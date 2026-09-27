@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -470,15 +471,17 @@ private fun LiveMeetingLayout(
             LiveTranscript(segments)
         }
         LiveControlsPanel(
-            recording = recording,
-            statusText = if (recording) {
-                stringResource(R.string.meeting_recording_live)
-            } else {
-                statusLabel(state)
-            },
-            elapsedMs = elapsed,
-            level = level,
-            notices = notices,
+            readout = LiveReadout(
+                recording = recording,
+                statusText = if (recording) {
+                    stringResource(R.string.meeting_recording_live)
+                } else {
+                    statusLabel(state)
+                },
+                elapsedMs = elapsed,
+                level = level,
+                notices = notices,
+            ),
             onStop = onStop,
             onDiscard = onDiscard,
         ) {
@@ -933,24 +936,7 @@ private fun LiveTranscript(segments: List<TranscriptSegment>) {
         if (segments.isNotEmpty()) listState.animateScrollToItem(segments.lastIndex)
     }
 
-    // The controls under the transcript can be dragged taller or shorter mid-
-    // meeting. A reader who was on the newest line stays on it while the
-    // viewport changes size; one who had scrolled back is left where they were.
-    LaunchedEffect(listState) {
-        var lastHeight = 0
-        var atEnd = true
-        snapshotFlow { listState.layoutInfo.viewportSize.height to listState.canScrollForward }
-            .collect { (height, canScrollForward) ->
-                val resized = lastHeight != 0 && height != lastHeight
-                lastHeight = height
-                if (resized && atEnd) {
-                    val last = listState.layoutInfo.totalItemsCount - 1
-                    if (last >= 0) listState.scrollToItem(last)
-                } else {
-                    atEnd = !canScrollForward
-                }
-            }
-    }
+    LaunchedEffect(listState) { listState.stayOnNewestAcrossResizes() }
 
     if (segments.isEmpty()) {
         Box(Modifier.fillMaxSize(), Alignment.Center) {
@@ -970,38 +956,65 @@ private fun LiveTranscript(segments: List<TranscriptSegment>) {
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         items(segments, key = { it.id }) { segment ->
-            Column {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        Modifier
-                            .size(6.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary)
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = speakerLabel(context, segment.speaker),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = formatClock(segment.startMs),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.outline,
-                    )
-                }
-                Text(
-                    text = segment.text,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = if (segment.isTail()) {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    } else {
-                        MaterialTheme.colorScheme.onSurface
-                    },
-                )
-            }
+            TranscriptLine(segment = segment, speaker = speakerLabel(context, segment.speaker))
         }
+    }
+}
+
+/**
+ * The controls under the transcript can be dragged taller or shorter mid-
+ * meeting. A reader who was on the newest line stays on it while the viewport
+ * changes size; one who had scrolled back is left where they were.
+ */
+private suspend fun LazyListState.stayOnNewestAcrossResizes() {
+    var lastHeight = 0
+    var atEnd = true
+    snapshotFlow { layoutInfo.viewportSize.height to canScrollForward }
+        .collect { (height, moreBelow) ->
+            val resized = lastHeight != 0 && height != lastHeight
+            lastHeight = height
+            if (resized && atEnd) scrollToNewest() else atEnd = !moreBelow
+        }
+}
+
+private suspend fun LazyListState.scrollToNewest() {
+    val last = layoutInfo.totalItemsCount - 1
+    if (last >= 0) scrollToItem(last)
+}
+
+/** One line of the live transcript: who, when, and what they said. */
+@Composable
+private fun TranscriptLine(segment: TranscriptSegment, speaker: String) {
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary)
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = speaker,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = formatClock(segment.startMs),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.outline,
+            )
+        }
+        Text(
+            text = segment.text,
+            style = MaterialTheme.typography.bodyLarge,
+            color = if (segment.isTail()) {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            } else {
+                MaterialTheme.colorScheme.onSurface
+            },
+        )
     }
 }
 

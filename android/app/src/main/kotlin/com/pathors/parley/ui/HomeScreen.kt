@@ -82,10 +82,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.AwaitPointerEventScope
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -619,26 +622,39 @@ private fun Modifier.folderSwipe(
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
             val onCards = cards.rects()
-            val touchSlop = viewConfiguration.touchSlop
-            var last = down.position
-            var multiTouch = false
-            var claim = FolderSwipe.Claim.UNDECIDED
-            while (true) {
-                val event = awaitPointerEvent(PointerEventPass.Initial)
-                if (event.changes.size > 1) multiTouch = true
-                val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                last = change.position
-                if (claim == FolderSwipe.Claim.UNDECIDED && !multiTouch) {
-                    claim = FolderSwipe.claim(last - down.position, touchSlop)
-                }
-                if (claim == FolderSwipe.Claim.SWIPE) change.consume()
-                if (!change.pressed) break
-            }
-            if (multiTouch) return@awaitEachGesture
-            val step = FolderSwipe.step(down.position, last - down.position, onCards, minDistance, rtl)
+            val end = followToLift(down, viewConfiguration.touchSlop)
+            if (end.multiTouch) return@awaitEachGesture
+            val step = FolderSwipe.step(down.position, end.translation, onCards, minDistance, rtl)
             if (step != 0) onStep(step)
         }
     }
+
+/** How a gesture ended: how far the first finger got, and whether another joined it. */
+private class GestureEnd(val translation: Offset, val multiTouch: Boolean)
+
+/**
+ * Follows the finger that went [down] until it lifts (or is lost), consuming
+ * every event from the moment the gesture is claimed as a swipe — see
+ * [folderSwipe] for why, and [FolderSwipe.claimAfter] for when.
+ */
+private suspend fun AwaitPointerEventScope.followToLift(
+    down: PointerInputChange,
+    touchSlop: Float,
+): GestureEnd {
+    var last = down.position
+    var multiTouch = false
+    var claim = FolderSwipe.Claim.UNDECIDED
+    while (true) {
+        val event = awaitPointerEvent(PointerEventPass.Initial)
+        multiTouch = multiTouch || event.changes.size > 1
+        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+        last = change.position
+        claim = FolderSwipe.claimAfter(claim, last - down.position, touchSlop, multiTouch)
+        if (claim == FolderSwipe.Claim.SWIPE) change.consume()
+        if (!change.pressed) break
+    }
+    return GestureEnd(last - down.position, multiTouch)
+}
 
 /**
  * A short slide in from the side the new page is on, whichever way it was

@@ -104,6 +104,33 @@ class FolderSwipeTest {
         assertEquals(FolderSwipe.Claim.NOT_OURS, FolderSwipe.claim(Offset(15f, -20f), slop))
     }
 
+    @Test
+    fun `a decided claim stays decided`() {
+        val across = Offset(-30f, 0f)
+        val down = Offset(0f, 30f)
+        assertEquals(
+            FolderSwipe.Claim.NOT_OURS,
+            FolderSwipe.claimAfter(FolderSwipe.Claim.NOT_OURS, across, slop, multiTouch = false),
+        )
+        assertEquals(
+            FolderSwipe.Claim.SWIPE,
+            FolderSwipe.claimAfter(FolderSwipe.Claim.SWIPE, down, slop, multiTouch = false),
+        )
+        assertEquals(
+            FolderSwipe.Claim.SWIPE,
+            FolderSwipe.claimAfter(FolderSwipe.Claim.UNDECIDED, across, slop, multiTouch = false),
+        )
+    }
+
+    /** Two fingers are a pinch or an accident: nothing gets claimed. */
+    @Test
+    fun `a second finger keeps it undecided`() {
+        assertEquals(
+            FolderSwipe.Claim.UNDECIDED,
+            FolderSwipe.claimAfter(FolderSwipe.Claim.UNDECIDED, Offset(-30f, 0f), slop, multiTouch = true),
+        )
+    }
+
     // ── which page it lands on ──────────────────────────────────────────────
 
     private val folders = listOf(

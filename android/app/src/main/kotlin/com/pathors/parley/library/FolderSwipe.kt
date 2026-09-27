@@ -53,6 +53,19 @@ object FolderSwipe {
     }
 
     /**
+     * [claim] carried along a gesture, one pointer event at a time: [current]
+     * is what it was before this event. Once decided it stays decided, and
+     * while a second finger is (or was) down nothing is decided at all — a
+     * pinch never becomes a swipe.
+     */
+    fun claimAfter(
+        current: Claim,
+        translation: Offset,
+        touchSlop: Float,
+        multiTouch: Boolean,
+    ): Claim = if (current != Claim.UNDECIDED || multiTouch) current else claim(translation, touchSlop)
+
+    /**
      * -1 for the previous page, +1 for the next, 0 for "not a page swipe".
      *
      * [start] is where the finger went down and [translation] how far it had

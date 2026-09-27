@@ -30,7 +30,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -64,6 +66,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pathors.parley.R
 import com.pathors.parley.ui.theme.ParleyTheme
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -71,77 +74,51 @@ import kotlinx.coroutines.launch
 internal data class PanelNotice(val text: String, val alarming: Boolean)
 
 /**
+ * What the panel reports about the meeting: whether it is [recording] yet, the
+ * status line, the clock, the input [level] (0…1) and the health [notices].
+ */
+@Immutable
+internal data class LiveReadout(
+    val recording: Boolean,
+    val statusText: String,
+    val elapsedMs: Long,
+    val level: Float,
+    val notices: List<PanelNotice>,
+)
+
+/**
  * The live meeting's controls, under the transcript: status, timer, level
  * meter, status lines, stop, discard.
  *
- * While [recording], the top edge can be dragged down to give the transcript
+ * While recording, the top edge can be dragged down to give the transcript
  * more room, and the panel stays wherever it is let go (see [LivePanel] for the
  * geometry and what drops out when). The height is remembered across meetings
  * in [LivePanelStore]. Before recording actually starts it is always fully
  * open, with no grabber — there is nothing to make room for yet.
  *
- * Whatever the height, an alarming [notices] entry stays visible: in full as the
- * status line, or as a warning mark beside the timer once that line has had to
- * go.
+ * Whatever the height, an alarming [LiveReadout.notices] entry stays visible: in
+ * full as the status line, or as a warning mark beside the timer once that line
+ * has had to go.
  */
 @Composable
 internal fun LiveControlsPanel(
-    recording: Boolean,
-    statusText: String,
-    elapsedMs: Long,
-    level: Float,
-    notices: List<PanelNotice>,
+    readout: LiveReadout,
     onStop: () -> Unit,
     onDiscard: () -> Unit,
     actions: @Composable RowScope.() -> Unit,
 ) {
-    val context = LocalContext.current
-    val store = remember(context) { LivePanelStore.default(context) }
-    val scope = rememberCoroutineScope()
-    val density = LocalDensity.current
+    val recording = readout.recording
+    val panel = rememberPanelHeight(recording)
+    val density = LocalDensity.current.density
 
-    // The stored fraction (0 compact … 1 full), and past either end while a
-    // drag rubber-bands. Starts open: that is also the only way to measure it.
-    val fraction = remember { Animatable(1f) }
-    // What the content measures fully open. Zero until the first layout.
-    var fullDp by remember { mutableFloatStateOf(0f) }
-    var dragging by remember { mutableStateOf(false) }
-    val dragHeightDp = remember { StateRef(0f) }
-    val touched = remember { StateRef(false) }
-
-    // A recording starting (or one being returned to) reopens the panel where
-    // the user last left it. Waits for a measurement, and gives way to a drag
-    // that got there first.
-    LaunchedEffect(recording) {
-        if (!recording) {
-            fraction.snapTo(1f)
-            return@LaunchedEffect
-        }
-        val saved = store.current()
-        snapshotFlow { fullDp }.first { it > 0f }
-        if (!touched.value) fraction.animateTo(saved, PanelSpring)
-    }
-
-    fun settle(target: Float) {
-        touched.value = true
-        scope.launch { fraction.animateTo(target, PanelSpring) }
-        scope.launch { store.set(target) }
-    }
-
-    val current = if (recording) fraction.value else 1f
+    val current = panel.current(recording)
     // Fully open and at rest, the panel wraps its content — which is how the
     // open height gets (re)measured, e.g. when a warning line appears.
-    val wrapping = !recording || fullDp <= 0f ||
-        (!dragging && !fraction.isRunning && LivePanel.isFullyOpen(current))
-    val heightDp = if (wrapping) fullDp else LivePanel.heightDp(current, fullDp)
-    val shape = if (wrapping) LivePanel.shape(fullDp, fullDp) else LivePanel.shape(heightDp, fullDp)
+    val wrapping = panel.wraps(recording)
+    val heightDp = if (wrapping) panel.fullDp else LivePanel.heightDp(current, panel.fullDp)
+    val shape = LivePanel.shape(heightDp, panel.fullDp)
 
-    val dragState = rememberDraggableState { deltaPx ->
-        val next = dragHeightDp.value - deltaPx / density.density
-        dragHeightDp.value = next
-        val shown = LivePanel.rubberBand(next, fullDp)
-        scope.launch { fraction.snapTo(LivePanel.fraction(shown, fullDp)) }
-    }
+    val dragState = rememberDraggableState { deltaPx -> panel.drag(deltaPx, density) }
 
     Column(Modifier.fillMaxWidth()) {
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -152,57 +129,120 @@ internal fun LiveControlsPanel(
                     if (wrapping) Modifier.wrapContentHeight() else Modifier.height(heightDp.dp)
                 )
                 .clipToBounds()
-                .onSizeChanged { size ->
-                    if (wrapping) fullDp = size.height / density.density
-                }
+                .onSizeChanged { size -> panel.measured(size.height / density, wrapping) }
                 .draggable(
                     state = dragState,
                     orientation = Orientation.Vertical,
-                    enabled = recording && fullDp > 0f,
-                    onDragStarted = {
-                        touched.value = true
-                        fraction.stop()
-                        dragging = true
-                        dragHeightDp.value = LivePanel.heightDp(fraction.value, fullDp)
-                    },
-                    onDragStopped = {
-                        dragging = false
-                        val shown = LivePanel.heightDp(fraction.value, fullDp)
-                        settle(LivePanel.restingFraction(shown, fullDp))
-                    },
+                    enabled = panel.canDrag(recording),
+                    onDragStarted = { panel.dragStarted() },
+                    onDragStopped = { panel.dragStopped() },
                 ),
         ) {
             if (shape.columnAlpha > 0f) {
                 FullColumn(
                     shape = shape,
-                    recording = recording,
-                    statusText = statusText,
-                    elapsedMs = elapsedMs,
-                    level = level,
-                    notices = notices,
+                    readout = readout,
                     onStop = onStop,
                     onDiscard = onDiscard,
                     actions = actions,
                 )
             }
-            if (recording && shape.rowAlpha > 0f) {
-                CompactRow(
-                    alpha = shape.rowAlpha,
-                    elapsedMs = elapsedMs,
-                    level = level,
-                    notices = notices,
-                    onStop = onStop,
-                )
-            }
             if (recording) {
-                Grabber(
+                RecordingOverlays(
+                    rowAlpha = shape.rowAlpha,
                     fraction = current,
-                    onToggle = { settle(LivePanel.toggledFraction(current)) },
-                    onSet = { settle(it) },
+                    readout = readout,
+                    onStop = onStop,
+                    onSettle = panel::settle,
                 )
             }
         }
     }
+}
+
+/**
+ * The panel's height and the drag that changes it. [fraction] is the stored
+ * fraction (0 compact … 1 full), and past either end while a drag
+ * rubber-bands; it starts open, which is also the only way to measure it.
+ * [fullDp] is what the content measures fully open, zero until the first
+ * layout.
+ */
+@Stable
+private class PanelHeight(
+    private val store: LivePanelStore,
+    private val scope: CoroutineScope,
+) {
+    val fraction = Animatable(1f)
+    var fullDp by mutableFloatStateOf(0f)
+        private set
+    private var dragging by mutableStateOf(false)
+    private var dragHeightDp = 0f
+    private var touched = false
+
+    /** The fraction to lay out at: always fully open before recording starts. */
+    fun current(recording: Boolean): Float = if (recording) fraction.value else 1f
+
+    /** Whether the panel wraps its content rather than being held at a height. */
+    fun wraps(recording: Boolean): Boolean = !recording || fullDp <= 0f ||
+        (!dragging && !fraction.isRunning && LivePanel.isFullyOpen(fraction.value))
+
+    fun canDrag(recording: Boolean): Boolean = recording && fullDp > 0f
+
+    /**
+     * A recording starting (or one being returned to) reopens the panel where
+     * the user last left it. Waits for a measurement, and gives way to a drag
+     * that got there first.
+     */
+    suspend fun reopen(recording: Boolean) {
+        if (!recording) {
+            fraction.snapTo(1f)
+            return
+        }
+        val saved = store.current()
+        snapshotFlow { fullDp }.first { it > 0f }
+        if (!touched) fraction.animateTo(saved, PanelSpring)
+    }
+
+    /** The content laid out at [heightDp]; only a wrapping panel is a measurement. */
+    fun measured(heightDp: Float, wrapping: Boolean) {
+        if (wrapping) fullDp = heightDp
+    }
+
+    fun settle(target: Float) {
+        touched = true
+        scope.launch { fraction.animateTo(target, PanelSpring) }
+        scope.launch { store.set(target) }
+    }
+
+    suspend fun dragStarted() {
+        touched = true
+        fraction.stop()
+        dragging = true
+        dragHeightDp = LivePanel.heightDp(fraction.value, fullDp)
+    }
+
+    fun drag(deltaPx: Float, density: Float) {
+        val next = dragHeightDp - deltaPx / density
+        dragHeightDp = next
+        val shown = LivePanel.rubberBand(next, fullDp)
+        scope.launch { fraction.snapTo(LivePanel.fraction(shown, fullDp)) }
+    }
+
+    fun dragStopped() {
+        dragging = false
+        val shown = LivePanel.heightDp(fraction.value, fullDp)
+        settle(LivePanel.restingFraction(shown, fullDp))
+    }
+}
+
+/** The panel's height, reopened to the stored one whenever [recording] starts. */
+@Composable
+private fun rememberPanelHeight(recording: Boolean): PanelHeight {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val panel = remember { PanelHeight(LivePanelStore.default(context), scope) }
+    LaunchedEffect(recording) { panel.reopen(recording) }
+    return panel
 }
 
 /**
@@ -220,11 +260,7 @@ private val GrabberBand = 20.dp
 @Composable
 private fun BoxScope.FullColumn(
     shape: LivePanelShape,
-    recording: Boolean,
-    statusText: String,
-    elapsedMs: Long,
-    level: Float,
-    notices: List<PanelNotice>,
+    readout: LiveReadout,
     onStop: () -> Unit,
     onDiscard: () -> Unit,
     actions: @Composable RowScope.() -> Unit,
@@ -241,30 +277,15 @@ private fun BoxScope.FullColumn(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         if (shape.showsStatusRow) {
-            StatusRow(recording = recording, text = statusText, actions = actions)
+            StatusRow(recording = readout.recording, text = readout.statusText, actions = actions)
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            PanelTimer(elapsedMs = elapsedMs, sizeSp = shape.timerSp)
-            if (!shape.showsStatusLine) HealthMark(notices, Modifier.padding(start = 8.dp))
-        }
+        TimerLine(shape = shape, elapsedMs = readout.elapsedMs, notices = readout.notices)
         if (shape.showsLevelMeter) {
             Spacer(Modifier.height(8.dp))
-            LevelMeter(level = level, live = recording)
+            LevelMeter(level = readout.level, live = readout.recording)
         }
         if (shape.showsStatusLine) {
-            notices.forEach { notice ->
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = notice.text,
-                    style = MaterialTheme.typography.bodySmall,
-                    textAlign = TextAlign.Center,
-                    color = if (notice.alarming) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                )
-            }
+            NoticeLines(readout.notices)
         }
         Spacer(Modifier.height(12.dp))
         RoundStopButton(diameter = shape.stopDp.dp, onStop = onStop)
@@ -274,6 +295,55 @@ private fun BoxScope.FullColumn(
             Spacer(Modifier.height(4.dp))
         }
     }
+}
+
+/** The clock, with the warning mark beside it once the status lines are gone. */
+@Composable
+private fun TimerLine(shape: LivePanelShape, elapsedMs: Long, notices: List<PanelNotice>) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        PanelTimer(elapsedMs = elapsedMs, sizeSp = shape.timerSp)
+        if (!shape.showsStatusLine) HealthMark(notices, Modifier.padding(start = 8.dp))
+    }
+}
+
+/** Every notice spelled out, the alarming ones in the error colour. */
+@Composable
+private fun NoticeLines(notices: List<PanelNotice>) {
+    notices.forEach { notice ->
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = notice.text,
+            style = MaterialTheme.typography.bodySmall,
+            textAlign = TextAlign.Center,
+            color = if (notice.alarming) {
+                MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        )
+    }
+}
+
+/**
+ * What only a recording panel has, over the column: the compact row as it
+ * fades in, and the grabber. [onSettle] moves the panel to a fraction.
+ */
+@Composable
+private fun BoxScope.RecordingOverlays(
+    rowAlpha: Float,
+    fraction: Float,
+    readout: LiveReadout,
+    onStop: () -> Unit,
+    onSettle: (Float) -> Unit,
+) {
+    if (rowAlpha > 0f) {
+        CompactRow(alpha = rowAlpha, readout = readout, onStop = onStop)
+    }
+    Grabber(
+        fraction = fraction,
+        onToggle = { onSettle(LivePanel.toggledFraction(fraction)) },
+        onSet = { onSettle(it) },
+    )
 }
 
 /** The red dot and what is happening, with the transcript's copy and share. */
@@ -303,13 +373,7 @@ private fun StatusRow(recording: Boolean, text: String, actions: @Composable Row
 
 /** Collapsed: red dot, timer, a small level meter, stop. */
 @Composable
-private fun BoxScope.CompactRow(
-    alpha: Float,
-    elapsedMs: Long,
-    level: Float,
-    notices: List<PanelNotice>,
-    onStop: () -> Unit,
-) {
+private fun BoxScope.CompactRow(alpha: Float, readout: LiveReadout, onStop: () -> Unit) {
     Row(
         modifier = Modifier
             .align(Alignment.BottomCenter)
@@ -321,11 +385,11 @@ private fun BoxScope.CompactRow(
     ) {
         RecordingDot()
         Spacer(Modifier.width(8.dp))
-        PanelTimer(elapsedMs = elapsedMs, sizeSp = LivePanel.TIMER_ROW_SP)
-        HealthMark(notices, Modifier.padding(start = 6.dp))
+        PanelTimer(elapsedMs = readout.elapsedMs, sizeSp = LivePanel.TIMER_ROW_SP)
+        HealthMark(readout.notices, Modifier.padding(start = 6.dp))
         Spacer(Modifier.width(12.dp))
         LevelMeter(
-            level = level,
+            level = readout.level,
             live = true,
             bars = 8,
             height = 14.dp,
