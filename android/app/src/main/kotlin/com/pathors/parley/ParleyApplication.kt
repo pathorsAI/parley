@@ -9,7 +9,11 @@ import com.pathors.parley.cloud.CloudClient
 import com.pathors.parley.meeting.ImportSession
 import com.pathors.parley.meeting.MeetingService
 import com.pathors.parley.meeting.MeetingSession
+import com.pathors.parley.kit.GettingStartedStep
 import com.pathors.parley.meeting.RecordingFiles
+import com.pathors.parley.onboarding.GettingStartedStore
+import com.pathors.parley.onboarding.SampleRecordingStore
+import com.pathors.parley.onboarding.parleyOnboardingStore
 import com.pathors.parley.playback.AudioRetention
 import com.pathors.parley.playback.LocalAudioStore
 import com.pathors.parley.screenshot.DemoMode
@@ -103,12 +107,32 @@ class AppContainer(private val app: Application) {
     /** How many hand-triggered re-transcriptions each recording has spent. */
     val manualRetries: ManualRetryLedger = ManualRetryLedger.default(app)
 
+    /**
+     * The library's getting-started checklist. Built before anything can sign
+     * in, which is what lets it tell an existing user from a new one — see
+     * [GettingStartedStore].
+     */
+    val gettingStarted: GettingStartedStore = GettingStartedStore(
+        store = app.parleyOnboardingStore,
+        scope = appScope,
+        hadStoredSession = { auth.currentToken() != null },
+    )
+
+    /** The bundled sample recording's local-only library entry. */
+    val sample: SampleRecordingStore = SampleRecordingStore(
+        context = app,
+        store = app.parleyOnboardingStore,
+        scope = appScope,
+        gettingStarted = gettingStarted,
+    )
+
     val uploader: MeetingUploader = MeetingUploader(
         cloud = cloud,
         queue = uploadQueue,
         backfills = backfillQueue,
         localAudio = localAudio,
         keepsAudioOnPhone = audioRetention::keepsAudioOnPhoneNow,
+        onSaved = { gettingStarted.mark(GettingStartedStep.RECORDED) },
     )
 
     /**

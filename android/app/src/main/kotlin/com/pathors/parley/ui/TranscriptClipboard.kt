@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.IntentSender
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Icon
@@ -103,7 +104,7 @@ object TranscriptClipboard {
      * cheap and universal, and it is one of the few places this app can go past
      * the iOS build rather than catch up to it.
      */
-    fun share(context: Context, text: String, title: String) {
+    fun share(context: Context, text: String, title: String, onChosen: IntentSender? = null) {
         val send = Intent(Intent.ACTION_SEND)
             .setType("text/plain")
             .putExtra(Intent.EXTRA_TITLE, title)
@@ -111,7 +112,17 @@ object TranscriptClipboard {
             .putExtra(Intent.EXTRA_TEXT, text)
         // A chooser always resolves, but a device with no share target at all (a
         // locked-down kiosk image) would otherwise take the app down with it.
-        runCatching { context.startActivity(Intent.createChooser(send, title)) }
+        runCatching { context.startActivity(Intent.createChooser(send, title, onChosen)) }
+    }
+
+    /**
+     * The hand-off to the user's own AI: [HandoffText] through the share sheet,
+     * with the checklist ticked once a target is actually picked (see
+     * [HandoffShareReceiver]).
+     */
+    fun shareToAI(context: Context, text: String, title: String) {
+        if (text.isEmpty()) return
+        share(context, text, title, HandoffShareReceiver.intentSender(context))
     }
 }
 

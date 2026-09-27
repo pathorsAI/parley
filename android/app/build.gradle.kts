@@ -1,4 +1,10 @@
 import java.util.Properties
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.tasks.InputDirectory
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.TaskAction
 
 plugins {
     alias(libs.plugins.android.application)
@@ -143,6 +149,43 @@ android {
         // BuildConfig.DEBUG gates the store-screenshot demo mode, so a release
         // build cannot be talked into serving fixtures by a deep link.
         buildConfig = true
+    }
+}
+
+// ── The bundled sample recording ────────────────────────────────────────────
+// `public/sample/` at the repository root is the one copy of the sample: the
+// desktop serves it, iOS references it from project.yml, and this copies it into
+// the APK's assets as `sample/` at build time rather than keeping a second copy
+// of ~700 KB of audio in the tree that would drift the next time
+// `scripts/sample/render.ts` re-renders it. See onboarding/SampleRecordingStore.kt.
+
+abstract class CopySampleAssets : DefaultTask() {
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val source: DirectoryProperty
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun copy() {
+        val target = outputDir.get().asFile.resolve("sample")
+        target.deleteRecursively()
+        target.mkdirs()
+        source.get().asFile
+            .listFiles { file -> file.isFile && (file.extension == "json" || file.extension == "ogg") }
+            .orEmpty()
+            .forEach { it.copyTo(target.resolve(it.name), overwrite = true) }
+    }
+}
+
+val copySampleAssets = tasks.register<CopySampleAssets>("copySampleAssets") {
+    source.set(rootProject.layout.projectDirectory.dir("../public/sample"))
+}
+
+androidComponents {
+    onVariants { variant ->
+        variant.sources.assets?.addGeneratedSourceDirectory(copySampleAssets, CopySampleAssets::outputDir)
     }
 }
 

@@ -130,6 +130,13 @@ class MeetingUploader(
     private val retryDelay: suspend (attempt: Int) -> Unit = { attempt ->
         delay(1_000L shl attempt.coerceAtMost(4))
     },
+    /**
+     * Told once a recording is safe in the queue — the getting-started
+     * checklist's "recorded". Saved on the phone is saved: whatever the upload
+     * does next, the meeting is not going to be lost, which is the event iOS
+     * ticks on too (`MeetingUploader.finishAndUpload`).
+     */
+    private val onSaved: () -> Unit = {},
 ) {
     private val drainMutex = Mutex()
 
@@ -166,6 +173,7 @@ class MeetingUploader(
             folderId = request.folderId,
         )
         queue.enqueue(pending, request.audio)
+        onSaved()
         request.id
     }
 
