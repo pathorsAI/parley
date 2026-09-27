@@ -20,6 +20,10 @@ struct ParleyApp: App {
         // reads whether a session token is *already* in the Keychain, and it
         // has to ask before this launch could have put one there.
         _ = GettingStartedStore.shared
+        // Same reason, for What's New: a fresh install marks every bundled
+        // announcement seen on its first launch, and it can only tell a fresh
+        // install from an update before this launch could have signed in.
+        _ = AnnouncementStore.shared
     }
 
     var body: some Scene {
@@ -43,6 +47,10 @@ struct ParleyApp: App {
                     #if DEBUG
                         if ScreenshotDemo.shared.handle(url) { return }
                     #endif
+                    // Any URL — the keyboard's dictate, the Live Activity's
+                    // card — means the user came here in the middle of
+                    // something, so What's New waits for another foreground.
+                    WhatsNewPresenter.shared.noteOpenedByURL()
                     if let session = DictationChannel.session(fromStart: url) {
                         Task { await dictation.begin(session: session) }
                     }
@@ -129,6 +137,9 @@ struct MainTabs: View {
                 .tag(AppTab.settings)
         }
         .environmentObject(router)
+        // Once, after an update, when nothing else is going on — see
+        // `WhatsNewPresenter` for what "nothing" has to mean.
+        .whatsNewSheet()
         #if DEBUG
             // The DEBUG screenshot routes land on a tab without a tap.
             .onReceive(ScreenshotDemo.shared.$tab) { router.tab = $0 }

@@ -27,6 +27,13 @@ targets:
       - path: ../../public/sample
         type: folder
         buildPhase: resources
+      # The What's New announcements, shared with Android and the desktop app
+      # (see announcements/README.md). A folder reference for the same reason
+      # as the sample: it lands as `announcements/`, and a new entry is a new
+      # file with no project change. See WhatsNew.swift.
+      - path: ../../announcements
+        type: folder
+        buildPhase: resources
     dependencies:
       - package: ParleyKit
       # Embeds the keyboard extension into the app bundle.
