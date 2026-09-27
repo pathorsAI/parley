@@ -846,16 +846,23 @@ struct KeyboardRootView: View {
     /// The set-up notice sits *below* the error, not above it: an error names
     /// the actual problem ("turn the microphone on in Settings"), and the
     /// generic invitation to open the app is only better than saying nothing.
+    ///
+    /// Once a session is over and its words are still here, the whole slot is
+    /// also a button that copies them — see `CopyTarget`.
     private var textSlot: some View {
         Group {
             if !bridge.hasFullAccess {
                 fullAccessNotice
             } else if let error = bridge.errorText, !bridge.listening {
-                centered {
-                    Text(error)
-                        .font(.footnote)
-                        .foregroundStyle(KBTheme.recording)
-                        .multilineTextAlignment(.center)
+                if bridge.tail.isEmpty {
+                    centered {
+                        Text(error)
+                            .font(.footnote)
+                            .foregroundStyle(KBTheme.recording)
+                            .multilineTextAlignment(.center)
+                    }
+                } else {
+                    failedText(error)
                 }
             } else if bridge.micTaken {
                 micTakenNotice
@@ -871,10 +878,27 @@ struct KeyboardRootView: View {
         }
         .frame(height: KBMetrics.textHeight)
         .frame(maxWidth: .infinity)
+        .modifier(
+            CopyTarget(
+                text: bridge.copyableText, copied: bridge.justCopied, dark: dark,
+                copy: bridge.copyDictation))
         .animation(.easeInOut(duration: 0.15), value: bridge.listening)
         .animation(.easeInOut(duration: 0.15), value: bridge.reconnecting)
         .animation(.easeOut(duration: 0.12), value: bridge.partial)
+        // A crossfade and nothing else, Reduce Motion or not: the caption and
+        // the corner glyph swap in place, and nothing about the slot moves.
+        .animation(.easeOut(duration: 0.15), value: bridge.justCopied)
     }
+
+    /// How far the words stand back from the slot's trailing edge once a
+    /// session is over, to leave the copy glyph's corner to the glyph (12pt,
+    /// and a gap). Taken whenever the session is over rather than only while
+    /// the copy is on offer: the first key typed afterwards ends the offer,
+    /// and giving the width back then would reflow the words under the user's
+    /// eyes for no reason they could see. `done` already changes the text —
+    /// the polished words replace the raw ones — so taking it there costs no
+    /// reflow of its own.
+    private static let copyGlyphInset: CGFloat = 18
 
     /// The connection dropped mid-sentence. The transcript stays exactly where
     /// it was — nothing already said is thrown away — with one line above it
@@ -994,6 +1018,11 @@ struct KeyboardRootView: View {
     /// emphasis instead, still, and a caption in the reconnect caption's shape
     /// says what is happening — in the accent rather than amber, because
     /// nothing is wrong.
+    ///
+    /// Once the session is over the same slot holds the finished words, and a
+    /// tap copies them (`CopyTarget`); for a moment after the tap, "Copied"
+    /// takes the polishing caption's place and shape — the same accent, for
+    /// the same reason.
     @ViewBuilder
     private var liveText: some View {
         let transcript = TranscriptText(
@@ -1001,11 +1030,35 @@ struct KeyboardRootView: View {
             still: reduceMotion
         )
         .equatable()
-        if reduceMotion, bridge.finishing, bridge.wave != nil {
+        .padding(.trailing, bridge.listening ? 0 : Self.copyGlyphInset)
+        if bridge.justCopied {
+            captioned(Text("Copied"), in: KBTheme.accent) { transcript }
+        } else if reduceMotion, bridge.finishing, bridge.wave != nil {
             captioned(Text("Polishing…"), in: KBTheme.accent) { transcript }
         } else {
             TranscriptScroll { transcript }
         }
+    }
+
+    /// The session failed with words already said: the error as a caption,
+    /// in the error red, above the words it cost.
+    ///
+    /// This slot used to show the error alone and the words were cleared with
+    /// it, so the one ending where nothing reaches the field was also the one
+    /// that took the words off the screen. They stay now, laid out the way a
+    /// reconnect lays them out — caption on the words, the words scrolling
+    /// under it if there are many — and a tap copies all of them. A session
+    /// that failed before anything settled has no words to keep and still
+    /// gets the centred error on its own.
+    private func failedText(_ error: String) -> some View {
+        captioned(
+            bridge.justCopied ? Text("Copied") : Text(error),
+            in: bridge.justCopied ? KBTheme.accent : KBTheme.recording
+        ) {
+            TranscriptText(tail: bridge.tail, partial: "", dark: dark, wave: nil, still: false)
+                .equatable()
+        }
+        .padding(.trailing, Self.copyGlyphInset)
     }
 
     private var fullAccessNotice: some View {
@@ -1028,6 +1081,74 @@ struct KeyboardRootView: View {
             content()
             Spacer(minLength: 0)
         }
+    }
+}
+
+/// The transcript slot as a button that copies the finished dictation, while
+/// there is one to copy (`KeyboardBridge.copyableText`); the slot exactly as
+/// it was the rest of the time.
+///
+/// **The whole slot is the target.** The words are the thing the user is
+/// looking at, and a small copy button beside them would be one more control
+/// on a pane that was rebuilt to have fewer — so the words themselves answer
+/// the tap, and the glyph in the corner only says that they will. It is a tap
+/// and not a press-and-hold, because a hold on a keyboard reads as "start
+/// selecting", which this slot cannot do.
+///
+/// **Scrolling still works.** The slot is a `ScrollView` (`TranscriptScroll`)
+/// and a long dictation has to stay rereadable, so the tap is a plain
+/// `onTapGesture`: it fails the moment the finger travels, and the scroll view
+/// takes the drag as it always has. `contentShape` gives it the slot's empty
+/// top as well as the pixels of the words; the track's sub-visible fill
+/// (`KBTheme.hitFill`) is what lets the system deliver a touch there at all.
+///
+/// **The glyph costs no layout.** An overlay in the top-trailing corner,
+/// outside the slot's layout and out of hit-testing, so the slot's height —
+/// and the keyboard's — cannot change when it appears. The words stand back
+/// from that corner on their own (`copyGlyphInset`) rather than here, because
+/// they have to keep standing back after the glyph has gone.
+///
+/// **VoiceOver** gets one button, "Copy dictated text", with the text as its
+/// value — the words are what the button acts on, so they are what it reads.
+private struct CopyTarget: ViewModifier {
+    /// What a tap copies; `nil` when the slot is not a copy target.
+    var text: String?
+    /// A tap just copied: the glyph is a checkmark for as long as the caption
+    /// says so.
+    var copied: Bool
+    var dark: Bool
+    var copy: () -> Void
+
+    func body(content: Content) -> some View {
+        if let text {
+            content
+                .overlay(alignment: .topTrailing) { glyph }
+                .contentShape(Rectangle())
+                .onTapGesture(perform: copy)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Text("Copy dictated text"))
+                .accessibilityValue(Text(verbatim: text))
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction(.default, copy)
+        } else {
+            content
+        }
+    }
+
+    /// Faint on purpose: it is a hint that the words can be taken, not a
+    /// control competing with the record button for the eye. Both glyphs are
+    /// the same size and ink so the swap is a change of shape only.
+    private var glyph: some View {
+        ZStack {
+            // Both drawn, one visible, so the swap is a crossfade in place and
+            // the corner never re-lays itself out between the two.
+            Image(systemName: "doc.on.doc").opacity(copied ? 0 : 1)
+            Image(systemName: "checkmark").opacity(copied ? 1 : 0)
+        }
+        .font(.system(size: 12, weight: .regular))
+        .foregroundStyle(KBTheme.inkSoft(dark).opacity(0.7))
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
