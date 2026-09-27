@@ -71,12 +71,26 @@ final class KeyboardViewController: UIInputViewController {
     /// it when the text landed and when the editing is over.
     private let lexicon = KeyboardLexiconWatch()
     private var host: UIHostingController<KeyboardRootView>?
+    /// A canvas behind the SwiftUI root, shown only when the system's would
+    /// disagree with the caps. See `needsOwnBackdrop`.
+    private let backdrop = UIView()
     private var heightConstraint: NSLayoutConstraint?
 
     /// 傳統注音 input for the 注音 pane. Cheap to hold: the dictionary behind it
     /// does not touch its resource until the first syllable is finalized, so a
     /// keyboard that only ever dictates never pays for it.
     private var zhuyin = ZhuyinComposer(dictionary: .bundled, phrases: ZhuyinPhrases.bundled)
+    /// The marked text this keyboard has sent and the host has not confirmed,
+    /// and whether this field's host shows marked text at all. A mirror
+    /// because the proxy cannot read marked text back.
+    private var marks = MarkedTextLog()
+    /// The field the keyboard is typing into, so a report from a different one
+    /// can be told apart from a report about this one: hosts on iOS 26.5 leave
+    /// marked text out of the context they report, so the context alone
+    /// cannot say which field it came from.
+    private var currentField: UUID?
+    /// The pending check that the host answered the first marks in a field.
+    private var settleCheck: DispatchWorkItem?
 
     /// The user's own words, offered ahead of the bundled list on the English
     /// pane. Read once per appearance rather than per keystroke: it is a file in
@@ -118,19 +132,47 @@ final class KeyboardViewController: UIInputViewController {
             EnglishWords.bundled.warm { [weak self] in self?.refreshSuggestions() }
         }
 
-        // Let the system's own input view supply the background. It is already
-        // the right colour, already rounds its corners the way the host expects
-        // and already covers exactly the area the system keyboard would; a
-        // canvas of our own painted over it was what left a seam against the
-        // row below and a top-left corner that didn't line up.
+        // The system's input view supplies the backdrop, exactly as before
+        // 1.21 — it is already the right colour, already the right shape on
+        // every device and already covers exactly the area the system keyboard
+        // would. `backdrop` is shown only when this keyboard has decided on the
+        // opposite appearance from the one the system is painting: see
+        // `needsOwnBackdrop`. That is the one case where caps and ink would
+        // otherwise land on a backdrop chosen by someone else (#441).
+        //
+        // When it is shown it is a view of its own rather than
+        // `view.backgroundColor`: on iOS 26 the system draws the keyboard as a
+        // card with large rounded top corners, and a full-width rectangle
+        // poked its square corners out of that curve and covered the card's
+        // rim. It is kept inside the card instead — see `KBMetrics.backdropInset`.
         view.backgroundColor = .clear
+        backdrop.backgroundColor = KBTheme.backdrop(isDark)
+        backdrop.isHidden = !needsOwnBackdrop
+        backdrop.isUserInteractionEnabled = false
+        backdrop.layer.cornerRadius = KBMetrics.backdropCorner
+        backdrop.layer.cornerCurve = .continuous
+        backdrop.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        backdrop.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(backdrop)
+        NSLayoutConstraint.activate([
+            // Down to the bottom of the input view, home indicator strip
+            // included; 1pt in at the top and sides (see `KBMetrics`).
+            backdrop.topAnchor.constraint(
+                equalTo: view.topAnchor, constant: KBMetrics.backdropInset),
+            backdrop.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            backdrop.leadingAnchor.constraint(
+                equalTo: view.leadingAnchor, constant: KBMetrics.backdropInset),
+            backdrop.trailingAnchor.constraint(
+                equalTo: view.trailingAnchor, constant: -KBMetrics.backdropInset),
+        ])
         // Self-sizing is what makes the system honour a height constraint at
-        // all. Without it the constraint below is advisory at best, which is
-        // the other half of the same misalignment.
+        // all. Without it the constraint below is advisory at best, and the
+        // keyboard renders at a height nobody asked for.
         inputView?.allowsSelfSizing = true
 
-        readHostAppearance(force: true)
         let root = UIHostingController(rootView: makeRoot())
+        // Clear, so the backdrop's shape is the only one painted: a filled
+        // hosting view would be a second, square-cornered rectangle over it.
         root.view.backgroundColor = .clear
         addChild(root)
         view.addSubview(root.view)
@@ -157,13 +199,12 @@ final class KeyboardViewController: UIInputViewController {
         height.isActive = true
         heightConstraint = height
 
-        // The backdrop follows the trait collection for a host that follows
-        // the system, so the caps have to follow it too — including when the
-        // user flips Dark Mode with the keyboard on screen, which neither
-        // `viewWillAppear` nor `textDidChange` hears about. See `isDark`.
+        // Dark Mode can flip with the keyboard on screen, which neither
+        // `viewWillAppear` nor `textDidChange` hears about — and the trait
+        // collection is the first thing `isDark` reads.
         registerForTraitChanges([UITraitUserInterfaceStyle.self]) {
-            (self: Self, _: UITraitCollection) in
-            self.refreshAppearance()
+            (self: Self, previous: UITraitCollection) in
+            self.styleDidChange(from: previous)
         }
 
         armChannelObservers()
@@ -237,10 +278,10 @@ final class KeyboardViewController: UIInputViewController {
         bridge.showsGlobe = needsInputModeSwitchKey
         refreshPanes()
         // A half-typed syllable belongs to the field it was started in, so it is
-        // dropped rather than committed — the same rule as the transcript tail
-        // below, and for the same reason.
-        zhuyin.clear()
-        publishComposition()
+        // not carried into this one — the same rule as the transcript tail
+        // below, and for the same reason. A reading a host kept as plain text
+        // when the keyboard went away is replaced by its best guess here.
+        returnToField()
         // The field may be a different one, with a different word half-typed in
         // front of the cursor, so both the user's terms and the bar are re-read
         // rather than carried over.
@@ -251,7 +292,9 @@ final class KeyboardViewController: UIInputViewController {
         // is dropped unless a session is still running — `drainDownlink` below
         // puts it straight back when one is.
         if !bridge.listening { bridge.tail = "" }
-        readHostAppearance(force: true)
+        // A fresh appearance is a freshly read field: whatever it says now is
+        // current. See `staleHostDark`.
+        staleHostDark = false
         refreshAppearance()
         refreshReturnKey()
         readReadiness()
@@ -292,21 +335,29 @@ final class KeyboardViewController: UIInputViewController {
         // is precisely the thing the user is walking away from.
         if hasFullAccess, bridge.listening { Haptics.dictationContinuesInBackground() }
         lexicon.harvest(context: textDocumentProxy.documentContextBeforeInput)
+        leaveComposition()
     }
 
-    /// A keyboard follows the appearance of the *field* it is typing into when
-    /// the field names one — see `isDark`. `textInputMode` changes as the user
-    /// moves between fields, so this is re-read whenever the keyboard comes
-    /// back.
+    /// A field that asks for a dark keyboard gets one — see `isDark`. The field
+    /// changes as the user moves between them, so the question is asked again
+    /// whenever the text does.
     override func textDidChange(_ textInput: UITextInput?) {
         super.textDidChange(textInput)
-        readHostAppearance(force: false)
+        // Only a field that stopped saying `.dark` is known to have been read
+        // again; one still saying it may be the same stale value.
+        if textDocumentProxy.keyboardAppearance != .dark { staleHostDark = false }
+        hostChangedText()
         refreshAppearance()
         refreshReturnKey()
         // The cursor may have moved somewhere this keyboard did not put it —
         // a tap in the field, an autofill, the host rewriting its own text — so
         // the word in front of it is re-read rather than assumed.
         refreshSuggestions()
+    }
+
+    override func selectionDidChange(_ textInput: UITextInput?) {
+        super.selectionDidChange(textInput)
+        hostChangedText()
     }
 
     /// The constraint measures the whole input view, but the content is pinned
@@ -411,52 +462,74 @@ final class KeyboardViewController: UIInputViewController {
         UIView.animate(withDuration: 0.18) { self.view.superview?.layoutIfNeeded() }
     }
 
-    /// The last `keyboardAppearance` read off the host field, and whether that
-    /// value was the host forcing an appearance or merely mirroring the
-    /// system's. See `isDark`.
-    private var hostAppearance: UIKeyboardAppearance = .default
-    private var hostFollowsSystem = true
-
-    /// Whether to draw dark caps.
+    /// Whether to draw dark — caps, ink and backdrop alike.
     ///
-    /// The system paints the input view's backdrop — see `viewDidLoad` — so the
-    /// caps have to make the same call it does. Three kinds of host:
+    /// The trait collection first, and a host asking for `.dark` as a second
+    /// way in. A host reporting `.light` never overrides a dark trait:
     ///
     /// - Most third-party hosts (Claude, LINE) leave `keyboardAppearance` at
-    ///   `.default`, and the backdrop follows the trait collection. Reading
-    ///   `.default` as light drew white caps on a black backdrop, which is the
-    ///   bug 1.19 shipped with.
-    /// - System apps (Reminders, Safari) report `.dark` or `.light` *matching*
-    ///   the system style. That value goes stale the moment the user flips
-    ///   Dark Mode: the proxy keeps the old one until the field is activated
-    ///   again, while the backdrop repaints at once. So a value that matched
-    ///   the trait when it was read is taken to mean "follows the system".
-    /// - A host that forces the opposite of the system — a dark-themed app on
-    ///   a light phone — is believed, and keeps its appearance across a flip.
+    ///   `.default`, so the trait collection is the only signal there is.
+    /// - A dark-themed app on a light phone asks for `.dark`, and gets it.
+    /// - Apple Notes in Dark Mode reports `.light` while the trait is dark.
+    ///   1.20 believed it and drew white caps and near-black candidates on the
+    ///   system's black backdrop (#441). System apps also keep reporting the
+    ///   old value after a Dark Mode flip until the field is activated again,
+    ///   so a `.light` over a dark trait is more often stale than meant.
+    ///
+    /// Believing the host's `.light` could only ever be right for a light-themed
+    /// app on a dark phone, which draws a light keyboard against a dark screen —
+    /// readable either way now that the backdrop is ours. Believing it wrongly
+    /// is what made the candidates invisible, so it is the case given up.
     private var isDark: Bool {
-        hostFollowsSystem
-            ? traitCollection.userInterfaceStyle == .dark
-            : hostAppearance == .dark
+        traitCollection.userInterfaceStyle == .dark
+            || (!staleHostDark && (textDocumentProxy.keyboardAppearance ?? .default) == .dark)
     }
 
-    /// Re-read the host's appearance. `force` on a fresh appearance, where the
-    /// proxy is known to be current; otherwise only a *changed* value is
-    /// learned from, because an unchanged one after a Dark Mode flip is the
-    /// stale value described on `isDark`, not a host that forces it.
-    private func readHostAppearance(force: Bool) {
-        let appearance = textDocumentProxy.keyboardAppearance ?? .default
-        guard force || appearance != hostAppearance else { return }
-        hostAppearance = appearance
-        let systemDark = traitCollection.userInterfaceStyle == .dark
-        switch appearance {
-        case .dark: hostFollowsSystem = systemDark
-        case .light: hostFollowsSystem = !systemDark
-        default: hostFollowsSystem = true
-        }
+    /// The host's `.dark` is left over from before the phone went light.
+    ///
+    /// System apps (Reminders, Safari) report `.dark` while the phone is dark
+    /// and keep reporting it after the user flips to light with the keyboard on
+    /// screen — typing does not refresh it, only activating the field again
+    /// does. Believed, it kept the keyboard dark on a light phone with the
+    /// system's own globe-and-dictation strip under it already light: a
+    /// two-tone keyboard. So a `.dark` that was already there when the trait
+    /// went from dark to light is set aside until the field is read again.
+    ///
+    /// The one host this misjudges is a dark-themed app on a phone the user
+    /// flips from dark to light: it gets a light keyboard until the field is
+    /// next activated. Readable, and corrected on the next appearance.
+    private var staleHostDark = false
+
+    private func styleDidChange(from previous: UITraitCollection) {
+        staleHostDark =
+            previous.userInterfaceStyle == .dark
+            && traitCollection.userInterfaceStyle != .dark
+            && textDocumentProxy.keyboardAppearance == .dark
+        refreshAppearance()
     }
 
+    /// Whether this keyboard has to paint its own backdrop: only when `isDark`
+    /// disagrees with the style the system paints its input view in.
+    ///
+    /// After `isDark`'s rule that can only be one way round — a host forcing
+    /// `.dark` on a light phone — because a dark trait always makes `isDark`
+    /// true. Everywhere else the system's backdrop already agrees with the caps
+    /// and the ink, and is left to show through: it is the right shape on every
+    /// device, which a painted one is only known to be on the devices it was
+    /// measured on.
+    private var needsOwnBackdrop: Bool {
+        isDark != (traitCollection.userInterfaceStyle == .dark)
+    }
+
+    /// Repaint whenever the appearance changes: the SwiftUI root that draws the
+    /// caps and the ink, and the backdrop behind them when the system's would
+    /// disagree. One answer drives all of it.
     private func refreshAppearance() {
         let dark = isDark
+        let color = KBTheme.backdrop(dark)
+        if backdrop.backgroundColor != color { backdrop.backgroundColor = color }
+        let hidden = !needsOwnBackdrop
+        if backdrop.isHidden != hidden { backdrop.isHidden = hidden }
         if host?.rootView.dark != dark {
             host?.rootView = makeRoot(dark: dark)
         }
@@ -953,7 +1026,7 @@ final class KeyboardViewController: UIInputViewController {
         // appearance.
         let committed = Array(d.committed)
         if d.state == .done, committed.count > insertedCount {
-            textDocumentProxy.insertText(String(committed[insertedCount...]))
+            typeOutsideComposition(String(committed[insertedCount...]))
             insertedCount = committed.count
             var up = DictationChannel.readUplink() ?? .init(session: session)
             up.insertedCount = insertedCount
@@ -1115,24 +1188,203 @@ final class KeyboardViewController: UIInputViewController {
     ) {
         switch outcome {
         case .handled: break
-        case .insert(let text): textDocumentProxy.insertText(text)
+        case .insert(let text): commit(text)
         case .passThrough: passThrough()
         }
         publishComposition()
     }
 
-    /// One assignment for the composition and its candidates together, and
-    /// only on a real change: a keystroke is one invalidation of the strip,
-    /// not two.
+    /// `insertText` replaces the marked text. `setMarkedText` + `unmarkText`
+    /// does not survive a `setMarkedText` in the same turn: Reminders applied
+    /// them out of order and dropped the picked candidate. In a field whose
+    /// host ignores marked text there is nothing to replace, and this is the
+    /// plain insert the pane used before marked text.
+    private func commit(_ text: String) {
+        textDocumentProxy.insertText(text)
+        if marks.usesMarkedText { marks.sent("") }
+    }
+
+    /// The reading goes to the host as marked text and the strip gets only the
+    /// candidates — or, in a field whose host ignores marked text, the reading
+    /// goes to the strip's chip and nothing goes to the host. One assignment
+    /// for the strip, and only on a real change: a keystroke is one
+    /// invalidation of the strip, not two.
     private func publishComposition() {
+        let reading = zhuyin.reading
+        if marks.usesMarkedText, reading != marks.current {
+            if reading.isEmpty {
+                // One call, so there is no order to lose: the proxy drops an
+                // empty insertText, and unmarkText after this is not needed.
+                textDocumentProxy.setMarkedText("", selectedRange: NSRange(location: 0, length: 0))
+            } else {
+                textDocumentProxy.setMarkedText(
+                    reading,
+                    selectedRange: NSRange(location: (reading as NSString).length, length: 0))
+                scheduleSettleCheck()
+            }
+            marks.sent(reading)
+        }
         let next = KeyboardBridge.ZhuyinStrip(
-            composition: zhuyin.reading, candidates: zhuyin.candidates)
+            composition: marks.usesMarkedText ? "" : reading, candidates: zhuyin.candidates)
         if bridge.zhuyin != next { bridge.zhuyin = next }
         // The candidate grid is about a reading; once the buffer is committed or
         // cleared there is nothing left in it to choose, and the keys come back.
         // Here rather than in the view so every way the buffer empties — a pick,
         // return, space, punctuation, leaving the pane — closes it the same way.
-        if zhuyin.reading.isEmpty, bridge.candidatesExpanded { bridge.candidatesExpanded = false }
+        if reading.isEmpty, bridge.candidatesExpanded { bridge.candidatesExpanded = false }
+    }
+
+    /// Which field the proxy is on. Read through key-value coding because the
+    /// property is declared non-optional in Swift but is nil while the
+    /// keyboard is between fields, and reading it then traps.
+    private var fieldID: UUID? {
+        (textDocumentProxy as? NSObject)?.value(forKey: "documentIdentifier") as? UUID
+    }
+
+    /// The host changed its text or selection itself: a tap, a different
+    /// field, a host rewrite. The keyboard's own edits do not arrive here.
+    private func hostChangedText() {
+        let field = fieldID
+        defer { if field != nil { currentField = field } }
+        if let field, let previous = currentField, field != previous {
+            // Another field. Nothing the proxy does now reaches the old one —
+            // on iOS 26.5 an insert here landed in the *new* field — so the
+            // composition is only let go of, and remembered for repair.
+            if !zhuyin.reading.isEmpty { strandComposition() }
+            marks.fieldChanged()
+            zhuyin.clear()
+            publishComposition()
+            repairStrandedReading()
+            return
+        }
+        if zhuyin.reading.isEmpty {
+            // Back in front of a reading the host kept as plain text.
+            repairStrandedReading()
+            return
+        }
+        guard marks.usesMarkedText else { return }
+        let before = textDocumentProxy.documentContextBeforeInput
+        let after = textDocumentProxy.documentContextAfterInput
+        if marks.hostReported(before: before, after: after) == .left { abandonComposition() }
+    }
+
+    /// End the composition without inserting anything; the host keeps what it
+    /// shows. Committing the best guess here would put it wherever the cursor
+    /// has gone.
+    private func abandonComposition() {
+        if marks.usesMarkedText { textDocumentProxy.unmarkText() }
+        marks.reset()
+        zhuyin.clear()
+        publishComposition()
+    }
+
+    /// A while after the first marks in a field, ask whether the host showed
+    /// them. The callbacks cannot say: a host sends none for the keyboard's own
+    /// edits. Only an empty field can answer, and there a host that reports no
+    /// text at all has dropped the mark: the reading moves to the strip.
+    private func scheduleSettleCheck() {
+        guard !marks.confirmed else { return }
+        settleCheck?.cancel()
+        let check = DispatchWorkItem { [weak self] in self?.hostSettled() }
+        settleCheck = check
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: check)
+    }
+
+    private func hostSettled() {
+        let verdict = marks.hostSettled(
+            before: textDocumentProxy.documentContextBeforeInput,
+            after: textDocumentProxy.documentContextAfterInput,
+            hasText: textDocumentProxy.hasText)
+        guard verdict == .ignoresMarkedText else { return }
+        publishComposition()
+    }
+
+    /// The keyboard is going away with a reading pending. The system 注音
+    /// keyboard commits its best guess here; this one tries the same, but in
+    /// Reminders on iOS 26.5 no proxy edit lands this late (nor in
+    /// `textWillChange`, which comes first), and the host keeps the reading as
+    /// typed. So it is also remembered, and `returnToField` repairs it.
+    private func leaveComposition() {
+        settleCheck?.cancel()
+        guard !zhuyin.reading.isEmpty else { return }
+        if marks.usesMarkedText {
+            strandComposition()
+            commit(zhuyin.best)
+        }
+        marks.reset()
+        zhuyin.clear()
+        publishComposition()
+    }
+
+    /// A reading the host may keep as plain text, and its best guess. In
+    /// memory only, and static because UIKit makes a new controller each time
+    /// the keyboard comes up while the extension process lives on. Never
+    /// written to disk: the keyboard holds no typed content beyond the process
+    /// (see `ios/AppStore/privacy-label.md`), so if iOS ends the process
+    /// before the user comes back to the field, the reading is not repaired.
+    private static var stranded: StrandedReading?
+    /// Set with `stranded`, cleared once the keyboard has explicitly removed
+    /// whatever might still be marked.
+    private static var markMayLinger = false
+
+    private func strandComposition() {
+        guard marks.usesMarkedText else { return }
+        Self.stranded = StrandedReading(reading: zhuyin.reading, best: zhuyin.best, at: Date())
+        Self.markMayLinger = true
+    }
+
+    /// If the text before the caret ends with exactly the stranded reading,
+    /// put its best guess in its place.
+    @discardableResult
+    private func repairStrandedReading() -> Bool {
+        guard let stranded = Self.stranded else { return false }
+        guard let repair = stranded.repair(
+            before: textDocumentProxy.documentContextBeforeInput, now: Date())
+        else {
+            if Date().timeIntervalSince(stranded.at) >= StrandedReading.lifetime {
+                Self.stranded = nil
+            }
+            return false
+        }
+        for _ in 0..<repair.delete { textDocumentProxy.deleteBackward() }
+        textDocumentProxy.insertText(repair.insert)
+        Self.stranded = nil
+        return true
+    }
+
+    /// The keyboard is back, possibly in another field: start the field over.
+    /// A stranded reading in front of the caret is repaired. Otherwise, if one
+    /// was stranded, anything still marked is removed explicitly — a reading a
+    /// keyboard switch left underlined — with `setMarkedText("")` followed by
+    /// `unmarkText()`. Only then, and never over a selection: an empty
+    /// `setMarkedText` replaces the selected text when nothing is marked.
+    private func returnToField() {
+        settleCheck?.cancel()
+        zhuyin.clear()
+        marks.fieldChanged()
+        currentField = fieldID
+        if !repairStrandedReading() { removeLingeringMark() }
+        Self.markMayLinger = false
+        publishComposition()
+    }
+
+    /// Remove whatever the keyboard may have left marked, with
+    /// `setMarkedText("")` followed by `unmarkText()`: neither kept raw nor
+    /// finalized as typed. Only after stranding a reading, and never over a
+    /// selection, because an empty `setMarkedText` replaces the selected text
+    /// when nothing is marked.
+    private func removeLingeringMark() {
+        guard Self.markMayLinger, (textDocumentProxy.selectedText ?? "").isEmpty else { return }
+        textDocumentProxy.setMarkedText("", selectedRange: NSRange(location: 0, length: 0))
+        textDocumentProxy.unmarkText()
+        Self.markMayLinger = false
+    }
+
+    /// Text that does not come from the composer ends the composition first,
+    /// so it lands after the reading rather than replacing it.
+    private func typeOutsideComposition(_ text: String) {
+        apply(zhuyin.confirm())
+        textDocumentProxy.insertText(text)
     }
 
     // MARK: English word suggestions
@@ -1183,6 +1435,7 @@ final class KeyboardViewController: UIInputViewController {
     func pickSuggestion(_ word: String) {
         let partial = bridge.english.partialWord
         guard !partial.isEmpty else { return }
+        apply(zhuyin.confirm())
         for _ in 0..<partial.unicodeScalars.count { textDocumentProxy.deleteBackward() }
         textDocumentProxy.insertText(word + " ")
         refreshSuggestions()
@@ -1207,8 +1460,7 @@ final class KeyboardViewController: UIInputViewController {
     /// returns before its `documentContextBeforeInput` — a round trip to the
     /// host — on every pane but English.
     func insert(_ text: String) {
-        apply(zhuyin.confirm())
-        textDocumentProxy.insertText(text)
+        typeOutsideComposition(text)
         refreshSuggestions()
     }
 
@@ -1254,7 +1506,7 @@ final class KeyboardViewController: UIInputViewController {
             publishComposition()
             return
         case .insert(let text):
-            textDocumentProxy.insertText(text)
+            commit(text)
             publishComposition()
             return
         case .passThrough:
@@ -1428,11 +1680,16 @@ final class KeyboardBridge: ObservableObject {
     /// `MicMeter` is: every keystroke changes both, and two would invalidate the
     /// view twice for one key.
     struct ZhuyinStrip: Equatable {
-        /// The syllables part-way through being typed. Empty when nothing is
-        /// pending, which is also what puts the wordmark back.
+        /// The syllables part-way through being typed, for the strip's chip.
+        /// Empty unless the host ignores marked text: everywhere else the
+        /// reading is marked text in the field and the strip has no copy.
         var composition: String
         /// What the front of the composition could be, most likely first.
         var candidates: [String]
+
+        /// Something to show for 注音. Neither half pending is what puts the
+        /// wordmark back.
+        var isPending: Bool { !composition.isEmpty || !candidates.isEmpty }
     }
 
     @Published var zhuyin = ZhuyinStrip(composition: "", candidates: [])

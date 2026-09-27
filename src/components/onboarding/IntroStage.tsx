@@ -1,7 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { FileAudio, Folder, House, AudioLines, Mic, Plug } from "lucide-react";
 import { useI18n } from "../../i18n";
-import { isMac } from "../../lib/platform";
 import { sampleManifest } from "../../lib/onboarding/sample";
 import { OB_EASE, TYPE_MS_PER_CHAR, prefersReducedMotion } from "../../lib/onboarding/motion";
 import { cn } from "@/lib/utils";
@@ -52,7 +51,7 @@ export function IntroStage() {
   const reached = (id: IntroBeatId) => beat !== null && ORDER.indexOf(beat) >= ORDER.indexOf(id);
   const manifest = sampleManifest(language);
   const captionKey = {
-    record: isMac() ? "onboarding.stage.record" : "onboarding.stage.record.windows",
+    record: "onboarding.stage.record",
     transcript: "onboarding.stage.transcript",
     folder: "onboarding.stage.folder",
     mcp: "onboarding.stage.mcp",

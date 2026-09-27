@@ -17,10 +17,9 @@ import SwiftUI
 /// the pane with caps (which it used to do) made it read as a broken keyboard
 /// rather than a place to speak.
 ///
-/// The view paints no background of its own. The system's `UIInputView` is
-/// already the right colour, already has the right corners and already covers
-/// exactly the right area; painting over it was what made the keyboard seam
-/// against the row below and sit a shade off from the system's.
+/// The view paints no background of its own. The system's `UIInputView` shows
+/// through, and the controller covers it only when the system is painting the
+/// other appearance from the one this view was handed (#441).
 ///
 /// Everything here is presentation only — no audio, no transcript history
 /// beyond the short tail shown above the button — so the extension stays well
@@ -30,9 +29,8 @@ struct KeyboardRootView: View {
     @Environment(\.openURL) private var openURL
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// The host field's appearance when it names one — a dark-themed app puts
-    /// a dark keyboard on screen even in light mode — and the trait collection's
-    /// when it leaves it at `.default`. See `KeyboardViewController.isDark`.
+    /// Dark when the trait collection is, or when the host field asks for a
+    /// dark keyboard. See `KeyboardViewController.isDark`.
     var dark: Bool
 
     /// Live horizontal travel of the pane track while a drag is in flight.
@@ -73,7 +71,7 @@ struct KeyboardRootView: View {
                 // touch through and only drawn controls could start a swipe.
                 // `contentShape` cannot fix that from inside SwiftUI; a fill
                 // below the eye's threshold can.
-                .background(Color.white.opacity(0.01))
+                .background(KBTheme.hitFill(dark))
                 .simultaneousGesture(
                     DragGesture(minimumDistance: 24)
                         .updating($drag) { value, state, _ in
@@ -152,19 +150,23 @@ struct KeyboardRootView: View {
     /// across — the track still follows the finger — and the tabs are the second
     /// way, for the user who never thinks to drag.
     ///
-    /// While a 注音 composition is pending the whole row is given over to it and
-    /// its candidates. It is the one row the keyboard has to spare, and the
-    /// alternative — a bar of its own above the keys — would make the pane
-    /// taller than its neighbours every time someone started a word. The
-    /// composition can be several syllables; the two of them share the row, so
-    /// the chip is capped and the bar keeps the rest.
+    /// While a 注音 composition has candidates the whole row is given over to
+    /// them. It is the one row the keyboard has to spare, and the alternative —
+    /// a bar of its own above the keys — would make the pane taller than its
+    /// neighbours every time someone started a word. The composition itself is
+    /// marked text in the host field, as on the system keyboard, so the row
+    /// holds only the candidates. The one exception is a field whose host
+    /// ignores marked text: there the reading has nowhere else to be seen, and
+    /// it takes the 1.20 chip at the left of the row again.
     private var modeStrip: some View {
         HStack(spacing: 0) {
-            if !bridge.zhuyin.composition.isEmpty {
-                compositionChip
+            if bridge.zhuyin.isPending {
+                // Only a host that ignores marked text gets the chip: anywhere
+                // else the reading is already underlined in the field.
+                if !bridge.zhuyin.composition.isEmpty { compositionChip }
                 if bridge.candidatesExpanded {
                     // The grid below has the candidates; the strip keeps the
-                    // reading and the way back.
+                    // way back.
                     Spacer(minLength: 8)
                 } else {
                     candidateBar
@@ -190,14 +192,13 @@ struct KeyboardRootView: View {
         // fully transparent point in a keyboard extension never receives the
         // touch, so without it only the drawn pixels of ⌄ — two thin strokes —
         // and of each candidate's glyphs were tappable.
-        .background(Color.white.opacity(0.01))
+        .background(KBTheme.hitFill(dark))
     }
 
     /// The English pane's word suggestions take the strip on the same terms the
-    /// 注音 composition does, and behind it: a pending composition belongs to the
-    /// other pane and can only exist while that one is current, but the two
-    /// branches are ordered anyway so the rule is written down rather than
-    /// inferred.
+    /// 注音 candidates do, and behind them: candidates belong to the other pane
+    /// and can only exist while that one is current, but the two branches are
+    /// ordered anyway so the rule is written down rather than inferred.
     private var showsSuggestions: Bool {
         bridge.pane == .english && !bridge.english.suggestions.isEmpty
     }
@@ -289,6 +290,10 @@ struct KeyboardRootView: View {
     /// What is being typed but has not landed anywhere yet, in the accent so it
     /// reads as pending rather than as text in the document.
     ///
+    /// Only in a field whose host ignores marked text. Everywhere else the
+    /// reading is underlined at the caret, `composition` stays empty and the
+    /// chip never draws; see `MarkedTextLog`.
+    ///
     /// The chip shares the row with the candidate bar, and the bar is the part
     /// the user acts on. It used to show the whole buffer, capped at 170pt: at
     /// six syllables that is the cap, and on a 320pt phone the bar was left with
@@ -356,7 +361,7 @@ struct KeyboardRootView: View {
     /// for. The controller collapses it when the buffer empties; the pane test
     /// is a second guard, so the grid can never sit over another pane's keys.
     private var showsCandidateGrid: Bool {
-        bridge.candidatesExpanded && bridge.pane == .zhuyin && !bridge.zhuyin.composition.isEmpty
+        bridge.candidatesExpanded && bridge.pane == .zhuyin && bridge.zhuyin.isPending
     }
 
     /// Only with something to show, or with the grid already open so it can be
@@ -394,7 +399,7 @@ struct KeyboardRootView: View {
     /// whole word in, with the space that ends it.
     ///
     /// It takes the strip for exactly as long as the cursor is inside a word,
-    /// by the same argument the 注音 composition takes it: the strip is the one
+    /// by the same argument the 注音 candidates take it: the strip is the one
     /// row this keyboard has to spare, and a bar of its own above the keys would
     /// make the English pane taller than its neighbours every time somebody
     /// started a word — which would shove the host app's content up and down

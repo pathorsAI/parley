@@ -113,6 +113,58 @@ transcript* below — and that the transcript now depends on the keyboard coming
 back within the downlink's adoption window (150 s) rather than on it having been
 alive at the right moments.
 
+#### Where the words go when they don't land: voice-typing history
+
+One insertion has a cost the paragraph above only half states: when the
+insertion does not happen, the words exist nowhere. The keyboard's
+`drainDownlink` has four ways of ending without typing anything, all silent by
+design:
+
+1. **The adoption window runs out.** A relaunched keyboard adopts a foreign
+   downlink only within 150 s of its last stamp; come back later and a `done`
+   transcript is never inserted.
+2. **`looksDead`.** A live state nobody has vouched for is abandoned — the app
+   was suspended, jetsammed or swiped away mid-session.
+3. **`error`.** Never inserted, whatever had settled before the failure.
+4. **The wrong field.** `insertText` goes to whatever is focused when `done`
+   arrives; if the user moved, the text lands somewhere else or nowhere.
+
+So since 1.21 the app keeps what was dictated (pathorsAI/parley#290).
+`DictationHistoryStore` (ParleyKit, Foundation only, unit-tested) is one JSON
+file, `dictation-history.json`, and `DictationCoordinator` writes to it from the
+three endings that carry words: `settle` (`done`, after the personal
+dictionary, so the entry is exactly what the keyboard was handed), `fail`
+(`error`) and `endSessionWithMicTaken`, each only when `committed` is non-empty.
+**Never from ✕**: `cancel` is the user throwing the words away, and it clears
+`committed` before it publishes. Entries carry the text, when, how long, the
+entry point (keyboard or Action Button) and the host bundle id when the keyboard
+could resolve one. Retention is the most recent 200 **and** nothing older than
+30 days, pruned on every write and every load. Settings › Voice typing history
+switches it off (the store refuses writes; existing entries stay until "Clear
+all") and clears it.
+
+**App side, on purpose.** The file lives in the app's own sandbox (Application
+Support, excluded from backup), not the App Group. The App Group is shared with
+the keyboard, and the keyboard is the one process that must never hold
+transcript history: it runs inside every app the user types into. The keyboard
+target does not reference the type at all. The relay was checked before building
+this: it meters seconds per feature and relays frames, and stores no transcript
+text, so there was nothing server-side to fetch instead.
+
+**Error is the case worth saving.** A `done` that inserted is already in a
+field; history is merely convenient for it. An `error` — and exits 1 and 4,
+where the app did reach `done` but nothing landed — is where the words would
+otherwise be gone, and it happens precisely when something already went wrong.
+Exit 2 is covered when the app survives to end the session itself; when the
+process was killed outright, the words die with it. The stale downlink that
+`reapOrphanedSession` rewrites on the next launch still carries them, and
+keeping that too is a possible follow-up (it has no reliable start time or
+duration, which is why it is not in the first cut). That is also why there is no
+"paste last" key on the keyboard: rescuing words is the app's job, reading
+history back into a keyboard is exactly what the sandbox choice rules out, and
+copy is the primary row action in Library › Voice typing — one tap from the
+list, not behind the detail sheet.
+
 ### App Group channel
 
 `DictationChannel` (in ParleyKit, so both targets share it) is seven
@@ -798,49 +850,91 @@ The rule this leaves: **a view below the root takes values, not the bridge.**
 Anything that observes it re-evaluates on every key and every microphone
 reading.
 
-### Not painting a background
+### The backdrop: the system's, unless it would disagree
 
-The keyboard draws **no canvas of its own**. `view.backgroundColor` is clear,
-the SwiftUI root is clear, and the system's own `UIInputView` shows through.
-This is not a style choice: the input view is already the exact colour iOS uses,
-already rounds its corners the way the host expects, and already covers exactly
-the area the system keyboard would. A canvas painted over it is a slightly wrong
-grey that seams against whatever sits below the keyboard and a top-left corner
-that doesn't line up — which is precisely how the bug reported as 跑版 looked.
+The keyboard's canvas is the system's `UIInputView`. `view.backgroundColor` is
+clear, the SwiftUI root is clear, and the input view shows through. This is not
+a style choice: the input view is already the exact colour iOS uses, already
+rounds its corners the way the host expects and already covers exactly the area
+the system keyboard would — on every device, in every orientation, in every
+host. A canvas once painted over it was a slightly wrong grey that seamed
+against whatever sat below the keyboard, with a top-left corner that didn't
+line up, which is precisely how the bug reported as 跑版 looked.
 
-Not painting the backdrop has one consequence the caps have to follow: **the
-backdrop's colour is the system's decision, so the caps' has to be made the same
-way.** Until 1.20 the keyboard read only `keyboardAppearance == .dark`, and most
-third-party hosts — Claude and LINE among them — leave that property at
-`.default` while the system paints the backdrop from the *trait collection*. In
-Dark Mode those hosts got white caps with black glyphs on a black backdrop.
+What that costs is ownership of one of the three colours on screen. The caps
+and the ink are this keyboard's decision, made from `isDark`; the backdrop is
+the system's, made from the trait collection. Any time the two decisions come
+out differently, the keyboard draws one appearance on top of the other. 1.19 did
+it in Claude and LINE (white caps on a dark backdrop). 1.20 fixed that by
+teaching `isDark` to believe a host that reports the opposite of the system
+style — and #441 is the other side of the same coin: Apple Notes in Dark Mode
+reports `.light` while the trait is dark, so 1.20 drew white caps and near-black
+candidates on the system's black backdrop, and the candidates disappeared.
 
-The rule is now `KeyboardViewController.isDark`, and it has to cover three kinds
-of host, measured on the iOS 26.5 simulator:
+1.21 answers it in two parts, and the order matters.
 
-- **`.default`** follows `traitCollection.userInterfaceStyle`, as the backdrop
-  does.
-- **A value that mirrors the system.** Reminders and Safari report `.light` in
-  light mode and `.dark` in dark mode. Flipping Dark Mode with the keyboard on
-  screen repaints the backdrop at once, but the proxy keeps reporting the old
-  value until the field is activated again — a stale `.light` over a dark
-  backdrop. So when the value is read fresh (`viewWillAppear`) and matches the
-  trait, the host is taken to *follow the system*, and a later trait change
-  (`registerForTraitChanges([UITraitUserInterfaceStyle.self])`) is believed over
-  the unchanged proxy.
-- **A value that contradicts the system** — a dark-themed app on a light phone —
-  is the host forcing its appearance, and is kept across a flip.
+**First, make the two decisions agree wherever they can** — the rule in *Which
+appearance* below. With the trait collection first and a host's `.light` never
+overriding it, `isDark` and the system's backdrop agree in every host that
+leaves `keyboardAppearance` at `.default` (Claude, LINE), every system app that
+mirrors the system style (Reminders, Safari, Contacts, Messages, Settings) and
+Notes. In all of those the keyboard paints nothing and looks exactly as 1.20 did
+where 1.20 was right.
 
-`textDidChange` re-learns only from a *changed* value, because an unchanged one
-after a flip is exactly the stale case. The one case this cannot tell apart is a
-host that forces `.dark` while the phone is already dark and then sees the phone
-go light; it is corrected on the next appearance.
+**Then paint only where they cannot.** After that rule there is exactly one way
+for them to disagree: a host that forces `.dark` while the phone is light — a
+dark-themed app — where the system paints its light glass and the keyboard has
+chosen dark caps and white ink. There, and only there
+(`KeyboardViewController.needsOwnBackdrop`: `isDark` differs from the trait),
+the keyboard shows a `backdrop` view of its own, filled with
+`KBTheme.backdrop(dark)`, and hides it again the moment the two agree.
+`refreshAppearance()` toggles it together with rebuilding the SwiftUI root, on
+every appearance, every `textDidChange` and every trait change, so caps, ink and
+canvas always come from one answer.
+
+Painting only in that case is the smallest blast radius available. The painted
+backdrop's shape was fitted on one device; the system's is right on all of
+them. So the fitted shape is used in the one case where the alternative is
+white ink on a light keyboard, and nowhere else.
+
+How it is painted when it is, so that it does not reintroduce the seam:
+
+- **The grey is measured, not remembered.** With the system keyboard up in
+  Reminders on the iOS 26.5 simulator, the pixels between keys are
+  **`#E2E4E8`** in light mode and **`#171717`** in dark (the same 23 the dark
+  caps were measured against, below). The iOS 18-era values in #441 (`#D1D3D9`,
+  `#2B2B2B`) are visibly off on iOS 26. Only the dark value is painted today;
+  the light one is kept because `backdrop(_:)` is keyed on `dark` like every
+  other colour here, and the rule could one day paint it.
+- **It stays inside the system's card.** On iOS 26 the system draws the
+  keyboard as a card whose continuous top corners begin at the top of our view,
+  reach the screen edge only about 37pt down, and in light mode carry a 2px rim
+  along the top and down the sides. A full-width `view.backgroundColor` — the
+  obvious way to paint — poked square corners out of that curve and covered the
+  rim, which is the old top-left misalignment in new clothes. The backdrop is
+  therefore its own `UIView` behind the SwiftUI root, **1pt inside the view on
+  the top and both sides, with 32pt continuous top corners**
+  (`KBMetrics.backdropInset`, `backdropCorner`). On the iPhone 17 Pro simulator
+  that lies inside the card everywhere and leaves the rim visible. Other
+  devices are unmeasured, which is part of why it is painted so rarely.
+- **The system's globe-and-dictation strip stays the system's.** Under a
+  third-party keyboard on Face ID phones iOS draws that strip itself, below our
+  view, in the trait's appearance. In the forced-dark case it stays light under
+  our dark keys. Nothing inside the extension can reach it.
+- **Nothing else tints the canvas.** The hosting view stays clear. The
+  sub-visible fills that make empty points take touches (see *The strip takes
+  touches everywhere*) are the backdrop's colour at 1% (`KBTheme.hitFill`)
+  rather than white: white at 1% lifted the dark keyboard from 23 to 25 over
+  exactly the SwiftUI area, a two-level step against the home indicator's strip.
 
 The dark caps are measured against the same backdrop: iOS 26.5 draws every key
-at sRGB 61/255 over a backdrop of about 24, so `KBTheme.key(true)` is
+at sRGB 61/255 over a backdrop of 23, so `KBTheme.key(true)` is
 `Color(white: 0.24)`. iOS 26 no longer draws the non-letter keys a different
 grey; ours keep a darker `keyAlt` (0.17) anyway, because an engaged shift is
 shown by borrowing the letter cap and would otherwise have no way to look armed.
+The candidate ink is `KBTheme.ink` — `Color(white: 0.08)` (sRGB 20) in light,
+white in dark — which is **14.5:1** against `#E2E4E8` and **17.9:1** against
+`#171717`, far above WCAG's 4.5:1.
 
 Two more pieces of the same recipe:
 
@@ -877,6 +971,39 @@ knowing about:
   caps. `KBMetrics.zhuyinKeyHeight` is therefore *derived* — (213 − 8 − 4 − 4×7)
   ÷ 5 ≈ 34.6pt — rather than picked. Shorter 注音 caps are also what iOS's own
   注音 keyboard does, for exactly this reason.
+
+#### Which appearance
+
+`KeyboardViewController.isDark` is now two lines:
+
+- **The trait collection first.** The system picks its own chrome — the card,
+  the globe-and-dictation strip under a third-party keyboard — from
+  `traitCollection.userInterfaceStyle`, so that is the one signal that agrees
+  with everything around the keyboard.
+- **A host asking for `.dark` is an additional way in.** A dark-themed app on a
+  light phone gets a dark keyboard.
+- **A host's `.light` never overrides a dark trait.** That is the Notes case.
+  Believing `.light` could only ever be right for a light-themed app on a dark
+  phone, which would get a light keyboard against a dark screen; believing it
+  wrongly is what made the candidates invisible. A dark keyboard on a dark
+  phone is what the system is painting anyway, so the case given up costs
+  nothing.
+
+`hostAppearance`, `hostFollowsSystem` and `readHostAppearance` — the machinery
+1.20 needed to guess which hosts meant their report — are gone. One piece of it
+survives in a narrower form, because the simulator showed the regression without
+it: Reminders and Safari report `.dark` while the phone is dark and **keep
+reporting it after the user flips to light with the keyboard on screen**; typing
+does not refresh it, only activating the field again does. Taken at its word
+that `.dark` kept the keyboard dark on a light phone, above a system strip that
+had already turned light — and now that a disagreement is what makes the
+keyboard paint, it would also have painted a dark backdrop over the system's
+light one for no reason at all. So `staleHostDark` sets aside a `.dark` that was
+already there when the trait went from dark to light, until the field is read
+again (`viewWillAppear`, or a `textDidChange` that sees any other value). The one
+host this misjudges is a dark-themed app on a phone flipped from dark to light:
+it gets a light keyboard until the field is next activated — readable, and
+corrected on the next appearance.
 
 ### Mode strip
 
@@ -932,11 +1059,12 @@ would contradict it two panes later.
 The strip defaults to the first typing pane when there is no Full Access,
 because that is the pane that still works in that state.
 
-While 注音 is being typed the strip gives its whole row over to the
-composition — every syllable still pending, space-separated — and the candidates
-for the oldest of them; see below. It is the one row the keyboard has to spare,
-and a candidate bar of its own above the keys would make that pane taller than
-its neighbours every time somebody started a word.
+While 注音 is being typed the strip gives its whole row over to the candidates
+for the oldest pending syllable; see below. The composition itself is marked
+text in the host's field, as on the system keyboard, so the row holds only the
+candidates. It is the one row the keyboard has to spare, and a candidate bar of
+its own above the keys would make that pane taller than its neighbours every
+time somebody started a word.
 
 ### English pane
 
@@ -981,13 +1109,13 @@ spell every word out, which is how the owner put it — 「中文有 auto comple
 
 **While the cursor is inside a word, the mode strip is given over to a
 suggestion bar**: up to five completions of the run of letters before the cursor,
-most frequent first, on the same terms the 注音 composition takes the strip. The
+most frequent first, on the same terms the 注音 candidates take the strip. The
 argument is the same one, too — the strip is the one row this keyboard has to
 spare, and a bar of its own above the keys would make the English pane taller
 than its neighbours every time somebody started a word, which shoves the host
 app's content up and down mid-swipe. When the partial word is empty the strip is
-the wordmark and the tabs again. A pending 注音 composition wins the row, though
-it cannot arise while the English pane is current.
+the wordmark and the tabs again. 注音 candidates win the row, though they
+cannot arise while the English pane is current.
 
 The partial word is the run of letters and apostrophes immediately before the
 cursor in `textDocumentProxy.documentContextBeforeInput`, recomputed after every
@@ -1302,9 +1430,9 @@ composer's limit rather than a position anybody argued for.
   cells, `max(4, width ÷ 64)` columns, scrolling vertically — in exactly the
   composer's order, never re-sorted. The keyboard's height does not change: the
   grid takes the keys' place rather than growing the keyboard. It *replaces*
-  them rather than covering them, because the keyboard paints no background
-  (see *Not painting a background*): the pane track is hidden and stops taking
-  touches while the grid is up. The strip keeps the reading and flips ⌄ to ⌃ to
+  them rather than covering them, because the SwiftUI tree paints no background
+  of its own (see *The backdrop: the system's, unless it would disagree*): the pane track is hidden and stops taking
+  touches while the grid is up. The strip keeps the way back and flips ⌄ to ⌃ to
   close it; the grid carries its own ⌫ (bottom right, hold-to-repeat), because
   the pane's is hidden with the keys and delete still unwinds the buffer. The
   open state lives on the bridge (`candidatesExpanded`) because the controller
@@ -1351,27 +1479,114 @@ composer's limit rather than a position anybody argued for.
     `， 。 ？ ！ ： ； （ ） 「 」 、 ～ 《 》`.
   - **Double-space types 「。」** on the 注音 pane, with no trailing space — the
     full-width mark carries its own. QWERTY keeps `. `.
-- **The composition is drawn in the mode strip**, space-separated, rather than as
-  marked text in the host's field. `UITextDocumentProxy` does offer
-  `setMarkedText(_:selectedRange:)`, and the system keyboard uses exactly that;
-  it is not used here because how a host renders and commits marked text is the
-  host's business, and a composition that the keyboard cannot see cannot be
-  guaranteed to end the way the composer thinks it did. The strip is ours. Six
-  syllables and a candidate bar do not both fit in one row, so **the chip shows
-  the last two syllables**, behind a `…` when more are pending (VoiceOver still
-  reads the whole buffer): the newest syllable is the one being typed, the one
-  before it shows the segmentation, and the front of the buffer is on screen
-  anyway as the candidates. Until 1.20 the chip showed the whole buffer capped
-  at 170pt, which at six syllables left a 320pt phone two or three candidates —
-  reported as "only about three characters". The chip is also 15pt now, down
-  from 17. Measured on the simulator: the chip for `…ㄖㄣ ㄐㄧㄣ` is 100pt plus a
-  6pt gap, a one-character candidate cell 45pt, a two-character phrase 65pt,
-  and ⌄ 33pt. So at 320pt (296pt of strip) the bar has 157pt — three and a half
-  single characters, or two and a half phrases — and at 402pt (iPhone 17 Pro)
-  239pt, three and a half phrases. `ZhuyinComposer.maxPending` is unchanged.
-- Leaving the pane commits what was pending — the user swiped, they didn't press
-  delete. Coming back to a *different* field drops it, the same rule the
-  transcript tail follows and for the same reason.
+- **The composition is marked text in the host's field**, underlined and
+  provisional, as the system keyboard shows it: the pending syllables
+  space-separated, tone marks included, with `ˉ` after one toned with space
+  (`ZhuyinComposer.reading`). On iOS 26.3 the system keyboard shows `ㄋ ㄏ` and
+  `ㄋㄧˇ ㄏ` for those keys, and does not convert a toned syllable inline. It
+  shows converted text only for a candidate picked from the front (`你ㄏ`), and
+  a pick here commits at once, so that part is already committed text. The
+  strip holds only the candidates, so `StripBar` has the full width: the 1.20
+  chip (last two syllables, 120 pt) is kept only for a host that ignores marked
+  text, below. The proxy cannot read marked text back, and
+  `textDidChange` reports the host's text as it was when the host answered,
+  which with fast typing is two or three keystrokes old. So the keyboard keeps
+  every marked state it has sent and the host has not yet confirmed
+  (`MarkedTextLog`), and accepts a report that matches any of them.
+- **A keyboard-initiated end commits with `insertText`.** A candidate, return,
+  space on a toned syllable, punctuation, leaving the pane (the user swiped,
+  they didn't press delete) and buffer overflow all call `insertText`, which
+  replaces the marked text. `setMarkedText` with the committed text followed by
+  `unmarkText` looks more explicit and is wrong: when the next `setMarkedText`
+  (the rest of the reading) follows in the same turn, Reminders applied them out
+  of order, dropped the picked character and left the rest unmarked. Deleting
+  the last symbol ends with a single `setMarkedText("")`: the proxy drops an
+  empty `insertText`, and one call has no order to lose. Text from outside the composer, a finished
+  transcript or an English suggestion, commits the composition first, so it
+  lands after the reading instead of replacing it.
+- **A host-initiated end keeps what the host shows.** When the host no longer
+  holds the marked text around the caret (a host that cleared or rewrote its
+  text, a caret moved out of the marked range), the keyboard calls
+  `unmarkText` and drops the buffer. Nothing is inserted: committing the best
+  guess would put it wherever the cursor has gone. A caret moved *inside* the
+  marked range keeps composing, as on the system keyboard, which is also where
+  UIKit puts a tap in the field while marked text is showing. A host that
+  reports no context at all cannot contradict anything, so it keeps composing.
+- **Hosts leave marked text out of the context they report (iOS 26.5).**
+  Measured on the simulator in Reminders and Safari's address bar:
+  `documentContextBeforeInput` is `nil` while the field holds nothing but the
+  reading, and holds only the text *before* the mark once there is some. No
+  `textDidChange` or `selectionDidChange` arrives for the keyboard's own edits
+  either; `selectionWillChange` never arrived at all. So the context cannot
+  confirm a mark, and it cannot say which field a report came from. The field
+  is told by `documentIdentifier` instead, read through key-value coding
+  because it is `nil` between fields and reading the Swift property then traps.
+  `MarkedTextLog` still accepts a context that holds the reading (what #427
+  measured on iOS 26.3), and treats anything it cannot decide as consistent.
+- **A host that ignores marked text gets the 1.20 chip, for that field only.**
+  0.4 s after the first marks in a field, if no report has confirmed them, the
+  keyboard asks again (`MarkedTextLog.hostSettled`). The only answer it can
+  trust is an empty field: the reading as the field's only text (`hasText`
+  with no context) confirms the mark, and a field that still reports no text at
+  all has dropped it. Then `usesMarkedText` goes false for the field: the
+  buffer is kept, the reading is published to the strip's chip (last two
+  syllables, 120 pt, as in 1.20), commits are plain `insertText`, and
+  `setMarkedText` is not called again until the field changes or the keyboard
+  comes back. The brief for this asked for a stronger rule — a host that has
+  never confirmed a mark and then reports context without it ignores marked
+  text — but on iOS 26.5 that describes *every* host, Reminders included,
+  because none of them ever puts the mark in the context. A field with text in
+  it therefore stays on marked text whatever the host does (fail open). No
+  simulator host ignored marked text, so the fallback has run only in
+  `MarkedTextLogTests`.
+- **Every exit commits or removes, as far as the proxy reaches.** Return,
+  punctuation, the symbol planes, English suggestions, the dictation transcript
+  and leaving the pane commit with `insertText` (above). The keyboard going away
+  and the field changing are the host's doing, and the hook experiment on
+  iOS 26.5 found no callback in which the proxy still edits the old field:
+  - In Reminders, dismissing (Done) calls `textWillChange`, `textDidChange`,
+    then `viewWillDisappear`. An `insertText(best)` in `textWillChange` or in
+    `viewWillDisappear` does not land; the title is saved with the raw reading
+    as plain text, the underline gone.
+  - Changing fields in Reminders (title → note) calls only `textWillChange` and
+    `textDidChange`, and by `textWillChange` the proxy is already on the *new*
+    field: the `insertText(best)` landed in the note. So on a field change the
+    keyboard edits nothing. It lets go of the buffer when `documentIdentifier`
+    changes, and the old field keeps the raw reading.
+  - In Safari's address bar, ✕ discards the whole entry, reading included, so
+    nothing is left either way.
+  `viewWillDisappear` still tries `insertText(best)` — it is where the system
+  keyboard commits, a host that honours it gets the right text, and in
+  Reminders it was verified to add nothing — and it is idempotent: an empty
+  composer does nothing.
+- **The backstop repairs a stranded reading on the way back.** Whenever the
+  keyboard leaves a reading behind (dismissal, field change) it stores the
+  reading and its best guess (`StrandedReading`) in a static on the
+  controller — static because UIKit makes a new controller every time the
+  keyboard comes up, and in memory because the keyboard never writes what the
+  user types to disk (`ios/AppStore/privacy-label.md`, #290). On `viewWillAppear`, and on any `textDidChange` with nothing
+  composing, if the text before the caret ends with exactly that reading —
+  spaces and tone marks included, which is what makes the match unambiguous —
+  the keyboard deletes it and types the best guess: `你好ㄨㄛ` became `你好我`
+  when the reminder was tapped again, and a title left as `…我ㄋ ㄏ` by a field
+  change became `…我你好` on tapping back into it. The record lives for 30
+  minutes. The cost is honest: in such a host the raw 注音 is visible while the
+  keyboard is away, and stays if the user never comes back to that field — or
+  if iOS ends the keyboard's process before they do, since the record goes with
+  it.
+- **A drop is an explicit removal.** When the keyboard comes back after
+  leaving a reading behind and the backstop did not match, whatever may still
+  be marked — a reading a keyboard switch left underlined — is removed with
+  `setMarkedText("")` followed by `unmarkText()`, so it is neither kept raw nor
+  finalized as typed. Only then, and never over a selection, because an empty
+  `setMarkedText` replaces the selected text when nothing is marked. On
+  Reminders the pair was verified to leave the field's committed text intact.
+- **Switching keyboards cannot commit.** The system 注音 keyboard commits its
+  best guess when the globe switches away. Ours cannot: by `viewWillDisappear`
+  the host has already stopped taking the proxy's edits, and on phones where
+  the system draws the globe there is no earlier callback. The reading stays in
+  the field, still underlined, until the next keyboard's first key finalizes it
+  as typed, after which the backstop no longer matches it.
 
 **Nothing commits itself on the way past.** The rule that starting a syllable
 confirmed the one before it went with one-at-a-time: starting the next syllable

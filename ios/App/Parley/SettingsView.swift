@@ -30,6 +30,12 @@ struct SettingsView: View {
     /// where the `true` default is stated for both readers.
     @AppStorage(LocalAudioStore.keepAudioKey) private var keepAudioOnPhone = true
     @State private var showRemoveAudioConfirmation = false
+    /// "Keep voice typing history". Bound here, read raw by the store on every
+    /// write (`DictationHistoryStore.isEnabled`) — the coordinator keeps a
+    /// session with no view alive.
+    @AppStorage(DictationHistoryStore.enabledKey) private var keepDictationHistory = true
+    @ObservedObject private var dictationHistory = DictationHistory.shared
+    @State private var showClearHistoryConfirmation = false
     @State private var personalFolders: [CloudFolder] = []
     @State private var orgFolders: [String: [CloudFolder]] = [:]
     @State private var showDeleteConfirmation = false
@@ -57,6 +63,12 @@ struct SettingsView: View {
                     if app.hasAccount {
                         dictationSection.id(Self.keyboardSectionID)
                         micWindowSection
+                    }
+                    // Also shown signed out while anything is kept: the history
+                    // is on this phone, not in the account, and signing out must
+                    // not strand the only switch that clears it.
+                    if app.hasAccount || !dictationHistory.entries.isEmpty {
+                        dictationHistorySection
                     }
                     keyboardsSection
                     appearanceSection
@@ -123,6 +135,16 @@ struct SettingsView: View {
                 }
             } message: {
                 Text("The recordings themselves stay in the cloud. You can download the audio again whenever you need it.")
+            }
+            .confirmationDialog(
+                "Clear voice typing history?",
+                isPresented: $showClearHistoryConfirmation, titleVisibility: .visible
+            ) {
+                Button("Clear all", role: .destructive) {
+                    dictationHistory.clearAll()
+                }
+            } message: {
+                Text("Everything you have dictated is removed from this phone. This can't be undone.")
             }
             .confirmationDialog(
                 "Delete your account permanently?", isPresented: $showDeleteConfirmation,
@@ -525,6 +547,32 @@ struct SettingsView: View {
             sectionHeader("Voice keyboard")
         } footer: {
             sectionFooter("Fix a word right after dictating it and Parley learns how you say it. What it has learned is in the personal dictionary, where you can also add names it should get right.")
+        }
+    }
+
+    // MARK: voice typing history
+
+    /// The switch and the clear for Library › Voice typing (#290), in the same
+    /// shape as "Keep audio on this phone": a toggle with its caption, then the
+    /// destructive button behind a confirmation. Its own section, directly under
+    /// the two voice-keyboard ones, because it is about what they produce — and
+    /// because it has to outlive the account gate they sit behind.
+    private var dictationHistorySection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle("Keep voice typing history", isOn: $keepDictationHistory)
+                Text("What you dictate is kept on this phone for 30 days, up to 200 entries, so you can copy it again from Library › Voice typing if it didn't land. It never leaves the phone. Turning this off keeps what is already there until you clear it.")
+                    .font(.parley.caption)
+                    .foregroundStyle(Color(.secondaryLabel))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.vertical, 2)
+            Button("Clear all", role: .destructive) {
+                showClearHistoryConfirmation = true
+            }
+            .disabled(dictationHistory.entries.isEmpty)
+        } header: {
+            sectionHeader("Voice typing history")
         }
     }
 

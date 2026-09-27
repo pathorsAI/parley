@@ -83,6 +83,36 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.21
+
+What you dictate is kept, so words that never landed are one tap away.
+
+If a dictation didn't make it into the app you were typing in, open Parley and
+go to Library › Voice typing. Everything you dictated in the last 30 days is
+there, newest first; tap the copy button beside it and paste it where it
+belongs. Tap an entry to read it in full, share it, or delete it. The history
+stays on your phone and never leaves it. Settings › Voice typing history turns
+it off or clears it.
+
+The Parley keyboard stays readable in dark mode, Notes included.
+
+In a few apps, Apple's Notes among them, dark mode drew the candidates above
+the keys in near-black on a black keyboard, where they could not be read. The
+keys and the words above them now follow the same dark or light setting as the
+keyboard behind them, including when you switch dark mode while typing.
+
+Bopomofo is typed where you are typing, and the whole bar above the keys is for candidates.
+
+The syllables you haven't turned into characters yet now appear underlined at
+the cursor in the app you're typing in, as they do on the system keyboard,
+instead of in a small box beside the candidates. That box is gone, so the bar
+has room for more candidates. Pick one and the underline shrinks to what is
+left; delete edits the underlined syllables before anything else. If you
+dismiss the keyboard or move to another field before choosing, some apps keep
+the bare symbols as typed; the next time the keyboard comes up right after
+them, Parley swaps them for its best guess. In the rare app that doesn't show
+underlined text, the syllables appear in the bar as before.
+
 ## What's New — 1.20
 
 The Parley keyboard looks right in dark mode, in every app.
@@ -116,7 +146,8 @@ sentence.
 
 One wrong 注音 symbol no longer empties the candidate bar.
 
-Type ㄌ for ㄋ, ㄗ for ㄓ or ㄣ for ㄥ, or catch the key next to the one you meant,
+Mix up two symbols that sound alike — n and l, a retroflex and its flat
+twin, a front and a back nasal — or catch the key next to the one you meant,
 and the 注音 keyboard still offers the word you were after, right behind the
 words that match exactly what you typed, so typing correctly works just as it
 did. A syllable no character is read as now commits its closest character on

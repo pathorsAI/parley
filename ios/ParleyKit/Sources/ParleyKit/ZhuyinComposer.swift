@@ -62,8 +62,8 @@ public struct ZhuyinComposer {
     }
 
     /// How many syllables may wait before the oldest is committed for the user.
-    /// Six is past any word they are mid-way through and short of a buffer that
-    /// would scroll the strip; the cap exists so a pane left open on a long run
+    /// Six is past any word they are mid-way through and short of an underline
+    /// too long to read back; the cap exists so a pane left open on a long run
     /// of keys cannot grow without bound.
     public static let maxPending = 6
 
@@ -101,11 +101,18 @@ public struct ZhuyinComposer {
         return last.tone == nil ? .composing : .choosing
     }
 
-    /// What the user is part-way through typing, shown above the keys. Syllables
-    /// are separated by a space, which is how the system keyboard shows a buffer
-    /// it has segmented — without it `ㄋㄧㄏㄠ` reads as one impossible syllable.
+    /// What the user is part-way through typing, exactly as the host field
+    /// shows it as marked text. Syllables are separated by a space, which is how
+    /// the system keyboard shows a buffer it has segmented — without it
+    /// `ㄋㄧㄏㄠ` reads as one impossible syllable. The first tone has no mark of
+    /// its own, so a syllable toned with space shows `ˉ` the way the system
+    /// keyboard does; otherwise it would look as untoned as one still being typed.
     public var reading: String {
-        syllables.map(\.text).joined(separator: " ")
+        syllables.map(Self.marked).joined(separator: " ")
+    }
+
+    private static func marked(_ syllable: ZhuyinSyllable) -> String {
+        syllable.tone == .first ? syllable.text + "ˉ" : syllable.text
     }
 
     /// What confirm commits, read left to right: at each position the longest

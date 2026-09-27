@@ -224,12 +224,12 @@ export function syllablesPerMin(hz: number): number {
  * diarized: "me" vs "them"); in diarized "mix" sessions there is no per-source
  * "me", so this returns null and callers fall back to the mic voiced-ratio.
  *
- * A split needs evidence of BOTH sides, not just one. Windows has no
- * system-audio capture at all (the mixer and the system tap are macOS-only, see
- * src-tauri/src/audio/mod.rs), so every segment of every Windows recording
- * carries source "me" — and a one-sided tally is not a conversation split, it's
- * the absence of the far side. Counting it as one made the scorecard announce
- * "100% — you dominated the conversation" after every Windows meeting.
+ * A split needs evidence of BOTH sides, not just one. When the system-audio
+ * capture fails (or, before WASAPI loopback, on every Windows meeting) every
+ * segment carries source "me" — and a one-sided tally is not a conversation
+ * split, it's the absence of the far side. Counting it as one made the
+ * scorecard announce "100% — you dominated the conversation" after every such
+ * meeting.
  */
 export function talkTimeRatio(
   segments: TranscriptSegment[]
