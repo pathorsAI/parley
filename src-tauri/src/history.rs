@@ -161,6 +161,43 @@ pub async fn save_remote_history_entry(
     Ok(dir.to_string_lossy().into_owned())
 }
 
+/// Write the bundled onboarding sample's `audio.ogg` from bytes the webview
+/// sends as the raw IPC body (entry id in the `x-entry-id` header). The sample's
+/// audio ships inside the frontend assets, not as a file Rust can reach, so no
+/// path-based save fits. Writes ONLY the recording: the caller then saves
+/// meta/summary through [`save_history_entry`], keeping the on-disk invariant
+/// that a summary claiming `hasAudio` always has `audio.ogg`.
+///
+/// Restricted to `sample-` ids so a webview bug can never overwrite a real
+/// recording through this door.
+#[tauri::command]
+pub async fn write_sample_audio(
+    app: AppHandle,
+    request: tauri::ipc::Request<'_>,
+) -> Result<(), String> {
+    const MAX_BYTES: usize = 20 * 1024 * 1024;
+    let id = request
+        .headers()
+        .get("x-entry-id")
+        .and_then(|v| v.to_str().ok())
+        .ok_or("missing x-entry-id header")?
+        .to_string();
+    if !id.starts_with("sample-") {
+        return Err("write_sample_audio only accepts sample entries".into());
+    }
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("expected a raw audio body".into());
+    };
+    if bytes.is_empty() || bytes.len() > MAX_BYTES {
+        return Err(format!("sample audio has an unexpected size ({} bytes)", bytes.len()));
+    }
+    let dir = history_dir(&app)?.join(safe_id(&id));
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join("audio.ogg"), bytes).map_err(|e| e.to_string())?;
+    log::info!("history: wrote sample audio {}", dir.to_string_lossy());
+    Ok(())
+}
+
 /// Download a cloud audio file to a temp cache path and return it, so an ORG
 /// recording can be replayed WITHOUT persisting it under the personal `history/`
 /// dir (org recordings must never pollute the local history list). Fetched here
@@ -197,11 +234,23 @@ pub async fn download_remote_audio(
 
 /// List every entry's `summary.json` (raw strings; the frontend parses + sorts).
 /// Missing/corrupt summaries are skipped rather than failing the whole list.
+///
+/// `async` + `spawn_blocking` for the same reason as [`save_history_entry`]: this
+/// opens one file per recording, and the library re-lists on every focus and
+/// every history update. On the main thread that is a stall of every window
+/// (voice typing included) that grows with the size of the library.
 #[tauri::command]
-pub fn list_history(app: AppHandle) -> Result<Vec<String>, String> {
+pub async fn list_history(app: AppHandle) -> Result<Vec<String>, String> {
     let base = history_dir(&app)?;
+    tauri::async_runtime::spawn_blocking(move || read_summaries(&base))
+        .await
+        .map_err(|e| format!("history list task panicked: {e}"))?
+}
+
+/// The file-side of [`list_history`]. Synchronous; runs on a blocking worker.
+fn read_summaries(base: &Path) -> Result<Vec<String>, String> {
     let mut out = Vec::new();
-    let entries = match std::fs::read_dir(&base) {
+    let entries = match std::fs::read_dir(base) {
         Ok(e) => e,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(out),
         Err(e) => return Err(e.to_string()),

@@ -28,13 +28,13 @@ import Foundation
 /// four thousand words for a one-letter prefix and a handful by the third
 /// letter — and a one-letter prefix is the only expensive case there is.
 ///
-/// **Loaded lazily and once**, like `ZhuyinPhrases` and for the same reason:
-/// this runs inside a keyboard extension, which iOS jetsams far sooner than an
-/// app, so nothing is read until the user is actually typing on the English
-/// pane. A keyboard opened on the voice or 注音 pane never pays for it. A
-/// missing resource answers nothing, each file on its own; a keyboard that
-/// crashed because a file moved would be far worse than one that stops
-/// suggesting.
+/// **Loaded lazily, never twice at once, and dropped under pressure**, like
+/// `ZhuyinPhrases` and for the same reason: this runs inside a keyboard
+/// extension, which iOS jetsams far sooner than an app, so nothing is read until
+/// the user is actually on the English pane. A keyboard opened on the voice or
+/// 注音 pane never pays for it. A missing resource answers nothing, each file on
+/// its own; a keyboard that crashed because a file moved would be far worse
+/// than one that stops suggesting.
 ///
 /// Not thread-safe, and it doesn't need to be: keys arrive on the main thread.
 public final class EnglishWords {
@@ -71,13 +71,23 @@ public final class EnglishWords {
 
     private var wordsURL: URL?
     private var followersURL: URL?
+    /// Whether either file is there to read. A list built from words, or from
+    /// no files at all, has nothing to warm or to reload.
+    private var hasResource: Bool { wordsURL != nil || followersURL != nil }
     private var table: Table?
     /// A background build is on its way back to the main queue.
     private var warming = false
+    /// Everyone who asked `warm` to be told when the table lands, oldest first.
+    private var onReady: [() -> Void] = []
 
     /// Whether the list is in memory. Internal for the tests, which is where
     /// "did the warm arrive" is a question worth asking.
     var isWarm: Bool { table != nil }
+
+    /// How many times the resource has been parsed. Internal for the tests,
+    /// which is where "was a second table ever built" is a question worth
+    /// asking.
+    private(set) var parseCount = 0
 
     /// Build from words given directly, most frequent first. This is how tests
     /// get a fixture whose order they control, rather than one a corpus decides.
@@ -92,34 +102,61 @@ public final class EnglishWords {
         self.followersURL = followersURL
     }
 
-    /// Build the list off the main thread, if it isn't built already.
+    /// Build the list off the main thread, if it isn't built already, and call
+    /// `onReady` on the main queue once it is — straight away when it already
+    /// is, or when there is no resource to wait for.
     ///
     /// Reading 40,000 lines and sorting them is tens of milliseconds, and that
     /// must not land on the first letter the user types. The keyboard calls
     /// this when the English pane becomes current, a beat earlier and idle.
     ///
-    /// While it is in flight every lookup answers nothing rather than parsing
-    /// the same files again on the main thread: the pane refreshes its bar in
-    /// the same turn it calls this, and after a space that refresh asks for
-    /// predictions. `ready` runs on the main queue once the table has landed,
-    /// so the caller can ask again; it does not run when there was nothing to
-    /// warm.
+    /// A lookup that arrives while the warm is in flight answers nothing rather
+    /// than reading a second copy beside it — the same rule, and the same
+    /// preventive reason, as `ZhuyinPhrases.warm(onReady:)`. It matters more
+    /// here than for completions alone: the pane refreshes its bar in the same
+    /// turn it calls this, and after a space that refresh asks for predictions.
+    /// The bar is blank for that moment; `onReady` is how the caller fills it in.
     ///
-    /// Main thread, like everything else here: the guard and the store both run
-    /// there, so two warms cannot race, and no load runs while one is in flight.
-    public func warm(then ready: (() -> Void)? = nil) {
-        guard table == nil, !warming, wordsURL != nil || followersURL != nil else { return }
+    /// Main thread, like everything else here: the guard, the store and the
+    /// completions all run there, so two warms cannot race and a lookup can
+    /// never see half a table.
+    public func warm(onReady: (() -> Void)? = nil) {
+        guard table == nil, hasResource else {
+            onReady?()
+            return
+        }
+        if let onReady { self.onReady.append(onReady) }
+        guard !warming else { return }
         warming = true
+        parseCount += 1
         let (wordsURL, followersURL) = (wordsURL, followersURL)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let built = Self.parse(wordsURL: wordsURL, followersURL: followersURL)
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.warming = false
-                self.table = built
-                ready?()
+                // Nothing can have filled this meanwhile — `load` does not read
+                // while a warm is in flight — so the guard is only a backstop.
+                if self.table == nil { self.table = built }
+                let waiting = self.onReady
+                self.onReady = []
+                waiting.forEach { $0() }
             }
         }
+    }
+
+    /// Give the list back, so the next lookup reads the resource again.
+    ///
+    /// For memory pressure: the keyboard calls this from
+    /// `didReceiveMemoryWarning`. The next lookup reads the files again
+    /// synchronously, which is one slow letter rather than a killed keyboard.
+    ///
+    /// A no-op while a warm is in flight — it would land a moment later anyway,
+    /// and dropping it here would only mean parsing again — and for a list
+    /// built from words, which has nothing to reload from.
+    public func unload() {
+        guard !warming, hasResource else { return }
+        table = nil
     }
 
     /// The words that start with `prefix`, most frequent first.
@@ -212,9 +249,11 @@ public final class EnglishWords {
     /// `nil` while a warm is in flight.
     private func load() -> Table? {
         if let table { return table }
+        // Never a second read beside the one in flight — see `warm`.
         guard !warming else { return nil }
         // A failed read caches the empty table too, so a missing resource costs
         // one attempt rather than one per keystroke.
+        if hasResource { parseCount += 1 }
         let built = Self.parse(wordsURL: wordsURL, followersURL: followersURL)
         table = built
         return built

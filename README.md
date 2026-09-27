@@ -17,12 +17,12 @@
 </p>
 
 <p align="center">
-  <img src="website/assets/showcase-hero.png" alt="Parley — live transcript, coach feed, and the agenda checklist during a call" width="900" />
+  <img src="website/assets/shots/desktop-library-en.jpg" alt="Parley on macOS: All recordings, grouped by day, with folders for Renewals, New business and Internal in the sidebar (fictional demo data)" width="900" />
 </p>
 
 Parley does four things: **record, transcribe, analyze, search**. It captures both sides of a call, gives you a speaker-labelled transcript live, writes a debrief when the meeting ends, and makes every word you have ever recorded searchable.
 
-Then it opens all of it over a local **MCP server** — 52 tools — so Claude, Claude Code, Cursor or any other MCP client can read, search, file and re-analyze your whole meeting history without a copy-paste in sight.
+Then it opens all of it over a local **MCP server** — 54 tools — so Claude, Claude Code, Cursor or any other MCP client can read, search, file and re-analyze your whole meeting history without a copy-paste in sight.
 
 - 🎙️ **Both sides, live** — your mic and the meeting's system audio, transcribed and diarized as you talk.
 - 📼 **A debrief that stays** — commitments, action items, findings on a timeline, and a delivery scorecard. Generated once, saved with the recording.
@@ -31,15 +31,18 @@ Then it opens all of it over a local **MCP server** — 52 tools — so Claude, 
 
 **Local-first, bring your own keys.** Audio and transcripts go directly to the STT and LLM providers *you* configure (Claude, OpenAI, Gemini, Soniox, Deepgram, …). No Pathors proxy, no telemetry, everything stored on your machine.
 
-**macOS and Windows, from one codebase.** The difference is what the app can hear. macOS captures the other side of a call through a Core Audio process tap; the Windows equivalent (WASAPI loopback) is not written yet, so on Windows a meeting records your microphone only.
+**macOS and Windows, from one codebase.** Both record both sides of a call: macOS captures the other side through a Core Audio process tap, Windows through WASAPI loopback of the default output device (no permission needed).
 
 | | macOS | Windows |
 | --- | --- | --- |
-| Records the other side of the call | Yes — Core Audio process tap | Not yet |
+| Records the other side of the call | Yes — Core Audio process tap | Yes — WASAPI loopback of the default output device |
 | Records your microphone | Yes | Yes |
 | Voice typing | Yes (<kbd>Option+Space</kbd>) | Yes (<kbd>Ctrl+Alt+Space</kbd>) |
 | Transcription, diarization and analysis | Yes | Yes |
 | Sign-in and cloud sync | Yes | Yes |
+| Closing the window | Hides it; Parley stays in the Dock | Hides it; Parley stays in the notification area (tray) |
+
+Closing the window never stops voice typing: Parley keeps running so the shortcut still works (an active meeting is ended and saved first). Bring the window back from the Dock (macOS) or by clicking the tray icon (Windows); quit with <kbd>⌘Q</kbd> on macOS, or **Quit Parley** in the tray icon's right-click menu on Windows.
 
 There are also companion apps for [iPhone](https://apps.apple.com/app/id6795031201) and Android that record in-person meetings and sync to the same account.
 
@@ -58,7 +61,7 @@ Then paste your API keys in **Settings**: one STT provider for transcription, on
 ## 🎙️ During the call
 
 <p align="center">
-  <img src="website/assets/showcase-transcript.png" alt="Live diarized transcript with speaker labels" width="820" />
+  <img src="website/assets/shots/desktop-live-en.jpg" alt="A meeting in progress: the live transcript split by speaker on the left, the coach feed in the middle, the agenda checklist on the right (fictional demo data)" width="820" />
 </p>
 
 Starting a meeting is one button. Parley captures both sides — your mic and the meeting's system audio — and transcribes them live, diarized as `me` / `them`, with editable speaker names.
@@ -72,7 +75,7 @@ Beside the transcript sits the **coach feed**: evaluation alerts from your own t
 ## 📼 After the call
 
 <p align="center">
-  <img src="website/assets/showcase-study.png" alt="The report: debrief, commitments, and action items on one scroll" width="820" />
+  <img src="website/assets/shots/desktop-report-en.jpg" alt="The report after a sales call: where it landed, commitments on both sides, what is still unknown and action items, each with a timestamp (fictional demo data)" width="820" />
 </p>
 
 Stopping a meeting lands on its debrief. Any recording — just finished, pulled from history, dragged in as an audio file, or imported as a `.txt` transcript — opens in two views:

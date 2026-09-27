@@ -14,6 +14,8 @@ struct SettingsView: View {
     /// ready is settings, but *whether it is open right now* is live state that
     /// belongs to the thing holding it.
     @ObservedObject private var dictation = DictationCoordinator.shared
+    /// For "Show the getting-started list again", which ends on the Library.
+    @EnvironmentObject private var router: TabRouter
     /// The keyboard's typing panes. Read once here and written straight through
     /// to the App Group's defaults, which is where the extension looks for them
     /// on every appearance — there is no live binding across a process boundary.
@@ -28,6 +30,12 @@ struct SettingsView: View {
     /// where the `true` default is stated for both readers.
     @AppStorage(LocalAudioStore.keepAudioKey) private var keepAudioOnPhone = true
     @State private var showRemoveAudioConfirmation = false
+    /// "Keep voice typing history". Bound here, read raw by the store on every
+    /// write (`DictationHistoryStore.isEnabled`) — the coordinator keeps a
+    /// session with no view alive.
+    @AppStorage(DictationHistoryStore.enabledKey) private var keepDictationHistory = true
+    @ObservedObject private var dictationHistory = DictationHistory.shared
+    @State private var showClearHistoryConfirmation = false
     @State private var personalFolders: [CloudFolder] = []
     @State private var orgFolders: [String: [CloudFolder]] = [:]
     @State private var showDeleteConfirmation = false
@@ -55,6 +63,12 @@ struct SettingsView: View {
                     if app.hasAccount {
                         dictationSection.id(Self.keyboardSectionID)
                         micWindowSection
+                    }
+                    // Also shown signed out while anything is kept: the history
+                    // is on this phone, not in the account, and signing out must
+                    // not strand the only switch that clears it.
+                    if app.hasAccount || !dictationHistory.entries.isEmpty {
+                        dictationHistorySection
                     }
                     keyboardsSection
                     appearanceSection
@@ -97,6 +111,14 @@ struct SettingsView: View {
                         // section header under the blur.
                         if focus { proxy.scrollTo(Self.keyboardSectionID, anchor: .center) }
                     }
+                    .onReceive(ScreenshotDemo.shared.$pressResetChecklist) { press in
+                        guard press else { return }
+                        // A beat on Settings first, the way a person gets there.
+                        Task { @MainActor in
+                            try? await Task.sleep(for: .milliseconds(600))
+                            showGettingStartedAgain()
+                        }
+                    }
                 #endif
             }
             .navigationTitle("Settings")
@@ -113,6 +135,16 @@ struct SettingsView: View {
                 }
             } message: {
                 Text("The recordings themselves stay in the cloud. You can download the audio again whenever you need it.")
+            }
+            .confirmationDialog(
+                "Clear voice typing history?",
+                isPresented: $showClearHistoryConfirmation, titleVisibility: .visible
+            ) {
+                Button("Clear all", role: .destructive) {
+                    dictationHistory.clearAll()
+                }
+            } message: {
+                Text("Everything you have dictated is removed from this phone. This can't be undone.")
             }
             .confirmationDialog(
                 "Delete your account permanently?", isPresented: $showDeleteConfirmation,
@@ -349,6 +381,11 @@ struct SettingsView: View {
                         scope: "personal", orgId: nil,
                         folderId: parts.count > 1 ? parts[1] : nil)
                 }
+                // Choosing a real home for every recording to come — a folder
+                // or an organization, not the personal root — is filing.
+                if app.defaultSave != .personalRoot {
+                    GettingStartedStore.shared.mark(.filed)
+                }
             })
     }
 
@@ -513,6 +550,32 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: voice typing history
+
+    /// The switch and the clear for Library › Voice typing (#290), in the same
+    /// shape as "Keep audio on this phone": a toggle with its caption, then the
+    /// destructive button behind a confirmation. Its own section, directly under
+    /// the two voice-keyboard ones, because it is about what they produce — and
+    /// because it has to outlive the account gate they sit behind.
+    private var dictationHistorySection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle("Keep voice typing history", isOn: $keepDictationHistory)
+                Text("What you dictate is kept on this phone for 30 days, up to 200 entries, so you can copy it again from Library › Voice typing if it didn't land. It never leaves the phone. Turning this off keeps what is already there until you clear it.")
+                    .font(.parley.caption)
+                    .foregroundStyle(Color(.secondaryLabel))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.vertical, 2)
+            Button("Clear all", role: .destructive) {
+                showClearHistoryConfirmation = true
+            }
+            .disabled(dictationHistory.entries.isEmpty)
+        } header: {
+            sectionHeader("Voice typing history")
+        }
+    }
+
     // MARK: which keyboards the swipe track carries
 
     /// The typing panes on the Parley keyboard, beside the voice pane that is
@@ -658,9 +721,34 @@ struct SettingsView: View {
             Link("Parley for Mac", destination: URL(string: "https://parley.tw")!)
             Link("Privacy Policy", destination: URL(string: "https://parley.tw/privacy/")!)
             Link("Support & feedback", destination: URL(string: "https://parley.tw/support/")!)
+            // Brings the Library's checklist back, unticked — for someone who
+            // closed it with "Not now" and wants the lap after all.
+            Button("Show the getting-started list again") {
+                showGettingStartedAgain()
+            }
         } footer: {
-            sectionFooter("Live coaching and deep analysis live in the desktop app; the phone handles recording, transcribing, and reading back in-person meetings.")
+            sectionFooter("Live coaching and deep analysis live in the desktop app; the phone handles recording, transcribing, and reading back in-person meetings. On the Mac, Claude Code can also read your whole recording library over MCP.")
         }
+    }
+
+    /// Reset the checklist and go and show it.
+    ///
+    /// Resetting alone was the bug: the list lives on another tab, so the tap
+    /// changed nothing anyone could see, and the owner concluded the button did
+    /// nothing. The reset now ends where its result is — the Library, scrolled
+    /// to the list — with a success haptic for the tap itself.
+    ///
+    /// Nothing to pop on this side: the button is on Settings' root page, so
+    /// Settings has no pushed screen when it is pressed. The Library pops its
+    /// own stack when it takes the request (`LibraryView.revealChecklist`).
+    private func showGettingStartedAgain() {
+        GettingStartedStore.shared.reset()
+        // The lap starts over from the sample: out of the Library with its
+        // rename, its folder and its ticks, back to "Walk through it with the
+        // sample recording". The bundle keeps the files.
+        SampleRecordingStore.shared.remove()
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        router.showGettingStarted()
     }
 
     #if DEBUG

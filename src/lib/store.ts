@@ -8,6 +8,8 @@ import type {
   Evaluation,
   FilingSuggestion,
   FindingSolutionEntry,
+  GettingStartedState,
+  HintId,
   LlmProvider,
   MeetingKind,
   MeetingStatus,
@@ -163,6 +165,24 @@ export function migrateVoiceTypingShortcut(
   return MAC_ONLY_SHORTCUTS.has(saved) ? DEFAULT_VOICE_TYPING_SHORTCUT : saved;
 }
 
+/** Every one-time hint id. Existing users are migrated with all of them seen. */
+export const ALL_HINT_IDS: readonly HintId[] = [
+  "report.filing",
+  "replay.seek",
+  "copy.handoff",
+  "speakers.whoAmI",
+  "home.voiceTyping",
+];
+
+/** Fresh checklist: nothing done, not dismissed. Treat as read-only. */
+export const DEFAULT_GETTING_STARTED: GettingStartedState = Object.freeze({
+  recorded: false,
+  filed: false,
+  replayed: false,
+  handedOff: false,
+  dismissedAt: null,
+});
+
 const DEFAULT_SETTINGS: Settings = {
   language: "zh-TW",
   theme: "system",
@@ -210,7 +230,60 @@ const DEFAULT_SETTINGS: Settings = {
   // keep this device local-only. Finished meetings save to the personal root.
   syncEnabled: true,
   defaultSaveLocation: { scope: "personal", folderId: null },
+  gettingStarted: { ...DEFAULT_GETTING_STARTED },
+  hintsSeen: [],
 };
+
+/** Fold a persisted (possibly partial or malformed) checklist over the defaults. */
+function backfillGettingStarted(saved: unknown): GettingStartedState {
+  if (!saved || typeof saved !== "object") return { ...DEFAULT_GETTING_STARTED };
+  const g = saved as Partial<Record<keyof GettingStartedState, unknown>>;
+  const flag = (v: unknown) => v === true;
+  return {
+    recorded: flag(g.recorded),
+    filed: flag(g.filed),
+    replayed: flag(g.replayed),
+    handedOff: flag(g.handedOff),
+    dismissedAt: typeof g.dismissedAt === "number" ? g.dismissedAt : null,
+  };
+}
+
+/** Persist schema version. v4 added `gettingStarted` + `hintsSeen`. */
+export const PERSIST_VERSION = 4;
+
+/**
+ * zustand-persist `migrate`, run when the stored version differs from
+ * {@link PERSIST_VERSION}.
+ *
+ * - v3 → v4: someone who already finished (or skipped) the old wizard is an
+ *   existing user. They must never see the getting-started checklist or the
+ *   one-time hints, so both are pre-closed. New users (onboarded false or
+ *   missing) keep the defaults, which `merge` backfills.
+ * - Anything older than v3 had no `migrate` before this one existed, so zustand
+ *   dropped it and started from defaults. That is preserved by returning
+ *   undefined, which `merge` treats as "nothing persisted".
+ *
+ * Exported for tests.
+ */
+export function migratePersistedState(persisted: unknown, version: number): unknown {
+  if (version < 3) return undefined;
+  if (version < 4) {
+    const state = (persisted ?? {}) as { settings?: Partial<Settings> };
+    const settings = state.settings;
+    if (settings?.onboarded === true) {
+      return {
+        ...state,
+        settings: {
+          ...settings,
+          gettingStarted: { ...DEFAULT_GETTING_STARTED, dismissedAt: Date.now() },
+          hintsSeen: [...ALL_HINT_IDS],
+        },
+      };
+    }
+    return state;
+  }
+  return persisted;
+}
 
 /**
  * Which top-level screen is active. Since #195 these are ROUTES under a
@@ -658,6 +731,81 @@ interface ParleyState {
   updateSettings: (patch: Partial<Settings>) => void;
   /** Replace settings wholesale — used to sync from the settings window. */
   applySettings: (settings: Settings) => void;
+}
+
+/**
+ * zustand-persist `merge`: backfill any settings fields missing from older
+ * persisted state (runs after {@link migratePersistedState}). Exported for tests.
+ */
+export function mergePersistedState(persisted: unknown, current: ParleyState): ParleyState {
+  const p = (persisted as { settings?: Partial<Settings> } | undefined)?.settings ?? {};
+  // Template shapes changed over time; fall back to defaults if the
+  // persisted value is an old shape (e.g. todoTemplates used to be string[]).
+  const validTodoTpls =
+    Array.isArray(p.todoTemplates) &&
+    p.todoTemplates.every((t) => t && typeof t === "object" && Array.isArray((t as { items?: unknown }).items));
+  const validEvalTpls =
+    Array.isArray(p.evalTemplates) &&
+    p.evalTemplates.every((t) => t && typeof t === "object" && Array.isArray((t as { evals?: unknown }).evals));
+  const { llmProviders, models, reasoningEffort } = migrateLlmSettings(p);
+
+  // Resolve built-in templates into the persisted language so they match
+  // the UI on rehydrate.
+  const language = (p.language as AppLanguage) ?? DEFAULT_SETTINGS.language;
+  const t = tFor(language);
+
+  // Relabel built-in active evaluations to the persisted language too,
+  // keeping any custom (non-built-in id) evaluations as saved.
+  const builtinLabels = buildBuiltinEvalLabels(t);
+  const persistedEvals =
+    (p.evaluations as Settings["evaluations"]) ?? defaultEvalDefs(t);
+  const relabeledEvals = persistedEvals.map((e) => {
+    const label = builtinLabels.get(e.id);
+    return label ? { ...e, name: label.name, description: label.description } : e;
+  });
+
+  // Layout presets were renamed in the live-screen redesign; map the old
+  // values so persisted states land on the closest new posture.
+  const rawLayout = p.layout as string | undefined;
+  const layout: Settings["layout"] =
+    rawLayout === "transcript" ? "transcript" : DEFAULT_SETTINGS.layout;
+
+  return {
+    ...current,
+    settings: {
+      ...DEFAULT_SETTINGS,
+      ...p,
+      layout,
+      // Windows never had a way to choose this, so a mac-only trigger in
+      // persisted state is stale default, not intent — see
+      // migrateVoiceTypingShortcut.
+      voiceTypingShortcut: migrateVoiceTypingShortcut(p.voiceTypingShortcut),
+      llmProviders,
+      // Per-provider models, legacy {ask,eval} roles already remapped;
+      // providers missing from persisted state keep their defaults.
+      models,
+      // Backfill delivery-coaching toggles for states saved before they existed.
+      delivery: { ...DEFAULT_SETTINGS.delivery, ...p.delivery },
+      reasoningEffort,
+      // Fold latest built-in templates over persisted ones, keeping customs.
+      todoTemplates: reconcileTemplates(
+        buildPresetTodoTemplates(t),
+        validTodoTpls ? p.todoTemplates! : []
+      ),
+      evalTemplates: reconcileTemplates(
+        buildPresetEvalTemplates(t),
+        validEvalTpls ? p.evalTemplates! : []
+      ),
+      // Backfill checklist flags / seen hints for states saved before them.
+      gettingStarted: backfillGettingStarted(p.gettingStarted),
+      hintsSeen: Array.isArray(p.hintsSeen)
+        ? p.hintsSeen.filter((h): h is HintId => typeof h === "string")
+        : [],
+    },
+    evaluations: evalsFromDefs(relabeledEvals),
+    // Restore the persisted cloud sign-in (re-validated on startup).
+    cloudAuth: (persisted as { cloudAuth?: CloudAuth } | undefined)?.cloudAuth ?? null,
+  };
 }
 
 export const useStore = create<ParleyState>()(
@@ -1180,75 +1328,12 @@ export const useStore = create<ParleyState>()(
     }),
     {
       name: "parley-settings",
-      version: 3,
+      version: PERSIST_VERSION,
+      migrate: migratePersistedState,
       // Persist settings + the cloud sign-in — transcript/eval state is per-session.
       partialize: (state) => ({ settings: state.settings, cloudAuth: state.cloudAuth }),
       // Backfill any settings fields missing from older persisted state.
-      merge: (persisted, current) => {
-        const p = (persisted as { settings?: Partial<Settings> } | undefined)?.settings ?? {};
-        // Template shapes changed over time; fall back to defaults if the
-        // persisted value is an old shape (e.g. todoTemplates used to be string[]).
-        const validTodoTpls =
-          Array.isArray(p.todoTemplates) &&
-          p.todoTemplates.every((t) => t && typeof t === "object" && Array.isArray((t as { items?: unknown }).items));
-        const validEvalTpls =
-          Array.isArray(p.evalTemplates) &&
-          p.evalTemplates.every((t) => t && typeof t === "object" && Array.isArray((t as { evals?: unknown }).evals));
-        const { llmProviders, models, reasoningEffort } = migrateLlmSettings(p);
-
-        // Resolve built-in templates into the persisted language so they match
-        // the UI on rehydrate.
-        const language = (p.language as AppLanguage) ?? DEFAULT_SETTINGS.language;
-        const t = tFor(language);
-
-        // Relabel built-in active evaluations to the persisted language too,
-        // keeping any custom (non-built-in id) evaluations as saved.
-        const builtinLabels = buildBuiltinEvalLabels(t);
-        const persistedEvals =
-          (p.evaluations as Settings["evaluations"]) ?? defaultEvalDefs(t);
-        const relabeledEvals = persistedEvals.map((e) => {
-          const label = builtinLabels.get(e.id);
-          return label ? { ...e, name: label.name, description: label.description } : e;
-        });
-
-        // Layout presets were renamed in the live-screen redesign; map the old
-        // values so persisted states land on the closest new posture.
-        const rawLayout = p.layout as string | undefined;
-        const layout: Settings["layout"] =
-          rawLayout === "transcript" ? "transcript" : DEFAULT_SETTINGS.layout;
-
-        return {
-          ...current,
-          settings: {
-            ...DEFAULT_SETTINGS,
-            ...p,
-            layout,
-            // Windows never had a way to choose this, so a mac-only trigger in
-            // persisted state is stale default, not intent — see
-            // migrateVoiceTypingShortcut.
-            voiceTypingShortcut: migrateVoiceTypingShortcut(p.voiceTypingShortcut),
-            llmProviders,
-            // Per-provider models, legacy {ask,eval} roles already remapped;
-            // providers missing from persisted state keep their defaults.
-            models,
-            // Backfill delivery-coaching toggles for states saved before they existed.
-            delivery: { ...DEFAULT_SETTINGS.delivery, ...p.delivery },
-            reasoningEffort,
-            // Fold latest built-in templates over persisted ones, keeping customs.
-            todoTemplates: reconcileTemplates(
-              buildPresetTodoTemplates(t),
-              validTodoTpls ? p.todoTemplates! : []
-            ),
-            evalTemplates: reconcileTemplates(
-              buildPresetEvalTemplates(t),
-              validEvalTpls ? p.evalTemplates! : []
-            ),
-          },
-          evaluations: evalsFromDefs(relabeledEvals),
-          // Restore the persisted cloud sign-in (re-validated on startup).
-          cloudAuth: (persisted as { cloudAuth?: CloudAuth } | undefined)?.cloudAuth ?? null,
-        };
-      },
+      merge: mergePersistedState,
     }
   )
 );

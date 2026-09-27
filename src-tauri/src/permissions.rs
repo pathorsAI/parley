@@ -4,8 +4,9 @@
 //! Audio process tap's own TCC service (NOT Screen Recording), prompted via
 //! `NSAudioCaptureUsageDescription`. On Windows the microphone is a per-app
 //! privacy setting read from the capability consent store; system audio
-//! (WASAPI loopback) needs no consent and reports `unsupported` until the
-//! loopback capture ships.
+//! (WASAPI loopback) needs no consent at all, so it reads `granted` whenever
+//! there is a default output device to capture and `unknown` when there is
+//! none.
 //!
 //! Status checks here must be side-effect free: `check_permissions` is polled by
 //! onboarding, so it must never trigger an OS consent prompt. Anything that can
@@ -23,7 +24,8 @@ use tauri::AppHandle;
 /// Last known System Audio Recording state. There is no public side-effect-free
 /// TCC query for the process tap, so we cache what the probes and real meeting
 /// captures observe: 0 = unknown (never probed), 1 = granted, 2 = denied,
-/// 3 = unsupported (macOS < 14.2).
+/// 3 = unsupported (macOS < 14.2). Windows has a side-effect-free answer and
+/// reads it live instead (see [`check_permissions`]).
 static SYSTEM_AUDIO: AtomicU8 = AtomicU8::new(SA_UNKNOWN);
 
 const SA_UNKNOWN: u8 = 0;
@@ -42,8 +44,7 @@ fn system_audio_str() -> &'static str {
 
 /// Called from the meeting's system-audio capture when tapped frames actually
 /// arrive — the strongest possible "granted" signal. macOS-only because the
-/// permission is: Windows system audio needs no consent and reports
-/// `unsupported` until the loopback capture ships, so no capture there has a
+/// permission is: Windows loopback needs no consent, so no capture there has a
 /// grant to confirm.
 #[cfg(target_os = "macos")]
 pub fn note_system_audio_granted() {
@@ -133,11 +134,17 @@ mod imp {
     /// toggled in Settings, which `open_privacy_settings` deep-links to.
     pub fn request_microphone() {}
 
-    /// WASAPI loopback capture is not implemented yet; `unsupported` keeps the
-    /// system-audio rows hidden in onboarding and Settings. Flips to granted
-    /// when the loopback source lands (loopback needs no OS consent).
+    /// WASAPI loopback needs no OS consent: it works whenever there is a
+    /// default render device to capture. Without one the state is `unknown`
+    /// (nothing is refused — there is just nothing to record yet), which the
+    /// frontend shows as "not ready" and points at the Sound settings. Only
+    /// enumerates devices, so it is safe to call from the polled status check.
     pub fn probe_system_audio() -> u8 {
-        super::SA_UNSUPPORTED
+        if crate::audio::system_windows::default_render_device_present() {
+            super::SA_GRANTED
+        } else {
+            super::SA_UNKNOWN
+        }
     }
 }
 
@@ -174,6 +181,11 @@ pub struct AppIdentity {
 /// Side-effect-free status snapshot (safe to poll — never prompts).
 #[tauri::command]
 pub fn check_permissions() -> Permissions {
+    // Windows' system-audio probe prompts nothing, so the status can be read
+    // live rather than last-observed (an output device plugged in or removed
+    // shows up on the next poll).
+    #[cfg(target_os = "windows")]
+    SYSTEM_AUDIO.store(imp::probe_system_audio(), Ordering::SeqCst);
     Permissions {
         microphone: imp::microphone_status().to_string(),
         system_audio: system_audio_str().to_string(),
@@ -251,11 +263,13 @@ pub fn open_privacy_settings(pane: String) {
     }
     #[cfg(target_os = "windows")]
     {
-        // Only the microphone has a Windows analogue; everything else lands on
-        // the privacy hub. explorer.exe resolves ms-settings: URIs without the
-        // cmd `start` quoting pitfalls.
+        // The microphone has a privacy pane; system audio (loopback) has no
+        // consent, only a device to pick, so it lands on Sound settings;
+        // everything else goes to the privacy hub. explorer.exe resolves
+        // ms-settings: URIs without the cmd `start` quoting pitfalls.
         let url = match pane.as_str() {
             "microphone" => "ms-settings:privacy-microphone",
+            "system-audio" => "ms-settings:sound",
             _ => "ms-settings:privacy",
         };
         let _ = std::process::Command::new("explorer.exe").arg(url).spawn();

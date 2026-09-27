@@ -23,6 +23,14 @@ public enum ZhuyinDachen {
         Array("zxcvbnm,./"),
     ]
 
+    /// How far each row starts to the right of the top row, in key pitches, as
+    /// the 注音 pane draws it: a third in, then two thirds, then back to the left
+    /// edge for the row that carries delete as its eleventh key. Kept in step with
+    /// `KeyboardZhuyinPane.swift` by hand — the pane lives in the app target and
+    /// this is the one number it and `ZhuyinFuzzy` must agree on, because which
+    /// keys sit above and below which is what a slipping thumb actually hits.
+    public static let rowOffsets: [Double] = [0, 1.0 / 3, 2.0 / 3, 0]
+
     /// Key → what it types. Tone marks are in here too; ask `ZhuyinTone.mark`
     /// which of the two a symbol is.
     public static let symbols: [Character: Character] = [

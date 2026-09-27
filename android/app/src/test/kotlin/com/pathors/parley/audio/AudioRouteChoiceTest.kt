@@ -53,17 +53,18 @@ class AudioRouteChoiceTest {
      * user believed they were on their Bluetooth headset.** They could hear the
      * meeting through the headset, so they had every reason to think it was
      * capturing them too; instead the phone recorded from a pocket for the rest
-     * of the call, and nobody found out until playback. Classic SCO is a worse
-     * codec than the built-in mic and it still wins, because a microphone two
-     * inches from the speaker's mouth beats a better one across the room.
+     * of the call, and nobody found out until playback. An LE Audio headset
+     * needs no SCO link to capture from, so pinning to it is enough, and it
+     * wins: a microphone two inches from the speaker's mouth beats one across
+     * the room.
      */
     @Test
-    fun aBluetoothHeadsetAppearingMidMeetingBeatsTheBuiltInMic() {
+    fun aBluetoothLeHeadsetAppearingMidMeetingBeatsTheBuiltInMic() {
         val before = listOf(builtinMic())
         assertEquals(builtinMic(), AudioRouteChoice.preferred(before))
 
-        val after = before + bluetoothHeadset()
-        assertEquals(bluetoothHeadset(), AudioRouteChoice.preferred(after))
+        val after = before + bleHeadset()
+        assertEquals(bleHeadset(), AudioRouteChoice.preferred(after))
         assertTrue(
             "the recording must follow the headset the user just put on",
             AudioRouteChoice.needsRebuild(builtinMic(), after),
@@ -71,7 +72,7 @@ class AudioRouteChoiceTest {
     }
 
     @Test
-    fun theTierOrderIsWiredThenUsbThenBleThenScoThenBuiltIn() {
+    fun theTierOrderIsWiredThenUsbThenBleThenBuiltIn() {
         val all = listOf(
             builtinMic(),
             bluetoothHeadset(),
@@ -88,7 +89,7 @@ class AudioRouteChoiceTest {
             AudioRouteChoice.preferred(listOf(builtinMic(), bluetoothHeadset(), bleHeadset())),
         )
         assertEquals(
-            bluetoothHeadset(),
+            builtinMic(),
             AudioRouteChoice.preferred(listOf(builtinMic(), bluetoothHeadset())),
         )
         assertEquals(builtinMic(), AudioRouteChoice.preferred(listOf(builtinMic())))
@@ -125,6 +126,52 @@ class AudioRouteChoiceTest {
         )
     }
 
+    // ------------------------------------------------------- classic bluetooth
+
+    /**
+     * **The 1.13 outage.** Classic Bluetooth hands-free only carries a
+     * microphone while a SCO audio link is up, and this app never opens one
+     * (no `startBluetoothSco()`, no `setCommunicationDevice()`). An
+     * `AudioRecord` pinned to a SCO input without that link opens fine and
+     * records silence — so ranking SCO above the built-in mic turned every
+     * phone with paired earbuds, a watch or a car kit into a machine for
+     * recording meetings of zeros. The built-in mic at least records the room.
+     */
+    @Test
+    fun aClassicBluetoothHeadsetNeverBeatsTheBuiltInMic() {
+        assertEquals(
+            builtinMic(),
+            AudioRouteChoice.preferred(listOf(bluetoothHeadset(), builtinMic())),
+        )
+        assertEquals(
+            builtinMic(),
+            AudioRouteChoice.preferred(listOf(builtinMic(), bluetoothHeadset())),
+        )
+    }
+
+    /**
+     * SCO is excluded outright, the same way telephony is, not ranked last: on
+     * a list with nothing else in it, last place would be first place, and the
+     * recording would be silence. And a hands-free headset connecting
+     * mid-meeting must not cost the recording a rebuild — the input we would
+     * choose has not moved.
+     */
+    @Test
+    fun classicBluetoothIsNeverChosenEvenWhenItIsTheOnlyDevice() {
+        assertNull(AudioRouteChoice.preferred(listOf(bluetoothHeadset())))
+        assertNull(
+            AudioRouteChoice.preferred(listOf(bluetoothHeadset(id = 3), bluetoothHeadset(id = 8))),
+        )
+        assertFalse(
+            "a hands-free headset connecting must not pull the recording off the built-in mic",
+            AudioRouteChoice.needsRebuild(builtinMic(), listOf(bluetoothHeadset(), builtinMic())),
+        )
+        assertFalse(
+            "a SCO input alone is no reason to abandon a working mic",
+            AudioRouteChoice.needsRebuild(builtinMic(), listOf(bluetoothHeadset())),
+        )
+    }
+
     @Test
     fun anEmptyListHasNoPreferredDevice() {
         assertNull(AudioRouteChoice.preferred(emptyList()))
@@ -133,9 +180,9 @@ class AudioRouteChoiceTest {
     // ------------------------------------------------------------ determinism
 
     /**
-     * Two inputs of the same kind — a Bluetooth headset and a Bluetooth
-     * speakerphone both enumerate as SCO — must always resolve to the same one,
-     * whatever order `getDevices()` returned them in. It barely matters which
+     * Two inputs of the same kind — a pair of LE Audio earbuds and an LE Audio
+     * speakerphone both enumerate as BLE headsets — must always resolve to the
+     * same one, whatever order `getDevices()` returned them in. It barely matters which
      * wins; it matters enormously that it is always the same one, because a
      * `preferred` that flipped with enumeration order would make `needsRebuild`
      * flap, and a flapping `needsRebuild` rebuilds the `AudioRecord` every few
@@ -143,8 +190,8 @@ class AudioRouteChoiceTest {
      */
     @Test
     fun tiesBreakByIdAndAreStableAcrossListOrderings() {
-        val low = bluetoothHeadset(id = 4)
-        val high = bluetoothHeadset(id = 9)
+        val low = bleHeadset(id = 4)
+        val high = bleHeadset(id = 9)
         assertEquals(low, AudioRouteChoice.preferred(listOf(low, high)))
         assertEquals(low, AudioRouteChoice.preferred(listOf(high, low)))
 
@@ -203,7 +250,7 @@ class AudioRouteChoiceTest {
     @Test
     fun aRecycledIdBelongingToADifferentDeviceRebuilds() {
         val current = wiredHeadset(id = 7)
-        val impostor = bluetoothHeadset(id = 7)
+        val impostor = usbDevice(id = 7)
         assertEquals(impostor, AudioRouteChoice.preferred(listOf(impostor)))
         assertTrue(AudioRouteChoice.needsRebuild(current, listOf(impostor)))
     }

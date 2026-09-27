@@ -11,6 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, emit, type UnlistenFn } from "@tauri-apps/api/event";
 import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
 import { isMac } from "../platform";
+import { TRAY_VOICE_TOGGLE_EVENT } from "../tray";
 import { isTauri } from "../tauriEvents";
 import { useStore } from "../store";
 import { sttApiKey, sttRelayUrl } from "../transcription/providers";
@@ -165,6 +166,18 @@ export function initVoiceTyping(): () => void {
         );
     }),
   );
+  // The Windows tray's "Start/Stop voice typing" item (see src-tauri/src/tray.rs).
+  // Queued on the same chain as the hotkey, and served by the same session
+  // start/end code — only the trigger differs.
+  track(
+    listen(TRAY_VOICE_TOGGLE_EVENT, () => {
+      pttChain = pttChain
+        .then(onTrayToggle)
+        .catch((error) =>
+          log.error("voice-typing: tray toggle failed", { error: String(error) }),
+        );
+    }),
+  );
   track(
     listen<TextReport>("voicetyping://text", (e) => {
       if (!owner.owns(e.payload)) return;
@@ -288,6 +301,24 @@ async function onPtt(isDown: boolean) {
   down = isDown;
   if (isDown) await startSession();
   else await endSession();
+}
+
+/**
+ * The tray item. A menu click cannot be held, so it toggles whatever the
+ * hold/toggle setting says: the first click starts a dictation, the next one
+ * ends it (the tray relabels itself to match). `down` mirrors the hotkey paths
+ * so the two triggers can be mixed — releasing the hotkey, or tapping it in
+ * toggle mode, ends a dictation the tray started.
+ */
+async function onTrayToggle() {
+  if (busy && down) {
+    down = false;
+    await endSession();
+    return;
+  }
+  down = true;
+  await startSession();
+  down = busy; // clear if the start didn't actually take
 }
 
 async function startSession() {

@@ -17,10 +17,9 @@ import SwiftUI
 /// the pane with caps (which it used to do) made it read as a broken keyboard
 /// rather than a place to speak.
 ///
-/// The view paints no background of its own. The system's `UIInputView` is
-/// already the right colour, already has the right corners and already covers
-/// exactly the right area; painting over it was what made the keyboard seam
-/// against the row below and sit a shade off from the system's.
+/// The view paints no background of its own. The system's `UIInputView` shows
+/// through, and the controller covers it only when the system is painting the
+/// other appearance from the one this view was handed (#441).
 ///
 /// Everything here is presentation only — no audio, no transcript history
 /// beyond the short tail shown above the button — so the extension stays well
@@ -30,8 +29,8 @@ struct KeyboardRootView: View {
     @Environment(\.openURL) private var openURL
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// The host field's appearance, not the system's: a dark-themed app puts a
-    /// dark keyboard on screen even in light mode.
+    /// Dark when the trait collection is, or when the host field asks for a
+    /// dark keyboard. See `KeyboardViewController.isDark`.
     var dark: Bool
 
     /// Live horizontal travel of the pane track while a drag is in flight.
@@ -72,7 +71,7 @@ struct KeyboardRootView: View {
                 // touch through and only drawn controls could start a swipe.
                 // `contentShape` cannot fix that from inside SwiftUI; a fill
                 // below the eye's threshold can.
-                .background(Color.white.opacity(0.01))
+                .background(KBTheme.hitFill(dark))
                 .simultaneousGesture(
                     DragGesture(minimumDistance: 24)
                         .updating($drag) { value, state, _ in
@@ -86,18 +85,49 @@ struct KeyboardRootView: View {
                             bridge.stepPane(by: dx < 0 ? 1 : -1)
                         }
                 )
+                // Hidden rather than covered while the candidate grid is up:
+                // the keyboard has no background to cover it with. Hit-testing
+                // goes with it, so the track can't be swiped or typed on
+                // underneath the grid.
+                .opacity(showsCandidateGrid ? 0 : 1)
+                .allowsHitTesting(!showsCandidateGrid)
+            }
+            // The same content area the panes have, so opening the grid cannot
+            // change the keyboard's height.
+            .overlay {
+                if showsCandidateGrid {
+                    CandidateGrid(
+                        candidates: bridge.zhuyin.candidates, dark: dark,
+                        pick: bridge.pickCandidate, backspace: bridge.backspace)
+                }
             }
             .clipped()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlayPreferenceValue(PressedKeys.self) { KeyCalloutLayer(dark: dark, keys: $0) }
     }
 
+    /// The typing panes are handed values rather than the bridge to observe,
+    /// and `.equatable()` is what lets SwiftUI skip them: this view re-evaluates
+    /// on every publish — every keystroke, every microphone reading — and the
+    /// forty-odd keys on each pane have nothing to redraw for any of them. See
+    /// `ZhuyinPane`.
     @ViewBuilder
     private func paneView(_ pane: KeyboardPane) -> some View {
         switch pane {
         case .voice: voicePane
-        case .english: LetterPane(bridge: bridge, dark: dark)
-        case .zhuyin: ZhuyinPane(bridge: bridge, dark: dark)
+        case .english:
+            LetterPane(
+                bridge: bridge, dark: dark, showsGlobe: bridge.showsGlobe,
+                returnKey: bridge.returnKeyStyle
+            )
+            .equatable()
+        case .zhuyin:
+            ZhuyinPane(
+                bridge: bridge, dark: dark, showsGlobe: bridge.showsGlobe,
+                returnKey: bridge.returnKeyStyle
+            )
+            .equatable()
         }
     }
 
@@ -121,17 +151,28 @@ struct KeyboardRootView: View {
     /// across — the track still follows the finger — and the tabs are the second
     /// way, for the user who never thinks to drag.
     ///
-    /// While a 注音 composition is pending the whole row is given over to it and
-    /// its candidates. It is the one row the keyboard has to spare, and the
-    /// alternative — a bar of its own above the keys — would make the pane
-    /// taller than its neighbours every time someone started a word. The
-    /// composition can be several syllables; the two of them share the row, so
-    /// the chip is capped and the bar keeps the rest.
+    /// While a 注音 composition has candidates the whole row is given over to
+    /// them. It is the one row the keyboard has to spare, and the alternative —
+    /// a bar of its own above the keys — would make the pane taller than its
+    /// neighbours every time someone started a word. The composition itself is
+    /// marked text in the host field, as on the system keyboard, so the row
+    /// holds only the candidates. The one exception is a field whose host
+    /// ignores marked text: there the reading has nowhere else to be seen, and
+    /// it takes the 1.20 chip at the left of the row again.
     private var modeStrip: some View {
         HStack(spacing: 0) {
-            if !bridge.composition.isEmpty {
-                compositionChip
-                candidateBar
+            if bridge.zhuyin.isPending {
+                // Only a host that ignores marked text gets the chip: anywhere
+                // else the reading is already underlined in the field.
+                if !bridge.zhuyin.composition.isEmpty { compositionChip }
+                if bridge.candidatesExpanded {
+                    // The grid below has the candidates; the strip keeps the
+                    // way back.
+                    Spacer(minLength: 8)
+                } else {
+                    candidateBar
+                }
+                if showsExpandKey { expandKey }
             } else if showsSuggestions {
                 suggestionBar
             } else {
@@ -148,26 +189,29 @@ struct KeyboardRootView: View {
         }
         .frame(height: KBMetrics.strip)
         .padding(.horizontal, 12)
+        // The same sub-visible fill the pane track has, for the same reason: a
+        // fully transparent point in a keyboard extension never receives the
+        // touch, so without it only the drawn pixels of ⌄ — two thin strokes —
+        // and of each candidate's glyphs were tappable.
+        .background(KBTheme.hitFill(dark))
     }
 
     /// The English pane's word suggestions take the strip on the same terms the
-    /// 注音 composition does, and behind it: a pending composition belongs to the
-    /// other pane and can only exist while that one is current, but the two
-    /// branches are ordered anyway so the rule is written down rather than
-    /// inferred.
+    /// 注音 candidates do, and behind them: candidates belong to the other pane
+    /// and can only exist while that one is current, but the two branches are
+    /// ordered anyway so the rule is written down rather than inferred.
     private var showsSuggestions: Bool {
-        bridge.pane == .english && !bridge.suggestions.isEmpty
+        bridge.pane == .english && !bridge.english.suggestions.isEmpty
     }
 
     /// The pane's short name. 注音 keeps its own name in both localizations: the
     /// keys on that pane *are* 注音, and nothing an English word could say
     /// would identify it faster.
-    @ViewBuilder
-    private func paneName(_ pane: KeyboardPane) -> some View {
+    private func paneName(_ pane: KeyboardPane) -> Text {
         switch pane {
-        case .voice: Text("Voice")
-        case .english: Text("English")
-        case .zhuyin: Text(verbatim: "注音")
+        case .voice: return Text(Image(systemName: "mic"))
+        case .english: return Text("English")
+        case .zhuyin: return Text(verbatim: "注音")
         }
     }
 
@@ -179,7 +223,7 @@ struct KeyboardRootView: View {
         }
     }
 
-    /// The panes, named, as a segmented control.
+    /// The panes as a segmented control.
     ///
     /// Sized to the 38pt strip rather than to UIKit's own segmented control,
     /// which is 32pt tall before its margins and would leave the wordmark
@@ -189,8 +233,8 @@ struct KeyboardRootView: View {
     /// rule the keys on the next pane are read by.
     ///
     /// Widths at the narrowest keyboard the app runs on — 320pt, less the
-    /// strip's 12pt gutters, so 296pt: wordmark 41 + 8 + chip 92 + 8 + tabs 144
-    /// = 293. The tabs' horizontal padding is 7 rather than the 9 the rest of
+    /// strip's 12pt gutters, so 296pt: wordmark 41 + 8 + chip 92 + 8 + tabs 125
+    /// = 274. The tabs' horizontal padding is 7 rather than the 9 the rest of
     /// the strip would suggest, and the mic chip's minutes are gone, because at
     /// 9pt and with them the row wanted 335pt and the chip's label would have
     /// truncated. Every wider phone has 30pt or more to spare.
@@ -235,41 +279,64 @@ struct KeyboardRootView: View {
 
     // MARK: 注音 composition
 
-    /// About 45% of the strip on every phone the keyboard runs on — 320pt to
-    /// 440pt wide — which is the most the chip can take before the candidate bar
-    /// stops being able to show a candidate the user would have picked anyway.
-    private static let compositionChipWidth: CGFloat = 170
+    /// A backstop rather than a layout: `compositionTail` keeps the chip to two
+    /// syllables, which at 15pt is under 100pt for almost every reading. The
+    /// cap only matters for two four-symbol syllables side by side.
+    private static let compositionChipWidth: CGFloat = 120
 
-    /// What is being typed but has not landed anywhere yet — up to six syllables,
-    /// space-separated — in the accent so it reads as pending rather than as
-    /// text in the document.
+    /// How many syllables the chip shows. See `compositionTail`.
+    private static let compositionChipSyllables = 2
+
+    /// What is being typed but has not landed anywhere yet, in the accent so it
+    /// reads as pending rather than as text in the document.
     ///
-    /// It is capped at roughly the left half of the strip and truncated from the
-    /// *head*, because the row is shared with the candidate bar: a long
-    /// composition must not push the candidates off the end, and the syllable
-    /// the next keystroke edits is the newest one, on the right. It is fixed to
-    /// its natural width up to that cap, so the bar can neither squeeze it nor
-    /// hand it room it has no text for.
+    /// Only in a field whose host ignores marked text. Everywhere else the
+    /// reading is underlined at the caret, `composition` stays empty and the
+    /// chip never draws; see `MarkedTextLog`.
+    ///
+    /// The chip shares the row with the candidate bar, and the bar is the part
+    /// the user acts on. It used to show the whole buffer, capped at 170pt: at
+    /// six syllables that is the cap, and on a 320pt phone the bar was left with
+    /// two or three candidates — "only about three characters", as it was
+    /// reported. So it shows the **last two syllables**, behind an ellipsis when
+    /// more are pending: the newest syllable is the one the next keystroke
+    /// edits, the one before it is enough context to see a segmentation, and the
+    /// front of the buffer is already on screen as the candidates themselves.
+    /// VoiceOver still gets the whole reading. It is fixed to its natural width,
+    /// so the bar can neither squeeze it nor hand it room it has no text for.
     private var compositionChip: some View {
-        Text(verbatim: bridge.composition)
-            .font(.system(size: 17))
+        Text(verbatim: compositionTail)
+            // 15pt, two below the 17 it had: the reading is a caption for
+            // the candidates beside it, not text the user reads for itself,
+            // and at 320pt every point it gives up is a candidate's.
+            .font(.system(size: 15))
             .foregroundStyle(KBTheme.accent)
             .lineLimit(1)
             .truncationMode(.head)
             .frame(maxWidth: Self.compositionChipWidth, alignment: .trailing)
             // Hug the text: a flexible frame beside a scroll view is offered
-            // the whole cap and takes it, which drew a 170pt chip around two
+            // the whole cap and takes it, which drew a wide chip around two
             // symbols. Fixed to its ideal width the chip is as wide as the
-            // reading, and the cap still truncates a six-syllable one.
+            // reading, and the cap still truncates an unusually long one.
             .fixedSize(horizontal: true, vertical: false)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 1)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
             .background(
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
                     .fill(KBTheme.control(dark)))
-            .padding(.trailing, 8)
+            .padding(.trailing, 6)
             .accessibilityLabel(Text("Composing"))
-            .accessibilityValue(Text(verbatim: bridge.composition))
+            .accessibilityValue(Text(verbatim: bridge.zhuyin.composition))
+    }
+
+    /// The last `compositionChipSyllables` of the space-separated reading,
+    /// after a `…` when that drops any.
+    private var compositionTail: String {
+        let syllables = bridge.zhuyin.composition.split(separator: " ")
+        guard syllables.count > Self.compositionChipSyllables else {
+            return bridge.zhuyin.composition
+        }
+        return "…" + syllables.suffix(Self.compositionChipSyllables).joined(separator: " ")
     }
 
     /// What the front of the buffer could be — phrases first, then the first
@@ -284,8 +351,45 @@ struct KeyboardRootView: View {
     /// character's width between candidates for the same reason.
     private var candidateBar: some View {
         StripBar(
-            items: bridge.candidates, dark: dark, fontSize: 22,
-            label: Text("Candidates"), action: bridge.pickCandidate)
+            items: bridge.zhuyin.candidates, dark: dark, fontSize: 22,
+            label: Text("Candidates"), action: bridge.pickCandidate
+        )
+        .equatable()
+    }
+
+    /// The grid replaces the 注音 keys only while there is a reading to choose
+    /// for. The controller collapses it when the buffer empties; the pane test
+    /// is a second guard, so the grid can never sit over another pane's keys.
+    private var showsCandidateGrid: Bool {
+        bridge.candidatesExpanded && bridge.pane == .zhuyin && bridge.zhuyin.isPending
+    }
+
+    /// Only with something to show, or with the grid already open so it can be
+    /// closed again.
+    private var showsExpandKey: Bool {
+        bridge.candidatesExpanded || !bridge.zhuyin.candidates.isEmpty
+    }
+
+    /// ⌄ at the end of the candidate bar, as on the system keyboard: the bar
+    /// shows what fits in one row, this opens all of them over the keys.
+    /// Flips to ⌃ while the grid is open. A hairline sets it off from the last
+    /// candidate, so it doesn't read as one.
+    private var expandKey: some View {
+        let expanded = bridge.candidatesExpanded
+        return HStack(spacing: 0) {
+            Rectangle()
+                .fill(KBTheme.inkSoft(dark).opacity(0.3))
+                .frame(width: 1, height: KBMetrics.strip - 18)
+            Button(action: { bridge.candidatesExpanded.toggle() }) {
+                Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(KBTheme.ink(dark))
+                    .frame(width: 32, height: KBMetrics.strip - 4)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(expanded ? Text("Fewer candidates") : Text("Show more candidates"))
+        }
     }
 
     // MARK: English word suggestions
@@ -295,7 +399,7 @@ struct KeyboardRootView: View {
     /// whole word in, with the space that ends it.
     ///
     /// It takes the strip for exactly as long as the cursor is inside a word,
-    /// by the same argument the 注音 composition takes it: the strip is the one
+    /// by the same argument the 注音 candidates take it: the strip is the one
     /// row this keyboard has to spare, and a bar of its own above the keys would
     /// make the English pane taller than its neighbours every time somebody
     /// started a word — which would shove the host app's content up and down
@@ -306,8 +410,10 @@ struct KeyboardRootView: View {
     /// fit across a 320pt strip.
     private var suggestionBar: some View {
         StripBar(
-            items: bridge.suggestions, dark: dark, fontSize: 17,
-            label: Text("Word suggestions"), action: bridge.pickSuggestion)
+            items: bridge.english.suggestions, dark: dark, fontSize: 17,
+            label: Text("Word suggestions"), action: bridge.pickSuggestion
+        )
+        .equatable()
     }
 
     // MARK: the microphone window
@@ -914,7 +1020,12 @@ private struct LevelRipple: View {
 /// about a character's width between its own for the same reason, and the
 /// English bar needs it just as much — `work` `world` `working` run together
 /// otherwise.
-private struct StripBar: View {
+///
+/// `Equatable` on what it shows, so the publishes that do not touch it — the
+/// return key, the microphone chip — leave it alone. Ids stay positional:
+/// nothing guarantees a bar's words are distinct, and `\.element` would give
+/// two of them one identity.
+private struct StripBar: View, Equatable {
     var items: [String]
     var dark: Bool
     /// 22 for Chinese candidates, 17 for Latin words: the same point size makes
@@ -924,6 +1035,11 @@ private struct StripBar: View {
     /// labels, so this names the container.
     var label: Text
     var action: (String) -> Void
+
+    /// The action is always the same bridge method for a given bar.
+    static func == (a: Self, b: Self) -> Bool {
+        a.items == b.items && a.dark == b.dark && a.fontSize == b.fontSize && a.label == b.label
+    }
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {

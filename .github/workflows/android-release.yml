@@ -219,7 +219,7 @@ jobs:
             android/app/build/outputs/bundle/release/app-release.aab
           fail_on_unmatched_files: true
 
-      # ── Play internal track ────────────────────────────────────────────────
+      # ── Play upload ────────────────────────────────────────────────────────
       # Reaching here means the precondition at the top of the job passed, so
       # either Play publishing is configured or the operator asked to skip. The
       # mapping.txt rides along so Play can deobfuscate crash reports.
@@ -236,12 +236,18 @@ jobs:
           service_account: ${{ vars.PLAY_PUBLISHER_SERVICE_ACCOUNT }}
 
       # Which track a tag ships to is configuration, not code: `PLAY_TRACK` moves
-      # the whole pipeline from testing to production without touching this file
-      # or cutting a release to change it. It stays `internal` until the app has
-      # actually launched — Play refuses a production release while the store
+      # the whole pipeline between tracks without touching this file or cutting
+      # a release to change it. The fallback is `production`: the app launched,
+      # and a tag *is* the release — nothing about it should wait for someone
+      # to open the Console and press *promote*. (It was `internal` before
+      # launch, because Play refuses a production release while the store
       # listing, content rating, data safety and target-audience forms are
-      # outstanding, so defaulting to production would fail every release until
-      # someone finished them.
+      # outstanding. Set `PLAY_TRACK=internal` to get that gate back.)
+      #
+      # With `status: completed` and the review flag below at its default, Play
+      # sends the production release for review as part of committing the
+      # edit and publishes it when review passes — so a green run here means
+      # "in review", not "on phones"; the store catches up hours to a day later.
       #
       # `PLAY_USER_FRACTION` (e.g. 0.1) turns a production release into a staged
       # rollout, which is the only undo Play offers once a build is live.
@@ -251,7 +257,7 @@ jobs:
         run: |
           TRACK="${{ inputs.track }}"
           [ -n "$TRACK" ] || TRACK="${{ vars.PLAY_TRACK }}"
-          [ -n "$TRACK" ] || TRACK="internal"
+          [ -n "$TRACK" ] || TRACK="production"
           FRACTION="${{ vars.PLAY_USER_FRACTION }}"
           if [ "$TRACK" = "production" ] && [ -n "$FRACTION" ]; then
             STATUS="inProgress"
@@ -265,6 +271,24 @@ jobs:
           echo "### Play release" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Track \`$TRACK\`, status \`$STATUS\`${FRACTION:+, rolling out to $FRACTION of users}." >> "$GITHUB_STEP_SUMMARY"
+
+      # Play shows these as "What's new" on the store listing: one file per
+      # locale, named for the locale, 500 characters at most. Play rejects an
+      # over-long note at the upload step, so the check runs before the build
+      # is spent. Update android/play/whatsnew/ in the same PR as the version
+      # bump — a release carrying the previous release's notes is the failure
+      # this cannot catch.
+      - name: Check the release notes
+        if: ${{ !inputs.skip_play_upload }}
+        run: |
+          set -eu
+          dir=android/play/whatsnew
+          for f in "$dir"/whatsnew-en-US "$dir"/whatsnew-zh-TW; do
+            [ -s "$f" ] || { echo "::error::$f is missing or empty"; exit 1; }
+            n=$(python3 -c 'import sys; print(len(open(sys.argv[1], encoding="utf-8").read().strip()))' "$f")
+            [ "$n" -le 500 ] || { echo "::error::$f is $n characters; Play allows 500"; exit 1; }
+            echo "$f: $n characters"
+          done
 
       - name: Upload to Play
         if: ${{ !inputs.skip_play_upload }}
@@ -280,6 +304,7 @@ jobs:
           track: ${{ steps.play.outputs.track }}
           status: ${{ steps.play.outputs.status }}
           userFraction: ${{ steps.play.outputs.user_fraction }}
+          whatsNewDirectory: android/play/whatsnew
           # This flag is a trap in both directions, so the history matters.
           #
           # It was set to `true` for android-v0.1.2, when the app had a rejected

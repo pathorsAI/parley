@@ -1,56 +1,126 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-Hant-TW">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Parley — Privacy policy</title>
-    <meta name="description" content="How Parley handles recordings, transcripts, cloud sync, and account data." />
+    <title>Parley — 隱私權政策</title>
+    <meta name="description" content="Parley 如何處理錄音、逐字稿、雲端同步與帳號資料。" />
+    <meta name="robots" content="index, follow" />
     <link rel="canonical" href="https://parley.tw/privacy/" />
     <link rel="icon" type="image/svg+xml" href="../assets/logo.svg" />
     <link rel="stylesheet" href="../legal.css" />
   </head>
   <body>
-    <header class="topline">
-      <a class="brand" href="../" aria-label="Parley home"><img src="../assets/logo.svg" alt="" />Parley</a>
-      <a class="back" href="../">Back to home</a>
-    </header>
-    <main>
-      <p class="eyebrow">Privacy</p>
-      <h1>You should know exactly where your meetings go.</h1>
-      <p class="lead">This policy covers how the official cloud edition of Parley handles accounts, recordings, transcripts, and AI usage data. The open-source desktop edition can run entirely on your own machine and your own third-party providers, with no cloud service enabled at all.</p>
-      <span class="updated">Last updated: 27 July 2026</span>
-
-      <div class="callout"><p><strong>The short version:</strong> Parley captures microphone audio only after you press record. Audio and transcripts sync to your Parley account so you can reach them from your other devices. You can permanently delete your account and all of its data from inside the app, or <a href="../account-deletion/">without installing the app at all</a>.</p></div>
-
-      <h2>What we collect</h2>
-      <div class="data-grid">
-        <div><strong>Account data</strong><span>Name, email address, sign-in method, and sessions — used to create and protect your account.</span></div>
-        <div><strong>Meeting content</strong><span>Audio you chose to record, along with its transcript, title, summaries, folders, and organization membership.</span></div>
-        <div><strong>Service usage</strong><span>Transcription seconds and AI credit consumption, used to apply your plan's allowance and prevent abuse.</span></div>
-        <div><strong>Technical data</strong><span>Basic request, error, and device/browser information needed to keep the service running and secure.</span></div>
+    <header class="site-head">
+      <div class="wrap">
+        <a class="wordmark" href="../" data-home>Parley</a>
+        <a class="lang-switch" href="#en" lang="en" hreflang="en" data-lang-switch>English</a>
       </div>
+    </header>
 
-      <h2>How we use it</h2>
-      <ul>
-        <li>To provide live transcription, your recording library, cross-device sync, and the personal or organization folders you choose.</li>
-        <li>To send audio to a transcription service on your behalf, and to a model provider when you use AI features.</li>
-        <li>To keep accounts secure, meter allowances, and diagnose service failures.</li>
-      </ul>
-      <p>We do not sell your personal data, and we do not use your meeting content for advertising.</p>
+    <main class="wrap">
+      <article id="zh" lang="zh-Hant-TW" data-lang="zh" data-title="Parley — 隱私權政策" data-description="Parley 如何處理錄音、逐字稿、雲端同步與帳號資料。">
+        <p class="label">隱私權政策</p>
+        <h1>你應該清楚知道，你的會議去了哪裡。</h1>
+        <p class="lead">本政策說明 Parley 官方雲端版如何處理帳號、錄音、逐字稿與 AI 使用資料。開源的桌面版可以完全在你自己的電腦上執行，搭配你自己選用的第三方供應商，完全不啟用任何雲端服務。</p>
+        <p class="updated">最後更新：<time datetime="2026-09-25">2026 年 9 月 25 日</time></p>
 
-      <h2>Storage and third parties</h2>
-      <p>The official cloud edition uses Cloudflare D1 and R2 to store account data, recording metadata, and audio objects transferred over encrypted connections. Live transcription uses Soniox; the official AI features use Groq. If you sign in with Google or Apple, that provider handles your sign-in data under its own policy. These providers process data only to deliver the Parley service.</p>
+        <div class="note">
+          <p><strong>簡單來說：</strong>Parley 只有在你按下錄音之後，才會收錄麥克風的聲音。音訊與逐字稿會同步到你的 Parley 帳號，讓你在其他裝置上也能取用。你可以在 App 內永久刪除帳號及其所有資料，也可以<a href="../account-deletion/">完全不安裝 App</a> 就申請刪除。</p>
+        </div>
 
-      <h2>Retention and deletion</h2>
-      <p>Your account data and personal recordings are kept until you delete them. Deleting your account permanently removes the account, the audio and transcripts of your personal recordings, your folders, and your usage data — and it cannot be undone. On iOS: <strong>Settings → Account → Delete account</strong>. On Android: the <strong>Account</strong> sheet → <strong>Delete account</strong>. If you cannot open the app, follow the <a href="../account-deletion/">account deletion page</a> to request it by email from your registered address. If you own a shared organization, you must transfer or delete that organization first, so other members' shared recordings are not destroyed by accident.</p>
-      <p>A finished recording that fails to sync is held in your device's app support storage until it uploads, then removed automatically. Deleting the app clears any such pending data from that device.</p>
+        <h2>我們收集哪些資料</h2>
+        <dl class="data">
+          <div><dt>帳號資料</dt><dd>姓名、電子郵件地址、登入方式與登入工作階段——用於建立並保護你的帳號。</dd></div>
+          <div><dt>會議內容</dt><dd>你選擇錄下的音訊，以及它的逐字稿、標題、摘要、資料夾與所屬組織。</dd></div>
+          <div><dt>服務用量</dt><dd>轉錄秒數與 AI 額度的消耗量，用於套用你方案的額度並防止濫用。</dd></div>
+          <div><dt>技術資料</dt><dd>維持服務運作與安全所需的基本請求、錯誤，以及裝置／瀏覽器資訊。</dd></div>
+        </dl>
 
-      <h2>Your responsibilities and choices</h2>
-      <p>Obtain consent from everyone present before recording, as the law where you are requires. Parley's mobile apps do not capture phone calls or the system audio of other apps; they use the microphone only while you have explicitly started a recording.</p>
+        <h2>我們如何使用這些資料</h2>
+        <ul>
+          <li>提供即時轉錄、你的錄音庫、跨裝置同步，以及你選擇使用的個人或組織資料夾。</li>
+          <li>代你將音訊傳送給轉錄服務；當你使用 AI 功能時，也會傳送給模型供應商。</li>
+          <li>維護帳號安全、計算額度用量，以及診斷服務故障。</li>
+        </ul>
+        <p>我們不販售你的個人資料，也不會將你的會議內容用於廣告。</p>
 
-      <h2>Contact</h2>
-      <p>For privacy questions, data requests, or feedback on this policy, email <a href="mailto:contact@pathors.com">contact@pathors.com</a>.</p>
+        <h2>儲存與第三方</h2>
+        <p>官方雲端版使用 Cloudflare D1 與 R2，儲存帳號資料、錄音的中繼資料，以及透過加密連線傳送的音訊物件。即時轉錄使用 Soniox；官方 AI 功能使用 Groq。如果你使用 Google 或 Apple 登入，你的登入資料由該供應商依其自身的政策處理。上述供應商僅為提供 Parley 服務而處理資料。</p>
+
+        <h2>本網站的瀏覽統計</h2>
+        <p>本網站（parley.tw）使用 Cloudflare Web Analytics 統計頁面瀏覽次數。它不使用 Cookie，也不收集任何個人資料；我們只看得到彙總後的頁面瀏覽數。這項統計只在 parley.tw 上運作，與 Parley 的各個 App 無關——App 本身不含任何遙測。</p>
+
+        <h2>保存與刪除</h2>
+        <p>你的帳號資料與個人錄音會一直保存，直到你將其刪除。刪除帳號會永久移除帳號本身、你個人錄音的音訊與逐字稿、你的資料夾以及用量資料，而且無法復原。iOS：<span class="path">設定 → 帳號 → 刪除帳號</span>。Android：<span class="path">帳號</span>面板 → <span class="path">刪除帳號</span>。如果你無法開啟 App，請依照<a href="../account-deletion/">刪除帳號頁面</a>的說明，從你註冊時使用的電子郵件地址來信申請。如果你是某個共享組織的擁有者，必須先移轉或刪除該組織，以免其他成員共享的錄音被意外一併刪除。</p>
+        <p>已完成但同步失敗的錄音，會暫存在這台裝置上 App 專用的儲存空間，直到上傳成功後自動移除。刪除 App 會一併清除該裝置上所有這類尚未上傳的資料。</p>
+
+        <h2>你的責任與選擇</h2>
+        <p>錄音前，請依你所在地法律的要求，取得在場每一個人的同意。Parley 的行動版 App 不會擷取電話通話，也不會擷取其他 App 的系統音訊；只有在你明確開始錄音的期間，才會使用麥克風。</p>
+
+        <h2>聯絡我們</h2>
+        <p>關於隱私的疑問、資料請求，或對本政策的意見，請來信 <a href="mailto:contact@pathors.com">contact@pathors.com</a>。</p>
+      </article>
+
+      <article id="en" lang="en" data-lang="en" data-title="Parley — Privacy policy" data-description="How Parley handles recordings, transcripts, cloud sync, and account data.">
+        <p class="label">Privacy policy</p>
+        <h1>You should know exactly where your meetings go.</h1>
+        <p class="lead">This policy covers how the official cloud edition of Parley handles accounts, recordings, transcripts, and AI usage data. The open-source desktop edition can run entirely on your own machine and your own third-party providers, with no cloud service enabled at all.</p>
+        <p class="updated">Last updated: <time datetime="2026-09-25">25 September 2026</time></p>
+
+        <div class="note">
+          <p><strong>The short version:</strong> Parley captures microphone audio only after you press record. Audio and transcripts sync to your Parley account so you can reach them from your other devices. You can permanently delete your account and all of its data from inside the app, or <a href="../account-deletion/?lang=en">without installing the app at all</a>.</p>
+        </div>
+
+        <h2>What we collect</h2>
+        <dl class="data">
+          <div><dt>Account data</dt><dd>Name, email address, sign-in method, and sessions — used to create and protect your account.</dd></div>
+          <div><dt>Meeting content</dt><dd>Audio you chose to record, along with its transcript, title, summaries, folders, and organization membership.</dd></div>
+          <div><dt>Service usage</dt><dd>Transcription seconds and AI credit consumption, used to apply your plan's allowance and prevent abuse.</dd></div>
+          <div><dt>Technical data</dt><dd>Basic request, error, and device/browser information needed to keep the service running and secure.</dd></div>
+        </dl>
+
+        <h2>How we use it</h2>
+        <ul>
+          <li>To provide live transcription, your recording library, cross-device sync, and the personal or organization folders you choose.</li>
+          <li>To send audio to a transcription service on your behalf, and to a model provider when you use AI features.</li>
+          <li>To keep accounts secure, meter allowances, and diagnose service failures.</li>
+        </ul>
+        <p>We do not sell your personal data, and we do not use your meeting content for advertising.</p>
+
+        <h2>Storage and third parties</h2>
+        <p>The official cloud edition uses Cloudflare D1 and R2 to store account data, recording metadata, and audio objects transferred over encrypted connections. Live transcription uses Soniox; the official AI features use Groq. If you sign in with Google or Apple, that provider handles your sign-in data under its own policy. These providers process data only to deliver the Parley service.</p>
+
+        <h2>Analytics on this website</h2>
+        <p>This website (parley.tw) uses Cloudflare Web Analytics to count page views. It sets no cookies and collects no personal data; we see only aggregate page-view counts. It runs on parley.tw only and is separate from the Parley apps, which contain no telemetry.</p>
+
+        <h2>Retention and deletion</h2>
+        <p>Your account data and personal recordings are kept until you delete them. Deleting your account permanently removes the account, the audio and transcripts of your personal recordings, your folders, and your usage data — and it cannot be undone. On iOS: <span class="path">Settings → Account → Delete account</span>. On Android: the <span class="path">Account</span> sheet → <span class="path">Delete account</span>. If you cannot open the app, follow the <a href="../account-deletion/?lang=en">account deletion page</a> to request it by email from your registered address. If you own a shared organization, you must transfer or delete that organization first, so other members' shared recordings are not destroyed by accident.</p>
+        <p>A finished recording that fails to sync is held in your device's app support storage until it uploads, then removed automatically. Deleting the app clears any such pending data from that device.</p>
+
+        <h2>Your responsibilities and choices</h2>
+        <p>Obtain consent from everyone present before recording, as the law where you are requires. Parley's mobile apps do not capture phone calls or the system audio of other apps; they use the microphone only while you have explicitly started a recording.</p>
+
+        <h2>Contact</h2>
+        <p>For privacy questions, data requests, or feedback on this policy, email <a href="mailto:contact@pathors.com">contact@pathors.com</a>.</p>
+      </article>
     </main>
-    <footer>© 2026 Pathors AI · <a href="../support/">Support</a> · <a href="../account-deletion/">Account deletion</a></footer>
+
+    <footer class="site-foot">
+      <div class="wrap">
+        <nav lang="zh-Hant-TW" data-lang="zh" aria-label="其他頁面">
+          <a href="../">Parley 首頁</a>
+          <a href="../support/">支援</a>
+          <a href="../account-deletion/">刪除帳號</a>
+        </nav>
+        <nav lang="en" data-lang="en" aria-label="Other pages">
+          <a href="../en/">Parley home</a>
+          <a href="../support/?lang=en">Support</a>
+          <a href="../account-deletion/?lang=en">Account deletion</a>
+        </nav>
+        <p class="copyright">© 2026 Pathors AI</p>
+      </div>
+    </footer>
+    <script src="../legal.js"></script>
   </body>
 </html>

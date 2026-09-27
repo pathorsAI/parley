@@ -164,7 +164,9 @@ final class EnglishWordsTests: XCTestCase {
             calls += 1
             landed.fulfill()
         }
+        // A second warm joins the first rather than starting another parse.
         warmed.warm { calls += 1 }
+        XCTAssertEqual(warmed.parseCount, 1)
         XCTAssertEqual(warmed.completions(for: "tomo"), [])
         XCTAssertEqual(warmed.nextWords(after: "thank"), [])
         XCTAssertNil(warmed.rank(of: "the"))
@@ -174,9 +176,51 @@ final class EnglishWordsTests: XCTestCase {
         XCTAssertEqual(warmed.completions(for: "tomo").first, "tomorrow")
         XCTAssertEqual(warmed.nextWords(after: "thank"), ["you"])
         XCTAssertEqual(warmed.rank(of: "the"), 0)
+        // Each waiting callback ran once, from the one parse.
+        XCTAssertEqual(calls, 2)
+        XCTAssertEqual(warmed.parseCount, 1)
+        // Already warm: answered straight away, with no second parse.
         warmed.warm { calls += 1 }
+        XCTAssertEqual(calls, 3)
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
-        XCTAssertEqual(calls, 1)
+        XCTAssertEqual(calls, 3)
+        XCTAssertEqual(warmed.parseCount, 1)
+    }
+
+    func testALookupThatBeatsTheWarmAnswersNothingAndReadsNothing() {
+        // Reading a second copy beside the one being built is exactly the
+        // memory spike the warm exists to avoid; the letter that loses the race
+        // gets a blank bar and the completion fills it in.
+        let words = EnglishWords(
+            wordsURL: EnglishWords.bundledWordsURL,
+            followersURL: EnglishWords.bundledFollowersURL)
+        let landed = expectation(description: "the warm's completion runs")
+        words.warm { landed.fulfill() }
+        XCTAssertEqual(words.completions(for: "tomo"), [])
+        XCTAssertEqual(words.parseCount, 1)
+        wait(for: [landed], timeout: 5)
+        XCTAssertEqual(words.completions(for: "tomo").first, "tomorrow")
+        XCTAssertEqual(words.parseCount, 1)
+
+        var immediately = false
+        words.warm { immediately = true }
+        XCTAssertTrue(immediately, "already warm: no trip through the queue")
+    }
+
+    func testUnloadDropsTheListAndTheNextLookupReadsItAgain() {
+        let words = EnglishWords(
+            wordsURL: EnglishWords.bundledWordsURL,
+            followersURL: EnglishWords.bundledFollowersURL)
+        XCTAssertEqual(words.completions(for: "tomo").first, "tomorrow")
+        words.unload()
+        XCTAssertFalse(words.isWarm)
+        XCTAssertEqual(words.completions(for: "tomo").first, "tomorrow")
+        XCTAssertEqual(words.parseCount, 2)
+        XCTAssertEqual(words.nextWords(after: "thank"), ["you"], "the followers come back too")
+
+        let fixture = EnglishWords(words: ["the", "tomorrow"])
+        fixture.unload()
+        XCTAssertEqual(fixture.completions(for: "to"), ["tomorrow"], "nothing to reload from")
     }
 }
 

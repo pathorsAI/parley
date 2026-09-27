@@ -83,6 +83,76 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.21
+
+What you dictate is kept, so words that never landed are one tap away.
+
+If a dictation didn't make it into the app you were typing in, open Parley and
+go to Library › Voice typing. Everything you dictated in the last 30 days is
+there, newest first; tap the copy button beside it and paste it where it
+belongs. Tap an entry to read it in full, share it, or delete it. The history
+stays on your phone and never leaves it. Settings › Voice typing history turns
+it off or clears it.
+
+The Parley keyboard stays readable in dark mode, Notes included.
+
+In a few apps, Apple's Notes among them, dark mode drew the candidates above
+the keys in near-black on a black keyboard, where they could not be read. The
+keys and the words above them now follow the same dark or light setting as the
+keyboard behind them, including when you switch dark mode while typing.
+
+Bopomofo is typed where you are typing, and the whole bar above the keys is for candidates.
+
+The syllables you haven't turned into characters yet now appear underlined at
+the cursor in the app you're typing in, as they do on the system keyboard,
+instead of in a small box beside the candidates. That box is gone, so the bar
+has room for more candidates. Pick one and the underline shrinks to what is
+left; delete edits the underlined syllables before anything else. If you
+dismiss the keyboard or move to another field before choosing, some apps keep
+the bare symbols as typed; the next time the keyboard comes up right after
+them, Parley swaps them for its best guess. In the rare app that doesn't show
+underlined text, the syllables appear in the bar as before.
+
+## What's New — 1.20
+
+The Parley keyboard looks right in dark mode, in every app.
+
+In apps that follow the system's dark mode — Claude and LINE among them — the
+keys were drawn white with black letters on a dark keyboard. They now match the
+keyboard around them, and change with it when you switch dark mode on or off
+while typing.
+
+注音 types Chinese punctuation. 「，」 and 「。」 sit on either side of the space
+bar, and the 123 and #+= keys on the 注音 keyboard now bring up full-width
+marks — 、？！：；「」（）…～ and more. Tapping space twice ends a sentence with 「。」.
+
+Tap ⌄ at the end of the candidate bar to see every candidate at once, in a grid
+where the keys were. Tap one to type it, or ⌃ to go back to the keys.
+
+More candidates stay in view while you type a long phrase: the reading above the
+keys now shows its last two syllables instead of all of them, so the candidates
+keep most of the bar.
+
+The keyboard is lighter and quicker.
+
+Typing on the 注音 and English keyboards now redraws only what changed — the
+bar of candidates above the keys — instead of every key on every tap, so the
+keyboard keeps up when you type fast.
+
+It also holds less in memory. Its word lists are never loaded twice at once,
+and the ones you are not using are let go when your phone runs short, which
+makes the keyboard much less likely to close unexpectedly in the middle of a
+sentence.
+
+One wrong 注音 symbol no longer empties the candidate bar.
+
+Mix up two symbols that sound alike — n and l, a retroflex and its flat
+twin, a front and a back nasal — or catch the key next to the one you meant,
+and the 注音 keyboard still offers the word you were after, right behind the
+words that match exactly what you typed, so typing correctly works just as it
+did. A syllable no character is read as now commits its closest character on
+return instead of the raw 注音. Tones still have to be right.
+
 ## What's New — 1.19
 
 Dictating twice in a row stays where you are.

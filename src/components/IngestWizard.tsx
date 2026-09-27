@@ -419,6 +419,7 @@ export function IngestWizard() {
                   onScrubStart={player.beginScrub}
                   onScrubEnd={player.endScrub}
                   ariaLabel={t("replay.playhead")}
+                  countsAsReplay={false}
                 />
                 <span className="w-9 shrink-0 text-[10px] tabular-nums text-muted-foreground">
                   {formatClock(session.durationMs)}

@@ -16,6 +16,10 @@ struct ParleyApp: App {
     /// the first scene is built. See `ParleyAppearance.swift`.
     init() {
         ParleyAppearance.apply()
+        // Before anything can sign in: the checklist's first-launch migration
+        // reads whether a session token is *already* in the Keychain, and it
+        // has to ask before this launch could have put one there.
+        _ = GettingStartedStore.shared
     }
 
     var body: some Scene {
@@ -108,30 +112,26 @@ struct RootView: View {
 }
 
 struct MainTabs: View {
-    /// Selection is bound rather than implicit only so the DEBUG screenshot
-    /// routes can land on a tab without a tap; behaviour is otherwise identical.
-    @State private var tab: ScreenshotTab = .record
+    /// The selection, lifted out of this view so Settings can send the user to
+    /// the Library — see `TabRouter`.
+    @StateObject private var router = TabRouter()
 
     var body: some View {
-        TabView(selection: $tab) {
+        TabView(selection: $router.tab) {
             LiveView()
                 .tabItem { Label("Record", systemImage: "record.circle") }
-                .tag(ScreenshotTab.record)
+                .tag(AppTab.record)
             LibraryView()
                 .tabItem { Label("Library", systemImage: "rectangle.stack") }
-                .tag(ScreenshotTab.library)
+                .tag(AppTab.library)
             SettingsView()
                 .tabItem { Label("Settings", systemImage: "gearshape") }
-                .tag(ScreenshotTab.settings)
+                .tag(AppTab.settings)
         }
+        .environmentObject(router)
         #if DEBUG
-            .onReceive(ScreenshotDemo.shared.$tab) { tab = $0 }
+            // The DEBUG screenshot routes land on a tab without a tap.
+            .onReceive(ScreenshotDemo.shared.$tab) { router.tab = $0 }
         #endif
     }
 }
-
-#if DEBUG
-    typealias ScreenshotTab = ScreenshotDemo.Tab
-#else
-    enum ScreenshotTab: Hashable { case record, library, settings }
-#endif

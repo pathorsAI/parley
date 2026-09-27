@@ -13,6 +13,7 @@ import com.pathors.parley.meeting.RecordingFiles
 import com.pathors.parley.playback.AudioRetention
 import com.pathors.parley.playback.LocalAudioStore
 import com.pathors.parley.screenshot.DemoMode
+import com.pathors.parley.upload.AutoSync
 import com.pathors.parley.upload.ManualRetryLedger
 import com.pathors.parley.upload.MeetingUploader
 import com.pathors.parley.upload.PendingBackfillQueue
@@ -45,6 +46,9 @@ class ParleyApplication : Application() {
         // for why launch is the only safe moment to go looking for a recording
         // the last process died in the middle of. The sweep drains afterwards.
         container.adoptOrphanedRecordings()
+        // From here on, a returning network or a returning user drains the
+        // queues too — not only the next cold start.
+        container.autoSync.start()
     }
 }
 
@@ -119,6 +123,13 @@ class AppContainer(private val app: Application) {
         localAudio = localAudio,
         keepsAudioOnPhone = audioRetention::keepsAudioOnPhoneNow,
     )
+
+    /**
+     * Drains both queues when a validated network comes back and when the app
+     * returns to the foreground. Started from `Application.onCreate`, after the
+     * launch-time sweep.
+     */
+    val autoSync: AutoSync = AutoSync(app, appScope) { drainPendingUploads() }
 
     /**
      * The last sign-in callback error code (never display copy — the UI maps it),
@@ -200,6 +211,9 @@ class AppContainer(private val app: Application) {
             // time.
             if (auth.currentToken() == null) return@launch
             runCatching { uploader.drain() }
+            // Then whatever was waiting for a better transcript — including a
+            // re-transcription the last process was killed in the middle of.
+            drainPendingBackfills()
         }
     }
 
@@ -252,6 +266,7 @@ class AppContainer(private val app: Application) {
             uploader = uploader,
             uri = uri,
             title = title,
+            drainBackfills = ::drainPendingBackfills,
         )
         _activeImport.value = session
         session.start()
