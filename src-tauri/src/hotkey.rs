@@ -5,10 +5,13 @@
 //!     Windows) or any user-recorded `combo:<modifiers+Key>` (e.g.
 //!     `combo:control+shift+KeyD`, `combo:F6`), handled by the cross-platform
 //!     `tauri-plugin-global-shortcut` (Carbon `RegisterEventHotKey` on macOS).
-//!     Needs NO extra permission — this is the out-of-the-box path, and the
-//!     only one off macOS.
-//!   - `fn` / `right-option` / `right-command` / `right-control` — macOS only,
-//!     single modifier keys handled by a macOS event tap (`kCGSessionEventTap`),
+//!     Needs NO extra permission — this is the out-of-the-box path.
+//!   - `fn` / `right-option` / `right-command` / `right-control` — single
+//!     modifier keys held as push-to-talk. On Windows only `right-control`
+//!     (right Ctrl) and `right-option` (right Alt, the key in the same place)
+//!     exist, delivered by a low-level keyboard hook that needs no permission
+//!     — see `hotkey/windows_hook.rs`. On macOS all four are handled by an
+//!     event tap (`kCGSessionEventTap`),
 //!     which sees modifier transitions before AppKit monitors. The tap is
 //!     created ACTIVE first (on modern macOS that pairs with the Accessibility
 //!     permission) so the selected key can be swallowed before the OS /
@@ -22,8 +25,9 @@
 //!
 //! The picker is the single source of truth: exactly one trigger is live at a
 //! time. Selecting a combo unregisters everything, registers that combo, and
-//! parks the HID tap (it matches nothing); selecting a modifier unregisters all
-//! combos and arms the HID tap on that key.
+//! parks the HID tap (it matches nothing) or removes the Windows hook;
+//! selecting a modifier unregisters all combos and arms the tap / hook on that
+//! key.
 //!
 //! Auto-paste is a separate concern with a separate gate: Accessibility on
 //! macOS, nothing at all on Windows (see voice_typing.rs).
@@ -37,10 +41,20 @@ use serde::Serialize;
 use tauri::AppHandle;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
 
-/// The modifier-key ids handled by the HID tap (everything else is a combo).
-/// macOS-only in practice: no other platform has an equivalent way to use a
-/// bare modifier as push-to-talk, so off macOS a selection from this list
-/// reports as inert rather than pretending — see `modifier_status`.
+/// Key transitions → push-to-talk start/stop for a held modifier. Only the
+/// Windows hook drives it, but it is compiled into every test build so its
+/// unit tests run on macOS CI too.
+#[cfg(any(target_os = "windows", test))]
+mod modifier_ptt;
+#[cfg(target_os = "windows")]
+mod windows_hook;
+#[cfg(target_os = "windows")]
+use windows_hook as imp;
+
+/// The modifier-key ids handled by the HID tap on macOS and the low-level
+/// keyboard hook on Windows (everything else is a combo). Windows delivers only
+/// the right Ctrl / right Alt ones; an id a platform can't deliver reports as
+/// inert rather than pretending — see `modifier_status`.
 const MODIFIER_IDS: [&str; 4] = ["fn", "right-option", "right-command", "right-control"];
 
 /// The Option+Space global shortcut handled by the global-shortcut plugin.
@@ -95,7 +109,8 @@ pub struct HotkeyStatus {
     active: bool,
     /// How the trigger is delivered: `combo` (global-shortcut plugin),
     /// `tap-active` (HID tap that swallows the key), `tap-listen` (HID tap
-    /// that observes but can't swallow), or `none` (no live tap).
+    /// that observes but can't swallow), `hook` (Windows low-level keyboard
+    /// hook, which observes and never swallows), or `none` (nothing live).
     mode: String,
     /// The current selection id (`alt-space` / `combo:…` / `fn` / `right-*`).
     shortcut: String,
@@ -209,17 +224,32 @@ fn modifier_status(id: String) -> HotkeyStatus {
     }
 }
 
-/// The [`MODIFIER_IDS`] are a macOS HID-tap concept — `fn` and the right-hand
-/// modifiers pressed as push-to-talk keys in their own right — and nothing off
-/// macOS can deliver them, so the answer is a flat "not authorized, not live".
+/// Status for one of the [`MODIFIER_IDS`] on Windows, where a low-level
+/// keyboard hook delivers right Ctrl / right Alt. No permission gates the hook,
+/// so a key Windows has is always authorized, and it is live exactly when the
+/// hook is installed — an installation failure shows as "not active" in
+/// Settings instead of a trigger that silently does nothing. `fn` and
+/// `right-command` have no Windows key (a settings file written on a Mac can
+/// still carry one), so they report "not authorized, not live".
 ///
-/// This has to say so explicitly instead of sharing the macOS branch, because
-/// that branch would LIE here: [`crate::voice_typing::is_accessibility_trusted`]
-/// returns true on Windows (input injection needs no permission there), so the
-/// authorization test would report a trigger that can never fire. A settings
-/// file written on a Mac and opened on Windows is enough to reach this, and
-/// Settings would then show a working shortcut that silently does nothing.
-#[cfg(not(target_os = "macos"))]
+/// This must not share the macOS branch: that one tests
+/// [`crate::voice_typing::is_accessibility_trusted`], which is always true on
+/// Windows and would vouch for keys that can never fire.
+#[cfg(target_os = "windows")]
+fn modifier_status(id: String) -> HotkeyStatus {
+    let supported = modifier_ptt::Trigger::from_id(&id).is_some();
+    let active = supported && imp::is_hooked();
+    HotkeyStatus {
+        authorized: supported,
+        active,
+        mode: if active { "hook" } else { "none" }.to_string(),
+        shortcut: id,
+    }
+}
+
+/// Nothing delivers the [`MODIFIER_IDS`] off macOS and Windows, so the answer
+/// is a flat "not authorized, not live".
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn modifier_status(id: String) -> HotkeyStatus {
     HotkeyStatus {
         authorized: false,
@@ -249,11 +279,13 @@ pub fn install_wake_observer(app: AppHandle) {
 }
 
 /// Re-apply the currently selected trigger (see [`install_wake_observer`]).
-/// macOS-only: it runs from the NSWorkspace wake block, and the failure modes
-/// it repairs — an inert Carbon registration, a silently disabled CGEventTap —
-/// are macOS's. The stub `imp` installs no observer, so nothing off macOS ever
-/// asks for a re-assert.
-#[cfg(target_os = "macos")]
+/// macOS runs it from the NSWorkspace wake block, where it repairs an inert
+/// Carbon registration or a silently disabled CGEventTap. Windows runs it on
+/// the main thread after `WM_POWERBROADCAST` / `PBT_APMRESUMEAUTOMATIC`, where
+/// it re-registers the `RegisterHotKey` combo and — through `reenable_tap` —
+/// re-installs the low-level keyboard hook, which Windows removes without
+/// notice when it times out during a slow wake.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn reassert(app: &AppHandle) {
     let id = CURRENT
         .lock()
@@ -262,7 +294,9 @@ fn reassert(app: &AppHandle) {
         .unwrap_or_else(|| BOOT_DEFAULT_ID.to_string());
     log::info!("voice-typing: re-asserting trigger {id:?} after wake");
     // Always revive the tap: in combo mode it's parked (matches nothing) but
-    // must stay alive for the next switch back to a modifier key.
+    // must stay alive for the next switch back to a modifier key. (The
+    // Windows hook is removed in combo mode, so there this re-installs it
+    // only when a modifier key is selected.)
     imp::reenable_tap();
     if MODIFIER_IDS.contains(&id.as_str()) {
         // No-op when the tap thread is alive; recreates it if boot skipped it
@@ -630,15 +664,13 @@ mod imp {
     }
 }
 
-/// There is no HID tap off macOS, so every entry point here reports "nothing
-/// is listening" and the modifier ids can never go live (see `modifier_status`).
+/// Neither a HID tap nor a keyboard hook exists off macOS and Windows, so every
+/// entry point here reports "nothing is listening" and the modifier ids can
+/// never go live (see `modifier_status`).
 ///
-/// This carries ONLY the functions the shared code actually calls off macOS.
-/// The tap-only ones (`is_started`, `tap_mode`, `shortcut_id`, `reenable_tap`)
-/// used to be stubbed here too, but nothing outside the macOS tap asks about —
-/// or revives — a tap that cannot exist, and an unused stub is not free,
-/// because the Windows CI job compiles this file with `-D warnings`.
-#[cfg(not(target_os = "macos"))]
+/// This carries ONLY the functions the shared code actually calls there; an
+/// unused stub is not free, because CI compiles with `-D warnings`.
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 mod imp {
     use tauri::AppHandle;
     pub fn listen_event_authorized() -> bool {
