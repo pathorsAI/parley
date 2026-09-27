@@ -364,7 +364,7 @@ class MeetingSession(
         relay = client
         // Attached before the socket exists: the client queues what it is
         // handed until the upgrade lands, so the first leg needs nothing held.
-        bridge.attach(client)
+        bridge.attach { client }
         // Collect before connecting: open() does not wait for the handshake, and
         // a rejected one arrives as an event rather than an exception.
         eventsJob = scope.launch { client.events.collect(::onRelayEvent) }

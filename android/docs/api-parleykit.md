@@ -204,7 +204,7 @@ fun watch(client: SttRelayClient) = scope.launch {
 }
 
 val first = newLeg(0)
-bridge.attach(first)                 // before open(): the client queues until the upgrade
+bridge.attach { first }              // before open(): the client queues until the upgrade
 watch(first)
 first.open()
 
@@ -243,15 +243,14 @@ throttle to wall-clock — the relay meters forwarded bytes, not elapsed time.
 ## `RelayAudioBridge`
 
 ```kotlin
-interface PcmSink { fun enqueuePcm(bytes: ByteArray) }   // SttRelayClient implements it
+fun interface PcmSink { fun enqueuePcm(bytes: ByteArray) }   // SttRelayClient implements it
 
 class RelayAudioBridge(
     val holdLimitMs: Long = DEFAULT_HOLD_LIMIT_MS,       // 45 000
     sampleRate: Int = SonioxProtocol.SAMPLE_RATE,
 ) {
     fun send(chunk: ByteArray)                           // capture thread; never waits on a socket
-    fun attach(leg: PcmSink)                             // first leg, nothing held
-    fun <L : PcmSink> attach(make: (timeOffsetMs: Long) -> L?): L?
+    fun <L : PcmSink> attach(make: (timeOffsetMs: Long) -> L?): L?  // first leg: attach { leg }
     fun hold()                                           // the leg is gone; start holding
     fun discard()                                        // no leg is coming; drop, keep the clock
     fun reset()                                          // new recording; forget the clock too
@@ -285,8 +284,10 @@ server-side close.
   from the factory leaves the bridge holding with nothing lost.
 - **Threads.** One producer calls `send`; the lifecycle calls may come from any
   thread. The lock is never held across a flush or a socket call.
-- `PcmSink` is a plain interface, not a `fun interface`, so a lambda passed to
-  `attach` cannot be SAM-converted into a sink by accident.
+- `attach` has exactly one signature, the leg factory; the first leg is
+  attached as `attach { leg }`. That is what makes `PcmSink` safe as a
+  `fun interface`: with no `attach(leg: PcmSink)` overload beside it, a lambda
+  passed to `attach` can never be SAM-converted into a sink by accident.
 
 ---
 

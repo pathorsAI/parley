@@ -355,8 +355,6 @@ private fun MeetingContent(
     onDiscard: () -> Unit,
     onDone: () -> Unit,
 ) {
-    val context = LocalContext.current
-    val view = LocalView.current
     val state by session.state.collectAsState()
     val segments by session.segments.collectAsState()
     val issue by session.issue.collectAsState()
@@ -365,16 +363,63 @@ private fun MeetingContent(
     val micSilenced by session.micSilenced.collectAsState()
     val micRecovery by session.micRecovery.collectAsState()
     val storageLow by session.storageLow.collectAsState()
-    val live = state is MeetingState.Recording || state is MeetingState.Connecting
+    val live = isLive(state)
 
-    // A finished meeting is a transient state: show the outcome for a beat, drop
-    // the session, and go back to the library where the new recording now lives.
-    //
-    // Except when the user did not end it. A meeting the microphone or the disk
-    // ended has something to say about *why*, and 1.2 s is not long enough to
-    // read it — it used to flash "Uploaded" and vanish, which read as though the
-    // user had tapped Stop. That outcome stays on screen until they close it,
-    // the way iOS leaves its status line up after the recorder goes idle.
+    CloseWhenFinishedByUser(state, onDone)
+    RecordingStartedHaptic(state)
+    val micBack = rememberMicBackNotice(micRecovery)
+    val close = {
+        MeetingService.clear()
+        onDone()
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp),
+    ) {
+        Spacer(Modifier.height(16.dp))
+        MeetingHeader(elapsed = elapsed, state = state, segments = segments)
+        Spacer(Modifier.height(12.dp))
+        LevelMeter(level = level, live = state is MeetingState.Recording)
+
+        if (live) {
+            MicStatusLine(micLine(micRecovery, micSilenced, micBack))
+            if (storageLow) StorageLowWarning()
+        }
+
+        issue?.let { TranscriptionIssueLine(it) }
+        interruptedFinish(state)?.let { InterruptedOutcome(it, onClose = close) }
+        (state as? MeetingState.Failed)?.let { FailedOutcome(it, onClose = close) }
+
+        Spacer(Modifier.height(16.dp))
+        Box(Modifier.weight(1f)) {
+            LiveTranscript(segments)
+        }
+
+        if (live) {
+            StopButton(onStop)
+            DiscardControl(
+                onDiscard = onDiscard,
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+            )
+        }
+        Spacer(Modifier.height(16.dp))
+    }
+}
+
+/**
+ * A finished meeting is a transient state: show the outcome for a beat, drop
+ * the session, and go back to the library where the new recording now lives.
+ *
+ * Except when the user did not end it. A meeting the microphone or the disk
+ * ended has something to say about *why*, and 1.2 s is not long enough to
+ * read it — it used to flash "Uploaded" and vanish, which read as though the
+ * user had tapped Stop. That outcome stays on screen until they close it,
+ * the way iOS leaves its status line up after the recorder goes idle.
+ */
+@Composable
+private fun CloseWhenFinishedByUser(state: MeetingState, onDone: () -> Unit) {
     LaunchedEffect(state) {
         val finished = state as? MeetingState.Finished ?: return@LaunchedEffect
         if (finished.interruptedBy != null) return@LaunchedEffect
@@ -382,10 +427,16 @@ private fun MeetingContent(
         MeetingService.clear()
         onDone()
     }
+}
 
-    // The microphone opening. On the transition only, so returning to a meeting
-    // already under way (or the screenshot demo, which starts mid-meeting) does
-    // not buzz as though it had just begun.
+/**
+ * The microphone opening. On the transition only, so returning to a meeting
+ * already under way (or the screenshot demo, which starts mid-meeting) does
+ * not buzz as though it had just begun.
+ */
+@Composable
+private fun RecordingStartedHaptic(state: MeetingState) {
+    val view = LocalView.current
     val lastState = remember { StateRef<MeetingState?>(null) }
     LaunchedEffect(state) {
         val before = lastState.value
@@ -394,9 +445,16 @@ private fun MeetingContent(
             MeetingHaptics.recordingStarted(view)
         }
     }
+}
 
-    // "Microphone is back" is news for a moment, not a state: shown for a few
-    // seconds after recovery, then the line goes quiet again.
+/**
+ * "Microphone is back" is news for a moment, not a state: true for a few
+ * seconds after recovery, then the line goes quiet again. Also buzzes once
+ * when the microphone is lost.
+ */
+@Composable
+private fun rememberMicBackNotice(micRecovery: MicRecoveryState): Boolean {
+    val view = LocalView.current
     var micBack by remember { mutableStateOf(false) }
     val lastRecovery = remember { StateRef<MicRecoveryState>(micRecovery) }
     LaunchedEffect(micRecovery) {
@@ -411,164 +469,140 @@ private fun MeetingContent(
         }
         micBack = false
     }
+    return micBack
+}
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp),
-    ) {
-        Spacer(Modifier.height(16.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = formatClock(elapsed),
-                    style = MaterialTheme.typography.displaySmall,
-                    fontWeight = FontWeight.Medium,
-                )
-                Text(
-                    text = statusLabel(state),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            // Copying works mid-meeting on purpose: the reason to grab a line is
-            // usually that it was just said.
-            CopyTranscriptButton(
-                text = {
-                    TranscriptClipboard.liveTranscript(segments) {
-                        speakerLabel(context, it.speaker)
-                    }
-                },
-                isEmpty = segments.isEmpty(),
-            )
-            ShareTranscriptButton(
-                text = {
-                    TranscriptClipboard.liveTranscript(segments) {
-                        speakerLabel(context, it.speaker)
-                    }
-                },
-                isEmpty = segments.isEmpty(),
-            )
+/** The clock, the status line, and the copy/share actions. */
+@Composable
+private fun MeetingHeader(elapsed: Long, state: MeetingState, segments: List<TranscriptSegment>) {
+    val context = LocalContext.current
+    val transcript = {
+        TranscriptClipboard.liveTranscript(segments) {
+            speakerLabel(context, it.speaker)
         }
-        Spacer(Modifier.height(12.dp))
-        LevelMeter(level = level, live = state is MeetingState.Recording)
-
-        // Louder than the transcription banner on purpose: a microphone that is
-        // silenced, being fought for or gone means the audio itself is empty,
-        // which is the one failure nothing later can recover from.
-        if (live) {
-            micNotice(micRecovery, micSilenced, micBack)?.let { notice ->
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    text = notice.text,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (notice.alarming) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                )
-            }
-        }
-
-        // Still recording, but not for much longer unless something is freed.
-        // The session stops and saves on its own before the disk fills; this is
-        // the warning that gives the user the chance to prevent that.
-        if (live && storageLow) {
-            Spacer(Modifier.height(12.dp))
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
             Text(
-                text = stringResource(R.string.meeting_storage_low),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
-
-        issue?.let { current ->
-            Spacer(Modifier.height(12.dp))
-            Text(
-                text = when (current) {
-                    TranscriptionIssue.QUOTA_EXCEEDED -> stringResource(R.string.meeting_issue_quota)
-                    TranscriptionIssue.RELAY_ERROR,
-                    TranscriptionIssue.RELAY_CLOSED,
-                    -> stringResource(R.string.meeting_issue_error)
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
-
-        (state as? MeetingState.Finished)?.takeIf { it.interruptedBy != null }?.let { finished ->
-            Spacer(Modifier.height(12.dp))
-            Text(
-                text = stringResource(R.string.meeting_interrupted),
-                style = MaterialTheme.typography.bodyMedium,
+                text = formatClock(elapsed),
+                style = MaterialTheme.typography.displaySmall,
+                fontWeight = FontWeight.Medium,
             )
             Text(
-                text = stringResource(
-                    if (finished.pendingUpload) R.string.meeting_queued else R.string.meeting_uploaded
-                ),
+                text = statusLabel(state),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            TextButton(onClick = {
-                MeetingService.clear()
-                onDone()
-            }) {
-                Text(stringResource(R.string.action_close))
-            }
         }
+        // Copying works mid-meeting on purpose: the reason to grab a line is
+        // usually that it was just said.
+        CopyTranscriptButton(text = transcript, isEmpty = segments.isEmpty())
+        ShareTranscriptButton(text = transcript, isEmpty = segments.isEmpty())
+    }
+}
 
-        (state as? MeetingState.Failed)?.let { failed ->
-            Spacer(Modifier.height(12.dp))
-            Text(
-                text = failureMessage(failed.reason),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.error,
-            )
-            TextButton(onClick = {
-                MeetingService.clear()
-                onDone()
-            }) {
-                Text(stringResource(R.string.action_close))
-            }
-        }
+/**
+ * Louder than the transcription banner on purpose: a microphone that is
+ * silenced, being fought for or gone means the audio itself is empty, which is
+ * the one failure nothing later can recover from.
+ */
+@Composable
+private fun MicStatusLine(line: MicLine?) {
+    if (line == null) return
+    Spacer(Modifier.height(12.dp))
+    Text(
+        text = micLineText(line),
+        style = MaterialTheme.typography.bodyMedium,
+        color = if (line.alarming) {
+            MaterialTheme.colorScheme.error
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        },
+    )
+}
 
-        Spacer(Modifier.height(16.dp))
-        Box(Modifier.weight(1f)) {
-            LiveTranscript(segments)
-        }
+/**
+ * Still recording, but not for much longer unless something is freed. The
+ * session stops and saves on its own before the disk fills; this is the
+ * warning that gives the user the chance to prevent that.
+ */
+@Composable
+private fun StorageLowWarning() {
+    Spacer(Modifier.height(12.dp))
+    Text(
+        text = stringResource(R.string.meeting_storage_low),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.error,
+    )
+}
 
-        if (live) {
-            Button(
-                onClick = {
-                    // On the tap, not when the upload lands: the beat answers
-                    // the press, and closing, draining and uploading are
-                    // seconds of work.
-                    MeetingHaptics.recordingStopped(view)
-                    onStop()
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    // A minimum, not a height: at the largest accessibility font
-                    // a fixed 56.dp clips the label it exists to show.
-                    .defaultMinSize(minHeight = 56.dp)
-                    .padding(vertical = 4.dp),
-                colors = ButtonDefaults.buttonColors(
-                    // The recording red, not the error red. Since the brand
-                    // palette landed these mean different things: this button is
-                    // the state of the recording, not a fault.
-                    containerColor = ParleyTheme.colors.recording,
-                    contentColor = MaterialTheme.colorScheme.onError,
-                ),
-            ) {
-                Text(stringResource(R.string.action_stop))
-            }
-            DiscardControl(
-                onDiscard = onDiscard,
-                modifier = Modifier.align(Alignment.CenterHorizontally),
-            )
-        }
-        Spacer(Modifier.height(16.dp))
+@Composable
+private fun TranscriptionIssueLine(issue: TranscriptionIssue) {
+    Spacer(Modifier.height(12.dp))
+    Text(
+        text = stringResource(transcriptionIssueRes(issue)),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.error,
+    )
+}
+
+/** A meeting the user did not end: say so, say where the audio went, and wait. */
+@Composable
+private fun InterruptedOutcome(finished: MeetingState.Finished, onClose: () -> Unit) {
+    Spacer(Modifier.height(12.dp))
+    Text(
+        text = stringResource(R.string.meeting_interrupted),
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    Text(
+        text = stringResource(finishedOutcomeRes(finished)),
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    TextButton(onClick = onClose) {
+        Text(stringResource(R.string.action_close))
+    }
+}
+
+@Composable
+private fun FailedOutcome(failed: MeetingState.Failed, onClose: () -> Unit) {
+    Spacer(Modifier.height(12.dp))
+    Text(
+        text = failureMessage(failed.reason),
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.error,
+    )
+    TextButton(onClick = onClose) {
+        Text(stringResource(R.string.action_close))
+    }
+}
+
+@Composable
+private fun StopButton(onStop: () -> Unit) {
+    val view = LocalView.current
+    Button(
+        onClick = {
+            // On the tap, not when the upload lands: the beat answers
+            // the press, and closing, draining and uploading are
+            // seconds of work.
+            MeetingHaptics.recordingStopped(view)
+            onStop()
+        },
+        modifier = Modifier
+            .fillMaxWidth()
+            // A minimum, not a height: at the largest accessibility font
+            // a fixed 56.dp clips the label it exists to show.
+            .defaultMinSize(minHeight = 56.dp)
+            .padding(vertical = 4.dp),
+        colors = ButtonDefaults.buttonColors(
+            // The recording red, not the error red. Since the brand
+            // palette landed these mean different things: this button is
+            // the state of the recording, not a fault.
+            containerColor = ParleyTheme.colors.recording,
+            contentColor = MaterialTheme.colorScheme.onError,
+        ),
+    ) {
+        Text(stringResource(R.string.action_stop))
     }
 }
 
@@ -707,38 +741,20 @@ private fun stoppedEarlyLabel(reason: MeetingFailure): String = stringResource(
     }
 )
 
-/** One line of microphone status, and whether it is bad news. */
-private class MicNotice(val text: String, val alarming: Boolean)
-
-/**
- * The single microphone line, the way iOS shows its one status line
- * (`MeetingRecorder.handle(_: AudioCapture.Status)`), in priority order: lost,
- * being fought for, silenced, back. Never two at once — a silenced microphone
- * is usually *also* recovering, and two banners saying the same thing in
- * different words read as two problems.
- */
+/** The copy for one microphone line; which line to show is [micLine]'s call. */
 @Composable
-private fun micNotice(recovery: MicRecoveryState, silenced: Boolean, back: Boolean): MicNotice? =
-    when (recovery) {
-        is MicRecoveryState.Lost -> MicNotice(
-            text = when (val loss = recovery.loss) {
-                CaptureRecovery.Loss.TakenBySystem -> stringResource(R.string.meeting_mic_lost_taken)
-                is CaptureRecovery.Loss.Broken -> loss.description
-                    ?.let { stringResource(R.string.meeting_mic_lost_broken_detail, it) }
-                    ?: stringResource(R.string.meeting_mic_lost_broken)
-            },
-            alarming = true,
-        )
-
-        MicRecoveryState.Recovering ->
-            MicNotice(stringResource(R.string.meeting_mic_recovering), alarming = true)
-
-        MicRecoveryState.Holding -> when {
-            silenced -> MicNotice(stringResource(R.string.meeting_mic_silenced), alarming = true)
-            back -> MicNotice(stringResource(R.string.meeting_mic_back), alarming = false)
-            else -> null
-        }
+private fun micLineText(line: MicLine): String = when (line) {
+    is MicLine.Lost -> when (val loss = line.loss) {
+        CaptureRecovery.Loss.TakenBySystem -> stringResource(R.string.meeting_mic_lost_taken)
+        is CaptureRecovery.Loss.Broken -> loss.description
+            ?.let { stringResource(R.string.meeting_mic_lost_broken_detail, it) }
+            ?: stringResource(R.string.meeting_mic_lost_broken)
     }
+
+    MicLine.Recovering -> stringResource(R.string.meeting_mic_recovering)
+    MicLine.Silenced -> stringResource(R.string.meeting_mic_silenced)
+    MicLine.Back -> stringResource(R.string.meeting_mic_back)
+}
 
 /**
  * A plain mutable box for the previous value an effect compares against. Not

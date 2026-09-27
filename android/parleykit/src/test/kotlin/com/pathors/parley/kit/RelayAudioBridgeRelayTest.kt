@@ -98,7 +98,7 @@ class RelayAudioBridgeRelayTest {
         // Leg 0: attached before the socket is even opened, as the session does
         // so the microphone never waits on a handshake.
         val legA = newClient(leg = 0, timeOffsetMs = 0)
-        bridge.attach(legA)
+        bridge.attach { legA }
         repeat(20) { bridge.send(chunk(1)) } // two seconds
         legA.open()
         serverA.text.poll(5, TimeUnit.SECONDS) // config

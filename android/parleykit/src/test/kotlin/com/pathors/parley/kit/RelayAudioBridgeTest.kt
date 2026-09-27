@@ -41,7 +41,7 @@ class RelayAudioBridgeTest {
     fun attachedAudioGoesStraightToTheLeg() {
         val bridge = RelayAudioBridge()
         val leg = Recorder()
-        bridge.attach(leg)
+        bridge.attach { leg }
 
         bridge.send(chunk(1))
         bridge.send(chunk(2))
@@ -55,7 +55,7 @@ class RelayAudioBridgeTest {
     fun gapAudioIsHeldAndFlushedIntoTheNextLegInOrder() {
         val bridge = RelayAudioBridge()
         val first = Recorder()
-        bridge.attach(first)
+        bridge.attach { first }
         bridge.send(chunk(1))
 
         bridge.hold()
@@ -80,7 +80,7 @@ class RelayAudioBridgeTest {
     @Test
     fun theNextLegIsOffsetToWhereTheHeldAudioWasSpoken() {
         val bridge = RelayAudioBridge()
-        bridge.attach(Recorder())
+        bridge.attach { Recorder() }
         // Ten seconds of meeting before the socket dies.
         repeat(10) { bridge.send(chunk(1, samples = SECOND_OF_SAMPLES)) }
 
@@ -105,7 +105,7 @@ class RelayAudioBridgeTest {
     @Test
     fun offsetWithNothingHeldIsTheLivePosition() {
         val bridge = RelayAudioBridge()
-        bridge.attach(Recorder())
+        bridge.attach { Recorder() }
         repeat(5) { bridge.send(chunk(1, samples = SECOND_OF_SAMPLES)) }
         bridge.hold()
 
@@ -120,7 +120,7 @@ class RelayAudioBridgeTest {
     @Test
     fun holdingIsBoundedAndDropsTheOldestAudio() {
         val bridge = RelayAudioBridge(holdLimitMs = 3_000)
-        bridge.attach(Recorder())
+        bridge.attach { Recorder() }
         bridge.hold()
 
         // Six seconds into a three-second buffer.
@@ -149,7 +149,7 @@ class RelayAudioBridgeTest {
     @Test
     fun discardDropsHeldAudioAndKeepsTheClock() {
         val bridge = RelayAudioBridge()
-        bridge.attach(Recorder())
+        bridge.attach { Recorder() }
         bridge.send(chunk(1, samples = SECOND_OF_SAMPLES))
         bridge.hold()
         bridge.send(chunk(2, samples = SECOND_OF_SAMPLES))
@@ -188,7 +188,7 @@ class RelayAudioBridgeTest {
     @Test
     fun resetForgetsTheClock() {
         val bridge = RelayAudioBridge()
-        bridge.attach(Recorder())
+        bridge.attach { Recorder() }
         bridge.send(chunk(1, samples = SECOND_OF_SAMPLES))
         bridge.reset()
 
@@ -205,7 +205,7 @@ class RelayAudioBridgeTest {
         val bridge = RelayAudioBridge()
         val first = Recorder()
         val second = Recorder()
-        bridge.attach(first)
+        bridge.attach { first }
 
         val chunks = 200
         val done = CountDownLatch(1)

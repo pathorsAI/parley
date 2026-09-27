@@ -5,11 +5,14 @@ package com.pathors.parley.kit
  * loop without making it wait. [SttRelayClient] is the only production
  * implementation; tests use a recorder.
  *
- * A plain interface rather than a `fun interface` on purpose: SAM conversion
- * would let a lambda passed to [RelayAudioBridge.attach] silently become a
- * sink instead of the leg factory it was written as.
+ * A `fun interface`, so a lambda can stand in for a sink. That is safe only
+ * because [RelayAudioBridge.attach] has a single signature — it takes a leg
+ * *factory*, never a sink — so a lambda handed to it cannot be SAM-converted
+ * into a sink by overload resolution. Keep it that way: an `attach(leg:
+ * PcmSink)` overload next to the factory one would let `attach { offsetMs -> … }`
+ * silently become a sink instead of the factory it was written as.
  */
-interface PcmSink {
+fun interface PcmSink {
     fun enqueuePcm(bytes: ByteArray)
 }
 
@@ -137,13 +140,13 @@ class RelayAudioBridge(
 
     // ── leg lifecycle ────────────────────────────────────────────────────────
 
-    /** Point the bridge at a leg with nothing held (the first connection). */
-    fun attach(leg: PcmSink) {
-        attach { leg }
-    }
-
     /**
-     * Create the next leg and hand it everything held during the gap.
+     * Create the next leg and hand it everything held during the gap. For the
+     * first connection, with nothing held, pass the existing leg:
+     * `attach { leg }`.
+     *
+     * Deliberately the only way to attach: see [PcmSink] for why there is no
+     * `attach(leg: PcmSink)` overload.
      *
      * [make] receives the timestamp offset that leg must be configured with —
      * the position of the oldest held sample, or the live position when
