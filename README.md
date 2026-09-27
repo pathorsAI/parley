@@ -31,11 +31,11 @@ Then it opens all of it over a local **MCP server** — 54 tools — so Claude, 
 
 **Local-first, bring your own keys.** Audio and transcripts go directly to the STT and LLM providers *you* configure (Claude, OpenAI, Gemini, Soniox, Deepgram, …). No Pathors proxy, no telemetry, everything stored on your machine.
 
-**macOS and Windows, from one codebase.** The difference is what the app can hear. macOS captures the other side of a call through a Core Audio process tap; the Windows equivalent (WASAPI loopback) is not written yet, so on Windows a meeting records your microphone only.
+**macOS and Windows, from one codebase.** Both record both sides of a call: macOS captures the other side through a Core Audio process tap, Windows through WASAPI loopback of the default output device (no permission needed).
 
 | | macOS | Windows |
 | --- | --- | --- |
-| Records the other side of the call | Yes — Core Audio process tap | Not yet |
+| Records the other side of the call | Yes — Core Audio process tap | Yes — WASAPI loopback of the default output device |
 | Records your microphone | Yes | Yes |
 | Voice typing | Yes (<kbd>Option+Space</kbd>) | Yes (<kbd>Ctrl+Alt+Space</kbd>) |
 | Transcription, diarization and analysis | Yes | Yes |
