@@ -4,7 +4,8 @@
 //! The premise of the phrase dictionary is that a correction made seconds after
 //! a dictation is a free, high-quality label: whatever the user retyped is what
 //! they wanted the STT to produce. Catching it needs no keylogging — the
-//! platform accessibility API can read the focused element's value, so we
+//! platform accessibility API (Accessibility on macOS, UI Automation on
+//! Windows) can read the focused element's value, so we
 //! snapshot it right after the paste and poll it for a minute. If the value
 //! settles on something other than the snapshot while focus stays put, we emit
 //! ONE `voicetyping://correction-candidate` and stop; the frontend diffs
@@ -21,21 +22,28 @@
 
 use tauri::AppHandle;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 mod watch;
 
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
-use macos as imp;
+use self::macos as imp;
+
+#[cfg(target_os = "windows")]
+mod windows;
+#[cfg(target_os = "windows")]
+use self::windows as imp;
 
 /// Start watching the field voice typing just pasted `inserted_text` into.
 ///
-/// Returns whether an observation was actually armed: `false` when
-/// Accessibility isn't granted, when there is no focused element, or when its
-/// value can't be read as a reasonable string. Returning `true` promises only
-/// that we are watching — most observations legitimately end with no event,
-/// because most dictations are not corrected.
+/// Returns whether an observation was (or, on Windows and for a
+/// not-yet-accessible Electron app on macOS, is being) armed: `false` when the
+/// platform accessibility layer is unavailable (macOS: Accessibility not
+/// granted) or there is no app to watch. Returning `true` promises only that
+/// we are watching — most observations legitimately end with no event,
+/// because most dictations are not corrected, and a field that turns out to be
+/// unreadable ends one quietly.
 ///
 /// Non-blocking: the polling lives on a background thread, and a later call
 /// supersedes an earlier one.
@@ -44,16 +52,13 @@ pub fn observe_pasted_field(app: AppHandle, inserted_text: String) -> bool {
     imp::observe(app, inserted_text)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 mod imp {
     use tauri::AppHandle;
 
-    /// No Accessibility API outside macOS. Voice typing itself now runs on
-    /// Windows, but this watcher does not: reading back the field we pasted
-    /// into needs UI Automation, which is a separate implementation nobody has
-    /// written. The cost is that a Windows user's corrections never become
-    /// dictionary suggestions — dictation itself is unaffected, and the
-    /// dictionary stays editable by hand.
+    /// No field-reading accessibility layer is wired up on other platforms,
+    /// so no correction is ever noticed there; the dictionary stays editable
+    /// by hand.
     pub fn observe(_app: AppHandle, _inserted_text: String) -> bool {
         false
     }

@@ -57,7 +57,10 @@ pub(super) fn is_current(generation: u64) -> bool {
     GENERATION.load(Ordering::SeqCst) == generation
 }
 
-/// Whether a field value is short enough to be worth watching.
+/// Whether a field value is short enough to be worth watching. Windows bounds
+/// its reads in UTF-16 units at the source instead (see `windows.rs`), so only
+/// macOS calls this.
+#[cfg(any(target_os = "macos", test))]
 pub(super) fn within_limit(value: &str) -> bool {
     value.chars().count() <= MAX_VALUE_CHARS
 }

@@ -412,14 +412,15 @@ pub(crate) fn is_accessibility_trusted() -> bool {
 }
 
 /// Pid of the frontmost app (the one voice typing pastes into), used by
-/// ax_observe to scope its queries to that app. NSWorkspace, not AX — works
-/// even when the target's accessibility tree is still switched off.
+/// ax_observe to scope its queries to that app. On macOS it comes from
+/// NSWorkspace, not AX — works even when the target's accessibility tree is
+/// still switched off.
 ///
-/// macOS-only, like its one caller: correction watching is built on the macOS
-/// AX tree and has no counterpart elsewhere. There used to be an `Option::None`
-/// stub for other platforms, but with nothing off macOS calling it, it was only
-/// a dead-code warning waiting for the Windows CI job to deny warnings.
-#[cfg(target_os = "macos")]
+/// On Windows it is the process owning the foreground window, which the UI
+/// Automation watcher compares against the focused element's process id.
+/// Compiled only where correction watching exists — a stub elsewhere would be a
+/// dead-code warning with nothing to call it.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn frontmost_app_pid() -> Option<i32> {
     imp::frontmost_pid()
 }
@@ -1110,14 +1111,9 @@ mod imp {
         true
     }
 
-    /// File name of the foreground window's executable, e.g. "notepad.exe".
-    ///
-    /// Windows has no bundle identifier, so this fills the `app_bundle_id` slot
-    /// with the closest stable per-app key that costs no permission. `None`
-    /// when nothing is foreground (a locked desktop, or a switch in flight) or
-    /// when the process can't be opened — for a target at a higher integrity
-    /// level that refusal is the normal answer, not a malfunction.
-    pub fn frontmost_bundle_id() -> Option<String> {
+    /// Process id owning the foreground window. `None` when nothing is
+    /// foreground (a locked desktop, or a switch in flight).
+    fn foreground_pid() -> Option<u32> {
         // SAFETY: reads global window-manager state; returns a null HWND rather
         // than failing when no window is foreground.
         let hwnd = unsafe { GetForegroundWindow() };
@@ -1128,9 +1124,24 @@ mod imp {
         // SAFETY: `pid` is a live local and the call writes exactly one u32 to
         // it. We want the process, not the thread id it returns.
         unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid as *mut u32)) };
-        if pid == 0 {
-            return None;
-        }
+        (pid != 0).then_some(pid)
+    }
+
+    /// The foreground process id in the shape UI Automation reports
+    /// (`CurrentProcessId` is an `i32`), for the correction watcher.
+    pub fn frontmost_pid() -> Option<i32> {
+        foreground_pid().and_then(|pid| i32::try_from(pid).ok())
+    }
+
+    /// File name of the foreground window's executable, e.g. "notepad.exe".
+    ///
+    /// Windows has no bundle identifier, so this fills the `app_bundle_id` slot
+    /// with the closest stable per-app key that costs no permission. `None`
+    /// when nothing is foreground (a locked desktop, or a switch in flight) or
+    /// when the process can't be opened — for a target at a higher integrity
+    /// level that refusal is the normal answer, not a malfunction.
+    pub fn frontmost_bundle_id() -> Option<String> {
+        let pid = foreground_pid()?;
         // PROCESS_QUERY_LIMITED_INFORMATION is the weakest right that answers
         // this question, and the only one granted across integrity levels.
         // SAFETY: opens a process by pid; the handle is closed on every path
