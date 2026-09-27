@@ -3,6 +3,8 @@ package com.pathors.parley.cloud
 import com.pathors.parley.kit.BatchJobStatus
 import com.pathors.parley.kit.BatchTranscriptResponse
 import com.pathors.parley.kit.BatchTranscriptionService
+import com.pathors.parley.kit.ChatCompletions
+import com.pathors.parley.kit.CloudChat
 import com.pathors.parley.util.deleteQuietly
 import java.io.File
 import java.io.IOException
@@ -139,7 +141,7 @@ class CloudClient(
     private val http: OkHttpClient = ParleyHttp.shared,
     private val tokenProvider: suspend () -> String?,
     private val onUnauthorized: suspend () -> Unit = {},
-) : BatchTranscriptionService {
+) : BatchTranscriptionService, ChatCompletions {
     private val base: HttpUrl = baseUrl.trimEnd('/').toHttpUrl()
 
     /**
@@ -375,6 +377,21 @@ class CloudClient(
      */
     override suspend fun deleteBatchJob(id: String) {
         runCatching { execute(Request.Builder().url(url("stt", "batch", id)).delete()) { } }
+    }
+
+    // ── chat (the one-shot LLM passes) ───────────────────────────────────────
+
+    /**
+     * `POST v1/chat/completions` — the cloud's OpenAI-compatible chat endpoint,
+     * with the same bearer token as every other call. The request and response
+     * shapes live in `kit/CloudChat.kt`; this is only the transport, so the
+     * passes built on it (the filing suggestion) are testable without a server.
+     */
+    override suspend fun chatCompletion(requestJson: String): String {
+        val request = Request.Builder()
+            .url(url(*CloudChat.PATH.split('/').toTypedArray()))
+            .post(requestJson.toRequestBody(APPLICATION_JSON))
+        return execute(request) { response -> bodyText(response) }
     }
 
     // ── plumbing ─────────────────────────────────────────────────────────────

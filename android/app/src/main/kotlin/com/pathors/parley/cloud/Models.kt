@@ -9,6 +9,7 @@ import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonEncoder
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -223,7 +224,7 @@ data class TranscriptSegmentDto(
 class RecordingMeta(val raw: JsonObject) {
 
     val id: String get() = raw.stringOrNull("id").orEmpty()
-    val title: String get() = raw.stringOrNull("title").orEmpty()
+    val title: String get() = raw.stringOrNull(TITLE).orEmpty()
     val source: String get() = raw.stringOrNull("source") ?: "live"
     val createdAt: Double get() = raw.numberOrNull("createdAt") ?: 0.0
     val durationMs: Double get() = raw.numberOrNull("durationMs") ?: 0.0
@@ -323,9 +324,35 @@ class RecordingMeta(val raw: JsonObject) {
         }
     )
 
+    /**
+     * Whether a filing pass (the AI title + folder suggestion) has already been
+     * spent on this recording, on any device. The desktop reads it to decide
+     * whether to run its own pass; iOS and Android write it on every answer,
+     * Skip included, so a recording dealt with on the phone is not asked about
+     * again on the Mac. Absent means the pass has not run.
+     */
+    val filingSuggested: Boolean get() = raw.booleanOrNull(FILING_SUGGESTED) ?: false
+
+    /** A copy with a different `title`, every other field preserved verbatim. */
+    fun withTitle(title: String): RecordingMeta = replacing(TITLE, JsonPrimitive(title))
+
+    /**
+     * A copy with `filingSuggested: true`, every other field preserved verbatim.
+     * There is no way to clear it: once a pass has been answered it stays
+     * answered.
+     */
+    fun withFilingSuggested(): RecordingMeta = replacing(FILING_SUGGESTED, JsonPrimitive(true))
+
+    /** One key set (in place, when it already exists), the rest untouched. */
+    private fun replacing(key: String, value: JsonElement): RecordingMeta =
+        RecordingMeta(JsonObject(LinkedHashMap(raw).apply { put(key, value) }))
+
     override fun toString(): String = raw.toString()
 
     companion object {
+        private const val TITLE = "title"
+        private const val FILING_SUGGESTED = "filingSuggested"
+
         /**
          * The `segments` array as every Parley client writes it.
          *
