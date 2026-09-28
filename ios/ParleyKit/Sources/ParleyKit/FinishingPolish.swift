@@ -87,4 +87,36 @@ public struct FinishingPolish: Equatable, Sendable {
         phase = .settled
         return true
     }
+
+    /// What the caller has to do when the session is still finishing at its
+    /// deadline (`deadlinePassed`).
+    public enum OverdueOutcome: Equatable, Sendable {
+        /// The drain never completed. Stop waiting for it and end the session
+        /// now: `drained` will then say to settle raw, with no polish.
+        case endDrainNow
+        /// The polish is still out. Cancel it and settle the raw words now.
+        case settleRawNow
+        /// Already settled; nothing is overdue.
+        case settled
+    }
+
+    /// The session has been finishing for longer than a drain and a polish
+    /// can take. Whatever it is still waiting for, it stops waiting and
+    /// delivers the raw words — the one ending every other failure in this
+    /// pipeline already resolves to — because a session that never settles
+    /// delivers nothing at all: no `done`, so nothing typed, and no history.
+    ///
+    /// A late polish reply after this loses exactly as it does to a skip.
+    public mutating func deadlinePassed() -> OverdueOutcome {
+        switch phase {
+        case .draining:
+            skipRequested = true
+            return .endDrainNow
+        case .polishing:
+            phase = .settled
+            return .settleRawNow
+        case .settled:
+            return .settled
+        }
+    }
 }

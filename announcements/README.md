@@ -1,9 +1,13 @@
 # In-app announcements
 
 The "What's New" sheet each app shows once after an update. One JSON file per
-announcement, shared by every platform: the iPhone app reads this folder today
-(bundled as a resource, see `ios/App/project.yml`), and Android and the desktop
-app are meant to read the same files, so a release's copy is written once.
+announcement, shared by every platform, so a release's copy is written once:
+
+- **iPhone** bundles the folder as a resource (see `ios/App/project.yml`).
+- **Android** copies it into the APK's assets at build time
+  (`copyAnnouncementAssets` in `android/app/build.gradle.kts`) and shows it as a
+  Material 3 bottom sheet (`android/app/src/main/kotlin/com/pathors/parley/ui/WhatsNewSheet.kt`).
+- **Desktop** is meant to read the same files.
 
 ## Schema
 
@@ -13,7 +17,7 @@ app are meant to read the same files, so a release's copy is written once.
   "ships": { "ios": "1.22", "android": null, "desktop": null },
   "audience": "keyboard",               // optional: "all" (default) | "keyboard"
   "hero": "keyboard-wave",              // optional: id in each platform's native hero registry
-  "cta": { "ios": null },               // optional per-platform deep link
+  "cta": { "ios": null, "android": null }, // optional per-platform deep link
   "copy": {
     "zh-Hant": { "badge": "", "title": "", "body": "", "also": "", "button": "" },
     "en":      { "badge": "", "title": "", "body": "", "also": "", "button": "" }
@@ -27,11 +31,14 @@ app are meant to read the same files, so a release's copy is written once.
   Versions compare numerically by component (`1.9 < 1.10`, `1.22 == 1.22.0`).
 - **`audience`** — `keyboard` means "has used the Parley keyboard on this
   device". A value a build does not know counts as unmet, never as everyone.
+  Android has no Parley keyboard, so a `keyboard` announcement never shows
+  there.
 - **`hero`** — looked up in each platform's own registry of native views (iOS:
-  `ios/App/Parley/WhatsNewHero.swift`). Unknown or absent draws no hero; the
-  sheet is complete without one.
-- **`cta`** — a deep link the button opens instead of just closing the sheet.
-  `null` or absent closes it.
+  `ios/App/Parley/WhatsNewHero.swift`; Android has none yet). Unknown or absent
+  draws no hero; the sheet is complete without one.
+- **`cta`** — a deep link the button opens after closing the sheet, per
+  platform (`ios`, `android`). `null` or absent just closes it. On Android an
+  `https` link opens in a Custom Tab and anything else as a view intent.
 - **`copy`** — `zh-Hant` and `en` are both required, and every field is
   non-empty. `badge` is the small line above the title, `also` is the one-line
   "also changed" footnote, `button` is the button's label.
@@ -48,5 +55,7 @@ app are meant to read the same files, so a release's copy is written once.
   copy. This copy is kept in sync with the App Store release notes, and App
   Store Connect's What's New field rejects them with a 409.
 
-`ios/ParleyKit/Tests/ParleyKitTests/AnnouncementCatalogTests.swift` reads every
-file here and enforces the schema, both languages, and the Bopomofo rule.
+`ios/ParleyKit/Tests/ParleyKitTests/AnnouncementCatalogTests.swift` and
+`android/parleykit/src/test/kotlin/com/pathors/parley/kit/AnnouncementCatalogTest.kt`
+each read every file here and enforce the schema, both languages, and the
+Bopomofo rule.

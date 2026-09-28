@@ -36,10 +36,10 @@
     <string name="sign_in_in_progress">Signing in…</string>
     <string name="sign_in_waiting">Waiting for the browser to hand the session back…</string>
     <string name="sign_in_no_browser">No browser is available to sign in with.</string>
-    <string name="sign_in_failed">Sign-in did not complete (%1$s).</string>
+    <string name="sign_in_didnt_finish">Sign-in didn\'t finish. Please try again.</string>
 
     <!-- Home -->
-    <string name="home_title">Recordings</string>
+    <string name="home_title">Library</string>
     <string name="home_account">Account</string>
     <string name="home_empty_title">No recordings yet</string>
     <string name="home_empty_body">Record a meeting, or import an audio file you already have.</string>
@@ -118,15 +118,22 @@
     <string name="meeting_panel_resize">Resize controls</string>
     <string name="meeting_panel_expand">Expand controls</string>
     <string name="meeting_panel_collapse">Collapse controls</string>
-    <string name="meeting_finishing">Finishing the transcript…</string>
+    <string name="meeting_finishing">Wrapping up…</string>
     <string name="meeting_uploading">Uploading…</string>
-    <string name="meeting_uploaded">Uploaded</string>
+    <string name="meeting_uploaded">Synced to the cloud</string>
     <string name="meeting_queued">Saved on this device. It uploads as soon as the network is back.</string>
-    <string name="meeting_dropped">That was under two seconds, so nothing was saved.</string>
+    <string name="meeting_dropped">That recording was too short to keep</string>
     <string name="meeting_interrupted">The meeting was cut short, but everything recorded up to that point is saved.</string>
     <string name="meeting_transcript_empty">The transcript appears here as people speak.</string>
-    <string name="meeting_issue_quota">Transcription stopped: the hosted transcription quota is used up. The audio is still being recorded.</string>
-    <string name="meeting_issue_error">Transcription stopped unexpectedly. The audio is still being recorded.</string>
+    <string name="meeting_issue_quota">You\'re out of transcription quota — live transcription stopped. The recording keeps running, and the audio is transcribed in full after it syncs.</string>
+    <string name="meeting_issue_reconnecting">Transcription dropped — reconnecting…</string>
+    <string name="meeting_issue_stopped">Live transcription stopped. The recording keeps running, and the audio is transcribed in full after it syncs.</string>
+    <string name="meeting_issue_signed_out">Live transcription stopped — the recording is still running</string>
+    <string name="meeting_shared_to">Synced, and shared to “%1$s”</string>
+    <string name="meeting_queued_quota">You\'re out of quota. The recording is safe on this phone and will sync once the quota resets.</string>
+    <string name="meeting_sync_failed">Sync failed for now. The recording is safe on this phone and will retry automatically.</string>
+    <string name="meeting_idle_hint">Hit record and put the phone on the table to catch the whole room.</string>
+    <string name="meeting_discard_a11y">Discard recording. Asks you to confirm, then throws the audio and transcript away.</string>
     <string name="meeting_mic_silenced">Another app has taken the microphone — Parley is recording silence until it gives it back.</string>
     <string name="meeting_mic_recovering">Trying to get the microphone back. The recording is still open and picks up where it left off.</string>
     <string name="meeting_mic_lost_taken">Something else is holding the microphone. Everything recorded so far is safe; bring Parley to the front to try again.</string>
@@ -246,6 +253,9 @@
     </plurals>
     <string name="account_audio_none">No audio stored on this phone.</string>
     <string name="account_audio_remove_all">Remove stored audio</string>
+    <string name="account_audio_remove_confirm_title">Remove the audio kept on this phone?</string>
+    <string name="account_audio_remove_confirm_body">The recordings themselves stay in the cloud. You can download the audio again whenever you need it.</string>
+    <string name="account_audio_remove_confirm_action">Remove all</string>
 
     <!-- Appearance -->
     <string name="account_appearance">Appearance</string>
@@ -271,7 +281,7 @@
     <!-- About -->
     <string name="account_about_title">About</string>
     <string name="account_version">Version %1$s (%2$d)</string>
-    <string name="account_about_detail">Live coaching and deep analysis live in the desktop app; the phone handles recording, transcribing, and reading back in-person meetings.</string>
+    <string name="account_about_detail">Live coaching and deep analysis live in the desktop app; the phone handles recording, transcribing, and reading back in-person meetings. On the Mac, Claude Code can also read your whole recording library over MCP.</string>
     <string name="link_desktop">Parley for desktop</string>
     <string name="link_privacy_policy">Privacy Policy</string>
     <string name="link_support">Support &amp; feedback</string>
@@ -332,6 +342,15 @@
     <string name="library_move_to_org">Move to organization</string>
     <string name="library_menu_back">Back</string>
     <string name="library_working">Updating…</string>
+    <!-- Audio on this phone, from the library row -->
+    <string name="library_download">Download</string>
+    <string name="library_remove_download">Remove download</string>
+    <string name="library_download_failed_retry">Download failed · Retry</string>
+    <string name="library_on_phone">On this phone</string>
+    <string name="library_downloading">Downloading</string>
+    <!-- The import that just landed, above the list -->
+    <string name="library_import_notice">Imported “%1$s”</string>
+    <string name="library_import_notice_shared">Imported “%1$s” and shared to “%2$s”</string>
     <string name="library_action_error_title">That didn\'t go through</string>
     <string name="library_move_failed">The recording wasn\'t moved. Check your connection and try again.</string>
     <string name="library_move_forbidden">You don\'t have permission to move recordings in “%1$s”.</string>
@@ -374,4 +393,11 @@
     <string name="filing_move_to_folder">Move to folder</string>
     <string name="filing_new_tag">New</string>
     <string name="filing_other_folder">Choose another folder…</string>
+
+    <!-- What's New. The announcement copy itself is not here: it is the
+         repository's announcements/ folder, shared with iOS and the desktop.
+         whats_new_copy_language picks which of its two languages to show, so
+         the sheet speaks whatever language these resources resolved to. -->
+    <string name="whats_new_also">Also</string>
+    <string name="whats_new_copy_language">en</string>
 </resources>

@@ -120,6 +120,8 @@ private fun ParleyNavHost(container: AppContainer) {
                     navController.navigate(Route.recording(id, orgId, openFor))
                 },
             )
+            // What's New after an update: only ever over the signed-in library.
+            WhatsNewHost(container.whatsNew)
         }
         composable(Route.MEETING) {
             MeetingScreen(onDone = { navController.popBackStack(Route.HOME, inclusive = false) })

@@ -104,6 +104,12 @@ public actor SttRelayClient {
     /// sending the finalize frame anyway. A dead socket must not hold up the
     /// end of a meeting.
     private static let drainTimeout: Duration = .seconds(3)
+    /// How long `finish()` then waits for the finalize frame itself to go out.
+    /// Together with `drainTimeout` this is the longest `finish()` can take,
+    /// which callers that must not hang on a dead socket rely on.
+    private static let finalizeTimeout: Duration = .seconds(1)
+    /// The longest `finish()` can take, whatever the socket is doing.
+    public static let finishBudget: Duration = drainTimeout + finalizeTimeout
 
     /// When to stop believing a socket that has gone quiet. See `RelayLiveness`
     /// for why this is measured on ping/pong rather than on transcript traffic.
@@ -188,7 +194,13 @@ public actor SttRelayClient {
         await drainWriter()
         keepaliveTask?.cancel()
         livenessTask?.cancel()
-        try? await task.send(.string(SonioxProtocol.finalizeFrame))
+        // Bounded like the drain, and for the same reason: sends on one socket
+        // go out in order, so behind a writer stuck on a stalled connection
+        // the finalize is stuck too — and the liveness check that would have
+        // declared that socket dead was cancelled on the line above.
+        await Deadline.wait(atMost: Self.finalizeTimeout) {
+            try? await task.send(.string(SonioxProtocol.finalizeFrame))
+        }
         // Deliberately no task.cancel() here — see the type doc.
     }
 
@@ -216,14 +228,15 @@ public actor SttRelayClient {
 
     /// Wait for the queued audio to reach the wire, but never longer than
     /// `drainTimeout` — the writer is blocked on a socket that may be gone.
+    ///
+    /// Not a task group racing a sleep, which is what this was: a group waits
+    /// for every child before it returns, and awaiting an unstructured task's
+    /// `value` does not stop when it is cancelled — so the timeout lost the
+    /// race it was there to win, and `finish()` waited on a stalled socket for
+    /// as long as the socket stayed stalled. See `Deadline`.
     private func drainWriter() async {
         guard let writerTask else { return }
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask { _ = await writerTask.value }
-            group.addTask { try? await Task.sleep(for: Self.drainTimeout) }
-            await group.next()
-            group.cancelAll()
-        }
+        await Deadline.wait(atMost: Self.drainTimeout) { _ = await writerTask.value }
     }
 
     private func startWriter() {

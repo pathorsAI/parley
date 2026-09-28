@@ -8,7 +8,7 @@ package com.pathors.parley.ui
  * to give the live transcript more room, and the panel stays wherever they let
  * go — continuous, no fixed detents, snapping only near the two ends. As it
  * shrinks, the secondary pieces leave in a fixed order: Discard first, then the
- * recording status row, then the status line, then the level meter. The timer
+ * recording status row, then the status line, then the waveform. The timer
  * and the stop button shrink continuously, and near the bottom the whole column
  * crossfades into a single compact row.
  *
@@ -57,7 +57,7 @@ internal object LivePanel {
     val DISCARD_FROM = prototype(330f)
     val STATUS_ROW_FROM = prototype(285f)
     val STATUS_LINE_FROM = prototype(250f)
-    val LEVEL_METER_FROM = prototype(215f)
+    val WAVEFORM_FROM = prototype(215f)
 
     /** The full column is opaque at and above this, gone at and below [COLUMN_GONE_AT]. */
     val COLUMN_OPAQUE_FROM = prototype(190f)
@@ -130,7 +130,7 @@ internal object LivePanel {
             showsDiscard = progress >= DISCARD_FROM,
             showsStatusRow = progress >= STATUS_ROW_FROM,
             showsStatusLine = progress >= STATUS_LINE_FROM,
-            showsLevelMeter = progress >= LEVEL_METER_FROM,
+            showsWaveform = progress >= WAVEFORM_FROM,
             timerSp = lerp(TIMER_SMALLEST_SP, TIMER_FULL_SP, t),
             stopDp = lerp(STOP_SMALLEST_DP, STOP_FULL_DP, t),
             columnAlpha = ramp(progress, from = COLUMN_GONE_AT, to = COLUMN_OPAQUE_FROM),
@@ -159,7 +159,7 @@ internal data class LivePanelShape(
     val showsDiscard: Boolean,
     val showsStatusRow: Boolean,
     val showsStatusLine: Boolean,
-    val showsLevelMeter: Boolean,
+    val showsWaveform: Boolean,
     val timerSp: Float,
     val stopDp: Float,
     val columnAlpha: Float,

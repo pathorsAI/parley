@@ -109,13 +109,20 @@ struct RootView: View {
     @EnvironmentObject private var app: AppState
 
     var body: some View {
-        if !app.bootstrapped {
-            LaunchView()
-        } else if app.hasAccount {
-            MainTabs()
-        } else {
-            OnboardingView()
+        Group {
+            if !app.bootstrapped {
+                LaunchView()
+            } else if app.hasAccount {
+                MainTabs()
+            } else {
+                OnboardingView()
+            }
         }
+        // The sign-in page's edge glow lives here rather than in
+        // `OnboardingView` so that it can outlast it: a successful sign-in
+        // swaps the page out in one frame, and the glow fades over the app that
+        // replaces it. It removes itself once faded. See `AuroraEdgeGlow`.
+        .overlay { AuroraEdgeGlow() }
     }
 }
 

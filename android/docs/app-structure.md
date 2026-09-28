@@ -19,11 +19,15 @@ com.pathors.parley
   onboarding/
     GettingStartedStore.kt the library checklist's state (DataStore `parley_onboarding`)
     SampleRecordingStore.kt the bundled sample's local-only library entry and audio
+    AnnouncementStore.kt which What's New announcements this phone has seen
+                         (DataStore `parley_announcements`)
+    WhatsNewPresenter.kt when the What's New sheet may come up
   ui/
     ParleyRoot.kt        sign-in wall, NavHost, the SAF picker
     SignInScreen.kt      Custom Tab hand-off
     HomeScreen.kt        library: scope switcher, folder chips, pending queue, row
-                         menu (folder / share / move to org / delete), the "add" actions
+                         menu (download / folder / share / move to org / delete),
+                         the import notice, the "add" actions
     HomeViewModel.kt     library state (scope, folders, moves, shares), account
                          state, save targets, sign-out
     FolderPickerSheet.kt searchable "Move to folder" sheet with create-as-you-type
@@ -31,9 +35,12 @@ com.pathors.parley
     HandoffText.kt       the analysis prompt for "Share to AI" / "Copy with analysis
                          prompt", and the chooser callback that ticks the checklist
     LibraryIcons.kt      folder / new folder / tray / group glyphs (not in core icons)
-    AccountSheet.kt      identity, usage, default save location, sync, storage,
+    AccountSheet.kt      identity (initial, name, email, organizations and roles),
+                         usage, default save location, sync, storage,
                          appearance, language, about, sign out, delete account
-    MeetingScreen.kt     permission gate, live transcript, level meter, mic/storage status, stop
+    MeetingScreen.kt     permission gate, live transcript, waveform, mic/storage status, stop
+    LiveWaveform.kt      the scrolling level history under the timer (iOS WaveformView)
+    WhatsNewSheet.kt     the What's New bottom sheet and its host on the library
     MeetingHaptics.kt    the four recording beats (start, stop, discard, mic lost)
     ImportScreen.kt      progress + phase label + cancel; the failure / partial endings
     RecordingDetail*.kt  player, transcript + search, findings, action items,
@@ -96,7 +103,12 @@ Differences that matter:
 
 A relay failure mid-session (quota, error, unexpected close) does **not** stop a
 meeting: the mic keeps running, the audio is still saved and uploaded, and the UI
-shows a `TranscriptionIssue` banner. `MeetingState.Failed` is kept for a
+shows a `TranscriptionIssue` line. iOS's split applies (`TranscriptionHealth`):
+a dropped socket is `RECONNECTING` — "Transcription dropped — reconnecting…",
+an amber spinner — until a leg is back up or a segment arrives, and only when no
+leg is coming (out of quota, budget spent, signed out) does the line say the
+live transcript stopped, in ink with a bolt rather than the error red, because
+the recording itself is fine. `MeetingState.Failed` is kept for a
 recording that could not be started or saved at all — not signed in, no
 microphone, no encoder, no storage headroom, or the hand-off to the upload queue
 throwing. A capture that is *interrupted* but left audio behind (the mic taken
@@ -135,8 +147,12 @@ reason), **Recovering**, `micSilenced`, and a four-second "Microphone is back �
 still recording" after a recovery — never two at once. `storageLow` adds a
 warning line. A `Finished` state with `interruptedBy` set says how the meeting
 ended ("Stopped early — lost the microphone" / storage / permission / other) and
-stays until the user taps Close; only a user-ended meeting auto-dismisses after
-1.2 s. Haptics (`ui/MeetingHaptics`) mark recording started, Stop, Discard and
+stays until the user taps Close. A meeting the user stopped stays up too, as it
+does on iOS: the transcript, the outcome in iOS's words ("Synced to the cloud",
+"Synced, and shared to “Org”", "You're out of quota…", "Sync failed for now…",
+"That recording was too short to keep") and the filing suggestion, until Done or
+Back. A settled session found on the next visit is cleared before the consent
+prompt rather than shown again. Haptics (`ui/MeetingHaptics`) mark recording started, Stop, Discard and
 microphone lost.
 
 ## The service
@@ -184,10 +200,22 @@ The library mirrors iOS `LibraryView` (and the desktop History window):
   when the account belongs to an organization. A scope whose organization is
   missing from a *successful* membership list falls back to personal; a failed
   list keeps the selection (offline is not "removed").
-- **Folders.** Chips (All / Unfiled / folders, server order) filter the list,
+- **Folders.** Chips (All / Unfiled / folders, server order; iOS's underlined
+  labels, not filled Material chips) filter the list,
   and the search narrows whichever page is showing. A `folderId` that names no
   live folder renders under Unfiled with no folder name on the card — the
   desktop's orphan→root rule (`LibraryFolders`, unit-tested).
+- **Audio on this phone.** `playback/AudioDownloads` is iOS `AudioDownloadModel`:
+  one per process, shared by the row menu's Download / Remove download
+  (personal rows only, not the sample), the detail screen's player and
+  re-transcription, so a download started from the library shows its progress
+  when the recording is opened and a second request joins the first. The row's
+  meta line ends with a phone glyph when the file is here, a progress ring while
+  it downloads, and "Download failed · Retry" after a failure (the retry is the
+  menu). Account sheet › Remove all asks first, with iOS's copy.
+- **Import result.** The import keeps its own progress screen; once it lands in
+  the cloud, the library shows iOS's green "Imported “X”" (or "… and shared to
+  “Org”") line above the list until the next import or a scope switch.
 - **Row menu.** Move to folder… (personal: re-push of the fresh meta; org:
   `PATCH …/folder`; create only in personal scope), Share to organization
   (copy), Move to organization (share, *then* delete the original — a failure
@@ -210,7 +238,8 @@ moved on to a guided lap, #450):
 
 - **Checklist.** Above the personal library, not while searching: record, put
   it in a folder, replay, share with your AI. Each item ticks only from the real
-  event — a recording saved in the upload queue, a successful filing, a user
+  event — a recording saved in the upload queue, a successful filing (or a
+  folder or an organization chosen as the default save location), a user
   seek in the player, a share target picked (`HandoffShareReceiver`) or "Copy
   with analysis prompt". Rows 2–4 open the newest recording with `OpenFor.FILE`
   (folder picker) or `OpenFor.SHARE` (share sheet). The rules are parleykit's
@@ -254,6 +283,35 @@ unit-tested.
   44dp row.
 - **TalkBack.** The strip is an adjustable control: swipe up/down moves 15 s,
   and the position is spoken as a clock.
+
+## What's New after an update
+
+A port of iOS #478. The copy is the repository's `announcements/` folder,
+shared with iOS and the desktop and copied into the APK's assets at build time
+(`copyAnnouncementAssets` in `app/build.gradle.kts`); see
+`announcements/README.md` for the schema.
+
+- **Which.** parleykit's `AnnouncementGate`: `ships.android` set and at most
+  the running `versionName` (numeric by component), audience met (Android has
+  no keyboard, so a `keyboard` announcement never shows), newest only with the
+  older ones retired alongside it, and never one already seen.
+  `AnnouncementCatalogTest` checks the real folder against the schema.
+- **Who never sees one.** A fresh install: `AnnouncementStore` marks everything
+  seen on its first launch unless a session was already stored — the same
+  first-launch check `GettingStartedStore` makes. It reads only after that
+  first write has landed, one-shot, under the same lock as its writes (no
+  long-lived collector; see the DataStore race in `GettingStartedStore`).
+- **When.** `WhatsNewPresenter`, 600 ms after the signed-in library appears
+  or the app comes to the foreground, and not if that foreground was opened by
+  a `parley://` link (`MainActivity.handleDeepLink`), a meeting holds the
+  microphone, it has already been shown this foreground, or demo mode is on.
+  A sheet the app takes down (a link arrived, the library went away) is not
+  marked seen; one the user closes in any way is.
+- **What.** `ui/WhatsNewSheet.kt`: a Material 3 bottom sheet sized to its
+  content — badge, title, body, hairline, "Also" line, one button that follows
+  `cta.android` when the announcement has one. The copy's language follows the
+  resources the app resolved (`whats_new_copy_language`), so the sheet never
+  speaks a different language from the screen under it. No hero registry yet.
 
 ## Strings
 
