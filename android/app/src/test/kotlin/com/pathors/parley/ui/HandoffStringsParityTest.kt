@@ -61,8 +61,7 @@ class HandoffStringsParityTest {
         "onboarding_headline" to "Record it. Hand it to the AI you already use.",
         "onboarding_subline" to "Parley records in-person meetings, transcribes them live, and keeps them " +
             "where your Mac and phone can both find them.",
-        "onboarding_sign_in_methods" to "Email and password, Google, and Apple all work. Before any recording " +
-            "starts, Parley asks you to confirm everyone in the room has agreed to it.",
+        "onboarding_sign_in_methods" to "Email and password, Google, and Apple all work.",
         "intro_recording_now" to "Recording now",
         "intro_caption_recording" to "Parley records both sides of the conversation.",
         "intro_caption_transcript" to "It turns into text as you go, with who said what.",
