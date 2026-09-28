@@ -53,24 +53,14 @@
 <body>
 <a class="skip" href="#main">{{a11y.skip}}</a>
 
-<!-- Shown by script.js only when the browser's language disagrees with this page. -->
-<div class="langbar" id="langbar" lang="{{@altHtmlLang}}" hidden>
-  <div class="wrap langbar__in">
-    <p>{{langbar.text}} <a href="{{@altHref}}" hreflang="{{@altHtmlLang}}">{{langbar.link}} →</a></p>
-    <button type="button" class="langbar__close" aria-label="{{langbar.close|attr}}">
-      <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3.5 3.5l9 9m0-9l-9 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-    </button>
-  </div>
-</div>
-
 <header class="nav" id="nav">
   <div class="wrap nav__in">
     <a class="wm" href="./" aria-label="{{nav.home|attr}}">Parley</a>
     <nav class="nav__links" id="nav-links" aria-label="{{nav.primary|attr}}">
+      <a href="#models">{{nav.models}}</a>
+      <a href="#open">{{nav.open}}</a>
       <a href="#meetings">{{nav.meetings}}</a>
       <a href="#ai">{{nav.ai}}</a>
-      <a href="#voice">{{nav.voice}}</a>
-      <a href="#trust">{{nav.trust}}</a>
     </nav>
     <a class="nav__lang" href="{{@altHref}}" hreflang="{{@altHtmlLang}}" lang="{{@altHtmlLang}}" title="{{nav.langTitle|attr}}">{{nav.lang}}</a>
     <a class="b1 b1--sm" href="#download">{{nav.download}}</a>
@@ -100,25 +90,54 @@
       <p class="fine">{{hero.fine}} <a href="https://github.com/pathorsAI/parley">{{hero.open}}</a></p>
     </div>
 
-    <div class="demo">
-      <!-- The animated demo is decorative; the same content is in the .sr-only block below. -->
-      <div class="live" aria-hidden="true">
-        <div class="lines" id="lines">
-          <div class="turn"><div class="who"><span class="nm">{{demo.speakerA}}</span><span class="ts">0:12</span></div><div class="txt"><span class="set">{{demo.line1}}</span><span class="tail"></span></div></div>
-          <div class="turn"><div class="who on"><span class="nm">{{demo.speakerB}}</span><span class="ts">0:27</span></div><div class="txt"><span class="set">{{demo.line2}}</span><span class="tail"></span></div></div>
+    <!--#
+      Where the conversation goes, in the two setups the app offers on first launch.
+      Own keys: straight from your computer to the providers you picked (the AI one can
+      be Ollama on the same machine). Cloud edition: to Parley, and that is all it says.
+      The nodes are plain HTML; script.js draws the wires, cycles the example hosts
+      (real endpoints the app connects to) and flips the mode.
+    -->
+    <figure class="route" id="route" data-mode="byok" aria-labelledby="route-cap">
+      <div class="seg" role="group" aria-label="{{route.label|attr}}">
+        <button type="button" aria-pressed="true" data-mode="byok">{{route.byok}}</button>
+        <button type="button" aria-pressed="false" data-mode="cloud">{{route.cloud}}</button>
+      </div>
+      <div class="route__map" id="route-map">
+        <svg class="route__wires" aria-hidden="true"></svg>
+        <div class="rt-dev" data-node="dev">
+          <p class="rt-dev__k">{{route.device}}</p>
+          <ul class="rt-lib" aria-hidden="true">
+            <li class="is-live"><span>{{route.rec1}}</span><time>18:47</time></li>
+            <li><span>{{route.rec2}}</span><time>32:10</time></li>
+            <li><span>{{route.rec3}}</span><time>45:03</time></li>
+          </ul>
+          <p class="rt-dev__note">{{route.deviceNote}}</p>
         </div>
-        <div class="rec">
-          <div class="rec__st"><i></i><span>{{demo.recording}}</span></div>
-          <span class="rec__clock" id="clock">18:47</span>
-          <canvas id="wave" width="480" height="68"></canvas>
+        <div class="rt-mid">
+          <div class="rt-node rt-node--parley" data-node="parley">
+            <p class="rt-k">{{route.parley}}</p>
+            <p class="rt-host">api.parley.tw</p>
+            <p class="rt-note"><span class="when-byok">{{route.parleyOff}}</span><span class="when-cloud">{{route.parleyOn}}</span></p>
+          </div>
+        </div>
+        <div class="rt-dest">
+          <div class="rt-node" data-node="stt">
+            <p class="rt-k">{{route.stt}}</p>
+            <p class="rt-host"><span data-cycle='["stt-rt.soniox.com","api.deepgram.com","api.openai.com"]'>stt-rt.soniox.com</span></p>
+            <p class="rt-note">{{route.direct}}</p>
+          </div>
+          <div class="rt-node" data-node="ai">
+            <p class="rt-k">{{route.ai}}</p>
+            <p class="rt-host"><span data-cycle='["127.0.0.1:11434","api.anthropic.com","api.openai.com"]' data-local="127.0.0.1:11434">127.0.0.1:11434</span></p>
+            <p class="rt-note" data-direct="{{route.direct|attr}}" data-local-note="{{route.local|attr}}">{{route.local}}</p>
+          </div>
         </div>
       </div>
-      <div class="sr-only">
-        <p>{{demo.alt}}</p>
-        <p>{{demo.speakerA}} — {{demo.line1}}</p>
-        <p>{{demo.speakerB}} — {{demo.line2}}</p>
-      </div>
-    </div>
+      <figcaption class="route__cap" id="route-cap">
+        <span class="when-byok">{{route.capByok}}</span>
+        <span class="when-cloud">{{route.capCloud}}</span>
+      </figcaption>
+    </figure>
   </section>
 
   <!-- ============ The desktop app mid-meeting: the whole window, full width ============ -->
@@ -130,6 +149,70 @@
       </picture>
     </div>
   </div>
+
+  <!-- ============ Models ============ -->
+  <section class="sec row" id="models">
+    <div class="wrap row__in">
+      <div class="row__tx fade">
+        <p class="k">{{models.kicker}}</p>
+        <h2>{{models.h2}}</h2>
+        <p class="p">{{models.p}}</p>
+      </div>
+      <!--# The provider settings drawn in HTML, with the app's own three workloads.
+           script.js steps each row through real providers, one row at a time. -->
+      <figure class="row__vis panel prefs fade" aria-label="{{models.alt|attr}}">
+        <p class="prefs__h">{{models.panel}}</p>
+        <div class="prefs__row">
+          <p class="prefs__l">{{models.stt}}</p>
+          <p class="prefs__v" data-cycle='[{"n": "Deepgram", "l": "{{@base}}assets/logos/deepgram.svg"}, {"n": "Soniox", "l": ""}, {"n": "AssemblyAI", "l": "{{@base}}assets/logos/assemblyai.svg"}, {"n": "OpenAI", "l": "{{@base}}assets/logos/openai.svg"}, {"n": "Gemini", "l": "{{@base}}assets/logos/gemini.svg"}]'><span class="logo" style="--m:url('{{@base}}assets/logos/deepgram.svg')"></span><span class="prefs__n">Deepgram</span></p>
+        </div>
+        <div class="prefs__row">
+          <p class="prefs__l">{{models.realtime}}</p>
+          <p class="prefs__v" data-cycle='[{"n": "Claude", "l": "{{@base}}assets/logos/claude.svg"}, {"n": "Groq", "l": "{{@base}}assets/logos/groq.svg"}, {"n": "OpenAI", "l": "{{@base}}assets/logos/openai.svg"}, {"n": "Qwen", "l": "{{@base}}assets/logos/qwen.svg"}, {"n": "Kimi", "l": "{{@base}}assets/logos/kimi.svg"}]'><span class="logo" style="--m:url('{{@base}}assets/logos/claude.svg')"></span><span class="prefs__n">Claude</span></p>
+        </div>
+        <div class="prefs__row">
+          <p class="prefs__l">{{models.deep}}</p>
+          <p class="prefs__v" data-cycle='[{"n": "Ollama", "l": "{{@base}}assets/logos/ollama.svg", "t": 1}, {"n": "Claude", "l": "{{@base}}assets/logos/claude.svg"}, {"n": "Gemini", "l": "{{@base}}assets/logos/gemini.svg"}, {"n": "OpenRouter", "l": "{{@base}}assets/logos/openrouter.svg"}, {"n": "Qwen", "l": "{{@base}}assets/logos/qwen.svg"}]'><span class="logo" style="--m:url('{{@base}}assets/logos/ollama.svg')"></span><span class="prefs__n">Ollama</span><em>{{models.local}}</em></p>
+        </div>
+        <ul class="prov" aria-label="{{models.providers|attr}}">
+          <li>Soniox</li>
+          <li><span class="logo" style="--m:url('{{@base}}assets/logos/deepgram.svg')"></span>Deepgram</li>
+          <li><span class="logo" style="--m:url('{{@base}}assets/logos/assemblyai.svg')"></span>AssemblyAI</li>
+          <li><span class="logo" style="--m:url('{{@base}}assets/logos/openai.svg')"></span>OpenAI</li>
+          <li><span class="logo" style="--m:url('{{@base}}assets/logos/gemini.svg')"></span>Gemini</li>
+          <li><span class="logo" style="--m:url('{{@base}}assets/logos/claude.svg')"></span>Claude</li>
+          <li><span class="logo" style="--m:url('{{@base}}assets/logos/groq.svg')"></span>Groq</li>
+          <li><span class="logo" style="--m:url('{{@base}}assets/logos/qwen.svg')"></span>Qwen</li>
+          <li><span class="logo" style="--m:url('{{@base}}assets/logos/kimi.svg')"></span>Kimi</li>
+          <li><span class="logo" style="--m:url('{{@base}}assets/logos/ollama.svg')"></span>Ollama</li>
+          <li><span class="logo" style="--m:url('{{@base}}assets/logos/openrouter.svg')"></span>OpenRouter</li>
+          <li>{{models.custom}}</li>
+        </ul>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ============ Open source ============ -->
+  <section class="sec row row--rev" id="open">
+    <div class="wrap row__in">
+      <div class="row__tx fade">
+        <p class="k">{{open.kicker}}</p>
+        <h2>{{open.h2}}</h2>
+        <p class="p">{{open.p}}</p>
+        <p class="more"><a href="https://github.com/pathorsAI/parley">{{open.repo}} →</a></p>
+      </div>
+      <!--# Building it yourself, in the README's own commands. -->
+      <figure class="row__vis term fade" aria-label="{{open.codeLabel|attr}}">
+        <button type="button" class="code__copy" data-copy="git clone https://github.com/pathorsAI/parley.git
+cd parley &amp;&amp; bun install
+bun run tauri build" data-done="{{ai.copied|attr}}">{{ai.copy}}</button>
+        <pre><code><span class="code__c">{{open.codeComment}}</span>
+<span class="term__p">$</span> git clone https://github.com/pathorsAI/parley.git
+<span class="term__p">$</span> cd parley &amp;&amp; bun install
+<span class="term__p">$</span> bun run tauri build</code></pre>
+      </figure>
+    </div>
+  </section>
 
   <!--#
     Every row below is a section label, one H2, one sentence and a large visual.
@@ -145,15 +228,20 @@
         <h2>{{meetings.h2}}</h2>
         <p class="p">{{meetings.p}}</p>
       </div>
-      <div class="row__vis phones fade">
-        <picture>
-          <source type="image/webp" srcset="{{@base}}assets/shots/iphone-record-{{@lang}}.webp">
-          <img src="{{@base}}assets/shots/iphone-record-{{@lang}}.jpg" width="600" height="1304" loading="lazy" decoding="async" alt="{{meetings.altRecord|attr}}">
-        </picture>
-        <picture>
-          <source type="image/webp" srcset="{{@base}}assets/shots/iphone-transcript-{{@lang}}.webp">
-          <img src="{{@base}}assets/shots/iphone-transcript-{{@lang}}.jpg" width="600" height="1304" loading="lazy" decoding="async" alt="{{meetings.altTranscript|attr}}">
-        </picture>
+      <div class="row__vis panel demo fade">
+        <!-- The animated demo is decorative; screen readers get the one-line description below. -->
+        <div class="live" aria-hidden="true">
+          <div class="lines" id="lines">
+            <div class="turn"><div class="who"><span class="nm">{{demo.speakerA}}</span><span class="ts">0:12</span></div><div class="txt"><span class="set">{{demo.line1}}</span><span class="tail"></span></div></div>
+            <div class="turn"><div class="who on"><span class="nm">{{demo.speakerB}}</span><span class="ts">0:27</span></div><div class="txt"><span class="set">{{demo.line2}}</span><span class="tail"></span></div></div>
+          </div>
+          <div class="rec">
+            <div class="rec__st"><i></i><span>{{demo.recording}}</span></div>
+            <span class="rec__clock" id="clock">18:47</span>
+            <canvas id="wave" width="480" height="68"></canvas>
+          </div>
+        </div>
+        <p class="sr-only">{{demo.alt}}</p>
       </div>
     </div>
   </section>
@@ -262,33 +350,6 @@ claude mcp add --transport http parley \
         <p class="polish__lab">↓ {{voice.polishLabel}}</p>
         <div class="polish__out">{{voice.out}}</div>
       </div>
-    </div>
-  </section>
-
-  <!-- ============ Trust ============ -->
-  <section class="sec" id="trust">
-    <div class="wrap">
-      <p class="k fade">{{trust.kicker}}</p>
-      <h2 class="fade">{{trust.h2}}</h2>
-      <ul class="trust fade">
-        <li><h3>{{trust.t1}}</h3><p>{{trust.t1p}}</p></li>
-        <li><h3>{{trust.t2}}</h3><p>{{trust.t2p}}</p></li>
-        <li><h3>{{trust.t3}}</h3><p>{{trust.t3p}}</p></li>
-        <li><h3>{{trust.t4}}</h3><p>{{trust.t4p}}</p></li>
-      </ul>
-      <ul class="prov fade" aria-label="{{trust.providers|attr}}">
-        <li>Soniox</li>
-        <li><span class="logo" style="--m:url('{{@base}}assets/logos/deepgram.svg')"></span>Deepgram</li>
-        <li><span class="logo" style="--m:url('{{@base}}assets/logos/assemblyai.svg')"></span>AssemblyAI</li>
-        <li><span class="logo" style="--m:url('{{@base}}assets/logos/openai.svg')"></span>OpenAI</li>
-        <li><span class="logo" style="--m:url('{{@base}}assets/logos/gemini.svg')"></span>Gemini</li>
-        <li><span class="logo" style="--m:url('{{@base}}assets/logos/claude.svg')"></span>Claude</li>
-        <li><span class="logo" style="--m:url('{{@base}}assets/logos/groq.svg')"></span>Groq</li>
-        <li><span class="logo" style="--m:url('{{@base}}assets/logos/qwen.svg')"></span>Qwen</li>
-        <li><span class="logo" style="--m:url('{{@base}}assets/logos/kimi.svg')"></span>Kimi</li>
-        <li><span class="logo" style="--m:url('{{@base}}assets/logos/ollama.svg')"></span>Ollama</li>
-        <li><span class="logo" style="--m:url('{{@base}}assets/logos/openrouter.svg')"></span>OpenRouter</li>
-      </ul>
     </div>
   </section>
 
