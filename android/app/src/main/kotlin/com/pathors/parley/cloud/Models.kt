@@ -1,5 +1,7 @@
 package com.pathors.parley.cloud
 
+import com.pathors.parley.kit.FilingFolderSuggestion
+import com.pathors.parley.kit.FilingSuggestion
 import com.pathors.parley.kit.TranscriptSegment
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
@@ -430,6 +432,47 @@ class RecordingMeta(val raw: JsonObject) {
      */
     fun withFilingSuggested(): RecordingMeta = replacing(FILING_SUGGESTED, JsonPrimitive(true))
 
+    /**
+     * The filing suggestion still waiting on the user (`HistoryEntry.filingSuggestion`),
+     * or null — iOS `RecordingMeta.filingSuggestion`. The desktop clears it to
+     * `null` once it is accepted or dismissed (the suggestion is a prompt, not a
+     * property of the recording), so non-null here means "pending". A folder
+     * without a name is dropped; a suggestion with neither a title nor a folder
+     * is none.
+     */
+    val filingSuggestion: FilingSuggestion?
+        get() {
+            val obj = raw[FILING_SUGGESTION] as? JsonObject ?: return null
+            val folders = (obj["folders"] as? JsonArray).orEmpty().mapNotNull { element ->
+                val folder = element as? JsonObject ?: return@mapNotNull null
+                val name = folder.stringOrNull("name")?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+                FilingFolderSuggestion(
+                    folderId = folder.stringOrNull("folderId"),
+                    name = name,
+                    reason = folder.stringOrNull("reason").orEmpty(),
+                )
+            }
+            val title = obj.stringOrNull(TITLE).orEmpty()
+            if (title.isEmpty() && folders.isEmpty()) return null
+            return FilingSuggestion(title = title, folders = folders)
+        }
+
+    /**
+     * A copy that says the filing offer has been answered, whichever way:
+     * `filingSuggested: true` (the desktop's "a pass has been spent here") and
+     * `filingSuggestion: null` (the desktop reads a non-null one as still
+     * waiting, and would offer it again on the Mac). What every filing write
+     * from the phone carries — iOS `FilingSuggestionModel.write`.
+     */
+    fun withFilingAnswered(): RecordingMeta = RecordingMeta(
+        JsonObject(
+            LinkedHashMap(raw).apply {
+                put(FILING_SUGGESTED, JsonPrimitive(true))
+                put(FILING_SUGGESTION, JsonNull)
+            },
+        ),
+    )
+
     /** One key set (in place, when it already exists), the rest untouched. */
     private fun replacing(key: String, value: JsonElement): RecordingMeta =
         RecordingMeta(JsonObject(LinkedHashMap(raw).apply { put(key, value) }))
@@ -439,6 +482,7 @@ class RecordingMeta(val raw: JsonObject) {
     companion object {
         private const val TITLE = "title"
         private const val FILING_SUGGESTED = "filingSuggested"
+        private const val FILING_SUGGESTION = "filingSuggestion"
 
         /**
          * The `segments` array as every Parley client writes it.

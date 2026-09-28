@@ -11,6 +11,7 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import com.pathors.parley.auth.AuthManager
 import com.pathors.parley.auth.SignInError
 import com.pathors.parley.cloud.CloudClient
+import com.pathors.parley.filing.SampleFilingTarget
 import com.pathors.parley.library.SaveLocationStore
 import com.pathors.parley.meeting.ImportSession
 import com.pathors.parley.meeting.MeetingService
@@ -202,6 +203,16 @@ class AppContainer(private val app: Application) {
         scope = appScope,
         gettingStarted = gettingStarted,
     )
+
+    /**
+     * Where the recording page writes the sample's filing answer — the
+     * sample's own store, once it implements [SampleFilingTarget] (onboarding
+     * v2's `suggestionPending` / `answerSuggestion`). Null until then, and the
+     * sample simply shows no filing card.
+     */
+    val sampleFiling: SampleFilingTarget?
+        get() = sample as? SampleFilingTarget
+
     /** "Default save location" — read by the uploader, chosen in the account sheet. */
     val saveLocation: SaveLocationStore = SaveLocationStore.default(app)
 

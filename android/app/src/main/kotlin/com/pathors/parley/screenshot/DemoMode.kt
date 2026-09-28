@@ -158,7 +158,7 @@ object DemoMode {
          */
         SETTLED("settled"),
 
-        /** [SETTLED] with the Adjust sheet open — iOS `parley://demo/adjust`. */
+        /** [SETTLED] with the filing card's folder picker open — iOS `parley://demo/adjust`. */
         ADJUST("adjust"),
         ;
 
@@ -820,7 +820,7 @@ object DemoMode {
     /**
      * What the filing pass proposes for the live script: a name that says who
      * and what, the Renewals folder with its reason, and a new folder as the
-     * runner-up for the Adjust sheet.
+     * runner-up for the second chip.
      */
     fun filingSuggestion(locale: Locale = Locale.getDefault()): FilingSuggestion = FilingSuggestion(
         title = t(locale, "Northwind renewal — seat count and price hold", "北風工業續約：席次與鎖價"),

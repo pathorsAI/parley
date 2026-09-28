@@ -12,6 +12,11 @@ import com.pathors.parley.cloud.CloudException
 import com.pathors.parley.cloud.CloudFolder
 import com.pathors.parley.cloud.RecordingMeta
 import com.pathors.parley.cloud.asBatchTranscriptionProblem
+import com.pathors.parley.filing.FilingCardController
+import com.pathors.parley.filing.FilingSuggestionModel
+import com.pathors.parley.filing.FilingTarget
+import com.pathors.parley.filing.PendingFiling
+import com.pathors.parley.kit.FilingSuggestion
 import com.pathors.parley.kit.GettingStartedStep
 import com.pathors.parley.kit.SampleManifest
 import com.pathors.parley.library.LibraryFolders
@@ -20,6 +25,7 @@ import com.pathors.parley.playback.PlaybackController
 import com.pathors.parley.playback.PlaybackPhase
 import com.pathors.parley.playback.PlaybackState
 import com.pathors.parley.screenshot.DemoMode
+import com.pathors.parley.upload.BackfillStatus
 import com.pathors.parley.upload.ManualRetryBudgetSpentException
 import java.io.File
 import kotlinx.coroutines.CancellationException
@@ -95,7 +101,7 @@ enum class DetailLoadFailure {
  * owns the bilingual copy for each reason.
  */
 enum class RetranscribeBlock {
-    /** A run for this recording is queued or in flight. */
+    /** A run for this recording is alive right now. A queued one is not this. */
     IN_FLIGHT,
 
     /** The cap on hand-triggered runs is used up. */
@@ -120,6 +126,12 @@ sealed interface RetranscribeFailure {
 
     /** The cap ran out between the screen opening and the tap landing. */
     data object BudgetSpent : RetranscribeFailure
+
+    /**
+     * A pass came back without this recording's new transcript and gave no
+     * reason worth reading — iOS "Re-transcribing didn't finish this time."
+     */
+    data object DidNotFinish : RetranscribeFailure
 }
 
 /**
@@ -130,9 +142,21 @@ sealed interface RetranscribeFailure {
  * once, this moves through a confirmation, a queue and possibly a failure — and
  * because a state machine that is its own value is one a test can drive without
  * a container, a cloud or a coroutine.
+ *
+ * ## Running is not queued (iOS 1.14)
+ *
+ * The spinner belongs to a run that is actually alive — this screen's own
+ * ([Phase.WORKING]) or a background pass that has picked this recording up
+ * ([runningNow]). A request that is merely *waiting* in the queue gets plain
+ * text, the truth about what will move it, and a **Start now** action; it no
+ * longer blocks asking again. A spinner over a request nothing was running was
+ * the whole of the reported bug: the phone said it was transcribing, it was
+ * not, and the retry that would have moved it was disabled because of it.
  */
 data class RetranscribeState(
     val phase: Phase = Phase.IDLE,
+    /** The confirmation dialog is up. The phase underneath is left as it was. */
+    val confirming: Boolean = false,
     /** Hand-triggered runs left on this recording, 0…3. */
     val retriesRemaining: Int = 0,
     /** Whether audio exists to send — on the phone, or downloadable from the cloud. */
@@ -140,18 +164,20 @@ data class RetranscribeState(
     /**
      * The last attempt's complaint, or null. Survives into [Phase.QUEUED]: a run
      * that failed while staying queued is both things at once, and saying only
-     * "queued" would hide a quota message the person needs.
+     * "waiting" would hide a quota message the person needs. Never drawn beside
+     * the spinner (see [status]).
      */
     val failure: RetranscribeFailure? = null,
+    /** A run for this recording is alive right now, started by anyone. */
+    val runningNow: Boolean = false,
+    /** When a run last started on the queued request, epoch ms; null if none ever has. */
+    val lastAttemptAtMs: Long? = null,
 ) {
 
     enum class Phase {
         IDLE,
 
-        /** The confirmation dialog is up. */
-        CONFIRMING,
-
-        /** Fetching the audio and enqueuing. Short, but it can involve a download. */
+        /** This screen is fetching the audio, queueing the run and running it. */
         WORKING,
 
         /** In the backfill queue: this screen's transcript is going to be replaced. */
@@ -161,10 +187,43 @@ data class RetranscribeState(
         FAILED,
     }
 
-    /** Why the action is unavailable, or null when it can be taken. */
+    /** What the inline status band shows — one of these, never two. */
+    enum class Status {
+        NONE,
+
+        /** Spinner and "Re-transcribing… this can take a few minutes." Nothing else. */
+        RUNNING,
+
+        /** The last complaint, if any, then "Waiting to re-transcribe…" and Start now. */
+        WAITING,
+
+        /** Nothing queued; only the refusal that explains a tap that did nothing. */
+        FAILURE,
+    }
+
+    /** A run is alive: this screen's own, or a pass that picked the queued request up. */
+    val isRunning: Boolean
+        get() = phase == Phase.WORKING || (phase == Phase.QUEUED && runningNow)
+
+    /** Queued, and nothing is running it. */
+    val isWaiting: Boolean get() = phase == Phase.QUEUED && !runningNow
+
+    val status: Status
+        get() = when {
+            isRunning -> Status.RUNNING
+            isWaiting -> Status.WAITING
+            failure != null -> Status.FAILURE
+            else -> Status.NONE
+        }
+
+    /**
+     * Why the action is unavailable, or null when it can be taken. Only a run
+     * that is alive closes it — a queued request is one nobody is working on,
+     * and asking again is exactly the right thing to be able to do.
+     */
     val block: RetranscribeBlock?
         get() = when {
-            phase == Phase.WORKING || phase == Phase.QUEUED -> RetranscribeBlock.IN_FLIGHT
+            isRunning -> RetranscribeBlock.IN_FLIGHT
             retriesRemaining <= 0 -> RetranscribeBlock.BUDGET_SPENT
             !audioObtainable -> RetranscribeBlock.NO_AUDIO
             else -> null
@@ -172,33 +231,25 @@ data class RetranscribeState(
 
     val canRequest: Boolean get() = block == null
 
-    /**
-     * Whether the inline status band draws at all.
-     *
-     * [Phase.CONFIRMING] is not on this list on purpose: the dialog is the
-     * feedback, and a band that appeared behind it would be describing something
-     * that has not been agreed to yet.
-     */
-    val showsStatus: Boolean
-        get() = phase == Phase.WORKING || phase == Phase.QUEUED || failure != null
-
-    /** Whether the band's spinner and "this is happening" line are drawn. */
-    val isRunning: Boolean get() = phase == Phase.WORKING || phase == Phase.QUEUED
+    /** Whether "Start now" can run the queued request. */
+    val canStartNow: Boolean get() = isWaiting && !confirming
 
     // ── transitions ──────────────────────────────────────────────────────────
     //
     // Pure, and all of them here rather than as `copy` calls scattered through
-    // the ViewModel: these five lines are the whole contract the screen renders,
-    // and they are what the unit test drives.
+    // the ViewModel: these lines are the whole contract the screen renders, and
+    // they are what the unit test drives.
 
-    fun confirming(): RetranscribeState =
-        if (canRequest) copy(phase = Phase.CONFIRMING) else this
+    fun confirming(): RetranscribeState = if (canRequest) copy(confirming = true) else this
 
-    fun dismissed(): RetranscribeState =
-        if (phase == Phase.CONFIRMING) copy(phase = Phase.IDLE) else this
+    fun dismissed(): RetranscribeState = copy(confirming = false)
 
-    /** The person said yes. Clears the previous complaint — this is a new attempt. */
-    fun working(): RetranscribeState = copy(phase = Phase.WORKING, failure = null)
+    /**
+     * The person said yes, or tapped Start now. Clears the previous complaint —
+     * this is a new attempt, and a red line under a live spinner would be the
+     * band claiming both at once.
+     */
+    fun working(): RetranscribeState = copy(phase = Phase.WORKING, confirming = false, failure = null)
 
     fun queued(retriesRemaining: Int = this.retriesRemaining): RetranscribeState =
         copy(phase = Phase.QUEUED, retriesRemaining = retriesRemaining, failure = null)
@@ -208,16 +259,17 @@ data class RetranscribeState(
      * idle, with one fewer retry.
      */
     fun settled(retriesRemaining: Int): RetranscribeState =
-        copy(phase = Phase.IDLE, retriesRemaining = retriesRemaining, failure = null)
+        copy(phase = Phase.IDLE, retriesRemaining = retriesRemaining, failure = null, runningNow = false)
 
     /**
      * The pass ended without clearing this recording. It stays queued and will
-     * be retried, and [problem] — when the pass reported one — says why it
-     * stopped, because "still queued" alone reads as progress.
+     * be retried, and the band says why it stopped — the queue's own reason
+     * when it kept one, "didn't finish this time" otherwise — because
+     * "waiting" alone reads as progress.
      */
     fun stillQueued(problem: BatchTranscriptionProblem?): RetranscribeState = copy(
         phase = Phase.QUEUED,
-        failure = problem?.let { RetranscribeFailure.Cloud(it) },
+        failure = problem?.let { RetranscribeFailure.Cloud(it) } ?: RetranscribeFailure.DidNotFinish,
     )
 
     fun failed(failure: RetranscribeFailure): RetranscribeState = copy(
@@ -229,6 +281,30 @@ data class RetranscribeState(
         retriesRemaining =
             if (failure is RetranscribeFailure.BudgetSpent) 0 else retriesRemaining,
     )
+
+    /**
+     * What the queue says about this recording, read after a load, a landed
+     * run, or a change in what is running. Only ever moves an idle or failed
+     * screen into the queued state, or a queued one out of it: a request this
+     * screen is in the middle of making owns [Phase.WORKING], and must not be
+     * overwritten by a queue read that was in flight at the same time.
+     */
+    fun observed(status: BackfillStatus): RetranscribeState = when (status) {
+        BackfillStatus.Running -> copy(runningNow = true, phase = promotedToQueued())
+        is BackfillStatus.Queued -> copy(
+            runningNow = false,
+            lastAttemptAtMs = status.lastAttemptAtMs,
+            phase = promotedToQueued(),
+        )
+        BackfillStatus.None -> copy(
+            runningNow = false,
+            lastAttemptAtMs = null,
+            phase = if (phase == Phase.QUEUED) Phase.IDLE else phase,
+        )
+    }
+
+    private fun promotedToQueued(): Phase =
+        if (phase == Phase.IDLE || phase == Phase.FAILED) Phase.QUEUED else phase
 }
 
 class RecordingDetailViewModel(
@@ -400,6 +476,51 @@ class RecordingDetailViewModel(
     private val _filing = MutableStateFlow(FilingState())
     val filing: StateFlow<FilingState> = _filing.asStateFlow()
 
+    /**
+     * The filing suggestion card, above Summary | Transcript, for a recording
+     * with a suggestion still pending — one a desktop pass or the backfill's
+     * pass left in the synced meta, or the sample's own (through
+     * [AppContainer.sampleFiling]). iOS `RecordingDetailView` since #450.
+     *
+     * Null where the recording cannot be filed from here (an org recording).
+     *
+     * ## Hooks for a guide (the onboarding GuideBar)
+     *
+     * - `filingCard?.wash()` — tint the card for 1.2 s: "look here".
+     * - `filingCard?.openPicker()` — open "Choose another…", the folder
+     *   picker with the suggested folders first.
+     * - `filingCard?.state` — whether there is a card to point at
+     *   ([com.pathors.parley.filing.FilingUiState.hasSomethingToOffer]).
+     *
+     * [washFilingCard] and [openFilingPicker] are the same two, for a caller
+     * that holds only this ViewModel.
+     */
+    val filingCard: FilingCardController? = if (orgId == null) {
+        FilingCardController(
+            model = FilingSuggestionModel(
+                cloud = container.cloud,
+                // Only the meeting screen runs a pass; this one presents.
+                speakerLabel = { "" },
+                onFiled = { container.gettingStarted.mark(GettingStartedStep.FILED) },
+            ),
+            scope = viewModelScope,
+            backgroundScope = container.appScope,
+            onWritten = ::showFilingAnswer,
+        )
+    } else {
+        null
+    }
+
+    /** GuideBar hook: wash the filing card for 1.2 s. A no-op when there is no card. */
+    fun washFilingCard() {
+        filingCard?.wash()
+    }
+
+    /** GuideBar hook: open the filing card's folder picker. A no-op when there is no card. */
+    fun openFilingPicker() {
+        filingCard?.openPicker()
+    }
+
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
 
@@ -427,17 +548,31 @@ class RecordingDetailViewModel(
         viewModelScope.launch {
             container.backfiller.landed.drop(1).collect { backfillLanded() }
         }
+        // A pass run from anywhere — the foreground drain, a network coming
+        // back — picking this recording up, or letting go of it: the band
+        // follows, so the spinner is up exactly while a run is alive.
+        viewModelScope.launch {
+            container.backfiller.running.drop(1).collect { syncRetranscribe() }
+        }
     }
 
     private suspend fun backfillLanded() {
-        val queued = runCatching { container.backfiller.isQueued(recordingId) }.getOrDefault(true)
-        if (!queued && _retranscribe.value.phase == RetranscribeState.Phase.QUEUED) {
+        val status = backfillStatus(default = BackfillStatus.Queued(null))
+        if (status == BackfillStatus.None && _retranscribe.value.phase == RetranscribeState.Phase.QUEUED) {
             // Ours landed while the screen was saying it was waiting.
             val remaining = retriesRemaining()
             _retranscribe.update { it.settled(remaining) }
         }
         refreshMeta()
         syncRetranscribe()
+    }
+
+    private suspend fun backfillStatus(default: BackfillStatus): BackfillStatus = try {
+        container.backfiller.status(recordingId)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Throwable) {
+        default
     }
 
     fun load() {
@@ -463,6 +598,7 @@ class RecordingDetailViewModel(
                 UiState(loading = false, failure = classifyLoadFailure(e))
             }
             openPlayer()
+            presentFiling()
             syncRetranscribe()
         }
         if (canMoveToFolder) viewModelScope.launch { loadFolders() }
@@ -483,6 +619,7 @@ class RecordingDetailViewModel(
         }
         sampleQuestions = manifest.questions
         _state.value = fromMeta(SampleRecordingStore.metaOf(manifest, entry))
+        presentFiling()
         sample.ensureAudio(manifest)
         openPlayer()
     }
@@ -506,6 +643,64 @@ class RecordingDetailViewModel(
             LibraryFolders.personalFolders(container.cloud.listFolders())
         }.getOrNull() ?: return
         _filing.update { it.copy(folders = folders) }
+        // Again, now with the list: the chips' "existing folder" captions and
+        // the picker's suggested section are drawn against it.
+        presentFiling()
+    }
+
+    /**
+     * Put the recording's pending suggestion on the card, if it has one. Safe
+     * to call on every load: an offer already being answered, or one the
+     * person said no to, is left alone ([FilingSuggestionModel.present]).
+     *
+     * Not in a screenshot run: there is no account to write an answer to.
+     */
+    private suspend fun presentFiling() {
+        val card = filingCard ?: return
+        if (DemoMode.isActive) return
+        val meta = _state.value.meta ?: return
+        val (suggestion, target) = pendingFiling(meta) ?: return
+        val folders = _filing.value.folders
+        card.model.present(
+            PendingFiling(
+                suggestion = suggestion,
+                currentTitle = meta.title,
+                currentFolderId = LibraryFolders.liveFolderId(meta.folderId, folders),
+                folders = folders,
+            ),
+            target,
+        )
+    }
+
+    /** The suggestion waiting on this recording, and where its answer goes. */
+    private suspend fun pendingFiling(meta: RecordingMeta): Pair<FilingSuggestion, FilingTarget>? {
+        if (!isSample) {
+            val suggestion = meta.filingSuggestion ?: return null
+            return suggestion to FilingTarget.Cloud(recordingId)
+        }
+        val store = container.sampleFiling ?: return null
+        val suggestion = store.pendingFilingSuggestion() ?: return null
+        return suggestion to FilingTarget.Sample(store)
+    }
+
+    /**
+     * An answer landed: the title in the top bar, the folder the overflow
+     * menu's picker ticks, and a folder created for it all follow.
+     */
+    private fun showFilingAnswer() {
+        val offer = filingCard?.state?.value ?: return
+        val meta = _state.value.meta ?: return
+        var shown = meta
+        if (offer.currentTitle.isNotEmpty() && offer.currentTitle != meta.title) {
+            shown = shown.withTitle(offer.currentTitle)
+        }
+        if (offer.folderAnswered && offer.currentFolderId != currentFolderId()) {
+            shown = shown.withFolderId(offer.currentFolderId)
+        }
+        if (shown !== meta) _state.update { it.copy(meta = shown) }
+        val known = _filing.value.folders.mapTo(HashSet()) { it.id }
+        val created = offer.existingFolders.filterNot { it.id in known }
+        if (created.isNotEmpty()) _filing.update { it.copy(folders = it.folders + created) }
     }
 
     /**
@@ -586,9 +781,23 @@ class RecordingDetailViewModel(
      * pass — the person is looking at the screen they asked from.
      */
     fun confirmRetranscribe() {
-        if (_retranscribe.value.phase != RetranscribeState.Phase.CONFIRMING) return
+        if (!_retranscribe.value.confirming) return
         _retranscribe.update { it.working() }
         viewModelScope.launch { runRetranscription() }
+    }
+
+    /**
+     * "Start now" under a waiting request: run the queue for it, right here.
+     *
+     * Deliberately not a second [TranscriptBackfiller.requestRetranscription]:
+     * the manifest and the audio are already on disk, and queueing again would
+     * spend another retry for a job the person has already paid for. This is
+     * the foreground drain, asked for by hand — iOS `drainNow`.
+     */
+    fun startRetranscriptionNow() {
+        if (!_retranscribe.value.canStartNow || DemoMode.isActive) return
+        _retranscribe.update { it.working() }
+        viewModelScope.launch { drainAndSettle() }
     }
 
     private suspend fun runRetranscription() {
@@ -625,18 +834,33 @@ class RecordingDetailViewModel(
             return
         }
 
-        // Queued from here on: whatever the pass below does, the request is
-        // persisted and will be retried, so the screen must say so even if this
-        // ViewModel dies in the next second.
-        _retranscribe.update { it.queued() }
+        // Queued from here on, and persisted: whatever the pass below does, the
+        // request will be retried. The band stays on "running" through the
+        // pass — the drain below is what runs this recording.
+        drainAndSettle()
+    }
 
-        val result = runCatching { container.backfiller.drain() }
-        val stillQueued = runCatching { container.backfiller.isQueued(recordingId) }
-            .getOrDefault(true)
-        if (stillQueued) {
-            val problem = (result.exceptionOrNull() ?: result.getOrNull()?.failure)
-                ?.asBatchTranscriptionProblem()
-            _retranscribe.update { it.stillQueued(problem) }
+    /**
+     * Run the queue now and say where this recording ended up: gone from the
+     * queue is the one unambiguous "it worked"; still there is "waiting", with
+     * the pass's reason (or "didn't finish this time") above it.
+     */
+    private suspend fun drainAndSettle() {
+        val failure = try {
+            container.backfiller.drain().failure
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            e
+        }
+        val status = backfillStatus(default = BackfillStatus.Queued(null))
+        if (status != BackfillStatus.None) {
+            // A cancellation is not a reason worth reading: it means the app
+            // went away mid-pass, which the foreground drain takes care of.
+            val problem = failure?.takeUnless { it is CancellationException }?.asBatchTranscriptionProblem()
+            // `observed` brings the last-attempt time, and a pass that has
+            // meanwhile picked the request up again.
+            _retranscribe.update { it.stillQueued(problem).observed(status) }
             return
         }
 
@@ -715,21 +939,13 @@ class RecordingDetailViewModel(
             return
         }
         val inCloud = _state.value.meta?.hasAudio == true
-        val queued = runCatching { container.backfiller.isQueued(recordingId) }
-            .getOrDefault(false)
+        val status = backfillStatus(default = BackfillStatus.None)
         val remaining = retriesRemaining()
         val onPhone = withContext(Dispatchers.IO) { container.localAudio.has(recordingId) }
         _retranscribe.update {
-            it.copy(
-                // Only ever promotes an idle screen. A confirmation that is open
-                // or a request this ViewModel is in the middle of making owns the
-                // phase, and must not be overwritten by a queue read that was in
-                // flight at the same time.
-                phase = if (queued && it.phase == RetranscribeState.Phase.IDLE) {
-                    RetranscribeState.Phase.QUEUED
-                } else {
-                    it.phase
-                },
+            // `observed` only ever moves an idle, failed or queued screen; a
+            // request this ViewModel is in the middle of making owns the phase.
+            it.observed(status).copy(
                 retriesRemaining = remaining,
                 audioObtainable = onPhone || inCloud,
             )

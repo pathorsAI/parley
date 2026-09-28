@@ -237,7 +237,13 @@
 
     <!-- 重新轉錄：即時逐字稿漏掉太多時的補救 -->
     <string name="retranscribe_action">重新轉錄</string>
-    <string name="retranscribe_queued">正在重新轉錄這場錄音。新的逐字稿完成後會取代現在這份。</string>
+    <string name="retranscribe_already_running">這段錄音正在重新轉錄。</string>
+    <string name="retranscribe_running">正在重新轉錄……可能需要幾分鐘。</string>
+    <string name="retranscribe_waiting_last_tried">等待重新轉錄。上次嘗試：%1$s，下次開啟 Parley 或把它切回前景時會再試一次。</string>
+    <string name="retranscribe_waiting_never">等待重新轉錄。目前沒有任何工作在跑——開啟 Parley 或把它切回前景時就會開始。</string>
+    <string name="retranscribe_start_now">立刻開始</string>
+    <string name="retranscribe_start_now_label">立刻開始重新轉錄</string>
+    <string name="retranscribe_did_not_finish">這次重新轉錄沒有完成。</string>
     <string name="retranscribe_budget_spent">這段錄音重新轉錄的次數已達上限。</string>
     <string name="retranscribe_remaining">還可以重新轉錄 %1$d 次</string>
     <string name="retranscribe_confirm_title">要重新轉錄這段錄音嗎？</string>
@@ -381,6 +387,8 @@
     <string name="folder_picker_no_match">沒有符合的資料夾。</string>
     <string name="folder_picker_current">目前的資料夾</string>
     <string name="folder_picker_create_failed">無法建立資料夾。請檢查網路連線後再試一次。</string>
+    <string name="folder_picker_suggested">建議</string>
+    <string name="folder_picker_all">所有資料夾</string>
     <!-- Default save location (AccountSheet) -->
     <string name="account_save_location_title">預設儲存位置</string>
     <string name="account_save_location_personal_folder">個人 · %1$s</string>
@@ -388,22 +396,20 @@
     <string name="account_save_location_change">變更</string>
     <string name="account_save_location_footer">選擇組織時，錄音仍會保存在個人空間，並自動分享一份到該組織——與桌面版行為一致。</string>
 
-    <!-- Filing suggestion (iOS FilingSuggestionCard / FilingAdjustSheet) -->
+    <!-- Filing suggestion (iOS FilingSuggestionCard) -->
     <string name="filing_heading">建議</string>
     <string name="filing_thinking">正在想名稱和資料夾…</string>
     <string name="filing_was">原本：%1$s</string>
-    <string name="filing_folder">資料夾</string>
+    <string name="filing_renamed">已改名</string>
+    <string name="filing_accept">採用</string>
+    <string name="filing_edit_title">編輯標題</string>
+    <string name="filing_title">標題</string>
     <string name="filing_new_folder">新資料夾</string>
-    <string name="filing_save_suggested">就這樣存</string>
-    <string name="filing_adjust">改一下</string>
+    <string name="filing_existing_folder">既有資料夾</string>
+    <string name="filing_choose_another">選其他資料夾…</string>
     <string name="filing_skip">不用建議</string>
     <string name="filing_write_failed">沒有存成功，請再試一次。</string>
     <string name="filing_done">完成</string>
-    <string name="filing_save">儲存</string>
-    <string name="filing_title">標題</string>
-    <string name="filing_move_to_folder">移到資料夾</string>
-    <string name="filing_new_tag">新增</string>
-    <string name="filing_other_folder">選其他資料夾…</string>
 
     <string name="whats_new_also">也改了</string>
     <string name="whats_new_copy_language">zh-Hant</string>

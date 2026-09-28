@@ -29,13 +29,16 @@ import kotlinx.coroutines.launch
  *
  * Skip's flag write is the one thing that outlives the screen: the screen
  * leaves a beat after Skip, and the write is launched on the app's scope so the
- * departure does not cancel it.
+ * departure does not cancel it (see [FilingCardController]).
  */
 class FilingSuggestionViewModel(
     private val model: FilingSuggestionModel,
     destination: Flow<SaveDestination>,
-    private val backgroundScope: CoroutineScope,
+    backgroundScope: CoroutineScope,
 ) : ViewModel() {
+
+    /** What the card does — accept, rename, file, pick, skip — and the guide's hooks. */
+    val card = FilingCardController(model, viewModelScope, backgroundScope)
 
     val state: StateFlow<FilingUiState> = model.state
 
@@ -52,31 +55,6 @@ class FilingSuggestionViewModel(
         val skip = FilingSuggestionModel.skipReason(finished, destination.value, spoken, DemoMode.isActive)
         val id = finished.recordingId.orEmpty()
         if (model.claim(id, skip)) viewModelScope.launch { model.run(id, spoken) }
-    }
-
-    fun acceptSuggested() {
-        viewModelScope.launch { model.acceptSuggested() }
-    }
-
-    /**
-     * The Adjust sheet's Save. A failed push keeps the sheet up with the edits
-     * intact ([onClosed] is not called); a push that landed retires the offer;
-     * a Save that found nothing to change leaves through [skip], which still
-     * lands `filingSuggested` for the desktop.
-     */
-    fun save(title: String, folder: FolderTarget?, onClosed: () -> Unit) {
-        viewModelScope.launch {
-            val pushed = model.apply(title, folder)
-            if (model.state.value.writeFailed) return@launch
-            if (pushed) model.forget() else skip()
-            onClosed()
-        }
-    }
-
-    /** The user said no: the offer goes now, the flag is written behind it. */
-    fun skip() {
-        val id = model.forget()?.takeIf { it.isNotEmpty() } ?: return
-        backgroundScope.launch { model.markAnswered(id) }
     }
 
     fun seedDemo(

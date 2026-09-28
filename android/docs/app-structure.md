@@ -46,6 +46,8 @@ com.pathors.parley
     RecordingDetail*.kt  player, Summary | Transcript pages, transcript search,
                          re-transcribe, move to folder (personal recordings)
     RecordingSummaryPage.kt brief, action items, highlights, speakers
+    FilingSuggestionCard.kt the filing suggestion: editable title, folder chips,
+                         "Choose another…", Accept / Skip, and its motion
     Format.kt            duration/clock/date/speaker-label formatting
     theme/Theme.kt       Material 3, dynamic color on API 31+
 ```
@@ -353,6 +355,54 @@ scroll position.
 - **Couldn't load.** A failed load is an icon, "Couldn't load", and the reason
   (`DetailLoadFailure`: offline, not found, no access, signed out, a server
   error, or the sample gone).
+- **Re-transcribe status** (iOS 1.14). `TranscriptBackfiller.status(id)` says
+  `Running` (a run is alive in this process — `running`, an in-memory set),
+  `Queued(lastAttemptAtMs)` (a manifest nobody is running; the time is stamped
+  into the manifest when a run starts, so a run the system killed still leaves
+  it), or `None`. The band above the pages shows exactly one of: a spinner and
+  "Re-transcribing… this can take a few minutes." (running only); the last
+  complaint, "Waiting to re-transcribe. It last tried …" and **Start now**,
+  which drains the queue here without queueing (or charging) again; or a
+  refusal on its own. A failure line never sits beside the spinner, and only a
+  live run disables "Transcribe again" — a queued request can be asked for
+  again.
+
+## The filing suggestion card
+
+`ui/FilingSuggestionCard.kt`, iOS `FilingSuggestionCard` (#450). The same card
+on two screens, driven by one `filing/FilingSuggestionModel` per screen through
+a `FilingCardController`:
+
+- **Meeting screen**, after a live recording: the model runs the pass itself
+  (`claim` / `run`) once the upload settles, and the card shows "Suggesting a
+  name and a folder…" while it thinks.
+- **Recording page**, above Summary | Transcript: the model `present`s a
+  suggestion already pending on the recording — the meta's `filingSuggestion`
+  (a desktop pass, or the backfill's), or the sample's through
+  `AppContainer.sampleFiling` (a `filing/SampleFilingTarget`, which the
+  sample's store implements). Personal recordings only.
+
+The card: a "Suggestion" heading with **Skip suggestion** at the top right;
+the proposed name, editable in place (Done renames at once, and "Was: …"
+becomes "Renamed ✓"); up to three outlined folder chips — a new folder dashed
+and captioned "New folder", an existing one "Existing folder", the model's
+reason read by TalkBack after the name; "Choose another…", which opens the
+folder picker with the suggested folders under "Suggested"; and **Accept**,
+which takes the name as the field shows it and the first chip in one push. A
+chip files without renaming. Every answer is one read-modify-write that also
+sets `filingSuggested` and clears `filingSuggestion`, so the desktop does not
+ask again.
+
+Motion lives in parleykit's `FilingMotion`: the card arrives on iOS's spring
+(response 0.5, damping 0.8), the proposed name types itself in once per
+session at 22 ms a character, and Accept or a chip flies a ghost of the card
+into the chip, pops it and plays a success haptic before writing. With
+"Remove animations" on, all of it is skipped.
+
+A guide can drive the card through the owning screen: `FilingCardController`
+(`RecordingDetailViewModel.filingCard`, `FilingSuggestionViewModel.card`) has
+`wash()` — tint the card for 1.2 s — and `openPicker()`; the recording page's
+ViewModel also has `washFilingCard()` / `openFilingPicker()`.
 
 ## Strings
 
