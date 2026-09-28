@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The launcher icon's themed (Material You) layer: the "P." monogram from
+     app-icon.svg at the repository root — stem, open bowl, point of agreement —
+     as a single-colour silhouette. The launcher tints it; only alpha matters.
+
+     The viewport is app-icon.svg's own 1024 units over the adaptive icon's
+     108dp, the same mapping the full-colour foreground uses. The mark is drawn
+     at 80% about the centre so its corners sit inside the 66dp circle a
+     themed icon is masked to, rather than touching it. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024">
+    <group
+        android:pivotX="512"
+        android:pivotY="512"
+        android:scaleX="0.8"
+        android:scaleY="0.8">
+        <!-- stem -->
+        <path
+            android:pathData="M360,300 V724"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="74"
+            android:strokeLineCap="round" />
+        <!-- bowl, left open to form the dialogue gap -->
+        <path
+            android:pathData="M360,300 H560 A150,150 0 0,1 560,600 H360"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="74"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+        <!-- the point of agreement -->
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M608,724 A40,40 0 1,0 688,724 A40,40 0 1,0 608,724 Z" />
+    </group>
+</vector>

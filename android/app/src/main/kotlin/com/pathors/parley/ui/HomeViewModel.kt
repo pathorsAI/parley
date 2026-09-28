@@ -19,6 +19,9 @@ import com.pathors.parley.kit.TranscriptSearch
 import com.pathors.parley.library.FolderFilter
 import com.pathors.parley.library.LibraryFolders
 import com.pathors.parley.library.SaveDestination
+import com.pathors.parley.meeting.ImportNotice
+import com.pathors.parley.playback.AudioDownloadState
+import com.pathors.parley.playback.AudioDownloads
 import com.pathors.parley.screenshot.DemoMode
 import com.pathors.parley.upload.PendingUpload
 import kotlinx.coroutines.CancellationException
@@ -192,6 +195,49 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     private var loadJob: Job? = null
 
     /**
+     * What the rows need to say where each recording's audio is: the downloads
+     * in flight or failed, and the store's contents. Two snapshots rather than a
+     * per-row lookup, so a row reads a map instead of the disk.
+     */
+    data class LibraryAudio(
+        val active: Map<String, AudioDownloadState> = emptyMap(),
+        val onPhone: Set<String> = emptySet(),
+    ) {
+        fun stateOf(id: String): AudioDownloadState =
+            if (SampleManifest.isSample(id)) {
+                // Bundled with the app: always here, and nothing to fetch.
+                AudioDownloadState.Local
+            } else {
+                AudioDownloads.stateOf(id, active, onPhone)
+            }
+    }
+
+    val audio: StateFlow<LibraryAudio> = combine(
+        container.audioDownloads.active,
+        container.audioDownloads.onPhone,
+    ) { active, onPhone -> LibraryAudio(active, onPhone) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, LibraryAudio())
+
+    /** The import that just landed, if the library has not moved on since. */
+    val importNotice: StateFlow<ImportNotice?> = container.importNotice
+
+    /**
+     * "Download" in a row's menu. Personal recordings only — the endpoint is
+     * the personal one, and an org copy's audio lives behind a path this client
+     * does not speak (iOS gates it the same way) — and never the sample.
+     */
+    fun downloadAudio(recording: RecordingSummary) {
+        if (!_state.value.isPersonal || SampleManifest.isSample(recording.id)) return
+        container.audioDownloads.requestDownload(recording.id)
+    }
+
+    /** "Remove download": the phone's copy only; the cloud keeps its own. */
+    fun removeDownload(recording: RecordingSummary) {
+        if (SampleManifest.isSample(recording.id)) return
+        container.audioDownloads.removeDownload(recording.id)
+    }
+
+    /**
      * Demo mode's library, per scope, seeded from the fixtures on first read
      * and then edited in place by moves and shares — so a screenshot run can
      * show a recording landing in a folder without a cloud to put it in.
@@ -210,6 +256,9 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
      */
     fun refresh() {
         loadJob?.cancel()
+        // A meeting kept on the phone after uploading reaches the store without
+        // passing through the downloader, so the rows re-read it on every load.
+        viewModelScope.launch { container.audioDownloads.refresh() }
         if (DemoMode.isActive) {
             // Fixtures, not the cloud — and deliberately not the pending queue
             // either: demo mode never reads or writes a real user's disk state.
@@ -319,6 +368,9 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
      */
     fun selectScope(orgId: String?) {
         if (orgId == _state.value.scopeOrgId) return
+        // The notice is about the library it landed in; iOS drops it on a
+        // scope switch too.
+        container.clearImportNotice()
         _state.update {
             it.copy(
                 scopeOrgId = orgId,
@@ -593,9 +645,12 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
      * retry ledger that would otherwise keep charging a deleted recording's
      * budget.
      */
-    private suspend fun forgetLocally(id: String) = withContext(Dispatchers.IO) {
-        container.localAudio.remove(id)
-        container.backfiller.forget(id)
+    private suspend fun forgetLocally(id: String) {
+        withContext(Dispatchers.IO) {
+            container.localAudio.remove(id)
+            container.backfiller.forget(id)
+        }
+        container.audioDownloads.refresh()
     }
 
     /** Dismiss the deletion error so the next attempt starts clean. */
@@ -635,7 +690,10 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 loading = false,
                 user = user.getOrNull(),
                 quota = quota.getOrNull(),
-                failed = user.isFailure && quota.isFailure,
+                // Who is signed in is the part the sheet cannot do without: a
+                // quota that loaded under an identity that did not still
+                // offers Refresh.
+                failed = user.getOrNull() == null,
                 saveTargets = _account.value.saveTargets,
             )
             loadSaveTargets()
@@ -670,6 +728,12 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
 
     /** "Default save location" in the account sheet. */
     fun setSaveDestination(destination: SaveDestination) {
+        // Choosing a real home for every recording to come — a folder or an
+        // organization, not the personal root — is filing (iOS SettingsView).
+        // The store routes this to demo mode's checklist by itself.
+        if (destination != SaveDestination.PERSONAL_ROOT) {
+            container.gettingStarted.mark(GettingStartedStep.FILED)
+        }
         if (DemoMode.isActive) {
             demoDestination.value = destination
             return

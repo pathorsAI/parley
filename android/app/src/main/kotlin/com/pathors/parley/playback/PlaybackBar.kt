@@ -38,8 +38,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -54,6 +55,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.AwaitPointerEventScope
+import androidx.compose.ui.input.pointer.PointerId
+import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -102,22 +106,15 @@ import androidx.compose.foundation.Canvas as DrawCanvas
  * offer, its progress, "Preparing…", or why it failed. An 80dp band holding one
  * line of text reads as a hole in the page, not a player (iOS #381).
  *
+ * @param actions what the bar's controls do. See [PlaybackBarActions].
  * @param markers moments worth finding on the timeline, in milliseconds — the
  *   analysis's findings. Drawn as small dots riding the top edge of the
  *   waveform; tapping one seeks there.
- * @param onSeek every seek the bar itself makes: each move of a scrub (live,
- *   so the audio follows the finger), a highlight dot, TalkBack's ±15 s. A
- *   seek from the transcript is not this — it goes through
- *   [PlaybackController.jumpTo], and the bar sees it as [PlaybackState.jump].
  */
 @Composable
 fun PlaybackBar(
     state: PlaybackState,
-    onPlayPause: () -> Unit,
-    onSeek: (Long) -> Unit,
-    onSetRate: (Float) -> Unit,
-    onCycleRate: () -> Unit,
-    onDownload: () -> Unit,
+    actions: PlaybackBarActions,
     modifier: Modifier = Modifier,
     markers: List<Long> = emptyList(),
 ) {
@@ -131,14 +128,7 @@ fun PlaybackBar(
             contentAlignment = Alignment.Center,
         ) {
             when (state.phase) {
-                PlaybackPhase.READY -> Player(
-                    state = state,
-                    markers = markers,
-                    onPlayPause = onPlayPause,
-                    onSeek = onSeek,
-                    onSetRate = onSetRate,
-                    onCycleRate = onCycleRate,
-                )
+                PlaybackPhase.READY -> Player(state = state, markers = markers, actions = actions)
 
                 PlaybackPhase.DOWNLOADING -> ProgressLine(
                     caption = stringResource(R.string.playback_downloading),
@@ -150,8 +140,8 @@ fun PlaybackBar(
                     fraction = -1f,
                 )
 
-                PlaybackPhase.FAILED -> FailureLine(state.failure, onDownload)
-                PlaybackPhase.ABSENT -> TextButton(onClick = onDownload) {
+                PlaybackPhase.FAILED -> FailureLine(state.failure, actions.onDownload)
+                PlaybackPhase.ABSENT -> TextButton(onClick = actions.onDownload) {
                     // No size next to it on purpose: the recording summary
                     // carries `hasAudio` but no byte count, and a number
                     // invented here would be a guess in the one place somebody
@@ -171,15 +161,25 @@ fun PlaybackBar(
     }
 }
 
+/**
+ * What the player's controls do, handed to [PlaybackBar] as one value.
+ *
+ * @property onSeek every seek the bar itself makes: each move of a scrub (live,
+ *   so the audio follows the finger), a highlight dot, TalkBack's ±15 s. A
+ *   seek from the transcript is not this — it goes through
+ *   [PlaybackController.jumpTo], and the bar sees it as [PlaybackState.jump].
+ * @property onDownload fetch the audio; also the failed download's retry.
+ */
+class PlaybackBarActions(
+    val onPlayPause: () -> Unit,
+    val onSeek: (Long) -> Unit,
+    val onSetRate: (Float) -> Unit,
+    val onCycleRate: () -> Unit,
+    val onDownload: () -> Unit,
+)
+
 @Composable
-private fun Player(
-    state: PlaybackState,
-    markers: List<Long>,
-    onPlayPause: () -> Unit,
-    onSeek: (Long) -> Unit,
-    onSetRate: (Float) -> Unit,
-    onCycleRate: () -> Unit,
-) {
+private fun Player(state: PlaybackState, markers: List<Long>, actions: PlaybackBarActions) {
     // Where the finger has the scrub, while one is down — for the clock in the
     // control row. The seek itself is already live; this only saves the clock
     // from lagging the finger by a poll.
@@ -188,13 +188,9 @@ private fun Player(
 
     Column(Modifier.fillMaxSize()) {
         WaveformScrubber(
-            overview = state.overview,
-            positionMs = state.positionMs,
-            durationMs = state.durationMs,
-            enabled = state.isSeekable,
-            onSeek = onSeek,
+            state = state,
+            onSeek = actions.onSeek,
             markers = markers,
-            jump = state.jump,
             onScrubChange = { scrubMs = it },
             modifier = Modifier
                 .fillMaxWidth()
@@ -210,7 +206,7 @@ private fun Player(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            PlayPauseButton(isPlaying = state.isPlaying, onClick = onPlayPause)
+            PlayPauseButton(isPlaying = state.isPlaying, onClick = actions.onPlayPause)
             Text(
                 text = "${formatDuration(shownMs.toDouble())} / " +
                     formatDuration(state.durationMs.toDouble()),
@@ -222,7 +218,7 @@ private fun Player(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.weight(1f))
-            SpeedButton(rate = state.rate, onSetRate = onSetRate, onCycle = onCycleRate)
+            SpeedButton(rate = state.rate, onSetRate = actions.onSetRate, onCycle = actions.onCycleRate)
         }
     }
 }
@@ -445,149 +441,65 @@ private fun failureMessage(failure: PlaybackFailure?): Int = when (failure) {
  */
 @Composable
 fun WaveformScrubber(
-    overview: AudioPeaks.Overview?,
-    positionMs: Long,
-    durationMs: Long,
-    enabled: Boolean,
+    state: PlaybackState,
     onSeek: (Long) -> Unit,
     modifier: Modifier = Modifier,
     markers: List<Long> = emptyList(),
-    jump: PlaybackJump = PlaybackJump(),
     onScrubChange: (Long?) -> Unit = {},
 ) {
-    val played = MaterialTheme.colorScheme.primary
-    val unplayed = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
-    val ink = MaterialTheme.colorScheme.onSurface
+    val colors = WaveformColors(
+        played = MaterialTheme.colorScheme.primary,
+        unplayed = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
+        playhead = MaterialTheme.colorScheme.onSurface,
+    )
     val page = MaterialTheme.colorScheme.surface
     val description = stringResource(R.string.playback_scrub)
-    val density = LocalDensity.current
     val view = LocalView.current
-    val context = LocalContext.current
+    val durationMs = state.durationMs
+    val enabled = state.isSeekable
 
     // Recomputed only when the bar count or the source peaks change: resampling
     // 400 values down to ~110 on every 50 ms tick would be work done 20 times a
     // second for a picture that did not move.
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
-    val step = with(density) { (BAR_WIDTH + BAR_GAP).toPx() }
+    val step = with(LocalDensity.current) { (BAR_WIDTH + BAR_GAP).toPx() }
     val barCount = (canvasSize.width / step).toInt().coerceAtLeast(0)
-    val bars = remember(overview, barCount) { resampleBars(overview, barCount) }
+    val bars = remember(state.overview, barCount) { resampleBars(state.overview, barCount) }
 
     var scrub by remember { mutableStateOf<ScrubPreview?>(null) }
-    val shownMs = scrub?.timeMs ?: positionMs
+    val shownMs = scrub?.timeMs ?: state.positionMs
 
-    val latestPosition by rememberUpdatedState(positionMs)
-    val latestOnSeek by rememberUpdatedState(onSeek)
-    val latestOnScrubChange by rememberUpdatedState(onScrubChange)
-    val latestDuration by rememberUpdatedState(durationMs)
+    // Held as `State` so the long-lived gesture and semantics lambdas always
+    // call the newest callbacks rather than the ones of their first frame.
+    val seek = rememberUpdatedState(onSeek)
+    val scrubChange = rememberUpdatedState(onScrubChange)
+    val gesture = ScrubCallbacks(
+        position = rememberUpdatedState(state.positionMs),
+        onSeek = seek,
+        onPreview = { preview ->
+            scrub = preview
+            scrubChange.value(preview?.timeMs)
+        },
+        onTierChange = { PlaybackHaptics.tierChanged(view) },
+    )
 
-    // ── the glide and the ring ─────────────────────────────────────────────
-    val glide = remember { Animatable(0f) }
-    val ring = remember { Animatable(0f) }
-    var gliding by remember { mutableStateOf(false) }
-    var ringFraction by remember { mutableStateOf<Float?>(null) }
-    // The jump already on screen when this composed — after a rotation, say —
-    // is history, not an event to replay.
-    var seenJump by remember { mutableIntStateOf(jump.id) }
-    LaunchedEffect(jump.id) {
-        if (jump.id == seenJump) return@LaunchedEffect
-        val id = jump.id
-        seenJump = id
-        PlaybackHaptics.jumped(view)
-        val duration = latestDuration
-        if (duration <= 0L || animationsRemoved(context)) return@LaunchedEffect
-        try {
-            glide.snapTo(fractionOf(jump.fromMs, duration))
-            ring.snapTo(0f)
-            gliding = true
-            ringFraction = fractionOf(jump.toMs, duration)
-            coroutineScope {
-                launch { glide.animateTo(fractionOf(jump.toMs, duration), tween(GLIDE_MS, easing = EASE_IN_OUT)) }
-                launch { ring.animateTo(1f, tween(RIPPLE_MS, easing = EASE_OUT)) }
-            }
-        } finally {
-            // Only this jump's own marks: a newer one may already be drawing.
-            if (seenJump == id) {
-                gliding = false
-                ringFraction = null
-            }
-        }
-    }
+    val marks = rememberJumpMarks(state.jump, durationMs)
 
     Box(modifier) {
         DrawCanvas(
             modifier = Modifier
                 .fillMaxSize()
-                .scrubSemantics(enabled, description, shownMs, positionMs, durationMs) { ms ->
-                    latestOnSeek(ms)
+                .scrubSemantics(enabled, description, shownMs, state.positionMs, durationMs) { ms ->
+                    seek.value(ms)
                 }
                 // Measured here rather than in the draw pass: writing state while
                 // drawing schedules another frame to draw the answer, which is one
                 // frame of a waveform that is not there yet on every resize.
                 .onSizeChanged { canvasSize = it }
-                .pointerInput(enabled, durationMs) {
-                    if (!enabled) return@pointerInput
-                    awaitEachGesture {
-                        val down = awaitFirstDown()
-                        down.consume()
-                        var time = latestPosition.toDouble()
-                        var lastX = down.position.x
-                        var tier = 0
-                        fun publish(finger: Offset) {
-                            val preview = ScrubPreview(time.roundToLong(), finger, tier)
-                            scrub = preview
-                            latestOnScrubChange(preview.timeMs)
-                        }
-                        publish(down.position)
-                        try {
-                            while (true) {
-                                val change = awaitPointerEvent().changes
-                                    .firstOrNull { it.id == down.id } ?: break
-                                if (!change.pressed) {
-                                    change.consume()
-                                    break
-                                }
-                                val finger = change.position
-                                val newTier = ScrubRules.tierFor((finger.y - down.position.y).toDp().value)
-                                if (newTier != tier) {
-                                    tier = newTier
-                                    PlaybackHaptics.tierChanged(view)
-                                }
-                                val before = time.roundToLong()
-                                time = ScrubRules.advance(
-                                    timeMs = time,
-                                    deltaPx = finger.x - lastX,
-                                    widthPx = size.width.toFloat(),
-                                    durationMs = durationMs,
-                                    tier = tier,
-                                )
-                                lastX = finger.x
-                                change.consume()
-                                publish(finger)
-                                val now = time.roundToLong()
-                                // Live: the audio follows the finger, or — paused —
-                                // the playhead does and the next play starts here.
-                                if (now != before) latestOnSeek(now)
-                            }
-                        } finally {
-                            // Nothing to apply on release: every move already
-                            // seeked, so lifting the finger just ends the label.
-                            scrub = null
-                            latestOnScrubChange(null)
-                        }
-                    }
-                },
+                .scrubGesture(enabled, durationMs, gesture),
         ) {
-            drawWaveform(
-                bars = bars,
-                step = step,
-                positionMs = shownMs,
-                durationMs = durationMs,
-                played = played,
-                unplayed = unplayed,
-                playhead = ink,
-                glideFraction = if (gliding) glide.value else null,
-            )
-            ringFraction?.let { drawRipple(it, ring.value, played) }
+            drawWaveform(bars, step, shownMs, durationMs, colors, marks.glideFraction)
+            marks.ringFraction?.let { drawRipple(it, marks.ring.value, colors.played) }
         }
 
         if (durationMs > 0L && canvasSize.width > 0) {
@@ -596,9 +508,8 @@ fun WaveformScrubber(
                     x = canvasSize.width * fractionOf(at, durationMs),
                     label = stringResource(R.string.playback_highlight_at, formatDuration(at.toDouble())),
                     enabled = enabled,
-                    ink = ink,
-                    page = page,
-                    onClick = { latestOnSeek(at.coerceIn(0L, durationMs)) },
+                    colors = DotColors(ink = colors.playhead, page = page),
+                    onClick = { seek.value(at.coerceIn(0L, durationMs)) },
                 )
             }
         }
@@ -609,6 +520,139 @@ fun WaveformScrubber(
 
 /** One live scrub: the time it has reached, where the finger is, and the tier. */
 private data class ScrubPreview(val timeMs: Long, val finger: Offset, val tier: Int)
+
+/**
+ * What the scrub gesture reads and reports. The position and the seek are
+ * `State`s because the gesture outlives recompositions: it must start from the
+ * current position and call the current callback.
+ */
+private class ScrubCallbacks(
+    val position: State<Long>,
+    val onSeek: State<(Long) -> Unit>,
+    val onPreview: (ScrubPreview?) -> Unit,
+    val onTierChange: () -> Unit,
+)
+
+/**
+ * The scrub: one gesture per finger, from touch-down to lift. See the
+ * [WaveformScrubber] doc for the behaviour and [ScrubSession] for the maths.
+ */
+private fun Modifier.scrubGesture(enabled: Boolean, durationMs: Long, callbacks: ScrubCallbacks): Modifier =
+    pointerInput(enabled, durationMs) {
+        if (!enabled) return@pointerInput
+        awaitEachGesture { trackScrub(durationMs, callbacks) }
+    }
+
+private suspend fun AwaitPointerEventScope.trackScrub(durationMs: Long, callbacks: ScrubCallbacks) {
+    val down = awaitFirstDown()
+    down.consume()
+    val session = ScrubSession(
+        startMs = callbacks.position.value,
+        downX = down.position.x,
+        downY = down.position.y,
+    )
+    callbacks.onPreview(ScrubPreview(session.currentMs, down.position, session.tier))
+    try {
+        while (true) {
+            val change = awaitScrubMove(down.id) ?: break
+            val before = session.currentMs
+            val tierChanged = session.move(
+                x = change.position.x,
+                y = change.position.y,
+                pxPerDp = density,
+                widthPx = size.width.toFloat(),
+                durationMs = durationMs,
+            )
+            if (tierChanged) callbacks.onTierChange()
+            change.consume()
+            callbacks.onPreview(ScrubPreview(session.currentMs, change.position, session.tier))
+            // Live: the audio follows the finger, or — paused — the playhead
+            // does and the next play starts here.
+            if (session.currentMs != before) callbacks.onSeek.value(session.currentMs)
+        }
+    } finally {
+        // Nothing to apply on release: every move already seeked, so lifting
+        // the finger just ends the label.
+        callbacks.onPreview(null)
+    }
+}
+
+/** The next move of the scrubbing finger, or null once it has lifted or gone. */
+private suspend fun AwaitPointerEventScope.awaitScrubMove(id: PointerId): PointerInputChange? {
+    val change = awaitPointerEvent().changes.firstOrNull { it.id == id } ?: return null
+    if (!change.pressed) {
+        change.consume()
+        return null
+    }
+    return change
+}
+
+/**
+ * The playhead gliding to a tapped turn and the ring where it lands — iOS
+ * `ScrubbableWaveform.startGlide`. Drawn by the canvas, whose own playhead
+ * steps aside for the length of the glide.
+ */
+@Stable
+private class JumpMarks(private var seenJump: Int) {
+    val glide = Animatable(0f)
+    val ring = Animatable(0f)
+    private var gliding by mutableStateOf(false)
+
+    /** Where the ring is, as a fraction of the width; null when there is none. */
+    var ringFraction by mutableStateOf<Float?>(null)
+        private set
+
+    /** The playhead's position mid-glide; null when it follows the audio. */
+    val glideFraction: Float? get() = if (gliding) glide.value else null
+
+    /**
+     * Whether [id] is a new jump. The jump already on screen when this
+     * composed — after a rotation, say — is history, not an event to replay.
+     */
+    fun claim(id: Int): Boolean {
+        if (id == seenJump) return false
+        seenJump = id
+        return true
+    }
+
+    suspend fun play(jump: PlaybackJump, durationMs: Long) {
+        val to = fractionOf(jump.toMs, durationMs)
+        try {
+            glide.snapTo(fractionOf(jump.fromMs, durationMs))
+            ring.snapTo(0f)
+            gliding = true
+            ringFraction = to
+            coroutineScope {
+                launch { glide.animateTo(to, tween(GLIDE_MS, easing = EASE_IN_OUT)) }
+                launch { ring.animateTo(1f, tween(RIPPLE_MS, easing = EASE_OUT)) }
+            }
+        } finally {
+            // Only this jump's own marks: a newer one may already be drawing.
+            if (seenJump == jump.id) {
+                gliding = false
+                ringFraction = null
+            }
+        }
+    }
+}
+
+/**
+ * Watches [jump]: a light tick on every new one, and the glide and ring unless
+ * the system's animations are off.
+ */
+@Composable
+private fun rememberJumpMarks(jump: PlaybackJump, durationMs: Long): JumpMarks {
+    val marks = remember { JumpMarks(jump.id) }
+    val view = LocalView.current
+    val context = LocalContext.current
+    val duration = rememberUpdatedState(durationMs)
+    LaunchedEffect(jump.id) {
+        if (!marks.claim(jump.id)) return@LaunchedEffect
+        PlaybackHaptics.jumped(view)
+        if (duration.value > 0L && !animationsRemoved(context)) marks.play(jump, duration.value)
+    }
+    return marks
+}
 
 /**
  * The strip as TalkBack sees it: "Scrub", the position as a clock, and an
@@ -650,8 +694,7 @@ private fun HighlightDot(
     x: Float,
     label: String,
     enabled: Boolean,
-    ink: Color,
-    page: Color,
+    colors: DotColors,
     onClick: () -> Unit,
 ) {
     DrawCanvas(
@@ -672,8 +715,8 @@ private fun HighlightDot(
             )
             .semantics { contentDescription = label },
     ) {
-        drawCircle(color = page, radius = (DOT_DIAMETER / 2 + DOT_RING).toPx())
-        drawCircle(color = ink, radius = (DOT_DIAMETER / 2).toPx())
+        drawCircle(color = colors.page, radius = (DOT_DIAMETER / 2 + DOT_RING).toPx())
+        drawCircle(color = colors.ink, radius = (DOT_DIAMETER / 2).toPx())
     }
 }
 
@@ -744,9 +787,7 @@ private fun DrawScope.drawWaveform(
     step: Float,
     positionMs: Long,
     durationMs: Long,
-    played: Color,
-    unplayed: Color,
-    playhead: Color,
+    colors: WaveformColors,
     glideFraction: Float?,
 ) {
     val minBar = BAR_WIDTH.toPx()
@@ -754,13 +795,22 @@ private fun DrawScope.drawWaveform(
 
     val progressX = size.width * fractionOf(positionMs, durationMs)
 
-    drawBars(bars, step, minBar, progressX, played, unplayed)
+    drawBars(bars, step, minBar, progressX, colors)
     // No duration means no meaningful position, so there is no line to put.
-    if (durationMs > 0L) drawPlayhead(glideFraction?.let { size.width * it } ?: progressX, playhead)
+    if (durationMs > 0L) drawPlayhead(glideFraction?.let { size.width * it } ?: progressX, colors.playhead)
 }
 
 /**
- * The bars themselves, [played] up to [progressX] and [unplayed] after it.
+ * The waveform's three inks: what has played, what has not, and the playhead —
+ * not the primary colour, which is already saying which side has played.
+ */
+private data class WaveformColors(val played: Color, val unplayed: Color, val playhead: Color)
+
+/** A highlight dot's ink and the ring of page colour around it. */
+private data class DotColors(val ink: Color, val page: Color)
+
+/**
+ * The bars themselves, played up to [progressX] and unplayed after it.
  *
  * Normalised to the loudest bar with a floor under it, and every bar at least
  * its own width tall. See the [WaveformScrubber] doc for why both.
@@ -770,8 +820,7 @@ private fun DrawScope.drawBars(
     step: Float,
     minBar: Float,
     progressX: Float,
-    played: Color,
-    unplayed: Color,
+    colors: WaveformColors,
 ) {
     val loudest = maxOf(bars.max(), MIN_LOUDEST)
     val midY = size.height / 2f
@@ -783,7 +832,7 @@ private fun DrawScope.drawBars(
         val scaled = (value / loudest).coerceIn(0f, 1f)
         val height = minBar + (size.height - minBar) * scaled
         drawRoundRect(
-            color = if (x + barWidth <= progressX) played else unplayed,
+            color = if (x + barWidth <= progressX) colors.played else colors.unplayed,
             topLeft = Offset(x, midY - height / 2f),
             size = Size(barWidth, height),
             cornerRadius = radius,

@@ -9,10 +9,12 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,24 +22,30 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -55,13 +63,17 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.core.app.ActivityCompat
@@ -81,6 +93,7 @@ import com.pathors.parley.meeting.MeetingState
 import com.pathors.parley.meeting.TranscriptionIssue
 import com.pathors.parley.screenshot.DemoMode
 import com.pathors.parley.screenshot.rememberDemoMeeting
+import com.pathors.parley.ui.theme.ParleyTextStyles
 import java.util.UUID
 import kotlinx.coroutines.delay
 
@@ -99,7 +112,7 @@ private object ProcessId {
 }
 
 /**
- * The live meeting: permission gate, consent, transcript, level meter, controls.
+ * The live meeting: permission gate, consent, transcript, waveform, controls.
  *
  * The screen owns none of the recording. It asks [MeetingService] to start,
  * observes the [MeetingSession] the service publishes, and asks it to stop —
@@ -150,7 +163,15 @@ fun MeetingScreen(onDone: () -> Unit) {
 
     // Ask before recording, never instead of asking — see [shouldRequestConsent].
     LaunchedEffect(mic.granted, restored) {
-        val running = MeetingService.activeSession.value
+        var running = MeetingService.activeSession.value
+        // A meeting that ended on an earlier visit and was never dismissed (the
+        // screen now stays up after Stop, and Back leaves without Done): its
+        // outcome was already on screen. This visit is for a new recording, not
+        // for reading an old one's status again.
+        if (startedIn == null && running != null && isSettled(running.state.value)) {
+            MeetingService.clear()
+            running = null
+        }
         if (shouldRequestConsent(mic.granted, restored, startedIn, running)) consenting = true
     }
 
@@ -179,7 +200,9 @@ fun MeetingScreen(onDone: () -> Unit) {
         )
     }
 
-    val active = session
+    // An old meeting's outcome is about to be cleared by the effect above; do
+    // not flash it for the frame before that lands.
+    val active = session?.takeUnless { startedIn == null && isSettled(it.state.value) }
     if (active == null) {
         // Nothing is starting while the consent dialog is up or while we are on
         // our way out, and a spinner under either would claim otherwise.
@@ -380,13 +403,16 @@ private fun MeetingContent(
 
     val filing = rememberFiling(state, segments, demoFiling)
     val filingState by filing.state.collectAsState()
-    CloseWhenFinishedByUser(state, holding = filingState.holdsScreen, onDone = onDone)
     RecordingStartedHaptic(state)
     val micBack = rememberMicBackNotice(micRecovery)
     val close = {
         MeetingService.clear()
         onDone()
     }
+    // The screen stays up once the meeting has an outcome (below), so Back has
+    // to be the same way out as Done: let the session go, not leave it behind
+    // for the next visit to find.
+    BackHandler(enabled = isSettled(state)) { close() }
 
     if (live) {
         LiveMeetingLayout(
@@ -405,6 +431,11 @@ private fun MeetingContent(
         return
     }
 
+    // After Stop the screen stays: the transcript, the outcome and the filing
+    // suggestion are what the user reads next, and iOS keeps all three up until
+    // the next recording. It used to close itself 1.2 s after a clean stop,
+    // which was long enough to see that *something* had happened and too short
+    // to read what — "Synced, and shared to …" or "out of quota" among it.
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -413,15 +444,14 @@ private fun MeetingContent(
         Spacer(Modifier.height(16.dp))
         MeetingHeader(elapsed = elapsed, state = state, segments = segments)
         Spacer(Modifier.height(12.dp))
-        LevelMeter(level = level, live = state is MeetingState.Recording)
+        LiveWaveform(level = level, active = false)
 
-        issue?.let { TranscriptionIssueLine(it) }
         interruptedFinish(state)?.let { InterruptedOutcome(it, onClose = close) }
         (state as? MeetingState.Failed)?.let { FailedOutcome(it, onClose = close) }
 
         Spacer(Modifier.height(16.dp))
         Box(Modifier.weight(1f)) {
-            LiveTranscript(segments)
+            LiveTranscript(segments, state)
         }
 
         FilingFooter(
@@ -468,7 +498,7 @@ private fun LiveMeetingLayout(
                 .fillMaxWidth()
                 .padding(start = 16.dp, end = 16.dp, top = 16.dp),
         ) {
-            LiveTranscript(segments)
+            LiveTranscript(segments, state)
         }
         LiveControlsPanel(
             readout = LiveReadout(
@@ -504,37 +534,14 @@ private fun liveNotices(
     storageLow: Boolean,
     issue: TranscriptionIssue?,
 ): List<PanelNotice> = buildList {
-    micLine?.let { add(PanelNotice(micLineText(it), alarming = it.alarming)) }
-    if (storageLow) {
-        add(PanelNotice(stringResource(R.string.meeting_storage_low), alarming = true))
+    micLine?.let {
+        add(PanelNotice(micLineText(it), if (it.alarming) NoticeTone.ALARM else NoticeTone.INFO))
     }
-    issue?.let { add(PanelNotice(stringResource(transcriptionIssueRes(it)), alarming = true)) }
-}
-
-/**
- * A finished meeting is a transient state: show the outcome for a beat, drop
- * the session, and go back to the library where the new recording now lives.
- *
- * Except when the user did not end it. A meeting the microphone or the disk
- * ended has something to say about *why*, and 1.2 s is not long enough to
- * read it — it used to flash "Uploaded" and vanish, which read as though the
- * user had tapped Stop. That outcome stays on screen until they close it,
- * the way iOS leaves its status line up after the recorder goes idle.
- *
- * Nor while the filing suggestion [holding]s the screen — see [FilingFooter].
- */
-@Composable
-private fun CloseWhenFinishedByUser(state: MeetingState, holding: Boolean, onDone: () -> Unit) {
-    LaunchedEffect(state, holding) {
-        val finished = state as? MeetingState.Finished ?: return@LaunchedEffect
-        if (finished.interruptedBy != null) return@LaunchedEffect
-        // The filing suggestion is thinking, or on offer and unanswered: the
-        // screen is still the place the user is looking. Once it settles —
-        // nothing to offer, answered, skipped — this runs again and leaves.
-        if (holding) return@LaunchedEffect
-        delay(1_200)
-        MeetingService.clear()
-        onDone()
+    if (storageLow) {
+        add(PanelNotice(stringResource(R.string.meeting_storage_low), NoticeTone.ALARM))
+    }
+    issue?.let {
+        add(PanelNotice(stringResource(transcriptionIssueRes(it)), transcriptionIssueTone(it)))
     }
 }
 
@@ -572,9 +579,9 @@ private fun rememberFiling(
 
 /**
  * Under the transcript once the meeting is over: the filing suggestion, its
- * Adjust sheet, and — while the suggestion keeps the screen up — a way to
- * leave without answering it. Leaving writes nothing; the offer simply goes
- * with the screen, and the desktop may ask about it later.
+ * Adjust sheet, and Done — the way out, now that the screen no longer closes
+ * itself. Leaving writes nothing; an unanswered offer simply goes with the
+ * screen, and the desktop may ask about it later.
  */
 @Composable
 private fun FilingFooter(
@@ -591,7 +598,7 @@ private fun FilingFooter(
         onAdjust = { adjusting = true },
         onSkip = filing::skip,
     )
-    if (showsDone && state.holdsScreen) {
+    if (showsDone) {
         OutlinedButton(
             onClick = onDone,
             modifier = Modifier
@@ -682,16 +689,6 @@ private fun MeetingHeader(elapsed: Long, state: MeetingState, segments: List<Tra
     }
 }
 
-@Composable
-private fun TranscriptionIssueLine(issue: TranscriptionIssue) {
-    Spacer(Modifier.height(12.dp))
-    Text(
-        text = stringResource(transcriptionIssueRes(issue)),
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.error,
-    )
-}
-
 /** A meeting the user did not end: say so, say where the audio went, and wait. */
 @Composable
 private fun InterruptedOutcome(finished: MeetingState.Finished, onClose: () -> Unit) {
@@ -701,7 +698,7 @@ private fun InterruptedOutcome(finished: MeetingState.Finished, onClose: () -> U
         style = MaterialTheme.typography.bodyMedium,
     )
     Text(
-        text = stringResource(finishedOutcomeRes(finished)),
+        text = finishedOutcomeText(finished),
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -731,10 +728,14 @@ private fun FailedOutcome(failed: MeetingState.Failed, onClose: () -> Unit) {
  * recording had to be stopped, uploaded, and then lived in the library forever,
  * because single-recording deletion did not exist either.
  *
- * Plain secondary text under the stop button rather than a second button, for
- * the same reason iOS does it that way (`LiveView.discardControl`): it must be
- * findable without ever competing with Stop for the thumb. And a confirmation,
- * because it throws the audio away.
+ * An outlined capsule with a trash glyph, as iOS draws it since #381
+ * (`LiveView.discardControl`). It used to be a line of grey text, which was
+ * indistinguishable from the explanatory prose on the same screen and had a
+ * tap target one line tall. Ink and a hairline say "tappable" without saying
+ * "recommended": not red, because Stop above it is already the screen's one
+ * red thing, and not blue, because blue here would be the app recommending
+ * that you throw the meeting away. The red belongs in the confirmation, which
+ * has it. 44dp tall at the least, whatever the text size.
  *
  * The throwing-away goes through [MeetingService.requestDiscard], which is the
  * only path in the app that deletes a recording. It used to ride on disposal
@@ -747,14 +748,32 @@ internal fun DiscardControl(onDiscard: () -> Unit, modifier: Modifier = Modifier
     val view = LocalView.current
     var confirming by rememberSaveable { mutableStateOf(false) }
     val label = stringResource(R.string.meeting_discard)
-    TextButton(
-        onClick = { confirming = true },
-        modifier = modifier.semantics { contentDescription = label },
+    // TalkBack has no separate hint slot, so the iOS label and hint are read
+    // as two sentences: what the button is, then what pressing it does.
+    val spoken = stringResource(R.string.meeting_discard_a11y)
+    val capsule = RoundedCornerShape(percent = 50)
+    Row(
+        modifier = modifier
+            .padding(top = 4.dp)
+            .heightIn(min = 44.dp)
+            .clip(capsule)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, capsule)
+            .clickable(role = Role.Button) { confirming = true }
+            .clearAndSetSemantics { contentDescription = spoken }
+            .padding(horizontal = 18.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
+        Icon(
+            imageVector = Icons.Outlined.Delete,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(Modifier.width(6.dp))
         Text(
             text = label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface,
         )
     }
     if (confirming) {
@@ -832,13 +851,19 @@ private fun statusLabel(state: MeetingState): String = when (state) {
     MeetingState.Uploading -> stringResource(R.string.meeting_uploading)
     is MeetingState.Finished -> when {
         state.interruptedBy != null -> stoppedEarlyLabel(state.interruptedBy)
-        state.dropped -> stringResource(R.string.meeting_dropped)
-        state.pendingUpload -> stringResource(R.string.meeting_queued)
-        else -> stringResource(R.string.meeting_uploaded)
+        else -> finishedOutcomeText(state)
     }
 
     is MeetingState.Failed -> failureMessage(state.reason)
 }
+
+/** Where a finished meeting ended up, in iOS's words — see [finishedOutcome]. */
+@Composable
+private fun finishedOutcomeText(finished: MeetingState.Finished): String =
+    when (val outcome = finishedOutcome(finished)) {
+        is FinishedOutcome.SharedTo -> stringResource(finishedOutcomeRes(outcome), outcome.org)
+        else -> stringResource(finishedOutcomeRes(outcome))
+    }
 
 /**
  * How a meeting ended when the user was not the one who ended it — the status
@@ -893,42 +918,8 @@ private fun failureMessage(reason: MeetingFailure): String = when (reason) {
     MeetingFailure.UNKNOWN -> stringResource(R.string.failure_unknown)
 }
 
-/** [bars] bars lit in proportion to the last chunk's RMS. */
 @Composable
-internal fun LevelMeter(
-    level: Float,
-    live: Boolean,
-    modifier: Modifier = Modifier.fillMaxWidth(),
-    bars: Int = 12,
-    height: Dp = 20.dp,
-) {
-    val animated by animateFloatAsState(
-        targetValue = if (live) level.coerceIn(0f, 1f) else 0f,
-        label = "level",
-    )
-    Row(
-        modifier = modifier.height(height),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        repeat(bars) { index ->
-            val lit = animated * bars > index
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(
-                        if (lit) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.surfaceVariant
-                    )
-            )
-        }
-    }
-}
-
-@Composable
-private fun LiveTranscript(segments: List<TranscriptSegment>) {
+private fun LiveTranscript(segments: List<TranscriptSegment>, state: MeetingState) {
     val context = LocalContext.current
     val listState = rememberLazyListState()
 
@@ -941,22 +932,31 @@ private fun LiveTranscript(segments: List<TranscriptSegment>) {
     if (segments.isEmpty()) {
         Box(Modifier.fillMaxSize(), Alignment.Center) {
             Text(
-                text = stringResource(R.string.meeting_transcript_empty),
-                style = MaterialTheme.typography.bodyMedium,
+                text = stringResource(emptyTranscriptRes(state)),
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .widthIn(max = 320.dp)
+                    .padding(horizontal = 8.dp),
             )
         }
         return
     }
 
+    val current = currentSpeakingId(segments)
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         items(segments, key = { it.id }) { segment ->
-            TranscriptLine(segment = segment, speaker = speakerLabel(context, segment.speaker))
+            TranscriptLine(
+                segment = segment,
+                speaker = speakerLabel(context, segment.speaker),
+                isCurrent = segment.id == current,
+            )
         }
     }
 }
@@ -982,39 +982,93 @@ private suspend fun LazyListState.scrollToNewest() {
     if (last >= 0) scrollToItem(last)
 }
 
-/** One line of the live transcript: who, when, and what they said. */
+/**
+ * One turn of the live transcript: who, when, and what — the same three facts
+ * in the same order as the detail screen and the clipboard. iOS `SegmentRow`.
+ *
+ * The speaker is plain text, not a coloured mark. There used to be a blue dot
+ * on every line, which spent the one signal colour on something that was not
+ * happening: blue here means *now*, so only [isCurrent] — the turn the provider
+ * has not finalised, the only thing on screen that is still being said — gets
+ * it, on its label.
+ *
+ * The words are selectable, the tentative tail included: a phrase is worth
+ * grabbing the second it appears, and whether the provider has finalised it yet
+ * is not something the person holding the phone can see. A long press anywhere
+ * else on the turn — the label, the clock, the space around them — offers Copy
+ * of the whole turn, header included, which selection cannot reach because the
+ * speaker and the clock are separate texts.
+ */
 @Composable
-private fun TranscriptLine(segment: TranscriptSegment, speaker: String) {
-    Column {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier
-                    .size(6.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary)
-            )
-            Spacer(Modifier.width(6.dp))
-            Text(
-                text = speaker,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = formatClock(segment.startMs),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.outline,
+private fun TranscriptLine(segment: TranscriptSegment, speaker: String, isCurrent: Boolean) {
+    val context = LocalContext.current
+    val clipLabel = stringResource(R.string.transcript_clip_label)
+    val copyLabel = stringResource(R.string.action_copy)
+    var menuOpen by remember { mutableStateOf(false) }
+    val copyTurn = {
+        TranscriptClipboard.write(
+            context,
+            TranscriptClipboard.plainText(segment, speaker),
+            clipLabel,
+        )
+    }
+    Box {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .pointerInput(segment.id) {
+                    detectTapGestures(onLongPress = { menuOpen = true })
+                }
+                .semantics {
+                    onLongClick(label = copyLabel) {
+                        menuOpen = true
+                        true
+                    }
+                },
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = speaker,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (isCurrent) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = formatClock(segment.startMs),
+                    style = ParleyTextStyles.caption2.copy(fontFeatureSettings = "tnum"),
+                    color = MaterialTheme.colorScheme.outline,
+                )
+            }
+            Spacer(Modifier.height(4.dp))
+            SelectionContainer {
+                Text(
+                    text = segment.text,
+                    style = MaterialTheme.typography.bodyLarge,
+                    // One step back in the ink rather than italic: the tail has
+                    // not settled, and a slant is something the CJK faces lack.
+                    color = if (segment.isFinal) {
+                        MaterialTheme.colorScheme.onSurface
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+        }
+        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            DropdownMenuItem(
+                text = { Text(copyLabel) },
+                enabled = segment.text.isNotEmpty(),
+                onClick = {
+                    menuOpen = false
+                    copyTurn()
+                },
             )
         }
-        Text(
-            text = segment.text,
-            style = MaterialTheme.typography.bodyLarge,
-            color = if (segment.isTail()) {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            } else {
-                MaterialTheme.colorScheme.onSurface
-            },
-        )
     }
 }
 

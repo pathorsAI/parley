@@ -1,5 +1,8 @@
 import java.util.Properties
 import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.provider.Property
+import org.gradle.api.provider.SetProperty
+import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
@@ -152,42 +155,68 @@ android {
     }
 }
 
-// ── The bundled sample recording ────────────────────────────────────────────
-// `public/sample/` at the repository root is the one copy of the sample: the
-// desktop serves it, iOS references it from project.yml, and this copies it into
-// the APK's assets as `sample/` at build time rather than keeping a second copy
-// of ~700 KB of audio in the tree that would drift the next time
-// `scripts/sample/render.ts` re-renders it. See onboarding/SampleRecordingStore.kt.
+// ── Assets shared with the other apps ───────────────────────────────────────
+// Two folders at the repository root are the one copy of something every app
+// ships, and are copied into the APK's assets at build time rather than kept a
+// second time in this tree, where they would drift:
+//
+// - `public/sample/` → `sample/`: the bundled sample recording. The desktop
+//   serves it, iOS references it from project.yml, and a copy here would go
+//   stale the next time `scripts/sample/render.ts` re-renders ~700 KB of audio.
+//   See onboarding/SampleRecordingStore.kt.
+// - `announcements/` → `announcements/`: the What's New copy, one JSON file per
+//   announcement, written once for every platform (announcements/README.md).
+//   See onboarding/AnnouncementStore.kt.
 
-abstract class CopySampleAssets : DefaultTask() {
+abstract class CopySharedAssets : DefaultTask() {
     @get:InputDirectory
     @get:PathSensitive(PathSensitivity.RELATIVE)
     abstract val source: DirectoryProperty
+
+    /** The folder the files land in, under the assets root. */
+    @get:Input
+    abstract val assetFolder: Property<String>
+
+    /** Which files to take, by extension; nothing else in the folder is copied. */
+    @get:Input
+    abstract val fileExtensions: SetProperty<String>
 
     @get:OutputDirectory
     abstract val outputDir: DirectoryProperty
 
     @TaskAction
     fun copy() {
-        val target = outputDir.get().asFile.resolve("sample")
+        val target = outputDir.get().asFile.resolve(assetFolder.get())
         target.deleteRecursively()
         target.mkdirs()
+        val wanted = fileExtensions.get()
         source.get().asFile
-            .listFiles { file -> file.isFile && (file.extension == "json" || file.extension == "ogg") }
+            .listFiles { file -> file.isFile && file.extension in wanted }
             .orEmpty()
             .forEach { it.copyTo(target.resolve(it.name), overwrite = true) }
     }
 }
 
-val copySampleAssets = tasks.register<CopySampleAssets>("copySampleAssets") {
+val copySampleAssets = tasks.register<CopySharedAssets>("copySampleAssets") {
     group = "build"
     description = "Copies public/sample (the bundled sample recording) into the APK's assets."
     source.set(rootProject.layout.projectDirectory.dir("../public/sample"))
+    assetFolder.set("sample")
+    fileExtensions.set(setOf("json", "ogg"))
+}
+
+val copyAnnouncementAssets = tasks.register<CopySharedAssets>("copyAnnouncementAssets") {
+    group = "build"
+    description = "Copies announcements/ (the What's New sheets) into the APK's assets."
+    source.set(rootProject.layout.projectDirectory.dir("../announcements"))
+    assetFolder.set("announcements")
+    fileExtensions.set(setOf("json"))
 }
 
 androidComponents {
     onVariants { variant ->
-        variant.sources.assets?.addGeneratedSourceDirectory(copySampleAssets, CopySampleAssets::outputDir)
+        variant.sources.assets?.addGeneratedSourceDirectory(copySampleAssets, CopySharedAssets::outputDir)
+        variant.sources.assets?.addGeneratedSourceDirectory(copyAnnouncementAssets, CopySharedAssets::outputDir)
     }
 }
 

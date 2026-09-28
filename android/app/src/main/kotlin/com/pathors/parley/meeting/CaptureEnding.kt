@@ -68,18 +68,27 @@ val CaptureEnding.deletesAudio: Boolean
  *   it. A capture that was interrupted *and* had nothing worth saving is the one
  *   case that still reports a failure: there is no recording to point at, so the
  *   reason is all the user can be given.
+ * @param waitingForQuota the upload stopped on a 402. Only meaningful while
+ *   [pendingUpload]: a recording that reached the cloud is not waiting for
+ *   anything.
+ * @param sharedToOrgName the organization the recording was copied into, when
+ *   it was. Only meaningful once it is in the cloud.
  */
 fun terminalStateFor(
     recordingId: String?,
     pendingUpload: Boolean,
     interruptedBy: MeetingFailure?,
     detail: String? = null,
+    waitingForQuota: Boolean = false,
+    sharedToOrgName: String? = null,
 ): MeetingState = when {
     recordingId != null -> MeetingState.Finished(
         recordingId = recordingId,
         pendingUpload = pendingUpload,
         dropped = false,
         interruptedBy = interruptedBy,
+        waitingForQuota = pendingUpload && waitingForQuota,
+        sharedToOrgName = sharedToOrgName.takeIf { !pendingUpload },
     )
 
     interruptedBy != null -> MeetingState.Failed(interruptedBy, detail)

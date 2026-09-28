@@ -63,6 +63,51 @@ final class FinishingPolishTests: XCTestCase {
         XCTAssertEqual(finish.skip(), .tooLate)
     }
 
+    // MARK: the deadline
+
+    func testADrainStillRunningAtTheDeadlineEndsAndSettlesRawWithoutAPolish() {
+        // The relay never took the finalize (a stalled socket): the session
+        // has to end anyway, with the words it has, and must not then go and
+        // spend another round trip on a polish.
+        var finish = FinishingPolish()
+        XCTAssertEqual(finish.deadlinePassed(), .endDrainNow)
+        XCTAssertFalse(finish.drained(wantsPolish: true))
+        XCTAssertEqual(finish.phase, .settled)
+        // And the drain returning late (or `finishUp` reached a second time)
+        // changes nothing.
+        XCTAssertFalse(finish.drained(wantsPolish: true))
+        XCTAssertFalse(finish.polishReturned())
+    }
+
+    func testAPolishStillOutAtTheDeadlineSettlesRawAndItsLateReplyLoses() {
+        var finish = FinishingPolish()
+        XCTAssertTrue(finish.drained(wantsPolish: true))
+        XCTAssertEqual(finish.deadlinePassed(), .settleRawNow)
+        XCTAssertEqual(finish.phase, .settled)
+        XCTAssertFalse(finish.polishReturned())
+        XCTAssertEqual(finish.skip(), .tooLate)
+    }
+
+    func testTheDeadlineAfterTheSessionSettledDoesNothing() {
+        var finish = FinishingPolish()
+        XCTAssertTrue(finish.drained(wantsPolish: true))
+        XCTAssertTrue(finish.polishReturned())
+        XCTAssertEqual(finish.deadlinePassed(), .settled)
+        XCTAssertEqual(finish.phase, .settled)
+    }
+
+    func testASkipWaitingOnAStuckDrainIsEndedByTheDeadline() {
+        // The shape of the 1.24 report: ⏹, the drain never completes, and the
+        // user taps "insert without polishing" — which, during the drain, only
+        // waits for it. Without the deadline nothing would ever settle.
+        var finish = FinishingPolish()
+        XCTAssertEqual(finish.skip(), .afterDrain)
+        XCTAssertEqual(finish.phase, .draining)
+        XCTAssertEqual(finish.deadlinePassed(), .endDrainNow)
+        XCTAssertFalse(finish.drained(wantsPolish: true))
+        XCTAssertEqual(finish.phase, .settled)
+    }
+
     func testTheDrainOnlyEndsOnce() {
         // `finishUp` can be reached twice for one session (the relay signing
         // off while `stop` is still awaiting it); the second must not start a

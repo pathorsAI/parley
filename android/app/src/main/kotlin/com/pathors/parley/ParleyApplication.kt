@@ -4,17 +4,28 @@ import android.app.Application
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import com.pathors.parley.auth.AuthManager
+import com.pathors.parley.auth.SignInError
 import com.pathors.parley.cloud.CloudClient
 import com.pathors.parley.library.SaveLocationStore
 import com.pathors.parley.meeting.ImportSession
 import com.pathors.parley.meeting.MeetingService
 import com.pathors.parley.meeting.MeetingSession
+import com.pathors.parley.meeting.MeetingState
 import com.pathors.parley.kit.GettingStartedStep
 import com.pathors.parley.meeting.RecordingFiles
+import com.pathors.parley.onboarding.AnnouncementStore
 import com.pathors.parley.onboarding.GettingStartedStore
 import com.pathors.parley.onboarding.SampleRecordingStore
+import com.pathors.parley.onboarding.WhatsNewPresenter
+import com.pathors.parley.onboarding.parleyAnnouncementsStore
 import com.pathors.parley.onboarding.parleyOnboardingStore
+import com.pathors.parley.meeting.ImportNotice
+import com.pathors.parley.playback.AudioDownloads
 import com.pathors.parley.playback.AudioRetention
 import com.pathors.parley.playback.LocalAudioStore
 import com.pathors.parley.screenshot.DemoMode
@@ -27,6 +38,7 @@ import com.pathors.parley.upload.TranscriptBackfiller
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -54,6 +66,7 @@ class ParleyApplication : Application() {
         // From here on, a returning network or a returning user drains the
         // queues too — not only the next cold start.
         container.autoSync.start()
+        container.startWhatsNew()
     }
 }
 
@@ -98,6 +111,17 @@ class AppContainer(private val app: Application) {
     val audioRetention: AudioRetention = AudioRetention(app)
 
     /**
+     * Who is downloading what: the library row's menu, the player and
+     * re-transcription all go through this one, so they agree about it.
+     */
+    val audioDownloads: AudioDownloads = AudioDownloads(
+        cloud = cloud,
+        store = localAudio,
+        scope = appScope,
+        isDemo = { DemoMode.isActive },
+    )
+
+    /**
      * Recordings whose live transcript came up short, waiting to be transcribed
      * again in full. Exposed alongside the backfiller because a storage readout
      * has to count these bytes too — they are the same Oggs the upload queue was
@@ -118,6 +142,58 @@ class AppContainer(private val app: Application) {
         scope = appScope,
         hadStoredSession = { auth.currentToken() != null },
     )
+
+    /**
+     * Which What's New announcements this phone is done with. Built before
+     * anything can sign in, for the same reason as [gettingStarted]: a fresh
+     * install is told apart from an update by whether a session is already
+     * stored — see [AnnouncementStore].
+     */
+    val announcements: AnnouncementStore = AnnouncementStore(
+        store = app.parleyAnnouncementsStore,
+        scope = appScope,
+        bundled = { AnnouncementStore.loadBundled(app) },
+        hadStoredSession = { auth.currentToken() != null },
+        appVersion = BuildConfig.VERSION_NAME,
+    )
+
+    /**
+     * When the What's New sheet may come up. Process-scoped, because the
+     * moments it waits on — a foreground, a deep link — belong to the process
+     * and the activity, not to the library screen. Fed by [startWhatsNew] and
+     * `MainActivity.handleDeepLink`; drawn by `ui/WhatsNewSheet.kt`.
+     */
+    val whatsNew: WhatsNewPresenter = WhatsNewPresenter(
+        scope = MainScope(),
+        decide = announcements::decide,
+        markSeen = announcements::markSeen,
+        isForeground = {
+            ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+        },
+        meetingHoldsMic = {
+            when (MeetingService.activeSession.value?.state?.value) {
+                MeetingState.Connecting, MeetingState.Recording, MeetingState.Finishing -> true
+                else -> false
+            }
+        },
+        // Store screenshots are taken in demo mode; a sheet over them would
+        // ruin every frame.
+        suppressed = { DemoMode.isActive },
+    )
+
+    /**
+     * Feeds [whatsNew] the process's foreground and background. Called once,
+     * from `Application.onCreate` — the main thread, which a lifecycle observer
+     * has to be added on.
+     */
+    fun startWhatsNew() {
+        ProcessLifecycleOwner.get().lifecycle.addObserver(
+            object : DefaultLifecycleObserver {
+                override fun onStart(owner: LifecycleOwner) = whatsNew.foregrounded()
+                override fun onStop(owner: LifecycleOwner) = whatsNew.backgrounded()
+            },
+        )
+    }
 
     /** The bundled sample recording's local-only library entry. */
     val sample: SampleRecordingStore = SampleRecordingStore(
@@ -160,11 +236,11 @@ class AppContainer(private val app: Application) {
     val autoSync: AutoSync = AutoSync(app, appScope) { drainPendingUploads() }
 
     /**
-     * The last sign-in callback error code (never display copy — the UI maps it),
-     * cleared when a sign-in attempt starts or succeeds.
+     * Why the last sign-in did not finish (never display copy — the UI maps
+     * it), cleared when a sign-in attempt starts or succeeds.
      */
-    private val _authError = MutableStateFlow<String?>(null)
-    val authError: StateFlow<String?> = _authError.asStateFlow()
+    private val _authError = MutableStateFlow<SignInError?>(null)
+    val authError: StateFlow<SignInError?> = _authError.asStateFlow()
 
     /**
      * The import currently running, if any. Application-scoped rather than
@@ -174,8 +250,20 @@ class AppContainer(private val app: Application) {
     private val _activeImport = MutableStateFlow<ImportSession?>(null)
     val activeImport: StateFlow<ImportSession?> = _activeImport.asStateFlow()
 
-    fun setAuthError(code: String?) {
-        _authError.value = code
+    /**
+     * The import that just landed, for the library's green line above the list
+     * (iOS `LibraryView.importNotice`). Set when the finished import's screen is
+     * left behind, cleared by the next import or by the library itself.
+     */
+    private val _importNotice = MutableStateFlow<ImportNotice?>(null)
+    val importNotice: StateFlow<ImportNotice?> = _importNotice.asStateFlow()
+
+    fun clearImportNotice() {
+        _importNotice.value = null
+    }
+
+    fun setAuthError(error: SignInError?) {
+        _authError.value = error
     }
 
     /**
@@ -200,7 +288,25 @@ class AppContainer(private val app: Application) {
         manualRetries.clear()
     }
 
-    /** Called after a successful sign-in callback: push anything that was waiting. */
+    /**
+     * The sign-in callback stored a token: confirm it is a session the cloud
+     * knows (iOS `AppState.completeSignIn`), then push anything that was
+     * waiting. A token the cloud refuses is discarded — which puts the sign-in
+     * screen back — with "Sign-in didn't finish", rather than leaving the app
+     * signed in until the first real call quietly signs it out again. See
+     * [SignInError.fromVerification] for what is kept.
+     */
+    suspend fun completeSignIn() {
+        val verdict = SignInError.fromVerification(runCatching { cloud.me() })
+        if (verdict != null) {
+            auth.clearSession()
+            _authError.value = verdict
+            return
+        }
+        onSignedIn()
+    }
+
+    /** Called after a sign-in that stuck: push anything that was waiting. */
     fun onSignedIn() {
         _authError.value = null
         drainPendingUploads()
@@ -283,11 +389,13 @@ class AppContainer(private val app: Application) {
             auth = auth,
             uploader = uploader,
             title = title,
+            orgName = { orgId -> cloud.myOrgs().firstOrNull { it.id == orgId }?.name },
         )
 
     /** Start importing [uri], replacing (and cancelling) any previous import. */
     fun startImport(uri: Uri, title: String): ImportSession {
         _activeImport.value?.cancel()
+        _importNotice.value = null
         val session = ImportSession(
             context = app,
             auth = auth,
@@ -295,15 +403,21 @@ class AppContainer(private val app: Application) {
             uri = uri,
             title = title,
             drainBackfills = ::drainPendingBackfills,
+            defaultDestination = saveLocation::current,
         )
         _activeImport.value = session
         session.start()
         return session
     }
 
-    /** Drop the finished (or abandoned) import so the screen can be left behind. */
+    /**
+     * Drop the finished (or abandoned) import so the screen can be left behind.
+     * One that reached the cloud leaves its [importNotice] for the library.
+     */
     fun clearImport() {
-        _activeImport.value?.cancel()
+        val session = _activeImport.value
+        ImportNotice.of(session?.title, session?.state?.value)?.let { _importNotice.value = it }
+        session?.cancel()
         _activeImport.value = null
     }
 }

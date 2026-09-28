@@ -4,6 +4,7 @@ import com.pathors.parley.cloud.CloudOrg
 import com.pathors.parley.cloud.RecordingSummary
 import com.pathors.parley.kit.SampleManifest
 import com.pathors.parley.library.LibraryFolders
+import com.pathors.parley.playback.AudioDownloadState
 import com.pathors.parley.playback.PlaybackPhase
 import com.pathors.parley.screenshot.DemoMode
 
@@ -18,12 +19,44 @@ internal data class RecordingRowModel(
     val busy: Boolean,
     val canMoveToFolder: Boolean,
     val shareTargets: List<CloudOrg>,
+    /** Where the audio is — the row's last meta item says so. */
+    val audio: AudioDownloadState = AudioDownloadState.Absent,
+    /**
+     * Whether the menu offers Download / Remove download at all: personal
+     * scope, and not the bundled sample. The on-phone glyph is not gated the
+     * same way — it states a fact about the file, whatever scope the row is in.
+     */
+    val canDownload: Boolean = false,
 ) {
     /** A delete, move or share is in flight: the row dims and stops responding. */
     val working: Boolean get() = deleting || busy
 
     val canShare: Boolean get() = shareTargets.isNotEmpty()
+
+    /** The download entry the menu offers, or null for none. */
+    val downloadAction: DownloadAction?
+        get() = if (!canDownload) {
+            null
+        } else {
+            when (audio) {
+                AudioDownloadState.Local -> DownloadAction.REMOVE
+                is AudioDownloadState.Downloading -> null
+                // A recording the cloud says has no audio would only 404.
+                AudioDownloadState.Absent, is AudioDownloadState.Failed ->
+                    if (recording.hasAudio) DownloadAction.DOWNLOAD else null
+            }
+        }
 }
+
+/**
+ * The one download entry a row's menu carries, iOS's `downloadAction(for:)`:
+ * fetch it (again, after a failure), or give the phone's copy back. Nothing
+ * while a download is running — the ring on the row is already the answer.
+ */
+internal enum class DownloadAction { DOWNLOAD, REMOVE }
+
+/** The widths [LibraryRules.metaWidths] hands the folder and the date, in pixels. */
+internal data class MetaWidths(val folder: Int, val date: Int)
 
 /** What a library row's tap and menu entries do. */
 internal class RecordingRowActions(
@@ -32,6 +65,8 @@ internal class RecordingRowActions(
     val onShare: (CloudOrg) -> Unit,
     val onMoveToOrg: (CloudOrg) -> Unit,
     val onDelete: () -> Unit,
+    val onDownload: () -> Unit = {},
+    val onRemoveDownload: () -> Unit = {},
 )
 
 /**
@@ -50,7 +85,11 @@ internal object LibraryRules {
      * has share targets — and never the sample, which is not in the cloud to be
      * copied (see `SampleRecordingStore`).
      */
-    fun recordingRow(state: HomeViewModel.UiState, recording: RecordingSummary) = RecordingRowModel(
+    fun recordingRow(
+        state: HomeViewModel.UiState,
+        recording: RecordingSummary,
+        audio: AudioDownloadState = AudioDownloadState.Absent,
+    ) = RecordingRowModel(
         recording = recording,
         folderName = LibraryFolders.folderName(recording, state.folders),
         deleting = recording.id in state.deleting,
@@ -61,7 +100,31 @@ internal object LibraryRules {
         } else {
             emptyList()
         },
+        audio = audio,
+        canDownload = state.isPersonal && !SampleManifest.isSample(recording.id),
     )
+
+    /**
+     * How a row's meta line shares out the width its pinned items (the counts,
+     * the audio glyphs) leave: [available] pixels between the folder and the
+     * date, spacing already taken off.
+     *
+     * Both get their natural width when they fit. When they do not, the folder
+     * gives way first — but only down to [folderMin] (a few characters and the
+     * glyph, never less than it needs): from there on the date shortens
+     * instead. Without the floor a long date left a folder as a glyph and "…",
+     * which says nothing; iOS truncates the folder only as far as it has to.
+     * With too little room for even the floor the folder takes all of it and
+     * the date none.
+     */
+    fun metaWidths(available: Int, dateNatural: Int, folderNatural: Int, folderMin: Int): MetaWidths {
+        val room = available.coerceAtLeast(0)
+        if (dateNatural + folderNatural <= room) return MetaWidths(folder = folderNatural, date = dateNatural)
+        val floor = minOf(folderNatural, folderMin.coerceAtLeast(0))
+        if (room <= floor) return MetaWidths(folder = room, date = 0)
+        val folder = (room - dateNatural).coerceIn(floor, folderNatural)
+        return MetaWidths(folder = folder, date = (room - folder).coerceAtMost(dateNatural))
+    }
 
     /**
      * A folder move that did not land. A 403 names the organization, and only

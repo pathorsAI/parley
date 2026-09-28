@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -44,6 +45,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -53,6 +55,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.progressBarRangeInfo
@@ -70,8 +73,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
-/** One line the panel has to say about the recording's health. */
-internal data class PanelNotice(val text: String, val alarming: Boolean)
+/** One line the panel has to say about the recording's health, and how to draw it. */
+internal data class PanelNotice(val text: String, val tone: NoticeTone) {
+    val needsAttention: Boolean get() = tone.needsAttention
+}
 
 /**
  * What the panel reports about the meeting: whether it is [recording] yet, the
@@ -87,8 +92,8 @@ internal data class LiveReadout(
 )
 
 /**
- * The live meeting's controls, under the transcript: status, timer, level
- * meter, status lines, stop, discard.
+ * The live meeting's controls, under the transcript: status, timer, waveform,
+ * status lines, stop, discard.
  *
  * While recording, the top edge can be dragged down to give the transcript
  * more room, and the panel stays wherever it is let go (see [LivePanel] for the
@@ -96,9 +101,9 @@ internal data class LiveReadout(
  * in [LivePanelStore]. Before recording actually starts it is always fully
  * open, with no grabber — there is nothing to make room for yet.
  *
- * Whatever the height, an alarming [LiveReadout.notices] entry stays visible: in
- * full as the status line, or as a warning mark beside the timer once that line
- * has had to go.
+ * Whatever the height, a [LiveReadout.notices] entry that needs attention stays
+ * visible: in full as the status line, or as its mark beside the timer once
+ * that line has had to go (see [HealthMark]).
  */
 @Composable
 internal fun LiveControlsPanel(
@@ -280,9 +285,9 @@ private fun BoxScope.FullColumn(
             StatusRow(recording = readout.recording, text = readout.statusText, actions = actions)
         }
         TimerLine(shape = shape, elapsedMs = readout.elapsedMs, notices = readout.notices)
-        if (shape.showsLevelMeter) {
+        if (shape.showsWaveform) {
             Spacer(Modifier.height(8.dp))
-            LevelMeter(level = readout.level, live = readout.recording)
+            LiveWaveform(level = readout.level, active = readout.recording)
         }
         if (shape.showsStatusLine) {
             NoticeLines(readout.notices)
@@ -306,22 +311,72 @@ private fun TimerLine(shape: LivePanelShape, elapsedMs: Long, notices: List<Pane
     }
 }
 
-/** Every notice spelled out, the alarming ones in the error colour. */
+/** Every notice spelled out, each drawn in its [NoticeTone]. */
 @Composable
 private fun NoticeLines(notices: List<PanelNotice>) {
     notices.forEach { notice ->
         Spacer(Modifier.height(8.dp))
+        NoticeLine(notice)
+    }
+}
+
+/**
+ * One status line. Its look is the news as much as its words are — iOS
+ * `LiveView.statusLine`: a reconnect is an amber spinner, the end of the live
+ * transcript is ink with a bolt (the recording is fine, so not red), and only a
+ * threat to the recording itself is the error colour.
+ */
+@Composable
+internal fun NoticeLine(notice: PanelNotice, modifier: Modifier = Modifier) {
+    val color = noticeColor(notice.tone)
+    Row(
+        modifier = modifier.semantics(mergeDescendants = true) {},
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        when (notice.tone) {
+            NoticeTone.RECONNECTING -> {
+                ReconnectingSpinner(size = 12.dp)
+                Spacer(Modifier.width(6.dp))
+            }
+            NoticeTone.TRANSCRIPT_STOPPED -> {
+                Icon(
+                    imageVector = MeetingIcons.TranscriptStopped,
+                    contentDescription = null,
+                    tint = color,
+                    modifier = Modifier.size(14.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+            }
+            NoticeTone.INFO, NoticeTone.ALARM -> Unit
+        }
         Text(
             text = notice.text,
             style = MaterialTheme.typography.bodySmall,
             textAlign = TextAlign.Center,
-            color = if (notice.alarming) {
-                MaterialTheme.colorScheme.error
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            },
+            color = color,
         )
     }
+}
+
+@Composable
+private fun noticeColor(tone: NoticeTone): Color = when (tone) {
+    NoticeTone.INFO -> MaterialTheme.colorScheme.onSurfaceVariant
+    NoticeTone.RECONNECTING -> ParleyTheme.colors.warning
+    // Full-weight ink rather than red: the live transcript is over, but the
+    // recording is not, and colouring this like a failure would say the
+    // opposite of what the sentence says.
+    NoticeTone.TRANSCRIPT_STOPPED -> MaterialTheme.colorScheme.onSurface
+    NoticeTone.ALARM -> MaterialTheme.colorScheme.error
+}
+
+/** iOS's mini `ProgressView` tinted amber: a pause that is being worked on. */
+@Composable
+private fun ReconnectingSpinner(size: Dp) {
+    CircularProgressIndicator(
+        modifier = Modifier.size(size),
+        color = ParleyTheme.colors.warning,
+        strokeWidth = 1.5.dp,
+    )
 }
 
 /**
@@ -371,7 +426,7 @@ private fun StatusRow(recording: Boolean, text: String, actions: @Composable Row
     }
 }
 
-/** Collapsed: red dot, timer, a small level meter, stop. */
+/** Collapsed: red dot, timer, the health mark, the waveform in whatever width is left, stop. */
 @Composable
 private fun BoxScope.CompactRow(alpha: Float, readout: LiveReadout, onStop: () -> Unit) {
     Row(
@@ -388,11 +443,9 @@ private fun BoxScope.CompactRow(alpha: Float, readout: LiveReadout, onStop: () -
         PanelTimer(elapsedMs = readout.elapsedMs, sizeSp = LivePanel.TIMER_ROW_SP)
         HealthMark(readout.notices, Modifier.padding(start = 6.dp))
         Spacer(Modifier.width(12.dp))
-        LevelMeter(
+        LiveWaveform(
             level = readout.level,
-            live = true,
-            bars = 8,
-            height = 14.dp,
+            active = true,
             modifier = Modifier.weight(1f),
         )
         Spacer(Modifier.width(12.dp))
@@ -433,20 +486,43 @@ private fun PanelTimer(elapsedMs: Long, sizeSp: Float) {
 private const val MAX_TIMER_FONT_SCALE = 1.3f
 
 /**
- * The health warnings, once there is no room left to spell them out: a mark in
- * the error colour that reads out every warning it stands for.
+ * The health lines, once there is no room left to spell them out: the most
+ * urgent one's mark, in the same glyph and colour as its line (see
+ * [NoticeLine]) so it reads as the same news at a smaller size — a warning
+ * triangle for a threat to the recording, the amber spinner for a reconnect,
+ * the ink bolt for a live transcript that is over. TalkBack reads out every
+ * line it stands for.
+ *
+ * The notices arrive most urgent first, so the first one that needs attention
+ * picks the mark.
  */
 @Composable
 private fun HealthMark(notices: List<PanelNotice>, modifier: Modifier = Modifier) {
-    val alarming = notices.filter { it.alarming }
-    if (alarming.isEmpty()) return
-    val description = alarming.joinToString("\n") { it.text }
-    Icon(
-        imageVector = Icons.Default.Warning,
-        contentDescription = description,
-        tint = MaterialTheme.colorScheme.error,
-        modifier = modifier.size(18.dp),
-    )
+    val attention = notices.filter { it.needsAttention }
+    val lead = attention.firstOrNull() ?: return
+    val description = attention.joinToString("\n") { it.text }
+    Box(
+        modifier = modifier
+            .size(18.dp)
+            .clearAndSetSemantics { contentDescription = description },
+        contentAlignment = Alignment.Center,
+    ) {
+        when (lead.tone) {
+            NoticeTone.RECONNECTING -> ReconnectingSpinner(size = 14.dp)
+            NoticeTone.TRANSCRIPT_STOPPED -> Icon(
+                imageVector = MeetingIcons.TranscriptStopped,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(18.dp),
+            )
+            NoticeTone.ALARM, NoticeTone.INFO -> Icon(
+                imageVector = Icons.Default.Warning,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.error,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+    }
 }
 
 /**

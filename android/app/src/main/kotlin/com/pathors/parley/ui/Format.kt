@@ -40,6 +40,19 @@ fun formatClock(ms: Long): String {
 fun formatTimestamp(epochMs: Double): String =
     DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(epochMs.toLong()))
 
+/**
+ * A recording's creation time as a library row shows it — iOS
+ * `RecordingCard.dateLabel`, `.dateTime.month(.abbreviated).day().hour().minute()`:
+ * abbreviated month, day and time, no year. "Aug 12, 9:40 AM" on an English
+ * phone, 「8月12日 上午9:40」 on a Chinese one. The skeleton goes through the
+ * platform's best-pattern lookup so the order, the 12/24-hour clock and the
+ * separators are the locale's, not ours.
+ */
+fun formatRowTimestamp(epochMs: Double, locale: Locale = Locale.getDefault()): String {
+    val pattern = android.text.format.DateFormat.getBestDateTimePattern(locale, "MMMdjmm")
+    return java.text.SimpleDateFormat(pattern, locale).format(Date(epochMs.toLong()))
+}
+
 /** A date only — used for the quota period reset. */
 fun formatDate(epochMs: Double): String =
     DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(epochMs.toLong()))
