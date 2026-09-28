@@ -107,6 +107,17 @@ class LocalAudioStore(private val directory: File) {
         directory.deleteRecursively()
     }
 
+    /**
+     * The [fileName] of every recording whose audio is here — one directory
+     * listing, so a library of a hundred rows can ask "is this on the phone"
+     * without a hundred `stat`s on the main thread.
+     */
+    fun storedNames(): Set<String> =
+        directory.listFiles { file -> file.isFile && file.name.endsWith(".ogg") }
+            ?.map { it.name.removeSuffix(".ogg") }
+            ?.toSet()
+            ?: emptySet()
+
     /** How many recordings have their audio here. */
     fun count(): Int =
         directory.listFiles { file -> file.isFile && file.name.endsWith(".ogg") }?.size ?: 0

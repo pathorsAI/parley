@@ -14,6 +14,7 @@ import com.pathors.parley.cloud.TranscriptSegmentDto
 import com.pathors.parley.kit.SttRelayClient
 import com.pathors.parley.kit.SttRelayEvent
 import com.pathors.parley.kit.TranscriptSegment
+import com.pathors.parley.library.SaveDestination
 import com.pathors.parley.upload.EnqueueRequest
 import com.pathors.parley.upload.MeetingUploader
 import com.pathors.parley.upload.PendingUpload
@@ -64,12 +65,41 @@ sealed interface ImportState {
         val pendingUpload: Boolean,
         val transcript: ImportTranscript = ImportTranscript.COMPLETE,
         val waitingForQuota: Boolean = false,
+        /**
+         * The organization the default save location shares a copy into, or
+         * null for personal only — what lets the library say "and shared to".
+         */
+        val sharedToOrgId: String? = null,
     ) : ImportState
 
     data class Failed(val reason: ImportFailure, val detail: String? = null) : ImportState
 
     /** The user backed out; the temporary files are already gone. */
     data object Cancelled : ImportState
+}
+
+/**
+ * An import that reached the cloud, as the library reports it: iOS's inline
+ * "Imported “X”" / "Imported “X” and shared to “Org”" above the list.
+ *
+ * Android keeps a screen of its own for the progress, which closes itself on a
+ * clean finish; without this the library it returns to said nothing at all
+ * about what had just happened.
+ */
+data class ImportNotice(val title: String, val sharedToOrgId: String?) {
+    companion object {
+        /**
+         * The notice for an import leaving the screen in [state], or null when
+         * there is nothing to announce: still running, failed, cancelled, or
+         * saved on the phone but not yet in the cloud — the upload queue above
+         * the list is already saying that one.
+         */
+        fun of(title: String?, state: ImportState?): ImportNotice? {
+            val finished = state as? ImportState.Finished ?: return null
+            if (title == null || finished.pendingUpload) return null
+            return ImportNotice(title, finished.sharedToOrgId)
+        }
+    }
 }
 
 /** Why an import ended badly. The UI owns the (bilingual) copy for each case. */
@@ -150,6 +180,13 @@ class ImportSession(
      */
     private val drainBackfills: () -> Unit = {},
     private val scope: CoroutineScope = defaultImportScope(),
+    /**
+     * The "Default save location", read once the file is ready to queue. Read
+     * here rather than left to the uploader so the finished state can say which
+     * organization got a copy; the uploader honours an explicit destination
+     * exactly as it would have resolved it. Null leaves it to the uploader.
+     */
+    private val defaultDestination: (suspend () -> SaveDestination)? = null,
 ) {
     private val _state = MutableStateFlow<ImportState>(ImportState.Idle)
     val state: StateFlow<ImportState> = _state.asStateFlow()
@@ -334,6 +371,16 @@ class ImportSession(
         }
 
         _state.value = ImportState.Uploading
+        // An unreadable setting is the personal root, as in the uploader.
+        val destination = defaultDestination?.let { read ->
+            try {
+                read()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                SaveDestination.PERSONAL_ROOT
+            }
+        }
         val id = try {
             uploader.enqueue(
                 EnqueueRequest(
@@ -342,6 +389,7 @@ class ImportSession(
                     durationMs = decodedMs.toDouble(),
                     segments = segments,
                     source = RecordingSource.UPLOAD,
+                    destination = destination,
                 )
             )
         } catch (e: Throwable) {
@@ -367,6 +415,7 @@ class ImportSession(
             // A 402 keeps the recording queued (see MeetingUploader.dispositionOf);
             // say it waits for the quota, not for a network that is fine.
             waitingForQuota = pending && result?.quotaExhausted == true,
+            sharedToOrgId = destination?.orgId,
         )
     }
 

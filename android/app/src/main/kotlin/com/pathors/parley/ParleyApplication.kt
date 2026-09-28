@@ -24,6 +24,8 @@ import com.pathors.parley.onboarding.SampleRecordingStore
 import com.pathors.parley.onboarding.WhatsNewPresenter
 import com.pathors.parley.onboarding.parleyAnnouncementsStore
 import com.pathors.parley.onboarding.parleyOnboardingStore
+import com.pathors.parley.meeting.ImportNotice
+import com.pathors.parley.playback.AudioDownloads
 import com.pathors.parley.playback.AudioRetention
 import com.pathors.parley.playback.LocalAudioStore
 import com.pathors.parley.screenshot.DemoMode
@@ -107,6 +109,17 @@ class AppContainer(private val app: Application) {
 
     /** "Keep audio on this phone" — read by the uploader, toggled in the account sheet. */
     val audioRetention: AudioRetention = AudioRetention(app)
+
+    /**
+     * Who is downloading what: the library row's menu, the player and
+     * re-transcription all go through this one, so they agree about it.
+     */
+    val audioDownloads: AudioDownloads = AudioDownloads(
+        cloud = cloud,
+        store = localAudio,
+        scope = appScope,
+        isDemo = { DemoMode.isActive },
+    )
 
     /**
      * Recordings whose live transcript came up short, waiting to be transcribed
@@ -236,6 +249,18 @@ class AppContainer(private val app: Application) {
      */
     private val _activeImport = MutableStateFlow<ImportSession?>(null)
     val activeImport: StateFlow<ImportSession?> = _activeImport.asStateFlow()
+
+    /**
+     * The import that just landed, for the library's green line above the list
+     * (iOS `LibraryView.importNotice`). Set when the finished import's screen is
+     * left behind, cleared by the next import or by the library itself.
+     */
+    private val _importNotice = MutableStateFlow<ImportNotice?>(null)
+    val importNotice: StateFlow<ImportNotice?> = _importNotice.asStateFlow()
+
+    fun clearImportNotice() {
+        _importNotice.value = null
+    }
 
     fun setAuthError(error: SignInError?) {
         _authError.value = error
@@ -370,6 +395,7 @@ class AppContainer(private val app: Application) {
     /** Start importing [uri], replacing (and cancelling) any previous import. */
     fun startImport(uri: Uri, title: String): ImportSession {
         _activeImport.value?.cancel()
+        _importNotice.value = null
         val session = ImportSession(
             context = app,
             auth = auth,
@@ -377,15 +403,21 @@ class AppContainer(private val app: Application) {
             uri = uri,
             title = title,
             drainBackfills = ::drainPendingBackfills,
+            defaultDestination = saveLocation::current,
         )
         _activeImport.value = session
         session.start()
         return session
     }
 
-    /** Drop the finished (or abandoned) import so the screen can be left behind. */
+    /**
+     * Drop the finished (or abandoned) import so the screen can be left behind.
+     * One that reached the cloud leaves its [importNotice] for the library.
+     */
     fun clearImport() {
-        _activeImport.value?.cancel()
+        val session = _activeImport.value
+        ImportNotice.of(session?.title, session?.state?.value)?.let { _importNotice.value = it }
+        session?.cancel()
         _activeImport.value = null
     }
 }

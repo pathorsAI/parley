@@ -39,7 +39,7 @@
     <string name="sign_in_didnt_finish">Sign-in didn\'t finish. Please try again.</string>
 
     <!-- Home -->
-    <string name="home_title">Recordings</string>
+    <string name="home_title">Library</string>
     <string name="home_account">Account</string>
     <string name="home_empty_title">No recordings yet</string>
     <string name="home_empty_body">Record a meeting, or import an audio file you already have.</string>
@@ -250,6 +250,9 @@
     </plurals>
     <string name="account_audio_none">No audio stored on this phone.</string>
     <string name="account_audio_remove_all">Remove stored audio</string>
+    <string name="account_audio_remove_confirm_title">Remove the audio kept on this phone?</string>
+    <string name="account_audio_remove_confirm_body">The recordings themselves stay in the cloud. You can download the audio again whenever you need it.</string>
+    <string name="account_audio_remove_confirm_action">Remove all</string>
 
     <!-- Appearance -->
     <string name="account_appearance">Appearance</string>
@@ -336,6 +339,15 @@
     <string name="library_move_to_org">Move to organization</string>
     <string name="library_menu_back">Back</string>
     <string name="library_working">Updating…</string>
+    <!-- Audio on this phone, from the library row -->
+    <string name="library_download">Download</string>
+    <string name="library_remove_download">Remove download</string>
+    <string name="library_download_failed_retry">Download failed · Retry</string>
+    <string name="library_on_phone">On this phone</string>
+    <string name="library_downloading">Downloading</string>
+    <!-- The import that just landed, above the list -->
+    <string name="library_import_notice">Imported “%1$s”</string>
+    <string name="library_import_notice_shared">Imported “%1$s” and shared to “%2$s”</string>
     <string name="library_action_error_title">That didn\'t go through</string>
     <string name="library_move_failed">The recording wasn\'t moved. Check your connection and try again.</string>
     <string name="library_move_forbidden">You don\'t have permission to move recordings in “%1$s”.</string>
