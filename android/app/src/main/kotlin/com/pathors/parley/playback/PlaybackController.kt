@@ -8,6 +8,7 @@ import com.pathors.parley.parleyContainer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -77,10 +78,23 @@ data class PlaybackState(
      * a position value can say on its own.
      */
     val seekGeneration: Int = 0,
+    /**
+     * The last discrete jump asked for from the text — a tapped turn — rather
+     * than a scrub. The waveform watches its [PlaybackJump.id] to glide its
+     * playhead there and ring the spot, which a scrub, already under the
+     * finger, must not do. iOS `PlaybackController.lastJump`.
+     */
+    val jump: PlaybackJump = PlaybackJump(),
 ) {
     /** Whether a seek would do anything — i.e. there is audio open. */
     val isSeekable: Boolean get() = phase == PlaybackPhase.READY && durationMs > 0L
 }
+
+/**
+ * A jump from [fromMs] to [toMs], numbered so two jumps to the same line are
+ * still two events. `id == 0` is "no jump yet".
+ */
+data class PlaybackJump(val id: Int = 0, val fromMs: Long = 0L, val toMs: Long = 0L)
 
 /**
  * The recording detail screen's player: one recording, from "is the audio even
@@ -113,6 +127,9 @@ class PlaybackController(
     private val scope: CoroutineScope,
     /** Swaps the engine for a clock and the audio for a fixture. See [DemoPlaybackEngine]. */
     private val demo: Boolean = false,
+    /** The remembered speed. In memory in demo mode, which promises no residue. */
+    private val rates: PlaybackRateStore =
+        if (demo) PlaybackRateStore.inMemory() else PlaybackRateStore.device(context),
     /**
      * The shared downloader. Defaulted from the container so the detail
      * screen's view model builds this exactly as it did before downloads were
@@ -122,7 +139,7 @@ class PlaybackController(
 ) {
     private val context = context.applicationContext
 
-    private val _state = MutableStateFlow(PlaybackState())
+    private val _state = MutableStateFlow(PlaybackState(rate = rates.load()))
     val state: StateFlow<PlaybackState> = _state.asStateFlow()
 
     private var engine: PlaybackEngine? = null
@@ -135,6 +152,33 @@ class PlaybackController(
     private var downloadJob: Job? = null
     private var peaksJob: Job? = null
     private var released = false
+
+    /**
+     * Seeks on their way to the engine, conflated. A scrub seeks on every move
+     * of the finger — that is what makes the audio follow it — and ExoPlayer
+     * flushes its renderers on each one, so the engine is handed the newest
+     * target at most once per [SEEK_INTERVAL_MS] and the ones in between are
+     * dropped. The first seek after a pause goes straight through: a tapped
+     * turn is never delayed.
+     */
+    private val seeks = Channel<Long>(Channel.CONFLATED)
+
+    /**
+     * The target the engine has not been handed yet. While there is one, the
+     * position poll reports it instead of the engine's stale position, so the
+     * playhead does not flick back for a frame between a scrub and its seek.
+     */
+    private var pendingSeekMs: Long? = null
+
+    init {
+        scope.launch(Dispatchers.Main) {
+            for (target in seeks) {
+                engine?.seekTo(target)
+                if (pendingSeekMs == target) pendingSeekMs = null
+                delay(SEEK_INTERVAL_MS)
+            }
+        }
+    }
 
     /**
      * Point the controller at a recording.
@@ -198,39 +242,53 @@ class PlaybackController(
     }
 
     /**
-     * Move the playhead, and say so.
+     * Move the playhead, and say so. Main thread — every caller is a gesture.
      *
      * The bump to [PlaybackState.seekGeneration] is the point: it is what
      * re-arms the transcript's follow-the-audio. Clamped here rather than in the
      * engine so a drag past either end of the waveform lands on the end.
+     *
+     * Applied live and cheap to call on every frame of a drag: the position
+     * moves at once, and the engine seek is conflated (see [seeks]), so a scrub
+     * during playback keeps playing from under the finger.
      */
     fun seekTo(ms: Long) {
-        val engine = engine ?: return
-        scope.launch(Dispatchers.Main) {
-            val duration = _state.value.durationMs
-            val target = if (duration > 0L) ms.coerceIn(0L, duration) else ms.coerceAtLeast(0L)
-            engine.seekTo(target)
-            _state.update {
-                it.copy(positionMs = target, seekGeneration = it.seekGeneration + 1)
-            }
+        if (engine == null) return
+        val duration = _state.value.durationMs
+        val target = if (duration > 0L) ms.coerceIn(0L, duration) else ms.coerceAtLeast(0L)
+        pendingSeekMs = target
+        _state.update {
+            it.copy(positionMs = target, seekGeneration = it.seekGeneration + 1)
+        }
+        seeks.trySend(target)
+    }
+
+    /**
+     * [seekTo], announced as a jump — a tapped turn or timecode rather than a
+     * scrub. See [PlaybackState.jump]. iOS `PlaybackController.jump(to:)`.
+     */
+    fun jumpTo(ms: Long) {
+        if (!_state.value.isSeekable) return
+        val from = _state.value.positionMs
+        seekTo(ms)
+        _state.update {
+            it.copy(jump = PlaybackJump(id = it.jump.id + 1, fromMs = from, toMs = it.positionMs))
         }
     }
 
+    /** Any menu speed. Remembered for the next recording and the next launch. */
     fun setRate(rate: Float) {
-        val clamped = rate.coerceIn(RATES.first(), RATES.last())
+        val snapped = PlaybackRates.snap(rate)
+        rates.save(snapped)
         val engine = engine
         scope.launch(Dispatchers.Main) {
-            engine?.setRate(clamped)
-            _state.update { it.copy(rate = clamped) }
+            engine?.setRate(snapped)
+            _state.update { it.copy(rate = snapped) }
         }
     }
 
-    /** Tap-to-cycle through [RATES], wrapping at 2×. */
-    fun cycleRate() {
-        val current = _state.value.rate
-        val index = RATES.indexOfFirst { it > current - RATE_EPSILON && it < current + RATE_EPSILON }
-        setRate(RATES[if (index < 0) 1 else (index + 1) % RATES.size])
-    }
+    /** A tap on the speed: 1 → 1.25 → 1.5 → 2 → 1. See [PlaybackRates.next]. */
+    fun cycleRate() = setRate(PlaybackRates.next(_state.value.rate))
 
     /** Mandatory. See the class doc. */
     fun release() {
@@ -238,6 +296,7 @@ class PlaybackController(
         ticker?.cancel()
         downloadJob?.cancel()
         peaksJob?.cancel()
+        seeks.close()
         val engine = engine ?: return
         this.engine = null
         engine.release()
@@ -378,7 +437,7 @@ class PlaybackController(
         val duration = engine.durationMs.takeIf { it > 0L }
         _state.update {
             it.copy(
-                positionMs = engine.positionMs,
+                positionMs = pendingSeekMs ?: engine.positionMs,
                 isPlaying = engine.isPlaying,
                 durationMs = duration ?: it.durationMs,
             )
@@ -398,11 +457,16 @@ class PlaybackController(
 
     companion object {
         /** The speed menu, identical to iOS `PlaybackController.menu`. */
-        val RATES = listOf(0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
+        val RATES: List<Float> get() = PlaybackRates.MENU
 
         /** Position poll interval while playing. See [startTicking]. */
         private const val TICK_MS = 50L
 
-        private const val RATE_EPSILON = 0.01f
+        /**
+         * The fastest the engine is asked to seek during a scrub: about 12 a
+         * second, which keeps the audio under the finger without re-priming
+         * the decoder on every one of the 60–120 moves a second a drag makes.
+         */
+        private const val SEEK_INTERVAL_MS = 80L
     }
 }
