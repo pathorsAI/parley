@@ -80,6 +80,32 @@ class CaptureEndingTest {
     }
 
     @Test
+    fun aQueuedRecordingKnowsItIsWaitingForTheQuota() {
+        val finished = terminalStateFor(
+            recordingId = "abc",
+            pendingUpload = true,
+            interruptedBy = null,
+            waitingForQuota = true,
+        ) as MeetingState.Finished
+        assertTrue(finished.waitingForQuota)
+        assertNull("a recording still on the phone was shared nowhere", finished.sharedToOrgName)
+    }
+
+    @Test
+    fun anUploadedRecordingIsWaitingForNothingAndSaysWhereItWasShared() {
+        val finished = terminalStateFor(
+            recordingId = "abc",
+            pendingUpload = false,
+            interruptedBy = null,
+            // A 402 somewhere else in the same pass says nothing about this one.
+            waitingForQuota = true,
+            sharedToOrgName = "Pathors",
+        ) as MeetingState.Finished
+        assertFalse(finished.waitingForQuota)
+        assertEquals("Pathors", finished.sharedToOrgName)
+    }
+
+    @Test
     fun afailureWithNothingWorthSavingIsStillAFailure() {
         // Permission refused before the first chunk: there is no recording to
         // point the user at, so the reason is all they can be given.

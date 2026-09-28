@@ -37,8 +37,9 @@ com.pathors.parley
     AccountSheet.kt      identity (initial, name, email, organizations and roles),
                          usage, default save location, sync, storage,
                          appearance, language, about, sign out, delete account
+    MeetingScreen.kt     permission gate, live transcript, waveform, mic/storage status, stop
+    LiveWaveform.kt      the scrolling level history under the timer (iOS WaveformView)
     WhatsNewSheet.kt     the What's New bottom sheet and its host on the library
-    MeetingScreen.kt     permission gate, live transcript, level meter, mic/storage status, stop
     MeetingHaptics.kt    the four recording beats (start, stop, discard, mic lost)
     ImportScreen.kt      progress + phase label + cancel; the failure / partial endings
     RecordingDetail*.kt  player, transcript + search, findings, action items,
@@ -101,7 +102,12 @@ Differences that matter:
 
 A relay failure mid-session (quota, error, unexpected close) does **not** stop a
 meeting: the mic keeps running, the audio is still saved and uploaded, and the UI
-shows a `TranscriptionIssue` banner. `MeetingState.Failed` is kept for a
+shows a `TranscriptionIssue` line. iOS's split applies (`TranscriptionHealth`):
+a dropped socket is `RECONNECTING` — "Transcription dropped — reconnecting…",
+an amber spinner — until a leg is back up or a segment arrives, and only when no
+leg is coming (out of quota, budget spent, signed out) does the line say the
+live transcript stopped, in ink with a bolt rather than the error red, because
+the recording itself is fine. `MeetingState.Failed` is kept for a
 recording that could not be started or saved at all — not signed in, no
 microphone, no encoder, no storage headroom, or the hand-off to the upload queue
 throwing. A capture that is *interrupted* but left audio behind (the mic taken
@@ -140,8 +146,12 @@ reason), **Recovering**, `micSilenced`, and a four-second "Microphone is back �
 still recording" after a recovery — never two at once. `storageLow` adds a
 warning line. A `Finished` state with `interruptedBy` set says how the meeting
 ended ("Stopped early — lost the microphone" / storage / permission / other) and
-stays until the user taps Close; only a user-ended meeting auto-dismisses after
-1.2 s. Haptics (`ui/MeetingHaptics`) mark recording started, Stop, Discard and
+stays until the user taps Close. A meeting the user stopped stays up too, as it
+does on iOS: the transcript, the outcome in iOS's words ("Synced to the cloud",
+"Synced, and shared to “Org”", "You're out of quota…", "Sync failed for now…",
+"That recording was too short to keep") and the filing suggestion, until Done or
+Back. A settled session found on the next visit is cleared before the consent
+prompt rather than shown again. Haptics (`ui/MeetingHaptics`) mark recording started, Stop, Discard and
 microphone lost.
 
 ## The service

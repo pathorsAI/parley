@@ -364,6 +364,7 @@ class AppContainer(private val app: Application) {
             auth = auth,
             uploader = uploader,
             title = title,
+            orgName = { orgId -> cloud.myOrgs().firstOrNull { it.id == orgId }?.name },
         )
 
     /** Start importing [uri], replacing (and cancelling) any previous import. */
