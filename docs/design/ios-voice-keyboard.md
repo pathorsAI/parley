@@ -962,6 +962,16 @@ invalidates once per key rather than twice: the composition and its
 candidates are one published `ZhuyinStrip`, the English word and its
 suggestions one `EnglishStrip`.
 
+The voice pane followed later. It had still been built inline in
+`KeyboardRootView.body`, which runs on every publish, so each English or 注音
+keystroke re-evaluated its forty-odd views off screen. It is `VoicePane` now,
+handed one `KeyboardBridge.VoiceState` value (the fields it draws, copied) and
+`Equatable` on it; measured on the simulator, sixteen English keystrokes
+re-evaluate the root sixteen times and the voice pane not once. It still
+redraws for its own state, the microphone level included. The strip's resting
+row — wordmark, microphone chip, pane tabs — is `StripHome`, `Equatable` on the
+pane, the pane list, the chip and the appearance, for the same reason.
+
 The rule this leaves: **a view below the root takes values, not the bridge.**
 Anything that observes it re-evaluates on every key and every microphone
 reading.
