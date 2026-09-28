@@ -98,6 +98,13 @@ class ParleyClientHeaderTest {
             MockResponse().withWebSocketUpgrade(
                 object : WebSocketListener() {
                     override fun onOpen(webSocket: WebSocket, response: Response) = Unit
+
+                    // Answer the client's close the way the relay does. Without
+                    // the echo the server side never finishes closing, and
+                    // `server.shutdown()` in tearDown gives up waiting on it.
+                    override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                        webSocket.close(code, null)
+                    }
                 },
             ),
         )
