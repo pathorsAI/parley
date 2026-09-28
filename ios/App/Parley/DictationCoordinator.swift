@@ -683,7 +683,9 @@ final class DictationCoordinator: ObservableObject {
     ///     to be awake (foreground, or lingering in the background right after
     ///     a session). Starting here means the user never leaves their app —
     ///     the keyboard only falls back to `parley://dictate` when this note
-    ///     lands on nobody (see `KeyboardViewController.startDictation`).
+    ///     lands on nobody, when the app says it cannot open the microphone
+    ///     from here (`needsApp`), or when a provisional answer never becomes
+    ///     a session (see `StartHandshake`).
     private func armRequestObserver() {
         requestObserver = DarwinObserver(DictationChannel.upNote) { [weak self] in
             Task { @MainActor in
@@ -730,10 +732,37 @@ final class DictationCoordinator: ObservableObject {
                         || UIApplication.shared.applicationState == .active
                     else { return }
                     if !self.canServeInPlace {
-                        // Ahead of `begin`, so a refusal leaves the request
-                        // unanswered and the keyboard's URL fallback brings the
-                        // app forward, instead of `launch` publishing a failure.
-                        guard await self.openMicrophone() != nil else { return }
+                        let target = up.session
+                        // Answer first, then try. Opening a microphone from
+                        // the background is slow when iOS allows it at all,
+                        // and this used to say nothing until it was done — so
+                        // the keyboard's 700 ms ran out first and it jumped to
+                        // Parley over a microphone that was about to open:
+                        // "the next dictation always jumps to the app". The
+                        // provisional `starting` tells it the start is being
+                        // worked on, and buys `StartHandshake.microphoneWait`.
+                        //
+                        // Written straight to the channel rather than through
+                        // `publish()`: this is not the session yet. `session`
+                        // still names the previous one, which is what lets the
+                        // URL fallback for `target` start it for real.
+                        DictationChannel.writeDownlink(
+                            .init(session: target, state: .starting, openingMicrophone: true))
+                        // Ahead of `begin`, so a refusal is answered as one
+                        // rather than by `launch` publishing a failure.
+                        guard await self.openMicrophone() != nil else {
+                            // Unless the URL fallback got here first and the
+                            // session is already being served in the
+                            // foreground — a refusal written now would be
+                            // written over it.
+                            guard self.session != target else { return }
+                            // iOS will not give a backgrounded process the
+                            // microphone. Say so, so the keyboard opens Parley
+                            // now instead of waiting out a start that is not
+                            // coming.
+                            DictationChannel.writeDownlink(.init(session: target, state: .needsApp))
+                            return
+                        }
                     }
                     await self.begin(session: up.session)
                 }

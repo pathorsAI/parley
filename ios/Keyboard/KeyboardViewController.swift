@@ -700,20 +700,24 @@ final class KeyboardViewController: UIInputViewController {
 
     // MARK: dictation control (called from SwiftUI)
 
-    /// How long the keyboard waits for the app to acknowledge a start request
-    /// before falling back to opening the app. An awake app publishes the
-    /// `starting` downlink within milliseconds of the Darwin note; a suspended
-    /// or dead app never will, and the only thing that can wake it is the URL.
-    private static let startAckWindow: Duration = .milliseconds(700)
+    /// How often the start handshake re-reads the downlink while it waits.
+    private static let startPoll: Duration = .milliseconds(80)
 
     /// Start a session, preferring the path with no app switch: publish the
     /// request to the App Group (which posts the uplink note) and wait briefly
     /// for the app to acknowledge by publishing our session's downlink. The
     /// app hears the note whenever it is awake — foreground, or lingering in
     /// the background right after a previous dictation — and starts the mic
-    /// there, so the user never leaves the app they're typing in. Only when
-    /// the ack never comes does `completion` hand back the `parley://dictate`
-    /// URL for the visible round trip.
+    /// there, so the user never leaves the app they're typing in.
+    ///
+    /// How long "briefly" is, is `StartHandshake`'s call: `firstAck` (700 ms)
+    /// for any sign of life; up to `microphoneWait` (3 s) once the app has
+    /// said it is opening a microphone for this session; and not a moment
+    /// longer once it has said iOS refused it one (`needsApp`). Only then does
+    /// `completion` hand back the `parley://dictate` URL for the visible round
+    /// trip. The pane is listening from the tap throughout — nothing about it
+    /// changes while the handshake runs, and the watchdog covers a session
+    /// that is never taken up (`checkLiveness`).
     func startDictation(completion: @escaping (URL?) -> Void) {
         guard hasFullAccess else { return }
         // A new session ends the last one's editing window: anything the user
@@ -744,16 +748,34 @@ final class KeyboardViewController: UIInputViewController {
 
         let target = session
         Task { @MainActor [weak self] in
-            let deadline = ContinuousClock.now + Self.startAckWindow
-            while ContinuousClock.now < deadline {
-                try? await Task.sleep(for: .milliseconds(80))
+            let started = ContinuousClock.now
+            var handshake = StartHandshake()
+            while true {
+                try? await Task.sleep(for: Self.startPoll)
                 guard let self, self.session == target else { return }
-                if DictationChannel.readDownlink()?.session == target {
-                    return  // acked — the app is recording, nobody moved
+                // The user ended it before the app took it up — ✕, or ⏹ with
+                // nothing said. The wait is up to three seconds now, long
+                // enough for that to happen, and opening Parley for a session
+                // the user has already finished with would be the jump for
+                // nothing.
+                guard self.cancelledSession != target, self.stopRequestedAt == nil else { return }
+                if let d = DictationChannel.readDownlink(), d.session == target {
+                    handshake.observe(d)
+                }
+                let elapsed = started.duration(to: .now)
+                let seconds =
+                    Double(elapsed.components.seconds)
+                    + Double(elapsed.components.attoseconds) / 1e18
+                switch handshake.decide(elapsed: seconds) {
+                case .wait:
+                    continue
+                case .acked:
+                    return  // the app is recording, nobody moved
+                case .openApp:
+                    completion(DictationChannel.startURL(session: target))
+                    return
                 }
             }
-            guard let self, self.session == target else { return }
-            completion(DictationChannel.startURL(session: target))
         }
     }
 
@@ -774,7 +796,7 @@ final class KeyboardViewController: UIInputViewController {
 
     /// How long a freshly minted session may go without the app publishing
     /// anything for it before the pane gives up on it. The no-jump path answers
-    /// within `startAckWindow`; the URL path answers once the app has come
+    /// within `StartHandshake.firstAck`; the URL path answers once the app has come
     /// forward and opened the microphone, which is a couple of seconds at
     /// most — and usually kills this keyboard on the way, in which case none of
     /// this runs. It matters on the path where the switch never happens: the
@@ -813,7 +835,11 @@ final class KeyboardViewController: UIInputViewController {
         let now = Date()
         let presence = DictationChannel.readPresence()
         var deadline: Date
-        if let d = DictationChannel.readDownlink(), d.session == session {
+        // `needsApp` counts as not answered yet: it is the app handing the
+        // session to the URL, and it is not live, so it has no presumed death
+        // of its own — without this the pane would wait on it forever if the
+        // URL never landed.
+        if let d = DictationChannel.readDownlink(), d.session == session, d.state != .needsApp {
             // A terminal state has nothing left to watch; `drainDownlink` has
             // already taken the pane out of `listening` for it.
             guard let dead = d.presumedDeadAt(presence: presence) else { return }
