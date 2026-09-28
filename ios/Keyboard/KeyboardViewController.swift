@@ -114,7 +114,9 @@ final class KeyboardViewController: UIInputViewController {
     /// edited it in Parley is not typing at that moment. Empty without Full
     /// Access — the container is not openable then — which is a supported state
     /// rather than a failure, because the pane has to keep suggesting there.
-    private var lexiconTerms: [String] = []
+    /// Lowercased once here, as it is read, rather than on every keystroke —
+    /// see `WordSuggestions.LexiconTerms`.
+    private var lexiconTerms = WordSuggestions.LexiconTerms.none
 
     /// A keyboard has no intrinsic height — without one it collapses to the
     /// system minimum and the layout looks broken. Every pane is measured to the
@@ -332,7 +334,7 @@ final class KeyboardViewController: UIInputViewController {
         // The field may be a different one, with a different word half-typed in
         // front of the cursor, so both the user's terms and the bar are re-read
         // rather than carried over.
-        lexiconTerms = LexiconStore.recognitionTerms()
+        lexiconTerms = WordSuggestions.LexiconTerms(LexiconStore.recognitionTerms())
         refreshSuggestions()
         // The tail belongs to the field it was dictated into. Coming back to a
         // *different* field it would read as text that is already there, so it
@@ -1677,7 +1679,7 @@ final class KeyboardViewController: UIInputViewController {
             suggestions: partial.isEmpty
                 ? WordSuggestions.predictions(after: context, in: EnglishWords.bundled)
                 : WordSuggestions.suggestions(
-                    for: partial, in: EnglishWords.bundled, lexiconTerms: lexiconTerms))
+                    for: partial, in: EnglishWords.bundled, lexicon: lexiconTerms))
     }
 
     /// One assignment, and only on a real change: a keystroke that changed
