@@ -1,0 +1,28 @@
+{
+  "id": "2026-10-keyboard-tap-copy",
+  "ships": {
+    "ios": "1.27",
+    "android": null,
+    "desktop": null
+  },
+  "audience": "keyboard",
+  "cta": {
+    "ios": null
+  },
+  "copy": {
+    "zh-Hant": {
+      "badge": "1.27 更新",
+      "title": "講完之後，點一下文字就複製",
+      "body": "語音輸入完，點一下剛打出來的文字就能複製整段，鍵盤上方會顯示「✓ 已複製」。鍵盤也更穩了：切換 app 不會再自己消失，單次語音輸入延長到 10 分鐘。",
+      "also": "連線中斷時已經講的內容照樣貼上；上一段講完 30 秒內再講不用跳回 Parley。",
+      "button": "好"
+    },
+    "en": {
+      "badge": "New in 1.27",
+      "title": "Tap the text to copy it",
+      "body": "After dictating, tap the text to copy all of it, and the keyboard confirms with “✓ Copied”. The keyboard is steadier too: it no longer disappears after app switches, and a dictation can run for 10 minutes.",
+      "also": "If the connection drops, what you said is still typed, and you can dictate again within 30 seconds without leaving the app you're in.",
+      "button": "Got it"
+    }
+  }
+}
