@@ -289,7 +289,8 @@ A port of iOS onboarding v2 (#450; Android's first cut was the v1 checklist of
   name, if there is one) plus up to two recently used folders until
   `answerSuggestion()` — Skip, or both halves answered. Accept and the chips
   rename (`setTitle`) and file (`setFolder`) the local entry; a new folder is
-  still created in the cloud. Its files are read through a `SampleBundle` (the
+  still created in the cloud (in demo mode, in memory — the demo walk-through
+  offers the card too). Its files are read through a `SampleBundle` (the
   APK's assets; the repository's `public/` in `SampleFilingTest`).
 - **The guide bar** (`ui/GuideBar.kt`, iOS `GuideBar.swift`). Pinned to the
   bottom of the recording page — page-coloured, a hairline on top — on the
@@ -341,7 +342,9 @@ unit-tested.
   `RecordingDetailViewModel.jumpTo` → `PlaybackController.jumpTo`, which records
   `PlaybackState.jump`. The waveform glides its playhead there over 0.5 s and
   rings the spot for 0.7 s (skipped when the system's animations are removed),
-  with a light tick. Scrubs, dots and TalkBack use plain `seekTo`.
+  with a light tick. Scrubs, dots and TalkBack use plain `seekTo`. Both say
+  whether the playhead moved, and only a seek that moved it ticks the
+  checklist's "replay".
 - **Speed.** Tap cycles 1 / 1.25 / 1.5 / 2, long-press offers 0.75–2. The
   choice is kept in SharedPreferences `parley_playback` / `playbackRate` (the
   iOS key) across recordings and launches; in memory in demo mode.

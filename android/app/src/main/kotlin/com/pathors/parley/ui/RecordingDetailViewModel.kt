@@ -16,7 +16,7 @@ import com.pathors.parley.filing.FilingCardController
 import com.pathors.parley.filing.FilingSuggestionModel
 import com.pathors.parley.filing.FilingTarget
 import com.pathors.parley.filing.PendingFiling
-import com.pathors.parley.kit.FilingSuggestion
+import com.pathors.parley.filing.SampleFilingTarget
 import com.pathors.parley.kit.GettingStartedState
 import com.pathors.parley.kit.GettingStartedStep
 import com.pathors.parley.kit.GuidedLap
@@ -361,21 +361,21 @@ class RecordingDetailViewModel(
     /**
      * Every caller is a person — the scrubber, a highlight dot, TalkBack's
      * ±15 s — so the first seek ticks the checklist's "replay". Called on every
-     * move of a scrub, hence the once-only mark.
+     * move of a scrub, hence the once-only mark. Only a seek that moved the
+     * playhead counts: "replay" is the lesson that a line takes you there, and
+     * a tick over a player that stayed put would teach the opposite.
      */
     fun seekTo(ms: Long) {
-        playback.seekTo(ms)
-        markReplayed()
+        if (playback.seekTo(ms)) markReplayed()
     }
 
     /**
      * A seek asked for from the text — a tapped turn or its timecode. The
      * player glides its playhead there and rings the spot; see
-     * [PlaybackController.jumpTo].
+     * [PlaybackController.jumpTo]. Ticks "replay" only when it moved.
      */
     fun jumpTo(ms: Long) {
-        playback.jumpTo(ms)
-        markReplayed()
+        if (playback.jumpTo(ms)) markReplayed()
     }
 
     private var replayMarked = false
@@ -507,6 +507,11 @@ class RecordingDetailViewModel(
                 // Only the meeting screen runs a pass; this one presents.
                 speakerLabel = { "" },
                 onFiled = { container.gettingStarted.mark(GettingStartedStep.FILED) },
+                createFolder = if (DemoMode.isActive) {
+                    { name -> demoFolder(name) }
+                } else {
+                    { name -> container.cloud.createFolder(name) }
+                },
             ),
             scope = viewModelScope,
             backgroundScope = container.appScope,
@@ -624,9 +629,11 @@ class RecordingDetailViewModel(
         }
         sampleQuestions = manifest.questions
         _state.value = fromMeta(SampleRecordingStore.metaOf(manifest, entry))
-        presentFiling()
+        // The audio first: it is in the APK, so the player can be ready by the
+        // time anyone taps a line — the guide bar's step 2 is exactly that tap.
         sample.ensureAudio(manifest)
         openPlayer()
+        presentFiling()
     }
 
     private suspend fun fetchMeta(): RecordingMeta =
@@ -642,6 +649,7 @@ class RecordingDetailViewModel(
     private suspend fun loadFolders() {
         if (DemoMode.isActive) {
             _filing.update { it.copy(folders = DemoMode.pickerFolders()) }
+            presentFiling()
             return
         }
         val folders = runCatching {
@@ -658,34 +666,22 @@ class RecordingDetailViewModel(
      * to call on every load: an offer already being answered, or one the
      * person said no to, is left alone ([FilingSuggestionModel.present]).
      *
-     * Not in a screenshot run: there is no account to write an answer to.
+     * In a screenshot run only on the sample, whose answers stay in memory
+     * (`DemoMode.sampleEntry`) — a cloud recording there has no account to
+     * write to. The guided lap's first step is this card, so a demo walk
+     * through the sample without it would not be the lap at all.
      */
     private suspend fun presentFiling() {
         val card = filingCard ?: return
-        if (DemoMode.isActive) return
+        if (DemoMode.isActive && !isSample) return
         val meta = _state.value.meta ?: return
-        val (suggestion, target) = pendingFiling(meta) ?: return
-        val folders = _filing.value.folders
-        card.model.present(
-            PendingFiling(
-                suggestion = suggestion,
-                currentTitle = meta.title,
-                currentFolderId = LibraryFolders.liveFolderId(meta.folderId, folders),
-                folders = folders,
-            ),
-            target,
-        )
-    }
-
-    /** The suggestion waiting on this recording, and where its answer goes. */
-    private suspend fun pendingFiling(meta: RecordingMeta): Pair<FilingSuggestion, FilingTarget>? {
-        if (!isSample) {
-            val suggestion = meta.filingSuggestion ?: return null
-            return suggestion to FilingTarget.Cloud(recordingId)
-        }
-        val store = container.sampleFiling
-        val suggestion = store.pendingFilingSuggestion(_filing.value.folders) ?: return null
-        return suggestion to FilingTarget.Sample(store)
+        val (offer, target) = pendingOffer(
+            recordingId = recordingId,
+            meta = meta,
+            folders = _filing.value.folders,
+            sample = container.sampleFiling.takeIf { isSample },
+        ) ?: return
+        card.model.present(offer, target)
     }
 
     /**
@@ -1071,6 +1067,37 @@ class RecordingDetailViewModel(
 
         /** A hair past the ✓ hold's end, so the redraw lands after it rather than on it. */
         private const val LAP_REDRAW_SLACK_MS = 50L
+
+        /**
+         * The suggestion waiting on [meta], as the card offers it, and where
+         * its answer goes: the synced meta's own for a cloud recording, or —
+         * [sample] given — the sample's store, which composes the manifest's
+         * suggestion with [folders].
+         */
+        internal suspend fun pendingOffer(
+            recordingId: String,
+            meta: RecordingMeta,
+            folders: List<CloudFolder>,
+            sample: SampleFilingTarget?,
+        ): Pair<PendingFiling, FilingTarget>? {
+            val (suggestion, target) = if (sample == null) {
+                val pending = meta.filingSuggestion ?: return null
+                pending to FilingTarget.Cloud(recordingId)
+            } else {
+                val pending = sample.pendingFilingSuggestion(folders) ?: return null
+                pending to FilingTarget.Sample(sample)
+            }
+            val offer = PendingFiling(
+                suggestion = suggestion,
+                currentTitle = meta.title,
+                currentFolderId = LibraryFolders.liveFolderId(meta.folderId, folders),
+                folders = folders,
+            )
+            return offer to target
+        }
+
+        /** A folder "created" in a screenshot run: in memory, like everything else there. */
+        private fun demoFolder(name: String): CloudFolder = CloudFolder(id = CloudClient.newCloudId(), name = name)
 
         /** The loaded state for a meta, or the failed state when there is none. */
         internal fun fromMeta(meta: RecordingMeta?): UiState = when (meta) {

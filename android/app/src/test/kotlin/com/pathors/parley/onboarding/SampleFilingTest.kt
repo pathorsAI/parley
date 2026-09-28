@@ -11,6 +11,7 @@ import com.pathors.parley.filing.PendingFiling
 import com.pathors.parley.kit.FilingSuggestion
 import com.pathors.parley.kit.SampleManifest
 import com.pathors.parley.screenshot.DemoMode
+import com.pathors.parley.ui.RecordingDetailViewModel
 import java.io.File
 import java.io.FileInputStream
 import kotlinx.coroutines.CoroutineScope
@@ -102,6 +103,35 @@ class SampleFilingTest {
         assertEquals(manifest.suggestion?.title, suggestion?.title)
         assertEquals(CUSTOMER, suggestion?.folders?.first()?.name)
         assertNull("not created until it is chosen", suggestion?.folders?.first()?.folderId)
+    }
+
+    @Test
+    fun `right after the walk-through loads the sample, its page offers the card`() {
+        // `HomeViewModel.walkThroughSample` is the transcribing beat, then
+        // `sample.load` (done in setUp), then the sample's page opens: the
+        // page asks for the offer before its folder list has arrived…
+        val meta = SampleRecordingStore.metaOf(manifest, entry())
+        val (offer, target) = requireNotNull(
+            runBlocking { RecordingDetailViewModel.pendingOffer(manifest.id, meta, emptyList(), sample) },
+        )
+        val model = FilingSuggestionModel(
+            cloud = CloudClient(baseUrl = NOWHERE, tokenProvider = { null }),
+            speakerLabel = { "" },
+        )
+        assertTrue(model.present(offer, target))
+
+        val card = model.state.value
+        assertTrue("the card is drawn: Show me has something to wash", card.hasSomethingToOffer)
+        assertEquals(manifest.suggestion?.title, card.proposedTitle)
+        assertEquals(CUSTOMER, card.proposedFolder?.name)
+
+        // …and again once the folders land, which keeps the card on offer.
+        val folders = listOf(CloudFolder(id = OTHER_ID, name = "Acme", updatedAt = 5.0))
+        val (fuller, _) = requireNotNull(
+            runBlocking { RecordingDetailViewModel.pendingOffer(manifest.id, meta, folders, sample) },
+        )
+        assertTrue(model.present(fuller, target))
+        assertEquals(listOf(CUSTOMER, "Acme"), model.state.value.proposedFolders.map { it.name })
     }
 
     @Test

@@ -203,6 +203,12 @@ class FilingSuggestionModel(
      * checklist's "filed", which iOS ticks from the same card.
      */
     private val onFiled: () -> Unit = {},
+    /**
+     * Makes the folder an answer asked for. The cloud's, except in the
+     * screenshot demo, where the sample can be filed but nothing may reach the
+     * network.
+     */
+    private val createFolder: suspend (String) -> CloudFolder = { cloud.createFolder(it) },
 ) {
     private val _state = MutableStateFlow(FilingUiState())
     val state: StateFlow<FilingUiState> = _state.asStateFlow()
@@ -402,7 +408,7 @@ class FilingSuggestionModel(
         is FolderTarget.Existing -> target.id
         FolderTarget.Root -> null
         is FolderTarget.New -> {
-            val created = cloud.createFolder(target.name)
+            val created = createFolder(target.name)
             _state.update { it.copy(existingFolders = it.existingFolders + created) }
             created.id
         }
