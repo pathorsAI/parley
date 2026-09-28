@@ -85,6 +85,10 @@ fun FeedbackHost(feedback: FeedbackCenter) {
     val draft by feedback.draft.collectAsState()
     val crashOffer by feedback.crashOffer.collectAsState()
     val snackbar = remember { SnackbarHostState() }
+    // The screenshot offer gets a host of its own at the top: for the five
+    // seconds it is up, Android's own screenshot preview and toolbar own the
+    // bottom of the screen, and an offer down there sits under them, untappable.
+    val topSnackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
 
     LaunchedEffect(feedback) {
@@ -104,7 +108,7 @@ fun FeedbackHost(feedback: FeedbackCenter) {
                 }
 
                 is FeedbackNotice.ScreenshotOffer -> {
-                    val answer = snackbar.showFor(
+                    val answer = topSnackbar.showFor(
                         message = context.getString(R.string.feedback_screenshot_offer),
                         action = context.getString(R.string.feedback_screenshot_offer_action),
                     )
@@ -124,6 +128,13 @@ fun FeedbackHost(feedback: FeedbackCenter) {
                     .padding(horizontal = 12.dp, vertical = 8.dp),
             )
         }
+        SnackbarHost(
+            hostState = topSnackbar,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .statusBarsPadding()
+                .padding(top = 8.dp),
+        )
         SnackbarHost(
             hostState = snackbar,
             modifier = Modifier
