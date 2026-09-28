@@ -1728,11 +1728,17 @@ final class KeyboardViewController: UIInputViewController {
     /// The user tapped a word: take back the letters they typed and put the
     /// whole word in, with the space that ends it.
     ///
-    /// Deleting by `unicodeScalars.count` rather than by `count` because
-    /// `deleteBackward()` removes one scalar at a time, and a partial word can
-    /// contain a grapheme made of several — a combining accent typed into the
-    /// field by another keyboard, for instance. Counting graphemes would leave
-    /// the remainder of one behind.
+    /// Deleting by `count` — one call per grapheme — because that is what one
+    /// `deleteBackward()` removes for the text this bar can meet. This used to
+    /// count scalars on the belief that the host deletes a scalar at a time;
+    /// measured in a `UITextView` host (iOS 26.5 simulator), one call took all
+    /// of `e` + U+0301 and all of 👍🏽, so a partial with a combining accent
+    /// typed by another keyboard deleted a character *before* the word too.
+    /// The same measurement found one exception: Devanagari `कि` lost only its
+    /// vowel sign, so for such scripts this leaves part of a grapheme behind.
+    /// That is the rarer failure and the gentler one — a stray letter left in
+    /// place rather than the user's text in front of the word eaten — and the
+    /// bundled list is ASCII, so only a lexicon term can reach it.
     ///
     /// The suggestion already carries the case the partial asked for, so it is
     /// inserted as it is shown.
@@ -1742,7 +1748,7 @@ final class KeyboardViewController: UIInputViewController {
         let partial = bridge.english.partialWord
         keyPressed()
         apply(zhuyin.confirm())
-        for _ in 0..<partial.unicodeScalars.count { textDocumentProxy.deleteBackward() }
+        for _ in 0..<partial.count { textDocumentProxy.deleteBackward() }
         textDocumentProxy.insertText(word + " ")
         refreshSuggestions()
     }

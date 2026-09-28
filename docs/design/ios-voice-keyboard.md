@@ -1315,8 +1315,10 @@ what was typed; there is no autocorrect, and no space-commits-the-suggestion
 rule. A keyboard that silently replaces a word it thinks is wrong is worse than
 one that suggests nothing — and this keyboard already asks for a lot of trust,
 since the personal dictionary learns from what the user retypes. Tapping a
-suggestion deletes one scalar per scalar of the partial and inserts the word plus
-a space; a prediction has an empty partial, so it deletes nothing. Case comes
+suggestion calls `deleteBackward()` once per grapheme of the partial and inserts
+the word plus a space — measured in a `UITextView` host, one call removes a whole
+`e`+U+0301 or 👍🏽 (so counting scalars, as it used to, also ate the character
+before the word), though for Devanagari `कि` it removes only the vowel sign; a prediction has an empty partial, so it deletes nothing. Case comes
 from what the user already said with the shift key: a capitalised partial gets a
 capitalised word, an ALL-CAPS partial of two letters or more gets an all-caps
 word, and one uppercase letter alone is read as a sentence starting rather than
