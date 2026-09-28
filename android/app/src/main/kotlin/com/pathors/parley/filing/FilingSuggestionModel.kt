@@ -359,26 +359,18 @@ class FilingSuggestionModel(
 
     private suspend fun write(target: FilingTarget, newTitle: String?, move: FolderTarget?) {
         val folderId = move?.let { resolve(it) }
+        val moved = move != null
         when (target) {
-            is FilingTarget.Cloud -> cloud.editRecording(target.recordingId) { meta ->
-                var edited = meta
-                if (newTitle != null) edited = edited.withTitle(newTitle)
-                if (move != null) edited = edited.withFolderId(folderId)
-                edited.withFilingAnswered()
-            }
-
-            is FilingTarget.Sample -> {
-                if (newTitle != null) target.store.setTitle(newTitle)
-                if (move != null) target.store.setFolder(folderId)
-            }
+            is FilingTarget.Cloud -> writeCloud(target.recordingId, newTitle, moved, folderId)
+            is FilingTarget.Sample -> writeSample(target.store, newTitle, moved, folderId)
         }
         // Both halves are settled only once the push is back.
         _state.update { state ->
             state.copy(
                 currentTitle = newTitle ?: state.currentTitle,
                 titleAnswered = state.titleAnswered || newTitle != null,
-                currentFolderId = if (move != null) folderId else state.currentFolderId,
-                folderAnswered = state.folderAnswered || move != null,
+                currentFolderId = if (moved) folderId else state.currentFolderId,
+                folderAnswered = state.folderAnswered || moved,
             )
         }
         if (folderId != null) onFiled()
@@ -388,6 +380,21 @@ class FilingSuggestionModel(
         if (target is FilingTarget.Sample && !_state.value.hasSomethingToOffer) {
             target.store.answerSuggestion()
         }
+    }
+
+    /** One read-modify-write of the meta, answering the offer on the way. */
+    private suspend fun writeCloud(id: String, newTitle: String?, moved: Boolean, folderId: String?) {
+        cloud.editRecording(id) { meta ->
+            val renamed = if (newTitle != null) meta.withTitle(newTitle) else meta
+            val filed = if (moved) renamed.withFolderId(folderId) else renamed
+            filed.withFilingAnswered()
+        }
+    }
+
+    /** The sample's local entry. */
+    private suspend fun writeSample(store: SampleFilingTarget, newTitle: String?, moved: Boolean, folderId: String?) {
+        if (newTitle != null) store.setTitle(newTitle)
+        if (moved) store.setFolder(folderId)
     }
 
     /** The folder id a target files into, creating a new folder when asked to. */
