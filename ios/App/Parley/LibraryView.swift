@@ -964,6 +964,9 @@ struct LibraryView: View {
         }
         busyId = rec.id
         defer { busyId = nil }
+        // Before the delete, because afterwards there is nothing left to ask
+        // the server about.
+        let failure = await failedTranscript(rec)
         do {
             if let orgId = scope {
                 try await app.cloud.deleteOrgRecording(orgId: orgId, id: rec.id)
@@ -971,11 +974,76 @@ struct LibraryView: View {
                 try await app.cloud.deleteRecording(id: rec.id)
             }
             recordings.removeAll { $0.id == rec.id }
+            TranscriptHealthCache.forget(rec.id)
+            if let failure {
+                FeedbackCenter.shared.offerReportAfterDelete(
+                    recordingId: rec.id, context: failure.context(recordingId: rec.id))
+            }
         } catch let e as CloudError where e.status == 403 {
             error = String(localized: "Only the uploader or an admin can delete this recording")
         } catch {
             self.error = String(localized: "Delete failed: \(error.localizedDescription)")
         }
+    }
+}
+
+extension LibraryView {
+    /// Whether the recording about to be deleted came back empty or cut short
+    /// — the `delete_failed` condition — and its numbers if so.
+    ///
+    /// Answered without the network whenever possible: from what the detail
+    /// screen saw if the recording was opened in this session (the usual way
+    /// someone arrives at deleting a disappointing recording), else from the
+    /// row itself, which is enough for the empty case. Only a recording long
+    /// enough to be truncated, never opened, with words in its preview, needs
+    /// its transcript fetched — and that fetch is bounded, because it stands
+    /// between the user and a delete they asked for. A fetch that runs out of
+    /// time is a report not offered, never a delete delayed further.
+    fileprivate func failedTranscript(_ rec: CloudRecordingSummary) async
+        -> TranscriptHealthCache.Health?
+    {
+        guard FeedbackCenter.shared.mayOffer(.deleteFailed, recordingId: rec.id) else { return nil }
+        if let seen = TranscriptHealthCache.health(for: rec.id) { return seen.failed ? seen : nil }
+        if let empty = TranscriptHealthCache.Health(row: rec) { return empty }
+        guard rec.durationMs >= FeedbackConditions.truncatedMinimumMs else { return nil }
+        let cloud = app.cloud
+        let orgId = scope
+        let id = rec.id
+        let rowDuration = rec.durationMs
+        let found = FetchedHealth()
+        await Deadline.wait(atMost: .seconds(3)) {
+            let fetched: RecordingMeta?
+            if let orgId {
+                fetched = try? await cloud.orgRecordingMeta(orgId: orgId, id: id)
+            } else {
+                fetched = try? await cloud.recordingMeta(id: id)
+            }
+            guard let meta = fetched else { return }
+            found.set(
+                durationMs: max(meta.durationMs, rowDuration), segments: meta.segments)
+        }
+        guard let health = found.value, health.failed else { return nil }
+        return health
+    }
+}
+
+/// The bounded fetch's answer, handed out of a `@Sendable` closure.
+private final class FetchedHealth: @unchecked Sendable {
+    private let lock = NSLock()
+    private var durationMs: Double = 0
+    private var segments: [TranscriptSegment]?
+
+    func set(durationMs: Double, segments: [TranscriptSegment]) {
+        lock.lock()
+        defer { lock.unlock() }
+        self.durationMs = durationMs
+        self.segments = segments
+    }
+
+    @MainActor var value: TranscriptHealthCache.Health? {
+        lock.lock()
+        defer { lock.unlock() }
+        return segments.map { TranscriptHealthCache.Health(durationMs: durationMs, segments: $0) }
     }
 }
 

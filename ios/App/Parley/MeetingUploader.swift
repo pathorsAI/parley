@@ -108,6 +108,18 @@ final class MeetingUploader {
         /// which is every live recording — those are named by the clock at
         /// upload time so a queued recording is stamped when it was made.
         let title: String?
+        /// When this entry entered the queue. Nil on a manifest written before
+        /// the field existed, which reads as `startedAt` — close enough for the
+        /// only question asked of it, "has this waited more than a day?".
+        var queuedAt: Date?
+        /// Failed attempts in a row, and the code of the last one. Reset by
+        /// nothing but success, which removes the manifest altogether.
+        ///
+        /// Kept on the entry rather than in a side table because the question
+        /// they answer — "is *this* recording stuck?" (`sync_failed`) — is about
+        /// the entry, and a side table would outlive entries it no longer has.
+        var failureCount: Int = 0
+        var lastError: String?
 
         /// Both new fields decode with a default, because this manifest is
         /// written to disk and read back by a *later build of the app*. Someone
@@ -117,6 +129,7 @@ final class MeetingUploader {
         /// manifest reads as exactly what it was: a clock-named live recording.
         enum CodingKeys: String, CodingKey {
             case id, startedAt, durationMs, segments, defaultSave, source, title
+            case queuedAt, failureCount, lastError
         }
 
         init(
@@ -126,7 +139,8 @@ final class MeetingUploader {
             segments: [TranscriptSegment],
             defaultSave: SaveDestination,
             source: String,
-            title: String?
+            title: String?,
+            queuedAt: Date? = Date()
         ) {
             self.id = id
             self.startedAt = startedAt
@@ -135,6 +149,7 @@ final class MeetingUploader {
             self.defaultSave = defaultSave
             self.source = source
             self.title = title
+            self.queuedAt = queuedAt
         }
 
         init(from decoder: Decoder) throws {
@@ -146,6 +161,9 @@ final class MeetingUploader {
             defaultSave = try container.decode(SaveDestination.self, forKey: .defaultSave)
             source = try container.decodeIfPresent(String.self, forKey: .source) ?? "live"
             title = try container.decodeIfPresent(String.self, forKey: .title)
+            queuedAt = try container.decodeIfPresent(Date.self, forKey: .queuedAt)
+            failureCount = try container.decodeIfPresent(Int.self, forKey: .failureCount) ?? 0
+            lastError = try container.decodeIfPresent(String.self, forKey: .lastError)
         }
 
         /// The name this recording lands under.
@@ -185,7 +203,7 @@ final class MeetingUploader {
         // Saved on the phone is saved: whatever the upload does next, the
         // meeting is safe and the queue will deliver it.
         GettingStartedStore.markSoon(.recorded)
-        return try await Self.upload(pending, cloud: cloud, orgs: orgs)
+        return try await Self.uploadCountingFailure(pending, cloud: cloud, orgs: orgs)
     }
 
     /// File an imported recording — audio that was decoded and batch-transcribed
@@ -229,7 +247,7 @@ final class MeetingUploader {
         try persist(pending, audioAt: ogg)
         // An import counts as a recording, the same as a live meeting.
         GettingStartedStore.markSoon(.recorded)
-        return try await upload(pending, cloud: cloud, orgs: orgs)
+        return try await uploadCountingFailure(pending, cloud: cloud, orgs: orgs)
     }
 
     static func syncPending(cloud: CloudClient, orgs: [CloudOrg]) async -> SyncResult {
@@ -250,7 +268,7 @@ final class MeetingUploader {
                 continue
             }
             do {
-                _ = try await upload(item, cloud: cloud, orgs: orgs)
+                _ = try await uploadCountingFailure(item, cloud: cloud, orgs: orgs)
                 uploaded += 1
             } catch is CancellationError {
                 // The pass was torn down, not the upload refused. Stop without
@@ -262,6 +280,10 @@ final class MeetingUploader {
                 // file is too large, the account is out of credit, the payload
                 // is malformed. Retrying costs an upload of an hour of audio
                 // every launch and blocks everything queued behind it.
+                AppLog.sync.error(
+                    "upload \(item.id, privacy: .public) refused for good: http_\(error.status, privacy: .public)"
+                )
+                DiagnosticsJournal.record("sync_refused_http_\(error.status)", "upload dropped")
                 removePending(id: item.id)
                 discarded += 1
                 failure = error
@@ -281,6 +303,78 @@ final class MeetingUploader {
     }
 
     static var pendingCount: Int { loadPending().count }
+
+    // MARK: stuck uploads (`sync_failed`)
+
+    /// `upload`, with the failure written onto the entry when it throws.
+    ///
+    /// Every door into `upload` goes through here — the immediate attempt at
+    /// the end of a meeting, the one after an import, and every queued retry —
+    /// so "failed three times in a row" counts attempts rather than whichever
+    /// of those happened to be the one that noticed. A cancelled pass is not a
+    /// failure of the recording and is not counted.
+    private static func uploadCountingFailure(
+        _ pending: PendingUpload, cloud: CloudClient, orgs: [CloudOrg]
+    ) async throws -> Outcome {
+        do {
+            return try await upload(pending, cloud: cloud, orgs: orgs)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            let code = FeedbackErrorCode.of(error)
+            noteFailure(id: pending.id, code: code)
+            AppLog.sync.error(
+                "upload \(pending.id, privacy: .public) failed: \(code, privacy: .public)")
+            DiagnosticsJournal.record("sync_\(code)", "upload failed")
+            throw error
+        }
+    }
+
+    /// Bump the entry's failure count on disk, if it is still queued.
+    private static func noteFailure(id: String, code: String) {
+        guard let url = try? manifestURL(for: id),
+            let data = try? Data(contentsOf: url),
+            var entry = try? JSONDecoder().decode(PendingUpload.self, from: data)
+        else { return }
+        entry.failureCount += 1
+        entry.lastError = code
+        if let updated = try? JSONEncoder().encode(entry) {
+            try? updated.write(to: url, options: .atomic)
+        }
+    }
+
+    /// A queued recording that the app has given enough chances to call it
+    /// stuck — see `FeedbackConditions.isSyncStuck`.
+    struct StuckUpload: Equatable {
+        let id: String
+        let durationMs: Double
+        let segmentCount: Int
+        let failureCount: Int
+        let lastError: String?
+    }
+
+    /// The queued recordings that are stuck, oldest first. The Sync section in
+    /// Settings asks this, because that is where the queue is shown.
+    static func stuckUploads(now: Date = Date()) -> [StuckUpload] {
+        loadPending()
+            .filter {
+                FeedbackConditions.isSyncStuck(
+                    consecutiveFailures: $0.failureCount, queuedAt: $0.queuedAt ?? $0.startedAt,
+                    now: now)
+            }
+            .map {
+                StuckUpload(
+                    id: $0.id, durationMs: $0.durationMs,
+                    segmentCount: FeedbackConditions.transcriptSegmentCount($0.segments),
+                    failureCount: $0.failureCount, lastError: $0.lastError)
+            }
+    }
+
+    /// The code of the most recent failure anywhere in the queue, for a
+    /// report's `syncLastError`. Nil when nothing queued has failed yet.
+    static var lastSyncErrorCode: String? {
+        loadPending().last(where: { $0.lastError != nil })?.lastError
+    }
 
     /// Whether a queued entry still has an Ogg worth running.
     ///
@@ -885,9 +979,16 @@ final class MeetingUploader {
             // `finishBackfill` rather than `removeBackfill`: this request is
             // over, and a request that is over gets its audio retired on the
             // same terms as any other — a phone set to keep audio keeps it.
+            AppLog.sync.error(
+                "backfill \(id, privacy: .public) refused for good: http_\(error.status, privacy: .public)"
+            )
+            DiagnosticsJournal.record("backfill_refused_http_\(error.status)", "re-transcription dropped")
             finishBackfill(id: id)
             return .discarded(error)
         } catch {
+            let code = FeedbackErrorCode.of(error)
+            AppLog.sync.error("backfill \(id, privacy: .public) stopped: \(code, privacy: .public)")
+            DiagnosticsJournal.record("backfill_\(code)", "re-transcription stopped")
             return .stopped(error)
         }
     }

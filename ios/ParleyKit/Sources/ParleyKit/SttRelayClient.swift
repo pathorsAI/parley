@@ -149,7 +149,10 @@ public actor SttRelayClient {
         guard !spent.withLock({ $0 }) else { throw Spent() }
         var comps = URLComponents(url: options.relayURL, resolvingAgainstBaseURL: false)!
         comps.queryItems = [URLQueryItem(name: "feature", value: options.feature)]
-        var req = URLRequest(url: comps.url!)
+        // The build header rides the upgrade request like any other header —
+        // see `ParleyClientIdentity` for why this, and not `URLRequest(url:)`,
+        // is how a request to the cloud is started.
+        var req = ParleyClientIdentity.request(url: comps.url!)
         req.setValue("Bearer \(options.bearerToken)", forHTTPHeaderField: "Authorization")
 
         let task = URLSession.shared.webSocketTask(with: req)

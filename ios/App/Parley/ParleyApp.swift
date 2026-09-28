@@ -24,6 +24,9 @@ struct ParleyApp: App {
         // announcement seen on its first launch, and it can only tell a fresh
         // install from an update before this launch could have signed in.
         _ = AnnouncementStore.shared
+        // As early as the app has: MetricKit hands the previous run's crash to
+        // a subscriber as soon as it is added. See `FeedbackCenter.start`.
+        FeedbackCenter.shared.start()
     }
 
     var body: some Scene {
@@ -68,6 +71,9 @@ struct ParleyApp: App {
                 .onChange(of: scenePhase) { _, phase in
                     guard phase == .active else { return }
                     AppState.publishKeyboardReadiness()
+                    // The crash banner needs a scene to draw in, and this is
+                    // the first moment there reliably is one.
+                    FeedbackCenter.shared.sceneBecameActive()
                     // A Live Activity can only be *started* from the foreground,
                     // so a refusal is remembered rather than retried at the rate
                     // the transcript moves. This is the only event that can make

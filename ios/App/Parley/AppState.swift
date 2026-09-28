@@ -238,6 +238,8 @@ final class AppState: NSObject, ObservableObject {
             signInError = String(localized: "Sign-in didn't finish. Please try again.")
             return
         }
+        // Reports queued while signed out go now, and go as this account.
+        FeedbackCenter.shared.signedIn()
         await loadAccountExtras()
         await syncPendingUploads()
     }

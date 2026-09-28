@@ -186,6 +186,25 @@ struct RecordingDetailView: View {
     /// What the last filing on this screen did, for the bar's ✓ line.
     @State private var lastFiling: (folder: String, renamed: Bool)?
 
+    // MARK: feedback prompts
+
+    /// Whether this visit asks about the transcript at all, decided once when
+    /// the recording first loads — see `evaluateFeedbackPrompts`. Latched
+    /// rather than re-read on every render because showing a prompt is what
+    /// uses up its one showing per recording: re-asking the policy after that
+    /// would take the prompt down the moment it went up.
+    @State private var feedbackEvaluated = false
+    /// `empty_transcript` may offer 「傳診斷給我們」 on this visit.
+    @State private var offersEmptyReport = false
+    /// `truncated_transcript`'s strip may show on this visit. Whether it
+    /// *does* also depends on the transcript still being short — a
+    /// re-transcription that fixes it takes the strip down with it.
+    @State private var offersTruncatedReport = false
+    /// A re-transcription was asked for on this screen and has not landed yet.
+    /// When it lands the chips ask what was wrong with the one it replaced.
+    @State private var awaitingReTranscribe = false
+    @State private var showsReTranscribeChips = false
+
     init(
         summary: CloudRecordingSummary, orgId: String?, intent: Intent = .read,
         isLapRecording: Bool = false,
@@ -526,6 +545,10 @@ struct RecordingDetailView: View {
             refreshReTranscribeState()
             return
         }
+        // The prompts about the old transcript are answered by asking for a
+        // new one; the chips ask about it once the new one is here.
+        offersTruncatedReport = false
+        offersEmptyReport = false
 
         await drainNow()
     }
@@ -543,6 +566,9 @@ struct RecordingDetailView: View {
         // and a red line under a live spinner is the panel claiming both at
         // once.
         reTranscribeError = nil
+        // Somebody asked for this run, here — so when it lands, they are the
+        // person to ask how the transcript it replaced went wrong.
+        awaitingReTranscribe = true
         // Optimistic, and true within the frame: the drain below is what runs
         // this recording. It is also what takes the button off the screen, so
         // the same pass cannot be asked for twice while it is under way.
@@ -554,6 +580,7 @@ struct RecordingDetailView: View {
             // transcript is on the server, and `load()` is what puts it on the
             // screen.
             await load()
+            reTranscribeLanded()
             return
         }
         // Still queued. Say what went wrong — the queue now keeps the reason
@@ -584,6 +611,16 @@ struct RecordingDetailView: View {
         refreshReTranscribeState()
         if backfill == .none { reTranscribeError = nil }
         await load()
+        if backfill == .none { reTranscribeLanded() }
+    }
+
+    /// `retranscribe`: a run asked for on this screen has replaced the
+    /// transcript. Offer the chips, once per recording.
+    private func reTranscribeLanded() {
+        guard awaitingReTranscribe else { return }
+        awaitingReTranscribe = false
+        guard FeedbackCenter.shared.mayOffer(.retranscribe, recordingId: summary.id) else { return }
+        withAnimation { showsReTranscribeChips = true }
     }
 
     private func refreshReTranscribeState() {
@@ -640,6 +677,19 @@ struct RecordingDetailView: View {
                 // recording, not about either face.
                 if orgId == nil {
                     FilingSuggestionCard(model: filing, highlighted: cardHighlighted)
+                }
+                // Pinned with the player rather than put in the transcript:
+                // the strip is about the whole recording, and it has to be
+                // readable from the summary face too.
+                truncatedStrip(meta)
+                if showsReTranscribeChips {
+                    RetranscribeChips(
+                        recordingId: summary.id,
+                        send: { tag in
+                            showsReTranscribeChips = false
+                            sendFeedback(.retranscribe, meta: meta, tags: [tag.rawValue])
+                        },
+                        close: { showsReTranscribeChips = false })
                 }
                 faceSwitcher
                 if searching && face == .transcript { searchField }
@@ -881,9 +931,7 @@ struct RecordingDetailView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if segments.isEmpty {
-                        Text("This recording has no transcript.")
-                            .font(.parley.subheadline)
-                            .foregroundStyle(Color(.secondaryLabel))
+                        emptyTranscript(meta)
                     }
                     ForEach(segments, id: \.id) { seg in
                         turn(
@@ -1476,6 +1524,7 @@ struct RecordingDetailView: View {
                 : try await app.cloud.orgRecordingMeta(orgId: orgId!, id: summary.id)
             meta = loaded
             chooseFace(loaded)
+            evaluateFeedbackPrompts(loaded)
         } catch {
             self.error = error.localizedDescription
         }
@@ -1572,6 +1621,104 @@ struct RecordingDetailView: View {
         let folder = try await app.cloud.createFolder(name: name)
         folders.append(folder)
         await moveToFolder(folder.id)
+    }
+
+    // MARK: feedback
+
+    /// The recording's length, as the transcript prompts measure it: whichever
+    /// of the meta and the library row knows it to be longer. A re-transcribed
+    /// recording's meta is reconciled to the job's length; a row can lag.
+    private func recordingDurationMs(_ meta: RecordingMeta) -> Double {
+        max(meta.durationMs, summary.durationMs)
+    }
+
+    /// Decide, once per visit, whether to ask about this recording's
+    /// transcript — and remember what it looked like for the Library's
+    /// `delete_failed` offer, which only has the row to go on.
+    ///
+    /// Not while a re-transcription is queued or running: the transcript on
+    /// screen is about to be replaced, and a report about it would describe
+    /// something that is already being fixed.
+    private func evaluateFeedbackPrompts(_ meta: RecordingMeta) {
+        let duration = recordingDurationMs(meta)
+        TranscriptHealthCache.note(id: summary.id, durationMs: duration, segments: meta.segments)
+        guard !feedbackEvaluated, !isSample else { return }
+        feedbackEvaluated = true
+        guard backfill == .none else { return }
+        let center = FeedbackCenter.shared
+        if FeedbackConditions.isEmptyTranscript(durationMs: duration, segments: meta.segments) {
+            offersEmptyReport = center.mayOffer(.emptyTranscript, recordingId: summary.id)
+        } else if FeedbackConditions.truncatedAt(durationMs: duration, segments: meta.segments)
+            != nil
+        {
+            offersTruncatedReport = center.mayOffer(.truncatedTranscript, recordingId: summary.id)
+        }
+    }
+
+    /// Re-transcribe, offered next to a report — the same confirmation the menu
+    /// item leads to, and only where the menu item would be enabled.
+    private var reTranscribeOffer: (() -> Void)? {
+        guard orgId == nil, !isSample, canReTranscribe else { return nil }
+        return { confirmingReTranscribe = true }
+    }
+
+    @ViewBuilder
+    private func emptyTranscript(_ meta: RecordingMeta) -> some View {
+        let duration = recordingDurationMs(meta)
+        if FeedbackConditions.isEmptyTranscript(durationMs: duration, segments: meta.segments),
+            !isSample
+        {
+            EmptyTranscriptState(
+                recordingId: summary.id,
+                durationMs: duration,
+                offersReport: offersEmptyReport && backfill == .none,
+                reTranscribe: backfill == .none ? reTranscribeOffer : nil,
+                send: { sendFeedback(.emptyTranscript, meta: meta) })
+        } else {
+            Text("This recording has no transcript.")
+                .font(.parley.subheadline)
+                .foregroundStyle(Color(.secondaryLabel))
+        }
+    }
+
+    /// 「逐字稿只到 {mm:ss}，後面沒有轉出來。」 — shown while the transcript on
+    /// screen still stops short, and gone the moment a re-transcription fixes
+    /// it.
+    @ViewBuilder
+    private func truncatedStrip(_ meta: RecordingMeta) -> some View {
+        if offersTruncatedReport, backfill == .none,
+            let stopsAt = FeedbackConditions.truncatedAt(
+                durationMs: recordingDurationMs(meta), segments: meta.segments)
+        {
+            FeedbackPromptCard(
+                trigger: .truncatedTranscript,
+                recordingId: summary.id,
+                text: Text(
+                    "The transcript stops at \(FeedbackConditions.clock(stopsAt)). The rest wasn't transcribed."
+                ),
+                secondary: reTranscribeOffer.map { action in ("Re-transcribe", action) },
+                send: {
+                    offersTruncatedReport = false
+                    sendFeedback(.truncatedTranscript, meta: meta)
+                },
+                close: { withAnimation { offersTruncatedReport = false } })
+            .padding(.horizontal, 20)
+            .padding(.vertical, 6)
+        }
+    }
+
+    /// One tap, one report: the recording by id and by numbers — never its
+    /// words.
+    private func sendFeedback(_ trigger: FeedbackTrigger, meta: RecordingMeta, tags: [String]? = nil) {
+        let context = FeedbackDiagnostics.Context(
+            recordingId: summary.id,
+            recordingDurationMs: Int(recordingDurationMs(meta)),
+            transcriptSegments: FeedbackConditions.transcriptSegmentCount(meta.segments),
+            lastSegmentEndMs: Int(FeedbackConditions.lastSegmentEndMs(meta.segments)))
+        Task {
+            await FeedbackCenter.shared.send(
+                trigger, recordingId: summary.id, context: context, tags: tags)
+        }
     }
 
     static func duration(_ ms: Double) -> String {

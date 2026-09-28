@@ -23,7 +23,7 @@
         <p class="label">隱私權政策</p>
         <h1>你應該清楚知道，你的會議去了哪裡。</h1>
         <p class="lead">本政策說明 Parley 官方雲端版如何處理帳號、錄音、逐字稿與 AI 使用資料。開源的桌面版可以完全在你自己的電腦上執行，搭配你自己選用的第三方供應商，完全不啟用任何雲端服務。</p>
-        <p class="updated">最後更新：<time datetime="2026-09-25">2026 年 9 月 25 日</time></p>
+        <p class="updated">最後更新：<time datetime="2026-09-28">2026 年 9 月 28 日</time></p>
 
         <div class="note">
           <p><strong>簡單來說：</strong>Parley 只有在你按下錄音之後，才會收錄麥克風的聲音。音訊與逐字稿會同步到你的 Parley 帳號，讓你在其他裝置上也能取用。你可以在 App 內永久刪除帳號及其所有資料，也可以<a href="../account-deletion/">完全不安裝 App</a> 就申請刪除。</p>
@@ -34,7 +34,9 @@
           <div><dt>帳號資料</dt><dd>姓名、電子郵件地址、登入方式與登入工作階段——用於建立並保護你的帳號。</dd></div>
           <div><dt>會議內容</dt><dd>你選擇錄下的音訊，以及它的逐字稿、標題、摘要、資料夾與所屬組織。</dd></div>
           <div><dt>服務用量</dt><dd>轉錄秒數與 AI 額度的消耗量，用於套用你方案的額度並防止濫用。</dd></div>
-          <div><dt>技術資料</dt><dd>維持服務運作與安全所需的基本請求、錯誤，以及裝置／瀏覽器資訊。</dd></div>
+          <div><dt>技術資料</dt><dd>維持服務運作與安全所需的基本請求、錯誤，以及裝置／瀏覽器資訊。每個請求會帶上 App 的平台與版本號（例如 iOS 1.24），讓我們分辨問題出在哪個版本。</dd></div>
+          <div><dt>當機報告</dt><dd>行動版 App 意外關閉或卡住時，系統產生的當機位置與版本資訊。預設自動傳送，可以在設定中關閉。</dd></div>
+          <div><dt>問題回報</dt><dd>只有在你按下回報時才會送出：你寫的說明、你選擇保留的截圖，以及 App 附上的診斷資訊。</dd></div>
         </dl>
 
         <h2>我們如何使用這些資料</h2>
@@ -42,14 +44,20 @@
           <li>提供即時轉錄、你的錄音庫、跨裝置同步，以及你選擇使用的個人或組織資料夾。</li>
           <li>代你將音訊傳送給轉錄服務；當你使用 AI 功能時，也會傳送給模型供應商。</li>
           <li>維護帳號安全、計算額度用量，以及診斷服務故障。</li>
+          <li>找出並修正當機、轉錄失敗、同步失敗等問題，包括你回報的問題。</li>
         </ul>
         <p>我們不販售你的個人資料，也不會將你的會議內容用於廣告。</p>
 
         <h2>儲存與第三方</h2>
         <p>官方雲端版使用 Cloudflare D1 與 R2，儲存帳號資料、錄音的中繼資料，以及透過加密連線傳送的音訊物件。即時轉錄使用 Soniox；官方 AI 功能使用 Groq。如果你使用 Google 或 Apple 登入，你的登入資料由該供應商依其自身的政策處理。上述供應商僅為提供 Parley 服務而處理資料。</p>
 
+        <h2>當機報告與問題回報</h2>
+        <p>Parley 的行動版 App（iOS 與 Android）預設會在 App 意外關閉或卡住之後，於下次開啟時自動傳送一份當機報告給我們。報告只包含 App 版本、作業系統版本、裝置型號，以及當機發生在程式的哪個位置。你可以在 <span class="path">設定 → 回饋與診斷 → 自動傳送當機報告</span> 關閉；關閉之後，每次當機都會先詢問你要不要傳送。</p>
+        <p>除了當機報告，App 只會在你主動按下「傳診斷給我們」、「回報問題」這類按鈕時，才送出一份回報。回報包含：你選填的文字或選項、相關錄音的 ID 與時長等數字、App 與作業系統版本、裝置型號、語系與時區、音訊輸入來源、麥克風權限狀態、同步佇列的狀況、最近的錯誤代碼，以及一小段過濾過的 App 運作紀錄（電子郵件地址與登入憑證會先被移除）。你截圖時，App 可能會在畫面底部提示你回報這個畫面；截圖只有在你打開回報頁、而且沒有拿掉截圖的情況下才會送出，而且是 App 自己畫出的畫面，不會讀取你的相簿。</p>
+        <p>當機報告與回報<strong>永遠不會</strong>包含你的錄音檔、逐字稿文字，或你用 Parley 鍵盤打的字。登入狀態下送出的回報會與你的帳號綁定，方便我們對照你的錄音狀況追查；沒有登入也可以送出。這些資料只用來找出並修正問題，不用於廣告或追蹤。如果你想刪除自己送出的回報，請來信下方的聯絡信箱。</p>
+
         <h2>本網站的瀏覽統計</h2>
-        <p>本網站（parley.tw）使用 Cloudflare Web Analytics 統計頁面瀏覽次數。它不使用 Cookie，也不收集任何個人資料；我們只看得到彙總後的頁面瀏覽數。這項統計只在 parley.tw 上運作，與 Parley 的各個 App 無關——App 本身不含任何遙測。</p>
+        <p>本網站（parley.tw）使用 Cloudflare Web Analytics 統計頁面瀏覽次數。它不使用 Cookie，也不收集任何個人資料；我們只看得到彙總後的頁面瀏覽數。這項統計只在 parley.tw 上運作，與 Parley 的各個 App 無關——App 本身不含任何使用行為的遙測，只會傳送上面「當機報告與問題回報」說明的內容。</p>
 
         <h2>保存與刪除</h2>
         <p>你的帳號資料與個人錄音會一直保存，直到你將其刪除。刪除帳號會永久移除帳號本身、你個人錄音的音訊與逐字稿、你的資料夾以及用量資料，而且無法復原。iOS：<span class="path">設定 → 帳號 → 刪除帳號</span>。Android：<span class="path">帳號</span>面板 → <span class="path">刪除帳號</span>。如果你無法開啟 App，請依照<a href="../account-deletion/">刪除帳號頁面</a>的說明，從你註冊時使用的電子郵件地址來信申請。如果你是某個共享組織的擁有者，必須先移轉或刪除該組織，以免其他成員共享的錄音被意外一併刪除。</p>
@@ -66,7 +74,7 @@
         <p class="label">Privacy policy</p>
         <h1>You should know exactly where your meetings go.</h1>
         <p class="lead">This policy covers how the official cloud edition of Parley handles accounts, recordings, transcripts, and AI usage data. The open-source desktop edition can run entirely on your own machine and your own third-party providers, with no cloud service enabled at all.</p>
-        <p class="updated">Last updated: <time datetime="2026-09-25">25 September 2026</time></p>
+        <p class="updated">Last updated: <time datetime="2026-09-28">28 September 2026</time></p>
 
         <div class="note">
           <p><strong>The short version:</strong> Parley captures microphone audio only after you press record. Audio and transcripts sync to your Parley account so you can reach them from your other devices. You can permanently delete your account and all of its data from inside the app, or <a href="../account-deletion/?lang=en">without installing the app at all</a>.</p>
@@ -77,7 +85,9 @@
           <div><dt>Account data</dt><dd>Name, email address, sign-in method, and sessions — used to create and protect your account.</dd></div>
           <div><dt>Meeting content</dt><dd>Audio you chose to record, along with its transcript, title, summaries, folders, and organization membership.</dd></div>
           <div><dt>Service usage</dt><dd>Transcription seconds and AI credit consumption, used to apply your plan's allowance and prevent abuse.</dd></div>
-          <div><dt>Technical data</dt><dd>Basic request, error, and device/browser information needed to keep the service running and secure.</dd></div>
+          <div><dt>Technical data</dt><dd>Basic request, error, and device/browser information needed to keep the service running and secure. Every request carries the app's platform and version (for example iOS 1.24), so we can tell which release a problem comes from.</dd></div>
+          <div><dt>Crash reports</dt><dd>Where the mobile app crashed or froze, and which version it was, as the operating system records it. Sent automatically by default; you can turn this off in Settings.</dd></div>
+          <div><dt>Problem reports</dt><dd>Sent only when you tap to report: what you wrote, a screenshot if you chose to keep it, and the diagnostics the app attaches.</dd></div>
         </dl>
 
         <h2>How we use it</h2>
@@ -85,14 +95,20 @@
           <li>To provide live transcription, your recording library, cross-device sync, and the personal or organization folders you choose.</li>
           <li>To send audio to a transcription service on your behalf, and to a model provider when you use AI features.</li>
           <li>To keep accounts secure, meter allowances, and diagnose service failures.</li>
+          <li>To find and fix crashes, failed transcriptions, failed syncs, and the problems you report.</li>
         </ul>
         <p>We do not sell your personal data, and we do not use your meeting content for advertising.</p>
 
         <h2>Storage and third parties</h2>
         <p>The official cloud edition uses Cloudflare D1 and R2 to store account data, recording metadata, and audio objects transferred over encrypted connections. Live transcription uses Soniox; the official AI features use Groq. If you sign in with Google or Apple, that provider handles your sign-in data under its own policy. These providers process data only to deliver the Parley service.</p>
 
+        <h2>Crash reports and problem reports</h2>
+        <p>By default, Parley's mobile apps (iOS and Android) send us a crash report the next time you open the app after it crashed or froze. The report contains only the app version, the operating system version, the device model, and where in the app's code the crash happened. You can turn this off in <span class="path">Settings → Feedback &amp; diagnostics → Send crash reports automatically</span>; once it is off, the app asks you before sending each one.</p>
+        <p>Apart from crash reports, the app sends a report only when you tap a button such as "Send diagnostics" or "Report a problem". A report contains what you chose to write or pick, the ID and numbers such as the length of the recording it is about, the app and operating system versions, the device model, language and time zone, the audio input in use, whether microphone access is granted, the state of the sync queue, recent error codes, and a short, filtered app log with email addresses and sign-in credentials removed. When you take a screenshot, the app may offer at the bottom of the screen to report it; the screenshot is sent only if you open the report and leave it attached, and it is a picture the app draws of its own screen — your photo library is never read.</p>
+        <p>Crash reports and problem reports <strong>never</strong> contain your audio recordings, transcript text, or anything you type with the Parley keyboard. A report sent while you are signed in is linked to your account, so we can look at it alongside the recording it is about; you can also send one without signing in. We use them only to find and fix problems, never for advertising or tracking. To have reports you sent deleted, email the address below.</p>
+
         <h2>Analytics on this website</h2>
-        <p>This website (parley.tw) uses Cloudflare Web Analytics to count page views. It sets no cookies and collects no personal data; we see only aggregate page-view counts. It runs on parley.tw only and is separate from the Parley apps, which contain no telemetry.</p>
+        <p>This website (parley.tw) uses Cloudflare Web Analytics to count page views. It sets no cookies and collects no personal data; we see only aggregate page-view counts. It runs on parley.tw only and is separate from the Parley apps, which contain no usage telemetry and send only what "Crash reports and problem reports" above describes.</p>
 
         <h2>Retention and deletion</h2>
         <p>Your account data and personal recordings are kept until you delete them. Deleting your account permanently removes the account, the audio and transcripts of your personal recordings, your folders, and your usage data — and it cannot be undone. On iOS: <span class="path">Settings → Account → Delete account</span>. On Android: the <span class="path">Account</span> sheet → <span class="path">Delete account</span>. If you cannot open the app, follow the <a href="../account-deletion/?lang=en">account deletion page</a> to request it by email from your registered address. If you own a shared organization, you must transfer or delete that organization first, so other members' shared recordings are not destroyed by accident.</p>
