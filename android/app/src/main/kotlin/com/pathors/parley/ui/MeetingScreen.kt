@@ -116,7 +116,7 @@ private object ProcessId {
 }
 
 /**
- * The live meeting: permission gate, consent, transcript, waveform, controls.
+ * The live meeting: permission gate, transcript, waveform, controls.
  *
  * The screen owns none of the recording. It asks [MeetingService] to start,
  * observes the [MeetingSession] the service publishes, and asks it to stop —
@@ -135,9 +135,13 @@ private object ProcessId {
  * The user's own account of it: *I opened Parley and it was recording.*
  *
  * So the latch is a [rememberSaveable] carrying [ProcessId] rather than a
- * boolean, and a value from a dead process means *leave*, not *start*. On top of
- * that the only thing that can now reach `MeetingService.start` at all is the
- * user pressing through [RecordingConsentDialog].
+ * boolean, and a value from a dead process means *leave*, not *start*. Every
+ * route onto this screen is the user pressing a start-meeting button, and
+ * [shouldStart] is the whole guard between arriving and `MeetingService.start`.
+ *
+ * There is no "has everyone agreed?" prompt in front of it. Getting the room's
+ * permission is the person holding the phone's call, as it is with any other
+ * recorder, and a dialog every single time taught nothing but a reflex tap.
  */
 @Composable
 fun MeetingScreen(onDone: () -> Unit) {
@@ -156,7 +160,6 @@ fun MeetingScreen(onDone: () -> Unit) {
     // docs for what that cost.
     var startedIn by rememberSaveable { mutableStateOf<String?>(null) }
     val restored = startedIn != null && startedIn != ProcessId.value
-    var consenting by rememberSaveable { mutableStateOf(false) }
 
     // The meeting this screen was showing did not survive the process. There is
     // nothing to rejoin and nothing to resume, so leave — silently opening the
@@ -165,7 +168,8 @@ fun MeetingScreen(onDone: () -> Unit) {
         if (restored) onDone()
     }
 
-    // Ask before recording, never instead of asking — see [shouldRequestConsent].
+    // Start once the microphone is ours — see [shouldStart] for everything that
+    // must hold first.
     LaunchedEffect(mic.granted, restored) {
         var running = MeetingService.activeSession.value
         // A meeting that ended on an earlier visit and was never dismissed (the
@@ -176,7 +180,10 @@ fun MeetingScreen(onDone: () -> Unit) {
             MeetingService.clear()
             running = null
         }
-        if (shouldRequestConsent(mic.granted, restored, startedIn, running)) consenting = true
+        if (shouldStart(mic.granted, restored, startedIn, running)) {
+            startedIn = ProcessId.value
+            MeetingService.start(context)
+        }
     }
 
     if (!mic.granted) {
@@ -190,27 +197,13 @@ fun MeetingScreen(onDone: () -> Unit) {
         return
     }
 
-    if (consenting) {
-        RecordingConsentDialog(
-            onConfirm = {
-                consenting = false
-                startedIn = ProcessId.value
-                MeetingService.start(context)
-            },
-            onCancel = {
-                consenting = false
-                onDone()
-            },
-        )
-    }
-
     // An old meeting's outcome is about to be cleared by the effect above; do
     // not flash it for the frame before that lands.
     val active = session?.takeUnless { startedIn == null && isSettled(it.state.value) }
     if (active == null) {
-        // Nothing is starting while the consent dialog is up or while we are on
-        // our way out, and a spinner under either would claim otherwise.
-        MeetingStartingIndicator(spinning = !consenting && !restored)
+        // Nothing is starting while we are on our way out, and a spinner would
+        // claim otherwise.
+        MeetingStartingIndicator(spinning = !restored)
         return
     }
 
@@ -229,7 +222,7 @@ fun MeetingScreen(onDone: () -> Unit) {
 }
 
 /**
- * Whether arriving on this screen should ask the user to consent to a recording.
+ * Whether arriving on this screen should start a recording.
  *
  * This predicate is the whole guard in front of `MeetingService.start`, so the
  * answer is no unless every one of these holds: the microphone is ours; this
@@ -239,10 +232,9 @@ fun MeetingScreen(onDone: () -> Unit) {
  * is no [running] meeting to adopt.
  *
  * That last one is why a meeting already in progress (the user came back through
- * the library's "Return to it") is adopted without a second consent — they
- * consented when it started.
+ * the library's "Return to it") is adopted rather than started over.
  */
-private fun shouldRequestConsent(
+private fun shouldStart(
     granted: Boolean,
     restored: Boolean,
     startedIn: String?,
@@ -282,7 +274,7 @@ private fun DemoMeetingScreen(onDone: () -> Unit) {
     )
 }
 
-/** Waiting for the service to publish the session the consent dialog asked for. */
+/** Waiting for the service to publish the session this screen asked for. */
 @Composable
 private fun MeetingStartingIndicator(spinning: Boolean) {
     Box(Modifier.fillMaxSize(), Alignment.Center) {
@@ -846,37 +838,9 @@ internal fun DiscardControl(onDiscard: () -> Unit, modifier: Modifier = Modifier
 }
 
 /**
- * What the user agrees to before the microphone opens.
- *
- * Not a nicety and not a UX flourish: the phone is about to pick up everyone in
- * the room and stream them to a server, and in most of the places Parley is used
- * that needs everyone's agreement, not just the holder's. So the confirming
- * button says "Everyone has agreed" rather than "OK" — the same wording as iOS
- * (`LiveView`), because a button labelled OK records nothing but a reflex.
- */
-@Composable
-private fun RecordingConsentDialog(onConfirm: () -> Unit, onCancel: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onCancel,
-        title = { Text(stringResource(R.string.meeting_consent_title)) },
-        text = { ScrollingDialogText(stringResource(R.string.meeting_consent_body)) },
-        confirmButton = {
-            TextButton(onClick = onConfirm) {
-                Text(stringResource(R.string.meeting_consent_confirm))
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onCancel) {
-                Text(stringResource(R.string.action_cancel))
-            }
-        },
-    )
-}
-
-/**
  * Dialog body copy that stays readable at the largest font scale: an
- * `AlertDialog` clips its text slot rather than scrolling it, and these two
- * dialogs are the ones whose whole point is the paragraph.
+ * `AlertDialog` clips its text slot rather than scrolling it, and the discard
+ * dialog is one whose whole point is the paragraph.
  */
 @Composable
 private fun ScrollingDialogText(text: String) {

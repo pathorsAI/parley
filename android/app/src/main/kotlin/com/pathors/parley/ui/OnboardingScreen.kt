@@ -278,8 +278,8 @@ private fun IntroPoints(modifier: Modifier = Modifier) {
 }
 
 /**
- * The pinned bottom block: the button, what sign-in accepts, the consent the app
- * will ask for before it ever records, and the privacy policy.
+ * The pinned bottom block: the button, what sign-in accepts, and the privacy
+ * policy.
  *
  * The last one is not a courtesy. Play requires a privacy policy reachable from
  * inside the app, and this screen is the one every install passes through.

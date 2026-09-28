@@ -25,7 +25,6 @@ struct LiveView: View {
     /// owns the pass and its own accepted state, so this view only has to say
     /// where the block goes and when a new recording retires it.
     @StateObject private var filing = FilingSuggestionModel()
-    @State private var showRecordingConsent = false
     /// The meeting the `mic_recovery` prompt is about, when it is up. Latched
     /// on the meeting ending — see `MeetingRecorder.micRecoveries` — and
     /// cleared by the next meeting, a send, or ✕.
@@ -109,16 +108,6 @@ struct LiveView: View {
                         },
                         isEmpty: recorder.segments.isEmpty)
                 }
-            }
-            .alert("Before you start recording", isPresented: $showRecordingConsent) {
-                Button("Cancel", role: .cancel) {}
-                Button("Everyone has agreed") {
-                    Task {
-                        await recorder.start(token: KeychainStore.get(AppState.tokenKey))
-                    }
-                }
-            } message: {
-                Text("Parley picks up the room through the microphone, sends the audio to your Parley account for live transcription, and syncs the recording and transcript there. Confirm that everyone present has agreed to be recorded.")
             }
             // The microphone is not coming back. End the meeting rather than
             // leave a recording on screen that records nothing — the audio up
@@ -777,7 +766,11 @@ struct LiveView: View {
         if recorder.isRecording {
             Task { await recorder.stop(app: app) }
         } else if app.hasAccount {
-            showRecordingConsent = true
+            // No "has everyone agreed?" alert first: getting the room's
+            // permission is the person holding the phone's call, as it is with
+            // any other recorder, and asking every single time taught nothing
+            // but a reflex tap.
+            Task { await recorder.start(token: KeychainStore.get(AppState.tokenKey)) }
         } else {
             // The gate in RootView normally keeps this unreachable, but a
             // session can expire while the app is open and on this screen.

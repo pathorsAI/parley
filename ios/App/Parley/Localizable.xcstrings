@@ -630,23 +630,6 @@
         }
       }
     },
-    "Before you start recording" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Before you start recording"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "開始錄音前請確認"
-          }
-        }
-      }
-    },
     "Bopomofo keyboard" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1667,19 +1650,19 @@
         }
       }
     },
-    "Email and password, Google, and Apple all work. Before any recording starts, Parley asks you to confirm everyone in the room has agreed to it." : {
+    "Email and password, Google, and Apple all work." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Email and password, Google, and Apple all work. Before any recording starts, Parley asks you to confirm everyone in the room has agreed to it."
+            "value" : "Email and password, Google, and Apple all work."
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "支援信箱密碼、Google 與 Apple 登入。開始錄音前，Parley 一定會先請你確認在場所有人都同意錄音。"
+            "value" : "支援信箱密碼、Google 與 Apple 登入。"
           }
         }
       }
@@ -1748,23 +1731,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "錄完的會議會自動取名、建議放哪個資料夾。標題可以改，資料夾也能自己選。按「採用」或任一個資料夾試試。"
-          }
-        }
-      }
-    },
-    "Everyone has agreed" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Everyone has agreed"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "所有人都已同意"
           }
         }
       }
@@ -3126,23 +3092,6 @@
         }
       }
     },
-    "Nothing was transcribed" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nothing was transcribed"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "這場沒有轉出文字"
-          }
-        }
-      }
-    },
     "Not now" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3258,6 +3207,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "還沒學到任何東西。"
+          }
+        }
+      }
+    },
+    "Nothing was transcribed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nothing was transcribed"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這場沒有轉出文字"
           }
         }
       }
@@ -3759,23 +3725,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Parley 需要麥克風權限。請到「設定 › Parley」開啟。"
-          }
-        }
-      }
-    },
-    "Parley picks up the room through the microphone, sends the audio to your Parley account for live transcription, and syncs the recording and transcript there. Confirm that everyone present has agreed to be recorded." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Parley picks up the room through the microphone, sends the audio to your Parley account for live transcription, and syncs the recording and transcript there. Confirm that everyone present has agreed to be recorded."
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Parley 會用麥克風收取房間的聲音，將音訊送往你的 Parley 帳號進行即時轉錄，並把錄音與逐字稿同步到雲端。請先確認在場所有人都同意錄音。"
           }
         }
       }

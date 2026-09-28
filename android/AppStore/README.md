@@ -67,9 +67,11 @@ was months of work away from submitting, long after it had shipped:
   web route a non-installer can reach. [`data-safety.md`](data-safety.md).
 - **The review account** — `appreview@pathors.com`, confirmed able to sign in on
   2026-09-13. [`review-notes.md`](review-notes.md).
-- **No consent prompt on Android** — done. Recording now asks before the
-  microphone opens, matching iOS, so the listing copy is free to say so.
-  [`listing-en.md`](listing-en.md).
+- **No consent prompt** — settled. Android briefly asked "has everyone
+  agreed?" before the microphone opened, matching iOS; as of 2026-09-29 neither
+  platform does. Getting the room's permission is the user's call, as with any
+  recorder, and the privacy policy says so. The listing makes no consent-prompt
+  claim. [`listing-en.md`](listing-en.md).
 - **Feature graphic** — done, both locales, in
   [`assets/`](assets/).
 - **Screenshots** — done. Android has demo mode (`screenshot/DemoMode.kt`), so

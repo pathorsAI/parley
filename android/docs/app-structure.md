@@ -178,8 +178,8 @@ stays until the user taps Close. A meeting the user stopped stays up too, as it
 does on iOS: the transcript, the outcome in iOS's words ("Synced to the cloud",
 "Synced, and shared to “Org”", "You're out of quota…", "Sync failed for now…",
 "That recording was too short to keep") and the filing suggestion, until Done or
-Back. A settled session found on the next visit is cleared before the consent
-prompt rather than shown again. Haptics (`ui/MeetingHaptics`) mark recording started, Stop, Discard and
+Back. A settled session found on the next visit is cleared before the new
+recording starts rather than shown again. Haptics (`ui/MeetingHaptics`) mark recording started, Stop, Discard and
 microphone lost.
 
 ## The service
@@ -332,7 +332,7 @@ A port of iOS onboarding v2 (#450; Android's first cut was the v1 checklist of
     `LapConfetti`), once per recording ever (`LapCelebrations`, iOS's
     `lapMotion.celebrated.<id>`; "Show the getting-started list again" re-arms
     it with the rest of the lap). "Start your first real meeting" goes to the
-    meeting route, which asks for consent as it always does; "Close" hides the
+    meeting route; "Close" hides the
     bar. With "Remove animations" on, the final state shows at once and nothing
     is thrown.
 - **Hand-off.** The recording screen's `⋯` menu leads with "Share to AI (with

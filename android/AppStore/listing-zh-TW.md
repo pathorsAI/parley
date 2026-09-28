@@ -94,8 +94,8 @@ Parley Android 版首次推出。錄一場面對面的會議，逐字稿會邊�
 - **Not a translation.** The English copy opens on "records the meetings you
   have in person"; the Chinese opens on 「會議還在進行，逐字稿就已經讀得到了」,
   which is the promise that lands in Chinese. Same facts, native rhythm.
-- **The same three omissions as the English file**: no consent-prompt claim (the
-  Android app has none), no playback, no folders/organization sharing.
+- **The same three omissions as the English file**: no consent-prompt claim (neither
+  app has one), no playback, no folders/organization sharing.
 - **帳號刪除網址已定案**，與 [`listing-en.md`](listing-en.md) 一致：
   `https://parley.tw/account-deletion/` 同時寫了兩個平台的 app 內刪除路徑，
   以及打不開 app 時的來信管道。
