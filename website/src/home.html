@@ -98,10 +98,11 @@
       (real endpoints the app connects to) and flips the mode.
     -->
     <figure class="route" id="route" data-mode="byok" aria-labelledby="route-cap">
-      <div class="seg" role="group" aria-label="{{route.label|attr}}">
+      <fieldset class="seg">
+        <legend class="sr-only">{{route.label}}</legend>
         <button type="button" aria-pressed="true" data-mode="byok">{{route.byok}}</button>
         <button type="button" aria-pressed="false" data-mode="cloud">{{route.cloud}}</button>
-      </div>
+      </fieldset>
       <div class="route__map" id="route-map">
         <svg class="route__wires" aria-hidden="true"></svg>
         <div class="rt-dev" data-node="dev">

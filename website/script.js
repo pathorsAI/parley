@@ -433,14 +433,13 @@
     }
 
     const buttons = [...fig.querySelectorAll(".seg button")];
-    buttons.forEach((btn) =>
-      btn.addEventListener("click", () => {
-        if (fig.dataset.mode === btn.dataset.mode) return;
-        buttons.forEach((b) => b.setAttribute("aria-pressed", String(b === btn)));
-        fig.dataset.mode = btn.dataset.mode;
-        track(reduceMotion.matches ? 0 : 650);
-      }),
-    );
+    function setMode(mode) {
+      if (fig.dataset.mode === mode) return;
+      for (const b of buttons) b.setAttribute("aria-pressed", String(b.dataset.mode === mode));
+      fig.dataset.mode = mode;
+      track(reduceMotion.matches ? 0 : 650);
+    }
+    for (const btn of buttons) btn.addEventListener("click", () => setMode(btn.dataset.mode));
 
     if ("ResizeObserver" in globalThis) new ResizeObserver(() => draw()).observe(map);
     else addEventListener("resize", draw);

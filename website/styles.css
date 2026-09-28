@@ -190,8 +190,8 @@ h1 {
 .fine a { color: var(--secondary); white-space: nowrap; text-decoration: underline; text-decoration-color: var(--hairline-2); text-underline-offset: 3px; }
 .fine a:hover { color: var(--ink); }
 
-/* Live transcript: no card — a hairline above the recorder strip, nothing around it. */
-.demo { min-width: 0; }
+/* Live transcript ("In the meeting" row): on the panel, a hairline above the recorder strip. */
+.demo { min-width: 0; padding: 40px 40px 32px; }
 .lines {
   height: 212px; overflow: hidden;
   display: flex; flex-direction: column; justify-content: flex-end;
@@ -222,7 +222,7 @@ h1 {
    into the path and the wires run through it. */
 .route { min-width: 0; }
 .seg {
-  display: inline-flex; padding: 3px; border-radius: 10px;
+  display: inline-flex; margin: 0; padding: 3px; border: 0; min-width: 0; border-radius: 10px;
   background: var(--page-2); box-shadow: inset 0 0 0 1px var(--hairline);
 }
 .seg button {
@@ -268,10 +268,12 @@ html:not(.js) .seg { display: none; }
 .rt-dev__note { padding-top: 14px; border-top: 1px solid var(--hairline-2); font-size: 12.5px; line-height: 1.55; color: var(--secondary); text-wrap: pretty; }
 
 .rt-mid { position: relative; display: flex; align-items: center; }
-.rt-dest { display: flex; flex-direction: column; justify-content: center; gap: 48px; }
+.rt-dest {
+  display: flex; flex-direction: column; justify-content: center; gap: 36px; margin-left: 18px;
+  transition: opacity .3s ease;
+}
 /* Room for a two-line note, so swapping hosts never moves the wires. */
 .rt-dest .rt-node { min-height: 97px; }
-.rt-dest { gap: 36px; margin-left: 18px; }
 .rt-node {
   position: relative; width: 100%;
   padding: 11px 13px 10px; border: 1px solid var(--hairline-2); border-radius: 12px;
@@ -291,7 +293,6 @@ html:not(.js) .seg { display: none; }
 .route[data-mode="cloud"] .rt-node--parley { transform: translateX(calc(100% + 42px)); }
 .route[data-mode="byok"] .rt-node--parley :is(.rt-k, .rt-host, .rt-note) { color: var(--tertiary); }
 .route[data-mode="byok"] .when-cloud, .route[data-mode="cloud"] .when-byok { display: none; }
-.rt-dest { transition: opacity .3s ease; }
 .route[data-mode="cloud"] .rt-dest { opacity: 0; visibility: hidden; }
 
 .route__cap { margin-top: 18px; font-size: 15px; font-weight: 600; line-height: 1.5; }
@@ -327,9 +328,6 @@ h3 { font-size: 18px; font-weight: 600; line-height: 1.4; }
 .cmdk { display: flex; align-items: center; justify-content: center; padding: 56px 40px; }
 .cmdk picture { display: block; width: 100%; max-width: 620px; }
 .cmdk img { width: 100%; height: auto; border-radius: 12px; box-shadow: var(--win-shadow); }
-
-/* In the meeting: the live transcript and recorder strip on the panel. */
-.demo { padding: 40px 40px 32px; }
 
 /* Models: the app's provider settings drawn in HTML, then every provider mark. */
 .prefs { padding: 34px 40px 32px; }
