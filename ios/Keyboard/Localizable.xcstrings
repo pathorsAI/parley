@@ -718,6 +718,23 @@
         }
       }
     },
+    "Tap text to copy": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tap text to copy"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "點文字可複製"
+          }
+        }
+      }
+    },
     "Tap to open the app": {
       "localizations": {
         "en": {
