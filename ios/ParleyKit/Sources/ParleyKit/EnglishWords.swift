@@ -104,6 +104,25 @@ public final class EnglishWords {
     /// "did the warm arrive" is a question worth asking.
     var isWarm: Bool { table != nil }
 
+    /// The table as built, for the tests that check a parse builds exactly
+    /// what it used to.
+    var built: (words: [String], ranks: [Int32], followers: [String: [String]])? {
+        table.map { ($0.words, $0.ranks, $0.followers) }
+    }
+
+    /// Whether a lookup that finds no table **and no warm in flight** parses the
+    /// resource there and then. On by default, which is what the tests and any
+    /// caller that has not warmed want: the answer, whatever it costs.
+    ///
+    /// The keyboard turns it off. There, every path to a lookup starts a warm
+    /// first, so a lookup that finds nothing loaded is a path someone forgot —
+    /// and parsing on the spot would do it on the main thread, on a keystroke,
+    /// at the highest footprint a parse reaches. Off, such a lookup starts the
+    /// warm itself and answers nothing, exactly as one that arrives while a warm
+    /// is in flight does; the next keystroke after the landing is answered from
+    /// the table.
+    public var parsesOnLookup = true
+
     /// How many times the resource has been parsed. Internal for the tests,
     /// which is where "was a second table ever built" is a question worth
     /// asking.
@@ -169,7 +188,9 @@ public final class EnglishWords {
     ///
     /// For memory pressure: the keyboard calls this from
     /// `didReceiveMemoryWarning`. The next lookup reads the files again
-    /// synchronously, which is one slow letter rather than a killed keyboard.
+    /// synchronously, which is one slow letter rather than a killed keyboard —
+    /// or, with `parsesOnLookup` off as the keyboard has it, starts a warm and
+    /// answers nothing until it lands.
     ///
     /// A no-op while a warm is in flight — it would land a moment later anyway,
     /// and dropping it here would only mean parsing again — and for a list
@@ -295,12 +316,17 @@ public final class EnglishWords {
 
     // MARK: the table
 
+    /// The words sorted, beside their ranks. Sorts the ranks rather than
+    /// (word, rank) pairs: an array of `Int32` is a sixth the size of an array
+    /// of pairs, and building the pairs, sorting a copy and mapping it back out
+    /// into two arrays was three extra copies of the list at once. The
+    /// comparison is the same one on the same words, so the order — ties
+    /// included — is the order the pairs sorted into.
     private static func indexed(_ words: [String], followers: [String: [String]]) -> Table {
         // Rank before sorting: the order they arrive in *is* the rank.
-        let ranked = words.enumerated().map { (word: $0.element, rank: Int32($0.offset)) }
-            .sorted { $0.word < $1.word }
-        let sorted = ranked.map(\.word)
-        let ranks = ranked.map(\.rank)
+        var ranks = Array(0..<Int32(words.count))
+        ranks.sort { words[Int($0)] < words[Int($1)] }
+        let sorted = ranks.map { words[Int($0)] }
         let followers = Dictionary(
             followers.map { (normalized($0.key), $0.value) }, uniquingKeysWith: { first, _ in first })
         return Table(
@@ -350,6 +376,10 @@ public final class EnglishWords {
         if let table { return table }
         // Never a second read beside the one in flight — see `warm`.
         guard !warming else { return nil }
+        if !parsesOnLookup, hasResource {
+            warm()
+            return nil
+        }
         // A failed read caches the empty table too, so a missing resource costs
         // one attempt rather than one per keystroke.
         if hasResource { parseCount += 1 }
@@ -358,22 +388,26 @@ public final class EnglishWords {
         return built
     }
 
+    /// Read both files and build the table. Line by line off mapped files
+    /// (`ResourceLines`), for the reason `ZhuyinPhrases.parse` is: this used to
+    /// hold each file as a string, its lines as an array, and a filtered copy of
+    /// that array, all at once beside the words being collected.
     private static func parse(wordsURL: URL?, followersURL: URL?) -> Table {
         var words: [String] = []
         words.reserveCapacity(48_000)
-        for line in lines(of: wordsURL) { words.append(String(line)) }
-        var followers: [String: [String]] = [:]
-        for line in lines(of: followersURL) {
-            let fields = line.split(separator: " ").map(String.init)
-            guard let previous = fields.first, fields.count > 1 else { continue }
-            followers[previous] = Array(fields.dropFirst())
+        if let wordsURL {
+            ResourceLines.forEach(in: wordsURL) { words.append($0) }
         }
-        return indexed(words, followers: followers)
-    }
-
-    private static func lines(of url: URL?) -> [Substring] {
-        guard let url, let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
-        return text.split(separator: "\n", omittingEmptySubsequences: true)
-            .filter { !$0.hasPrefix("#") }
+        var followers: [String: [String]] = [:]
+        if let followersURL {
+            ResourceLines.forEach(in: followersURL) { line in
+                let fields = line.split(separator: " ").map(String.init)
+                guard let previous = fields.first, fields.count > 1 else { return }
+                followers[previous] = Array(fields.dropFirst())
+            }
+        }
+        let table = indexed(words, followers: followers)
+        ResourceLines.returnFreedPages()
+        return table
     }
 }

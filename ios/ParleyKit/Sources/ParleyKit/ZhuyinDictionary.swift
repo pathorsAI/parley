@@ -53,6 +53,19 @@ public final class ZhuyinDictionary {
     /// "did the warm arrive" is a question worth asking.
     var isWarm: Bool { table != nil }
 
+    /// Whether a lookup that finds no table **and no warm in flight** parses the
+    /// resource there and then. On by default, which is what the tests and any
+    /// caller that has not warmed want: the answer, whatever it costs.
+    ///
+    /// The keyboard turns it off. There, every path to a lookup starts a warm
+    /// first, so a lookup that finds nothing loaded is a path someone forgot —
+    /// and parsing on the spot would do it on the main thread, on a keystroke,
+    /// at the highest footprint a parse reaches. Off, such a lookup starts the
+    /// warm itself and answers nothing, exactly as one that arrives while a warm
+    /// is in flight does; the next keystroke after the landing is answered from
+    /// the table.
+    public var parsesOnLookup = true
+
     /// How many times the resource has been parsed. Internal for the tests,
     /// which is where "was a second table ever built" is a question worth
     /// asking.
@@ -151,9 +164,10 @@ public final class ZhuyinDictionary {
 
     /// How many characters each fuzzy variant may add. A slip is asking for the
     /// word the user meant, which is among that reading's commonest characters,
-    /// not for its whole row — and the strip draws every candidate it is given,
-    /// so fourteen variants' full rows (toneless rows run to 441 characters)
-    /// would be well over a thousand buttons on a keystroke.
+    /// not for its whole row — and fourteen variants' full rows (toneless rows
+    /// run to 441 characters) would be well over a thousand candidates on a
+    /// keystroke, every one of them a cell in the ⌄ grid. (The strip itself
+    /// draws only the first few; see `StripBar` in the keyboard.)
     public static let fuzzyPerVariant = 8
 
     /// The exact row first, untouched, then for each `ZhuyinFuzzy.variants` in
@@ -217,6 +231,10 @@ public final class ZhuyinDictionary {
         if let table { return table }
         // Never a second parse beside the one in flight — see `warm`.
         if warming { return [:] }
+        if !parsesOnLookup, url != nil {
+            warm()
+            return [:]
+        }
         // A failed read caches the empty table too, so a missing resource costs
         // one attempt rather than one per keystroke.
         if url != nil { parseCount += 1 }

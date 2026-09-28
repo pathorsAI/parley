@@ -1389,8 +1389,9 @@ there is one load and one warm for both files. While a warm is in flight every
 lookup answers nothing instead of parsing the files a second time on the main
 thread, because the pane refreshes its bar in the same turn it warms and after a
 space that refresh asks for predictions; the warm refreshes the bar again when
-it lands. A lookup with no warm in flight still loads synchronously. Rank is the
-word list's order and
+it lands. A lookup with no warm in flight loads synchronously in the tests; the
+keyboard turns that off (`parsesOnLookup`), so there it starts the warm instead.
+Rank is the word list's order and
 nothing else. What it builds at load is the other order — the same words sorted
 alphabetically with each word's rank beside it — so a prefix is a contiguous
 range found by binary search and the answer is the lowest-ranked few in that
@@ -1936,6 +1937,15 @@ syllable is finished. libtabe's notice sits beside McBopomofo's in
   the same main-queue block that stores the table, and keys arrive on the main
   queue too, so a key is either before the landing or after it — never in
   between. `EnglishWords` and `ZhuyinDictionary` follow the same contract.
+  The keyboard starts the warm for whichever pane it is on **every** time it
+  sets one — on a swipe or a tab, and also in `viewDidLoad` and when a pane
+  switched off in Settings sends it elsewhere, which used not to warm, so a
+  keyboard without Full Access opening straight onto 注音 parsed both tables on
+  the main thread on its first keystrokes. And it turns `parsesOnLookup` off on
+  all three tables, so a lookup that ever finds nothing loaded and nothing in
+  flight starts a warm and answers nothing rather than parsing on a keystroke;
+  with the warms above, that path is only reachable in tests, which keep the
+  synchronous default.
 - **Given back under memory pressure.** `unload()` drops the table, and the
   next lookup reads the file again. `didReceiveMemoryWarning` unloads the
   phrase table and the English list when the pane on screen is not using them
@@ -1955,11 +1965,24 @@ syllable is finished. libtabe's notice sits beside McBopomofo's in
   rows drawn from several buckets be merged back into file order. A row is the
   phrase (four BMP characters or fewer, so inline too), the reading and the
   rank: 32 bytes, the same stride as the two strings it replaced, with no heap
-  behind it. Measured cold in a fresh process, building the index costs about
-  12.6 MB of footprint against 15.5 MB before, most of what remains being the
-  file and its split lines, which are freed but whose pages stay; after a warm
-  the index itself retains about 3 MB. Comparing a slot is now a mask, and a
-  keystroke allocates nothing per row.
+  behind it. Comparing a slot is now a mask, and a keystroke allocates nothing
+  per row.
+- **Parsed line by line, off a mapped file.** Building the index used to cost
+  about 12.6 MB of footprint for an index that retains about 3 MB: the rest was
+  the file decoded into a string, `split` into 61,000 lines, every row in one
+  array and then copied into its bucket — freed once the parse returned, but
+  their pages stayed, and freed-but-resident is still footprint to jetsam. Now
+  the file is memory-mapped (`ResourceLines`) — clean, file-backed pages
+  that are not footprint at all — each line is decoded, parsed and dropped
+  before the next is read, and a row goes straight into its bucket. Measured on
+  an M4 Mac mini (macOS 26.2, release build, `phys_footprint` sampled every
+  millisecond through the parse): the phrase table's peak went from +12.2 MB to
+  +3.4 MB, which is now also what it retains, and the parse from ~75 ms to
+  ~50 ms; the English list's from +5.9 MB to +1.9 MB and ~12 ms to ~6 ms. After
+  a parse the tables call `malloc_zone_pressure_relief` to ask for freed pages
+  back, but on macOS 26.2 the default zone reported nothing to return — its
+  allocator defers that to the kernel — so the lower peak is what actually
+  moved the number.
 
 #### Error tolerance
 

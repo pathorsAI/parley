@@ -207,6 +207,66 @@ final class EnglishWordsTests: XCTestCase {
         XCTAssertTrue(immediately, "already warm: no trip through the queue")
     }
 
+    func testTheStreamingParseBuildsTheTableTheWholeFileParseDid() throws {
+        // The reference is the parse as it was: each file as a string, split
+        // and filtered, then (word, rank) pairs sorted by word and mapped back
+        // out. The streaming parse sorts ranks instead; ties must land the same.
+        func lines(_ url: URL) throws -> [Substring] {
+            try String(contentsOf: url, encoding: .utf8)
+                .split(separator: "\n", omittingEmptySubsequences: true)
+                .filter { !$0.hasPrefix("#") }
+        }
+        let wordsURL = try XCTUnwrap(EnglishWords.bundledWordsURL)
+        let followersURL = try XCTUnwrap(EnglishWords.bundledFollowersURL)
+        let words = try lines(wordsURL).map(String.init)
+        var followers: [String: [String]] = [:]
+        for line in try lines(followersURL) {
+            let fields = line.split(separator: " ").map(String.init)
+            guard let previous = fields.first, fields.count > 1 else { continue }
+            followers[previous] = Array(fields.dropFirst())
+        }
+        let pairs = words.enumerated().map { (word: $0.element, rank: Int32($0.offset)) }
+            .sorted { $0.word < $1.word }
+
+        let streamed = EnglishWords(wordsURL: wordsURL, followersURL: followersURL)
+        _ = streamed.completions(for: "a")
+        let built = try XCTUnwrap(streamed.built)
+        XCTAssertEqual(built.words, pairs.map(\.word))
+        XCTAssertEqual(built.ranks, pairs.map(\.rank))
+        XCTAssertEqual(built.followers, followers)
+
+        // Ties: a word listed twice keeps both ranks, in the order the pairs had.
+        let doubled = EnglishWords(words: ["to", "the", "to", "a", "the"])
+        _ = doubled.completions(for: "t")
+        XCTAssertEqual(doubled.built?.words, ["a", "the", "the", "to", "to"])
+        XCTAssertEqual(doubled.built?.ranks, [3, 1, 4, 0, 2])
+    }
+
+    func testWithParsingOnLookupOffAColdLookupWarmsInsteadOfParsing() {
+        let words = EnglishWords(
+            wordsURL: EnglishWords.bundledWordsURL,
+            followersURL: EnglishWords.bundledFollowersURL)
+        words.parsesOnLookup = false
+        XCTAssertEqual(words.completions(for: "tomo"), [])
+        XCTAssertEqual(words.parseCount, 1, "the lookup started a warm")
+        XCTAssertFalse(words.isWarm, "and did not read in place")
+        XCTAssertEqual(words.nextWords(after: "thank"), [], "a second lookup joins it")
+        let landed = expectation(description: "the warm lands")
+        words.warm { landed.fulfill() }
+        wait(for: [landed], timeout: 5)
+        XCTAssertEqual(words.completions(for: "tomo").first, "tomorrow")
+        XCTAssertEqual(words.parseCount, 1)
+    }
+
+    func testParsingTheWordList() {
+        measure {
+            let words = EnglishWords(
+                wordsURL: EnglishWords.bundledWordsURL,
+                followersURL: EnglishWords.bundledFollowersURL)
+            XCTAssertEqual(words.completions(for: "tomo").first, "tomorrow")
+        }
+    }
+
     func testUnloadDropsTheListAndTheNextLookupReadsItAgain() {
         let words = EnglishWords(
             wordsURL: EnglishWords.bundledWordsURL,
