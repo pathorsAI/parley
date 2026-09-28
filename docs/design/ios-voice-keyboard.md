@@ -1374,8 +1374,16 @@ nothing else. What it builds at load is the other order — the same words sorte
 alphabetically with each word's rank beside it — so a prefix is a contiguous
 range found by binary search and the answer is the lowest-ranked few in that
 range. A linear pass over 40,000 words per keystroke is the kind of cost that
-turns into dropped keys on an old phone; the only expensive case left is a
-one-letter prefix, and by the third letter the range is a handful. A missing
+turns into dropped keys on an old phone. The expensive walks are the one- and
+two-letter prefixes (four or five thousand words for `s`, `c` or `p`), so the
+load also stores the answer for every one- and two-letter prefix a word starts
+with, computed by the same walk; those keystrokes are a dictionary lookup, and
+by the third letter the range is small. The followers are indexed by their
+lowercase form at load too, so checking a run-together pair (`thankyou`) is a
+probe per cut rather than a copy of the follower list, and the user's lexicon is
+lowercased once when it is read rather than on every key. The equivalence tests
+hold the replaced implementation verbatim and compare every one-, two- and
+three-letter prefix and a few thousand real partials against it. A missing
 resource answers nothing rather than crashing, and each file can go missing
 without taking the other half with it.
 

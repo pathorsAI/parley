@@ -71,8 +71,13 @@ public enum WordSuggestions {
         return head.uppercased() + word.dropFirst()
     }
 
+    /// Every suggestion on the bar passes through here, and almost none of them
+    /// contains a lowercase `i` at the start of a word — so a text with no `i`
+    /// at all is handed back as it is, before it is split into words and
+    /// joined again to the same string.
     private static func capitalizingPronounI(_ text: String) -> String {
-        text.split(separator: " ", omittingEmptySubsequences: false).map { word in
+        guard text.utf8.contains(UInt8(ascii: "i")) else { return text }
+        return text.split(separator: " ", omittingEmptySubsequences: false).map { word in
             let folded = word.replacingOccurrences(of: "\u{2019}", with: "'")
             guard folded == "i" || folded.hasPrefix("i'") else { return String(word) }
             return "I" + word.dropFirst()
@@ -101,11 +106,47 @@ public enum WordSuggestions {
         lexiconTerms: [String] = [],
         limit: Int = EnglishWords.suggestionLimit
     ) -> [String] {
-        guard !partial.isEmpty, limit > 0 else { return [] }
-        let needle = partial.lowercased()
+        suggestions(for: partial, in: words, lexicon: LexiconTerms(lexiconTerms), limit: limit)
+    }
 
-        var fromList = words.completions(for: partial, limit: limit)
-        if let split = split(partial, in: words) {
+    /// The user's terms with their lowercase forms beside them, made once
+    /// when the terms are read rather than on every keystroke.
+    ///
+    /// The bar matches a term by its lowercase form and deduplicates by it, and
+    /// lowercasing every term on every key was the one per-keystroke cost that
+    /// grew with the user's dictionary. The keyboard builds one of these when it
+    /// reads the lexicon — on appearance — and hands it to every lookup.
+    public struct LexiconTerms: Equatable {
+        /// As the user wrote them, which is how they are offered.
+        public let terms: [String]
+        /// `terms[i].lowercased()`, index for index.
+        let lowercased: [String]
+
+        public init(_ terms: [String]) {
+            self.terms = terms
+            lowercased = terms.map { $0.lowercased() }
+        }
+
+        public static let none = LexiconTerms([])
+    }
+
+    /// `suggestions(for:in:lexiconTerms:limit:)` with the lexicon already
+    /// lowercased — the form the keyboard calls on every keystroke.
+    public static func suggestions(
+        for partial: String,
+        in words: EnglishWords,
+        lexicon: LexiconTerms,
+        limit: Int = EnglishWords.suggestionLimit
+    ) -> [String] {
+        guard !partial.isEmpty, limit > 0 else { return [] }
+        // Lowercased once, and the list's form — apostrophes folded too — made
+        // from it rather than from the partial again. The lexicon is matched on
+        // the plain lowercase form, as it always has been.
+        let needle = partial.lowercased()
+        let normalized = EnglishWords.foldingApostrophes(needle)
+
+        var fromList = words.completions(forNormalized: normalized, limit: limit)
+        if let split = split(normalized: normalized, in: words) {
             let beginsCommonWord =
                 fromList.first.flatMap(words.rank(of:)).map { $0 < commonWordRank } ?? false
             fromList.insert(split, at: beginsCommonWord ? 1 : 0)
@@ -113,7 +154,13 @@ public enum WordSuggestions {
 
         var out: [String] = []
         var seen = Set<String>()
-        for candidate in lexiconTerms.filter({ $0.lowercased().hasPrefix(needle) }) + fromList {
+        for (term, lowercased) in zip(lexicon.terms, lexicon.lowercased)
+        where lowercased.hasPrefix(needle) {
+            guard seen.insert(lowercased).inserted else { continue }
+            out.append(matchingCase(of: term, like: partial))
+            if out.count == limit { return out }
+        }
+        for candidate in fromList {
             guard seen.insert(candidate.lowercased()).inserted else { continue }
             out.append(matchingCase(of: candidate, like: partial))
             if out.count == limit { break }
@@ -142,18 +189,29 @@ public enum WordSuggestions {
     /// `occured` as `occur ed`. Among known pairs the most common wins, by the
     /// rarer half's rank, and the right half keeps the table's case.
     static func split(_ partial: String, in words: EnglishWords) -> String? {
-        let whole = EnglishWords.normalized(partial)
-        guard whole.count <= longestSplit, words.rank(of: whole) == nil else { return nil }
+        split(normalized: EnglishWords.normalized(partial), in: words)
+    }
+
+    /// `split` for a partial already put through `EnglishWords.normalized`.
+    ///
+    /// Every cut is a single dictionary probe
+    /// (`EnglishWords.follower(ofNormalized:lowercased:)`). It used to copy the
+    /// left half's whole follower list and lowercase each entry to compare,
+    /// and this runs on most keystrokes in the middle of a word — every
+    /// partial that is not itself a list word, which is most of them.
+    static func split(normalized whole: String, in words: EnglishWords) -> String? {
+        guard whole.count <= longestSplit, words.rank(ofNormalized: whole) == nil else {
+            return nil
+        }
         var best: (cost: Int, text: String)?
         for cut in whole.indices.dropFirst() {
             let left = String(whole[..<cut])
-            let rest = whole[cut...]
             guard
-                let right = words.nextWords(after: left, limit: .max)
-                    .first(where: { $0.lowercased() == rest })
+                let right = words.follower(ofNormalized: left, lowercased: String(whole[cut...]))
             else { continue }
             let cost = max(
-                words.rank(of: left) ?? unlistedRank, words.rank(of: right) ?? unlistedRank)
+                words.rank(ofNormalized: left) ?? unlistedRank,
+                words.rank(of: right) ?? unlistedRank)
             if cost < best?.cost ?? .max { best = (cost, left + " " + right) }
         }
         return best?.text
