@@ -398,6 +398,7 @@ private fun DetailContent(
                     onSetRate = viewModel::setRate,
                     onCycleRate = viewModel::cycleRate,
                     onDownload = viewModel::downloadAudio,
+                    markers = state.findings.mapNotNull { it.atMs },
                 )
             }
             val retranscribe by viewModel.retranscribe.collectAsState()
@@ -410,7 +411,7 @@ private fun DetailContent(
                 isPlaying = playback.isPlaying,
                 seekGeneration = playback.seekGeneration,
                 isSeekable = playback.isSeekable,
-                onSeek = viewModel::seekTo,
+                onSeek = viewModel::jumpTo,
                 searching = searching,
                 onCloseSearch = onCloseSearch,
             )

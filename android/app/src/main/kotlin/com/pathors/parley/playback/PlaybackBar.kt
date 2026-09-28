@@ -1,12 +1,21 @@
 package com.pathors.parley.playback
 
+import android.content.Context
+import android.os.Build
+import android.provider.Settings
+import android.view.HapticFeedbackConstants
+import android.view.View
 import androidx.annotation.StringRes
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,8 +24,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -26,9 +37,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -39,23 +53,40 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import com.pathors.parley.R
 import com.pathors.parley.ui.formatDuration
 import java.util.Locale
+import kotlin.math.roundToInt
 import kotlin.math.roundToLong
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.Canvas as DrawCanvas
 
 /**
  * The player, pinned under the recording's title: the whole file as one
- * overview waveform, and one row of controls.
+ * overview waveform, and one row of controls. The Android half of iOS
+ * `PlaybackBar.swift`, behaviour for behaviour.
  *
  * ## Why an overview and not a scrolling waveform
  *
@@ -65,11 +96,19 @@ import androidx.compose.foundation.Canvas as DrawCanvas
  * a view of the *whole* file can answer it. So this is static: one bar per 5dp
  * of width, the entire recording, the played portion in the primary colour.
  *
- * ## One height, four states
+ * ## Full height only once there is a waveform
  *
- * The audio is either playable, arriving, opening, or not here yet, and the
- * block keeps the same height through all of them ([BLOCK_HEIGHT]) so the
- * transcript underneath does not jump when a download lands.
+ * Before the audio is playable the block is a single 44dp row — the download
+ * offer, its progress, "Preparing…", or why it failed. An 80dp band holding one
+ * line of text reads as a hole in the page, not a player (iOS #381).
+ *
+ * @param markers moments worth finding on the timeline, in milliseconds — the
+ *   analysis's findings. Drawn as small dots riding the top edge of the
+ *   waveform; tapping one seeks there.
+ * @param onSeek every seek the bar itself makes: each move of a scrub (live,
+ *   so the audio follows the finger), a highlight dot, TalkBack's ±15 s. A
+ *   seek from the transcript is not this — it goes through
+ *   [PlaybackController.jumpTo], and the bar sees it as [PlaybackState.jump].
  */
 @Composable
 fun PlaybackBar(
@@ -80,18 +119,21 @@ fun PlaybackBar(
     onCycleRate: () -> Unit,
     onDownload: () -> Unit,
     modifier: Modifier = Modifier,
+    markers: List<Long> = emptyList(),
 ) {
+    val hasWaveform = state.phase == PlaybackPhase.READY
     Column(modifier = modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(BLOCK_HEIGHT)
+                .height(if (hasWaveform) PLAYER_HEIGHT + 16.dp else CONTROLS_HEIGHT + 16.dp)
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             contentAlignment = Alignment.Center,
         ) {
             when (state.phase) {
                 PlaybackPhase.READY -> Player(
                     state = state,
+                    markers = markers,
                     onPlayPause = onPlayPause,
                     onSeek = onSeek,
                     onSetRate = onSetRate,
@@ -132,30 +174,34 @@ fun PlaybackBar(
 @Composable
 private fun Player(
     state: PlaybackState,
+    markers: List<Long>,
     onPlayPause: () -> Unit,
     onSeek: (Long) -> Unit,
     onSetRate: (Float) -> Unit,
     onCycleRate: () -> Unit,
 ) {
-    // The position the finger is at, while one is down. Null otherwise — the
-    // playhead follows the audio again the moment the drag ends.
+    // Where the finger has the scrub, while one is down — for the clock in the
+    // control row. The seek itself is already live; this only saves the clock
+    // from lagging the finger by a poll.
     var scrubMs by remember { mutableStateOf<Long?>(null) }
     val shownMs = scrubMs ?: state.positionMs
 
     Column(Modifier.fillMaxSize()) {
         WaveformScrubber(
             overview = state.overview,
-            positionMs = shownMs,
+            positionMs = state.positionMs,
             durationMs = state.durationMs,
             enabled = state.isSeekable,
-            onScrub = { ms -> scrubMs = ms },
-            onScrubEnd = { ms ->
-                scrubMs = null
-                onSeek(ms)
-            },
+            onSeek = onSeek,
+            markers = markers,
+            jump = state.jump,
+            onScrubChange = { scrubMs = it },
             modifier = Modifier
                 .fillMaxWidth()
-                .height(WAVEFORM_HEIGHT),
+                .height(WAVEFORM_HEIGHT)
+                // Above the control row, so the floating time pill (taller
+                // than the strip in the precision tiers) draws over it.
+                .zIndex(1f),
         )
         Row(
             modifier = Modifier
@@ -236,34 +282,58 @@ private fun PlayPauseButton(isPlaying: Boolean, onClick: () -> Unit) {
     }
 }
 
-/** Tap cycles through the speeds, long-press opens the whole list. */
+/**
+ * Tap cycles 1 → 1.25 → 1.5 → 2, long-press opens every speed from 0.75× to
+ * 2×. Whatever is chosen is remembered for the next recording and the next
+ * launch ([PlaybackRateStore]).
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SpeedButton(rate: Float, onSetRate: (Float) -> Unit, onCycle: () -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     val label = stringResource(R.string.playback_speed)
+    val current = rateLabel(rate)
 
     Box {
-        Text(
-            text = rateLabel(rate),
-            style = MaterialTheme.typography.bodyLarge.copy(
-                fontFeatureSettings = TABULAR_FIGURES,
-            ),
-            fontWeight = FontWeight.Medium,
-            color = MaterialTheme.colorScheme.primary,
+        Box(
             modifier = Modifier
+                .sizeIn(minWidth = 44.dp, minHeight = 44.dp)
                 .clip(MaterialTheme.shapes.small)
                 .combinedClickable(
                     onClick = onCycle,
                     onLongClick = { expanded = true },
                 )
-                .padding(horizontal = 10.dp, vertical = 8.dp)
-                .semantics { contentDescription = label },
-        )
+                .padding(horizontal = 10.dp)
+                .semantics {
+                    contentDescription = label
+                    stateDescription = current
+                },
+            contentAlignment = Alignment.CenterEnd,
+        ) {
+            Text(
+                text = current,
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontFeatureSettings = TABULAR_FIGURES,
+                ),
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            PlaybackController.RATES.forEach { value ->
+            PlaybackRates.MENU.forEach { value ->
+                val selected = rateLabel(value) == current
                 DropdownMenuItem(
-                    text = { Text(rateLabel(value)) },
+                    text = {
+                        Text(
+                            text = rateLabel(value),
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                            color = if (selected) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            },
+                        )
+                    },
                     onClick = {
                         expanded = false
                         onSetRate(value)
@@ -280,7 +350,7 @@ private fun ProgressLine(caption: String, fraction: Float) {
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         if (fraction >= 0f) {
             LinearProgressIndicator(
@@ -298,21 +368,29 @@ private fun ProgressLine(caption: String, fraction: Float) {
     }
 }
 
+/**
+ * Why it failed, on the one row. A download that did not arrive is worth
+ * another tap, so it keeps a retry beside the sentence; a file on the phone
+ * that the decoder refuses is not, and offering a retry for it would be a
+ * button that cannot work.
+ */
 @Composable
 private fun FailureLine(failure: PlaybackFailure?, onRetry: () -> Unit) {
-    Column(
+    val retryable = failure != PlaybackFailure.UNPLAYABLE
+    Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = if (retryable) Arrangement.spacedBy(8.dp) else Arrangement.Center,
     ) {
         Text(
             text = stringResource(failureMessage(failure)),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.error,
+            textAlign = if (retryable) TextAlign.Start else TextAlign.Center,
+            maxLines = 2,
+            modifier = if (retryable) Modifier.weight(1f) else Modifier,
         )
-        // A download that did not arrive is worth another tap; a file on the
-        // phone that the decoder refuses is not, and offering a retry for it
-        // would be a button that cannot work.
-        if (failure != PlaybackFailure.UNPLAYABLE) {
+        if (retryable) {
             TextButton(onClick = onRetry) {
                 Text(stringResource(R.string.playback_retry))
             }
@@ -345,10 +423,25 @@ private fun failureMessage(failure: PlaybackFailure?): Int = when (failure) {
  *
  * ## The gesture
  *
- * Tap seeks. Drag previews and seeks on release, so the one thing that must be
- * true of a scrubber is true here: when the number under your finger changes,
- * the audio goes there. (iOS shipped this with the number moving and the audio
- * staying put — PR #376.)
+ * A drag moves the playhead *relative* to where it was — touching the strip
+ * does not jump anywhere — and moving the finger away from the strip, up or
+ * down, slows it to ¼ ("Fine") and then 1/16 ("Finer"), with a tick at each
+ * change and a floating pill that says the time and the tier. The audio seeks
+ * live on every move ([onSeek]; the controller conflates the engine seeks), so
+ * when the number under the finger changes, the audio is already there. See
+ * [ScrubRules] for the arithmetic.
+ *
+ * ## A jump from the transcript
+ *
+ * When [jump] changes, the playhead glides from where it was to where it
+ * landed over 0.5 s and a ring grows and fades there over 0.7 s — skipped
+ * entirely when the system's animations are off. A scrub never does this: it is
+ * already under the finger.
+ *
+ * ## TalkBack
+ *
+ * The drag is unreachable with TalkBack on, so the strip is an adjustable
+ * control: swipe up or down moves 15 s, and the position is spoken as a clock.
  */
 @Composable
 fun WaveformScrubber(
@@ -356,37 +449,277 @@ fun WaveformScrubber(
     positionMs: Long,
     durationMs: Long,
     enabled: Boolean,
-    onScrub: (Long) -> Unit,
-    onScrubEnd: (Long) -> Unit,
+    onSeek: (Long) -> Unit,
     modifier: Modifier = Modifier,
+    markers: List<Long> = emptyList(),
+    jump: PlaybackJump = PlaybackJump(),
+    onScrubChange: (Long?) -> Unit = {},
 ) {
     val played = MaterialTheme.colorScheme.primary
     val unplayed = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
-    val playhead = MaterialTheme.colorScheme.onSurface
+    val ink = MaterialTheme.colorScheme.onSurface
+    val page = MaterialTheme.colorScheme.surface
     val description = stringResource(R.string.playback_scrub)
+    val density = LocalDensity.current
+    val view = LocalView.current
+    val context = LocalContext.current
 
     // Recomputed only when the bar count or the source peaks change: resampling
     // 400 values down to ~110 on every 50 ms tick would be work done 20 times a
     // second for a picture that did not move.
-    var barCount by remember { mutableStateOf(0) }
+    var canvasSize by remember { mutableStateOf(IntSize.Zero) }
+    val step = with(density) { (BAR_WIDTH + BAR_GAP).toPx() }
+    val barCount = (canvasSize.width / step).toInt().coerceAtLeast(0)
     val bars = remember(overview, barCount) { resampleBars(overview, barCount) }
 
-    val step = with(androidx.compose.ui.platform.LocalDensity.current) {
-        (BAR_WIDTH + BAR_GAP).toPx()
+    var scrub by remember { mutableStateOf<ScrubPreview?>(null) }
+    val shownMs = scrub?.timeMs ?: positionMs
+
+    val latestPosition by rememberUpdatedState(positionMs)
+    val latestOnSeek by rememberUpdatedState(onSeek)
+    val latestOnScrubChange by rememberUpdatedState(onScrubChange)
+    val latestDuration by rememberUpdatedState(durationMs)
+
+    // ── the glide and the ring ─────────────────────────────────────────────
+    val glide = remember { Animatable(0f) }
+    val ring = remember { Animatable(0f) }
+    var gliding by remember { mutableStateOf(false) }
+    var ringFraction by remember { mutableStateOf<Float?>(null) }
+    // The jump already on screen when this composed — after a rotation, say —
+    // is history, not an event to replay.
+    var seenJump by remember { mutableIntStateOf(jump.id) }
+    LaunchedEffect(jump.id) {
+        if (jump.id == seenJump) return@LaunchedEffect
+        val id = jump.id
+        seenJump = id
+        PlaybackHaptics.jumped(view)
+        val duration = latestDuration
+        if (duration <= 0L || animationsRemoved(context)) return@LaunchedEffect
+        try {
+            glide.snapTo(fractionOf(jump.fromMs, duration))
+            ring.snapTo(0f)
+            gliding = true
+            ringFraction = fractionOf(jump.toMs, duration)
+            coroutineScope {
+                launch { glide.animateTo(fractionOf(jump.toMs, duration), tween(GLIDE_MS, easing = EASE_IN_OUT)) }
+                launch { ring.animateTo(1f, tween(RIPPLE_MS, easing = EASE_OUT)) }
+            }
+        } finally {
+            // Only this jump's own marks: a newer one may already be drawing.
+            if (seenJump == id) {
+                gliding = false
+                ringFraction = null
+            }
+        }
     }
 
-    DrawCanvas(
-        modifier = modifier
-            .semantics { contentDescription = description }
-            // Measured here rather than in the draw pass: writing state while
-            // drawing schedules another frame to draw the answer, which is one
-            // frame of a waveform that is not there yet on every resize.
-            .onSizeChanged { measured ->
-                barCount = (measured.width / step).toInt().coerceAtLeast(0)
+    Box(modifier) {
+        DrawCanvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .scrubSemantics(enabled, description, shownMs, positionMs, durationMs) { ms ->
+                    latestOnSeek(ms)
+                }
+                // Measured here rather than in the draw pass: writing state while
+                // drawing schedules another frame to draw the answer, which is one
+                // frame of a waveform that is not there yet on every resize.
+                .onSizeChanged { canvasSize = it }
+                .pointerInput(enabled, durationMs) {
+                    if (!enabled) return@pointerInput
+                    awaitEachGesture {
+                        val down = awaitFirstDown()
+                        down.consume()
+                        var time = latestPosition.toDouble()
+                        var lastX = down.position.x
+                        var tier = 0
+                        fun publish(finger: Offset) {
+                            val preview = ScrubPreview(time.roundToLong(), finger, tier)
+                            scrub = preview
+                            latestOnScrubChange(preview.timeMs)
+                        }
+                        publish(down.position)
+                        try {
+                            while (true) {
+                                val change = awaitPointerEvent().changes
+                                    .firstOrNull { it.id == down.id } ?: break
+                                if (!change.pressed) {
+                                    change.consume()
+                                    break
+                                }
+                                val finger = change.position
+                                val newTier = ScrubRules.tierFor((finger.y - down.position.y).toDp().value)
+                                if (newTier != tier) {
+                                    tier = newTier
+                                    PlaybackHaptics.tierChanged(view)
+                                }
+                                val before = time.roundToLong()
+                                time = ScrubRules.advance(
+                                    timeMs = time,
+                                    deltaPx = finger.x - lastX,
+                                    widthPx = size.width.toFloat(),
+                                    durationMs = durationMs,
+                                    tier = tier,
+                                )
+                                lastX = finger.x
+                                change.consume()
+                                publish(finger)
+                                val now = time.roundToLong()
+                                // Live: the audio follows the finger, or — paused —
+                                // the playhead does and the next play starts here.
+                                if (now != before) latestOnSeek(now)
+                            }
+                        } finally {
+                            // Nothing to apply on release: every move already
+                            // seeked, so lifting the finger just ends the label.
+                            scrub = null
+                            latestOnScrubChange(null)
+                        }
+                    }
+                },
+        ) {
+            drawWaveform(
+                bars = bars,
+                step = step,
+                positionMs = shownMs,
+                durationMs = durationMs,
+                played = played,
+                unplayed = unplayed,
+                playhead = ink,
+                glideFraction = if (gliding) glide.value else null,
+            )
+            ringFraction?.let { drawRipple(it, ring.value, played) }
+        }
+
+        if (durationMs > 0L && canvasSize.width > 0) {
+            markers.forEach { at ->
+                HighlightDot(
+                    x = canvasSize.width * fractionOf(at, durationMs),
+                    label = stringResource(R.string.playback_highlight_at, formatDuration(at.toDouble())),
+                    enabled = enabled,
+                    ink = ink,
+                    page = page,
+                    onClick = { latestOnSeek(at.coerceIn(0L, durationMs)) },
+                )
             }
-            .scrubGestures(enabled, durationMs, onScrub, onScrubEnd),
+        }
+
+        scrub?.let { ScrubPill(it, canvasSize) }
+    }
+}
+
+/** One live scrub: the time it has reached, where the finger is, and the tier. */
+private data class ScrubPreview(val timeMs: Long, val finger: Offset, val tier: Int)
+
+/**
+ * The strip as TalkBack sees it: "Scrub", the position as a clock, and an
+ * adjustable range in seconds whose step is exactly 15 s (see
+ * [ScrubRules.accessibilityRange]).
+ */
+private fun Modifier.scrubSemantics(
+    enabled: Boolean,
+    description: String,
+    shownMs: Long,
+    positionMs: Long,
+    durationMs: Long,
+    onSeek: (Long) -> Unit,
+): Modifier = semantics {
+    contentDescription = description
+    stateDescription = formatDuration(shownMs.toDouble())
+    if (enabled && durationMs > 0L) {
+        val range = ScrubRules.accessibilityRange(durationMs)
+        progressBarRangeInfo = ProgressBarRangeInfo(
+            current = (positionMs / 1000f).coerceIn(0f, range.endSeconds),
+            range = 0f..range.endSeconds,
+            steps = range.steps,
+        )
+        setProgress { seconds ->
+            onSeek((seconds * 1000.0).roundToLong().coerceIn(0L, durationMs))
+            true
+        }
+    }
+}
+
+/**
+ * A highlight: a 6dp ink dot with a ring of page colour, so it reads over a
+ * loud bar as well as over silence, riding the strip's top edge. The target is
+ * a thumb-sized 24dp around it, laid over the waveform so a tap on the dot is
+ * the dot's, not the scrub's.
+ */
+@Composable
+private fun HighlightDot(
+    x: Float,
+    label: String,
+    enabled: Boolean,
+    ink: Color,
+    page: Color,
+    onClick: () -> Unit,
+) {
+    DrawCanvas(
+        modifier = Modifier
+            .offset {
+                IntOffset(
+                    x = (x - DOT_TARGET.toPx() / 2f).roundToInt(),
+                    y = DOT_TARGET_TOP.roundToPx(),
+                )
+            }
+            .size(DOT_TARGET)
+            .clickable(
+                interactionSource = null,
+                indication = null,
+                enabled = enabled,
+                role = Role.Button,
+                onClick = onClick,
+            )
+            .semantics { contentDescription = label },
     ) {
-        drawWaveform(bars, step, positionMs, durationMs, played, unplayed, playhead)
+        drawCircle(color = page, radius = (DOT_DIAMETER / 2 + DOT_RING).toPx())
+        drawCircle(color = ink, radius = (DOT_DIAMETER / 2).toPx())
+    }
+}
+
+/**
+ * The floating time while a finger is down, with the tier's name under it once
+ * one is in effect. Follows the finger horizontally and sits above it, clamped
+ * inside the strip.
+ */
+@Composable
+private fun ScrubPill(preview: ScrubPreview, strip: IntSize) {
+    val tier = ScrubRules.TIERS[preview.tier]
+    val height = if (tier.label != null) PILL_HEIGHT_TIERED else PILL_HEIGHT
+    val shape = MaterialTheme.shapes.small
+    val density = LocalDensity.current
+    val (x, y) = with(density) {
+        ScrubRules.pillOffset(
+            fingerX = preview.finger.x,
+            fingerY = preview.finger.y,
+            pillWidth = PILL_WIDTH.toPx(),
+            pillHeight = height.toPx(),
+            stripWidth = strip.width.toFloat(),
+            stripHeight = strip.height.toFloat(),
+            gapPx = PILL_GAP.toPx(),
+        )
+    }
+    Column(
+        modifier = Modifier
+            .offset { IntOffset(x.roundToInt(), y.roundToInt()) }
+            .size(PILL_WIDTH, height)
+            .background(MaterialTheme.colorScheme.surface, shape)
+            .border(Dp.Hairline, MaterialTheme.colorScheme.outlineVariant, shape),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(1.dp, Alignment.CenterVertically),
+    ) {
+        Text(
+            text = formatDuration(preview.timeMs.toDouble()),
+            style = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = TABULAR_FIGURES),
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        tier.label?.let { label ->
+            Text(
+                text = stringResource(label),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
@@ -400,45 +733,8 @@ private fun resampleBars(overview: AudioPeaks.Overview?, barCount: Int): FloatAr
     else AudioPeaks.resample(overview.peaks, barCount)
 
 /**
- * The scrub gesture: tap commits straight away, drag reports every move through
- * [onScrub] and commits through [onScrubEnd].
- *
- * Two separate `pointerInput`s rather than one, because the tap detector and the
- * drag detector each want the whole gesture: sharing one scope makes the first
- * one to suspend the only one that ever sees a pointer.
- */
-private fun Modifier.scrubGestures(
-    enabled: Boolean,
-    durationMs: Long,
-    onScrub: (Long) -> Unit,
-    onScrubEnd: (Long) -> Unit,
-): Modifier = this
-    .pointerInput(enabled, durationMs) {
-        if (!enabled) return@pointerInput
-        detectTapGestures { offset ->
-            onScrubEnd(timeAt(offset.x, size.width, durationMs))
-        }
-    }
-    .pointerInput(enabled, durationMs) {
-        if (!enabled) return@pointerInput
-        var x = 0f
-        detectHorizontalDragGestures(
-            onDragStart = { offset ->
-                x = offset.x
-                onScrub(timeAt(x, size.width, durationMs))
-            },
-            onHorizontalDrag = { change, delta ->
-                change.consume()
-                x += delta
-                onScrub(timeAt(x, size.width, durationMs))
-            },
-            onDragEnd = { onScrubEnd(timeAt(x, size.width, durationMs)) },
-            onDragCancel = { onScrubEnd(timeAt(x, size.width, durationMs)) },
-        )
-    }
-
-/**
- * One draw pass: the bars, then the playhead over them.
+ * One draw pass: the bars, then the playhead over them — at [glideFraction]
+ * instead of the position while a jump is gliding.
  *
  * Bails on a canvas too short for a single bar rather than drawing a squashed
  * one, which also means nothing at all is drawn before the first real measure.
@@ -451,19 +747,16 @@ private fun DrawScope.drawWaveform(
     played: Color,
     unplayed: Color,
     playhead: Color,
+    glideFraction: Float?,
 ) {
     val minBar = BAR_WIDTH.toPx()
     if (bars.isEmpty() || size.height < minBar) return
 
-    val progressX = if (durationMs > 0L) {
-        size.width * (positionMs.toFloat() / durationMs).coerceIn(0f, 1f)
-    } else {
-        0f
-    }
+    val progressX = size.width * fractionOf(positionMs, durationMs)
 
     drawBars(bars, step, minBar, progressX, played, unplayed)
     // No duration means no meaningful position, so there is no line to put.
-    if (durationMs > 0L) drawPlayhead(progressX, playhead)
+    if (durationMs > 0L) drawPlayhead(glideFraction?.let { size.width * it } ?: progressX, playhead)
 }
 
 /**
@@ -504,20 +797,65 @@ private fun DrawScope.drawBars(
  * Not the primary colour: that is already saying which side of the line has
  * played, and a primary line on a primary field vanishes.
  */
-private fun DrawScope.drawPlayhead(progressX: Float, color: Color) {
+private fun DrawScope.drawPlayhead(x: Float, color: Color) {
     val width = PLAYHEAD_WIDTH.toPx()
     drawRoundRect(
         color = color,
-        topLeft = Offset((progressX - width / 2f).coerceIn(0f, size.width - width), 0f),
+        topLeft = Offset((x - width / 2f).coerceIn(0f, size.width - width), 0f),
         size = Size(width, size.height),
         cornerRadius = CornerRadius(width / 2f, width / 2f),
     )
 }
 
-private fun timeAt(x: Float, width: Int, durationMs: Long): Long {
-    if (width <= 0 || durationMs <= 0L) return 0L
-    val fraction = (x / width).coerceIn(0f, 1f)
-    return (fraction.toDouble() * durationMs).roundToLong()
+/**
+ * The ring where a jump landed: from a tenth of its size to 44dp across,
+ * fading out as it grows. iOS `RippleRing`. Drawn past the strip's own height
+ * on purpose — nothing clips it.
+ */
+private fun DrawScope.drawRipple(fraction: Float, progress: Float, color: Color) {
+    val full = RIPPLE_DIAMETER.toPx() / 2f
+    drawCircle(
+        color = color,
+        radius = full * (0.1f + 0.9f * progress),
+        center = Offset(size.width * fraction, size.height / 2f),
+        alpha = 0.9f * (1f - progress),
+        style = Stroke(width = RIPPLE_STROKE.toPx()),
+    )
+}
+
+private fun fractionOf(ms: Long, durationMs: Long): Float =
+    if (durationMs > 0L) (ms.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
+
+/**
+ * Whether the system's animations are off — Settings › Accessibility ›
+ * "Remove animations", which zeroes the animator duration scale. Read when a
+ * jump happens rather than remembered, so flipping it takes effect at once.
+ */
+private fun animationsRemoved(context: Context): Boolean =
+    Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
+
+/**
+ * The player's two light ticks. iOS uses a light impact for both; Android's
+ * closest vocabulary is the tick a slider makes crossing a detent. Never
+ * load-bearing — `performHapticFeedback` honours the system's touch-feedback
+ * setting and does nothing when it is off.
+ */
+internal object PlaybackHaptics {
+    /** The scrub crossed into a finer (or coarser) tier. */
+    fun tierChanged(view: View) {
+        view.performHapticFeedback(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                HapticFeedbackConstants.SEGMENT_TICK
+            } else {
+                HapticFeedbackConstants.CLOCK_TICK
+            },
+        )
+    }
+
+    /** A tapped turn moved the player. iOS `LapMotion.tap()`. */
+    fun jumped(view: View) {
+        view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+    }
 }
 
 /** `1×`, `1.25×` — trailing zeroes stripped, because `1.00×` reads as a measurement. */
@@ -536,8 +874,31 @@ private val PLAYHEAD_WIDTH: Dp = 2.dp
 private val WAVEFORM_HEIGHT: Dp = 36.dp
 private val CONTROLS_HEIGHT: Dp = 44.dp
 
-/** What the block occupies in every phase. See the [PlaybackBar] doc. */
-private val BLOCK_HEIGHT: Dp = WAVEFORM_HEIGHT + CONTROLS_HEIGHT + 16.dp
+/** The waveform and the control row. See the [PlaybackBar] doc for the collapsed height. */
+private val PLAYER_HEIGHT: Dp = WAVEFORM_HEIGHT + CONTROLS_HEIGHT
+
+private val DOT_DIAMETER: Dp = 6.dp
+private val DOT_RING: Dp = 1.5.dp
+private val DOT_TARGET: Dp = 24.dp
+
+/** The target's top, so the dot's centre sits 3dp inside the strip's top edge. */
+private val DOT_TARGET_TOP: Dp = (-9).dp
+
+private val PILL_WIDTH: Dp = 96.dp
+private val PILL_HEIGHT: Dp = 28.dp
+private val PILL_HEIGHT_TIERED: Dp = 44.dp
+private val PILL_GAP: Dp = 12.dp
+
+private val RIPPLE_DIAMETER: Dp = 44.dp
+private val RIPPLE_STROKE: Dp = 1.5.dp
+
+/** iOS `LapMotion.playheadGlide` and `LapMotion.ripple`, in milliseconds. */
+private const val GLIDE_MS = 500
+private const val RIPPLE_MS = 700
+
+/** SwiftUI's `.easeInOut` and `.easeOut` curves. */
+private val EASE_IN_OUT = CubicBezierEasing(0.42f, 0f, 0.58f, 1f)
+private val EASE_OUT = CubicBezierEasing(0f, 0f, 0.58f, 1f)
 
 /** The quietest "loudest moment" we will normalise against. See [WaveformScrubber]. */
 private const val MIN_LOUDEST = 0.02f

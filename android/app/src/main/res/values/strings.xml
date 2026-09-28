@@ -210,6 +210,9 @@
     <string name="playback_pause">Pause</string>
     <string name="playback_speed">Playback speed</string>
     <string name="playback_scrub">Scrub</string>
+    <string name="playback_scrub_fine">Fine</string>
+    <string name="playback_scrub_finer">Finer</string>
+    <string name="playback_highlight_at">Highlight at %1$s</string>
 
     <!-- Re-transcribing a recording whose live transcript came up short -->
     <string name="retranscribe_action">Transcribe again</string>

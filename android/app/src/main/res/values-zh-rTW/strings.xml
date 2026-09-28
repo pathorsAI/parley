@@ -208,7 +208,10 @@
     <string name="playback_play">播放</string>
     <string name="playback_pause">暫停</string>
     <string name="playback_speed">播放速度</string>
-    <string name="playback_scrub">拖曳進度</string>
+    <string name="playback_scrub">拖曳時間軸</string>
+    <string name="playback_scrub_fine">精細調整</string>
+    <string name="playback_scrub_finer">超精細</string>
+    <string name="playback_highlight_at">%1$s 的重點</string>
 
     <!-- 重新轉錄：即時逐字稿漏掉太多時的補救 -->
     <string name="retranscribe_action">重新轉錄</string>

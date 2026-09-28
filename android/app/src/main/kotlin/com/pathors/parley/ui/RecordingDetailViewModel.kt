@@ -247,11 +247,30 @@ class RecordingDetailViewModel(
     fun togglePlayPause() = playback.togglePlayPause()
 
     /**
-     * Every caller is a person — a tap on a turn or its timecode, the
-     * scrubber, a finding — so the first seek ticks the checklist's "replay".
+     * Every caller is a person — the scrubber, a highlight dot, TalkBack's
+     * ±15 s — so the first seek ticks the checklist's "replay". Called on every
+     * move of a scrub, hence the once-only mark.
      */
     fun seekTo(ms: Long) {
         playback.seekTo(ms)
+        markReplayed()
+    }
+
+    /**
+     * A seek asked for from the text — a tapped turn or its timecode. The
+     * player glides its playhead there and rings the spot; see
+     * [PlaybackController.jumpTo].
+     */
+    fun jumpTo(ms: Long) {
+        playback.jumpTo(ms)
+        markReplayed()
+    }
+
+    private var replayMarked = false
+
+    private fun markReplayed() {
+        if (replayMarked) return
+        replayMarked = true
         container.gettingStarted.mark(GettingStartedStep.REPLAYED)
     }
 

@@ -228,6 +228,33 @@ moved on to a guided lap, #450):
   line for line the iOS text (`HandoffStringsParityTest` checks the copy against
   the iOS catalogue). The sample asks the three questions written for its script.
 
+## The player
+
+`playback/PlaybackBar` is iOS `PlaybackBar.swift` behaviour for behaviour
+(#366, #381, #450); the arithmetic lives in `playback/ScrubRules.kt` and is
+unit-tested.
+
+- **Scrub.** A drag moves the playhead relative to where it was (touching does
+  not jump). Moving the finger 40dp / 90dp away from the strip, up or down,
+  scales the drag to ¼ ("Fine") and 1/16 ("Finer"), with a tick at each change
+  and a floating time pill. The audio seeks live on every move;
+  `PlaybackController` conflates the engine seeks to one per 80 ms.
+- **Highlights.** `PlaybackBar(markers = …)` takes the findings' `atMs` and
+  draws a tappable dot per finding along the strip's top edge.
+- **A jump from the text.** A tapped turn calls
+  `RecordingDetailViewModel.jumpTo` → `PlaybackController.jumpTo`, which records
+  `PlaybackState.jump`. The waveform glides its playhead there over 0.5 s and
+  rings the spot for 0.7 s (skipped when the system's animations are removed),
+  with a light tick. Scrubs, dots and TalkBack use plain `seekTo`.
+- **Speed.** Tap cycles 1 / 1.25 / 1.5 / 2, long-press offers 0.75–2. The
+  choice is kept in SharedPreferences `parley_playback` / `playbackRate` (the
+  iOS key) across recordings and launches; in memory in demo mode.
+- **Layout.** Full height only when there is a waveform; download offer,
+  progress, "Preparing…" and failure (with Retry for a failed download) are one
+  44dp row.
+- **TalkBack.** The strip is an adjustable control: swipe up/down moves 15 s,
+  and the position is spoken as a clock.
+
 ## Strings
 
 Every user-visible string is in `res/values/strings.xml` **and**
