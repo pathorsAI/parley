@@ -125,7 +125,7 @@ class MeetingService : Service() {
             }
 
             // A session that has finished but has not been cleared yet (the
-            // ~1.2 s the UI takes to acknowledge it). There is nothing to
+            // outcome still on screen until Done or Back). There is nothing to
             // record and nothing to adopt, so all that is left is to leave.
             else -> {
                 ensureForeground()

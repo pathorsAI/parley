@@ -71,12 +71,21 @@ sealed interface MeetingState {
      * the foreground service, an unexpected exception reached the capture loop.
      * The recording is real and complete up to that moment; the flag is there so
      * the UI can say so instead of implying the user stopped when they did not.
+     *
+     * [waitingForQuota] narrows [pendingUpload] to "the cloud said 402": the
+     * recording stays queued (see `MeetingUploader.dispositionOf`), and the
+     * screen has to say it waits for the quota to reset, not for a network that
+     * is fine. [sharedToOrgName] is the organization the default save location
+     * copied it into, so the status can say where it went — both iOS
+     * `MeetingRecorder.upload`'s endings.
      */
     data class Finished(
         val recordingId: String?,
         val pendingUpload: Boolean,
         val dropped: Boolean,
         val interruptedBy: MeetingFailure? = null,
+        val waitingForQuota: Boolean = false,
+        val sharedToOrgName: String? = null,
     ) : MeetingState
 
     /** The recording could not happen (or could not be saved). */
@@ -106,12 +115,29 @@ enum class MeetingFailure {
 /**
  * A transcription problem that did **not** stop the recording. The mic keeps
  * running and the audio is still saved and uploaded — only the live transcript
- * stopped growing — so this is a banner, not an error screen.
+ * paused or stopped growing — so this is a status line, not an error screen.
+ *
+ * iOS `MeetingRecorder.TranscriptionHealth` draws the same split: a reconnect
+ * is a pause the transcript comes back from, and must not be announced as the
+ * end of it; everything else here is the end of the *live* transcript for this
+ * meeting (the backfill pass re-transcribes the upload).
  */
 enum class TranscriptionIssue {
+    /** The socket dropped; the audio is held in the bridge for the next leg. */
+    RECONNECTING,
+
+    /** Out of quota: the next handshake would be refused the same way. */
     QUOTA_EXCEEDED,
-    RELAY_ERROR,
-    RELAY_CLOSED,
+
+    /** The reconnect budget is spent. */
+    STOPPED,
+
+    /** Signed out mid-meeting: there is no token to redial with. */
+    SIGNED_OUT,
+    ;
+
+    /** True once no leg is coming for this meeting. */
+    val isTerminal: Boolean get() = this != RECONNECTING
 }
 
 /**
@@ -220,6 +246,11 @@ class MeetingSession(
     /** Display title for the finished recording; built by the UI layer. */
     private val title: String,
     private val scope: CoroutineScope = defaultSessionScope(),
+    /**
+     * The display name of an organization, by id, for the "shared to" status.
+     * Null when it cannot be found, in which case the status just says synced.
+     */
+    private val orgName: suspend (orgId: String) -> String? = { null },
 ) : LiveMeeting {
     private val mic = MicCapture(context)
 
@@ -408,25 +439,29 @@ class MeetingSession(
 
     private fun onRelayEvent(event: SttRelayEvent) {
         when (event) {
-            is SttRelayEvent.Segment -> upsert(event.segment)
+            is SttRelayEvent.Segment -> {
+                upsert(event.segment)
+                // Words arriving are the proof a reconnect worked, even when the
+                // handshake outlived the wait in [scheduleReconnect] and so was
+                // never counted there.
+                if (_issue.value == TranscriptionIssue.RECONNECTING) _issue.value = null
+            }
             // Out of quota is the one failure reconnecting cannot fix: the next
-            // handshake is refused the same way, so this stays a banner — and
-            // nothing is held for a leg that is never coming.
+            // handshake is refused the same way, so this is the end of the live
+            // transcript — and nothing is held for a leg that is never coming.
             is SttRelayEvent.QuotaExceeded -> {
                 _issue.value = TranscriptionIssue.QUOTA_EXCEEDED
                 bridge.discard()
                 retireRelay()
             }
-            is SttRelayEvent.Error -> {
-                _issue.value = TranscriptionIssue.RELAY_ERROR
-                scheduleReconnect()
-            }
+            // A dropped socket is a pause, not the end: [scheduleReconnect] says
+            // "reconnecting" and only declares the transcript over when there is
+            // genuinely no leg coming. Announcing every drop as "stopped", as
+            // this used to, told the user the transcript had ended when it was
+            // about to come back.
+            is SttRelayEvent.Error -> scheduleReconnect()
             // A close after finalize is the normal end of the stream.
-            is SttRelayEvent.Closed ->
-                if (!finishRequested) {
-                    _issue.value = TranscriptionIssue.RELAY_CLOSED
-                    scheduleReconnect()
-                }
+            is SttRelayEvent.Closed -> if (!finishRequested) scheduleReconnect()
         }
     }
 
@@ -486,8 +521,10 @@ class MeetingSession(
             // Nothing is coming for the held audio; do not carry up to 45 s of
             // it for the rest of the meeting.
             bridge.discard()
+            _issue.value = TranscriptionIssue.STOPPED
             return
         }
+        _issue.value = TranscriptionIssue.RECONNECTING
         reconnectJob = scope.launch {
             delay(backoff)
             reconnectJob = null
@@ -495,6 +532,7 @@ class MeetingSession(
             val token = auth.currentToken()
             if (token == null) {
                 bridge.discard()
+                _issue.value = TranscriptionIssue.SIGNED_OUT
                 return@launch
             }
 
@@ -785,6 +823,10 @@ class MeetingSession(
      * the same act as throwing the recording away. See [CaptureEnding].
      */
     private fun quiesce() {
+        // Nothing is going to reconnect now, and "reconnecting" on a stopped
+        // meeting would be a promise nobody keeps. A terminal issue stays: it
+        // explains why the transcript on screen is short.
+        _issue.compareAndSet(TranscriptionIssue.RECONNECTING, null)
         tickerJob?.cancel()
         reconnectJob?.cancel()
         reconnectJob = null
@@ -846,13 +888,33 @@ class MeetingSession(
             }
 
             val result = if (id == null) null else runCatching { uploader.drain() }.getOrNull()
+            val pending = result == null || result.remaining > 0
+            val sharedTo = id?.let { result?.shared?.get(it) }
             _state.value = terminalStateFor(
                 recordingId = id,
-                pendingUpload = result == null || result.remaining > 0,
+                pendingUpload = pending,
                 interruptedBy = interruptedBy,
                 detail = detail,
+                // A 402 keeps the recording queued (MeetingUploader.dispositionOf);
+                // the screen must say it waits for the quota, not the network.
+                waitingForQuota = result?.quotaExhausted == true,
+                sharedToOrgName = sharedTo?.let { resolveOrgName(it) },
             )
         }
+
+    /**
+     * The organization's name for the "shared to" status, or null. Bounded,
+     * because this sits between the upload landing and the screen saying so; a
+     * slow `GET /orgs/mine` costs the name, never the outcome.
+     */
+    private suspend fun resolveOrgName(orgId: String): String? = try {
+        withTimeoutOrNull(ORG_NAME_TIMEOUT_MS) { orgName(orgId) }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (t: Throwable) {
+        Log.w(TAG, "could not name org $orgId", t)
+        null
+    }
 
     /**
      * Close the Ogg container, and keep the bytes even when closing fails.
@@ -988,5 +1050,8 @@ class MeetingSession(
         /** Ceiling on waiting for a reconnect's handshake to resolve; the
          *  client's own connect timeout is shorter, so this is a backstop. */
         const val HANDSHAKE_TIMEOUT_MS = 20_000L
+
+        /** How long the finished status waits for the shared-to org's name. */
+        const val ORG_NAME_TIMEOUT_MS = 5_000L
     }
 }

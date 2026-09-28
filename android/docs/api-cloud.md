@@ -48,7 +48,7 @@ when (val result = auth.handleAuthCallback(intent.data ?: return)) {
 | --- | --- |
 | `signInUrl(callback = "parley://auth-callback")` | `https://api.parley.tw/sign-in?to=<callback>`. The param is **`to`** — the backend's `validReturnTarget` (cloud `src/signin.ts`) reads `to` and allows any `parley://` target or an http loopback, falling back to `parley://auth-callback`. |
 | `isAuthCallback(uri)` | `parley://auth-callback` (the manifest intent filter) and `parley://auth/…` (the iOS form) both count. |
-| `handleAuthCallback(uri)` | Extracts `?token=`, persists it. `?error=` → `Failure(code)`; no token → `Failure("no_token_in_callback")`. |
+| `handleAuthCallback(uri)` | Extracts `?token=`, persists it. `?error=` → `Failure(code)`; no token → `Failure("no_token_in_callback")`. The app then confirms a stored token with `GET /me` (`AppContainer.completeSignIn`, iOS `completeSignIn`): a 401 or no user discards it. The sign-in screen never shows the code — `SignInError` maps every failure to "Sign-in didn't finish", and `access_denied` (backing out of a provider's consent screen) to nothing. |
 | `tokenFlow: Flow<String?>` / `isSignedIn: Flow<Boolean>` | Whether a token is **stored** — not whether it is valid. |
 | `currentToken(): String?` | One-shot read. |
 | `saveToken(token)` | Persist directly (debug token adoption). |

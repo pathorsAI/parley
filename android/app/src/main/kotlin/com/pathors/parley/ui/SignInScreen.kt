@@ -1,5 +1,6 @@
 package com.pathors.parley.ui
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -27,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import com.pathors.parley.AppContainer
 import com.pathors.parley.R
 import com.pathors.parley.auth.CustomTabsLauncher
+import com.pathors.parley.auth.SignInError
 
 /**
  * The sign-in affordance: one button, what it is doing, and what went wrong.
@@ -101,8 +103,7 @@ fun SignInCallToAction(container: AppContainer, modifier: Modifier = Modifier) {
 
         val message = when {
             noBrowser -> stringResource(R.string.sign_in_no_browser)
-            error != null -> stringResource(R.string.sign_in_failed, error.orEmpty())
-            else -> null
+            else -> error?.let { stringResource(signInErrorMessage(it)) }
         }
         if (message != null) {
             Text(
@@ -113,4 +114,10 @@ fun SignInCallToAction(container: AppContainer, modifier: Modifier = Modifier) {
             )
         }
     }
+}
+
+/** Copy a person can act on — iOS `AppState.signInFailureMessage`, not the page's raw code. */
+@StringRes
+private fun signInErrorMessage(error: SignInError): Int = when (error) {
+    SignInError.DIDNT_FINISH -> R.string.sign_in_didnt_finish
 }

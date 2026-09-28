@@ -85,6 +85,14 @@ data class DrainResult(
      * checks here before telling anyone it was saved.
      */
     val refused: Map<String, Throwable> = emptyMap(),
+    /**
+     * The recordings this pass uploaded *and* copied into an organization, by
+     * id, with the organization's id. A share the org refused for good leaves
+     * the recording personal-only and is not listed — which is what lets the
+     * live meeting say "shared to" only when it is true (iOS
+     * `MeetingUploader.Outcome.sharedToOrgName`).
+     */
+    val shared: Map<String, String> = emptyMap(),
 ) {
     /** The session died mid-pass: the UI should show the signed-out state. */
     val signedOut: Boolean get() = (failure as? CloudException)?.isAuthExpired == true
@@ -263,6 +271,7 @@ class MeetingUploader(
             discarded = tally.discarded,
             failure = tally.failure,
             refused = tally.refused,
+            shared = tally.shared,
         )
     }
 
@@ -272,6 +281,7 @@ class MeetingUploader(
         var discarded = 0
         var failure: Throwable? = null
         val refused = LinkedHashMap<String, Throwable>()
+        val shared = LinkedHashMap<String, String>()
     }
 
     /**
@@ -290,7 +300,7 @@ class MeetingUploader(
             return true
         }
         return try {
-            uploadAndRetire(item, audio)
+            uploadAndRetire(item, audio)?.let { orgId -> tally.shared[item.id] = orgId }
             tally.uploaded++
             true
         } catch (e: CancellationException) {
@@ -300,8 +310,9 @@ class MeetingUploader(
         }
     }
 
-    private suspend fun uploadAndRetire(item: PendingUpload, audio: File) {
-        uploadWithRetry(item, audio)
+    /** @return the organization the recording was copied into, if it was. */
+    private suspend fun uploadAndRetire(item: PendingUpload, audio: File): String? {
+        val sharedTo = uploadWithRetry(item, audio)
         // The cloud now holds everything, so the *queue's* copy has done
         // its job — unless the transcript that went up does not account
         // for the audio that went with it, in which case the Ogg is the
@@ -311,6 +322,7 @@ class MeetingUploader(
             retireAudio(item.id, audio)
         }
         withContext(Dispatchers.IO) { queue.remove(item.id) }
+        return sharedTo
     }
 
     /** @return whether the pass carries on with the next recording. */
@@ -383,12 +395,11 @@ class MeetingUploader(
         audio.deleteQuietly()
     }
 
-    private suspend fun uploadWithRetry(pending: PendingUpload, audio: File) {
+    private suspend fun uploadWithRetry(pending: PendingUpload, audio: File): String? {
         var attempt = 0
         while (true) {
             try {
-                upload(pending, audio)
-                return
+                return upload(pending, audio)
             } catch (e: CloudException) {
                 if (!e.isRetryable || attempt >= maxAttempts - 1) throw e
             } catch (e: IOException) {
@@ -403,11 +414,14 @@ class MeetingUploader(
     /**
      * Audio FIRST, then the summary+meta push — the contract's ordering — and
      * then, for an organization destination, the org copy.
+     *
+     * @return the organization the copy landed in, or null when there was
+     *   none to make or the organization refused it.
      */
-    private suspend fun upload(pending: PendingUpload, audio: File) {
+    private suspend fun upload(pending: PendingUpload, audio: File): String? {
         cloud.uploadAudio(pending.id, audio)
         cloud.pushRecording(pending.id, buildSummary(pending), buildMeta(pending))
-        shareIfAsked(pending)
+        return pending.shareOrgId?.takeIf { shareIfAsked(pending) }
     }
 
     /**
@@ -429,13 +443,18 @@ class MeetingUploader(
      *
      * iOS treats 403 as a retryable stop; the phone that would be stuck behind
      * it is the difference.
+     *
+     * @return true when the copy was made; false when there was none to make or
+     *   the organization refused it for good.
      */
-    private suspend fun shareIfAsked(pending: PendingUpload) {
-        val orgId = pending.shareOrgId ?: return
-        try {
+    private suspend fun shareIfAsked(pending: PendingUpload): Boolean {
+        val orgId = pending.shareOrgId ?: return false
+        return try {
             cloud.shareRecording(pending.id, orgId, pending.shareFolderId)
+            true
         } catch (e: CloudException) {
             if (e.isAuthExpired || e.isRetryable || e.status !in 400..499) throw e
+            false
         }
     }
 

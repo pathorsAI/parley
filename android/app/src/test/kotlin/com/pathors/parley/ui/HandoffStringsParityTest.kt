@@ -58,6 +58,17 @@ class HandoffStringsParityTest {
         "getting_started_show_again" to "Show the getting-started list again",
         "recording_source_sample" to "SAMPLE",
         "sample_missing" to "The sample recording is no longer in the library.",
+        // The account sheet, sign-in and What's New, ported from iOS Settings
+        // and #478: the same sentences, not a second translation of them.
+        "account_about_detail" to "Live coaching and deep analysis live in the desktop app; the phone " +
+            "handles recording, transcribing, and reading back in-person meetings. On the Mac, Claude Code " +
+            "can also read your whole recording library over MCP.",
+        "org_role_owner" to "Owner",
+        "org_role_admin" to "Admin",
+        "org_role_member" to "Member",
+        "action_refresh" to "Refresh",
+        "sign_in_didnt_finish" to "Sign-in didn't finish. Please try again.",
+        "whats_new_also" to "Also",
     )
 
     private val catalogue: JsonObject by lazy {
