@@ -85,7 +85,7 @@ Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
 ## What's New — 1.27
 
-After dictating with the voice keyboard, tap the text to copy all of it. The keyboard confirms with "✓ Copied" in its header, and for your first few dictations it reminds you that the text can be tapped.
+After dictating with the voice keyboard, tap the text to copy all of it. The keyboard confirms with "Copied" in its header, and for your first few dictations it reminds you that the text can be tapped.
 
 The voice keyboard no longer quits on its own after you switch between apps or fields a few times. It was holding on to every copy of itself it had ever shown until iOS closed it.
 
