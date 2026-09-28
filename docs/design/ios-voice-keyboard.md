@@ -957,6 +957,32 @@ The rule this leaves: **a view below the root takes values, not the bridge.**
 Anything that observes it re-evaluates on every key and every microphone
 reading.
 
+### What an appearance leaves behind
+
+iOS builds a new `KeyboardViewController` almost every time the keyboard comes
+up — a new field, a return from another app — and releases the old one. The
+controller does go, but on iOS 26.5 UIKit keeps holding its `UIInputView`,
+detached, with no window and no superview. Until 1.26 everything the
+controller had put in it stayed alive with it: the hosting view, its view
+graph, the layers of every key, and through the root view's `@ObservedObject`
+the bridge. Nothing in our code held any of it; the probe that settled it
+attached a marker object to the hosting view and to the input view and logged
+their lifetimes — seven appearances, seven of each still alive, and the
+bridge's live count climbing with them.
+
+The cost was measured on the simulator with the harness that taps the keyboard
+from outside (no XCUITest, whose accessibility snapshots distort the process's
+CPU and memory): 28 MB cold, **175 MB after twenty show/hide cycles**, climbing
+5–10 MB per appearance and never coming back. A keyboard extension is
+jetsam-killed somewhere past 50–70 MB on a phone, and a jetsam kill writes no
+crash report — which is how "the keyboard sometimes disappears" reached us
+without a single log.
+
+So the controller's `deinit` takes its own subviews — the hosting view and the
+backdrop — out of the input view. The tree and the bridge are then released
+with the controller, and what UIKit keeps is an empty input view. After the
+change: 34 MB cold, 42 MB after the first few cycles, **43–44 MB after forty**.
+
 ### The backdrop: the system's, unless it would disagree
 
 The keyboard's canvas is the system's `UIInputView`. `view.backgroundColor` is
