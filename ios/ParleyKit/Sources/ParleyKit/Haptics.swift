@@ -331,7 +331,7 @@
         /// feels like — a receipt, not an event.
         ///
         /// Fired on every tap, repeats included: each one really did put the
-        /// text on the pasteboard, and the caption it answers is re-shown
+        /// text on the pasteboard, and the "Copied" label it answers is re-shown
         /// every time as well.
         public static func dictationCopied() { light.impactOccurred() }
 

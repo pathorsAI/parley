@@ -885,20 +885,38 @@ struct KeyboardRootView: View {
         .animation(.easeInOut(duration: 0.15), value: bridge.listening)
         .animation(.easeInOut(duration: 0.15), value: bridge.reconnecting)
         .animation(.easeOut(duration: 0.12), value: bridge.partial)
-        // A crossfade and nothing else, Reduce Motion or not: the caption and
-        // the corner glyph swap in place, and nothing about the slot moves.
+        // The corner swaps in place and nothing else about the slot moves:
+        // the words never learn that a tap happened. See `CopyCorner`.
         .animation(.easeOut(duration: 0.15), value: bridge.justCopied)
     }
 
-    /// How far the words stand back from the slot's trailing edge once a
-    /// session is over, to leave the copy glyph's corner to the glyph (12pt,
-    /// and a gap). Taken whenever the session is over rather than only while
-    /// the copy is on offer: the first key typed afterwards ends the offer,
-    /// and giving the width back then would reflow the words under the user's
-    /// eyes for no reason they could see. `done` already changes the text —
-    /// the polished words replace the raw ones — so taking it there costs no
-    /// reflow of its own.
-    private static let copyGlyphInset: CGFloat = 18
+    /// `content` with the slot's top-trailing corner kept clear for the copy
+    /// corner (`CopyCorner`) when `reserve` is set, or `content` alone.
+    ///
+    /// The column kept clear is as wide as the corner's widest state — the
+    /// "✓ Copied" label, not the glyph — measured by laying a hidden copy of
+    /// the corner out beside the words rather than by a constant, so it is
+    /// right in both languages and at every text size. That is what lets the
+    /// label come and go on a full slot without covering a word or moving one.
+    ///
+    /// Reserved whenever the session is over rather than only while the copy
+    /// is on offer: the first key typed afterwards ends the offer, and giving
+    /// the width back then would reflow the words under the user's eyes for no
+    /// reason they could see. `done` already changes the text — the polished
+    /// words replace the raw ones — so taking it there costs no reflow of its
+    /// own.
+    private func clearOfCopyCorner<Content: View>(
+        _ reserve: Bool, @ViewBuilder _ content: () -> Content
+    ) -> some View {
+        HStack(alignment: .top, spacing: CopyCorner.gap) {
+            content()
+            if reserve {
+                CopyCorner(copied: false, dark: dark)
+                    .hidden()
+                    .accessibilityHidden(true)
+            }
+        }
+    }
 
     /// The connection dropped mid-sentence. The transcript stays exactly where
     /// it was — nothing already said is thrown away — with one line above it
@@ -1020,20 +1038,19 @@ struct KeyboardRootView: View {
     /// nothing is wrong.
     ///
     /// Once the session is over the same slot holds the finished words, and a
-    /// tap copies them (`CopyTarget`); for a moment after the tap, "Copied"
-    /// takes the polishing caption's place and shape — the same accent, for
-    /// the same reason.
+    /// tap copies them (`CopyTarget`). The words stand clear of the slot's
+    /// top-trailing corner from then on, which is where the copy glyph and,
+    /// for a moment after a tap, "✓ Copied" appear (`clearOfCopyCorner`).
     @ViewBuilder
     private var liveText: some View {
-        let transcript = TranscriptText(
-            tail: bridge.tail, partial: bridge.partial, dark: dark, wave: bridge.wave,
-            still: reduceMotion
-        )
-        .equatable()
-        .padding(.trailing, bridge.listening ? 0 : Self.copyGlyphInset)
-        if bridge.justCopied {
-            captioned(Text("Copied"), in: KBTheme.accent) { transcript }
-        } else if reduceMotion, bridge.finishing, bridge.wave != nil {
+        let transcript = clearOfCopyCorner(!bridge.listening) {
+            TranscriptText(
+                tail: bridge.tail, partial: bridge.partial, dark: dark, wave: bridge.wave,
+                still: reduceMotion
+            )
+            .equatable()
+        }
+        if reduceMotion, bridge.finishing, bridge.wave != nil {
             captioned(Text("Polishing…"), in: KBTheme.accent) { transcript }
         } else {
             TranscriptScroll { transcript }
@@ -1050,15 +1067,16 @@ struct KeyboardRootView: View {
     /// under it if there are many — and a tap copies all of them. A session
     /// that failed before anything settled has no words to keep and still
     /// gets the centred error on its own.
+    ///
+    /// The error stays put through a copy: the tap's feedback is the corner's
+    /// (`CopyCorner`), and the caption and words alike stand clear of it.
     private func failedText(_ error: String) -> some View {
-        captioned(
-            bridge.justCopied ? Text("Copied") : Text(error),
-            in: bridge.justCopied ? KBTheme.accent : KBTheme.recording
-        ) {
-            TranscriptText(tail: bridge.tail, partial: "", dark: dark, wave: nil, still: false)
-                .equatable()
+        clearOfCopyCorner(true) {
+            captioned(Text(error), in: KBTheme.recording) {
+                TranscriptText(tail: bridge.tail, partial: "", dark: dark, wave: nil, still: false)
+                    .equatable()
+            }
         }
-        .padding(.trailing, Self.copyGlyphInset)
     }
 
     private var fullAccessNotice: some View {
@@ -1102,19 +1120,19 @@ struct KeyboardRootView: View {
 /// top as well as the pixels of the words; the track's sub-visible fill
 /// (`KBTheme.hitFill`) is what lets the system deliver a touch there at all.
 ///
-/// **The glyph costs no layout.** An overlay in the top-trailing corner,
-/// outside the slot's layout and out of hit-testing, so the slot's height —
-/// and the keyboard's — cannot change when it appears. The words stand back
-/// from that corner on their own (`copyGlyphInset`) rather than here, because
-/// they have to keep standing back after the glyph has gone.
+/// **The corner costs no layout.** `CopyCorner` is an overlay in the
+/// top-trailing corner, outside the slot's layout and out of hit-testing, so
+/// the slot's height — and the keyboard's — cannot change when it appears or
+/// when it says "Copied". The words stand clear of that corner on their own
+/// (`KeyboardRootView.clearOfCopyCorner`) rather than here, because they have
+/// to keep standing clear after the corner has gone.
 ///
 /// **VoiceOver** gets one button, "Copy dictated text", with the text as its
 /// value — the words are what the button acts on, so they are what it reads.
 private struct CopyTarget: ViewModifier {
     /// What a tap copies; `nil` when the slot is not a copy target.
     var text: String?
-    /// A tap just copied: the glyph is a checkmark for as long as the caption
-    /// says so.
+    /// A tap just copied: the corner says so, for `KeyboardViewController.copiedLabelHold`.
     var copied: Bool
     var dark: Bool
     var copy: () -> Void
@@ -1122,7 +1140,11 @@ private struct CopyTarget: ViewModifier {
     func body(content: Content) -> some View {
         if let text {
             content
-                .overlay(alignment: .topTrailing) { glyph }
+                .overlay(alignment: .topTrailing) {
+                    CopyCorner(copied: copied, dark: dark)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
                 .contentShape(Rectangle())
                 .onTapGesture(perform: copy)
                 .accessibilityElement(children: .ignore)
@@ -1135,20 +1157,55 @@ private struct CopyTarget: ViewModifier {
         }
     }
 
-    /// Faint on purpose: it is a hint that the words can be taken, not a
-    /// control competing with the record button for the eye. Both glyphs are
-    /// the same size and ink so the swap is a change of shape only.
-    private var glyph: some View {
-        ZStack {
-            // Both drawn, one visible, so the swap is a crossfade in place and
-            // the corner never re-lays itself out between the two.
-            Image(systemName: "doc.on.doc").opacity(copied ? 0 : 1)
-            Image(systemName: "checkmark").opacity(copied ? 1 : 0)
+}
+
+/// The transcript slot's top-trailing corner while the finished dictation can
+/// be copied: a faint copy glyph, and for a moment after a tap, "✓ Copied" in
+/// its place.
+///
+/// **The corner, not a caption.** The feedback used to be a caption pinned
+/// above the words, in the polishing caption's shape — which on a full slot
+/// laid itself over the top visible line and cut it in half, at the one moment
+/// the user was looking at those words. The corner is where the tap's promise
+/// already was, and the words stand clear of it (`clearOfCopyCorner`), so the
+/// answer shows up where the question was asked and covers nothing.
+///
+/// **Faint glyph, clear answer.** The glyph is a hint that the words can be
+/// taken, not a control competing with the record button for the eye, so it
+/// is small and in the soft ink. "Copied" is the answer to something the user
+/// just did, so it is in the accent and the polishing caption's type — the
+/// same voice the pane uses for "this is going fine".
+///
+/// **Both states always laid out.** One is visible and the other transparent,
+/// so the swap is a crossfade in place and the corner's width never changes —
+/// which is also what lets a hidden copy of this view measure the column the
+/// words keep clear. Reduce Motion gets the crossfade alone; otherwise the
+/// label also grows into place from the corner, a scale that moves no layout.
+private struct CopyCorner: View {
+    var copied: Bool
+    var dark: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// Between the words and the corner's widest state.
+    static let gap: CGFloat = 6
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            Image(systemName: "doc.on.doc")
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(KBTheme.inkSoft(dark).opacity(0.7))
+                .opacity(copied ? 0 : 1)
+            HStack(spacing: 2) {
+                Image(systemName: "checkmark")
+                Text("Copied")
+            }
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(KBTheme.accent)
+            .lineLimit(1)
+            .fixedSize()
+            .opacity(copied ? 1 : 0)
+            .scaleEffect(copied || reduceMotion ? 1 : 0.85, anchor: .trailing)
         }
-        .font(.system(size: 12, weight: .regular))
-        .foregroundStyle(KBTheme.inkSoft(dark).opacity(0.7))
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
     }
 }
 

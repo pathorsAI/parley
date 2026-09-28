@@ -57,9 +57,9 @@ final class KeyboardViewController: UIInputViewController {
     private var waveReveal: Task<Void, Never>?
     /// Takes the wave down once its ease-out after `done` has played.
     private var waveFade: Task<Void, Never>?
-    /// Takes the "Copied" caption down again — see `copyDictation`. Replaced
-    /// on every tap, so a second tap restarts the caption's time rather than
-    /// being cut short by the first tap's.
+    /// Takes the "Copied" label in the slot's corner down again — see
+    /// `copyDictation`. Replaced on every tap, so a second tap restarts the
+    /// label's time rather than being cut short by the first tap's.
     private var copiedFade: Task<Void, Never>?
     /// The session whose copy target the user closed by typing after it — see
     /// `keyPressed`. The downlink keeps republishing `done`, and every drain
@@ -1307,10 +1307,10 @@ final class KeyboardViewController: UIInputViewController {
 
     // MARK: copying the finished dictation
 
-    /// How long "Copied" stays above the words after a tap. Long enough to be
-    /// read at a glance, short enough that the slot is back to just the words
-    /// before the user has looked away from it and back.
-    private static let copiedCaptionHold: Duration = .milliseconds(1500)
+    /// How long "Copied" stays in the slot's corner after a tap. Long enough
+    /// to be read at a glance, short enough that the corner is back to its
+    /// copy glyph before the user has looked away from it and back.
+    private static let copiedLabelHold: Duration = .milliseconds(1500)
 
     /// Make `text` what a tap on the slot copies, or make the slot not a copy
     /// target with `nil`.
@@ -1318,7 +1318,7 @@ final class KeyboardViewController: UIInputViewController {
     /// Every way the copy target changes comes through here, so the two rules
     /// that go with it cannot be forgotten at one of the call sites: a session
     /// the user has typed after stays closed (`copyClosedSession`), and the
-    /// "Copied" caption never outlives the target it was about. Assigns only on
+    /// "Copied" label never outlives the target it was about. Assigns only on
     /// a change — the drain runs on every note and every appearance, and a
     /// `@Published` assignment redraws the keyboard even when nothing moved.
     private func offerCopy(_ text: String?) {
@@ -1331,7 +1331,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     /// The user tapped the transcript slot of a finished dictation: put the
-    /// whole of it on the pasteboard, and say so with a tick and a caption.
+    /// whole of it on the pasteboard, and say so with a tick and "Copied" in the slot's corner.
     ///
     /// `copyableText` rather than `tail`: the tail is the last `tailLimit`
     /// characters, and what is wanted on the pasteboard is everything that
@@ -1345,11 +1345,11 @@ final class KeyboardViewController: UIInputViewController {
         UIPasteboard.general.string = text
         Haptics.dictationCopied()
         if !bridge.justCopied { bridge.justCopied = true }
-        // A repeated tap restarts the caption's time rather than stacking a
-        // second fade behind the first.
+        // A repeated tap shows the label again if it had gone, and restarts
+        // its time rather than stacking a second fade behind the first.
         copiedFade?.cancel()
         copiedFade = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: Self.copiedCaptionHold)
+            try? await Task.sleep(for: Self.copiedLabelHold)
             guard !Task.isCancelled, let self else { return }
             self.copiedFade = nil
             self.bridge.justCopied = false
@@ -1868,8 +1868,8 @@ final class KeyboardBridge: ObservableObject {
     /// ✕, the pane being cleared, or the user typing after it. The same rule
     /// as the tail's, a few more kilobytes at most.
     @Published var copyableText: String?
-    /// A tap just copied `copyableText`: the slot says "Copied" and its corner
-    /// shows a checkmark, for `copiedCaptionHold`.
+    /// A tap just copied `copyableText`: the slot's corner shows a checkmark
+    /// and "Copied" in place of the copy glyph, for `copiedLabelHold`.
     @Published var justCopied = false
 
     /// What the record button is doing with the user's voice, smoothed and
