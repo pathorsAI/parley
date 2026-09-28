@@ -427,7 +427,12 @@ unit tests.
 - [ ] Mic button → Parley records → the transcript types into the field you
       started from, in a third-party app (Notes, Messages, Mail).
 - [ ] The Action Button intent starts dictation without bringing Parley forward.
-- [ ] A session left running stops itself at the 120-second cap.
+- [ ] A session left running counts down its last 30 seconds in the keyboard
+      ("Stops in 25 s"), stops itself at the ten-minute cap, types what was said,
+      and says "Single dictation limit reached (10 min)".
+- [ ] With Wi-Fi and cellular cut mid-dictation, the words said before the cut
+      are typed once the reconnect gives up, with "Connection lost — inserted
+      what was transcribed", and the next tap starts without opening Parley.
 
 **Localization**
 
