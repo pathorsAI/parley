@@ -106,15 +106,15 @@ class FeedbackQueueTest {
     @Test
     fun `a report the cloud refuses for good is dropped and the pass goes on`() = runBlocking {
         val queue = queue()
-        queue.enqueue(payload("too-big"), nowMs = 1)
+        queue.enqueue(payload(TOO_BIG), nowMs = 1)
         queue.enqueue(payload("fine"), nowMs = 2)
 
         val result = queue.flush { json, _ ->
-            if (idOf(json) == "too-big") throw CloudException(413, "payload_too_large")
+            if (idOf(json) == TOO_BIG) throw CloudException(413, "payload_too_large")
         }
 
         assertEquals(FeedbackQueue.FlushResult(sent = 1, dropped = 1, remaining = 0), result)
-        assertEquals(listOf("too-big"), dropped)
+        assertEquals(listOf(TOO_BIG), dropped)
     }
 
     @Test
@@ -164,4 +164,9 @@ class FeedbackQueueTest {
 
     private fun idOf(json: String): String =
         kotlinx.serialization.json.Json.parseToJsonElement(json).jsonObject["id"]!!.jsonPrimitive.content
+
+    private companion object {
+        /** A report the cloud refuses with 413, so the queue must drop it. */
+        const val TOO_BIG = "too-big"
+    }
 }

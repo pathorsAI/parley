@@ -9,8 +9,12 @@ class DeviceModelTest {
     @Test
     fun `the maker is prefixed unless the model already says it`() {
         assertEquals("samsung SM-S918B", DiagnosticsCollector.deviceModel("samsung", "SM-S918B"))
-        assertEquals("Google Pixel 8", DiagnosticsCollector.deviceModel("Google", "Pixel 8"))
-        assertEquals("Google Pixel 8", DiagnosticsCollector.deviceModel("Google", "Google Pixel 8"))
+        assertEquals(PIXEL_8, DiagnosticsCollector.deviceModel("Google", "Pixel 8"))
+        assertEquals(PIXEL_8, DiagnosticsCollector.deviceModel("Google", PIXEL_8))
         assertEquals("OnePlus", DiagnosticsCollector.deviceModel("OnePlus", ""))
+    }
+
+    private companion object {
+        const val PIXEL_8 = "Google Pixel 8"
     }
 }

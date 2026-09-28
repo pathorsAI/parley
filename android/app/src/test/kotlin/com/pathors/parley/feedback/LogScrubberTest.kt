@@ -56,8 +56,10 @@ class LogScrubberTest {
 
     @Test
     fun `a long opaque token with no label is still taken out`() {
-        val token = "Zx8Q2mN4pL7vR1sT9wY3bC6dF0gH5jK2"
-        val out = LogScrubber.scrub("session $token rejected")
+        // Built at runtime and plainly fake: 33 characters of the token
+        // alphabet (mixed case, digits), long enough to trip the opaque rule.
+        val opaque = "Fake0Value9".repeat(3)
+        val out = LogScrubber.scrub("session $opaque rejected")
 
         assertEquals("session <redacted> rejected", out)
     }

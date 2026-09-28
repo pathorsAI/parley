@@ -62,9 +62,9 @@ class ParleyClientHeaderTest {
 
     @Test
     fun `a build that is not a number is dropped rather than sent broken`() {
-        assertEquals("android/1.16", ParleyClientHeader.format("android", "1.16", "nine"))
-        assertEquals("android/1.16", ParleyClientHeader.format("android", "1.16", ""))
-        assertEquals("android/1.16", ParleyClientHeader.format("android", "1.16", "12345678901"))
+        assertEquals(WITHOUT_BUILD, ParleyClientHeader.format("android", "1.16", "nine"))
+        assertEquals(WITHOUT_BUILD, ParleyClientHeader.format("android", "1.16", ""))
+        assertEquals(WITHOUT_BUILD, ParleyClientHeader.format("android", "1.16", "12345678901"))
         assertTrue(CLOUD_PATTERN.matches(ParleyClientHeader.format("android", "1.16", "")))
     }
 
@@ -126,6 +126,9 @@ class ParleyClientHeaderTest {
     }
 
     private companion object {
+        /** `android` 1.16 with the build left off. */
+        const val WITHOUT_BUILD = "android/1.16"
+
         /** The cloud's parser, verbatim from the shared spec (§1). */
         val CLOUD_PATTERN = Regex("""^(ios|android|macos|windows|linux)/([^\s()]{1,32})(?:\s\((\d{1,10})\))?$""")
     }
