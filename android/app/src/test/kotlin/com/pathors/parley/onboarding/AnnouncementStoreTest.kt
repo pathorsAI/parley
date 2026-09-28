@@ -35,14 +35,14 @@ class AnnouncementStoreTest {
         scopes.forEach { it.cancel() }
     }
 
-    private val bundled = listOf(announcement("2026-09-old", "1.15"), announcement("2026-10-new", "1.16"))
+    private val bundled = listOf(announcement(OLD, "1.15"), announcement(NEW, "1.16"))
 
     private fun announcement(id: String, android: String): Announcement {
         val copy = Announcement.Copy(badge = "b", title = "t", body = "x", also = "a", button = "ok")
         return Announcement(
             id = id,
             ships = Announcement.Ships(android = android),
-            copy = mapOf("en" to copy, "zh-Hant" to copy),
+            copy = mapOf(Announcement.ENGLISH to copy, Announcement.TRADITIONAL_CHINESE to copy),
         )
     }
 
@@ -98,8 +98,8 @@ class AnnouncementStoreTest {
     fun `an existing user updating is shown the newest, with the older one retired`() {
         val decision = await { store(file(), hadSession = true).decide() }
 
-        assertEquals("2026-10-new", decision.show?.id)
-        assertEquals(setOf("2026-09-old", "2026-10-new"), decision.retire)
+        assertEquals(NEW, decision.show?.id)
+        assertEquals(setOf(OLD, NEW), decision.retire)
     }
 
     @Test
@@ -121,17 +121,19 @@ class AnnouncementStoreTest {
         val file = file()
         val first = store(file, hadSession = true, version = "1.15")
         val old = await { first.decide() }
-        assertEquals("2026-09-old", old.show?.id)
+        assertEquals(OLD, old.show?.id)
         await { first.markSeen(old.retire) }
 
         runBlocking { scopes.forEach { it.coroutineContext.job.cancelAndJoin() } }
         scopes.clear()
         val updated = store(file, hadSession = true, version = "1.16")
 
-        assertEquals("2026-10-new", await { updated.decide() }.show?.id)
+        assertEquals(NEW, await { updated.decide() }.show?.id)
     }
 
     private companion object {
         const val TIMEOUT_MS = 20_000L
+        const val OLD = "2026-09-old"
+        const val NEW = "2026-10-new"
     }
 }
