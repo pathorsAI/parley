@@ -242,7 +242,13 @@
 
     <!-- Re-transcribing a recording whose live transcript came up short -->
     <string name="retranscribe_action">Transcribe again</string>
-    <string name="retranscribe_queued">Re-transcribing this recording. The new transcript replaces this one when it\'s ready.</string>
+    <string name="retranscribe_already_running">Already re-transcribing this recording.</string>
+    <string name="retranscribe_running">Re-transcribing… this can take a few minutes.</string>
+    <string name="retranscribe_waiting_last_tried">Waiting to re-transcribe. It last tried %1$s, and tries again when you open Parley or bring it back to the front.</string>
+    <string name="retranscribe_waiting_never">Waiting to re-transcribe. Nothing is running it yet — it starts when you open Parley or bring it back to the front.</string>
+    <string name="retranscribe_start_now">Start now</string>
+    <string name="retranscribe_start_now_label">Start re-transcribing now</string>
+    <string name="retranscribe_did_not_finish">Re-transcribing didn\'t finish this time.</string>
     <string name="retranscribe_budget_spent">This recording has been re-transcribed as many times as allowed.</string>
     <string name="retranscribe_remaining">%1$d re-transcriptions left</string>
     <string name="retranscribe_confirm_title">Transcribe this recording again?</string>
@@ -388,6 +394,8 @@
     <string name="folder_picker_no_match">No folders match.</string>
     <string name="folder_picker_current">Current folder</string>
     <string name="folder_picker_create_failed">Couldn\'t create the folder. Check your connection and try again.</string>
+    <string name="folder_picker_suggested">Suggested</string>
+    <string name="folder_picker_all">All folders</string>
     <!-- Default save location (AccountSheet) -->
     <string name="account_save_location_title">Default save location</string>
     <string name="account_save_location_personal_folder">Personal · %1$s</string>
@@ -395,22 +403,20 @@
     <string name="account_save_location_change">Change</string>
     <string name="account_save_location_footer">Picking an organization still saves the recording to your personal space and shares a copy there — same as the desktop app.</string>
 
-    <!-- Filing suggestion (iOS FilingSuggestionCard / FilingAdjustSheet) -->
+    <!-- Filing suggestion (iOS FilingSuggestionCard) -->
     <string name="filing_heading">Suggestion</string>
     <string name="filing_thinking">Suggesting a name and a folder…</string>
     <string name="filing_was">Was: %1$s</string>
-    <string name="filing_folder">Folder</string>
+    <string name="filing_renamed">Renamed</string>
+    <string name="filing_accept">Accept</string>
+    <string name="filing_edit_title">Edit the title</string>
+    <string name="filing_title">Title</string>
     <string name="filing_new_folder">New folder</string>
-    <string name="filing_save_suggested">Save as suggested</string>
-    <string name="filing_adjust">Adjust</string>
+    <string name="filing_existing_folder">Existing folder</string>
+    <string name="filing_choose_another">Choose another…</string>
     <string name="filing_skip">Skip suggestion</string>
     <string name="filing_write_failed">That didn\'t save. Try again.</string>
     <string name="filing_done">Done</string>
-    <string name="filing_save">Save</string>
-    <string name="filing_title">Title</string>
-    <string name="filing_move_to_folder">Move to folder</string>
-    <string name="filing_new_tag">New</string>
-    <string name="filing_other_folder">Choose another folder…</string>
 
     <!-- What's New. The announcement copy itself is not here: it is the
          repository's announcements/ folder, shared with iOS and the desktop.

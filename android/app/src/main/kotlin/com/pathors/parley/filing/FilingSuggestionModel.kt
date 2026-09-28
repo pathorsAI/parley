@@ -33,14 +33,14 @@ enum class FilingPhase {
 }
 
 /**
- * Where the user asked the recording to live. A folder picked in the Adjust
+ * Where the user asked the recording to live. A folder picked in the picker
  * sheet can be the personal root, which a [FilingFolderSuggestion] cannot say
  * (its null id means "a folder to create").
  */
 sealed interface FolderTarget {
     data class Existing(val id: String) : FolderTarget
 
-    /** Created on Save, and not a moment earlier. */
+    /** Created when the answer is written, and not a moment earlier. */
     data class New(val name: String) : FolderTarget
 
     /** The personal root — "Unfiled" in the picker. */
@@ -50,6 +50,20 @@ sealed interface FolderTarget {
         fun of(suggestion: FilingFolderSuggestion): FolderTarget =
             suggestion.folderId?.let(::Existing) ?: New(suggestion.name)
     }
+}
+
+/**
+ * Where an answered offer is written — iOS `FilingSuggestionModel.Target`.
+ */
+sealed interface FilingTarget {
+    /** A personal cloud recording: one read-modify-write of its meta. */
+    data class Cloud(val recordingId: String) : FilingTarget
+
+    /**
+     * The bundled sample, on this phone only. A new folder is still created in
+     * the cloud; only the filing itself stays local. See [SampleFilingTarget].
+     */
+    class Sample(val store: SampleFilingTarget) : FilingTarget
 }
 
 /** Why the pass was not run for a finished recording. */
@@ -85,7 +99,7 @@ data class FilingUiState(
     /** The (live) folder the recording is in right now; null is the root. */
     val currentFolderId: String? = null,
     /**
-     * The personal folders as the pass listed them, kept for the Adjust sheet
+     * The personal folders as the pass listed them, kept for the folder picker
      * so it offers the list the suggestion was made against, without a second
      * round trip that could fail on its own.
      */
@@ -130,6 +144,18 @@ data class FilingUiState(
     val hasSomethingToOffer: Boolean get() = proposedTitle != null || proposedFolders.isNotEmpty()
 
     /**
+     * What the title field starts with: the proposed name while it is still on
+     * offer, the recording's own once it has been answered.
+     */
+    val editableTitle: String get() = proposedTitle ?: currentTitle
+
+    /**
+     * The name half has been answered and the folder half has not: the card
+     * says "Renamed ✓" under the name instead of "Was: …".
+     */
+    val showsRenamed: Boolean get() = titleAnswered && proposedTitle == null
+
+    /**
      * Whether the meeting screen should stay up for this: while the pass is
      * thinking, and while there is an offer the user has not answered. Every
      * other state lets the screen go back to the library as it always did.
@@ -159,7 +185,7 @@ data class FilingUiState(
  * Each half records what the user did ([FilingUiState.titleAnswered],
  * [FilingUiState.folderAnswered]) instead of inferring it from what the
  * recording ended up being. Comparison cannot express "answered": a name the
- * user typed in the Adjust sheet is neither the model's nor the recording's old
+ * user typed into the card's title is neither the model's nor the recording's old
  * one, and a proposed new folder has no id to compare. Both flags are set by
  * [apply] — the only accept path — and only once its push has returned: a
  * write that threw leaves the offer open, because it is still worth taking.
@@ -181,8 +207,8 @@ class FilingSuggestionModel(
     private val _state = MutableStateFlow(FilingUiState())
     val state: StateFlow<FilingUiState> = _state.asStateFlow()
 
-    /** The recording the visible offer belongs to; null once forgotten (and in the demo). */
-    private var recordingId: String? = null
+    /** Where the visible offer's answer is written; null once forgotten (and in the demo). */
+    private var target: FilingTarget? = null
 
     /**
      * The recording the pass has already been spent on. Not cleared by
@@ -227,7 +253,7 @@ class FilingSuggestionModel(
             _state.update { it.copy(phase = FilingPhase.SETTLED) }
             return
         }
-        this.recordingId = recordingId
+        this.target = FilingTarget.Cloud(recordingId)
         _state.value = offered
     }
 
@@ -256,6 +282,36 @@ class FilingSuggestionModel(
         )
     }
 
+    // ── a suggestion that is already pending ─────────────────────────────────
+
+    /**
+     * Offer a suggestion the recording already carries — the recording page's
+     * route in (a desktop pass left one in the synced meta, the backfill's
+     * pass did, or the sample ships with one). iOS
+     * `FilingSuggestionModel.present`.
+     *
+     * Safe to call again with a fuller folder list (the folders arrive after
+     * the meta): an offer the user has started to answer, one being written,
+     * or one they said no to ([forget] settles it) is left alone — a reload
+     * racing Skip's write must not bring the card back.
+     *
+     * @return whether the offer is now the one on screen.
+     */
+    fun present(offer: PendingFiling, target: FilingTarget): Boolean {
+        val current = _state.value
+        if (current.phase == FilingPhase.SETTLED) return false
+        if (current.isWriting || current.titleAnswered || current.folderAnswered) return false
+        this.target = target
+        _state.value = FilingUiState(
+            phase = FilingPhase.OFFERING,
+            suggestion = offer.suggestion,
+            currentTitle = offer.currentTitle,
+            currentFolderId = offer.currentFolderId,
+            existingFolders = offer.folders,
+        )
+        return true
+    }
+
     // ── accepting ────────────────────────────────────────────────────────────
 
     /** Take the suggestion as offered: the proposed name and the best proposed folder. */
@@ -274,22 +330,22 @@ class FilingSuggestionModel(
      * A folder that does not exist yet is created HERE and nowhere earlier:
      * merely offering a candidate must not bring it into being.
      *
-     * Every write carries `filingSuggested`, so the desktop does not ask again.
+     * Every write carries `filingSuggested` and clears the pending
+     * `filingSuggestion`, so the desktop does not ask again.
      *
-     * @return whether a push landed. A Save that found nothing to change pushed
-     *   nothing, and has to leave through [skip] to land the flag.
+     * @return whether a write landed. Nothing to change writes nothing.
      */
     suspend fun apply(title: String?, folder: FolderTarget?): Boolean {
-        val id = recordingId ?: return false
+        val target = this.target ?: return false
         val current = _state.value
         if (current.isWriting) return false
         val newTitle = title?.trim()?.takeIf { it.isNotEmpty() && it != current.currentTitle }
-        val target = folder?.takeUnless { it.isWhere(current.currentFolderId) }
-        if (newTitle == null && target == null) return false
+        val move = folder?.takeUnless { it.isWhere(current.currentFolderId) }
+        if (newTitle == null && move == null) return false
 
         _state.update { it.copy(isWriting = true, writeFailed = false) }
         val landed = try {
-            write(id, newTitle, target)
+            write(target, newTitle, move)
             true
         } catch (e: CancellationException) {
             _state.update { it.copy(isWriting = false) }
@@ -301,24 +357,44 @@ class FilingSuggestionModel(
         return landed
     }
 
-    private suspend fun write(id: String, newTitle: String?, target: FolderTarget?) {
-        val folderId = target?.let { resolve(it) }
-        cloud.editRecording(id) { meta ->
-            var edited = meta
-            if (newTitle != null) edited = edited.withTitle(newTitle)
-            if (target != null) edited = edited.withFolderId(folderId)
-            edited.withFilingSuggested()
+    private suspend fun write(target: FilingTarget, newTitle: String?, move: FolderTarget?) {
+        val folderId = move?.let { resolve(it) }
+        val moved = move != null
+        when (target) {
+            is FilingTarget.Cloud -> writeCloud(target.recordingId, newTitle, moved, folderId)
+            is FilingTarget.Sample -> writeSample(target.store, newTitle, moved, folderId)
         }
         // Both halves are settled only once the push is back.
         _state.update { state ->
             state.copy(
                 currentTitle = newTitle ?: state.currentTitle,
                 titleAnswered = state.titleAnswered || newTitle != null,
-                currentFolderId = if (target != null) folderId else state.currentFolderId,
-                folderAnswered = state.folderAnswered || target != null,
+                currentFolderId = if (moved) folderId else state.currentFolderId,
+                folderAnswered = state.folderAnswered || moved,
             )
         }
         if (folderId != null) onFiled()
+        // The sample's offer is over once both halves are: it must not come
+        // back the next time the sample is opened. (A cloud recording's is
+        // already cleared by the push above.)
+        if (target is FilingTarget.Sample && !_state.value.hasSomethingToOffer) {
+            target.store.answerSuggestion()
+        }
+    }
+
+    /** One read-modify-write of the meta, answering the offer on the way. */
+    private suspend fun writeCloud(id: String, newTitle: String?, moved: Boolean, folderId: String?) {
+        cloud.editRecording(id) { meta ->
+            val renamed = if (newTitle != null) meta.withTitle(newTitle) else meta
+            val filed = if (moved) renamed.withFolderId(folderId) else renamed
+            filed.withFilingAnswered()
+        }
+    }
+
+    /** The sample's local entry. */
+    private suspend fun writeSample(store: SampleFilingTarget, newTitle: String?, moved: Boolean, folderId: String?) {
+        if (newTitle != null) store.setTitle(newTitle)
+        if (moved) store.setFolder(folderId)
     }
 
     /** The folder id a target files into, creating a new folder when asked to. */
@@ -337,25 +413,29 @@ class FilingSuggestionModel(
     /**
      * The user said no, or finished with the offer. The offer goes at once —
      * a dismiss that waits on the network reads as a broken button — and the
-     * id it belonged to comes back, for [markAnswered] to write the flag behind
-     * it.
+     * target it belonged to comes back, for [markAnswered] to write the answer
+     * behind it.
      */
-    fun forget(): String? {
-        val id = recordingId
-        recordingId = null
+    fun forget(): FilingTarget? {
+        val target = this.target
+        this.target = null
         _state.value = FilingUiState(phase = FilingPhase.SETTLED)
-        return id
+        return target
     }
 
     /**
-     * Write `filingSuggested` and nothing else — what Skip, and a Save that
-     * found nothing to change, still owe the desktop. Failure is ignored: the
-     * worst case is the desktop asking once more about a recording that was
-     * already dealt with here.
+     * Write "answered" and nothing else — what Skip still owes the desktop
+     * (`filingSuggested`, and the pending suggestion cleared), or the sample
+     * its `suggestionPending = false`. Failure is ignored: the worst case is
+     * the offer coming back once more on a recording that was already dealt
+     * with here.
      */
-    suspend fun markAnswered(id: String) {
+    suspend fun markAnswered(target: FilingTarget) {
         try {
-            cloud.editRecording(id) { it.withFilingSuggested() }
+            when (target) {
+                is FilingTarget.Cloud -> cloud.editRecording(target.recordingId) { it.withFilingAnswered() }
+                is FilingTarget.Sample -> target.store.answerSuggestion()
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
@@ -377,7 +457,7 @@ class FilingSuggestionModel(
         // Claimed, so the screen's own `consider` for the same recording is a
         // no-op rather than settling the offer away as a demo skip.
         consideredId = recordingId
-        this.recordingId = null
+        this.target = null
         _state.value = FilingUiState(
             phase = FilingPhase.OFFERING,
             suggestion = suggestion,
@@ -410,6 +490,19 @@ class FilingSuggestionModel(
             segments.filter { it.isFinal && it.text.isNotBlank() && !it.id.endsWith(MeetingUploader.TAIL_SUFFIX) }
     }
 }
+
+/**
+ * A suggestion already waiting on a recording, with what the recording is now
+ * — what [FilingSuggestionModel.present] offers.
+ */
+data class PendingFiling(
+    val suggestion: FilingSuggestion,
+    val currentTitle: String,
+    /** The live folder the recording is in; null is the root (orphans included). */
+    val currentFolderId: String?,
+    /** The personal folders, for the picker and the "existing folder" captions. */
+    val folders: List<CloudFolder>,
+)
 
 /** Whether filing into this target would leave the recording where it already is. */
 private fun FolderTarget.isWhere(currentFolderId: String?): Boolean = when (this) {

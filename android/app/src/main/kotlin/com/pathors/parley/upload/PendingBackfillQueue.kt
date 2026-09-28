@@ -58,6 +58,17 @@ data class BackfillRequest(
      * transcript being replaced.
      */
     val existingSummary: RecordingSummary? = null,
+    /**
+     * When a run last started on this request, epoch ms — null when none ever
+     * has, which a freshly queued request and a manifest from an older build
+     * share. Stamped before the work starts, so a run the system killed still
+     * leaves its time behind: it is what lets the recording page say "waiting,
+     * last tried 5 minutes ago" instead of claiming the run is still going
+     * (iOS `BackfillRequest.lastAttemptAt`).
+     */
+    val lastAttemptAtMs: Long? = null,
+    /** How many runs have started on this request. */
+    val attemptCount: Int = 0,
 ) {
     val id: String get() = pending.id
 

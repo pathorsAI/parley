@@ -80,8 +80,10 @@ import kotlinx.coroutines.launch
  * is no endpoint to create a folder with (an organization's library), which
  * hides the row rather than offering something that cannot work.
  *
- * iOS also has a "Suggested" section fed by its on-device filing suggestion.
- * Android has no filing suggestion to feed it, so the section is not here.
+ * [suggested] is iOS's "Suggested" section: the filing card's "Choose
+ * another…" opens the picker with the suggestion's own folders listed first,
+ * under their own label, then "All folders". A suggested folder that is not in
+ * [folders] (deleted meanwhile) is not offered.
  *
  * @param currentFolderId where the recording is filed now; null is Unfiled.
  *   Callers pass the *live* folder (orphans are Unfiled), so the tick agrees
@@ -99,6 +101,7 @@ fun FolderPickerSheet(
     onSelect: (String?) -> Unit,
     onCreate: (suspend (String) -> Unit)?,
     onDismiss: () -> Unit,
+    suggested: List<CloudFolder> = emptyList(),
 ) {
     // Fully expanded from the start. iOS opens at its medium detent and grows
     // on focus; a half-height Material sheet asked to expand while the IME is
@@ -111,6 +114,10 @@ fun FolderPickerSheet(
 
     val unfiled = stringResource(R.string.library_folder_unfiled)
     val matches = remember(folders, picker.query) { FolderSearch.filter(folders, picker.query) { it.name } }
+    val suggestedMatches = remember(folders, suggested, picker.query) {
+        val live = folders.mapTo(HashSet()) { it.id }
+        FolderSearch.filter(suggested.filter { it.id in live }, picker.query) { it.name }
+    }
     val trimmed = FolderSearch.normalized(picker.query)
     // Unfiled is a place too; it answers to its own name like a folder does.
     val showsUnfiled = FolderSearch.matches(unfiled, picker.query)
@@ -138,6 +145,7 @@ fun FolderPickerSheet(
             HorizontalDivider()
             PickerList(
                 list = PickerListModel(
+                    suggested = suggestedMatches,
                     matches = matches,
                     currentFolderId = currentFolderId,
                     unfiledLabel = unfiled,
@@ -248,6 +256,8 @@ private class FolderPickerState {
 
 /** The rows under the search field, as the list draws them. */
 private class PickerListModel(
+    /** The filing suggestion's folders, drawn first under "Suggested". */
+    val suggested: List<CloudFolder>,
     val matches: List<CloudFolder>,
     val currentFolderId: String?,
     val unfiledLabel: String,
@@ -320,6 +330,21 @@ private fun PickerList(
         if (createRow != null) {
             item(key = "create") { createRow() }
         }
+        // Section labels are rows rather than sticky headers, as on iOS: a
+        // pinned header needs a fill behind it, which this page does without.
+        if (list.suggested.isNotEmpty()) {
+            item(key = "suggested-label") { SectionLabel(stringResource(R.string.folder_picker_suggested)) }
+            items(list.suggested, key = { "suggested-" + it.id }) { folder ->
+                PickerRow(
+                    icon = LibraryIcons.Folder,
+                    title = folder.name,
+                    isCurrent = folder.id == list.currentFolderId,
+                    enabled = !list.busy,
+                    onClick = { onSelect(folder.id) },
+                )
+            }
+            item(key = "all-label") { SectionLabel(stringResource(R.string.folder_picker_all)) }
+        }
         items(list.matches, key = { "folder-" + it.id }) { folder ->
             PickerRow(
                 icon = LibraryIcons.Folder,
@@ -344,6 +369,16 @@ private fun PickerList(
             item(key = "none") { NoMatchRow() }
         }
     }
+}
+
+@Composable
+private fun SectionLabel(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 4.dp),
+    )
 }
 
 @Composable

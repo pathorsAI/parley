@@ -1,6 +1,7 @@
 package com.pathors.parley.ui
 
 import android.content.Context
+import android.text.format.DateUtils
 import androidx.annotation.StringRes
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
@@ -464,8 +465,11 @@ private fun DetailContent(
                     markers = state.findings.map { it.atMs },
                 )
             }
+            // About the whole recording, not either page: above the switch,
+            // pinned with the player (docs/design/ios-recording-page.md, D6).
+            viewModel.filingCard?.let { FilingSuggestionCard(card = it, gutter = PAGE_GUTTER) }
             val retranscribe by viewModel.retranscribe.collectAsState()
-            RetranscribeStatus(retranscribe)
+            RetranscribeStatus(retranscribe, onStartNow = viewModel::startRetranscriptionNow)
             DetailBody(
                 meta = meta,
                 state = state,
@@ -538,7 +542,7 @@ private fun DetailDialogs(
     choosingFolder: Boolean,
     onDismissPicker: () -> Unit,
 ) {
-    if (retranscribe.phase == RetranscribeState.Phase.CONFIRMING) {
+    if (retranscribe.confirming) {
         RetranscribeConfirmation(
             onConfirm = viewModel::confirmRetranscribe,
             onDismiss = viewModel::dismissRetranscribe,
@@ -698,7 +702,7 @@ private fun RetranscribeMenuItem(state: RetranscribeState, onClick: () -> Unit) 
 /** The copy for each reason the action is unavailable. See [RetranscribeBlock]. */
 @StringRes
 internal fun retranscribeNoteRes(block: RetranscribeBlock): Int = when (block) {
-    RetranscribeBlock.IN_FLIGHT -> R.string.retranscribe_queued
+    RetranscribeBlock.IN_FLIGHT -> R.string.retranscribe_already_running
     RetranscribeBlock.BUDGET_SPENT -> R.string.retranscribe_budget_spent
     RetranscribeBlock.NO_AUDIO -> R.string.retranscribe_no_audio
 }
@@ -731,65 +735,115 @@ private fun RetranscribeConfirmation(onConfirm: () -> Unit, onDismiss: () -> Uni
 }
 
 /**
- * One line under the player while a re-transcription is running, and one line if
- * the last one failed.
+ * What this recording's re-transcription is actually doing, above the pages —
+ * iOS `reTranscribeStatus` since 1.14. One of three things, never two:
+ *
+ * - **Running** — a run is alive: a spinner and "Re-transcribing… this can
+ *   take a few minutes." Only then; spinning over a request nothing was
+ *   running was the reported bug. No failure line ever sits beside it: a new
+ *   attempt has answered the old complaint, or is about to.
+ * - **Waiting** — queued, and nothing is running it: the last complaint (if
+ *   any), the plain truth about when it will be tried again — with the last
+ *   attempt's time — and **Start now**, which runs it here.
+ * - **Failed** — nothing is queued; only the refusal that explains a tap that
+ *   produced no re-transcription.
  *
  * Deliberately not a spinner over the screen, not a disabled state on the text,
- * and not an item inside the transcript list. The job takes minutes; the
- * transcript that is already here stays readable, searchable and playable
- * throughout, and the only thing that changes when the new one lands is the
- * words — so the honest UI is a sentence saying so, above a document that still
- * works.
- *
- * Outside the `LazyColumn` rather than its first item for two reasons: a status
- * that scrolled away would be unfindable ten turns down, and an extra list item
- * would break "turn *n* is item *n*" — the arithmetic that follow-the-audio, jumps
- * and the search chevrons all scroll by (see [TranscriptScroll]).
+ * and not an item inside the transcript list: the transcript that is already
+ * here stays readable, searchable and playable throughout. Outside the
+ * `LazyColumn` because a status that scrolled away would be unfindable ten
+ * turns down, and an extra list item would break "turn *n* is item *n*" — the
+ * arithmetic that follow-the-audio, jumps and the search chevrons all scroll by
+ * (see [TranscriptScroll]).
  */
 @Composable
-private fun RetranscribeStatus(state: RetranscribeState) {
-    if (!state.showsStatus) return
+private fun RetranscribeStatus(state: RetranscribeState, onStartNow: () -> Unit) {
+    val status = state.status
+    if (status == RetranscribeState.Status.NONE) return
     Column(
         Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        if (state.isRunning) {
-            // Top-aligned, not centre-aligned: the sentence wraps to two lines on
-            // a phone, and a spinner centred against both would float in the gap
-            // between them rather than sitting beside the line it belongs to.
-            Row(verticalAlignment = Alignment.Top) {
-                CircularProgressIndicator(
-                    modifier = Modifier
-                        .padding(top = 3.dp)
-                        .size(14.dp),
-                    strokeWidth = 2.dp,
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = stringResource(R.string.retranscribe_queued),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+        when (status) {
+            RetranscribeState.Status.RUNNING -> RetranscribeRunning()
+            RetranscribeState.Status.WAITING -> {
+                state.failure?.let { RetranscribeError(retranscribeFailureText(it)) }
+                RetranscribeWaiting(lastAttemptAtMs = state.lastAttemptAtMs, onStartNow = onStartNow)
             }
-        }
-        when (val failure = state.failure) {
-            null -> Unit
-            is RetranscribeFailure.Cloud -> RetranscribeError(
-                text = stringResource(
-                    failure.problem.messageRes(),
-                    *failure.problem.messageArgs(),
-                ),
-            )
-
-            RetranscribeFailure.AudioUnavailable ->
-                RetranscribeError(stringResource(R.string.retranscribe_audio_failed))
-
-            RetranscribeFailure.BudgetSpent ->
-                RetranscribeError(stringResource(R.string.retranscribe_budget_spent))
+            RetranscribeState.Status.FAILURE ->
+                state.failure?.let { RetranscribeError(retranscribeFailureText(it)) }
+            RetranscribeState.Status.NONE -> Unit
         }
     }
+}
+
+@Composable
+private fun RetranscribeRunning() {
+    // Top-aligned, not centre-aligned: the sentence can wrap to two lines on a
+    // phone, and a spinner centred against both would float in the gap between
+    // them rather than sitting beside the line it belongs to.
+    Row(verticalAlignment = Alignment.Top) {
+        CircularProgressIndicator(
+            modifier = Modifier
+                .padding(top = 3.dp)
+                .size(14.dp),
+            strokeWidth = 2.dp,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = stringResource(R.string.retranscribe_running),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/**
+ * Plain text, and a button that moves it. The button is its own element, not
+ * folded into the paragraph, so TalkBack finds it without being talked into it.
+ */
+@Composable
+private fun RetranscribeWaiting(lastAttemptAtMs: Long?, onStartNow: () -> Unit) {
+    val text = if (lastAttemptAtMs != null) {
+        stringResource(R.string.retranscribe_waiting_last_tried, relativeTime(lastAttemptAtMs))
+    } else {
+        stringResource(R.string.retranscribe_waiting_never)
+    }
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    val label = stringResource(R.string.retranscribe_start_now_label)
+    TextButton(
+        onClick = onStartNow,
+        contentPadding = PaddingValues(horizontal = 0.dp),
+        modifier = Modifier.semantics { contentDescription = label },
+    ) {
+        Text(
+            text = stringResource(R.string.retranscribe_start_now),
+            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+        )
+    }
+}
+
+/**
+ * "5 minutes ago", "yesterday" — in the reader's language, as iOS's
+ * `.relative(presentation: .named)`.
+ */
+@Composable
+private fun relativeTime(epochMs: Long): String =
+    DateUtils.getRelativeTimeSpanString(epochMs, System.currentTimeMillis(), DateUtils.SECOND_IN_MILLIS).toString()
+
+/** The words for each [RetranscribeFailure]. */
+@Composable
+private fun retranscribeFailureText(failure: RetranscribeFailure): String = when (failure) {
+    is RetranscribeFailure.Cloud -> stringResource(failure.problem.messageRes(), *failure.problem.messageArgs())
+    RetranscribeFailure.AudioUnavailable -> stringResource(R.string.retranscribe_audio_failed)
+    RetranscribeFailure.BudgetSpent -> stringResource(R.string.retranscribe_budget_spent)
+    RetranscribeFailure.DidNotFinish -> stringResource(R.string.retranscribe_did_not_finish)
 }
 
 @Composable
@@ -810,6 +864,9 @@ private fun RetranscribeError(text: String) {
  * instead.
  */
 private val RETRANSCRIBE_NOTE_WIDTH = 240.dp
+
+/** The page's horizontal margin, which the filing card's text lines up with. */
+private val PAGE_GUTTER = 20.dp
 
 /** How long the screen waits after arriving before acting on [OpenFor] — iOS waits the same 600 ms. */
 private const val INTENT_DELAY_MS = 600L

@@ -80,7 +80,6 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.pathors.parley.R
 import com.pathors.parley.filing.FilingSuggestionViewModel
-import com.pathors.parley.filing.FilingUiState
 import com.pathors.parley.parleyContainer
 import com.pathors.parley.audio.MicRecoveryState
 import com.pathors.parley.kit.CaptureRecovery
@@ -402,7 +401,6 @@ private fun MeetingContent(
     val live = isLive(state)
 
     val filing = rememberFiling(state, segments, demoFiling)
-    val filingState by filing.state.collectAsState()
     RecordingStartedHaptic(state)
     val micBack = rememberMicBackNotice(micRecovery)
     val close = {
@@ -456,10 +454,9 @@ private fun MeetingContent(
 
         FilingFooter(
             filing = filing,
-            state = filingState,
             showsDone = state is MeetingState.Finished && interruptedFinish(state) == null,
             onDone = close,
-            openAdjust = demoFiling == DemoMode.MeetingScenario.ADJUST,
+            openPicker = demoFiling == DemoMode.MeetingScenario.ADJUST,
         )
         Spacer(Modifier.height(16.dp))
     }
@@ -578,26 +575,23 @@ private fun rememberFiling(
 }
 
 /**
- * Under the transcript once the meeting is over: the filing suggestion, its
- * Adjust sheet, and Done — the way out, now that the screen no longer closes
- * itself. Leaving writes nothing; an unanswered offer simply goes with the
- * screen, and the desktop may ask about it later.
+ * Under the transcript once the meeting is over: the filing suggestion card
+ * and Done — the way out, now that the screen no longer closes itself. Leaving
+ * writes nothing; an unanswered offer simply goes with the screen, and the
+ * desktop may ask about it later.
+ *
+ * @param openPicker the screenshot demo's `adjust` route: "Choose another…"
+ *   opened with nobody tapping, as iOS's route does.
  */
 @Composable
 private fun FilingFooter(
     filing: FilingSuggestionViewModel,
-    state: FilingUiState,
     showsDone: Boolean,
     onDone: () -> Unit,
-    openAdjust: Boolean,
+    openPicker: Boolean,
 ) {
-    var adjusting by rememberSaveable(openAdjust) { mutableStateOf(openAdjust) }
-    FilingSuggestionBlock(
-        state = state,
-        onAccept = filing::acceptSuggested,
-        onAdjust = { adjusting = true },
-        onSkip = filing::skip,
-    )
+    LaunchedEffect(openPicker) { if (openPicker) filing.card.openPicker() }
+    FilingSuggestionCard(card = filing.card)
     if (showsDone) {
         OutlinedButton(
             onClick = onDone,
@@ -607,13 +601,6 @@ private fun FilingFooter(
         ) {
             Text(stringResource(R.string.filing_done))
         }
-    }
-    if (adjusting && state.hasSomethingToOffer) {
-        FilingAdjustSheet(
-            state = state,
-            onSave = { title, folder -> filing.save(title, folder) { adjusting = false } },
-            onDismiss = { adjusting = false },
-        )
     }
 }
 

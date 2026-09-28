@@ -1,6 +1,7 @@
 package com.pathors.parley.filing
 
 import com.pathors.parley.cloud.CloudClient
+import com.pathors.parley.cloud.CloudFolder
 import com.pathors.parley.cloud.CloudJson
 import com.pathors.parley.cloud.RecordingMeta
 import com.pathors.parley.kit.FilingFolderSuggestion
@@ -8,6 +9,7 @@ import com.pathors.parley.kit.TranscriptSegment
 import com.pathors.parley.library.SaveDestination
 import com.pathors.parley.meeting.MeetingState
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.JsonNull
@@ -278,13 +280,14 @@ class FilingSuggestionModelTest {
     @Test
     fun `skip retires the offer at once and still writes the flag`() {
         offer()
-        val id = model.forget()
-        assertEquals(RECORDING, id)
+        val target = model.forget()
+        assertEquals(FilingTarget.Cloud(RECORDING), target)
         assertEquals(FilingPhase.SETTLED, state.phase)
         assertFalse(state.holdsScreen)
 
-        runBlocking { model.markAnswered(RECORDING) }
+        runBlocking { model.markAnswered(target!!) }
         assertTrue(lastMeta().filingSuggested)
+        assertEquals(JsonNull, lastMeta().raw[PENDING])
         assertEquals("nothing else changes", CLOCK_TITLE, lastMeta().title)
         assertNull(lastMeta().folderId)
     }
@@ -298,7 +301,184 @@ class FilingSuggestionModelTest {
         assertTrue(paths.isEmpty())
     }
 
+    // ── a suggestion already pending on the recording (the recording page) ───
+
+    private fun pending(folderId: String? = null) = PendingFiling(
+        suggestion = SUGGESTION,
+        currentTitle = CLOCK_TITLE,
+        currentFolderId = folderId,
+        folders = listOf(CloudFolder(id = ACME_ID, name = ACME)),
+    )
+
+    @Test
+    fun `the meta's pending suggestion is read as the desktop writes it`() {
+        stored = buildJsonObject {
+            put("id", RECORDING)
+            put("title", CLOCK_TITLE)
+            put(PENDING, CloudJson.parseToJsonElement(PENDING_JSON))
+        }
+        assertEquals(SUGGESTION, RecordingMeta(stored).filingSuggestion)
+        assertNull("a cleared one is none", RecordingMeta(stored).withFilingAnswered().filingSuggestion)
+    }
+
+    @Test
+    fun `a pending suggestion is offered without a pass`() {
+        assertTrue(model.present(pending(), FilingTarget.Cloud(RECORDING)))
+
+        assertEquals(FilingPhase.OFFERING, state.phase)
+        assertEquals(RENEWAL, state.editableTitle)
+        assertEquals(ACME_ID, state.proposedFolder?.folderId)
+        assertEquals("no model call spent on it", 0, count(CHAT))
+    }
+
+    @Test
+    fun `accepting a pending suggestion clears it for the desktop`() {
+        model.present(pending(), FilingTarget.Cloud(RECORDING))
+        assertTrue(runBlocking { model.acceptSuggested() })
+
+        assertEquals(RENEWAL, lastMeta().title)
+        assertEquals(ACME_ID, lastMeta().folderId)
+        assertTrue(lastMeta().filingSuggested)
+        assertEquals("answered, so the Mac does not ask again", JsonNull, lastMeta().raw[PENDING])
+        assertFalse(state.hasSomethingToOffer)
+    }
+
+    @Test
+    fun `a rename alone says renamed and keeps the folders on offer`() {
+        model.present(pending(), FilingTarget.Cloud(RECORDING))
+        assertTrue(runBlocking { model.apply(TYPED, null) })
+
+        assertTrue(state.showsRenamed)
+        assertNull(state.proposedTitle)
+        assertEquals(TYPED, state.editableTitle)
+        assertTrue(state.hasSomethingToOffer)
+    }
+
+    @Test
+    fun `a said-no offer is not presented again`() {
+        model.present(pending(), FilingTarget.Cloud(RECORDING))
+        model.forget()
+        assertFalse("a reload racing Skip's write", model.present(pending(), FilingTarget.Cloud(RECORDING)))
+        assertFalse(state.hasSomethingToOffer)
+    }
+
+    @Test
+    fun `an offer being answered is not replaced by a fuller folder list`() {
+        model.present(pending(), FilingTarget.Cloud(RECORDING))
+        runBlocking { model.apply(TYPED, null) }
+        assertFalse(model.present(pending(), FilingTarget.Cloud(RECORDING)))
+        assertEquals(TYPED, state.currentTitle)
+    }
+
+    @Test
+    fun `the sample is renamed and filed on the phone, and answered once both halves are`() {
+        val sample = FakeSample()
+        model.present(pending(), FilingTarget.Sample(sample))
+
+        assertTrue(runBlocking { model.apply(TYPED, null) })
+        assertEquals(listOf(TYPED), sample.titles)
+        assertEquals("the folder half is still open", 0, sample.answered)
+
+        assertTrue(runBlocking { model.apply(null, FolderTarget.Existing(ACME_ID)) })
+        assertEquals(listOf<String?>(ACME_ID), sample.folders)
+        assertEquals(1, sample.answered)
+        assertTrue("nothing pushed to the cloud for a local recording", pushes.isEmpty())
+    }
+
+    @Test
+    fun `a new folder for the sample is a real folder in the cloud`() {
+        val sample = FakeSample()
+        model.present(pending(), FilingTarget.Sample(sample))
+        assertTrue(runBlocking { model.apply(null, FolderTarget.New("Globex")) })
+
+        assertEquals(1, count("POST /folders"))
+        assertEquals(1, sample.folders.size)
+    }
+
+    @Test
+    fun `skipping the sample answers it without touching the cloud`() {
+        val sample = FakeSample()
+        model.present(pending(), FilingTarget.Sample(sample))
+        runBlocking { model.markAnswered(model.forget()!!) }
+
+        assertEquals(1, sample.answered)
+        assertTrue(paths.isEmpty())
+    }
+
+    // ── the card's actions ───────────────────────────────────────────────────
+
+    @Test
+    fun `accept takes the name as the field shows it and the first chip`() {
+        model.present(pending(), FilingTarget.Cloud(RECORDING))
+        runBlocking {
+            FilingCardController(model, this, this).accept(" $TYPED ")
+        }
+        assertEquals(1, pushes.size)
+        assertEquals(TYPED, lastMeta().title)
+        assertEquals(ACME_ID, lastMeta().folderId)
+    }
+
+    @Test
+    fun `a chip files without renaming, and tells the screen`() {
+        model.present(pending(), FilingTarget.Cloud(RECORDING))
+        var written = 0
+        runBlocking {
+            FilingCardController(model, this, this, onWritten = { written++ }).file(SUGGESTION.folders.first())
+        }
+        assertEquals(CLOCK_TITLE, lastMeta().title)
+        assertEquals(ACME_ID, lastMeta().folderId)
+        assertEquals(1, written)
+        assertEquals("the name is still on offer", RENEWAL, state.proposedTitle)
+    }
+
+    @Test
+    fun `skip closes the picker and writes the answer behind the card`() {
+        model.present(pending(), FilingTarget.Cloud(RECORDING))
+        runBlocking {
+            val card = FilingCardController(model, this, this)
+            card.openPicker()
+            card.skip()
+            assertFalse(card.cues.choosing.value)
+        }
+        assertEquals(FilingPhase.SETTLED, state.phase)
+        assertTrue(lastMeta().filingSuggested)
+    }
+
+    @Test
+    fun `a wash lasts as long as it was asked for`() = runBlocking {
+        val cues = FilingCardCues(this)
+        cues.wash(durationMs = 10)
+        assertTrue(cues.washed.value)
+        delay(50)
+        assertFalse(cues.washed.value)
+    }
+
+    /** The sample's store, as far as filing is concerned. */
+    private class FakeSample : SampleFilingTarget {
+        val titles = mutableListOf<String>()
+        val folders = mutableListOf<String?>()
+        var answered = 0
+
+        override suspend fun pendingFilingSuggestion() = if (answered == 0) SUGGESTION else null
+
+        override suspend fun setTitle(title: String) {
+            titles += title
+        }
+
+        override suspend fun setFolder(folderId: String?) {
+            folders += folderId
+        }
+
+        override suspend fun answerSuggestion() {
+            answered++
+        }
+    }
+
     private companion object {
+        const val PENDING = "filingSuggestion"
+        const val PENDING_JSON = """{"title":"Acme renewal terms","folders":[""" +
+            """{"folderId":"f-acme","name":"Acme Corp","reason":"customer"},""" +
+            """{"folderId":null,"name":"","reason":"no name"}]}"""
         const val RECORDING = "rec-1"
         const val CLOCK_TITLE = "Meeting Sep 18, 2025, 3:20 PM"
         const val RENEWAL = "Acme renewal terms"

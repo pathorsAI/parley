@@ -101,6 +101,31 @@ class HandoffStringsParityTest {
         "transcript_two_x_zone" to "Playback speed",
         "transcript_two_x_hint" to "Hold for 2×",
         "transcript_search" to "Search transcript",
+        // The filing card v2 (iOS #450) and the folder picker's suggested section.
+        "filing_heading" to "Suggestion",
+        "filing_skip" to "Skip suggestion",
+        "filing_write_failed" to "That didn't save. Try again.",
+        "filing_was" to "Was: %@",
+        "filing_renamed" to "Renamed",
+        "filing_accept" to "Accept",
+        "filing_choose_another" to "Choose another…",
+        "filing_new_folder" to "New folder",
+        "filing_existing_folder" to "Existing folder",
+        "filing_edit_title" to "Edit the title",
+        "filing_title" to "Title",
+        "folder_picker_suggested" to "Suggested",
+        "folder_picker_all" to "All folders",
+        // Re-transcribe says queued, not running (iOS 1.14).
+        "retranscribe_running" to "Re-transcribing… this can take a few minutes.",
+        "retranscribe_waiting_last_tried" to "Waiting to re-transcribe. It last tried %@, and tries again " +
+            "when you open Parley or bring it back to the front.",
+        "retranscribe_waiting_never" to "Waiting to re-transcribe. Nothing is running it yet — it starts " +
+            "when you open Parley or bring it back to the front.",
+        "retranscribe_start_now" to "Start now",
+        "retranscribe_start_now_label" to "Start re-transcribing now",
+        "retranscribe_already_running" to "Already re-transcribing this recording.",
+        "retranscribe_did_not_finish" to "Re-transcribing didn't finish this time.",
+        "retranscribe_budget_spent" to "This recording has been re-transcribed as many times as allowed.",
     )
 
     /**

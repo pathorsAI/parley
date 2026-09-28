@@ -47,6 +47,30 @@ class ManualRetryBudgetSpentException(val recordingId: String) :
     IllegalStateException("manual retry budget spent for $recordingId")
 
 /**
+ * What a recording's re-transcription is actually doing, as opposed to what
+ * the queue directory happens to contain — iOS `MeetingUploader.BackfillState`.
+ *
+ * The distinction is the bug this type exists for (iOS 1.14). "Is there a
+ * manifest" cannot tell a run that is under way from one the system killed
+ * with the app, so a screen that asked it spun "Re-transcribing…" over a
+ * request nothing was running, with the retry that would have moved it
+ * disabled because of it.
+ */
+sealed interface BackfillStatus {
+    /** Nothing queued for this recording. */
+    data object None : BackfillStatus
+
+    /** A run is alive in this process right now. */
+    data object Running : BackfillStatus
+
+    /**
+     * A manifest is on disk and nothing is running it. [lastAttemptAtMs] is
+     * when a run last started — null if none ever has.
+     */
+    data class Queued(val lastAttemptAtMs: Long?) : BackfillStatus
+}
+
+/**
  * The transcript safety net: recordings whose live transcript came up short get
  * their audio transcribed again, in full, and the thin transcript replaced.
  *
@@ -85,8 +109,20 @@ class TranscriptBackfiller(
     private val keepsAudioOnPhone: suspend () -> Boolean = { false },
     private val policy: TranscriptCoverage.BackfillPolicy =
         TranscriptCoverage.BackfillPolicy.STANDARD,
+    /** The clock a run's start is stamped with. Injectable for tests. */
+    private val now: () -> Long = System::currentTimeMillis,
 ) {
     private val drainMutex = Mutex()
+
+    private val _running = MutableStateFlow<Set<String>>(emptySet())
+
+    /**
+     * The recordings a run is alive for in this process, right now. In memory
+     * on purpose: a process that dies takes its runs with it, and a set that
+     * outlived them would be the very "it says it's running but it isn't" this
+     * exists to end.
+     */
+    val running: StateFlow<Set<String>> = _running.asStateFlow()
 
     private val _landed = MutableStateFlow(0)
 
@@ -112,6 +148,22 @@ class TranscriptBackfiller(
      * detail screen can say so and not offer a second one.
      */
     suspend fun isQueued(id: String): Boolean = withContext(Dispatchers.IO) { queue.has(id) }
+
+    /**
+     * Whether this recording's re-transcription is running, merely waiting, or
+     * not queued at all. Keyed off the manifest file rather than a successful
+     * decode: a manifest this build cannot read is still work somebody is owed.
+     */
+    suspend fun status(id: String): BackfillStatus {
+        if (id in _running.value) return BackfillStatus.Running
+        return withContext(Dispatchers.IO) {
+            if (!queue.has(id)) {
+                BackfillStatus.None
+            } else {
+                BackfillStatus.Queued(lastAttemptAtMs = queue.request(id)?.lastAttemptAtMs)
+            }
+        }
+    }
 
     /** How many hand-triggered re-runs this recording has left, 0…3. */
     suspend fun retriesRemaining(id: String): Int =
@@ -233,6 +285,8 @@ class TranscriptBackfiller(
                 discarded++
                 continue
             }
+            markAttempt(request)
+            _running.update { it + request.id }
             try {
                 run(request, audio)
                 repaired++
@@ -242,6 +296,8 @@ class TranscriptBackfiller(
             } catch (e: Throwable) {
                 failure = e
                 break
+            } finally {
+                _running.update { it - request.id }
             }
         }
 
@@ -251,6 +307,23 @@ class TranscriptBackfiller(
             discarded = discarded,
             failure = failure,
         )
+    }
+
+    /**
+     * Stamp a request as tried, in its manifest, before the work starts — so a
+     * run the system kills still leaves its time behind. Guarded on the
+     * manifest still being there, so this never writes one back that
+     * something else has just finished and deleted. Best-effort: a stamp that
+     * fails costs a less specific sentence, never the run.
+     */
+    private suspend fun markAttempt(request: BackfillRequest) = withContext(Dispatchers.IO) {
+        if (!queue.has(request.id)) return@withContext
+        runCatching {
+            queue.writeManifest(
+                request.copy(lastAttemptAtMs = now(), attemptCount = request.attemptCount + 1),
+            )
+        }
+        Unit
     }
 
     private suspend fun run(request: BackfillRequest, audio: File) {

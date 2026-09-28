@@ -548,7 +548,63 @@ class TranscriptBackfillerTest {
         assertTrue(TranscriptBackfiller.coverage(tailed).needsBackfill())
     }
 
+    // ── what a screen is told (iOS 1.14) ───────────────────────────────────────
+
+    @Test
+    fun `a queued request that never ran is waiting with no attempt`() = runBlocking {
+        val queue = queue("status-fresh")
+        val backfiller = backfiller(queue, ledger("status-fresh-l"), FakeBatch(fullTranscript()))
+        assertEquals(BackfillStatus.None, backfiller.status(RECORDING))
+
+        queue.enqueueMoving(BackfillRequest(pending = pending(RECORDING)), audio("a.ogg"))
+
+        assertEquals(BackfillStatus.Queued(lastAttemptAtMs = null), backfiller.status(RECORDING))
+    }
+
+    /**
+     * A run the system killed looks exactly like this from the next launch: a
+     * manifest, nothing running it. What it leaves behind is when it started.
+     */
+    @Test
+    fun `a run that did not land leaves its start time and is waiting, not running`() = runBlocking {
+        val queue = queue("status-stuck")
+        queue.enqueueMoving(BackfillRequest(pending = pending(RECORDING)), audio("a.ogg"))
+        val backfiller = TranscriptBackfiller(
+            cloud = cloud(),
+            queue = queue,
+            ledger = ledger("status-stuck-l"),
+            transcriber = BatchTranscriber(FakeBatch(fullTranscript(), failStart = true), pollIntervalMs = 1),
+            now = { ATTEMPT_AT },
+        )
+
+        backfiller.drain()
+
+        assertEquals(BackfillStatus.Queued(lastAttemptAtMs = ATTEMPT_AT), backfiller.status(RECORDING))
+        assertEquals(1, queue.request(RECORDING)?.attemptCount)
+        assertTrue("nothing is running it any more", backfiller.running.value.isEmpty())
+    }
+
+    @Test
+    fun `a run is reported as running exactly while it is alive`() = runBlocking {
+        val queue = queue("status-running")
+        queue.enqueueMoving(BackfillRequest(pending = pending(RECORDING)), audio("a.ogg"))
+        val probe = RunningProbe()
+        val backfiller = TranscriptBackfiller(
+            cloud = cloud(),
+            queue = queue,
+            ledger = ledger("status-running-l"),
+            transcriber = BatchTranscriber(probe, pollIntervalMs = 1),
+        )
+        probe.backfiller = backfiller
+
+        backfiller.drain()
+
+        assertEquals(BackfillStatus.Running, probe.seen)
+        assertTrue(backfiller.running.value.isEmpty())
+    }
+
     private companion object {
+        const val ATTEMPT_AT = 1_700_000_123_000L
         const val RECORDING = "rec-renamed"
         const val RENAMED = "Acme renewal terms"
         const val MOVED_TO = "folder-3"
@@ -581,6 +637,28 @@ private class FakeBatch(
         BatchJobStatus(status = "completed", durationMs = 2_953_000.0)
 
     override suspend fun batchTranscript(id: String): BatchTranscriptResponse = transcript
+
+    override suspend fun deleteBatchJob(id: String) = Unit
+}
+
+/** Records what the backfiller says about the recording while its run is under way. */
+private class RunningProbe : BatchTranscriptionService {
+    lateinit var backfiller: TranscriptBackfiller
+    var seen: BackfillStatus? = null
+
+    override suspend fun startBatchJob(
+        audio: File,
+        diarization: Boolean,
+        languageHints: List<String>,
+    ): String {
+        seen = backfiller.status("rec-renamed")
+        throw IOException("stop here")
+    }
+
+    override suspend fun batchJobStatus(id: String): BatchJobStatus =
+        BatchJobStatus(status = "completed", durationMs = 0.0)
+
+    override suspend fun batchTranscript(id: String): BatchTranscriptResponse = BatchTranscriptResponse(emptyList())
 
     override suspend fun deleteBatchJob(id: String) = Unit
 }
