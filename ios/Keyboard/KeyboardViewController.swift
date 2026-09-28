@@ -125,6 +125,37 @@ final class KeyboardViewController: UIInputViewController {
         KBMetrics.height(bridge.pane)
     }
 
+    /// Detach the SwiftUI tree from the input view, because UIKit keeps the
+    /// input view alive after this controller is gone.
+    ///
+    /// iOS builds a new controller almost every time the keyboard comes up —
+    /// each field, each app switch — and releases the old one, but on iOS 26.5
+    /// something inside UIKit goes on holding the old `UIInputView` (detached,
+    /// no window, no superview). Everything under it lived on with it: the
+    /// hosting view, its view graph, every key's layers, and through the root
+    /// view's `@ObservedObject` the bridge. Measured on the simulator, that is
+    /// 5–10 MB per appearance with nothing ever given back — 28 MB cold to
+    /// 175 MB after twenty show/hide cycles, where a keyboard extension is
+    /// jetsam-killed somewhere past 50–70 MB on a phone. A kill leaves no crash
+    /// report, which is why "the keyboard disappears sometimes" never came with
+    /// a log. With the hosting view taken out here, the tree and the bridge are
+    /// released with the controller and the footprint stays flat; the empty
+    /// input view that UIKit keeps costs next to nothing. The backdrop goes too,
+    /// for the same reason at a smaller scale.
+    ///
+    /// The last release of a view controller happens on the main thread, but
+    /// `deinit` is not isolated, so the removal is posted to main when it isn't
+    /// already there.
+    deinit {
+        // Our own subviews only: the input view's content views are UIKit's.
+        let ours = [host?.view, backdrop].compactMap { $0 }
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { ours.forEach { $0.removeFromSuperview() } }
+        } else {
+            DispatchQueue.main.async { ours.forEach { $0.removeFromSuperview() } }
+        }
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         bridge.controller = self
