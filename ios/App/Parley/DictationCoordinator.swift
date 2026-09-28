@@ -463,6 +463,17 @@ final class DictationCoordinator: ObservableObject {
                 // the stream (and the Darwin channel) freezes.
                 beginLinger()
                 demoTask = Task { [weak self] in await self?.streamDemoTranscript() }
+                if let after = ScreenshotDemo.loseConnectionAfter {
+                    // The relay's ladder running out, on cue: the real
+                    // ending, with a fake transcript under it.
+                    Task { [weak self] in
+                        try? await Task.sleep(for: after)
+                        guard let self, self.owns(owner) else { return }
+                        self.demoTask?.cancel()
+                        self.demoTask = nil
+                        self.endAfterLostConnection()
+                    }
+                }
                 return
             }
         #endif

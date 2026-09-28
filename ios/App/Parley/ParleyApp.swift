@@ -61,6 +61,9 @@ struct ParleyApp: App {
                 .fullScreenCover(isPresented: dictationPresented) {
                     DictationView(coordinator: dictation)
                 }
+                #if DEBUG
+                    .modifier(KeyboardHarnessPresenter())
+                #endif
                 // Every foregrounding, not only launch: a trip to Settings to
                 // grant the microphone brings the app back here rather than
                 // through `init`, and the keyboard's pane is only honest for as
@@ -95,7 +98,14 @@ struct ParleyApp: App {
 
     private var dictationPresented: Binding<Bool> {
         Binding(
-            get: { dictation.active },
+            get: {
+                #if DEBUG
+                    // The keyboard harness is the screen to watch; a cover
+                    // over it would take the keyboard away with the focus.
+                    if ScreenshotDemo.shared.keyboardHarness { return false }
+                #endif
+                return dictation.active
+            },
             set: { if !$0 { Task { await dictation.dismiss() } } })
     }
 }
