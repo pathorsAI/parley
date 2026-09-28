@@ -63,8 +63,8 @@ final class KeyboardViewController: UIInputViewController {
     private var waveReveal: Task<Void, Never>?
     /// Takes the wave down once its ease-out after `done` has played.
     private var waveFade: Task<Void, Never>?
-    /// Takes the "Copied" label in the slot's corner down again — see
-    /// `copyDictation`. Replaced on every tap, so a second tap restarts the
+    /// Takes the "Copied" label in the strip, and the wash over the words,
+    /// down again — see `copyDictation`. Replaced on every tap, so a second tap restarts the
     /// label's time rather than being cut short by the first tap's.
     private var copiedFade: Task<Void, Never>?
     /// The session whose copy target the user closed by typing after it — see
@@ -1565,10 +1565,12 @@ final class KeyboardViewController: UIInputViewController {
 
     // MARK: copying the finished dictation
 
-    /// How long "Copied" stays in the slot's corner after a tap. Long enough
-    /// to be read at a glance, short enough that the corner is back to its
-    /// copy glyph before the user has looked away from it and back.
-    private static let copiedLabelHold: Duration = .milliseconds(1500)
+    /// How long "Copied" stands in for the wordmark, and the wash stays on the
+    /// words, after a tap. Long enough to be read at a glance; shorter than the
+    /// 1.5 s the corner label had, because the wash is on the words the user is
+    /// looking at and a highlight that lingers starts to read as a selection
+    /// that is still there.
+    private static let copiedLabelHold: Duration = .milliseconds(1200)
 
     /// Make `text` what a tap on the slot copies, or make the slot not a copy
     /// target with `nil`.
@@ -1579,17 +1581,51 @@ final class KeyboardViewController: UIInputViewController {
     /// "Copied" label never outlives the target it was about. Assigns only on
     /// a change — the drain runs on every note and every appearance, and a
     /// `@Published` assignment redraws the keyboard even when nothing moved.
+    ///
+    /// The first-run hint goes with the target: offered while there is one and
+    /// `CopyHint` still allows it for this session, and gone the moment the
+    /// target is.
     private func offerCopy(_ text: String?) {
         let next = session == copyClosedSession ? nil : text
         if bridge.copyableText != next { bridge.copyableText = next }
+        let hint = next != nil && CopyHint.offers(in: session, copyHint)
+        if bridge.copyHintOffered != hint { bridge.copyHintOffered = hint }
         guard next == nil else { return }
         copiedFade?.cancel()
         copiedFade = nil
         if bridge.justCopied { bridge.justCopied = false }
     }
 
+    /// What the keyboard remembers about the first-run copy hint, read once
+    /// per controller — iOS builds a new one on every appearance, so a change
+    /// the app made (the DEBUG harness's reset) is picked up on the next one.
+    /// Only read here and written through `CopyHintLedger`, never on a path
+    /// that runs per keystroke.
+    private lazy var copyHint = CopyHintLedger.shared.read()
+
+    /// The strip drew the hint for the current session (`StripHome`): count
+    /// it. Not counted when the hint was only offered — on a strip too narrow
+    /// for it the offer is skipped, and that session must not use one up.
+    /// `CopyHint.shown` ignores a session already counted, so the hint being
+    /// drawn again after a copy or a new appearance costs nothing.
+    func copyHintShown() {
+        guard bridge.copyHintOffered else { return }
+        let next = CopyHint.shown(in: session, copyHint)
+        guard next != copyHint else { return }
+        copyHint = next
+        CopyHintLedger.shared.write(next)
+        Self.copyHintLog.notice(
+            "copy hint shown: \(next.countedSessions, privacy: .public) of \(CopyHint.sessionLimit, privacy: .public)")
+    }
+
+    /// The hint's count and its retirement, and nothing else — no text, no ids.
+    private static let copyHintLog = Logger(
+        subsystem: "com.pathors.parley.ios.keyboard", category: "copyHint")
+
     /// The user tapped the transcript slot of a finished dictation: put the
-    /// whole of it on the pasteboard, and say so with a tick and "Copied" in the slot's corner.
+    /// whole of it on the pasteboard, and say so — a wash over the words and
+    /// "✓ Copied" in place of the strip's wordmark (see `CopyTarget` and
+    /// `StripHome.wordmark`), and for VoiceOver, the same word spoken.
     ///
     /// `copyableText` rather than `tail`: the tail is the last `tailLimit`
     /// characters, and what is wanted on the pasteboard is everything that
@@ -1598,11 +1634,28 @@ final class KeyboardViewController: UIInputViewController {
     ///
     /// Behind Full Access twice over — the pasteboard and the haptic both need
     /// it — though without it `copyableText` is never set to begin with.
+    ///
+    /// The announcement is VoiceOver's whole confirmation: the label is in the
+    /// strip, away from the button VoiceOver is on and hidden from it, and the
+    /// wash is only something to see. Posted on every tap, like the haptic,
+    /// because every tap really did copy.
     func copyDictation() {
         guard hasFullAccess, let text = bridge.copyableText else { return }
         UIPasteboard.general.string = text
         Haptics.dictationCopied()
+        if UIAccessibility.isVoiceOverRunning {
+            UIAccessibility.post(notification: .announcement, argument: String(localized: "Copied"))
+        }
         if !bridge.justCopied { bridge.justCopied = true }
+        // One copy is proof the user knows: the hint is retired for good, and
+        // when "Copied" goes the wordmark comes back rather than the hint.
+        if !copyHint.hasCopied {
+            copyHint = CopyHint.copied(copyHint)
+            CopyHintLedger.shared.write(copyHint)
+            Self.copyHintLog.notice(
+                "copy hint retired by a copy after \(self.copyHint.countedSessions, privacy: .public) shown")
+        }
+        if bridge.copyHintOffered { bridge.copyHintOffered = false }
         // A repeated tap shows the label again if it had gone, and restarts
         // its time rather than stacking a second fade behind the first.
         copiedFade?.cancel()
@@ -2217,9 +2270,14 @@ final class KeyboardBridge: ObservableObject {
     /// ✕, the pane being cleared, or the user typing after it. The same rule
     /// as the tail's, a few more kilobytes at most.
     @Published var copyableText: String?
-    /// A tap just copied `copyableText`: the slot's corner shows a checkmark
-    /// and "Copied" in place of the copy glyph, for `copiedLabelHold`.
+    /// A tap just copied `copyableText`: the strip shows "✓ Copied" in place of
+    /// the wordmark and the words wear a wash, for `copiedLabelHold`.
     @Published var justCopied = false
+    /// The strip may say "Tap text to copy" in place of the wordmark: the
+    /// finished dictation is a copy target and `CopyHint` still allows the
+    /// hint for this session. Whether it is actually drawn is the strip's call
+    /// (it needs the room), and the strip reports it back — `copyHintShown`.
+    @Published var copyHintOffered = false
 
     /// What the record button is doing with the user's voice, smoothed and
     /// ready to draw. Two `Float`s, published together.
@@ -2397,6 +2455,8 @@ final class KeyboardBridge: ObservableObject {
     /// Put the finished dictation on the pasteboard — a tap on the slot while
     /// `copyableText` is set.
     func copyDictation() { controller?.copyDictation() }
+    /// The strip drew the first-run copy hint — see `copyHintOffered`.
+    func copyHintShown() { controller?.copyHintShown() }
     func backspace() { controller?.deleteBackward() }
     /// A repeat of a held delete key, and the hold ending — see
     /// `DeleteKey`.

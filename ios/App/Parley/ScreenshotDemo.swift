@@ -252,6 +252,13 @@
                 // the way the Action Button starts one, so the keyboard adopts
                 // it the way it adopts any session it did not mint.
                 keyboardHarness = true
+                // `-ParleyDemoResetCopyHint YES`: the keyboard's first-run
+                // "Tap text to copy" hint back to never shown, so its first
+                // sessions — and its retirement — can be captured again. The
+                // keyboard reads the ledger on its next appearance.
+                if UserDefaults.standard.bool(forKey: "ParleyDemoResetCopyHint") {
+                    CopyHintLedger.shared.reset()
+                }
                 Task { @MainActor in
                     try? await Task.sleep(for: .seconds(4))
                     await DictationCoordinator.shared.beginFromIntent()
