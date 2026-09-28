@@ -3,16 +3,11 @@ package com.pathors.parley.ui
 import android.content.Context
 import android.provider.Settings
 import androidx.annotation.StringRes
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -64,6 +59,7 @@ import com.pathors.parley.kit.SampleManifest
 import com.pathors.parley.ui.theme.ParleyPalette
 import com.pathors.parley.ui.theme.ParleyTheme
 import com.pathors.parley.ui.theme.ThemePreference
+import kotlin.math.roundToInt
 
 /**
  * What the sign-in page's film shows, read from the bundled sample: the call's
@@ -111,46 +107,77 @@ data class IntroFilm(
  * the app's own pieces in the app's own visual language (plain text, hairlines,
  * one tint): a recording starts; the sample call's first three lines type
  * themselves in with who said them; the suggestion card flies into the
- * customer's folder; the share mark lights. One caption under the stage names
+ * customer's folder; the share mark lights. One caption ([IntroCaption]) names
  * the beat.
  *
- * Every piece is a pure function of the time since the stage appeared, against
- * [IntroFilm.schedule]. It plays once — a rotation keeps the final frame rather
- * than replaying. With the system's animations removed (Settings ›
- * Accessibility › "Remove animations") it starts on its final frame. TalkBack
- * reads the three points the page used to print, rather than a film it cannot
- * see.
+ * Every piece is a pure function of [t], the time since the stage appeared
+ * ([rememberIntroClock]), against [IntroFilm.schedule]. The stage has its final
+ * height from the first frame: every piece is laid out from the start and only
+ * fades, scales or slides in its own drawing layer, so nothing below it moves
+ * as the film plays. TalkBack reads the three points the page used to print,
+ * rather than a film it cannot see.
  *
- * [frozenAt] pins the clock (seconds), for previews; null plays the film.
+ * The caption is a separate composable so the page can keep it on screen while
+ * the pitch above it scrolls (see `OnboardingScreen`).
  */
 @Composable
-fun IntroStage(film: IntroFilm, modifier: Modifier = Modifier, frozenAt: Double? = null) {
-    val context = LocalContext.current
-    val removed = remember { animationsRemoved(context) }
-    val still = frozenAt ?: film.schedule.end.takeIf { removed }
-    val clock = rememberFilmClock(film.schedule.end, still)
-    val t = clock.value
+fun IntroStage(film: IntroFilm, t: Double, modifier: Modifier = Modifier) {
     val description = listOf(R.string.intro_point_record, R.string.intro_point_folder, R.string.intro_point_share)
         .map { stringResource(it) }
         .joinToString(". ")
 
     Column(
-        modifier = modifier.clearAndSetSemantics { contentDescription = description },
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = STAGE_MIN_HEIGHT)
+            .clearAndSetSemantics { contentDescription = description },
+        verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = STAGE_MIN_HEIGHT),
-            verticalArrangement = Arrangement.spacedBy(18.dp),
-        ) {
-            RecordingPill(film.schedule, t)
-            Transcript(film, t)
-            FolderBeat(film, t)
-            ShareMark(film.schedule, t)
-        }
-        Caption(film.schedule.beat(t) ?: LapMotion.IntroBeat.RECORDING)
+        RecordingPill(film.schedule, t)
+        Transcript(film, t)
+        FolderBeat(film, t)
+        ShareMark(film.schedule, t)
     }
+}
+
+/**
+ * The film's clock: seconds since it appeared, one value per frame until it
+ * ends. It plays once — a rotation keeps the final frame rather than replaying —
+ * and with the system's animations removed (Settings › Accessibility › "Remove
+ * animations") it starts on its final frame. [frozenAt] pins it, for previews.
+ */
+@Composable
+fun rememberIntroClock(film: IntroFilm, frozenAt: Double? = null): State<Double> {
+    val context = LocalContext.current
+    val removed = remember { animationsRemoved(context) }
+    val still = frozenAt ?: film.schedule.end.takeIf { removed }
+    return rememberFilmClock(film.schedule.end, still)
+}
+
+/**
+ * One line naming the beat, cross-fading as the beat changes. Always as tall as
+ * the tallest of the four captions — they are all laid out, invisibly, under the
+ * one showing — so a two-line caption never pushes anything. Silent to TalkBack:
+ * the stage already reads the three points.
+ */
+@Composable
+fun IntroCaption(film: IntroFilm, t: Double, modifier: Modifier = Modifier) {
+    val beat = film.schedule.beat(t) ?: LapMotion.IntroBeat.RECORDING
+    Box(modifier.clearAndSetSemantics {}) {
+        LapMotion.IntroBeat.entries.forEach { CaptionText(it, Modifier.alpha(0f)) }
+        Crossfade(targetState = beat, animationSpec = fade(), label = "caption") { CaptionText(it) }
+    }
+}
+
+/**
+ * Where the caption goes, in the pitch's viewport: right under the stage
+ * ([slotTop], in the scrolling content, less [scroll]) — unless that is below
+ * the viewport's bottom edge, in which case it sticks there, above the pinned
+ * sign-in button, until scrolling brings its own place into view. Pixels.
+ */
+internal fun stickyCaptionTop(slotTop: Float, scroll: Int, viewportHeight: Int, captionHeight: Int): Int {
+    val natural = (slotTop - scroll).roundToInt()
+    return minOf(natural, viewportHeight - captionHeight).coerceAtLeast(0)
 }
 
 /**
@@ -265,6 +292,7 @@ private fun FolderBeat(film: IntroFilm, t: Double) {
     val shown = t >= schedule.folder
     val landed = t >= schedule.cardFly
     val enter = animateFloatAsState(if (shown) 1f else 0f, lapSpring(), label = "folder")
+    val land = animateFloatAsState(if (landed) 1f else 0f, lapSpring(), label = "land")
     val wash = animateFloatAsState(
         targetValue = if (schedule.folderFlashing(t)) FLASH_ALPHA else 0f,
         animationSpec = tween(FLASH_MS),
@@ -275,11 +303,22 @@ private fun FolderBeat(film: IntroFilm, t: Double) {
 
     Column(
         modifier = Modifier.graphicsLayer { alpha = enter.value.coerceIn(0f, 1f) },
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(CARD_GAP),
     ) {
-        AnimatedVisibility(visible = !landed, exit = fadeOut(fade()) + shrinkVertically(lapSpring())) {
-            SuggestionCard(film.cardTitle)
-        }
+        // The card keeps its slot after it has flown, so the stage never
+        // changes height: it drops toward the row and fades as its copy in the
+        // row scales in.
+        SuggestionCard(
+            film.cardTitle,
+            Modifier.graphicsLayer {
+                val progress = land.value.coerceIn(0f, 1f)
+                translationY = progress * (size.height + CARD_GAP.toPx())
+                alpha = 1f - progress
+                val scale = 1f - (1f - CARD_LANDED_SCALE) * progress
+                scaleX = scale
+                scaleY = scale
+            },
+        )
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -297,16 +336,17 @@ private fun FolderBeat(film: IntroFilm, t: Double) {
             Icon(LibraryIcons.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(text = film.folderName, style = MaterialTheme.typography.titleSmall, maxLines = 1)
             Spacer(Modifier.width(8.dp))
-            AnimatedVisibility(
-                visible = landed,
-                enter = fadeIn(fade()) + scaleIn(lapSpring(), initialScale = CARD_START_SCALE),
-            ) {
-                SuggestionCard(film.cardTitle, Modifier.graphicsLayer {
-                    scaleX = CARD_LANDED_SCALE
-                    scaleY = CARD_LANDED_SCALE
+            SuggestionCard(
+                film.cardTitle,
+                Modifier.graphicsLayer {
+                    val progress = land.value.coerceIn(0f, 1f)
+                    val scale = CARD_START_SCALE + (CARD_LANDED_SCALE - CARD_START_SCALE) * land.value
+                    scaleX = scale
+                    scaleY = scale
+                    alpha = progress
                     transformOrigin = TransformOrigin(1f, 0.5f)
-                })
-            }
+                },
+            )
         }
     }
 }
@@ -357,18 +397,15 @@ private fun ShareMark(schedule: LapMotion.IntroSchedule, t: Double) {
     }
 }
 
-/** One line under the stage naming the beat, cross-fading as the beat changes. */
 @Composable
-private fun Caption(beat: LapMotion.IntroBeat) {
-    Crossfade(targetState = beat, animationSpec = fade(), label = "caption") { shown ->
-        Text(
-            text = stringResource(captionOf(shown)),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
+private fun CaptionText(beat: LapMotion.IntroBeat, modifier: Modifier = Modifier) {
+    Text(
+        text = stringResource(captionOf(beat)),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = TextAlign.Center,
+        modifier = modifier.fillMaxWidth(),
+    )
 }
 
 @StringRes
@@ -412,11 +449,13 @@ private const val RING_START_SCALE = 0.7f
 private const val RING_ALPHA = 0.25f
 private val RING_SIZE = 40.dp
 private val FOLDER_SLIDE = 24.dp
+private val CARD_GAP = 8.dp
 private val STAGE_MIN_HEIGHT = 300.dp
 
 // ── previews ─────────────────────────────────────────────────────────────────
 
-private val previewFilm = IntroFilm(
+/** A cast for previews, the zh-TW sample's opening. */
+internal val previewIntroFilm = IntroFilm(
     lines = listOf(
         IntroFilm.Line("你", isMe = true, text = "林經理午安，謝謝您今天抽時間。"),
         IntroFilm.Line("林經理", isMe = false, text = "旺季一天大概三百多通，平常兩百左右。"),
@@ -426,27 +465,30 @@ private val previewFilm = IntroFilm(
     cardTitle = "泓昇科技 · 客服語音系統需求訪談",
 )
 
-@Preview(name = "Intro — the final frame", showBackground = true, widthDp = 380)
 @Composable
-private fun IntroStageFinalPreview() {
-    ParleyTheme(preference = ThemePreference.LIGHT) {
-        Surface { IntroStage(previewFilm, Modifier.padding(24.dp), frozenAt = previewFilm.schedule.end) }
+private fun StagePreview(at: Double, preference: ThemePreference = ThemePreference.LIGHT) {
+    ParleyTheme(preference = preference) {
+        Surface {
+            Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                IntroStage(previewIntroFilm, at)
+                IntroCaption(previewIntroFilm, at)
+            }
+        }
     }
 }
 
-@Preview(name = "Intro — mid-transcript", showBackground = true, widthDp = 380)
+@Preview(name = "Intro — the final frame", showBackground = true, widthDp = 380)
 @Composable
-private fun IntroStageTypingPreview() {
-    ParleyTheme(preference = ThemePreference.LIGHT) {
-        val midLine = previewFilm.schedule.lines[1].start + 0.2
-        Surface { IntroStage(previewFilm, Modifier.padding(24.dp), frozenAt = midLine) }
-    }
-}
+private fun IntroStageFinalPreview() = StagePreview(previewIntroFilm.schedule.end)
+
+@Preview(name = "Intro — mid-transcript (same height as the final frame)", showBackground = true, widthDp = 380)
+@Composable
+private fun IntroStageTypingPreview() = StagePreview(previewIntroFilm.schedule.lines[1].start + 0.2)
+
+@Preview(name = "Intro — the card in flight", showBackground = true, widthDp = 380)
+@Composable
+private fun IntroStageFlyingPreview() = StagePreview(previewIntroFilm.schedule.cardFly + 0.1)
 
 @Preview(name = "Intro — dark, final frame", showBackground = true, widthDp = 380)
 @Composable
-private fun IntroStageDarkPreview() {
-    ParleyTheme(preference = ThemePreference.DARK) {
-        Surface { IntroStage(previewFilm, Modifier.padding(24.dp), frozenAt = previewFilm.schedule.end) }
-    }
-}
+private fun IntroStageDarkPreview() = StagePreview(previewIntroFilm.schedule.end, ThemePreference.DARK)

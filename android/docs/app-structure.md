@@ -250,7 +250,9 @@ hooks below.
   glyph lighting — with one caption per beat. The schedule is parleykit's
   `LapMotion.introBeats` (unit-tested); the cast is `IntroFilm.of(manifest)`.
   With "Remove animations" on it shows the final frame; TalkBack reads the three
-  points iOS gives VoiceOver.
+  points iOS gives VoiceOver. The stage has its final height from the first
+  frame, and the caption (`IntroCaption`) floats: under the stage when that is
+  on screen, else pinned just above the sign-in button (`stickyCaptionTop`).
 - **Checklist.** Above the personal library, not while searching: record, put
   it in a folder, replay, share with your AI. Each item ticks only from the real
   event — a recording saved in the upload queue, a successful filing (or a
