@@ -91,7 +91,13 @@ import androidx.compose.ui.input.pointer.AwaitPointerEventScope
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.Measurable
+import androidx.compose.ui.layout.MeasureResult
+import androidx.compose.ui.layout.MeasureScope
+import androidx.compose.ui.layout.Placeable
+import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
@@ -101,8 +107,11 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -1601,15 +1610,16 @@ private fun SourceBadge(recording: RecordingSummary) {
  * the far edge — when it happened, whether it has audio, and whether that audio
  * is on this phone.
  *
- * One line, never two. Everything here is short and exact except the folder
- * name, so every other item is pinned (`softWrap = false`, iOS's `fixedSize`)
- * and the folder alone takes what is left and truncates in it — `weight` is
- * iOS's `layoutPriority(1)`: the folder has the first claim on the slack, so it
- * degrades only once the row is actually full rather than at one character with
- * room beside it. Without a folder a spacer takes the slack instead, so the date
- * sits at the edge either way. The previous `FlowRow` answered the same pressure
- * by wrapping to a second line, which put the date under the duration on every
- * row that had a long customer name.
+ * One line, never two. The counts and the audio glyphs are short and exact, so
+ * they are pinned (`softWrap = false`, iOS's `fixedSize`). The folder and the
+ * date share what is left by [LibraryRules.metaWidths]: the folder truncates
+ * first but keeps its glyph and first few characters, and only then does the
+ * date shorten — so a long customer name degrades once the row is actually full,
+ * never down to a glyph and "…". The date is iOS's short form, month, day and
+ * time without the year ([formatRowTimestamp]), which is most of what keeps
+ * the folder readable on a phone. The previous `FlowRow` answered the same
+ * pressure by wrapping to a second line, which put the date under the duration
+ * on every row that had a long customer name.
  *
  * Zero counts are absent rather than shown as "0": a recording nobody has
  * analyzed has no findings line to report, and a row of zeroes reads as a
@@ -1621,47 +1631,151 @@ private fun RecordingMeta(
     folderName: String?,
     audio: AudioDownloadState,
 ) {
-    Row(
+    val gap = with(LocalDensity.current) { MetaGap.roundToPx() }
+    val folderMin = folderName?.let { rememberFolderMinWidth(it) } ?: 0
+    Layout(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        MetaItem(
-            icon = LibraryIcons.Clock,
-            label = stringResource(R.string.recording_meta_duration),
-            value = formatDuration(recording.durationMs),
-        )
-        recording.speakerCount?.takeIf { it > 0 }?.let { speakers ->
-            MetaItem(
-                icon = LibraryIcons.Group,
-                label = stringResource(R.string.recording_meta_speakers),
-                value = speakers.toString(),
+        content = {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(MetaGap),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.layoutId(MetaSlot.COUNTS),
+            ) {
+                MetaItem(
+                    icon = LibraryIcons.Clock,
+                    label = stringResource(R.string.recording_meta_duration),
+                    value = formatDuration(recording.durationMs),
+                )
+                recording.speakerCount?.takeIf { it > 0 }?.let { speakers ->
+                    MetaItem(
+                        icon = LibraryIcons.Group,
+                        label = stringResource(R.string.recording_meta_speakers),
+                        value = speakers.toString(),
+                    )
+                }
+                recording.findingsCount?.takeIf { it > 0 }?.let { findings ->
+                    // The lightbulb, the glyph the detail screen's findings carry on iOS.
+                    MetaItem(
+                        icon = LibraryIcons.Lightbulb,
+                        label = stringResource(R.string.detail_findings),
+                        value = findings.toString(),
+                    )
+                }
+            }
+            if (folderName != null) {
+                FolderMetaItem(folderName, Modifier.layoutId(MetaSlot.FOLDER))
+            }
+            Text(
+                text = formatRowTimestamp(recording.createdAt),
+                style = metaTextStyle(),
+                color = MaterialTheme.colorScheme.outline,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.layoutId(MetaSlot.DATE),
             )
-        }
-        recording.findingsCount?.takeIf { it > 0 }?.let { findings ->
-            // The lightbulb, the glyph the detail screen's findings carry on iOS.
-            MetaItem(
-                icon = LibraryIcons.Lightbulb,
-                label = stringResource(R.string.detail_findings),
-                value = findings.toString(),
-            )
-        }
-        if (folderName != null) {
-            FolderMetaItem(folderName, Modifier.weight(1f))
-        } else {
-            Spacer(Modifier.weight(1f))
-        }
-        MetaItem(icon = null, label = null, value = formatTimestamp(recording.createdAt))
-        if (recording.hasAudio) {
-            MetaItem(
-                icon = LibraryIcons.Speaker,
-                label = stringResource(R.string.recording_meta_audio),
-                value = null,
-            )
-        }
-        AudioIndicator(audio)
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(MetaGap),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.layoutId(MetaSlot.AUDIO),
+            ) {
+                if (recording.hasAudio) {
+                    MetaItem(
+                        icon = LibraryIcons.Speaker,
+                        label = stringResource(R.string.recording_meta_audio),
+                        value = null,
+                    )
+                }
+                AudioIndicator(audio)
+            }
+        },
+    ) { measurables, constraints ->
+        layoutMeta(measurables, constraints, gap, folderMin)
     }
 }
+
+/** The meta line's four parts, in the order they are placed. */
+private enum class MetaSlot { COUNTS, FOLDER, DATE, AUDIO }
+
+/** The gap between two meta items, iOS's `HStack(spacing: 10)`. */
+private val MetaGap = 10.dp
+
+/** Glyph, gap, and the folder name's first few characters: what a folder keeps. */
+private const val FolderMinChars = 6
+private val FolderGlyphSize = 13.dp
+private val FolderGlyphGap = 3.dp
+
+/**
+ * The narrowest a folder item gets before the date gives way — see
+ * [LibraryRules.metaWidths]. Measured from the name itself (its first
+ * [FolderMinChars] characters and an ellipsis), so six Chinese characters get
+ * the room six Chinese characters need and six Latin ones do not take more.
+ */
+@Composable
+private fun rememberFolderMinWidth(name: String): Int {
+    val measurer = rememberTextMeasurer()
+    val style = metaTextStyle()
+    val density = LocalDensity.current
+    return remember(name, style, density) {
+        val text = if (name.length > FolderMinChars) name.take(FolderMinChars) + "…" else name
+        val glyph = with(density) { (FolderGlyphSize + FolderGlyphGap).roundToPx() }
+        glyph + measurer.measure(text, style, maxLines = 1, softWrap = false).size.width
+    }
+}
+
+/**
+ * Counts from the start, the audio glyphs at the far edge, and the date just
+ * before them — all at their natural widths — then the folder and the date share
+ * what is left by [LibraryRules.metaWidths]: the folder truncates first, down to
+ * a few characters, and only then does the date shorten.
+ */
+private fun MeasureScope.layoutMeta(
+    measurables: List<Measurable>,
+    constraints: Constraints,
+    gap: Int,
+    folderMin: Int,
+): MeasureResult {
+    val width = constraints.maxWidth
+    val loose = constraints.copy(minWidth = 0, minHeight = 0)
+    fun slot(id: MetaSlot) = measurables.firstOrNull { it.layoutId == id }
+
+    val counts = slot(MetaSlot.COUNTS)!!.measure(loose)
+    val audio = slot(MetaSlot.AUDIO)!!.measure(loose)
+    val dateSlot = slot(MetaSlot.DATE)!!
+    val folderSlot = slot(MetaSlot.FOLDER)
+    val rowHeight = maxOf(counts.height, audio.height)
+    val dateNatural = dateSlot.maxIntrinsicWidth(rowHeight)
+    val folderNatural = folderSlot?.maxIntrinsicWidth(rowHeight) ?: 0
+
+    val gaps = gap + // counts → folder, or counts → date
+        (if (folderSlot != null) gap else 0) + // folder → date
+        (if (audio.width > 0) gap else 0) // date → audio glyphs
+    val widths = LibraryRules.metaWidths(
+        available = width - counts.width - audio.width - gaps,
+        dateNatural = dateNatural,
+        folderNatural = folderNatural,
+        folderMin = folderMin,
+    )
+    val date = dateSlot.measure(Constraints.fixedWidth(widths.date).copy(minHeight = 0))
+    val folder = folderSlot?.measure(Constraints.fixedWidth(widths.folder).copy(minHeight = 0))
+
+    val height = maxOf(rowHeight, date.height, folder?.height ?: 0)
+    return layout(width, height) {
+        fun Placeable.placeCentred(x: Int) = placeRelative(x, (height - this.height) / 2)
+        counts.placeCentred(0)
+        folder?.placeCentred(counts.width + gap)
+        val audioX = width - audio.width
+        audio.placeCentred(audioX)
+        date.placeCentred(audioX - (if (audio.width > 0) gap else 0) - date.width)
+    }
+}
+
+/** The meta line's type: 12sp, tabular figures so counts do not reflow. */
+@Composable
+private fun metaTextStyle(): TextStyle = MaterialTheme.typography.labelSmall.copy(
+    fontSize = 12.sp,
+    fontFeatureSettings = "tnum",
+)
 
 /**
  * The last thing on the meta line — iOS `RecordingCard.audioIndicator`: a
@@ -1761,7 +1875,7 @@ private fun FolderMetaItem(name: String, modifier: Modifier = Modifier) {
     val label = stringResource(R.string.library_folder_meta)
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(FolderGlyphGap),
         modifier = modifier
             .semantics(mergeDescendants = true) { contentDescription = "$label $name" },
     ) {
@@ -1769,13 +1883,16 @@ private fun FolderMetaItem(name: String, modifier: Modifier = Modifier) {
             imageVector = LibraryIcons.Folder,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.outline,
-            modifier = Modifier.size(13.dp),
+            modifier = Modifier.size(FolderGlyphSize),
         )
         Text(
             text = name,
-            style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp),
+            // The same style [rememberFolderMinWidth] measures with.
+            style = metaTextStyle(),
             color = MaterialTheme.colorScheme.outline,
             maxLines = 1,
+            // Cut at a character, not a word: "Northw…" says more than "…".
+            softWrap = false,
             overflow = TextOverflow.Ellipsis,
         )
     }
@@ -1817,10 +1934,7 @@ private fun MetaItem(icon: ImageVector?, label: String?, value: String?) {
                 text = value,
                 // Tabular figures, so a row of counts does not reflow a digit at
                 // a time when the list refreshes under it.
-                style = MaterialTheme.typography.labelSmall.copy(
-                    fontSize = 12.sp,
-                    fontFeatureSettings = "tnum",
-                ),
+                style = metaTextStyle(),
                 color = MaterialTheme.colorScheme.outline,
                 maxLines = 1,
                 softWrap = false,

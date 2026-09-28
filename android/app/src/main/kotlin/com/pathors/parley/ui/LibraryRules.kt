@@ -55,6 +55,9 @@ internal data class RecordingRowModel(
  */
 internal enum class DownloadAction { DOWNLOAD, REMOVE }
 
+/** The widths [LibraryRules.metaWidths] hands the folder and the date, in pixels. */
+internal data class MetaWidths(val folder: Int, val date: Int)
+
 /** What a library row's tap and menu entries do. */
 internal class RecordingRowActions(
     val onClick: () -> Unit,
@@ -100,6 +103,28 @@ internal object LibraryRules {
         audio = audio,
         canDownload = state.isPersonal && !SampleManifest.isSample(recording.id),
     )
+
+    /**
+     * How a row's meta line shares out the width its pinned items (the counts,
+     * the audio glyphs) leave: [available] pixels between the folder and the
+     * date, spacing already taken off.
+     *
+     * Both get their natural width when they fit. When they do not, the folder
+     * gives way first — but only down to [folderMin] (a few characters and the
+     * glyph, never less than it needs): from there on the date shortens
+     * instead. Without the floor a long date left a folder as a glyph and "…",
+     * which says nothing; iOS truncates the folder only as far as it has to.
+     * With too little room for even the floor the folder takes all of it and
+     * the date none.
+     */
+    fun metaWidths(available: Int, dateNatural: Int, folderNatural: Int, folderMin: Int): MetaWidths {
+        val room = available.coerceAtLeast(0)
+        if (dateNatural + folderNatural <= room) return MetaWidths(folder = folderNatural, date = dateNatural)
+        val floor = minOf(folderNatural, folderMin.coerceAtLeast(0))
+        if (room <= floor) return MetaWidths(folder = room, date = 0)
+        val folder = (room - dateNatural).coerceIn(floor, folderNatural)
+        return MetaWidths(folder = folder, date = (room - folder).coerceAtMost(dateNatural))
+    }
 
     /**
      * A folder move that did not land. A 403 names the organization, and only

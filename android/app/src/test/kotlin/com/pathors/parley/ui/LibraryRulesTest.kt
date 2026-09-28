@@ -106,6 +106,50 @@ class LibraryRulesTest {
     }
 
     @Test
+    fun `the meta line gives both their width when they fit`() {
+        assertEquals(
+            MetaWidths(folder = 80, date = 120),
+            LibraryRules.metaWidths(available = 300, dateNatural = 120, folderNatural = 80, folderMin = 60),
+        )
+    }
+
+    @Test
+    fun `the folder gives way first, down to its floor, before the date shortens`() {
+        // 40px short: the folder alone absorbs it, still above its floor.
+        assertEquals(
+            MetaWidths(folder = 140, date = 120),
+            LibraryRules.metaWidths(available = 260, dateNatural = 120, folderNatural = 180, folderMin = 60),
+        )
+        // The row seen on a 1080-wide phone: a long date used to leave the
+        // folder a glyph and "…". It keeps its floor, and the date shortens.
+        assertEquals(
+            MetaWidths(folder = 60, date = 90),
+            LibraryRules.metaWidths(available = 150, dateNatural = 160, folderNatural = 180, folderMin = 60),
+        )
+    }
+
+    @Test
+    fun `a short folder is never padded out to the floor, and no room means no date`() {
+        assertEquals(
+            MetaWidths(folder = 30, date = 70),
+            LibraryRules.metaWidths(available = 100, dateNatural = 120, folderNatural = 30, folderMin = 60),
+        )
+        assertEquals(
+            MetaWidths(folder = 40, date = 0),
+            LibraryRules.metaWidths(available = 40, dateNatural = 120, folderNatural = 180, folderMin = 60),
+        )
+        assertEquals(
+            "no folder: the date takes what there is",
+            MetaWidths(folder = 0, date = 50),
+            LibraryRules.metaWidths(available = 50, dateNatural = 120, folderNatural = 0, folderMin = 0),
+        )
+        assertEquals(
+            MetaWidths(folder = 0, date = 0),
+            LibraryRules.metaWidths(available = -20, dateNatural = 120, folderNatural = 180, folderMin = 60),
+        )
+    }
+
+    @Test
     fun `an import is announced only once it is in the cloud`() {
         val landed = ImportState.Finished(recordingId = "r1", pendingUpload = false)
         assertEquals(ImportNotice("Board.m4a", null), ImportNotice.of("Board.m4a", landed))
