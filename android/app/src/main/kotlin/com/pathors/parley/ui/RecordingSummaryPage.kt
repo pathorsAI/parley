@@ -29,7 +29,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
@@ -135,11 +134,11 @@ private fun Brief(brief: String, onJump: (Long) -> Unit) {
     val stampSize = MaterialTheme.typography.bodySmall.fontSize
     // The paragraphs are remembered against the brief, not the callback, so the
     // link reads whichever callback is current when it is tapped.
-    val jump by rememberUpdatedState(onJump)
+    val latestJump = rememberUpdatedState(onJump)
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         paragraphs.forEach { runs ->
             val text = remember(runs, link, stampSize) {
-                briefParagraph(runs, link, stampSize) { jump(it) }
+                briefParagraph(runs, link, stampSize) { ms -> latestJump.value(ms) }
             }
             Text(
                 text = text,

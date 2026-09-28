@@ -221,11 +221,13 @@ fun RecordingDetailScreen(
             state = state,
             playback = playback,
             orgId = orgId,
-            face = face ?: DetailFace.TRANSCRIPT,
-            onFaceChange = { chosenFace = it },
+            pages = PageControl(
+                face = face ?: DetailFace.TRANSCRIPT,
+                onFaceChange = { chosenFace = it },
+                searching = searching,
+                onCloseSearch = { searching = false },
+            ),
             generate = menu::shareToAI,
-            searching = searching,
-            onCloseSearch = { searching = false },
             padding = padding,
         )
     }
@@ -426,11 +428,8 @@ private fun DetailContent(
     state: RecordingDetailViewModel.UiState,
     playback: PlaybackState,
     orgId: String?,
-    face: DetailFace,
-    onFaceChange: (DetailFace) -> Unit,
+    pages: PageControl,
     generate: () -> Unit,
-    searching: Boolean,
-    onCloseSearch: () -> Unit,
     padding: PaddingValues,
 ) {
     val meta = state.meta
@@ -465,8 +464,7 @@ private fun DetailContent(
             DetailBody(
                 meta = meta,
                 state = state,
-                face = face,
-                onFaceChange = onFaceChange,
+                pages = pages,
                 playback = playback,
                 player = remember(viewModel) {
                     PlayerActions(jumpTo = viewModel::jumpTo, holdTwoX = viewModel::holdTwoX)
@@ -478,8 +476,6 @@ private fun DetailContent(
                         generate = generate,
                     )
                 },
-                searching = searching,
-                onCloseSearch = onCloseSearch,
             )
         }
     }
@@ -909,14 +905,15 @@ private fun FaceSwitcher(face: DetailFace, onFaceChange: (DetailFace) -> Unit) {
 private fun DetailBody(
     meta: RecordingMeta,
     state: RecordingDetailViewModel.UiState,
-    face: DetailFace,
-    onFaceChange: (DetailFace) -> Unit,
+    pages: PageControl,
     playback: PlaybackState,
     player: PlayerActions,
     summary: SummaryHooks,
-    searching: Boolean,
-    onCloseSearch: () -> Unit,
 ) {
+    val face = pages.face
+    val onFaceChange = pages.onFaceChange
+    val searching = pages.searching
+    val onCloseSearch = pages.onCloseSearch
     val context = LocalContext.current
     val transcriptList = rememberLazyListState()
     val summaryList = rememberLazyListState()
@@ -1058,6 +1055,18 @@ private fun DetailBody(
     }
 }
 
+/**
+ * Which page is up and whether the search field is, with the two ways to
+ * change them — held by the screen, because the toolbar drives both.
+ */
+@Immutable
+private class PageControl(
+    val face: DetailFace,
+    val onFaceChange: (DetailFace) -> Unit,
+    val searching: Boolean,
+    val onCloseSearch: () -> Unit,
+)
+
 /** The two things the transcript asks of the player. */
 @Immutable
 private class PlayerActions(
@@ -1197,11 +1206,11 @@ private fun FollowPlayheadEffects(
 
     // Read at the moment the seek lands, not when the effect was keyed: the
     // position and the generation move in the same state update.
-    val latestIndex by rememberUpdatedState(currentIndex)
+    val latestIndex = rememberUpdatedState(currentIndex)
     LaunchedEffect(seekGeneration) {
         if (seekGeneration == 0) return@LaunchedEffect
         onFollowChange(true)
-        val turn = latestIndex
+        val turn = latestIndex.value
         if (turn >= 0) scroll.snapToTurn(turn)
     }
 
@@ -1290,7 +1299,7 @@ private fun TranscriptPage(
     onHoldTwoX: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val holdTwoX by rememberUpdatedState(onHoldTwoX)
+    val latestHoldTwoX = rememberUpdatedState(onHoldTwoX)
     // Set by the hold itself, synchronously, so a turn's long-press menu — whose
     // own timer runs out just after the hold engages — knows the press was
     // somebody asking for 2× rather than for the menu.
@@ -1302,7 +1311,7 @@ private fun TranscriptPage(
             if (!decoration.isSeekable) return@pointerInput
             detectEdgeHold(band) { holding ->
                 edgeHeld = holding
-                holdTwoX(holding)
+                latestHoldTwoX.value(holding)
             }
         },
     ) {
@@ -1459,24 +1468,28 @@ private fun TranscriptList(
         items(segments.size) { index ->
             val segment = segments[index]
             TranscriptTurn(
-                label = content.labels[index],
-                segment = segment,
-                isCurrent = index == decoration.currentIndex,
-                wash = TurnWash(isFlashing = flash.isFlashing(segment.id), isLit = lit.isFlashing(segment.id)),
-                enabled = decoration.isSeekable,
-                hits = decoration.matches.byTurn[segment.id].orEmpty(),
-                activeHit = decoration.activeHit,
-                findings = content.annotations[segment.id].orEmpty(),
-                canOpenMenu = canOpenMenu,
-                onTap = {
-                    decoration.onSeek(segment.startMs)
-                    flash.light(segment.id)
-                },
-                onFinding = { finding ->
-                    // Goes to the finding's own moment, which may be inside the turn.
-                    if (decoration.isSeekable) decoration.onSeek(finding.atMs)
-                    lit.light(segment.id)
-                },
+                turn = TurnView(
+                    label = content.labels[index],
+                    segment = segment,
+                    isCurrent = index == decoration.currentIndex,
+                    wash = TurnWash(isFlashing = flash.isFlashing(segment.id), isLit = lit.isFlashing(segment.id)),
+                    enabled = decoration.isSeekable,
+                    hits = decoration.matches.byTurn[segment.id].orEmpty(),
+                    activeHit = decoration.activeHit,
+                    findings = content.annotations[segment.id].orEmpty(),
+                ),
+                actions = TurnActions(
+                    canOpenMenu = canOpenMenu,
+                    onTap = {
+                        decoration.onSeek(segment.startMs)
+                        flash.light(segment.id)
+                    },
+                    onFinding = { finding ->
+                        // Goes to the finding's own moment, which may be inside the turn.
+                        if (decoration.isSeekable) decoration.onSeek(finding.atMs)
+                        lit.light(segment.id)
+                    },
+                ),
             )
         }
     }
@@ -1658,6 +1671,31 @@ private data class TurnDecoration(
 @Immutable
 private data class TurnWash(val isFlashing: Boolean, val isLit: Boolean)
 
+/** Everything one turn draws: its words, its label, and what is marked on it. */
+@Immutable
+private data class TurnView(
+    val label: String,
+    val segment: TranscriptSegmentDto,
+    /** The playhead is inside this turn: its speaker label goes blue. */
+    val isCurrent: Boolean,
+    val wash: TurnWash,
+    /** Whether a tap can seek — false when there is no audio to move. */
+    val enabled: Boolean,
+    val hits: List<TranscriptSearch.Hit>,
+    val activeHit: TranscriptSearch.Hit?,
+    /** The findings that start in this turn, for its 💡 lines. */
+    val findings: List<FindingRow>,
+)
+
+/** What a turn does when it is touched. */
+@Immutable
+private class TurnActions(
+    /** False while an edge hold is on, so the hold does not also open the menu. */
+    val canOpenMenu: () -> Boolean,
+    val onTap: () -> Unit,
+    val onFinding: (FindingRow) -> Unit,
+)
+
 /**
  * One turn of the conversation, and the gestures on it.
  *
@@ -1670,19 +1708,16 @@ private data class TurnWash(val isFlashing: Boolean, val isLit: Boolean)
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun TranscriptTurn(
-    label: String,
-    segment: TranscriptSegmentDto,
-    isCurrent: Boolean,
-    wash: TurnWash,
-    enabled: Boolean,
-    hits: List<TranscriptSearch.Hit>,
-    activeHit: TranscriptSearch.Hit?,
-    findings: List<FindingRow>,
-    canOpenMenu: () -> Boolean,
-    onTap: () -> Unit,
-    onFinding: (FindingRow) -> Unit,
-) {
+private fun TranscriptTurn(turn: TurnView, actions: TurnActions) {
+    val label = turn.label
+    val segment = turn.segment
+    val wash = turn.wash
+    val enabled = turn.enabled
+    val hits = turn.hits
+    val activeHit = turn.activeHit
+    val canOpenMenu = actions.canOpenMenu
+    val onTap = actions.onTap
+    val onFinding = actions.onFinding
     var menuOpen by remember { mutableStateOf(false) }
     val highlight = MaterialTheme.colorScheme.primary
     val text = remember(segment.text, hits, activeHit, highlight) {
@@ -1707,11 +1742,11 @@ private fun TranscriptTurn(
             )
             .padding(horizontal = 6.dp, vertical = 4.dp),
     ) {
-        TurnHeading(label = label, startMs = segment.startMs, isCurrent = isCurrent)
+        TurnHeading(label = label, startMs = segment.startMs, isCurrent = turn.isCurrent)
         SelectionContainer {
             Text(text = text, style = MaterialTheme.typography.bodyLarge)
         }
-        findings.forEach { finding ->
+        turn.findings.forEach { finding ->
             FindingNote(finding = finding, onTap = { onFinding(finding) })
         }
         TurnActionsMenu(
