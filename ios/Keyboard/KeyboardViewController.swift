@@ -57,6 +57,15 @@ final class KeyboardViewController: UIInputViewController {
     private var waveReveal: Task<Void, Never>?
     /// Takes the wave down once its ease-out after `done` has played.
     private var waveFade: Task<Void, Never>?
+    /// Takes the "Copied" label in the slot's corner down again — see
+    /// `copyDictation`. Replaced on every tap, so a second tap restarts the
+    /// label's time rather than being cut short by the first tap's.
+    private var copiedFade: Task<Void, Never>?
+    /// The session whose copy target the user closed by typing after it — see
+    /// `keyPressed`. The downlink keeps republishing `done`, and every drain
+    /// would otherwise offer the copy again; remembering the id is what makes
+    /// "the user has moved on" stick for the rest of that session.
+    private var copyClosedSession = ""
 
     /// The keyboard's view of the current session. It mints the id, so it owns
     /// the truth about which downlink is "ours"; a downlink for any other
@@ -297,8 +306,13 @@ final class KeyboardViewController: UIInputViewController {
         // The tail belongs to the field it was dictated into. Coming back to a
         // *different* field it would read as text that is already there, so it
         // is dropped unless a session is still running — `drainDownlink` below
-        // puts it straight back when one is.
-        if !bridge.listening { bridge.tail = "" }
+        // puts it straight back when one is. The copy target goes with it, by
+        // the same rule — it is only ever a copy of words on screen — and the
+        // drain re-offers it for exactly the tail it puts back.
+        if !bridge.listening {
+            bridge.tail = ""
+            offerCopy(nil)
+        }
         // A fresh appearance is a freshly read field: whatever it says now is
         // current. See `staleHostDark`.
         staleHostDark = false
@@ -594,6 +608,9 @@ final class KeyboardViewController: UIInputViewController {
         bridge.tail = ""
         bridge.errorText = nil
         bridge.micTaken = false
+        // The last dictation's words leave the slot, so they stop being the
+        // thing a tap there copies.
+        offerCopy(nil)
         // The pane went live before the app has said a word; the watchdog is
         // what takes it back if the app never does (see `checkLiveness`).
         checkLiveness()
@@ -1025,6 +1042,10 @@ final class KeyboardViewController: UIInputViewController {
         // slot goes back to the idle invitation to speak.
         bridge.errorText = nil
         bridge.micTaken = false
+        // Nothing is on screen any more, so nothing is there to copy — which
+        // also covers `abandonSession`, whose red copy follows with no words
+        // under it.
+        offerCopy(nil)
         // The button goes back to its resting size under the finger, with the
         // rest of the pane. Letting it coast down from the last word would be
         // the one part of this still animating a session the user just ended.
@@ -1255,11 +1276,24 @@ final class KeyboardViewController: UIInputViewController {
             bridge.listening = false
             bridge.reconnecting = false
             bridge.partial = ""
-            bridge.tail = ""
+            // The tail stays, set above from what had settled. It used to be
+            // cleared here, which made an error the one ending that took the
+            // words off the screen as well as out of the field — the failure
+            // is exactly when they exist nowhere else. The slot now shows them
+            // under the error (`KeyboardRootView.failedText`), and a tap copies
+            // them. An error before any word settled has an empty tail and
+            // looks as it always has.
+            //
             // Surface the app's failure where the user actually is. Swallowing
             // it (the old behavior) read as "the mic button does nothing".
             bridge.errorText = d.errorMessage ?? String(localized: "Couldn't start. Try again.")
         }
+        // Whether a tap on the slot copies, derived from the same file the
+        // slot's words came from: the whole of `committed` once the session is
+        // over, and nothing while it is not. See `DictationCopy`.
+        offerCopy(
+            DictationCopy.text(
+                for: d.state, committed: d.committed, hasFullAccess: hasFullAccess))
         // Nothing that is not live has a level. One line here rather than the
         // same line in each of the four terminal branches above: whatever took
         // the pane out of its listening shape, the meter goes with it. Idle
@@ -1269,6 +1303,75 @@ final class KeyboardViewController: UIInputViewController {
         // Every drain is a sign of life or the end of one; either way the
         // watchdog's deadline moved.
         checkLiveness()
+    }
+
+    // MARK: copying the finished dictation
+
+    /// How long "Copied" stays in the slot's corner after a tap. Long enough
+    /// to be read at a glance, short enough that the corner is back to its
+    /// copy glyph before the user has looked away from it and back.
+    private static let copiedLabelHold: Duration = .milliseconds(1500)
+
+    /// Make `text` what a tap on the slot copies, or make the slot not a copy
+    /// target with `nil`.
+    ///
+    /// Every way the copy target changes comes through here, so the two rules
+    /// that go with it cannot be forgotten at one of the call sites: a session
+    /// the user has typed after stays closed (`copyClosedSession`), and the
+    /// "Copied" label never outlives the target it was about. Assigns only on
+    /// a change — the drain runs on every note and every appearance, and a
+    /// `@Published` assignment redraws the keyboard even when nothing moved.
+    private func offerCopy(_ text: String?) {
+        let next = session == copyClosedSession ? nil : text
+        if bridge.copyableText != next { bridge.copyableText = next }
+        guard next == nil else { return }
+        copiedFade?.cancel()
+        copiedFade = nil
+        if bridge.justCopied { bridge.justCopied = false }
+    }
+
+    /// The user tapped the transcript slot of a finished dictation: put the
+    /// whole of it on the pasteboard, and say so with a tick and "Copied" in the slot's corner.
+    ///
+    /// `copyableText` rather than `tail`: the tail is the last `tailLimit`
+    /// characters, and what is wanted on the pasteboard is everything that
+    /// was said. The two are the same text for any dictation short enough to
+    /// see whole.
+    ///
+    /// Behind Full Access twice over — the pasteboard and the haptic both need
+    /// it — though without it `copyableText` is never set to begin with.
+    func copyDictation() {
+        guard hasFullAccess, let text = bridge.copyableText else { return }
+        UIPasteboard.general.string = text
+        Haptics.dictationCopied()
+        if !bridge.justCopied { bridge.justCopied = true }
+        // A repeated tap shows the label again if it had gone, and restarts
+        // its time rather than stacking a second fade behind the first.
+        copiedFade?.cancel()
+        copiedFade = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.copiedLabelHold)
+            guard !Task.isCancelled, let self else { return }
+            self.copiedFade = nil
+            self.bridge.justCopied = false
+        }
+    }
+
+    /// A key on this keyboard typed or deleted something after a dictation:
+    /// the user has moved on from those words, so the slot stops being a way
+    /// to copy them.
+    ///
+    /// The key press itself, because nothing better exists. The lexicon watch
+    /// is the other thing here that cares about edits after a dictation, but
+    /// it only looks at the field twice — when the keyboard leaves and when
+    /// the next session starts — and cannot say when the first edit happened.
+    /// The host's `textDidChange` is no help either: it never reports the
+    /// keyboard's own edits, and it does report a tap that merely moves the
+    /// cursor. So the keys call this, and the words stay on screen as they
+    /// always have — only the copy target goes.
+    private func keyPressed() {
+        guard bridge.copyableText != nil else { return }
+        copyClosedSession = session
+        offerCopy(nil)
     }
 
     /// Open the container app from the extension. The classic responder-chain
@@ -1291,13 +1394,22 @@ final class KeyboardViewController: UIInputViewController {
     // MARK: 注音 (called from SwiftUI)
 
     /// A bopomofo key.
-    func zhuyinSymbol(_ symbol: Character) { apply(zhuyin.symbol(symbol)) }
+    func zhuyinSymbol(_ symbol: Character) {
+        keyPressed()
+        apply(zhuyin.symbol(symbol))
+    }
 
     /// A tone key: finalize the syllable and show its candidates.
-    func zhuyinTone(_ tone: ZhuyinTone) { apply(zhuyin.tone(tone)) }
+    func zhuyinTone(_ tone: ZhuyinTone) {
+        keyPressed()
+        apply(zhuyin.tone(tone))
+    }
 
     /// The user picked a character out of the candidate bar.
-    func zhuyinPick(_ candidate: String) { apply(zhuyin.pick(candidate)) }
+    func zhuyinPick(_ candidate: String) {
+        keyPressed()
+        apply(zhuyin.pick(candidate))
+    }
 
     /// Do whatever the composer asked for, then republish what it is holding.
     ///
@@ -1560,6 +1672,7 @@ final class KeyboardViewController: UIInputViewController {
         // Empty right after a space, where the bar holds predictions: the tap
         // then deletes nothing and only inserts.
         let partial = bridge.english.partialWord
+        keyPressed()
         apply(zhuyin.confirm())
         for _ in 0..<partial.unicodeScalars.count { textDocumentProxy.deleteBackward() }
         textDocumentProxy.insertText(word + " ")
@@ -1572,6 +1685,7 @@ final class KeyboardViewController: UIInputViewController {
     /// bar first, then the syllable slot by slot — and only reaches the field
     /// once there is nothing pending. See `ZhuyinComposer.delete()`.
     func deleteBackward() {
+        keyPressed()
         apply(zhuyin.delete()) { textDocumentProxy.deleteBackward() }
         refreshSuggestions()
     }
@@ -1585,6 +1699,7 @@ final class KeyboardViewController: UIInputViewController {
     /// returns before its `documentContextBeforeInput` — a round trip to the
     /// host — on every pane but English.
     func insert(_ text: String) {
+        keyPressed()
         typeOutsideComposition(text)
         refreshSuggestions()
     }
@@ -1598,6 +1713,7 @@ final class KeyboardViewController: UIInputViewController {
     /// keyboard does: the first return closes the composition, the next one
     /// breaks the line.
     func insertReturn() {
+        keyPressed()
         apply(zhuyin.confirm()) { textDocumentProxy.insertText("\n") }
         refreshSuggestions()
     }
@@ -1619,6 +1735,7 @@ final class KeyboardViewController: UIInputViewController {
     /// trip to the host. `refreshSuggestions` reads it on the English pane
     /// only.
     func insertSpace() {
+        keyPressed()
         typeSpace()
         refreshSuggestions()
     }
@@ -1739,6 +1856,21 @@ final class KeyboardBridge: ObservableObject {
     /// and by any other downlink state, including the app publishing `listening`
     /// again for the same session when the microphone comes back.
     @Published var micTaken = false
+
+    /// The whole text of the dictation on screen, while a tap on the slot
+    /// copies it — after `done`, or after an `error` with words settled — and
+    /// `nil` the rest of the time. See `DictationCopy` for when, and
+    /// `KeyboardViewController.offerCopy` for what ends it.
+    ///
+    /// The one place this keyboard holds more than `tail`: a long dictation's
+    /// full text, for as long as it is on screen. In memory only, never
+    /// written anywhere, and dropped with the words — by the next session, a
+    /// ✕, the pane being cleared, or the user typing after it. The same rule
+    /// as the tail's, a few more kilobytes at most.
+    @Published var copyableText: String?
+    /// A tap just copied `copyableText`: the slot's corner shows a checkmark
+    /// and "Copied" in place of the copy glyph, for `copiedLabelHold`.
+    @Published var justCopied = false
 
     /// What the record button is doing with the user's voice, smoothed and
     /// ready to draw. Two `Float`s, published together.
@@ -1913,6 +2045,9 @@ final class KeyboardBridge: ObservableObject {
     func skipPolish() { controller?.skipPolishing() }
     /// End the session and throw the words away — the ✕ beside ⏹.
     func cancel() { controller?.cancelDictation() }
+    /// Put the finished dictation on the pasteboard — a tap on the slot while
+    /// `copyableText` is set.
+    func copyDictation() { controller?.copyDictation() }
     func backspace() { controller?.deleteBackward() }
     func type(_ text: String) { controller?.insert(text) }
     func space() { controller?.insertSpace() }

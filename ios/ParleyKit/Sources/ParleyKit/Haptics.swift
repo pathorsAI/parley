@@ -26,9 +26,9 @@
     /// against the keyclick and the finger's own landing; the dismissal used to
     /// be nothing at all, and so did both ends of a meeting recording.
     ///
-    /// ## Five shapes
+    /// ## Six shapes
     ///
-    /// A new beat has to be one of these or be a sixth on purpose:
+    /// A new beat has to be one of these or be a seventh on purpose:
     ///
     /// | Shape | Means |
     /// |---|---|
@@ -37,6 +37,7 @@
     /// | falling, slow, to almost nothing — `.heavy` → `.light`, 130 ms | the keyboard is leaving, but something is still listening |
     /// | one hard tick — `.rigid` | thrown away; nothing follows |
     /// | level, tight — `.heavy` → `.heavy`, 60 ms | the microphone was taken away from you |
+    /// | one soft tick — `.light` | copied; nothing in the document changed |
     ///
     /// The two tight patterns are each other played backwards, which is the
     /// point: a stop is the undoing of the start that opened it, and that is
@@ -53,6 +54,9 @@
     /// shape with nowhere to travel, and going nowhere twice is the only
     /// two-beat pattern left that is neither a rise nor a fall. See
     /// `micTakenBySystem`.
+    ///
+    /// The sixth is not about the microphone at all, and is shaped to say so:
+    /// one beat, and the quietest one there is. See `dictationCopied`.
     ///
     /// ## Where this lives
     ///
@@ -305,11 +309,31 @@
         /// a session never blur.
         ///
         /// Also left alone. `.rigid` was already the most distinguishable of
-        /// these endings, and it is still the only single-beat event in the set
-        /// — which is a shape too: nothing follows it, because nothing follows.
+        /// these endings, and it is still the only single-beat event among the
+        /// microphone's — which is a shape too: nothing follows it, because
+        /// nothing follows. (`dictationCopied` is single-beat as well, and
+        /// deliberately at the other end of the scale; it ends nothing.)
         /// `recordingDiscarded` is the same tick calling this, rather than a
         /// second single-beat event beside it, which is what keeps that true.
         public static func dictationDiscarded() { discard.impactOccurred() }
+
+        /// The finished dictation was copied from the keyboard's transcript
+        /// slot: one `.light` tick, when the tap lands.
+        ///
+        /// Outside the microphone's vocabulary on purpose. Every other beat
+        /// here brackets a microphone opening or closing, and a copy does
+        /// neither — the session is already over, and nothing in the field
+        /// changed. So it borrows none of their shapes: no direction, because
+        /// nothing began or ended, and not the success pattern, which already
+        /// means "your words landed in the field" and fired for this very
+        /// dictation a moment earlier. What is left is the smallest thing the
+        /// phone can do, which is also roughly what the system's own copy
+        /// feels like — a receipt, not an event.
+        ///
+        /// Fired on every tap, repeats included: each one really did put the
+        /// text on the pasteboard, and the "Copied" label it answers is re-shown
+        /// every time as well.
+        public static func dictationCopied() { light.impactOccurred() }
 
         /// Warm the engine up for a meeting recording, on the tap that starts
         /// one. The meeting's answer to `prepareForDictation`, and it warms
