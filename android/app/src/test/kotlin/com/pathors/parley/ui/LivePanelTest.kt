@@ -26,7 +26,7 @@ class LivePanelTest {
         assertTrue(shape.showsDiscard)
         assertTrue(shape.showsStatusRow)
         assertTrue(shape.showsStatusLine)
-        assertTrue(shape.showsLevelMeter)
+        assertTrue(shape.showsWaveform)
         assertEquals(1f, shape.progress, 0f)
         assertEquals(LivePanel.TIMER_FULL_SP, shape.timerSp, 0.001f)
         assertEquals(LivePanel.STOP_FULL_DP, shape.stopDp, 0.001f)
@@ -40,7 +40,7 @@ class LivePanelTest {
         assertFalse(shape.showsDiscard)
         assertFalse(shape.showsStatusRow)
         assertFalse(shape.showsStatusLine)
-        assertFalse(shape.showsLevelMeter)
+        assertFalse(shape.showsWaveform)
         assertEquals(0f, shape.columnAlpha, 0f)
         assertEquals(1f, shape.rowAlpha, 0f)
         assertEquals(LivePanel.TIMER_SMALLEST_SP, shape.timerSp, 0.001f)
@@ -56,8 +56,8 @@ class LivePanelTest {
         assertFalse(at(284f).showsStatusRow)
         assertTrue(at(250f).showsStatusLine)
         assertFalse(at(249f).showsStatusLine)
-        assertTrue(at(215f).showsLevelMeter)
-        assertFalse(at(214f).showsLevelMeter)
+        assertTrue(at(215f).showsWaveform)
+        assertFalse(at(214f).showsWaveform)
         // Timer 34 + 22t, stop 56 + 16t.
         val t = (219f - compact) / (prototypeFull - compact)
         assertEquals(34f + 22f * t, at(219f).timerSp, 0.001f)
@@ -74,14 +74,14 @@ class LivePanelTest {
     }
 
     @Test
-    fun `secondary pieces leave in order, discard first and the level meter last`() {
+    fun `secondary pieces leave in order, discard first and the waveform last`() {
         for (full in listOf(260f, 350f, 480f)) {
             var seenDiscard = false
             for (h in heights(full)) {
                 val s = LivePanel.shape(h, full)
                 if (s.showsDiscard) assertTrue("status row outlived by discard at $h/$full", s.showsStatusRow)
                 if (s.showsStatusRow) assertTrue("status line at $h/$full", s.showsStatusLine)
-                if (s.showsStatusLine) assertTrue("level meter at $h/$full", s.showsLevelMeter)
+                if (s.showsStatusLine) assertTrue("waveform at $h/$full", s.showsWaveform)
                 seenDiscard = seenDiscard || s.showsDiscard
             }
             assertTrue(seenDiscard)
@@ -122,9 +122,9 @@ class LivePanelTest {
         val discardAt = compact + LivePanel.DISCARD_FROM * (full - compact)
         assertTrue(LivePanel.shape(discardAt + 0.01f, full).showsDiscard)
         assertFalse(LivePanel.shape(discardAt - 0.01f, full).showsDiscard)
-        val meterAt = compact + LivePanel.LEVEL_METER_FROM * (full - compact)
-        assertTrue(LivePanel.shape(meterAt + 0.01f, full).showsLevelMeter)
-        assertFalse(LivePanel.shape(meterAt - 0.01f, full).showsLevelMeter)
+        val meterAt = compact + LivePanel.WAVEFORM_FROM * (full - compact)
+        assertTrue(LivePanel.shape(meterAt + 0.01f, full).showsWaveform)
+        assertFalse(LivePanel.shape(meterAt - 0.01f, full).showsWaveform)
     }
 
     @Test
