@@ -174,12 +174,19 @@ final class KeyboardViewController: UIInputViewController {
         // first pane that still works. App Review 4.4.1 judges the keyboard in
         // exactly this state.
         bridge.setPane(hasFullAccess ? .voice : (typing.first ?? .english), notify: false)
+        // A lookup that finds a table neither loaded nor loading would parse
+        // it right there, on the main thread and on a keystroke. Every path to
+        // a lookup starts a warm first (`warmTables`), so here that can only be
+        // a path someone forgot — and for that one, a blank bar until the warm
+        // lands beats a hitch at the highest footprint a parse reaches.
+        ZhuyinDictionary.bundled.parsesOnLookup = false
+        ZhuyinPhrases.bundled.parsesOnLookup = false
+        EnglishWords.bundled.parsesOnLookup = false
         // `setPane(notify: false)` deliberately skips `paneDidChange`, so a
-        // keyboard that opens straight onto the English pane — which is what
-        // every keyboard without Full Access does — has to be warmed here.
-        if bridge.pane == .english {
-            EnglishWords.bundled.warm { [weak self] in self?.refreshSuggestions() }
-        }
+        // keyboard that opens straight onto a typing pane — which is what every
+        // keyboard without Full Access does, onto English or onto 注音 — has to
+        // be warmed here.
+        warmTables()
 
         // The system's input view supplies the backdrop, exactly as before
         // 1.21 — it is already the right colour, already the right shape on
@@ -437,6 +444,8 @@ final class KeyboardViewController: UIInputViewController {
         if !bridge.panes.contains(bridge.pane) {
             bridge.setPane(hasFullAccess ? .voice : (typing.first ?? .english), notify: false)
             applyHeight(animated: false)
+            // Not notified, so not warmed by `paneDidChange` either.
+            warmTables()
         }
     }
 
@@ -446,30 +455,43 @@ final class KeyboardViewController: UIInputViewController {
         // it: the user swiped away, they didn't press delete.
         apply(zhuyin.confirm())
         applyHeight(animated: true)
-        // Arriving on it starts the tables loading off the main thread, so the
-        // ~100 ms the phrase table costs is spent while the pane is still
-        // sliding in rather than on the keystroke that finishes the second
-        // syllable.
-        //
-        // A key that beats a warm is answered from no table at all rather than
-        // from a second copy parsed on the spot (see `ZhuyinPhrases.warm`), so
-        // each warm is handed a completion that answers the pending syllables
-        // again once its table lands. It runs on the main queue in the same
-        // block that stores the table, and keys arrive on the main queue too,
-        // so a key is either before the landing — answered empty, then put
-        // right here — or after it, answered from the whole table. Nothing can
-        // fall between the two.
-        if bridge.pane == .zhuyin {
+        warmTables()
+        refreshSuggestions()
+    }
+
+    /// Start loading the tables the current pane types against, off the main
+    /// thread. Called wherever the pane is set — `paneDidChange` for a swipe or
+    /// a tab, and `viewDidLoad` and `refreshPanes`, which set it without
+    /// notifying — because a pane that is showing without its tables warm would
+    /// have its first keystrokes answered from nothing. Cheap to repeat: a warm
+    /// table calls back at once and a warm in flight is joined, not restarted.
+    ///
+    /// Arriving on 注音 starts both its tables, so the ~50–100 ms the phrase
+    /// table costs is spent while the pane is still sliding in rather than on
+    /// the keystroke that finishes the second syllable.
+    ///
+    /// A key that beats a warm is answered from no table at all rather than
+    /// from a second copy parsed on the spot (see `ZhuyinPhrases.warm`), so
+    /// each warm is handed a completion that answers the pending syllables
+    /// again once its table lands. It runs on the main queue in the same
+    /// block that stores the table, and keys arrive on the main queue too,
+    /// so a key is either before the landing — answered empty, then put
+    /// right by `zhuyinTablesLanded` — or after it, answered from the whole
+    /// table. Nothing can fall between the two.
+    ///
+    /// Same bargain on the English pane: reading and sorting 40,000 words is
+    /// milliseconds, and it belongs on the swipe rather than on the first
+    /// letter typed. The bar is empty until it lands, then refreshed.
+    private func warmTables() {
+        switch bridge.pane {
+        case .zhuyin:
             ZhuyinDictionary.bundled.warm { [weak self] in self?.zhuyinTablesLanded() }
             ZhuyinPhrases.bundled.warm { [weak self] in self?.zhuyinTablesLanded() }
-        }
-        // Same bargain on the English pane: reading and sorting 40,000 words is
-        // tens of milliseconds, and it belongs on the swipe rather than on the
-        // first letter typed. The bar is empty until it lands, then refreshed.
-        if bridge.pane == .english {
+        case .english:
             EnglishWords.bundled.warm { [weak self] in self?.refreshSuggestions() }
+        case .voice:
+            break
         }
-        refreshSuggestions()
     }
 
     /// A 注音 table finished loading: whatever is pending was looked up without
@@ -488,9 +510,9 @@ final class KeyboardViewController: UIInputViewController {
     /// limit is tight enough that this is the cheapest insurance there is.
     ///
     /// Only the idle ones. Dropping the table the user is typing against would
-    /// make the very next keystroke parse it again on the spot, and a parse
-    /// costs several times the table's own size while it runs — the worst
-    /// thing to do at the moment the system says memory is short. The 注音
+    /// blank the bar on the very next keystroke while a warm read it all again
+    /// — a parse at the moment the system says memory is short, for a table
+    /// that was about to be needed anyway. The 注音
     /// dictionary is never dropped: it is a few hundred kilobytes, and every
     /// 注音 keystroke needs it.
     override func didReceiveMemoryWarning() {
