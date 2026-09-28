@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
@@ -16,6 +17,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -55,35 +58,11 @@ internal fun LiveWaveform(
     modifier: Modifier = Modifier,
     height: Dp = LiveWaveformShape.HEIGHT,
 ) {
-    val currentLevel by rememberUpdatedState(level)
-    val history = remember { LevelHistory(LiveWaveformShape.CAPACITY) }
-    // Snapshot state only so the canvas redraws: the draw block reads both, so
-    // a new frame or a new sample invalidates the draw and nothing else.
-    var lastSampleNanos by remember { mutableLongStateOf(0L) }
-    var frameNanos by remember { mutableLongStateOf(0L) }
-
-    LaunchedEffect(active) {
-        if (!active) {
-            // The next meeting starts from an empty field, not this one's tail.
-            history.clear()
-            lastSampleNanos = 0L
-            frameNanos = 0L
-            return@LaunchedEffect
-        }
-        launch {
-            while (true) {
-                history.append(currentLevel)
-                lastSampleNanos = System.nanoTime()
-                delay(LiveWaveformShape.INTERVAL_MS)
-            }
-        }
-        while (true) {
-            withFrameNanos { frameNanos = System.nanoTime() }
-        }
-    }
-
-    val signal = MaterialTheme.colorScheme.primary
-    val idle = MaterialTheme.colorScheme.outline.copy(alpha = LiveWaveformShape.IDLE_ALPHA)
+    val clock = rememberWaveformClock(level, active)
+    val colors = WaveformColors(
+        signal = MaterialTheme.colorScheme.primary,
+        idle = MaterialTheme.colorScheme.outline.copy(alpha = LiveWaveformShape.IDLE_ALPHA),
+    )
 
     Canvas(
         modifier
@@ -93,42 +72,106 @@ internal fun LiveWaveform(
             // line beside it already says the recording is running.
             .clearAndSetSemantics {},
     ) {
-        val barWidth = LiveWaveformShape.BAR_WIDTH.toPx()
-        val step = barWidth + LiveWaveformShape.GAP.toPx()
-        val minBar = LiveWaveformShape.MIN_BAR.toPx()
-        if (size.width <= step || size.height <= minBar) return@Canvas
+        drawWaveform(clock, active, colors)
+    }
+}
 
-        // One extra bar so the one sliding off the left edge is drawn while it
-        // is still half visible.
-        val visible = ceil(size.width / step).toInt() + 1
-        val frames = history.lastPadded(visible)
-        val progress = if (active) {
-            LiveWaveformShape.glide(frameNanos - lastSampleNanos)
-        } else {
-            0f
+/**
+ * The waveform's history and the two clocks that move it. [lastSampleNanos]
+ * and [frameNanos] are snapshot state only so the canvas redraws: the draw
+ * block reads both, so a new frame or a new sample invalidates the draw and
+ * nothing else.
+ */
+@Stable
+private class WaveformClock {
+    val history = LevelHistory(LiveWaveformShape.CAPACITY)
+    var lastSampleNanos by mutableLongStateOf(0L)
+    var frameNanos by mutableLongStateOf(0L)
+
+    /** The next meeting starts from an empty field, not this one's tail. */
+    fun reset() {
+        history.clear()
+        lastSampleNanos = 0L
+        frameNanos = 0L
+    }
+
+    fun sample(level: Float) {
+        history.append(level)
+        lastSampleNanos = System.nanoTime()
+    }
+
+    /** How far through the current sample window the field has glided, 0…1. */
+    fun progress(active: Boolean): Float =
+        if (active) LiveWaveformShape.glide(frameNanos - lastSampleNanos) else 0f
+}
+
+/**
+ * Samples [level] every [LiveWaveformShape.INTERVAL_MS] and ticks the frame
+ * clock, both only while [active]; parks on an empty field otherwise.
+ */
+@Composable
+private fun rememberWaveformClock(level: Float, active: Boolean): WaveformClock {
+    val currentLevel by rememberUpdatedState(level)
+    val clock = remember { WaveformClock() }
+    LaunchedEffect(active) {
+        if (!active) {
+            clock.reset()
+            return@LaunchedEffect
         }
-        val shift = progress * step
-        val midY = size.height / 2f
-        val corner = CornerRadius(barWidth / 2f)
-
-        frames.forEachIndexed { index, value ->
-            val fromRight = frames.size - 1 - index
-            val x = size.width - barWidth - fromRight * step - shift
-            if (x + barWidth <= 0f || x >= size.width) return@forEachIndexed
-            val barHeight = LiveWaveformShape.barHeight(value, size.height, minBar)
-            val color = if (active) {
-                signal.copy(alpha = LiveWaveformShape.opacity(fromRight))
-            } else {
-                idle
+        launch {
+            while (true) {
+                clock.sample(currentLevel)
+                delay(LiveWaveformShape.INTERVAL_MS)
             }
-            drawRoundRect(
-                color = color,
-                topLeft = Offset(x, midY - barHeight / 2f),
-                size = Size(barWidth, barHeight),
-                cornerRadius = corner,
-            )
+        }
+        while (true) {
+            withFrameNanos { clock.frameNanos = System.nanoTime() }
         }
     }
+    return clock
+}
+
+/** Pale blue while recording; the grey centreline when idle. */
+private class WaveformColors(val signal: Color, val idle: Color) {
+    fun bar(active: Boolean, fromRight: Int): Color =
+        if (active) signal.copy(alpha = LiveWaveformShape.opacity(fromRight)) else idle
+}
+
+/** One frame of the field: every visible bar, newest pinned to the right edge. */
+private fun DrawScope.drawWaveform(clock: WaveformClock, active: Boolean, colors: WaveformColors) {
+    val barWidth = LiveWaveformShape.BAR_WIDTH.toPx()
+    val step = barWidth + LiveWaveformShape.GAP.toPx()
+    val minBar = LiveWaveformShape.MIN_BAR.toPx()
+    if (size.width <= step || size.height <= minBar) return
+
+    // One extra bar so the one sliding off the left edge is drawn while it is
+    // still half visible.
+    val visible = ceil(size.width / step).toInt() + 1
+    val frames = clock.history.lastPadded(visible)
+    val shift = clock.progress(active) * step
+    val bar = BarGeometry(barWidth = barWidth, minBar = minBar)
+
+    frames.forEachIndexed { index, value ->
+        val fromRight = frames.size - 1 - index
+        val x = size.width - barWidth - fromRight * step - shift
+        drawBar(x, value, bar, colors.bar(active, fromRight))
+    }
+}
+
+private class BarGeometry(val barWidth: Float, val minBar: Float) {
+    val corner = CornerRadius(barWidth / 2f)
+}
+
+/** One capsule bar at [x], symmetric about the centreline; skipped when off-canvas. */
+private fun DrawScope.drawBar(x: Float, value: Float, bar: BarGeometry, color: Color) {
+    if (x + bar.barWidth <= 0f || x >= size.width) return
+    val barHeight = LiveWaveformShape.barHeight(value, size.height, bar.minBar)
+    drawRoundRect(
+        color = color,
+        topLeft = Offset(x, size.height / 2f - barHeight / 2f),
+        size = Size(bar.barWidth, barHeight),
+        cornerRadius = bar.corner,
+    )
 }
 
 /**
