@@ -270,7 +270,9 @@ final class FeedbackCenter: ObservableObject {
     /// `screenshot`: the user took one. Offer — never insist — to report the
     /// screen, with a picture of it the app drew itself.
     private func userTookScreenshot() {
+        // The crash banner also lives at the top; it outranks this offer.
         guard UIApplication.shared.applicationState == .active, !reportPresented,
+            !FeedbackOverlay.shared.isShowing(.top),
             mayOffer(.screenshot, recordingId: nil)
         else { return }
         // Taken now, before the toast exists, so the picture is of what the
@@ -283,10 +285,12 @@ final class FeedbackCenter: ObservableObject {
                 text: String(localized: "Report this screen?"),
                 action: String(localized: "Report"),
                 perform: { [weak self] in
-                    FeedbackOverlay.shared.dismiss(.bottom, used: true)
+                    FeedbackOverlay.shared.dismiss(.top, used: true)
                     self?.presentReport(.screenshot, screenshot: image)
                 }),
-            on: .bottom, duration: 5,
+            // Top, not bottom: for these five seconds the system screenshot
+            // thumbnail sits in the bottom corner and would crowd the offer.
+            on: .top, duration: 5,
             onIgnored: { [weak self] in self?.noteDismissed(.screenshot) })
     }
 
