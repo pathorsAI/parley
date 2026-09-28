@@ -106,6 +106,19 @@ class CaptureEndingTest {
     }
 
     @Test
+    fun aSavedRecordingCarriesHowTheMicrophoneHeldUp() {
+        // The finished screen's "send diagnostics?" offer reads these back.
+        val finished = terminalStateFor(
+            recordingId = "abc",
+            pendingUpload = false,
+            interruptedBy = null,
+            health = CaptureHealth(micRecoveries = 5, audioRoute = "bluetooth"),
+        ) as MeetingState.Finished
+        assertEquals(5, finished.micRecoveries)
+        assertEquals("bluetooth", finished.audioRoute)
+    }
+
+    @Test
     fun afailureWithNothingWorthSavingIsStillAFailure() {
         // Permission refused before the first chunk: there is no recording to
         // point the user at, so the reason is all they can be given.

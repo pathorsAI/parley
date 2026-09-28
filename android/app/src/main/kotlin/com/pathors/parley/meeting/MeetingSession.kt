@@ -907,8 +907,10 @@ class MeetingSession(
                 // the screen must say it waits for the quota, not the network.
                 waitingForQuota = result?.quotaExhausted == true,
                 sharedToOrgName = sharedTo?.let { resolveOrgName(it) },
-                micRecoveries = mic.recoveries,
-                audioRoute = mic.activeRoute,
+                health = CaptureHealth(
+                    micRecoveries = mic.recoveries,
+                    audioRoute = mic.activeRoute,
+                ),
             )
         }
 

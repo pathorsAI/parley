@@ -580,25 +580,39 @@ private fun DetailContent(
                         generate = generate,
                     )
                 },
-                emptyTranscript = prompts.emptyMinutes?.let { minutes ->
-                    {
-                        EmptyTranscriptState(
-                            minutes = minutes,
-                            onSend = if (prompts.emptyCanSend) {
-                                { viewModel.sendDiagnostics(FeedbackTrigger.EMPTY_TRANSCRIPT) }
-                            } else {
-                                null
-                            },
-                            onRetranscribe = if (viewModel.canRetranscribe && retranscribe.canRequest) {
-                                viewModel::askToRetranscribe
-                            } else {
-                                null
-                            },
-                        )
-                    }
-                },
+                emptyTranscript = emptyTranscriptSlot(viewModel, prompts, retranscribe),
             )
         }
+    }
+}
+
+/**
+ * What the transcript page shows in place of "no transcript" when the
+ * recording has minutes of audio behind it, or null to keep the one-line
+ * default. Pulled out of [DetailContent] so the screen's layout reads as
+ * layout; the decisions about which actions the empty state offers — Send
+ * only while the prompt is still eligible, "Transcribe again" only when a
+ * request would be accepted — live here with it.
+ */
+private fun emptyTranscriptSlot(
+    viewModel: RecordingDetailViewModel,
+    prompts: DetailPrompts,
+    retranscribe: RetranscribeState,
+): (@Composable () -> Unit)? = prompts.emptyMinutes?.let { minutes ->
+    {
+        EmptyTranscriptState(
+            minutes = minutes,
+            onSend = if (prompts.emptyCanSend) {
+                { viewModel.sendDiagnostics(FeedbackTrigger.EMPTY_TRANSCRIPT) }
+            } else {
+                null
+            },
+            onRetranscribe = if (viewModel.canRetranscribe && retranscribe.canRequest) {
+                viewModel::askToRetranscribe
+            } else {
+                null
+            },
+        )
     }
 }
 
