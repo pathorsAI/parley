@@ -97,7 +97,7 @@ public enum FilingSuggester {
     /// How much transcript travels with the request.
     ///
     /// The dictation rewrite this pass is modelled on never had to think about
-    /// length: dictation is capped at 120 s. A meeting is not — an hour of
+    /// length: dictation is capped at ten minutes. A meeting is not — an hour of
     /// conversation is comfortably past any context window we can afford on the
     /// fast lane, and an over-long request is not a worse suggestion, it is a
     /// rejected request and no suggestion at all.

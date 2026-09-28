@@ -117,7 +117,10 @@ struct DictationView: View {
             return String(localized: "Swipe back to your app")
         }
         switch coordinator.state {
-        case .starting: return String(localized: "Getting ready…")
+        // `needsApp` is only ever written to the keyboard's file, never this
+        // object's state; it is here because the switch is exhaustive, and
+        // "getting ready" is what the screen is doing when it is ever shown.
+        case .starting, .needsApp: return String(localized: "Getting ready…")
         case .listening: return String(localized: "Listening…")
         case .finishing: return String(localized: "Wrapping up…")
         case .done: return String(localized: "Done")

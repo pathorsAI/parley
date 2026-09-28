@@ -28,9 +28,12 @@ public struct ReconnectPolicy: Sendable, Equatable {
         self.cap = cap
     }
 
-    /// Dictation is a two-minute session someone is standing there waiting on,
-    /// so it redials faster and gives up sooner than a meeting: past a few
-    /// seconds the user has already stopped and tried again.
+    /// Dictation is a short session someone is standing there waiting on, so
+    /// it redials faster and gives up sooner than a meeting: past a few seconds
+    /// the user has already stopped and tried again. Giving up no longer costs
+    /// the words — what had settled is delivered (`DictationEnding
+    /// .connectionLost`) — and no longer costs the microphone either
+    /// (`DictationFailure.connection`), so the tap that tries again stays put.
     public static let dictation = ReconnectPolicy(
         maxAttempts: 4, base: .milliseconds(500), cap: .seconds(4))
 

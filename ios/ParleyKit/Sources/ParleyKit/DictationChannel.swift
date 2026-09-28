@@ -108,6 +108,26 @@ public enum DictationChannel {
         /// keyboard uses it to bound how long a finished session's tail is still
         /// worth inserting after a relaunch (see `KeyboardViewController`).
         public var updatedAt: Date?
+        /// Set on a `starting` the app publishes *before* it has a microphone:
+        /// it heard the keyboard's start request in the background with no
+        /// capture to borrow, and is trying to open one. A provisional answer —
+        /// the keyboard gives it `StartHandshake.microphoneWait` to become the
+        /// session (or a `needsApp`) instead of opening the app at the 700 ms
+        /// mark. `nil` (every other downlink, and every file written before the
+        /// field existed) means the app has a microphone or is in front, where
+        /// it can open one.
+        public var openingMicrophone: Bool?
+        /// When the app's session cap will stop this session — see
+        /// `MicActivityPolicy.dictationLimit`. Published with `listening`, so
+        /// the keyboard counts the last seconds down from the app's own clock
+        /// rather than assuming when the session began (`DictationCountdown`).
+        /// `nil` before the session is listening and once it is over.
+        public var deadline: Date?
+        /// Something the user should read after a `done` that did not come from
+        /// their ⏹ — the cap, or a lost connection. See `DictationEnding`.
+        /// Never a reason not to insert: a `done` with a notice inserts exactly
+        /// like one without.
+        public var notice: DictationEnding?
 
         /// `CaseIterable` so the wire-format test iterates the states rather
         /// than listing them: a state that decodes to something the other
@@ -147,6 +167,24 @@ public enum DictationChannel {
             /// session in place — a recovery republishes `listening` for the
             /// same id and the transcript carries on where it stopped.
             case micTaken
+            /// The app heard the start request in the background, tried to open
+            /// the microphone, and iOS refused: the session can only start with
+            /// Parley in front.
+            ///
+            /// The keyboard's answer is to open `parley://dictate` for the same
+            /// session at once, rather than waiting out
+            /// `StartHandshake.microphoneWait` for a start that is not coming.
+            /// It used to be expressed as silence — the app published nothing
+            /// and let the keyboard's 700 ms run out — which only worked while
+            /// the app said nothing *before* trying, and the provisional
+            /// `starting` it now publishes first (`openingMicrophone`) would
+            /// have turned that silence into a 3-second wait.
+            ///
+            /// Not live — nothing holds a microphone for it — and not an
+            /// ending the pane shows: it is a hand-off in flight. A keyboard
+            /// that survives the trip (the URL was refused) treats it as a
+            /// session the app has not answered, and `startGrace` takes it back.
+            case needsApp
 
             /// The session is still being served: a process somewhere is
             /// holding a microphone (or draining a relay) on its behalf. The
@@ -166,9 +204,15 @@ public enum DictationChannel {
             public var isLive: Bool {
                 switch self {
                 case .starting, .listening, .reconnecting, .finishing: return true
-                case .done, .error, .cancelled, .micTaken: return false
+                case .done, .error, .cancelled, .micTaken, .needsApp: return false
                 }
             }
+        }
+
+        /// The app's `starting` is provisional: it is still opening the
+        /// microphone. See `openingMicrophone`.
+        public var isOpeningMicrophone: Bool {
+            state == .starting && openingMicrophone == true
         }
 
         /// When this live session should be presumed dead unless something
@@ -204,7 +248,8 @@ public enum DictationChannel {
         public init(
             session: String, committed: String = "", partial: String = "",
             state: State = .starting, errorMessage: String? = nil,
-            updatedAt: Date? = nil
+            updatedAt: Date? = nil, openingMicrophone: Bool? = nil,
+            deadline: Date? = nil, notice: DictationEnding? = nil
         ) {
             self.session = session
             self.committed = committed
@@ -212,6 +257,33 @@ public enum DictationChannel {
             self.state = state
             self.errorMessage = errorMessage
             self.updatedAt = updatedAt
+            self.openingMicrophone = openingMicrophone
+            self.deadline = deadline
+            self.notice = notice
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case session, committed, partial, state, errorMessage, updatedAt
+            case openingMicrophone, deadline, notice
+        }
+
+        /// Hand-written so the three fields added for continuity decode
+        /// leniently. All optional, so a file from before them decodes either
+        /// way; but `notice` is an enum, and a value this build does not know
+        /// would otherwise fail the whole file — and a downlink that fails to
+        /// decode reads as "nothing there", which is a `done` never inserted.
+        /// An unknown note is dropped instead; the words still land.
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            session = try c.decode(String.self, forKey: .session)
+            committed = try c.decode(String.self, forKey: .committed)
+            partial = try c.decode(String.self, forKey: .partial)
+            state = try c.decode(State.self, forKey: .state)
+            errorMessage = try c.decodeIfPresent(String.self, forKey: .errorMessage)
+            updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt)
+            openingMicrophone = (try? c.decodeIfPresent(Bool.self, forKey: .openingMicrophone)) ?? nil
+            deadline = (try? c.decodeIfPresent(Date.self, forKey: .deadline)) ?? nil
+            notice = (try? c.decodeIfPresent(DictationEnding.self, forKey: .notice)) ?? nil
         }
     }
 

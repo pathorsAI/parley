@@ -1355,6 +1355,15 @@ final class KeyboardViewController: UIInputViewController {
             // yet, not the session carrying on: the finishing face the tap put
             // up stays, and `stopGrace` decides if the stop went unheard.
             if stopRequestedAt == nil { leaveFinishing(settled: false) }
+        case .needsApp:
+            // The app could not open the microphone from the background and is
+            // handing the session to the URL, which `startDictation` opens on
+            // reading this. The pane stays exactly as the tap left it —
+            // listening, optimistically — because the same session carries on
+            // in Parley; if the jump never lands, `checkLiveness` treats this
+            // as unanswered and `startGrace` takes the pane back.
+            bridge.listening = true
+            bridge.reconnecting = false
         case .reconnecting:
             // Still a live session: the app's microphone is open and the audio
             // is being held for the next relay leg. Saying so — rather than
