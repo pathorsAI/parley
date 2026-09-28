@@ -312,7 +312,7 @@
     <string name="feedback_report_placeholder">What happened? (optional)</string>
     <string name="feedback_report_screenshot">Screenshot of this screen</string>
     <string name="feedback_report_remove_screenshot">Remove screenshot</string>
-    <string name="feedback_report_disclosure">The app version, your device, and recent error logs go with it. Never your recordings or transcripts.</string>
+    <string name="feedback_report_disclosure">The app version, device, and recent error log are attached. Never your recordings or transcripts.</string>
     <string name="feedback_report_send">Send</string>
     <string name="feedback_report_faq">FAQ</string>
     <string name="feedback_sent">Sent. Thank you.</string>
