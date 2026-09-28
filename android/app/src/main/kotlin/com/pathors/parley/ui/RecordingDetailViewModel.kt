@@ -18,6 +18,10 @@ import com.pathors.parley.filing.FilingTarget
 import com.pathors.parley.filing.PendingFiling
 import com.pathors.parley.filing.SampleFilingTarget
 import com.pathors.parley.kit.GettingStartedState
+import com.pathors.parley.feedback.FeedbackTrigger
+import com.pathors.parley.feedback.ProblemSignals
+import com.pathors.parley.feedback.RecordingContext
+import com.pathors.parley.feedback.RetranscribeTag
 import com.pathors.parley.kit.GettingStartedStep
 import com.pathors.parley.kit.GuidedLap
 import com.pathors.parley.kit.SampleManifest
@@ -312,6 +316,32 @@ data class RetranscribeState(
         if (phase == Phase.IDLE || phase == Phase.FAILED) Phase.QUEUED else phase
 }
 
+/**
+ * The "send us diagnostics" prompts this screen can raise about the recording
+ * on it (spec §4) — each null or false when it is not up.
+ *
+ * Decided once, when the recording first loads, and only for a personal cloud
+ * recording: never the sample, an organization's copy (somebody else's
+ * recording, as far as a report goes) or a screenshot run. Each goes through
+ * the app's frequency limits (`feedback/PromptGate`) before it is shown, and
+ * counts as shown from then on — reopening the recording does not bring it
+ * back.
+ */
+data class DetailPrompts(
+    /**
+     * The empty transcript's own state is drawn whenever the recording is 20 s
+     * or more with no transcript; [emptyCanSend] says whether its "Send us
+     * diagnostics" button is in it. The explanation and "Transcribe again" are
+     * worth showing even when the prompt itself is resting.
+     */
+    val emptyMinutes: Int? = null,
+    val emptyCanSend: Boolean = false,
+    /** Where a truncated transcript stops, for the banner over it. */
+    val truncatedAtMs: Long? = null,
+    /** "What was wrong last time?" after a re-transcription landed here. */
+    val askRetranscribe: Boolean = false,
+)
+
 class RecordingDetailViewModel(
     private val container: AppContainer,
     val recordingId: String,
@@ -425,6 +455,14 @@ class RecordingDetailViewModel(
 
     override fun onCleared() {
         playback.release()
+        // Leaving with a prompt still up and unanswered is brushing it off —
+        // the same as its ×, as far as the frequency limits go.
+        val left = _prompts.value
+        listOf(
+            FeedbackTrigger.EMPTY_TRANSCRIPT,
+            FeedbackTrigger.TRUNCATED_TRANSCRIPT,
+            FeedbackTrigger.RETRANSCRIBE,
+        ).filter { left.isShowing(it) }.forEach(container.feedback::promptIgnored)
     }
 
     data class UiState(
@@ -537,9 +575,105 @@ class RecordingDetailViewModel(
     private val _retranscribe = MutableStateFlow(RetranscribeState())
     val retranscribe: StateFlow<RetranscribeState> = _retranscribe.asStateFlow()
 
+    private val _prompts = MutableStateFlow(DetailPrompts())
+    val prompts: StateFlow<DetailPrompts> = _prompts.asStateFlow()
+
     init {
         load()
         observeBackfills()
+    }
+
+    // ── problem reports ──────────────────────────────────────────────────────
+
+    /** Whether this screen raises prompts at all — see [DetailPrompts]. */
+    private val raisesPrompts: Boolean get() = orgId == null && !isSample && !DemoMode.isActive
+
+    /** Prompts decided once per screen, on the first load that produced a recording. */
+    private var promptsDecided = false
+
+    /** The transcript as a report describes it: its shape, never its words. */
+    private fun recordingContext(): RecordingContext? {
+        val meta = _state.value.meta ?: return null
+        val finals = meta.segments.filter { it.isFinal }
+        return RecordingContext(
+            recordingId = recordingId,
+            recordingDurationMs = meta.durationMs.toLong(),
+            transcriptSegments = finals.size,
+            lastSegmentEndMs = finals.maxOfOrNull { it.endMs } ?: 0L,
+        )
+    }
+
+    /**
+     * Look at the transcript that just loaded and raise whichever of the two
+     * transcript prompts it calls for. Not while a re-transcription is queued
+     * for it: that is already the fix, and asking for a report about a
+     * transcript that is about to be replaced would be asking about the past.
+     */
+    private suspend fun decidePrompts() {
+        if (!raisesPrompts || promptsDecided) return
+        val context = recordingContext() ?: return
+        promptsDecided = true
+        container.feedback.noteRecordingShape(context)
+        val duration = context.recordingDurationMs ?: return
+        val segments = context.transcriptSegments ?: return
+        val lastEnd = context.lastSegmentEndMs ?: 0L
+        if (_retranscribe.value.isRunning) return
+        when {
+            ProblemSignals.isEmptyTranscript(duration, segments) -> {
+                val canSend = container.feedback.claimPrompt(FeedbackTrigger.EMPTY_TRANSCRIPT, recordingId)
+                _prompts.update {
+                    it.copy(emptyMinutes = ProblemSignals.wholeMinutes(duration), emptyCanSend = canSend)
+                }
+            }
+            ProblemSignals.isTruncatedTranscript(duration, segments, lastEnd) -> {
+                if (container.feedback.claimPrompt(FeedbackTrigger.TRUNCATED_TRANSCRIPT, recordingId)) {
+                    _prompts.update { it.copy(truncatedAtMs = lastEnd) }
+                }
+            }
+        }
+    }
+
+    /** A re-transcription of this recording landed while the screen was up. */
+    private suspend fun offerRetranscribeChips() {
+        if (!raisesPrompts) return
+        recordingContext()?.let(container.feedback::noteRecordingShape)
+        if (container.feedback.claimPrompt(FeedbackTrigger.RETRANSCRIBE, recordingId)) {
+            _prompts.update { it.copy(askRetranscribe = true) }
+        }
+    }
+
+    /** "Send us diagnostics" on the empty state or the truncated banner. */
+    fun sendDiagnostics(trigger: FeedbackTrigger) {
+        container.feedback.send(trigger, recordingContext())
+        _prompts.update { it.without(trigger) }
+    }
+
+    /** One of the "what was wrong last time?" chips: that answer is the report. */
+    fun answerRetranscribe(tag: RetranscribeTag) {
+        container.feedback.send(FeedbackTrigger.RETRANSCRIBE, recordingContext(), tags = listOf(tag.id))
+        _prompts.update { it.copy(askRetranscribe = false) }
+    }
+
+    /** The × on a prompt. */
+    fun dismissPrompt(trigger: FeedbackTrigger) {
+        if (!_prompts.value.isShowing(trigger)) return
+        container.feedback.promptIgnored(trigger)
+        _prompts.update { it.without(trigger) }
+    }
+
+    private fun DetailPrompts.isShowing(trigger: FeedbackTrigger): Boolean = when (trigger) {
+        FeedbackTrigger.EMPTY_TRANSCRIPT -> emptyCanSend
+        FeedbackTrigger.TRUNCATED_TRANSCRIPT -> truncatedAtMs != null
+        FeedbackTrigger.RETRANSCRIBE -> askRetranscribe
+        else -> false
+    }
+
+    /** The prompt taken down; the empty state itself stays, without its button. */
+    private fun DetailPrompts.without(trigger: FeedbackTrigger): DetailPrompts = when (trigger) {
+        FeedbackTrigger.EMPTY_TRANSCRIPT -> copy(emptyCanSend = false)
+        FeedbackTrigger.TRUNCATED_TRANSCRIPT -> copy(truncatedAtMs = null)
+        FeedbackTrigger.RETRANSCRIBE -> copy(askRetranscribe = false)
+        else -> this
     }
 
     /**
@@ -568,13 +702,16 @@ class RecordingDetailViewModel(
 
     private suspend fun backfillLanded() {
         val status = backfillStatus(default = BackfillStatus.Queued(null))
-        if (status == BackfillStatus.None && _retranscribe.value.phase == RetranscribeState.Phase.QUEUED) {
+        val oursLanded =
+            status == BackfillStatus.None && _retranscribe.value.phase == RetranscribeState.Phase.QUEUED
+        if (oursLanded) {
             // Ours landed while the screen was saying it was waiting.
             val remaining = retriesRemaining()
             _retranscribe.update { it.settled(remaining) }
         }
         refreshMeta()
         syncRetranscribe()
+        if (oursLanded) offerRetranscribeChips()
     }
 
     private suspend fun backfillStatus(default: BackfillStatus): BackfillStatus = try {
@@ -610,6 +747,7 @@ class RecordingDetailViewModel(
             openPlayer()
             presentFiling()
             syncRetranscribe()
+            decidePrompts()
         }
         if (canMoveToFolder) viewModelScope.launch { loadFolders() }
     }
@@ -874,6 +1012,9 @@ class RecordingDetailViewModel(
     fun confirmRetranscribe() {
         if (!_retranscribe.value.confirming) return
         _retranscribe.update { it.working() }
+        // Transcribing again *is* the answer to the truncated banner, which
+        // offers it; the banner goes without counting as brushed off.
+        _prompts.update { it.copy(truncatedAtMs = null) }
         viewModelScope.launch { runRetranscription() }
     }
 
@@ -960,6 +1101,7 @@ class RecordingDetailViewModel(
         refreshMeta()
         val remaining = retriesRemaining()
         _retranscribe.update { it.settled(remaining) }
+        offerRetranscribeChips()
     }
 
     /**

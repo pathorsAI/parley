@@ -12,6 +12,9 @@ import com.pathors.parley.cloud.CloudOrg
 import com.pathors.parley.cloud.CloudUser
 import com.pathors.parley.cloud.HostedQuota
 import com.pathors.parley.cloud.RecordingSummary
+import com.pathors.parley.feedback.FeedbackTrigger
+import com.pathors.parley.feedback.ProblemSignals
+import com.pathors.parley.feedback.RecordingContext
 import com.pathors.parley.kit.GettingStartedState
 import com.pathors.parley.kit.GettingStartedStep
 import com.pathors.parley.kit.LapMotion
@@ -148,6 +151,11 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
          * waits for while its existing-user check is pending.
          */
         val personalLoaded: Boolean = false,
+        /**
+         * Queued recordings under which "keeps failing to sync — send us
+         * diagnostics?" is showing. See [considerSyncPrompts].
+         */
+        val syncPrompts: Set<String> = emptySet(),
     ) {
         val isPersonal: Boolean get() = scopeOrgId == null
 
@@ -340,6 +348,66 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                     container.gettingStarted.noteLibraryLoaded(recordings.size)
                 }
             }
+            considerSyncPrompts(pending)
+        }
+    }
+
+    // ── sync_failed ──────────────────────────────────────────────────────────
+
+    /**
+     * Raise "this recording keeps failing to sync" under each queued recording
+     * that has failed three passes running or waited a day
+     * ([ProblemSignals.isSyncStuck]) — the queue's own rows being the place
+     * sync status is shown. Each recording is asked about once, ever; rows
+     * that have since synced lose theirs.
+     *
+     * "Queued" is dated from the end of the recording: the queue does not
+     * stamp its entries, and a recording joins it the moment it ends.
+     */
+    private suspend fun considerSyncPrompts(pending: List<PendingUpload>) {
+        if (DemoMode.isActive) return
+        val ids = pending.map { it.id }.toSet()
+        val failures = withContext(Dispatchers.IO) { container.syncFailures.read() }
+        val now = System.currentTimeMillis()
+        val stuck = pending.filter { item ->
+            item.id !in _state.value.syncPrompts &&
+                ProblemSignals.isSyncStuck(
+                    consecutiveFailures = failures.entries[item.id]?.consecutiveFailures ?: 0,
+                    queuedAtMs = item.startedAtMs + item.durationMs.toLong(),
+                    nowMs = now,
+                )
+        }
+        val raised = stuck.filter { container.feedback.claimPrompt(FeedbackTrigger.SYNC_FAILED, it.id) }
+        _state.update { it.copy(syncPrompts = (it.syncPrompts intersect ids) + raised.map { item -> item.id }) }
+    }
+
+    /** "Send us diagnostics" under a stuck recording. */
+    fun sendSyncDiagnostics(pending: PendingUpload) {
+        container.feedback.send(
+            FeedbackTrigger.SYNC_FAILED,
+            RecordingContext(
+                recordingId = pending.id,
+                recordingDurationMs = pending.durationMs.toLong(),
+                transcriptSegments = pending.segments.size,
+                lastSegmentEndMs = pending.segments.maxOfOrNull { it.endMs } ?: 0L,
+            ),
+        )
+        _state.update { it.copy(syncPrompts = it.syncPrompts - pending.id) }
+    }
+
+    fun dismissSyncPrompt(id: String) {
+        if (id !in _state.value.syncPrompts) return
+        container.feedback.promptIgnored(FeedbackTrigger.SYNC_FAILED)
+        _state.update { it.copy(syncPrompts = it.syncPrompts - id) }
+    }
+
+    /**
+     * The library going away with a sync prompt still up counts as one
+     * brush-off — one, however many rows had one: it was one screen left.
+     */
+    override fun onCleared() {
+        if (_state.value.syncPrompts.isNotEmpty()) {
+            container.feedback.promptIgnored(FeedbackTrigger.SYNC_FAILED)
         }
     }
 
@@ -667,6 +735,9 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     private suspend fun delete(id: String, scope: String?) {
+        // Read before the row leaves the list: whether the recording looked
+        // broken decides the "send its diagnostics?" offer afterwards.
+        val deleted = _state.value.recordings.firstOrNull { it.id == id }
         _state.update { it.copy(deleting = it.deleting + id, deleteError = null) }
         val result = runCatchingCancellable {
             if (scope == null) {
@@ -678,7 +749,10 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         val gone = result.isGone()
         // Only a personal recording has anything on this phone: an org
         // row is the server's copy, under an id of its own.
-        if (gone && scope == null) forgetLocally(id)
+        if (gone && scope == null) {
+            forgetLocally(id)
+            deleted?.let { container.feedback.recordingDeleted(deletedShape(it)) }
+        }
         val error = if (gone) {
             null
         } else {
@@ -700,6 +774,22 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         }
         container.audioDownloads.refresh()
     }
+
+    /**
+     * What a deleted recording's transcript looked like, for the delete_failed
+     * offer. The detail screen's reading when there is one — it saw the whole
+     * transcript, so it knows where it ends — otherwise the library row's: an
+     * empty preview line means no transcript at all, and a non-empty one says
+     * nothing about truncation, so the segment count is left unknown and no
+     * offer is made on it.
+     */
+    private fun deletedShape(summary: RecordingSummary): RecordingContext =
+        container.feedback.recordingShape(summary.id) ?: RecordingContext(
+            recordingId = summary.id,
+            recordingDurationMs = summary.durationMs.toLong(),
+            transcriptSegments = if (summary.snippet.isNullOrEmpty()) 0 else null,
+            lastSegmentEndMs = if (summary.snippet.isNullOrEmpty()) 0L else null,
+        )
 
     /** Dismiss the deletion error so the next attempt starts clean. */
     fun clearDeleteRecordingError() {

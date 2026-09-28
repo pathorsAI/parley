@@ -83,7 +83,22 @@ the app coming back to the foreground (iOS drains its backfill queue on
 screen locking is otherwise only retried at the next cold start). Both go through
 `SyncDebouncer`, so a flapping network cannot stack passes. All of this needs a
 live process; draining from the background is a WorkManager job nobody has
-written yet.
+written yet. The same moments flush the problem-report queue
+(`AppContainer.feedback`), signed in or not.
+
+`AppContainer.feedback` (`feedback/FeedbackCenter`) owns problem reports: the
+frequency limits every "send us diagnostics?" prompt goes through
+(`PromptGate`: two brush-offs → 30 days quiet per trigger, once per recording),
+the last process's crash (an uncaught-exception handler installed first thing
+in `Application.onCreate`, plus `ApplicationExitInfo` on API 30+, sent
+automatically unless the account sheet's switch is off), the screenshot prompt
+(`MainActivity` registers a screen-capture callback on API 34+), and the
+surfaces `ui/FeedbackHost` draws over every screen — the report sheet, the
+crash banner and the five-second notices. Screens raise their own inline
+prompts where the fact is known: the recording page (empty / truncated
+transcript, the chips after a re-transcription), the library's queued rows
+(sync keeps failing), the meeting's end (microphone recovered five or more
+times) and the library's delete (a broken recording was deleted).
 
 ## Who owns a recording
 

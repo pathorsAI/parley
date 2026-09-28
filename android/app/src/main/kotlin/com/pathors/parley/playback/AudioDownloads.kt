@@ -1,8 +1,8 @@
 package com.pathors.parley.playback
 
-import android.util.Log
 import com.pathors.parley.cloud.CloudClient
 import com.pathors.parley.cloud.CloudException
+import com.pathors.parley.feedback.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope

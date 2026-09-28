@@ -1,12 +1,12 @@
 package com.pathors.parley.onboarding
 
 import android.content.Context
-import android.util.Log
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.pathors.parley.feedback.Log
 import com.pathors.parley.kit.Announcement
 import com.pathors.parley.kit.AnnouncementCatalog
 import com.pathors.parley.kit.AnnouncementGate

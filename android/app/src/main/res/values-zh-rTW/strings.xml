@@ -300,13 +300,51 @@
     <string name="account_language_change">變更</string>
     <string name="account_language_detail">Parley 支援英文與繁體中文，預設跟隨手機的語言。只想改 Parley 的話，到系統設定裡調整。</string>
 
+    <!-- Feedback & diagnostics (shared copy with iOS — spec §6) -->
+    <string name="feedback_section_title">回饋與診斷</string>
+    <string name="feedback_report_problem">回報問題</string>
+    <string name="feedback_auto_crash">自動傳送當機報告</string>
+    <string name="feedback_auto_crash_footnote">只傳 App 版本、裝置型號與當機位置，不含錄音或逐字稿。</string>
+    <string name="feedback_report_title">回報問題</string>
+    <string name="feedback_report_placeholder">發生了什麼事？（選填）</string>
+    <string name="feedback_report_screenshot">這個畫面的截圖</string>
+    <string name="feedback_report_remove_screenshot">拿掉截圖</string>
+    <string name="feedback_report_disclosure">會一起附上 App 版本、裝置與最近的錯誤紀錄，不含錄音或逐字稿。</string>
+    <string name="feedback_report_send">送出</string>
+    <string name="feedback_report_faq">常見問題</string>
+    <string name="feedback_sent">已送出，謝謝你</string>
+    <string name="feedback_send_diagnostics">傳診斷給我們</string>
+    <string name="feedback_dismiss">關閉</string>
+    <string name="feedback_empty_title">這場沒有轉出文字</string>
+    <plurals name="feedback_empty_body">
+        <item quantity="other">錄了 %1$d 分鐘，但逐字稿是空的。</item>
+    </plurals>
+    <string name="feedback_truncated">逐字稿只到 %1$s，後面沒有轉出來。</string>
+    <string name="feedback_sync_failed">這筆錄音一直同步不上去。</string>
+    <plurals name="feedback_mic_recovery">
+        <item quantity="other">這場錄音時麥克風中斷了 %1$d 次。</item>
+    </plurals>
+    <string name="feedback_retranscribe_ask">上一次哪裡不好？</string>
+    <string name="retranscribe_tag_misheard">聽錯字</string>
+    <string name="retranscribe_tag_missing">漏了一段</string>
+    <string name="retranscribe_tag_speakers">講者分錯</string>
+    <string name="retranscribe_tag_other">其他</string>
+    <string name="feedback_delete_offer">已刪除。要把這筆的診斷傳給我們嗎？</string>
+    <string name="feedback_delete_offer_action">傳送</string>
+    <string name="feedback_crash_title">Parley 上次意外關閉了</string>
+    <string name="feedback_crash_body">要傳送當機報告嗎？不含錄音內容。</string>
+    <string name="feedback_crash_send">傳送</string>
+    <string name="feedback_crash_decline">不用</string>
+    <string name="feedback_crash_always">以後自動傳送</string>
+    <string name="feedback_screenshot_offer">回報這個畫面？</string>
+    <string name="feedback_screenshot_offer_action">回報</string>
+
     <!-- About -->
     <string name="account_about_title">關於</string>
     <string name="account_version">版本 %1$s（%2$d）</string>
     <string name="account_about_detail">即時教練與深度分析以桌面版為主；手機負責面對面會議的錄音、轉錄與閱讀。在 Mac 上還能讓 Claude Code 透過 MCP 直接讀整個錄音資料庫。</string>
     <string name="link_desktop">Parley 桌面版</string>
     <string name="link_privacy_policy">隱私權政策</string>
-    <string name="link_support">支援與問題回報</string>
 
     <!-- Foreground service notification -->
     <string name="notification_channel_name">會議錄音</string>

@@ -160,6 +160,10 @@ class SttRelayClient(private val options: Options) : PcmSink {
             // nothing ever failed, `terminated` never flipped, and everything
             // waiting on it waited for good. See [RelayLiveness].
             .pingInterval(LIVENESS.okHttpPingIntervalMs, TimeUnit.MILLISECONDS)
+            // `X-Parley-Client` on the upgrade request, so the cloud can stamp
+            // the STT session row with the build that opened it. Here rather
+            // than in [open] so no future second socket path can miss it.
+            .addInterceptor(ParleyClientHeader.interceptor)
             .build()
 
     private val eventChannel = Channel<SttRelayEvent>(Channel.UNLIMITED)

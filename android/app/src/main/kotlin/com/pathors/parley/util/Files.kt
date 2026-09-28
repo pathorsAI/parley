@@ -1,6 +1,6 @@
 package com.pathors.parley.util
 
-import android.util.Log
+import com.pathors.parley.feedback.Log
 import java.io.File
 
 private const val TAG = "Files"

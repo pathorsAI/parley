@@ -110,6 +110,7 @@ import com.pathors.parley.R
 import com.pathors.parley.cloud.RecordingMeta
 import com.pathors.parley.cloud.TranscriptSegmentDto
 import com.pathors.parley.filing.FilingPhase
+import com.pathors.parley.feedback.FeedbackTrigger
 import com.pathors.parley.kit.TranscriptAnchor
 import com.pathors.parley.kit.TranscriptSearch
 import com.pathors.parley.kit.TranscriptSegment
@@ -561,7 +562,9 @@ private fun DetailContent(
             // pinned with the player (docs/design/ios-recording-page.md, D6).
             viewModel.filingCard?.let { FilingSuggestionCard(card = it, gutter = PAGE_GUTTER) }
             val retranscribe by viewModel.retranscribe.collectAsState()
+            val prompts by viewModel.prompts.collectAsState()
             RetranscribeStatus(retranscribe, onStartNow = viewModel::startRetranscriptionNow)
+            ProblemPrompts(viewModel, prompts, retranscribe)
             DetailBody(
                 meta = meta,
                 state = state,
@@ -577,8 +580,80 @@ private fun DetailContent(
                         generate = generate,
                     )
                 },
+                emptyTranscript = emptyTranscriptSlot(viewModel, prompts, retranscribe),
             )
         }
+    }
+}
+
+/**
+ * What the transcript page shows in place of "no transcript" when the
+ * recording has minutes of audio behind it, or null to keep the one-line
+ * default. Pulled out of [DetailContent] so the screen's layout reads as
+ * layout; the decisions about which actions the empty state offers — Send
+ * only while the prompt is still eligible, "Transcribe again" only when a
+ * request would be accepted — live here with it.
+ */
+private fun emptyTranscriptSlot(
+    viewModel: RecordingDetailViewModel,
+    prompts: DetailPrompts,
+    retranscribe: RetranscribeState,
+): (@Composable () -> Unit)? = prompts.emptyMinutes?.let { minutes ->
+    {
+        EmptyTranscriptState(
+            minutes = minutes,
+            onSend = if (prompts.emptyCanSend) {
+                { viewModel.sendDiagnostics(FeedbackTrigger.EMPTY_TRANSCRIPT) }
+            } else {
+                null
+            },
+            onRetranscribe = if (viewModel.canRetranscribe && retranscribe.canRequest) {
+                viewModel::askToRetranscribe
+            } else {
+                null
+            },
+        )
+    }
+}
+
+/**
+ * The two prompts that sit over the transcript rather than in it: "the
+ * transcript stops at m:ss" (with "Transcribe again" beside Send, since that
+ * is the fix on offer), and the chips after a re-transcription. Under the
+ * re-transcription status for the same reason that is outside the list — a
+ * line about the whole transcript must not scroll away with its first turn.
+ * See [DetailPrompts] for when either is up.
+ */
+@Composable
+private fun ProblemPrompts(
+    viewModel: RecordingDetailViewModel,
+    prompts: DetailPrompts,
+    retranscribe: RetranscribeState,
+) {
+    val promptModifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+    prompts.truncatedAtMs?.let { endMs ->
+        DiagnosticsPrompt(
+            text = stringResource(R.string.feedback_truncated, formatClock(endMs)),
+            onSend = { viewModel.sendDiagnostics(FeedbackTrigger.TRUNCATED_TRANSCRIPT) },
+            onDismiss = { viewModel.dismissPrompt(FeedbackTrigger.TRUNCATED_TRANSCRIPT) },
+            modifier = promptModifier,
+            secondary = if (viewModel.canRetranscribe && retranscribe.canRequest) {
+                {
+                    TextButton(onClick = viewModel::askToRetranscribe) {
+                        Text(stringResource(R.string.retranscribe_action))
+                    }
+                }
+            } else {
+                null
+            },
+        )
+    }
+    if (prompts.askRetranscribe) {
+        RetranscribeChips(
+            onPick = viewModel::answerRetranscribe,
+            onDismiss = { viewModel.dismissPrompt(FeedbackTrigger.RETRANSCRIBE) },
+            modifier = promptModifier,
+        )
     }
 }
 
@@ -1063,6 +1138,8 @@ private fun DetailBody(
     playback: PlaybackState,
     player: PlayerActions,
     summary: SummaryHooks,
+    /** What the transcript page shows when it has no turns, when that is more than one line. */
+    emptyTranscript: (@Composable () -> Unit)? = null,
 ) {
     val face = pages.face
     val onFaceChange = pages.onFaceChange
@@ -1186,7 +1263,7 @@ private fun DetailBody(
 
             DetailFace.TRANSCRIPT -> {
                 TranscriptPage(
-                    content = TranscriptContent(segments, labels, annotations),
+                    content = TranscriptContent(segments, labels, annotations, emptyTranscript),
                     scroll = scroll,
                     decoration = TurnDecoration(
                         currentIndex = currentIndex,
@@ -1462,6 +1539,12 @@ private class TranscriptContent(
     val labels: List<String>,
     /** Segment id → the findings that start in it. */
     val annotations: Map<String, List<FindingRow>>,
+    /**
+     * Drawn instead of the one-line "no transcript" when there are no turns
+     * and the recording is long enough for that to be a failure — see
+     * [EmptyTranscriptState].
+     */
+    val empty: (@Composable () -> Unit)? = null,
 )
 
 /**
@@ -1643,12 +1726,17 @@ private fun TranscriptList(
     ) {
         if (segments.isEmpty()) {
             item {
-                Text(
-                    text = stringResource(R.string.detail_no_transcript),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 6.dp),
-                )
+                val empty = content.empty
+                if (empty != null) {
+                    empty()
+                } else {
+                    Text(
+                        text = stringResource(R.string.detail_no_transcript),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 6.dp),
+                    )
+                }
             }
         }
         items(segments.size) { index ->

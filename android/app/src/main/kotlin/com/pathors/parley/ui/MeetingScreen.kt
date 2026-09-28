@@ -57,6 +57,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -66,6 +67,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -78,6 +80,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.pathors.parley.feedback.FeedbackTrigger
+import com.pathors.parley.feedback.ProblemSignals
+import com.pathors.parley.feedback.RecordingContext
 import com.pathors.parley.R
 import com.pathors.parley.filing.FilingSuggestionViewModel
 import com.pathors.parley.parleyContainer
@@ -446,6 +451,7 @@ private fun MeetingContent(
 
         interruptedFinish(state)?.let { InterruptedOutcome(it, onClose = close) }
         (state as? MeetingState.Failed)?.let { FailedOutcome(it, onClose = close) }
+        (state as? MeetingState.Finished)?.let { MicRecoveryPrompt(it, segments, elapsed) }
 
         Spacer(Modifier.height(16.dp))
         Box(Modifier.weight(1f)) {
@@ -674,6 +680,56 @@ private fun MeetingHeader(elapsed: Long, state: MeetingState, segments: List<Tra
         CopyTranscriptButton(text = transcript, isEmpty = segments.isEmpty())
         ShareTranscriptButton(text = transcript, isEmpty = segments.isEmpty())
     }
+}
+
+/**
+ * "The microphone was interrupted n times during this recording" — at the end
+ * of a meeting whose capture had to win the microphone back five or more times
+ * ([ProblemSignals.isMicRecoveryWorthAsking]). Asked here, while the person is
+ * still looking at the meeting it happened in, because this is the failure
+ * 1.13 shipped: the input rebuilt itself in a loop, the transcript came back
+ * empty, and nobody told us for ten days.
+ *
+ * Once per recording, through the app's frequency limits; leaving the screen
+ * without answering counts as brushing it off.
+ */
+@Composable
+private fun MicRecoveryPrompt(finished: MeetingState.Finished, segments: List<TranscriptSegment>, elapsedMs: Long) {
+    val id = finished.recordingId ?: return
+    if (!ProblemSignals.isMicRecoveryWorthAsking(finished.micRecoveries)) return
+    val feedback = rememberContainer().feedback
+    var showing by remember(id) { mutableStateOf(false) }
+    LaunchedEffect(id) {
+        showing = feedback.claimPrompt(FeedbackTrigger.MIC_RECOVERY, id)
+    }
+    val stillShowing by rememberUpdatedState(showing)
+    DisposableEffect(id) {
+        onDispose { if (stillShowing) feedback.promptIgnored(FeedbackTrigger.MIC_RECOVERY) }
+    }
+    if (!showing) return
+    Spacer(Modifier.height(12.dp))
+    DiagnosticsPrompt(
+        text = pluralStringResource(R.plurals.feedback_mic_recovery, finished.micRecoveries, finished.micRecoveries),
+        onSend = {
+            val finals = segments.filter { it.isFinal && !it.isTail() }
+            feedback.send(
+                FeedbackTrigger.MIC_RECOVERY,
+                RecordingContext(
+                    recordingId = id,
+                    recordingDurationMs = elapsedMs,
+                    transcriptSegments = finals.size,
+                    lastSegmentEndMs = finals.maxOfOrNull { it.endMs } ?: 0L,
+                    audioRoute = finished.audioRoute,
+                    micRecoveries = finished.micRecoveries,
+                ),
+            )
+            showing = false
+        },
+        onDismiss = {
+            feedback.promptIgnored(FeedbackTrigger.MIC_RECOVERY)
+            showing = false
+        },
+    )
 }
 
 /** A meeting the user did not end: say so, say where the audio went, and wait. */
