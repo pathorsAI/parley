@@ -142,6 +142,9 @@ final class DictationCoordinator: ObservableObject {
     /// merely outrun it — the request is a metered model call, and one whose
     /// answer nobody will read is worth stopping.
     private var polishTask: Task<Void, Never>?
+    /// The backstop that settles a session still `finishing` at
+    /// `finishingBudget` after ⏹ — see `finishingOverdue`.
+    private var finishingDeadline: Task<Void, Never>?
     private var capTimer: Task<Void, Never>?
     /// Persistent uplink listener (armed for the process's whole life): stop
     /// requests for the running session, and — the no-jump path — start
@@ -249,6 +252,23 @@ final class DictationCoordinator: ObservableObject {
     /// a hang, and the raw transcript is what ships when it runs out.
     private nonisolated static let polishBudget = Duration.seconds(6)
 
+    /// How long `stop` waits for the relay to take the finalize. The client
+    /// bounds `finish()` itself now (`SttRelayClient.finishBudget`); this is
+    /// the same bound again from the side that cannot afford to be wrong
+    /// about it, because everything after ⏹ is queued behind this await.
+    private static let drainBudget = SttRelayClient.finishBudget + .milliseconds(500)
+
+    /// The longest a session may stay `finishing`: the drain, then the polish,
+    /// plus a margin. Past it `finishingOverdue` settles the raw words.
+    ///
+    /// Every wait inside finishing has a deadline of its own, so this should
+    /// never fire. It exists because a session that is never settled is the
+    /// worst ending this pipeline has, and the one nobody can see coming: the
+    /// app stays alive and heartbeating, so the keyboard keeps drawing the
+    /// polish wave over a transcript that is never typed and never reaches
+    /// the history. That is what a stalled relay socket used to do at ⏹.
+    private static let finishingBudget = drainBudget + polishBudget + .seconds(2)
+
     private init() {
         window = .closed(length: MicWindowLength(
             rawValue: UserDefaults.standard.string(forKey: Self.windowLengthKey) ?? "") ?? .off)
@@ -272,10 +292,19 @@ final class DictationCoordinator: ObservableObject {
         // A fresh open for the session the keyboard just wrote. If the same
         // session is already running (double-delivery of the URL, or the
         // Darwin start raced the URL), ignore.
-        if active && session == self.session { return }
+        //
+        // Whatever state it is in, not only while `active`: a session spends
+        // its polish round trip inactive but still `finishing`, and restarting
+        // it then threw away the transcript it was about to deliver; after
+        // `done` it brought a delivered session back to life as a new
+        // recording. A session id is minted once per tap — the keyboard's and
+        // the Action Button's alike — so a second start for the same id is
+        // always a duplicate (the uplink observer already reads it that way).
+        if !session.isEmpty, session == self.session { return }
         let owner = leg
         if active { await stop() }
         guard leg == owner else { return }
+        supersedeFinishing()
         self.session = session
 
         let host = DictationChannel.readUplink()?.hostBundleID
@@ -315,6 +344,7 @@ final class DictationCoordinator: ObservableObject {
     /// so mint one and publish it for whichever Parley keyboard is frontmost.
     func beginFromIntent() async {
         if active { return }
+        supersedeFinishing()
         session = "ab-" + UUID().uuidString
         DictationChannel.writeUplink(.init(session: session))
         returnableHost = nil
@@ -361,10 +391,13 @@ final class DictationCoordinator: ObservableObject {
         finishRequested = false
         // A previous session still polishing can no longer deliver — its
         // result is dropped by the session guard in `finishUp` — so the
-        // request is stopped rather than left to finish for nobody.
+        // request is stopped rather than left to finish for nobody. Its words
+        // were already kept by `supersedeFinishing`.
         finishingPolish = FinishingPolish()
         polishTask?.cancel()
         polishTask = nil
+        finishingDeadline?.cancel()
+        finishingDeadline = nil
         reconnectTask?.cancel()
         reconnectTask = nil
         audio.reset()
@@ -1132,12 +1165,66 @@ final class DictationCoordinator: ObservableObject {
         stopReportingLevel()
         state = .finishing
         publish()
+        armFinishingDeadline()
         let owner = leg
         if let relay {
-            await relay.finish()
+            await Deadline.wait(atMost: Self.drainBudget) { await relay.finish() }
         }
         guard owns(owner) else { return }
         finishUp()  // which hands the microphone to the window, or closes it
+    }
+
+    /// Arm the backstop for the session that just started finishing: if it is
+    /// still `finishing` at `finishingBudget`, `finishingOverdue` settles it.
+    private func armFinishingDeadline() {
+        finishingDeadline?.cancel()
+        let target = session
+        finishingDeadline = Task { [weak self] in
+            try? await Task.sleep(for: Self.finishingBudget)
+            guard !Task.isCancelled, let self else { return }
+            self.finishingOverdue(target)
+        }
+    }
+
+    /// The session is still `finishing` at its deadline. Deliver the raw
+    /// words now, whatever it was still waiting on.
+    ///
+    /// Still draining means `stop` never got the relay's finalize through:
+    /// `finishUp` runs now and, with the drain marked as skipped, settles raw
+    /// without starting a polish. Still polishing means the request outlived
+    /// its own timeout: it is cancelled and the raw words settle, exactly as
+    /// a skip would, and the late reply then loses to the state machine.
+    private func finishingOverdue(_ target: String) {
+        finishingDeadline = nil
+        guard session == target, state == .finishing else { return }
+        Self.log.error("dictation still finishing at its deadline; settling the raw words")
+        switch finishingPolish.deadlinePassed() {
+        case .endDrainNow:
+            finishUp()
+        case .settleRawNow, .settled:
+            // `.settled` with the state still `finishing` should not exist —
+            // every settling transition calls `settle` on the spot — but if it
+            // ever does, the session is still waiting on nothing, and ending
+            // it is the only way out.
+            polishTask?.cancel()
+            polishTask = nil
+            settle()
+        }
+    }
+
+    /// A new session is replacing one that is still `finishing` (polishing,
+    /// in practice: a live one is stopped first). It will never be delivered
+    /// — the keyboard that asked for the new session has moved on, and the
+    /// downlink is about to be rewritten for it — so its raw words go to the
+    /// history now, the one place they can still be found. Called by the
+    /// entry points before they overwrite the session's source and host.
+    private func supersedeFinishing() {
+        guard state == .finishing else { return }
+        finishingDeadline?.cancel()
+        finishingDeadline = nil
+        polishTask?.cancel()
+        polishTask = nil
+        recordHistory()
     }
 
     /// The keyboard's ✕: end the session and throw away everything it heard.
@@ -1331,6 +1418,8 @@ final class DictationCoordinator: ObservableObject {
     /// The last beat of a session: hand the finished text to the keyboard as
     /// `done`, which is its cue to insert.
     private func settle() {
+        finishingDeadline?.cancel()
+        finishingDeadline = nil
         state = .done
         // After the polish, never before. The dictionary holds corrections the
         // user made by hand, and a model that undid one of them has to lose to
