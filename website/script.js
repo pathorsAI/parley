@@ -88,23 +88,6 @@
     });
   }
 
-  /* ---------- Language suggestion (no redirect; a dismissible bar) ---------- */
-  function setupLangBar() {
-    const bar = document.getElementById("langbar");
-    if (!bar) return;
-    const KEY = "parley.langbar.dismissed";
-    if (store.get(KEY) === "1") return;
-    const prefs = navigator.languages?.length ? navigator.languages : [navigator.language || ""];
-    const prefersZh = /^zh\b/i.test(prefs[0] || "");
-    const mismatch = pageLang === "zh" ? !prefersZh : prefersZh;
-    if (!mismatch) return;
-    bar.hidden = false;
-    bar.querySelector(".langbar__close")?.addEventListener("click", () => {
-      bar.hidden = true;
-      store.set(KEY, "1");
-    });
-  }
-
   /* ---------- Nav: hairline once scrolled, and the small-screen menu ---------- */
   function setupNav() {
     const nav = document.getElementById("nav");
@@ -174,7 +157,7 @@
     els.forEach((el) => io.observe(el));
   }
 
-  /* ---------- Hero: live transcript + waveform ----------
+  /* ---------- In the meeting: live transcript + waveform ----------
      One sample per 85ms, measured from synthesized speech of the exact two lines
      on screen (website/tools/hero-rms). A run of zeros is the silence between the
      speakers, so the text only advances while someone is talking, and the
@@ -374,6 +357,178 @@
     else size();
   }
 
+  /* ---------- Hero figure: where the conversation goes ----------
+     The nodes are laid out by CSS; this draws the wires between them, flips the
+     mode, and (own keys only) steps through a few real provider hosts so the
+     "you choose" part is visible. Without JS the own-keys state stands on its own. */
+
+  const SVG_NS = "http://www.w3.org/2000/svg";
+
+  function svgEl(name, attrs) {
+    const el = document.createElementNS(SVG_NS, name);
+    for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+    return el;
+  }
+
+  function curve(a, b, vertical) {
+    if (vertical) {
+      const my = (a.y + b.y) / 2;
+      return `M${a.x},${a.y} C${a.x},${my} ${b.x},${my} ${b.x},${b.y}`;
+    }
+    const mx = (a.x + b.x) / 2;
+    return `M${a.x},${a.y} C${mx},${a.y} ${mx},${b.y} ${b.x},${b.y}`;
+  }
+
+  function setupRoute() {
+    const fig = document.getElementById("route");
+    const map = fig?.querySelector(".route__map");
+    const svg = fig?.querySelector(".route__wires");
+    if (!map || !svg) return;
+    const node = (name) => map.querySelector(`[data-node="${name}"]`);
+    const els = { dev: node("dev"), parley: node("parley"), stt: node("stt"), ai: node("ai") };
+    if (Object.values(els).some((el) => !el)) return;
+    const stacked = matchMedia("(max-width: 560px)");
+
+    function box(el) {
+      const m = map.getBoundingClientRect();
+      const r = el.getBoundingClientRect();
+      const l = r.left - m.left;
+      const t = r.top - m.top;
+      return { l, t, r: l + r.width, b: t + r.height, cx: l + r.width / 2, cy: t + r.height / 2 };
+    }
+
+    function draw() {
+      const D = box(els.dev);
+      const P = box(els.parley);
+      const S = box(els.stt);
+      const A = box(els.ai);
+      // Narrow screens stack the nodes (see the 560px rule in styles.css): wires run downwards.
+      const vertical = stacked.matches;
+      const into = (B) => (vertical ? { x: B.cx, y: B.t } : { x: B.l, y: B.cy });
+      const outOf = (B) => (vertical ? { x: B.cx, y: B.b } : { x: B.r, y: B.cy });
+      const from = outOf(D);
+      // Cloud edition: the recording goes to Parley, and that is the whole story.
+      const legs =
+        fig.dataset.mode === "cloud" ? [[from, into(P)]] : [[from, into(S)], [from, into(A)]];
+      const nodes = [];
+      for (const [a, b] of legs) {
+        const d = curve(a, b, vertical);
+        nodes.push(svgEl("path", { class: "w", d }), svgEl("path", { class: "f", d }));
+      }
+      const ends = new Map(legs.flat().map((p) => [`${p.x},${p.y}`, p]));
+      for (const p of ends.values()) nodes.push(svgEl("circle", { cx: p.x, cy: p.y, r: 3 }));
+      svg.replaceChildren(...nodes);
+    }
+
+    // The Parley node slides while the mode changes; keep the wires on it.
+    let follow = 0;
+    function track(ms) {
+      cancelAnimationFrame(follow);
+      const until = performance.now() + ms;
+      const step = () => {
+        draw();
+        if (performance.now() < until) follow = requestAnimationFrame(step);
+      };
+      step();
+    }
+
+    const buttons = [...fig.querySelectorAll(".seg button")];
+    function setMode(mode) {
+      if (fig.dataset.mode === mode) return;
+      for (const b of buttons) b.setAttribute("aria-pressed", String(b.dataset.mode === mode));
+      fig.dataset.mode = mode;
+      track(reduceMotion.matches ? 0 : 650);
+    }
+    for (const btn of buttons) btn.addEventListener("click", () => setMode(btn.dataset.mode));
+
+    if ("ResizeObserver" in globalThis) new ResizeObserver(() => draw()).observe(map);
+    else addEventListener("resize", draw);
+    stacked.addEventListener?.("change", draw);
+    document.fonts?.ready.then(draw);
+    draw();
+
+    // Own keys: step through real hosts, one node at a time.
+    const cycles = [...fig.querySelectorAll("[data-cycle]")].map((el) => {
+      let hosts = [];
+      try {
+        hosts = JSON.parse(el.dataset.cycle);
+      } catch {
+        hosts = [];
+      }
+      return { el, hosts, i: 0, note: el.closest(".rt-node")?.querySelector(".rt-note[data-local-note]") };
+    });
+    if (reduceMotion.matches || !cycles.length) return;
+    let inView = true;
+    let hovering = false;
+    if ("IntersectionObserver" in globalThis) {
+      new IntersectionObserver((entries) => {
+        inView = entries.some((e) => e.isIntersecting);
+      }).observe(fig);
+    }
+    fig.addEventListener("pointerenter", () => { hovering = true; });
+    fig.addEventListener("pointerleave", () => { hovering = false; });
+    let turn = 0;
+    setInterval(() => {
+      if (!inView || hovering || document.hidden || fig.dataset.mode !== "byok") return;
+      const c = cycles[turn++ % cycles.length];
+      if (c.hosts.length < 2) return;
+      c.i = (c.i + 1) % c.hosts.length;
+      const host = c.hosts[c.i];
+      c.el.classList.add("is-swap");
+      setTimeout(() => {
+        c.el.textContent = host;
+        if (c.note?.dataset.localNote) {
+          c.note.textContent = host === c.el.dataset.local ? c.note.dataset.localNote : c.note.dataset.direct;
+        }
+        c.el.classList.remove("is-swap");
+        draw();
+      }, 200);
+    }, 2600);
+  }
+
+  /* ---------- Models: each setting steps through real providers ----------
+     One row at a time, so the eye can follow it. The HTML is the first entry of
+     each list, which is also what reduced motion and no-JS visitors see. */
+
+  function setupPrefs() {
+    const panel = document.querySelector(".prefs");
+    if (!panel || reduceMotion.matches) return;
+    const rows = [...panel.querySelectorAll(".prefs__v[data-cycle]")].map((el) => {
+      let items = [];
+      try {
+        items = JSON.parse(el.dataset.cycle);
+      } catch {
+        items = [];
+      }
+      return { el, items, i: 0, logo: el.querySelector(".logo"), name: el.querySelector(".prefs__n"), tag: el.querySelector("em") };
+    });
+    if (!rows.length) return;
+    let inView = false;
+    if ("IntersectionObserver" in globalThis) {
+      new IntersectionObserver((entries) => {
+        inView = entries.some((e) => e.isIntersecting);
+      }).observe(panel);
+    } else inView = true;
+    let turn = 0;
+    setInterval(() => {
+      if (!inView || document.hidden) return;
+      const row = rows[turn++ % rows.length];
+      if (row.items.length < 2) return;
+      row.i = (row.i + 1) % row.items.length;
+      const next = row.items[row.i];
+      row.el.classList.add("is-swap");
+      setTimeout(() => {
+        if (row.name) row.name.textContent = next.n;
+        if (row.logo) {
+          row.logo.style.setProperty("--m", next.l ? `url('${next.l}')` : "none");
+          row.logo.hidden = !next.l;
+        }
+        if (row.tag) row.tag.hidden = !next.t;
+        row.el.classList.remove("is-swap");
+      }, 200);
+    }, 1800);
+  }
+
   /* ---------- Row demos: the AI chat and voice-typing polish ----------
      Each plays once, the first time it is mostly in view. The HTML is the final
      state, so without JS, without IntersectionObserver or with reduced motion the
@@ -451,11 +606,12 @@
     }
   }
 
-  setupLangBar();
   setupNav();
   setupDownloads(detectOS());
   setupCopy();
   setupFades();
+  setupRoute();
+  setupPrefs();
   setupHero();
   setupDemos();
 })();

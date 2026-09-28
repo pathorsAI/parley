@@ -2,9 +2,8 @@
 //
 //   node website/tools/og/render.mjs      (or: bun website/tools/og/render.mjs)
 //
-// Fills og.html from the site's own strings (website/src/i18n/*.json) and hero
-// loudness data (website/src/rms.json), so the card shows the same two lines and
-// the same measured waveform as the hero, frozen partway into the second turn.
+// Fills og.html from the site's own strings (website/src/i18n/*.json), so the card
+// shows the hero's headline and its route figure in the own-keys state.
 // Fonts are inlined as data: URLs because Chrome will not load @font-face files
 // across file:// URLs.
 //
@@ -20,41 +19,13 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SITE = path.resolve(HERE, "../..");
 const CHROME = process.env.CHROME_PATH ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const LANGS = {
-  zh: { dict: "zh-TW.json", htmlLang: "zh-Hant-TW", url: "parley.tw", lag: 6 },
-  en: { dict: "en.json", htmlLang: "en", url: "parley.tw/en", lag: 18 },
+  zh: { dict: "zh-TW.json", htmlLang: "zh-Hant-TW", url: "parley.tw" },
+  en: { dict: "en.json", htmlLang: "en", url: "parley.tw/en" },
 };
 
 const font = (file) =>
   `data:font/woff2;base64,${fs.readFileSync(path.join(SITE, "assets/fonts", file)).toString("base64")}`;
 const escapeHtml = (s) => s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-
-function bars(rms, end, count) {
-  const slice = rms.slice(Math.max(0, end - count), end);
-  return slice
-    .map((v, i) => {
-      const cls = [i >= slice.length - 6 ? "new" : "", v < 0.05 ? "dot" : ""].filter(Boolean).join(" ");
-      const h = v < 0.05 ? 3 : Math.max(4, Math.round(v * 40));
-      const classAttr = cls ? ` class="${cls}"` : "";
-      return `<b${classAttr} style="height:${h}px"></b>`;
-    })
-    .join("");
-}
-
-function secondTurnStart(rms) {
-  // Find the first run of ≥6 silent samples; the second turn starts right after it.
-  let i = 0;
-  while (i < rms.length) {
-    if (rms[i] === 0) {
-      let j = i;
-      while (j < rms.length && rms[j] === 0) j++;
-      if (j - i >= 6) return j;
-      i = j;
-    } else {
-      i++;
-    }
-  }
-  return 0;
-}
 
 async function shoot(html, out) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "parley-og-"));
@@ -92,7 +63,6 @@ async function shoot(html, out) {
 }
 
 const template = fs.readFileSync(path.join(HERE, "og.html"), "utf8");
-const rmsAll = JSON.parse(fs.readFileSync(path.join(SITE, "src/rms.json"), "utf8"));
 const fonts = {
   fontDmSans: font("dm-sans-latin-wght-normal.woff2"),
   fontAlexandria: font("alexandria-latin-wght-normal.woff2"),
@@ -100,30 +70,21 @@ const fonts = {
 
 for (const [lang, cfg] of Object.entries(LANGS)) {
   const t = JSON.parse(fs.readFileSync(path.join(SITE, "src/i18n", cfg.dict), "utf8"));
-  const rms = rmsAll[lang];
-  const line2 = t["demo.line2"];
-  // Freeze 55% of the way into the second turn, like a moment of the live hero.
-  let shown = Math.round(line2.length * 0.55);
-  let settled = Math.max(0, shown - cfg.lag);
-  if (lang === "en") {
-    // Space-separated text: freeze on word boundaries, not mid-word.
-    shown = line2.includes(" ", shown) ? line2.indexOf(" ", shown) : line2.length;
-    settled = Math.max(0, line2.lastIndexOf(" ", settled));
-  }
-  const start2 = secondTurnStart(rms);
-  const at = start2 + Math.round((rms.length - start2) * 0.55);
+  const text = (key) => escapeHtml(t[key]);
   const values = {
     ...fonts,
     htmlLang: cfg.htmlLang,
     url: cfg.url,
     h1: t["hero.h1"],
-    speakerA: escapeHtml(t["demo.speakerA"]),
-    speakerB: escapeHtml(t["demo.speakerB"]),
-    line1: escapeHtml(t["demo.line1"]),
-    line2Settled: escapeHtml(line2.slice(0, settled)),
-    line2Tail: escapeHtml(line2.slice(settled, shown)),
-    recording: escapeHtml(t["demo.recording"]),
-    bars: bars(rms, at, 40),
+    device: text("route.device"),
+    rec1: text("route.rec1"),
+    rec2: text("route.rec2"),
+    rec3: text("route.rec3"),
+    deviceNote: text("route.deviceNote"),
+    stt: text("route.stt"),
+    ai: text("route.ai"),
+    direct: text("route.direct"),
+    capByok: text("route.capByok"),
   };
   const html = template
     .replace(/<!--[\s\S]*?-->\n?/, "")

@@ -1,8 +1,7 @@
 <!doctype html>
 <!--
   Open Graph card for parley.tw, rendered to website/assets/og-<lang>.png by
-  render.mjs (1200×630). The {{…}} slots are filled from website/src/i18n and
-  website/src/rms.json, so the card always matches the hero.
+  render.mjs (1200×630). The {{…}} slots are filled from website/src/i18n, so the card always matches the hero.
 -->
 <html lang="{{htmlLang}}">
 <head>
@@ -29,19 +28,31 @@ h1 { font-size: 54px; font-weight: 700; line-height: 1.16; letter-spacing: -.02e
 :lang(zh) h1 { font-size: 46px; line-height: 1.3; letter-spacing: 0; }
 .url { font-size: 18px; font-weight: 600; color: var(--secondary); margin-top: 22px; }
 .right { display: flex; flex-direction: column; justify-content: flex-end; min-width: 0; }
-.turn + .turn { margin-top: 22px; }
-.who { font-size: 16px; font-weight: 600; color: var(--secondary); display: flex; gap: 10px; align-items: baseline; }
-.who.on { color: var(--signal); }
-.ts { font-weight: 400; font-size: 15px; color: var(--tertiary); }
-.txt { font-size: 22px; line-height: 1.55; margin-top: 4px; }
-.tail { color: var(--tertiary); }
-.rec { border-top: 1px solid var(--hairline); margin-top: 26px; padding-top: 20px; display: flex; align-items: center; gap: 22px; }
-.st { font-size: 15px; color: var(--secondary); display: flex; align-items: center; gap: 8px; white-space: nowrap; }
-.st i { width: 9px; height: 9px; border-radius: 50%; background: var(--recording); }
-.wave { flex: 1; min-width: 0; overflow: hidden; display: flex; align-items: center; justify-content: flex-end; gap: 3px; height: 44px; }
-.wave b { width: 4px; border-radius: 2px; background: var(--signal); opacity: .35; }
-.wave b.new { opacity: .9; }
-.wave b.dot { width: 3px; height: 3px !important; border-radius: 50%; margin: 0 .5px; }
+/* The hero's route, own-keys state, frozen: your computer, two direct wires, no Parley. */
+.map { position: relative; width: 470px; height: 300px; }
+.map svg { position: absolute; inset: 0; overflow: visible; }
+.map path { fill: none; stroke: var(--signal); stroke-width: 2; stroke-dasharray: 2 10; stroke-linecap: round; }
+.map circle { fill: #FFFFFF; stroke: var(--signal); stroke-width: 2; }
+.dev {
+  position: absolute; left: 0; top: 18px; width: 212px; height: 264px;
+  padding: 20px 20px 18px; border-radius: 16px; background: #F6F7F9;
+  display: flex; flex-direction: column;
+}
+.k { font-size: 15px; font-weight: 600; color: var(--secondary); }
+.lib { list-style: none; padding: 0; margin-top: 10px; }
+.lib li { display: flex; justify-content: space-between; padding: 10px 0; border-top: 1px solid #D5DAE0; font-size: 17px; }
+.lib li:first-child::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--recording); margin: 8px 8px 0 0; }
+.lib li span { flex: 1; }
+.lib time { font-size: 14px; color: var(--tertiary); }
+.note { margin-top: auto; padding-top: 12px; border-top: 1px solid #D5DAE0; font-size: 14px; color: var(--secondary); line-height: 1.5; }
+.node {
+  position: absolute; left: 282px; width: 188px; height: 96px;
+  padding: 14px 16px; border: 1.5px solid #D5DAE0; border-radius: 14px; background: #FFFFFF;
+}
+.node.stt { top: 36px; } .node.ai { top: 168px; }
+.host { font: 15px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; margin-top: 4px; }
+.direct { font-size: 14px; color: var(--secondary); margin-top: 2px; }
+.cap { font-size: 18px; font-weight: 600; margin-top: 20px; }
 </style>
 </head>
 <body>
@@ -53,18 +64,25 @@ h1 { font-size: 54px; font-weight: 700; line-height: 1.16; letter-spacing: -.02e
     </div>
   </div>
   <div class="right">
-    <div class="turn">
-      <div class="who"><span>{{speakerA}}</span><span class="ts">0:12</span></div>
-      <div class="txt">{{line1}}</div>
+    <div class="map">
+      <svg width="470" height="300" viewBox="0 0 470 300" aria-hidden="true">
+        <path d="M212,150 C247,150 247,84 282,84"/>
+        <path d="M212,150 C247,150 247,216 282,216"/>
+        <circle cx="212" cy="150" r="4"/><circle cx="282" cy="84" r="4"/><circle cx="282" cy="216" r="4"/>
+      </svg>
+      <div class="dev">
+        <p class="k">{{device}}</p>
+        <ul class="lib">
+          <li><span>{{rec1}}</span><time>18:47</time></li>
+          <li><span>{{rec2}}</span><time>32:10</time></li>
+          <li><span>{{rec3}}</span><time>45:03</time></li>
+        </ul>
+        <p class="note">{{deviceNote}}</p>
+      </div>
+      <div class="node stt"><p class="k">{{stt}}</p><p class="host">stt-rt.soniox.com</p><p class="direct">{{direct}}</p></div>
+      <div class="node ai"><p class="k">{{ai}}</p><p class="host">api.anthropic.com</p><p class="direct">{{direct}}</p></div>
     </div>
-    <div class="turn">
-      <div class="who on"><span>{{speakerB}}</span><span class="ts">0:27</span></div>
-      <div class="txt">{{line2Settled}}<span class="tail">{{line2Tail}}</span></div>
-    </div>
-    <div class="rec">
-      <div class="st"><i></i><span>{{recording}}</span></div>
-      <div class="wave">{{bars}}</div>
-    </div>
+    <p class="cap">{{capByok}}</p>
   </div>
 </body>
 </html>
