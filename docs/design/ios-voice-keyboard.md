@@ -955,7 +955,9 @@ only, take what they actually draw — `dark`, `showsGlobe` and a
 parameters, and are `Equatable` on those; `KeyboardRootView` wraps them in
 `.equatable()` and SwiftUI skips their bodies whenever those values are
 unchanged, which on a keystroke is always. A pane still redraws for its own
-`@State` — shift, the symbol planes — and there `KeyButton` and `DeleteKey`,
+state — the symbol planes, and on the English pane shift, which the controller
+drives (see *English pane*) through a small `ShiftModel` only that pane
+observes, not through the bridge — and there `KeyButton` and `DeleteKey`,
 also `Equatable` on their looks, keep the keys that did not change from being
 re-evaluated. The strip is the one thing a keystroke should redraw, and it now
 invalidates once per key rather than twice: the composition and its
@@ -1022,6 +1024,66 @@ So the controller's `deinit` takes its own subviews — the hosting view and the
 backdrop — out of the input view. The tree and the bridge are then released
 with the controller, and what UIKit keeps is an empty input view. After the
 change: 34 MB cold, 42 MB after the first few cycles, **43–44 MB after forty**.
+
+### Touch: what makes a key feel like a system key
+
+The keys looked right well before they felt right. Measured against the system
+keyboard, what was missing was all in how a touch is taken, not in how a key is
+drawn:
+
+- **Every point of a typing pane belongs to a key.** The caps are drawn with
+  6pt between them and 11pt between rows, and the keys used to hit-test only
+  the drawn cap. A touch in a gap, in the half-key strip beside `a` and `l`, in
+  the 8pt above the top row or in the 注音 rows' stagger fell through to the
+  track, where only the swipe listens, and was dropped — about a third of the
+  pane on a 390pt phone. On the system keyboard a touch there types the nearest
+  key. Each key now has a touch target (`RowReach`, `KeyTarget`): its cap plus
+  half the gap to each neighbour and half the row spacing above and below, and
+  for the keys at the ends of the rows and in the top and bottom rows,
+  everything out to the pane's edge. The targets tile the pane. The end keys
+  reach a few points past the side edges (the 注音 plane's fourth row sits 3pt
+  right of the others, and would otherwise start with a dead strip), and each
+  pane cuts its keys' targets at its own edge, because the panes sit side by
+  side on one track and an end key reaching into the next pane took its
+  touches — the first measurement typed `ㄅ` for a tap beside `p`. They are hit
+  shapes, not layout — the caps are laid out exactly as before, and a
+  screenshot of every plane is pixel-identical to 1.25's — because growing the
+  keys' frames instead nudged the 注音 caps by a pixel (its 34.6pt rows round to
+  the pixel grid differently one level deeper). The globe is a `UIButton`, which
+  a hit shape does not reach, so its button overhangs the cap by the same
+  amount instead. Measured on the simulator with coordinate taps at points
+  taken from 1.25's caps: 20 of 27 gap taps typed the nearest key before —
+  SwiftUI's own touch slop catches some — and 27 of 27 after; before, a tap
+  2pt right of `g` typed `h`, and taps at the screen edge beside `a`, `l` and at
+  the end of a 注音 staggered row typed nothing.
+- **Pressed on the frame the finger lands.** The press shading used to fade in
+  over 80ms, which reads as a key a beat behind the finger. It is now instant;
+  only the release eases out.
+- **No delay at the screen's edges.** The system watches the left and bottom
+  edges for its own gestures with a recognizer on the keyboard's window
+  (`_UISystemGestureGateGestureRecognizer` on the iOS 26.5 simulator) that holds
+  a touch back until it has ruled a gesture out, so `q`, `a`, shift, `123` and
+  space darkened late and their callouts flashed late or not at all.
+  `delaysTouchesBegan` is switched off on it every time the keyboard appears or
+  moves to a window — the standard workaround for custom keyboards; the system
+  gestures still work.
+- **Keys click.** `UIDevice.playInputClick()` only sounds when the input view
+  adopts `UIInputViewAudioFeedback`, which the stock one does not, so the
+  keyboard was silent even with Keyboard Clicks on. The controller's input view
+  is now `KeyboardInputView`, the same `UIInputView` with that adoption (same
+  style, so the system paints the same backdrop, and the same self-sizing and
+  height constraint). Every key clicks on touch-down — characters, space,
+  delete and each of its repeats, return, shift, `123`/`ABC`, the globe — and
+  the user's Keyboard Clicks setting decides whether anything is heard. **No
+  haptics**: the system's key haptic is a separate setting a third-party
+  keyboard cannot read, and playing one anyway would buzz on every letter for
+  the people who turned it off.
+
+Not done here, and a project of its own: multi-touch rollover and committing a
+key on touch-down. Each key is still its own SwiftUI control, so a second
+finger landing before the first lifts is handled key by key, and a character
+types on release. Both need one pane-level touch surface in place of the
+per-key buttons.
 
 ### The backdrop: the system's, unless it would disagree
 
@@ -1265,14 +1327,42 @@ being told there are eleven columns instead of ten.
 The behaviours that make it feel like a keyboard rather than a grid of buttons:
 
 - **Shift** is three-state. Tap arms it for one letter; a second tap within
-  0.3 s locks it (`capslock.fill`); a slow tap turns it off. An armed shift
-  borrows the light letter-key cap, the way iOS signals it.
-- **Delete repeats while held** — ~0.4 s before it starts, then ~0.1 s a tick,
-  matching the system key. It can't be a `Button` (a button only reports on
+  0.3 s locks it (`capslock.fill`); a tap on an armed or locked shift turns it
+  off. An armed shift borrows the light letter-key cap, the way iOS signals it.
+  It acts on **touch-down**, as the system's does, not on release.
+- **Shift arms itself** where the host field asks for it
+  (`textDocumentProxy.autocapitalizationType`): at the start of the field,
+  after `.` `?` `!` and a space (closing quotes and brackets allowed between
+  them; `e.g. ` counts too, as on the system keyboard), after a line break and
+  after the double-space full stop, for `.sentences` — what a field that says
+  nothing gets; after any space for `.words`; after every letter for
+  `.allCharacters`, which types like caps lock but can still be tapped off for
+  one letter; never for `.none` (URLs, e-mail addresses). The controller
+  re-decides after every edit and every caret move, and that one rule is also
+  what spends a one-shot shift on the letter it capitalised; a locked shift is
+  never touched. The rule is `AutoCapitalization` and the key's state machine
+  `ShiftLatch`, both in ParleyKit and tested there. Shift lives with the
+  controller rather than the pane for that reason, in a `ShiftModel` only the
+  letter pane observes.
+- **Delete repeats while held, and speeds up** (`DeleteRepeat`, ParleyKit): the
+  first repeat after 0.5 s, then one every 0.1 s, every 0.05 s after about a
+  second, and after twenty characters — 2 s into the hold — a word per repeat,
+  every 0.1 s. A word is back to the previous space or punctuation, taking the
+  trailing spaces and punctuation with it; a line break is a unit of its own;
+  Han and kana, which have no spaces to find a word by, go two characters at a
+  time. A pending 注音 reading is always unwound symbol by symbol first, never a
+  word at a time. The repeats skip the per-keystroke refreshes — the suggestion
+  bar, shift, the 注音 candidate lookup — and all of it is redone once when the
+  key is let go. The timer runs in the run loop's common modes so nothing
+  tracking stalls it. It can't be a `Button` (a button only reports on
   touch-up), so it is a zero-distance drag gesture driving a `KeyRepeater`.
+  Measured on the simulator against a long English field: a 1 s hold deleted 7
+  characters, a 1.6 s hold 15, and a 3 s hold 77, ending on a word boundary
+  (1.25: 8, 14 and 28).
 - **Double-tapping space** types `". "` instead of a second space, but only when
   the character before it is a letter or a digit — after punctuation or at the
-  start of a line, two taps are two spaces, which is what iOS does.
+  start of a line, two taps are two spaces, which is what iOS does. The next
+  letter is a capital, as after any sentence end.
 - **Return always inserts `"\n"`.** The host's `returnKeyType` changes what the
   key *says* (Go / Send / Search / Done / Next) and whether it is tinted, and
   nothing else: a keyboard extension has no public way to fire the host's return
@@ -1721,6 +1811,10 @@ composer's limit rather than a position anybody argued for.
 - **Delete unwinds the buffer before it reaches the document**: the last
   syllable's tone, then its slots, then the empty syllable itself, and on into
   the syllable before it. Only with nothing pending does it reach the field.
+  Held, it keeps doing that one symbol at a time however long it has been held
+  — the word-at-a-time repeat (see *English pane*) only starts once the reading
+  is gone — and the candidate bar waits for the key to be let go rather than
+  being looked up again twenty times a second.
 - **Punctuation commits first.** A mark typed from the symbol planes or the
   function row flushes the pending syllables and then lands, rather than
   arriving in front of the word that was being typed.
