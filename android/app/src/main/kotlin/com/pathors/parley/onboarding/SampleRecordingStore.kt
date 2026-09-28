@@ -30,6 +30,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -91,6 +92,13 @@ class SampleRecordingStore(
         /** Epoch ms. When it was added, which is what it sorts by. */
         val addedAtMs: Double,
         val folderId: String? = null,
+        /**
+         * The action items ticked on the summary page, as [actionItemId]s. The
+         * sample is the one recording whose ticks are kept — a cloud
+         * recording's summary takes none, because the phone has no write path
+         * for them (iOS `SampleRecordingStore.Entry.doneActionItems`).
+         */
+        val doneActionItems: List<String> = emptyList(),
     )
 
     /** The entry, or null when the sample is not in the library. */
@@ -180,6 +188,13 @@ class SampleRecordingStore(
     suspend fun setFolder(folderId: String?) {
         val current = currentEntry() ?: return
         save(current.copy(folderId = folderId))
+    }
+
+    /** Tick or untick one of the sample's action items. Local only — see the class doc. */
+    suspend fun setActionItem(id: String, done: Boolean) {
+        val current = currentEntry() ?: return
+        val ticked = if (done) current.doneActionItems + id else current.doneActionItems - id
+        save(current.copy(doneActionItems = ticked.distinct()))
     }
 
     /** Take the sample out of the library. The APK keeps the files, so the checklist can offer it again. */
@@ -274,10 +289,30 @@ class SampleRecordingStore(
                     manifest.meetingKind?.let { put("meetingKind", it) }
                     manifest.brief?.let { put("brief", it) }
                     put("findings", manifest.findings ?: JsonArray(emptyList()))
-                    put("actionItems", manifest.actionItems ?: JsonArray(emptyList()))
+                    put("actionItems", actionItemsJson(manifest, entry))
                     put("folderId", entry.folderId?.let(::JsonPrimitive) ?: JsonNull)
                 },
             )
+
+        /**
+         * The id an action item of the sample is ticked under. Positional, which
+         * is safe because the list is read from the APK and never edited — iOS
+         * `SampleManifest.actionItemID`.
+         */
+        fun actionItemId(index: Int): String = "sample-action-$index"
+
+        /**
+         * The manifest's action items under the ids they are ticked by, and
+         * whether they are; every other field passed through untouched.
+         */
+        private fun actionItemsJson(manifest: SampleManifest, entry: Entry): JsonArray = buildJsonArray {
+            manifest.actionItems.orEmpty().forEachIndexed { index, element ->
+                val item = element as? JsonObject ?: return@forEachIndexed
+                val id = actionItemId(index)
+                val done = JsonPrimitive(id in entry.doneActionItems)
+                add(JsonObject(item + mapOf("id" to JsonPrimitive(id), "done" to done)))
+            }
+        }
 
         private fun segmentsJson(manifest: SampleManifest): JsonArray = buildJsonArray {
             manifest.transcriptSegments.forEach { segment ->

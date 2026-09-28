@@ -335,6 +335,31 @@ class RecordingMeta(val raw: JsonObject) {
     val actionItemsCount: Int get() = (raw["actionItems"] as? JsonArray)?.size ?: 0
 
     /**
+     * The analysis's short read of the meeting (`HistoryEntry.brief`), as the
+     * markdown-lite the desktop saves it in (see `BriefMarkup`). Empty when
+     * there is none.
+     */
+    val brief: String get() = raw.stringOrNull("brief").orEmpty().trim()
+
+    /**
+     * A copy with one action item ticked or unticked, every other field — of
+     * that item and of the entry — preserved verbatim. An item is matched by its
+     * `id`, or by `action-{index}` when it has none, the same fallback the
+     * screen reads it with. iOS `setActionItem`.
+     */
+    fun withActionItem(id: String, done: Boolean): RecordingMeta {
+        val items = raw["actionItems"] as? JsonArray ?: return this
+        val ticked = JsonArray(
+            items.mapIndexed { index, element ->
+                val obj = element as? JsonObject ?: return@mapIndexed element
+                if ((obj.stringOrNull("id") ?: "action-$index") != id) return@mapIndexed element
+                JsonObject(obj + ("done" to JsonPrimitive(done)))
+            },
+        )
+        return RecordingMeta(JsonObject(raw + ("actionItems" to ticked)))
+    }
+
+    /**
      * A copy with a different `folderId`, every other field preserved verbatim.
      *
      * Moving to the personal root writes an explicit `"folderId": null` rather

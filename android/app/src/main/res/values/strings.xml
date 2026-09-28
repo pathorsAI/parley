@@ -146,8 +146,11 @@
     <string name="meeting_stopped_storage">Stopped early — this phone ran out of storage</string>
     <string name="meeting_stopped_other">Stopped early — something went wrong</string>
     <string name="meeting_title_format">Meeting %1$s</string>
-    <string name="speaker_label">Speaker %1$d</string>
-    <string name="speaker_unknown">Speaker</string>
+    <string name="speaker_label">Speaker %1$s</string>
+    <string name="speaker_you">You</string>
+    <string name="speaker_you_numbered">You %1$d</string>
+    <string name="speaker_them">Them</string>
+    <string name="speaker_remote_numbered">Remote %1$d</string>
 
     <!-- Failures shared by the meeting and import flows -->
     <string name="failure_not_signed_in">You are signed out. Sign in and try again.</string>
@@ -186,9 +189,21 @@
     <string name="detail_no_transcript">This recording has no transcript.</string>
     <string name="detail_findings">Findings</string>
     <string name="detail_action_items">Action items</string>
-    <string name="detail_speakers">%1$d speakers</string>
-    <string name="detail_length">Length %1$s</string>
     <string name="detail_more_actions">More actions</string>
+    <string name="detail_load_failed_title">Couldn\'t load</string>
+    <string name="detail_error_network">Can\'t reach the cloud right now. Check your connection and open the recording again.</string>
+    <string name="detail_error_not_found">This recording is no longer in the cloud.</string>
+    <string name="detail_error_forbidden">You don\'t have access to this recording any more.</string>
+    <string name="detail_face_summary">Summary</string>
+    <string name="summary_highlights">Highlights %1$d</string>
+    <string name="summary_speakers">Speakers</string>
+    <string name="summary_empty">No summary yet.</string>
+    <string name="summary_generate">Generate a summary with AI</string>
+    <string name="summary_done">Done</string>
+    <string name="summary_go_to">Go to %1$s in the transcript</string>
+    <string name="transcript_highlight">Highlight: %1$s</string>
+    <string name="transcript_two_x_zone">Playback speed</string>
+    <string name="transcript_two_x_hint">Hold for 2×</string>
 
     <!-- Copying and sharing a transcript -->
     <string name="transcript_clip_label">Parley transcript</string>

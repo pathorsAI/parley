@@ -69,47 +69,106 @@ class HandoffStringsParityTest {
         "action_refresh" to "Refresh",
         "sign_in_didnt_finish" to "Sign-in didn't finish. Please try again.",
         "whats_new_also" to "Also",
+        // The recording page: Summary | Transcript (iOS #450).
+        "detail_face_summary" to "Summary",
+        "detail_transcript" to "Transcript",
+        "detail_action_items" to "Action items",
+        "detail_no_transcript" to "This recording has no transcript.",
+        "detail_load_failed_title" to "Couldn't load",
+        "recording_untitled" to "Untitled recording",
+        "summary_highlights" to "Highlights %lld",
+        "summary_speakers" to "Speakers",
+        "summary_empty" to "No summary yet.",
+        "summary_generate" to "Generate a summary with AI",
+        "summary_done" to "Done",
+        "summary_go_to" to "Go to %@ in the transcript",
+        "transcript_highlight" to "Highlight: %@",
+        "transcript_two_x_zone" to "Playback speed",
+        "transcript_two_x_hint" to "Hold for 2×",
+        "transcript_search" to "Search transcript",
     )
 
-    private val catalogue: JsonObject by lazy {
-        val file = File("../../ios/App/Parley/Localizable.xcstrings")
+    /**
+     * The speaker labels, which iOS keeps in ParleyKit's own catalogue
+     * (`RecordingMeta.speakerLabel(for:)`) — the same names on both phones, and
+     * in the clipboard and the hand-off text that reuse them.
+     */
+    private val kitShared = mapOf(
+        "speaker_label" to "Speaker %@",
+        "speaker_you" to "You",
+        "speaker_you_numbered" to "You %lld",
+        "speaker_them" to "Them",
+        "speaker_remote_numbered" to "Remote %lld",
+    )
+
+    private val catalogue: JsonObject by lazy { catalogueAt("../../ios/App/Parley/Localizable.xcstrings") }
+
+    private val kitCatalogue: JsonObject by lazy {
+        catalogueAt("../../ios/ParleyKit/Sources/ParleyKit/Resources/Localizable.xcstrings")
+    }
+
+    private fun catalogueAt(path: String): JsonObject {
+        val file = File(path)
         assertTrue("not found from ${File("").absolutePath}: $file", file.isFile)
-        Json.parseToJsonElement(file.readText()).jsonObject.getValue("strings").jsonObject
+        return Json.parseToJsonElement(file.readText()).jsonObject.getValue("strings").jsonObject
     }
 
     @Test
     fun `english matches the iOS catalogue`() {
-        val android = stringsOf("values")
-        val mismatched = shared.mapNotNull { (key, ios) ->
-            val expected = android(ios(ios, "en") ?: ios)
-            (key to android[key]).takeIf { android[key] != expected }
-        }
-        assertEquals(emptyList<Pair<String, String?>>(), mismatched)
+        assertEquals(emptyList<Pair<String, String?>>(), mismatches("values", "en", shared, catalogue))
     }
 
     @Test
     fun `traditional chinese matches the iOS catalogue`() {
-        val android = stringsOf("values-zh-rTW")
-        val mismatched = shared.mapNotNull { (key, ios) ->
-            val translated = ios(ios, "zh-Hant")
-            assertTrue("iOS has no zh-Hant for \"$ios\"", translated != null)
+        assertEquals(emptyList<Pair<String, String?>>(), mismatches("values-zh-rTW", "zh-Hant", shared, catalogue))
+    }
+
+    @Test
+    fun `speaker labels match ParleyKit's catalogue in both languages`() {
+        assertEquals(emptyList<Pair<String, String?>>(), mismatches("values", "en", kitShared, kitCatalogue))
+        assertEquals(
+            emptyList<Pair<String, String?>>(),
+            mismatches("values-zh-rTW", "zh-Hant", kitShared, kitCatalogue),
+        )
+    }
+
+    /**
+     * The Android keys in [keys] whose text differs from iOS's. English may fall
+     * back to the key (a catalogue entry with no `en` is its own English);
+     * Traditional Chinese may not.
+     */
+    private fun mismatches(
+        qualifier: String,
+        language: String,
+        keys: Map<String, String>,
+        catalogue: JsonObject,
+    ): List<Pair<String, String?>> {
+        val android = stringsOf(qualifier)
+        return keys.mapNotNull { (key, ios) ->
+            val translated = ios(catalogue, ios, language)
+                ?: if (language == "en") ios else null
+            assertTrue("iOS has no $language for \"$ios\"", translated != null)
             val expected = android(translated!!)
             (key to android[key]).takeIf { android[key] != expected }
         }
-        assertEquals(emptyList<Pair<String, String?>>(), mismatched)
     }
 
     /** The iOS value for [key] in [language], or null when the catalogue has none. */
-    private fun ios(key: String, language: String): String? =
+    private fun ios(catalogue: JsonObject, key: String, language: String): String? =
         (catalogue[key] as? JsonObject)
             ?.get("localizations")?.jsonObject
             ?.get(language)?.jsonObject
             ?.get("stringUnit")?.jsonObject
             ?.get("value")?.jsonPrimitive?.content
 
-    /** iOS placeholders in Android's spelling: `%@` → `%1$s`, `%1$@` → `%1$s`. */
+    /**
+     * iOS placeholders in Android's spelling: `%@` → `%1$s`, `%1$@` → `%1$s`,
+     * `%lld` → `%1$d`.
+     */
     private fun android(ios: String): String =
-        ios.replace("%@", "%1\$s").replace(Regex("""%(\d)\$@"""), "%$1\\\$s")
+        ios.replace("%lld", "%1\$d")
+            .replace("%@", "%1\$s")
+            .replace(Regex("""%(\d)\$@"""), "%$1\\\$s")
 
     /** `name` → text as Android will hand it to the app (escapes resolved). */
     private fun stringsOf(qualifier: String): Map<String, String> {

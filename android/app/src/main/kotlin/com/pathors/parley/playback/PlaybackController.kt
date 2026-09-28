@@ -85,6 +85,12 @@ data class PlaybackState(
      * finger, must not do. iOS `PlaybackController.lastJump`.
      */
     val jump: PlaybackJump = PlaybackJump(),
+    /**
+     * An edge of the transcript is being held: the engine plays at
+     * [PlaybackController.HELD_RATE] while [rate] keeps the speed the person
+     * chose, because letting go restores it. iOS `isHoldingTwoX`.
+     */
+    val isHoldingTwoX: Boolean = false,
 ) {
     /** Whether a seek would do anything — i.e. there is audio open. */
     val isSeekable: Boolean get() = phase == PlaybackPhase.READY && durationMs > 0L
@@ -282,13 +288,28 @@ class PlaybackController(
         rates.save(snapped)
         val engine = engine
         scope.launch(Dispatchers.Main) {
-            engine?.setRate(snapped)
+            // A choice made mid-hold is remembered, not heard, until the hold ends.
+            if (!_state.value.isHoldingTwoX) engine?.setRate(snapped)
             _state.update { it.copy(rate = snapped) }
         }
     }
 
     /** A tap on the speed: 1 → 1.25 → 1.5 → 2 → 1. See [PlaybackRates.next]. */
     fun cycleRate() = setRate(PlaybackRates.next(_state.value.rate))
+
+    /**
+     * An edge of the transcript is held, or let go. Deliberately leaves
+     * [PlaybackState.rate] alone: the chosen speed has to survive the gesture,
+     * because releasing restores it. Does not start playback — iOS `holdTwoX`.
+     */
+    fun holdTwoX(holding: Boolean) {
+        if (_state.value.isHoldingTwoX == holding) return
+        _state.update { it.copy(isHoldingTwoX = holding) }
+        val engine = engine ?: return
+        scope.launch(Dispatchers.Main) {
+            engine.setRate(if (_state.value.isHoldingTwoX) HELD_RATE else _state.value.rate)
+        }
+    }
 
     /** Mandatory. See the class doc. */
     fun release() {
@@ -458,6 +479,12 @@ class PlaybackController(
     companion object {
         /** The speed menu, identical to iOS `PlaybackController.menu`. */
         val RATES: List<Float> get() = PlaybackRates.MENU
+
+        /**
+         * What an edge hold plays at. Not a setting and never written to
+         * [PlaybackState.rate] — iOS `PlaybackController.heldRate`.
+         */
+        const val HELD_RATE = 2f
 
         /** Position poll interval while playing. See [startTicking]. */
         private const val TICK_MS = 50L

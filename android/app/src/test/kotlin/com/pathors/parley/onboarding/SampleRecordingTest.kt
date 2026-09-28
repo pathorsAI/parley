@@ -47,6 +47,31 @@ class SampleRecordingTest {
     }
 
     @Test
+    fun `the sample's action items are ticked by position and kept`() {
+        val manifest = manifest("en")
+        val ticked = SampleRecordingStore.actionItemId(1)
+        val meta = SampleRecordingStore.metaOf(manifest, entry.copy(doneActionItems = listOf(ticked)))
+        val items = RecordingDetailViewModel.readActionItems(meta)
+
+        assertEquals(manifest.actionItems?.indices?.map { SampleRecordingStore.actionItemId(it) }, items.map { it.id })
+        assertEquals(items.map { it.id == ticked }, items.map { it.done })
+        // Where each came from is passed through, so its timestamp can jump.
+        assertTrue(items.all { it.atMs != null })
+        // Analysis to open the summary page on.
+        assertTrue(RecordingDetailViewModel.fromMeta(meta).hasAnalysis)
+    }
+
+    @Test
+    fun `an entry saved before ticks existed still decodes`() {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        val old = json.decodeFromString(
+            SampleRecordingStore.Entry.serializer(),
+            """{ "lang": "en", "addedAtMs": 1.0, "folderId": null }""",
+        )
+        assertTrue(old.doneActionItems.isEmpty())
+    }
+
+    @Test
     fun `unfiled is a null folder`() {
         val meta = SampleRecordingStore.metaOf(manifest("zh-TW"), entry.copy(folderId = null))
         assertNull(meta.folderId)

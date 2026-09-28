@@ -66,7 +66,7 @@ class DemoModeTest {
             assertEquals(3, findings.size)
             assertEquals(2, actions.size)
             assertTrue(findings.all { it.title.isNotBlank() && it.detail.isNotBlank() })
-            assertTrue(findings.all { it.atMs != null })
+            assertTrue(findings.all { it.atMs > 0 })
             assertTrue(actions.all { it.text.isNotBlank() && !it.done })
         }
     }
