@@ -21,6 +21,7 @@ import com.pathors.parley.kit.GettingStartedStep
 import com.pathors.parley.meeting.RecordingFiles
 import com.pathors.parley.onboarding.AnnouncementStore
 import com.pathors.parley.onboarding.GettingStartedStore
+import com.pathors.parley.onboarding.LapCelebrations
 import com.pathors.parley.onboarding.SampleRecordingStore
 import com.pathors.parley.onboarding.WhatsNewPresenter
 import com.pathors.parley.onboarding.parleyAnnouncementsStore
@@ -205,13 +206,15 @@ class AppContainer(private val app: Application) {
     )
 
     /**
-     * Where the recording page writes the sample's filing answer — the
-     * sample's own store, once it implements [SampleFilingTarget] (onboarding
-     * v2's `suggestionPending` / `answerSuggestion`). Null until then, and the
-     * sample simply shows no filing card.
+     * Where the recording page reads the sample's pending filing suggestion
+     * and writes its answer: the sample's own store (onboarding v2's
+     * `suggestionPending` / `answerSuggestion`).
      */
-    val sampleFiling: SampleFilingTarget?
-        get() = sample as? SampleFilingTarget
+    val sampleFiling: SampleFilingTarget
+        get() = sample
+
+    /** Whether the guided lap's finish has had its burst, per recording. */
+    val lapCelebrations: LapCelebrations = LapCelebrations.device(app)
 
     /** "Default save location" — read by the uploader, chosen in the account sheet. */
     val saveLocation: SaveLocationStore = SaveLocationStore.default(app)

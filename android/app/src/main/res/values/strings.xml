@@ -4,7 +4,7 @@
   Traditional Chinese is first-class in Parley, not a translation afterthought:
   a string that exists in only one of the two files is a bug.
 -->
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <string name="app_name">Parley</string>
 
     <!-- Shared actions -->
@@ -347,6 +347,28 @@
     <string name="getting_started_walk_through">Walk through it with the sample recording</string>
     <string name="getting_started_continue">Continue →</string>
     <string name="getting_started_transcribing">Transcribing…</string>
+    <!-- The guided lap's guide bar on the recording page (GuideBar, iOS #450) -->
+    <string name="guide_file_title" tools:ignore="TypographyFractions">1 / 3 · See what Parley did for you</string>
+    <string name="guide_file_body">Every recording gets a name and a suggested folder when it\'s done. You can change the title or pick your own folder — tap Accept or any folder to try it.</string>
+    <string name="guide_show_me">Show me</string>
+    <string name="guide_choose_folder">Choose a folder</string>
+    <string name="guide_filed">Filed. Every recording will get a suggestion like this.</string>
+    <string name="guide_filed_in">Filed in “%1$s”. Every recording will get a suggestion like this.</string>
+    <string name="guide_renamed_filed_in">Renamed and filed in “%1$s”. Every recording will do this from now on.</string>
+    <string name="guide_replay_title" tools:ignore="TypographyFractions">2 / 3 · Replay</string>
+    <string name="guide_replay_body">Tap any line and the audio jumps to that moment. Try it.</string>
+    <string name="guide_open_transcript">Open the transcript</string>
+    <string name="guide_replay_confirmed">That\'s it. Search finds any word you remember.</string>
+    <string name="guide_share_title" tools:ignore="TypographyFractions">3 / 3 · Hand it to your AI</string>
+    <string name="guide_share_body">Share it, paste it, and ask:</string>
+    <string name="guide_share_to_ai">Share to AI</string>
+    <string name="guide_copy_instead">Copy instead</string>
+    <string name="guide_done_named">Named and filed</string>
+    <string name="guide_done_replayed">Replayed</string>
+    <string name="guide_done_handed">Handed to your AI</string>
+    <string name="guide_done_body">That\'s a meeting in Parley: record → named and filed for you → replay → hand it to your AI. Next time it all happens on its own.</string>
+    <string name="guide_start_meeting">Start your first real meeting</string>
+    <string name="guide_mac_footnote">On a Mac, Claude Code can also read your whole recording library directly over MCP.</string>
     <string name="recording_source_sample">SAMPLE</string>
     <string name="sample_missing">The sample recording is no longer in the library.</string>
     <!-- Library scope and folders (see HomeScreen, LibraryFolders) -->

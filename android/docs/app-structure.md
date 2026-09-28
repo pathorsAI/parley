@@ -19,6 +19,8 @@ com.pathors.parley
   onboarding/
     GettingStartedStore.kt the library checklist's state (DataStore `parley_onboarding`)
     SampleRecordingStore.kt the bundled sample's local-only library entry and audio
+    LapCelebrations.kt   which recordings' lap finish has had its burst
+                         (SharedPreferences `parley_lap_motion`)
     AnnouncementStore.kt which What's New announcements this phone has seen
                          (DataStore `parley_announcements`)
     WhatsNewPresenter.kt when the What's New sheet may come up
@@ -35,6 +37,8 @@ com.pathors.parley
                          state, save targets, sign-out
     FolderPickerSheet.kt searchable "Move to folder" sheet with create-as-you-type
     GettingStartedList.kt "Do one lap, five minutes" — the checklist rows and header
+    GuideBar.kt          the guided lap's bar on the recording page, its done card
+                         and confetti
     LapRecording.kt      which recording the guided lap is about (LapRules,
                          LocalLapRecording), the checklist's header action
     HandoffText.kt       the analysis prompt for "Share to AI" / "Copy with analysis
@@ -242,8 +246,7 @@ The library mirrors iOS `LibraryView` (and the desktop History window):
 ## Getting started: the intro film, the checklist, the sample, the hand-off
 
 A port of iOS onboarding v2 (#450; Android's first cut was the v1 checklist of
-#435). The guide bar that walks the lap on the recording page builds on the
-hooks below.
+#435), including the guide bar that walks the lap on the recording page.
 
 - **Sign-in page.** `OnboardingScreen` leads with the iOS headline and subline,
   then `IntroStage`: a ~7 s film that plays once — a recording pill, the
@@ -280,10 +283,42 @@ hooks below.
   detail screen reads the manifest, plays the bundled audio (unpacked to the
   cache), and files it locally. It is never uploaded, and it offers no download,
   re-transcription or organization share; Delete only takes it out of the list.
-  It arrives pre-suggested: `SampleRecordingStore.filingSuggestion(entry,
-  folders)` offers the manifest's title and customer folder plus up to two
-  recently used folders until `answerSuggestion()`; `setTitle()` renames it
-  locally.
+  It arrives pre-suggested: the store is the recording page's
+  `SampleFilingTarget`, and `pendingFilingSuggestion(folders)` offers the
+  manifest's title and customer folder (pointing at a live folder of that
+  name, if there is one) plus up to two recently used folders until
+  `answerSuggestion()` — Skip, or both halves answered. Accept and the chips
+  rename (`setTitle`) and file (`setFolder`) the local entry; a new folder is
+  still created in the cloud. Its files are read through a `SampleBundle` (the
+  APK's assets; the repository's `public/` in `SampleFilingTest`).
+- **The guide bar** (`ui/GuideBar.kt`, iOS `GuideBar.swift`). Pinned to the
+  bottom of the recording page — page-coloured, a hairline on top — on the
+  lap's recording (the sample, the only personal recording, or a page opened
+  `guided`) while the checklist is live. Its step is parleykit's `GuidedLap`,
+  derived from the checklist and never stored, so every route to an outcome
+  moves it: the first of filed → replayed → shared-to-AI not done yet. A step
+  finished while the bar is up is held as a ✓ for 1.5 s ("Renamed and filed
+  in “X”…", "Filed in “X”…", "That's it. Search finds…"); one finished out of
+  order, or a reset, shows no ✓. The lap lives in `RecordingDetailViewModel`
+  (`lap`, one redraw scheduled when a hold ends), so a rotation keeps it.
+  - **1 / 3** "Show me" washes the filing card for 1.2 s; with no suggestion
+    the button is "Choose a folder" and opens the folder picker.
+  - **2 / 3** "Open the transcript" switches to the Transcript page, scrolls to
+    the first turn and lights it (#489's jump, without a seek — the step ticks
+    when the reader taps a line, which glides the playhead and rings the
+    waveform, #484).
+  - **3 / 3** lists the three questions the share asks (the sample's own, else
+    the generic three) over "Share to AI" and "Copy instead" — the `⋯` menu's
+    two hand-offs.
+  - Every step has "Not now", which dismisses the checklist.
+  - **Done.** The three ✓ lines cascade 260 ms apart, then a success haptic
+    and one burst of confetti (26 blue rectangles over 1.5 s, parleykit's
+    `LapConfetti`), once per recording ever (`LapCelebrations`, iOS's
+    `lapMotion.celebrated.<id>`; "Show the getting-started list again" re-arms
+    it with the rest of the lap). "Start your first real meeting" goes to the
+    meeting route, which asks for consent as it always does; "Close" hides the
+    bar. With "Remove animations" on, the final state shows at once and nothing
+    is thrown.
 - **Hand-off.** The recording screen's `⋯` menu leads with "Share to AI (with
   analysis prompt)" and "Copy with analysis prompt": parleykit's `HandoffPrompt`,
   line for line the iOS text (`HandoffStringsParityTest` checks the copy against

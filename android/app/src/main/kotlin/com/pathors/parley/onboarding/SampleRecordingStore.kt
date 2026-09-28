@@ -10,6 +10,7 @@ import com.pathors.parley.cloud.RecordingMeta
 import com.pathors.parley.cloud.RecordingSource
 import com.pathors.parley.cloud.RecordingSummary
 import com.pathors.parley.cloud.CloudFolder
+import com.pathors.parley.filing.SampleFilingTarget
 import com.pathors.parley.kit.FilingFolder
 import com.pathors.parley.kit.FilingSuggestion
 import com.pathors.parley.kit.GettingStartedStep
@@ -18,6 +19,7 @@ import com.pathors.parley.playback.LocalAudioStore
 import com.pathors.parley.screenshot.DemoMode
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -79,13 +81,28 @@ private const val TAG = "SampleRecording"
  * the same rule the desktop and iOS use.
  */
 class SampleRecordingStore(
-    context: Context,
+    /** Where the manifests and the audio are read from — the APK's assets. */
+    private val bundle: SampleBundle,
+    /** The app's cache directory, where the audio is unpacked for the player. */
+    cacheDir: File,
     private val store: DataStore<Preferences>,
     scope: CoroutineScope,
     private val gettingStarted: GettingStartedStore,
     private val clock: () -> Long = System::currentTimeMillis,
-) {
-    private val context = context.applicationContext
+) : SampleFilingTarget {
+
+    constructor(
+        context: Context,
+        store: DataStore<Preferences>,
+        scope: CoroutineScope,
+        gettingStarted: GettingStartedStore,
+    ) : this(
+        bundle = SampleBundle.assets(context.applicationContext),
+        cacheDir = context.applicationContext.cacheDir,
+        store = store,
+        scope = scope,
+        gettingStarted = gettingStarted,
+    )
 
     /**
      * What is stored about the entry. The manifest itself is not — it is read
@@ -142,7 +159,7 @@ class SampleRecordingStore(
      * made again; its own directory so the account sheet's storage readout — and
      * its "remove downloaded audio" — never count or delete it.
      */
-    val audioStore: LocalAudioStore = LocalAudioStore(File(this.context.cacheDir, AUDIO_DIRECTORY))
+    val audioStore: LocalAudioStore = LocalAudioStore(File(cacheDir, AUDIO_DIRECTORY))
 
     private val manifests = mutableMapOf<String, SampleManifest?>()
 
@@ -152,7 +169,7 @@ class SampleRecordingStore(
     @Synchronized
     fun manifest(lang: String): SampleManifest? = manifests.getOrPut(lang) {
         runCatching {
-            context.assets.open("$ASSET_DIRECTORY/sample.$lang.json")
+            bundle.open("$ASSET_DIRECTORY/sample.$lang.json")
                 .bufferedReader()
                 .use { SampleManifest.decode(it.readText()) }
         }.onFailure { Log.w(TAG, "no sample manifest for $lang", it) }.getOrNull()
@@ -208,7 +225,7 @@ class SampleRecordingStore(
     }
 
     /** File the sample. Local only — see the class doc. */
-    suspend fun setFolder(folderId: String?) {
+    override suspend fun setFolder(folderId: String?) {
         val current = currentEntry() ?: return
         save(current.copy(folderId = folderId))
     }
@@ -217,7 +234,7 @@ class SampleRecordingStore(
      * Rename the sample. Local only — see the class doc. Blank, or the
      * manifest's own title, puts the manifest's title back.
      */
-    suspend fun setTitle(title: String) {
+    override suspend fun setTitle(title: String) {
         val current = currentEntry() ?: return
         save(current.copy(title = storedTitle(title, manifestOf(current)?.title)))
     }
@@ -226,7 +243,7 @@ class SampleRecordingStore(
      * The filing suggestion has been answered — accepted, or skipped — and the
      * card is not offered again. Local only — see the class doc.
      */
-    suspend fun answerSuggestion() {
+    override suspend fun answerSuggestion() {
         val current = currentEntry() ?: return
         save(current.copy(suggestionPending = false))
     }
@@ -242,6 +259,14 @@ class SampleRecordingStore(
         val manifest = manifestOf(entry) ?: return null
         return entry?.let { suggestionOf(manifest, it, folders) }
     }
+
+    /**
+     * The recording page's way in ([SampleFilingTarget]): [filingSuggestion]
+     * for the entry as stored right now, so a card is never offered from a
+     * value that has not caught up with an answer.
+     */
+    override suspend fun pendingFilingSuggestion(folders: List<CloudFolder>): FilingSuggestion? =
+        filingSuggestion(currentEntry(), folders)
 
     /** Tick or untick one of the sample's action items. Local only — see the class doc. */
     suspend fun setActionItem(id: String, done: Boolean) {
@@ -272,7 +297,7 @@ class SampleRecordingStore(
         val temp = File(target.parentFile, "${target.name}.tmp")
         try {
             target.parentFile?.mkdirs()
-            context.assets.open("$ASSET_DIRECTORY/${manifest.audio}").use { input ->
+            bundle.open("$ASSET_DIRECTORY/${manifest.audio}").use { input ->
                 temp.outputStream().use { input.copyTo(it) }
             }
             temp.renameTo(target)
@@ -410,5 +435,18 @@ class SampleRecordingStore(
                 )
             }
         }
+    }
+}
+
+/**
+ * Where the sample's files are read from: the APK's assets (`public/sample`,
+ * copied in at build time) in the app, the repository's folder in a test.
+ */
+fun interface SampleBundle {
+    /** Open [path], relative to the assets root. Throws when there is no such file. */
+    fun open(path: String): InputStream
+
+    companion object {
+        fun assets(context: Context): SampleBundle = SampleBundle { context.assets.open(it) }
     }
 }

@@ -459,7 +459,7 @@ class FilingSuggestionModelTest {
         val folders = mutableListOf<String?>()
         var answered = 0
 
-        override suspend fun pendingFilingSuggestion() = if (answered == 0) SUGGESTION else null
+        override suspend fun pendingFilingSuggestion(folders: List<CloudFolder>) = if (answered == 0) SUGGESTION else null
 
         override suspend fun setTitle(title: String) {
             titles += title

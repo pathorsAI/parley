@@ -599,11 +599,12 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
      *
      * The lap starts over from the sample, too: out of the library with its
      * rename, its folder and its ticks, back to "Walk through it with the sample
-     * recording". The APK keeps the files. iOS
-     * `SettingsView.showGettingStartedAgain`.
+     * recording". The APK keeps the files, and the lap's finish can play its
+     * burst again. iOS `SettingsView.showGettingStartedAgain`.
      */
     fun showChecklistAgain() {
         container.gettingStarted.reset()
+        container.lapCelebrations.forgetAll()
         viewModelScope.launch { container.sample.remove() }
         selectScope(null)
         selectFolder(FolderFilter.All)

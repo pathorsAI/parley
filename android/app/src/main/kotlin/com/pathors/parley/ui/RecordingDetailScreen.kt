@@ -3,6 +3,13 @@ package com.pathors.parley.ui
 import android.content.Context
 import android.text.format.DateUtils
 import androidx.annotation.StringRes
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -102,6 +109,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pathors.parley.R
 import com.pathors.parley.cloud.RecordingMeta
 import com.pathors.parley.cloud.TranscriptSegmentDto
+import com.pathors.parley.filing.FilingPhase
 import com.pathors.parley.kit.TranscriptAnchor
 import com.pathors.parley.kit.TranscriptSearch
 import com.pathors.parley.kit.TranscriptSegment
@@ -143,6 +151,8 @@ fun RecordingDetailScreen(
     orgId: String? = null,
     openFor: OpenFor = OpenFor.READ,
     onBack: () -> Unit,
+    /** "Start your first real meeting" at the end of the guided lap. */
+    onStartMeeting: () -> Unit = {},
 ) {
     val container = rememberContainer()
     val context = LocalContext.current
@@ -204,7 +214,21 @@ fun RecordingDetailScreen(
         }
     }
 
+    // The guide bar's "Open the transcript": a request the pages carry out,
+    // counted so the same request twice is still two.
+    var lapJump by rememberSaveable { mutableIntStateOf(0) }
+
     Scaffold(
+        bottomBar = {
+            RecordingGuide(
+                viewModel = viewModel,
+                guided = LocalLapRecording.current,
+                menu = menu,
+                onChooseFolder = { choosingFolder = true },
+                onOpenTranscript = { lapJump++ },
+                onStartMeeting = onStartMeeting,
+            )
+        },
         topBar = {
             DetailTopBar(meta = state.meta, onBack = onBack) {
                 DetailToolbarActions(
@@ -228,6 +252,7 @@ fun RecordingDetailScreen(
                 onFaceChange = { chosenFace = it },
                 searching = searching,
                 onCloseSearch = { searching = false },
+                lapJump = lapJump,
             ),
             generate = menu::shareToAI,
             padding = padding,
@@ -252,6 +277,73 @@ private fun plainTranscriptOf(
     if (meta == null) return ""
     return TranscriptClipboard.storedTranscript(readable) { segment ->
         speakerLabel(context, segment, meta.speakerName(segment))
+    }
+}
+
+/**
+ * The guided lap's bar at the bottom of the page — see [GuideBar] — wired to
+ * this page: the filing card, the transcript, the hand-off, the checklist.
+ * Drawn only on the lap's recording, once it has loaded, and only while the
+ * checklist is live ([com.pathors.parley.kit.GuidedLap.isVisible]).
+ *
+ * @param guided the route's `guided` argument ([LocalLapRecording]).
+ */
+@Composable
+private fun RecordingGuide(
+    viewModel: RecordingDetailViewModel,
+    guided: Boolean,
+    menu: DetailMenu,
+    onChooseFolder: () -> Unit,
+    onOpenTranscript: () -> Unit,
+    onStartMeeting: () -> Unit,
+) {
+    val container = rememberContainer()
+    val context = LocalContext.current
+    val state by viewModel.state.collectAsState()
+    val lap by viewModel.lap.collectAsState()
+    val lastFiling by viewModel.lastFiling.collectAsState()
+    val offer = viewModel.filingCard?.state?.collectAsState()?.value
+    val hasSuggestion = offer != null && offer.phase == FilingPhase.OFFERING && offer.hasSomethingToOffer
+    val current = lap
+    val visible = state.meta != null && current != null &&
+        current.lap.isVisible(current.checklist, viewModel.isLapRecording(guided))
+    val removed = remember(context) { guideAnimationsRemoved(context) }
+    val actions = remember(viewModel, menu, container) {
+        GuideBarActions(
+            showSuggestion = {
+                if (viewModel.filingCard?.state?.value?.hasSomethingToOffer == true) {
+                    viewModel.washFilingCard()
+                } else {
+                    onChooseFolder()
+                }
+            },
+            openTranscript = onOpenTranscript,
+            share = menu::shareToAI,
+            copy = menu::copyWithPrompt,
+            notNow = container.gettingStarted::dismiss,
+            finish = GuideFinishActions(
+                startMeeting = onStartMeeting,
+                close = viewModel::closeLap,
+                claimCelebration = { container.lapCelebrations.claim(viewModel.recordingId) },
+            ),
+        )
+    }
+    AnimatedVisibility(
+        visible = visible,
+        enter = if (removed) EnterTransition.None else slideInVertically { it } + fadeIn(),
+        exit = if (removed) ExitTransition.None else slideOutVertically { it } + fadeOut(),
+    ) {
+        val shown = current ?: return@AnimatedVisibility
+        GuideBar(
+            state = GuideBarState(
+                display = shown.display,
+                questions = remember(viewModel) { viewModel.lapQuestions(context) },
+                filedFolder = lastFiling?.folder ?: viewModel.currentFolderName(),
+                renamed = lastFiling?.renamed == true,
+                hasSuggestion = hasSuggestion,
+            ),
+            actions = actions,
+        )
     }
 }
 
@@ -1033,6 +1125,20 @@ private fun DetailBody(
     )
     JumpScrollEffect(scroll = scroll, request = jumpRequest)
 
+    // The guide bar's step 2: the transcript, its first turn scrolled to and
+    // lit — "this is a turn; tap it". Deliberately no seek: the step ticks when
+    // the reader taps a line themselves, which is also what glides the
+    // playhead and rings the waveform (#484).
+    val firstTurn = rememberUpdatedState(segments.firstOrNull())
+    GuideJumpEffect(request = pages.lapJump) {
+        firstTurn.value?.let { first ->
+            onFaceChange(DetailFace.TRANSCRIPT)
+            followsAudio = false
+            jumpRequest = JumpRequest(turn = 0, serial = jumpRequest.serial + 1)
+            lit.light(first.id)
+        }
+    }
+
     // A moment in the summary, taken to the transcript: switch pages, send the
     // audio there, scroll the turn into view and light it. The scroll is asked
     // for separately from the seek because a recording whose audio is not on the
@@ -1127,6 +1233,8 @@ private class PageControl(
     val onFaceChange: (DetailFace) -> Unit,
     val searching: Boolean,
     val onCloseSearch: () -> Unit,
+    /** Bumped by the guide bar's "Open the transcript" — see [GuideJumpEffect]. */
+    val lapJump: Int = 0,
 )
 
 /** The two things the transcript asks of the player. */
@@ -1145,6 +1253,22 @@ private class SummaryHooks(
     val tickActionItem: (id: String, done: Boolean) -> Unit,
     val generate: () -> Unit,
 )
+
+/**
+ * Runs [onJump] each time [request] changes after this first composes — the
+ * guide bar's "Open the transcript". The value it arrives with is taken as
+ * already handled, so coming back to the page does not replay an old request.
+ */
+@Composable
+private fun GuideJumpEffect(request: Int, onJump: () -> Unit) {
+    var handled by remember { mutableIntStateOf(request) }
+    val jump = rememberUpdatedState(onJump)
+    LaunchedEffect(request) {
+        if (request == handled) return@LaunchedEffect
+        handled = request
+        jump.value()
+    }
+}
 
 /** A jump the transcript has to scroll to. [serial] so the same turn twice is still two requests. */
 @Immutable
