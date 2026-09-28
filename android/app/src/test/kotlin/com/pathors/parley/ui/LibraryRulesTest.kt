@@ -152,18 +152,18 @@ class LibraryRulesTest {
     @Test
     fun `an import is announced only once it is in the cloud`() {
         val landed = ImportState.Finished(recordingId = "r1", pendingUpload = false)
-        assertEquals(ImportNotice("Board.m4a", null), ImportNotice.of("Board.m4a", landed))
+        assertEquals(ImportNotice(IMPORTED_TITLE, null), ImportNotice.of(IMPORTED_TITLE, landed))
         assertEquals(
-            ImportNotice("Board.m4a", ORG_ID),
-            ImportNotice.of("Board.m4a", landed.copy(sharedToOrgId = ORG_ID)),
+            ImportNotice(IMPORTED_TITLE, ORG_ID),
+            ImportNotice.of(IMPORTED_TITLE, landed.copy(sharedToOrgId = ORG_ID)),
         )
         assertNull(
             "still on the phone: the upload queue is already saying so",
-            ImportNotice.of("Board.m4a", landed.copy(pendingUpload = true)),
+            ImportNotice.of(IMPORTED_TITLE, landed.copy(pendingUpload = true)),
         )
-        assertNull(ImportNotice.of("Board.m4a", ImportState.Failed(ImportFailure.UNKNOWN)))
-        assertNull(ImportNotice.of("Board.m4a", ImportState.Cancelled))
-        assertNull(ImportNotice.of("Board.m4a", ImportState.Uploading))
+        assertNull(ImportNotice.of(IMPORTED_TITLE, ImportState.Failed(ImportFailure.UNKNOWN)))
+        assertNull(ImportNotice.of(IMPORTED_TITLE, ImportState.Cancelled))
+        assertNull(ImportNotice.of(IMPORTED_TITLE, ImportState.Uploading))
         assertNull(ImportNotice.of(null, null))
     }
 
@@ -240,3 +240,4 @@ class LibraryRulesTest {
 
 private const val ORG_ID = "org-1"
 private const val ORG_NAME = "Team"
+private const val IMPORTED_TITLE = "Board.m4a"
