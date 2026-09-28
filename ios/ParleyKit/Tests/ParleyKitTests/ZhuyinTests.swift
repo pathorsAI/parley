@@ -401,6 +401,22 @@ final class ZhuyinComposerTests: XCTestCase {
         XCTAssertEqual(c.syllables.count, 1)
     }
 
+    func testAHeldDeleteDefersTheBarUntilRefreshButNeverLeavesItOverAnEmptyBuffer() {
+        var c = composer()
+        for symbol in "ㄋㄧㄏㄠ" { _ = c.symbol(symbol) }
+        let before = c.candidates
+        XCTAssertEqual(c.delete(refreshingCandidates: false), .handled)
+        XCTAssertEqual(c.delete(refreshingCandidates: false), .handled)
+        XCTAssertEqual(c.reading, "ㄋㄧ", "the buffer moves on every tick")
+        XCTAssertEqual(c.candidates, before, "the bar waits for the key to be let go")
+        c.refresh()
+        XCTAssertEqual(c.candidates, ["你", "尼"])
+        XCTAssertEqual(c.delete(refreshingCandidates: false), .handled)
+        XCTAssertEqual(c.delete(refreshingCandidates: false), .handled)
+        XCTAssertEqual(c.stage, .idle)
+        XCTAssertTrue(c.candidates.isEmpty, "an empty buffer has an empty bar")
+    }
+
     func testPickCommitsTheFirstSyllableAndLeavesTheRest() {
         var c = composer()
         for symbol in "ㄋㄧㄏㄠ" { _ = c.symbol(symbol) }
