@@ -976,6 +976,27 @@ The rule this leaves: **a view below the root takes values, not the bridge.**
 Anything that observes it re-evaluates on every key and every microphone
 reading.
 
+**A pane is built the first time it is needed, then kept.** The track used to
+build all of them at `viewDidLoad` — the voice pane and every key of QWERTY
+and 注音, about 120 keys — and keep them laid out off screen, so a keyboard
+opened only to dictate paid for two keyboards it never showed. Now
+`KeyboardRootView.paneSlot` draws a pane only once it is the current one, a
+drag on the track has begun beside it (both neighbours are built on the drag's
+first movement, in the same update that first moves the track), or a tab is
+about to slide across it (a tap from the voice pane to 注音 builds English and
+注音 before the slide starts). "Before" means an update earlier: SwiftUI animates
+the track by moving each view from where it was, and a view built in the same
+update as the move has no "was" — on the simulator the 注音 keys sat in place
+from the first frame while the voice pane slid away beneath them. So a tab that
+has something to build commits the build and moves on the next turn of the main
+queue, one frame later and only the first time. A drag needs no such care: it
+is not animated, so a neighbour built on its first movement is simply drawn
+where the finger put it. A pane the controller moves to on its own — one
+switched off in Settings, in `viewWillAppear` — is drawn as it lands and
+recorded as built on the next update. Until then a pane is `Color.clear` in the
+same frame, so the track's geometry and offset arithmetic are unchanged, and
+once built it stays, so swiping back costs what it always did.
+
 ### What an appearance leaves behind
 
 iOS builds a new `KeyboardViewController` almost every time the keyboard comes
