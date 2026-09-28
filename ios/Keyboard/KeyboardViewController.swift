@@ -158,6 +158,75 @@ final class KeyboardViewController: UIInputViewController {
         }
     }
 
+    /// Swap the stock input view for `KeyboardInputView`, which is the same
+    /// view with key clicks allowed and a window-change hook.
+    ///
+    /// Built after `super.loadView()` so it takes the stock view's style —
+    /// that style is what the system paints the keyboard's backdrop from — and
+    /// its frame and resizing, so nothing about how the system sizes the
+    /// keyboard changes. `inputView` is the controller's view; setting it sets
+    /// both.
+    override func loadView() {
+        super.loadView()
+        let stock = view
+        let style = (stock as? UIInputView)?.inputViewStyle ?? .keyboard
+        let input = KeyboardInputView(frame: stock?.frame ?? .zero, inputViewStyle: style)
+        if let stock {
+            input.autoresizingMask = stock.autoresizingMask
+            input.translatesAutoresizingMaskIntoConstraints =
+                stock.translatesAutoresizingMaskIntoConstraints
+        }
+        input.didMoveToNewWindow = { [weak self] in self?.stopDelayingTouches() }
+        inputView = input
+        Self.touchLog.debug(
+            "input view style \(style.rawValue, privacy: .public), is the view: \(self.view === input, privacy: .public)"
+        )
+    }
+
+    private static let touchLog = Logger(
+        subsystem: "com.pathors.parley.ios.keyboard", category: "touch")
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        stopDelayingTouches()
+    }
+
+    /// Let touches near the screen's edges reach the keys at once.
+    ///
+    /// The system watches the screen's edges for its own gestures — the home
+    /// indicator swipe along the bottom, the back swipe along the left — and its
+    /// recognizers for them sit on the window this keyboard is shown in, with
+    /// `delaysTouchesBegan` on. So a touch that starts near the left or bottom
+    /// edge — `q`, `a`, shift, `123`, the globe, the space bar — is held back
+    /// until the system has decided it is not one of its gestures: the key
+    /// darkens late, its callout flashes late or not at all, and a quick tap can
+    /// arrive as a press and a release in the same instant.
+    ///
+    /// Turning `delaysTouchesBegan` off on those recognizers is the standard
+    /// workaround every custom keyboard uses; the system gestures still work,
+    /// they just no longer hold the touch back while deciding. They are looked
+    /// for on the window and on every view between it and this one, and again
+    /// every time the view lands in a window, because the system hands the
+    /// keyboard a new one when it comes back. On the iOS 26.5 simulator there
+    /// is exactly one: a `_UISystemGestureGateGestureRecognizer` on the
+    /// `_UIHostedWindow`.
+    private func stopDelayingTouches() {
+        var found: [String] = []
+        var node: UIView? = view.superview
+        while let current = node {
+            for recognizer in current.gestureRecognizers ?? [] where recognizer.delaysTouchesBegan {
+                recognizer.delaysTouchesBegan = false
+                found.append(
+                    "\(String(describing: type(of: recognizer)))@\(String(describing: type(of: current)))")
+            }
+            // The chain ends at the window itself.
+            node = current.superview
+        }
+        Self.touchLog.debug(
+            "edge delay off on \(found.count, privacy: .public): \(found.joined(separator: ", "), privacy: .public)"
+        )
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         bridge.controller = self
@@ -419,6 +488,9 @@ final class KeyboardViewController: UIInputViewController {
     override func selectionDidChange(_ textInput: UITextInput?) {
         super.selectionDidChange(textInput)
         hostChangedText()
+        // The caret moved: whether the next letter starts a sentence is a
+        // question about where it is now.
+        refreshShift()
     }
 
     /// The constraint measures the whole input view, but the content is pinned
@@ -1730,6 +1802,8 @@ final class KeyboardViewController: UIInputViewController {
             return
         }
         let context = textDocumentProxy.documentContextBeforeInput
+        // Shift is decided from the same read; see `refreshShift`.
+        refreshShift(context: context)
         let partial = WordSuggestions.partialWord(before: context)
         publishSuggestions(
             partial: partial,
@@ -1784,6 +1858,75 @@ final class KeyboardViewController: UIInputViewController {
         keyPressed()
         apply(zhuyin.delete()) { textDocumentProxy.deleteBackward() }
         refreshSuggestions()
+    }
+
+    /// One repeat of a held delete key — see `DeleteRepeat` for the pace and
+    /// when a repeat becomes a word.
+    ///
+    /// A pending 注音 reading is still unwound symbol by symbol, however long
+    /// the key has been held: a word repeat never reaches past it into the
+    /// document, and never takes a whole word out of it. Its candidate bar is
+    /// left alone until the key is let go (`ZhuyinComposer.delete`).
+    ///
+    /// Nothing else is refreshed per repeat: the suggestion bar and shift are
+    /// re-read once, in `deleteRepeatEnded`. At twenty repeats a second each of
+    /// those was a document read and a strip redraw nobody could see.
+    func deleteRepeating(_ unit: DeleteRepeat.Unit) {
+        keyPressed()
+        apply(zhuyin.delete(refreshingCandidates: false)) {
+            let count =
+                unit == .word
+                ? DeleteRepeat.wordLength(before: textDocumentProxy.documentContextBeforeInput)
+                : 1
+            for _ in 0..<count { textDocumentProxy.deleteBackward() }
+        }
+    }
+
+    /// A held delete key was let go: bring back what the repeats skipped.
+    func deleteRepeatEnded() {
+        if !zhuyin.reading.isEmpty {
+            zhuyin.refresh()
+            publishComposition()
+        }
+        refreshSuggestions()
+    }
+
+    // MARK: shift
+
+    /// The shift key went down.
+    func tapShift() {
+        bridge.shift.update { $0.tap(at: Date()) }
+    }
+
+    /// Re-decide shift from the host's autocapitalisation and the text before
+    /// the caret — after every edit and every caret move, which is what both
+    /// spends a one-shot shift and arms it again after `. ` (see `ShiftLatch`).
+    ///
+    /// English pane only: it is the only pane with a shift key, and on the
+    /// others the read of the document would be a round trip to the host for
+    /// nothing. Arriving on the English pane re-reads it (`paneDidChange` →
+    /// `refreshSuggestions`). `context` is passed in where the caller has just
+    /// read it, so a keystroke reads the document once, not twice.
+    private func refreshShift(context: String?? = nil) {
+        guard bridge.pane == .english else { return }
+        let mode = autocapitalization
+        let capitalize =
+            mode == .none
+            ? false
+            : AutoCapitalization.capitalizesNext(
+                after: context ?? textDocumentProxy.documentContextBeforeInput, mode: mode)
+        bridge.shift.update { $0.settle(capitalize: capitalize) }
+    }
+
+    /// The host field's `autocapitalizationType`, in ParleyKit's terms. A field
+    /// that says nothing gets sentences, as it would from the system keyboard.
+    private var autocapitalization: AutoCapitalization.Mode {
+        switch textDocumentProxy.autocapitalizationType ?? .sentences {
+        case .none: return .none
+        case .words: return .words
+        case .allCharacters: return .allCharacters
+        default: return .sentences
+        }
     }
 
     /// Type a character from the symbol planes, committing any pending 注音
@@ -2145,6 +2288,13 @@ final class KeyboardBridge: ObservableObject {
     /// `copyableText` is set.
     func copyDictation() { controller?.copyDictation() }
     func backspace() { controller?.deleteBackward() }
+    /// A repeat of a held delete key, and the hold ending — see
+    /// `DeleteKey`.
+    func backspaceRepeat(_ unit: DeleteRepeat.Unit) { controller?.deleteRepeating(unit) }
+    func backspaceReleased() { controller?.deleteRepeatEnded() }
+    /// The letter pane's shift. Not `@Published`: see `ShiftModel`.
+    let shift = ShiftModel()
+    func tapShift() { controller?.tapShift() }
     func type(_ text: String) { controller?.insert(text) }
     func space() { controller?.insertSpace() }
     func newline() { controller?.insertReturn() }

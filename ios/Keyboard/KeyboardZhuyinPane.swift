@@ -63,6 +63,10 @@ struct ZhuyinPane: View, Equatable {
         }
     }
 
+    /// Five rows of caps whose touch targets tile the pane, as on the QWERTY
+    /// pane — see `RowReach`. The stagger is the first key's reach, so a finger
+    /// in the strip a staggered row starts with types that row's first key, and
+    /// what the stagger leaves at the right end is the last key's.
     private var zhuyinPlane: some View {
         GeometryReader { geo in
             let m = KeyRowMetrics(
@@ -70,18 +74,26 @@ struct ZhuyinPane: View, Equatable {
             // One column, key to matching key: what the stagger is measured in.
             let pitch = m.unit + KBMetrics.keyGap
             VStack(spacing: KBMetrics.zhuyinRowSpacing) {
-                symbolRow(ZhuyinDachen.rows[0], unit: m.unit)
-                symbolRow(ZhuyinDachen.rows[1], unit: m.unit, leading: pitch / 3)
-                symbolRow(ZhuyinDachen.rows[2], unit: m.unit, leading: 2 * pitch / 3)
+                symbolRow(0, m, width: geo.size.width)
+                symbolRow(1, m, width: geo.size.width, stagger: pitch / 3)
+                symbolRow(2, m, width: geo.size.width, stagger: 2 * pitch / 3)
+                // Measured on iOS 26.5 (iPhone 17 Pro Max simulator), this row
+                // draws 3pt right of the rows above it, its ⌫ running to the
+                // screen edge. That predates the touch targets and is left as
+                // drawn; `RowReach.edgeOverhang` keeps its ends from leaving a
+                // dead strip.
                 row {
-                    ForEach(ZhuyinDachen.rows[3], id: \.self) { key in
-                        symbolKey(key, width: m.unit)
+                    let keys = ZhuyinDachen.rows[3]
+                    let reach = Self.reach(3)
+                    ForEach(Array(keys.enumerated()), id: \.offset) { i, key in
+                        symbolKey(key, width: m.unit, reach: reach.key(first: i == 0))
                     }
                     DeleteKey(
-                        dark: dark, width: m.unit, height: KBMetrics.zhuyinKeyHeight
-                    ) {
-                        bridge.backspace()
-                    }
+                        dark: dark, width: m.unit, height: KBMetrics.zhuyinKeyHeight,
+                        reach: reach.key(last: true),
+                        action: bridge.backspace, repeatAction: bridge.backspaceRepeat,
+                        onRelease: bridge.backspaceReleased
+                    )
                     .equatable()
                 }
                 functionRow(m)
@@ -90,23 +102,43 @@ struct ZhuyinPane: View, Equatable {
             .padding(.top, KBMetrics.paneTop)
             .padding(.bottom, KBMetrics.paneBottom)
         }
+        // The keys' targets stop at the pane's edge (see `RowReach`). The
+        // panes sit side by side on one track, and an end key reaching past
+        // its own pane would take touches meant for the pane beside it.
+        .contentShape(Rectangle())
     }
 
-    /// One row of 大千 symbols, pushed `leading` points to the right of the row
-    /// above and then left-aligned — the keys keep the eleven-column unit width,
-    /// so a staggered row is the same keys as the top row's, just offset. The
-    /// trailing `Spacer` is what makes it an offset rather than a stretch: a row
-    /// of ten fixed-width keys would otherwise be free to spread itself out.
+    private static func reach(
+        _ row: Int, leading: CGFloat = KBMetrics.sideInset,
+        trailing: CGFloat = KBMetrics.sideInset
+    ) -> RowReach {
+        RowReach(
+            row: row, of: KBMetrics.zhuyinRows, spacing: KBMetrics.zhuyinRowSpacing,
+            leading: leading, trailing: trailing)
+    }
+
+    /// One row of 大千 symbols, pushed `stagger` points to the right of the
+    /// row above and then left-aligned — the keys keep the eleven-column unit
+    /// width, so a staggered row is the same keys as the top row's, just offset.
+    /// The trailing `Spacer` is what makes it an offset rather than a stretch: a
+    /// row of ten fixed-width keys would otherwise be free to spread itself out.
+    /// The first key's reach covers the stagger, and the last key's whatever
+    /// the `Spacer` takes.
     private func symbolRow(
-        _ keys: [Character], unit: CGFloat, leading: CGFloat = 0
+        _ index: Int, _ m: KeyRowMetrics, width: CGFloat, stagger: CGFloat = 0
     ) -> some View {
-        row {
-            ForEach(keys, id: \.self) { key in
-                symbolKey(key, width: unit)
+        let keys = ZhuyinDachen.rows[index]
+        let count = CGFloat(keys.count)
+        let leading = KBMetrics.sideInset + stagger
+        let used = leading + count * m.unit + (count - 1) * KBMetrics.keyGap
+        let reach = Self.reach(index, leading: leading, trailing: max(width - used, 0))
+        return row {
+            ForEach(Array(keys.enumerated()), id: \.offset) { i, key in
+                symbolKey(key, width: m.unit, reach: reach.key(i, of: keys.count))
             }
             Spacer(minLength: 0)
         }
-        .padding(.leading, leading)
+        .padding(.leading, stagger)
     }
 
     /// `123`, the globe where the system asks for one, `，`, space, `。`,
@@ -124,10 +156,11 @@ struct ZhuyinPane: View, Equatable {
     /// one tap away from where the thumbs already are, and the row still fits:
     /// on a 320pt SE with the globe, space keeps about 81pt.
     private func functionRow(_ m: KeyRowMetrics) -> some View {
-        row {
+        let reach = Self.reach(4)
+        return row {
             KeyButton(
                 dark: dark, tint: .alt, width: m.extraWide,
-                height: KBMetrics.zhuyinKeyHeight,
+                height: KBMetrics.zhuyinKeyHeight, reach: reach.key(first: true),
                 action: { symbols = true }
             ) {
                 Text(verbatim: "123").font(.system(size: 16, weight: .regular))
@@ -135,27 +168,29 @@ struct ZhuyinPane: View, Equatable {
             .equatable()
             .accessibilityLabel(Text(verbatim: "123"))
             if showsGlobe {
-                GlobeKey(controller: bridge.controller, dark: dark)
+                GlobeKey(controller: bridge.controller, dark: dark, reach: reach.key())
                     .frame(width: m.unit, height: KBMetrics.zhuyinKeyHeight)
             }
-            punctuationKey(",", width: m.unit, label: Text("Chinese comma"))
+            punctuationKey(
+                ",", width: m.unit, reach: reach.key(), label: Text("Chinese comma"))
             // Space is the first tone while a syllable is being typed and
             // "yes, that one" while candidates are showing — see
             // `ZhuyinComposer.space()`. The label stays put: a key whose
             // caption changes under the finger is harder to aim at than one
             // whose meaning follows the state.
             KeyButton(
-                dark: dark, width: nil, height: KBMetrics.zhuyinKeyHeight,
+                dark: dark, width: nil, height: KBMetrics.zhuyinKeyHeight, reach: reach.key(),
                 action: { bridge.space() }
             ) {
                 Text("Space").font(.system(size: 15))
             }
             .equatable()
             .accessibilityLabel(Text("Space"))
-            punctuationKey(".", width: m.unit, label: Text("Chinese period"))
+            punctuationKey(
+                ".", width: m.unit, reach: reach.key(), label: Text("Chinese period"))
             ReturnKey(
                 bridge: bridge, style: returnKey, dark: dark, width: m.extraWide,
-                height: KBMetrics.zhuyinKeyHeight
+                height: KBMetrics.zhuyinKeyHeight, reach: reach.key(last: true)
             )
             .equatable()
         }
@@ -164,10 +199,12 @@ struct ZhuyinPane: View, Equatable {
     /// A full-width mark on the function row. It goes through `bridge.type`
     /// like any symbol-plane key, so a pending reading is committed first and
     /// the mark lands after it rather than in front of it.
-    private func punctuationKey(_ ascii: Character, width: CGFloat, label: Text) -> some View {
+    private func punctuationKey(
+        _ ascii: Character, width: CGFloat, reach: EdgeInsets, label: Text
+    ) -> some View {
         let mark = FullWidthPunctuation.fullWidth(ascii)
         return KeyButton(
-            dark: dark, width: width, height: KBMetrics.zhuyinKeyHeight,
+            dark: dark, width: width, height: KBMetrics.zhuyinKeyHeight, reach: reach,
             action: { bridge.type(mark) }
         ) {
             Text(verbatim: mark).font(.system(size: 22))
@@ -183,11 +220,11 @@ struct ZhuyinPane: View, Equatable {
     /// One 大千 key. The tone marks share the plane and the cap with the symbols
     /// — they are part of the reading, not commands — and differ only in what
     /// they do to the buffer.
-    private func symbolKey(_ key: Character, width: CGFloat) -> some View {
+    private func symbolKey(_ key: Character, width: CGFloat, reach: EdgeInsets) -> some View {
         let symbol = ZhuyinDachen.symbol(for: key) ?? key
         let tone = ZhuyinTone.mark(symbol)
         return KeyButton(
-            dark: dark, width: width, height: KBMetrics.zhuyinKeyHeight,
+            dark: dark, width: width, height: KBMetrics.zhuyinKeyHeight, reach: reach,
             callout: String(symbol),
             action: {
                 if let tone {
