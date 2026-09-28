@@ -5,6 +5,7 @@ import com.pathors.parley.kit.BatchTranscriptResponse
 import com.pathors.parley.kit.BatchTranscriptionService
 import com.pathors.parley.kit.ChatCompletions
 import com.pathors.parley.kit.CloudChat
+import com.pathors.parley.kit.ParleyClientHeader
 import com.pathors.parley.util.deleteQuietly
 import java.io.File
 import java.io.IOException
@@ -60,6 +61,11 @@ val CloudJson: Json = Json {
  *
  * No overall call timeout: a pending-upload PUT can legitimately take minutes on
  * a bad connection, and the read/write timeouts already bound a *stalled* socket.
+ *
+ * Every request through it carries `X-Parley-Client` ([ParleyClientHeader]):
+ * the interceptor is on the client rather than in [CloudClient.execute] so
+ * that the sign-out in `AuthManager`, which builds its own request, and any
+ * client derived with `newBuilder()` (the batch upload's) inherit it too.
  */
 object ParleyHttp {
     val shared: OkHttpClient by lazy {
@@ -69,6 +75,7 @@ object ParleyHttp {
             .writeTimeout(5, TimeUnit.MINUTES)
             .callTimeout(0, TimeUnit.MILLISECONDS)
             .retryOnConnectionFailure(true)
+            .addInterceptor(ParleyClientHeader.interceptor)
             .build()
     }
 }

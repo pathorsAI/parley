@@ -12,6 +12,7 @@ import com.pathors.parley.auth.AuthManager
 import com.pathors.parley.auth.SignInError
 import com.pathors.parley.cloud.CloudClient
 import com.pathors.parley.filing.SampleFilingTarget
+import com.pathors.parley.kit.ParleyClientHeader
 import com.pathors.parley.library.SaveLocationStore
 import com.pathors.parley.meeting.ImportSession
 import com.pathors.parley.meeting.MeetingService
@@ -60,6 +61,13 @@ class ParleyApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // Before anything can open a connection — every request to the cloud,
+        // the STT socket included, says which build sent it.
+        ParleyClientHeader.install(
+            platform = ParleyClientHeader.ANDROID,
+            versionName = BuildConfig.VERSION_NAME,
+            build = BuildConfig.VERSION_CODE.toString(),
+        )
         container = AppContainer(this)
         // Rather than a bare drain: see [AppContainer.adoptOrphanedRecordings]
         // for why launch is the only safe moment to go looking for a recording
