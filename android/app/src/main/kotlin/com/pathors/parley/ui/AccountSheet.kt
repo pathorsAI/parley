@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -39,6 +40,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -59,6 +61,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -71,6 +74,7 @@ import com.pathors.parley.auth.CustomTabsLauncher
 import com.pathors.parley.cloud.CloudOrg
 import com.pathors.parley.cloud.CloudUser
 import com.pathors.parley.cloud.HostedQuota
+import com.pathors.parley.feedback.FeedbackSettings
 import com.pathors.parley.library.SaveDestination
 import com.pathors.parley.playback.AudioStorageSection
 import com.pathors.parley.ui.theme.ParleyTextStyles
@@ -171,6 +175,8 @@ fun AccountSheet(
             AppearanceSection()
 
             LanguageSection()
+
+            FeedbackSection(onReport = onDismiss)
 
             AboutSection(onShowGettingStarted)
 
@@ -736,7 +742,67 @@ private fun openLanguageSettings(context: Context) {
 }
 
 /**
- * Version, and the three addresses the app is obliged to be reachable at.
+ * "Feedback & diagnostics": the way to tell us something is wrong, and the one
+ * switch over what the app sends without being asked.
+ *
+ * "Report a problem" replaced the old "Support & feedback" web link. The link
+ * sent somebody off to a page to write an email — and nobody did: 1.13 broke
+ * transcription for almost every new Android user for ten days without one
+ * report. The sheet it opens now attaches the version, the device and the
+ * recent errors on its own, and keeps the FAQ link at its foot for questions
+ * that are not problems.
+ *
+ * The switch is on by default (spec §6) and the footnote says, in one line,
+ * exactly what a crash report contains — which is the whole of what makes a
+ * default-on report acceptable.
+ */
+@Composable
+private fun FeedbackSection(
+    /**
+     * Closes this sheet as the report sheet opens: stacked, the report's
+     * "Sent" would land behind a full-height account sheet where nobody sees
+     * it, and the person is done here anyway.
+     */
+    onReport: () -> Unit,
+) {
+    val feedback = rememberContainer().feedback
+    val autoSend by feedback.autoSendCrashes.collectAsState(initial = FeedbackSettings.DEFAULT_AUTO_SEND_CRASHES)
+
+    SectionHeader(R.string.feedback_section_title)
+
+    LinkButton(R.string.feedback_report_problem) {
+        feedback.openReport()
+        onReport()
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .toggleable(
+                value = autoSend,
+                role = Role.Switch,
+                onValueChange = feedback::setAutoSendCrashes,
+            ),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = stringResource(R.string.feedback_auto_crash),
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+        )
+        Switch(checked = autoSend, onCheckedChange = null)
+    }
+
+    Text(
+        text = stringResource(R.string.feedback_auto_crash_footnote),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+/**
+ * Version, and the two addresses the app is obliged to be reachable at.
  *
  * The privacy policy is the reason this section exists at all: Play rejects an
  * app that does not link to one from inside itself, and Android had no link
@@ -764,7 +830,6 @@ private fun AboutSection(onShowGettingStarted: () -> Unit) {
     LinkButton(R.string.link_privacy_policy) {
         CustomTabsLauncher.launch(context, ParleyLinks.PRIVACY)
     }
-    LinkButton(R.string.link_support) { CustomTabsLauncher.launch(context, ParleyLinks.SUPPORT) }
     // Brings the library's checklist back, unticked — for someone who closed it
     // with "Not now" and wants the lap after all. Resetting alone was the iOS
     // bug: the list lives behind this sheet, so the tap changed nothing anyone

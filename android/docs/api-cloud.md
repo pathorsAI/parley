@@ -90,6 +90,7 @@ All methods are `suspend` and throw `CloudException` on a non-2xx response.
 | `moveOrgRecordingToFolder(orgId, id, folderId?)` | `PATCH /orgs/{orgId}/recordings/{id}/folder` `{folderId}` (explicit `null` = org root) |
 | `signOut()` | `POST /auth/sign-out` (prefer `AuthManager.signOut()`) |
 | `deleteAccount()` | `DELETE /me` — permanent account deletion. See below. |
+| `submitFeedback(body): String?` | `POST /feedback`, `multipart/form-data`: a `payload` JSON field and an optional `screenshot` JPEG part (`feedback/FeedbackMultipart`). Bearer attached when signed in, anonymous otherwise. Idempotent on the payload's client-minted `id`. A 401 here **never** fires `onUnauthorized`. See "Problem reports" below. |
 
 **Ordering rule:** audio is uploaded **before** the summary/meta push, always. A
 row claiming `hasAudio` before its blob exists 404s the download on every other
@@ -142,6 +143,32 @@ Retrying will never clear it, so say that instead of "try again".
 
 `status == 0` means the failure never reached HTTP (unparseable body). Plain
 `IOException`s (DNS, socket) come through unwrapped.
+
+### `X-Parley-Client`
+
+Every request to the cloud — REST and the STT WebSocket upgrade — carries
+`X-Parley-Client: android/<versionName> (<versionCode>)`, e.g.
+`android/1.16 (9)`, so the cloud can stamp recordings and STT sessions with the
+build that made them. It is added by one OkHttp interceptor
+(`kit/ParleyClientHeader`), installed on `ParleyHttp.shared` and on the relay's
+own client; the value is set once in `Application.onCreate`. No call site sets
+it, so none can forget it.
+
+### Problem reports
+
+`feedback/FeedbackCenter` is the one door. A report is a
+`FeedbackPayload` — `{ id, trigger, recordingId?, message?, tags, diagnostics }`
+— written to `filesDir/FeedbackQueue/` (max 20, oldest dropped; screenshot beside
+it as `{id}.jpg`) **before** it is sent, then flushed at launch, on a validated
+network or a foreground (`AutoSync`), after sign-in, and right after it is made.
+A 400/413 drops the report; anything else stops the pass and keeps the queue.
+
+`trigger` is one of `empty_transcript`, `truncated_transcript`, `sync_failed`,
+`mic_recovery`, `retranscribe`, `delete_failed`, `crash`, `screenshot`,
+`manual`. `diagnostics` is the shared shape (app, os, device, context,
+recentErrors, log, crash); the log is the in-process ring (`feedback/Log`)
+scrubbed of tokens, emails and picked-file names, and never contains transcript
+text. A `crash` report carries only app, os, device model and the crash.
 
 ## Uploading a finished meeting
 

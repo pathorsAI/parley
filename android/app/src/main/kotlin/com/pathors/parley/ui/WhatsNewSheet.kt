@@ -4,7 +4,6 @@ import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
-import android.util.Log
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -40,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import com.pathors.parley.R
 import com.pathors.parley.auth.CustomTabsLauncher
+import com.pathors.parley.feedback.Log
 import com.pathors.parley.kit.Announcement
 import com.pathors.parley.onboarding.WhatsNewPresenter
 import com.pathors.parley.ui.theme.ParleyTheme

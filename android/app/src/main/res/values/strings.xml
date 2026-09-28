@@ -303,13 +303,53 @@
     <string name="account_language_change">Change</string>
     <string name="account_language_detail">Parley speaks English and Traditional Chinese, and follows your phone\'s language by default. Change it for Parley alone in the system settings.</string>
 
+    <!-- Feedback & diagnostics (shared copy with iOS — spec §6) -->
+    <string name="feedback_section_title">Feedback &amp; diagnostics</string>
+    <string name="feedback_report_problem">Report a problem</string>
+    <string name="feedback_auto_crash">Send crash reports automatically</string>
+    <string name="feedback_auto_crash_footnote">Only the app version, device model, and where it crashed. Never your recordings or transcripts.</string>
+    <string name="feedback_report_title">Report a problem</string>
+    <string name="feedback_report_placeholder">What happened? (optional)</string>
+    <string name="feedback_report_screenshot">Screenshot of this screen</string>
+    <string name="feedback_report_remove_screenshot">Remove screenshot</string>
+    <string name="feedback_report_disclosure">The app version, your device, and recent error logs go with it. Never your recordings or transcripts.</string>
+    <string name="feedback_report_send">Send</string>
+    <string name="feedback_report_faq">FAQ</string>
+    <string name="feedback_sent">Sent. Thank you.</string>
+    <string name="feedback_send_diagnostics">Send us diagnostics</string>
+    <string name="feedback_dismiss">Dismiss</string>
+    <string name="feedback_empty_title">Nothing was transcribed</string>
+    <plurals name="feedback_empty_body">
+        <item quantity="one">Recorded for %1$d minute, but the transcript is empty.</item>
+        <item quantity="other">Recorded for %1$d minutes, but the transcript is empty.</item>
+    </plurals>
+    <string name="feedback_truncated">The transcript stops at %1$s. The rest wasn\'t transcribed.</string>
+    <string name="feedback_sync_failed">This recording keeps failing to sync.</string>
+    <plurals name="feedback_mic_recovery">
+        <item quantity="one">The microphone was interrupted %1$d time during this recording.</item>
+        <item quantity="other">The microphone was interrupted %1$d times during this recording.</item>
+    </plurals>
+    <string name="feedback_retranscribe_ask">What was wrong last time?</string>
+    <string name="retranscribe_tag_misheard">Misheard words</string>
+    <string name="retranscribe_tag_missing">Missing parts</string>
+    <string name="retranscribe_tag_speakers">Wrong speakers</string>
+    <string name="retranscribe_tag_other">Something else</string>
+    <string name="feedback_delete_offer">Deleted. Send us diagnostics for this recording?</string>
+    <string name="feedback_delete_offer_action">Send</string>
+    <string name="feedback_crash_title">Parley closed unexpectedly last time</string>
+    <string name="feedback_crash_body">Send a crash report? It doesn\'t include your recordings.</string>
+    <string name="feedback_crash_send">Send</string>
+    <string name="feedback_crash_decline">Don\'t send</string>
+    <string name="feedback_crash_always">Send automatically from now on</string>
+    <string name="feedback_screenshot_offer">Report this screen?</string>
+    <string name="feedback_screenshot_offer_action">Report</string>
+
     <!-- About -->
     <string name="account_about_title">About</string>
     <string name="account_version">Version %1$s (%2$d)</string>
     <string name="account_about_detail">Live coaching and deep analysis live in the desktop app; the phone handles recording, transcribing, and reading back in-person meetings. On the Mac, Claude Code can also read your whole recording library over MCP.</string>
     <string name="link_desktop">Parley for desktop</string>
     <string name="link_privacy_policy">Privacy Policy</string>
-    <string name="link_support">Support &amp; feedback</string>
 
     <!-- Foreground service notification -->
     <string name="notification_channel_name">Meeting recording</string>

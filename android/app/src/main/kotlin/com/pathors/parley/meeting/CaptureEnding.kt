@@ -81,6 +81,8 @@ fun terminalStateFor(
     detail: String? = null,
     waitingForQuota: Boolean = false,
     sharedToOrgName: String? = null,
+    micRecoveries: Int = 0,
+    audioRoute: String? = null,
 ): MeetingState = when {
     recordingId != null -> MeetingState.Finished(
         recordingId = recordingId,
@@ -89,6 +91,8 @@ fun terminalStateFor(
         interruptedBy = interruptedBy,
         waitingForQuota = pendingUpload && waitingForQuota,
         sharedToOrgName = sharedToOrgName.takeIf { !pendingUpload },
+        micRecoveries = micRecoveries,
+        audioRoute = audioRoute,
     )
 
     interruptedBy != null -> MeetingState.Failed(interruptedBy, detail)

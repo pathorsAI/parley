@@ -14,9 +14,11 @@ import android.os.Handler
 import android.os.Looper
 import android.os.Process
 import android.os.SystemClock
-import android.util.Log
+import com.pathors.parley.feedback.AudioRouteLabel
+import com.pathors.parley.feedback.Log
 import com.pathors.parley.kit.CaptureRecovery
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.channels.trySendBlocking
@@ -236,6 +238,23 @@ class MicCapture @JvmOverloads constructor(
     /** Where microphone recovery stands. See [MicRecoveryState]. */
     val micRecovery: StateFlow<MicRecoveryState> = _micRecovery.asStateFlow()
 
+    private val recoveryCount = AtomicInteger()
+
+    /**
+     * How many times this capture lost the microphone and had to go and get it
+     * back — each interruption once, however many rungs of the ladder it took.
+     * The count behind the "microphone was interrupted n times" prompt: 1.13's
+     * rebuild loop would have shown up here as dozens in the first minute.
+     */
+    val recoveries: Int get() = recoveryCount.get()
+
+    /**
+     * The input the live `AudioRecord` is pointed at, in the route vocabulary
+     * the diagnostics share with iOS (`feedback/AudioRouteLabel`); null before
+     * the microphone first opened.
+     */
+    val activeRoute: String? get() = activeInput?.type?.let(AudioRouteLabel::of)
+
     /** Set by [stop] and never cleared — see "One-shot per instance" in the class docs. */
     @Volatile
     private var stopRequested: Boolean = false
@@ -427,6 +446,7 @@ class MicCapture @JvmOverloads constructor(
                 release(current)
                 current = null
                 if (exit is ReadExit.Recover) {
+                    recoveryCount.incrementAndGet()
                     current = recover(exit.action, sender)
                     if (current != null) publish(current)
                 }

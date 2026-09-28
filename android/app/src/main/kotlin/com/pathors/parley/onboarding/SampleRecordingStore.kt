@@ -1,7 +1,6 @@
 package com.pathors.parley.onboarding
 
 import android.content.Context
-import android.util.Log
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
@@ -13,6 +12,7 @@ import com.pathors.parley.cloud.CloudFolder
 import com.pathors.parley.filing.SampleFilingTarget
 import com.pathors.parley.kit.FilingFolder
 import com.pathors.parley.kit.FilingSuggestion
+import com.pathors.parley.feedback.Log
 import com.pathors.parley.kit.GettingStartedStep
 import com.pathors.parley.kit.SampleManifest
 import com.pathors.parley.playback.LocalAudioStore

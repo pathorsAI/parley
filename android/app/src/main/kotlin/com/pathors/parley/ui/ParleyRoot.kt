@@ -122,6 +122,9 @@ fun ParleyRoot() {
             signedIn == false -> OnboardingScreen(container)
             else -> ParleyNavHost(container)
         }
+        // Over every screen, signed in or not (a crash report does not need an
+        // account) — but never over a store screenshot.
+        if (!demo) FeedbackHost(container.feedback)
     }
 }
 

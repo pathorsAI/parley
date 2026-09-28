@@ -10,7 +10,6 @@ import android.os.Handler
 import android.os.Looper
 import android.os.StatFs
 import android.os.SystemClock
-import android.util.Log
 import com.pathors.parley.audio.MicCapture
 import com.pathors.parley.audio.MicCaptureException
 import com.pathors.parley.audio.MicRecoveryState
@@ -21,6 +20,7 @@ import com.pathors.parley.audio.StorageHeadroom
 import com.pathors.parley.auth.AuthManager
 import com.pathors.parley.cloud.RecordingSource
 import com.pathors.parley.cloud.TranscriptSegmentDto
+import com.pathors.parley.feedback.Log
 import com.pathors.parley.kit.RelayAudioBridge
 import com.pathors.parley.kit.SttRelayClient
 import com.pathors.parley.kit.SttRelayEvent
@@ -86,6 +86,14 @@ sealed interface MeetingState {
         val interruptedBy: MeetingFailure? = null,
         val waitingForQuota: Boolean = false,
         val sharedToOrgName: String? = null,
+        /**
+         * How many times the microphone had to be recovered during the
+         * recording — five or more and the screen offers to send diagnostics
+         * (`feedback/ProblemSignals.isMicRecoveryWorthAsking`).
+         */
+        val micRecoveries: Int = 0,
+        /** The input it was recording from at the end, for those diagnostics. */
+        val audioRoute: String? = null,
     ) : MeetingState
 
     /** The recording could not happen (or could not be saved). */
@@ -899,6 +907,8 @@ class MeetingSession(
                 // the screen must say it waits for the quota, not the network.
                 waitingForQuota = result?.quotaExhausted == true,
                 sharedToOrgName = sharedTo?.let { resolveOrgName(it) },
+                micRecoveries = mic.recoveries,
+                audioRoute = mic.activeRoute,
             )
         }
 

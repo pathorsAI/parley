@@ -600,6 +600,32 @@ class CloudClient(
         return execute(request) { response -> bodyText(response) }
     }
 
+    // ── feedback ─────────────────────────────────────────────────────────────
+
+    /**
+     * `POST /feedback` — one problem report, as the multipart body
+     * `feedback/FeedbackMultipart` builds (`payload` JSON, optional `screenshot`
+     * JPEG). Returns the id the cloud stored it under, or null when it answered
+     * 200 without one.
+     *
+     * The bearer header goes along when there is a session, so a report is
+     * linked to the account that sent it; without one the cloud files it as
+     * anonymous. Idempotent on the payload's client-minted id — a retry after a
+     * lost response is a 200, not a duplicate — which is what lets the offline
+     * queue resend without bookkeeping.
+     *
+     * A 401 here does **not** sign anybody out. The cloud is specified never to
+     * send one for this route, but if it ever did, a crash report quietly
+     * flushing in the background must not be the thing that ends a session:
+     * the next ordinary call will find out on its own whether the token is dead.
+     */
+    suspend fun submitFeedback(body: RequestBody): String? {
+        val request = Request.Builder().url(url("feedback")).post(body)
+        val text = execute(request, signsOutOn401 = false) { response -> bodyText(response) }
+        val obj = runCatching { CloudJson.parseToJsonElement(text) as? JsonObject }.getOrNull()
+        return obj?.stringOrNull("id")
+    }
+
     // ── plumbing ─────────────────────────────────────────────────────────────
 
     private fun url(vararg segments: String): HttpUrl =
@@ -625,6 +651,8 @@ class CloudClient(
     private suspend fun <T> execute(
         builder: Request.Builder,
         client: OkHttpClient = http,
+        /** False only for [submitFeedback] — see there. */
+        signsOutOn401: Boolean = true,
         onSuccess: suspend (Response) -> T,
     ): T {
         tokenProvider()?.let { builder.header("Authorization", "Bearer $it") }
@@ -632,7 +660,7 @@ class CloudClient(
         try {
             if (!response.isSuccessful) {
                 val text = bodyText(response)
-                if (response.code == 401) onUnauthorized()
+                if (response.code == 401 && signsOutOn401) onUnauthorized()
                 throw errorFor(response.code, text)
             }
             return onSuccess(response)

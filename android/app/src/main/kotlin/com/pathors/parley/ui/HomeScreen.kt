@@ -212,6 +212,10 @@ fun HomeScreen(
         onUpload = { viewModel.uploadNow() },
         onRefresh = { viewModel.refresh() },
         onSelectFolder = viewModel::selectFolder,
+        syncPrompt = SyncPromptActions(
+            onSend = viewModel::sendSyncDiagnostics,
+            onDismiss = viewModel::dismissSyncPrompt,
+        ),
         rowActions = { recording ->
             RecordingRowActions(
                 onClick = {
@@ -346,9 +350,17 @@ private class LibraryCallbacks(
     val onUpload: () -> Unit,
     val onRefresh: () -> Unit,
     val onSelectFolder: (FolderFilter) -> Unit,
+    /** The "keeps failing to sync" prompt under a queued row: send, or ×. */
+    val syncPrompt: SyncPromptActions = SyncPromptActions(),
     val rowActions: (RecordingSummary) -> RecordingRowActions,
     val audioOf: (String) -> AudioDownloadState = { AudioDownloadState.Absent },
     val importNotice: ImportNoticeText? = null,
+)
+
+/** What the sync prompt under a queued recording does. */
+private class SyncPromptActions(
+    val onSend: (PendingUpload) -> Unit = {},
+    val onDismiss: (String) -> Unit = {},
 )
 
 /** The import notice's parts; [orgName] null is the personal-only wording. */
@@ -573,6 +585,7 @@ private fun LibraryList(
             importNotice = callbacks.importNotice,
             onRecord = callbacks.onRecord,
             onUpload = callbacks.onUpload,
+            syncPrompt = callbacks.syncPrompt,
         )
         lap.checklist?.let { checklist ->
             item(key = "getting-started") {
@@ -1129,6 +1142,7 @@ private fun LazyListScope.libraryHeader(
     importNotice: ImportNoticeText?,
     onRecord: () -> Unit,
     onUpload: () -> Unit,
+    syncPrompt: SyncPromptActions,
 ) {
     // First, as on iOS, where it sits above the error row and the list: the
     // answer to "did my import work" belongs where the eye lands on return.
@@ -1153,7 +1167,21 @@ private fun LazyListScope.libraryHeader(
                 onUpload = onUpload,
             )
         }
-        items(state.pending, key = { "pending-" + it.id }) { pending -> PendingRow(pending) }
+        items(state.pending, key = { "pending-" + it.id }) { pending ->
+            Column {
+                PendingRow(pending)
+                // Under the row it is about: this is where sync status is
+                // read, and a recording that will not go up is sync status.
+                if (pending.id in state.syncPrompts) {
+                    DiagnosticsPrompt(
+                        text = stringResource(R.string.feedback_sync_failed),
+                        onSend = { syncPrompt.onSend(pending) },
+                        onDismiss = { syncPrompt.onDismiss(pending.id) },
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+            }
+        }
     }
 }
 

@@ -3,7 +3,6 @@ package com.pathors.parley
 import android.app.Application
 import android.content.Context
 import android.net.Uri
-import android.util.Log
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
@@ -12,6 +11,14 @@ import com.pathors.parley.auth.AuthManager
 import com.pathors.parley.auth.SignInError
 import com.pathors.parley.cloud.CloudClient
 import com.pathors.parley.filing.SampleFilingTarget
+import com.pathors.parley.feedback.DiagnosticsCollector
+import com.pathors.parley.feedback.FeedbackCenter
+import com.pathors.parley.feedback.FeedbackQueue
+import com.pathors.parley.feedback.FeedbackSettings
+import com.pathors.parley.feedback.Log
+import com.pathors.parley.feedback.PromptGateStore
+import com.pathors.parley.feedback.SyncFailureLedger
+import com.pathors.parley.feedback.UncaughtCrashRecorder
 import com.pathors.parley.kit.ParleyClientHeader
 import com.pathors.parley.library.SaveLocationStore
 import com.pathors.parley.meeting.ImportSession
@@ -38,6 +45,7 @@ import com.pathors.parley.upload.MeetingUploader
 import com.pathors.parley.upload.PendingBackfillQueue
 import com.pathors.parley.upload.PendingUploadQueue
 import com.pathors.parley.upload.TranscriptBackfiller
+import java.io.File
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -61,6 +69,9 @@ class ParleyApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // First, before anything else can throw: a crash while the container
+        // is being built is exactly the kind nobody would otherwise hear of.
+        UncaughtCrashRecorder(AppContainer.crashDirectory(this)).install()
         // Before anything can open a connection — every request to the cloud,
         // the STT socket included, says which build sent it.
         ParleyClientHeader.install(
@@ -77,6 +88,9 @@ class ParleyApplication : Application() {
         // queues too — not only the next cold start.
         container.autoSync.start()
         container.startWhatsNew()
+        // The last process's crash, if it had one, and any report that did not
+        // get out before it ended.
+        container.feedback.handleLaunch()
     }
 }
 
@@ -227,6 +241,13 @@ class AppContainer(private val app: Application) {
     /** "Default save location" — read by the uploader, chosen in the account sheet. */
     val saveLocation: SaveLocationStore = SaveLocationStore.default(app)
 
+    /**
+     * Each queued recording's run of failed syncs — what the library's
+     * "keeps failing to sync" prompt and a report's `syncLastError` read.
+     */
+    val syncFailures: SyncFailureLedger =
+        SyncFailureLedger(File(FeedbackCenter.directory(app), "sync-failures.json"))
+
     val uploader: MeetingUploader = MeetingUploader(
         cloud = cloud,
         queue = uploadQueue,
@@ -235,6 +256,31 @@ class AppContainer(private val app: Application) {
         keepsAudioOnPhone = audioRetention::keepsAudioOnPhoneNow,
         onSaved = { gettingStarted.mark(GettingStartedStep.RECORDED) },
         defaultDestination = saveLocation::current,
+        onSyncAttempt = { id, failure ->
+            if (failure == null) syncFailures.clear(id) else syncFailures.failed(id, failure)
+        },
+    )
+
+    /**
+     * Problem reports: the prompts every screen raises, the crash from the
+     * last process, the report sheet, and the queue that gets them to the
+     * cloud. See [FeedbackCenter].
+     */
+    val feedback: FeedbackCenter = FeedbackCenter(
+        app = app,
+        scope = appScope,
+        cloud = cloud,
+        settings = FeedbackSettings(app),
+        gate = PromptGateStore(File(FeedbackCenter.directory(app), "prompts.json")),
+        queue = FeedbackQueue(File(app.filesDir, FeedbackQueue.DIRECTORY_NAME)),
+        collector = DiagnosticsCollector(
+            context = app,
+            pendingUploads = uploadQueue::count,
+            syncLastError = { syncFailures.read().lastError },
+            signedIn = { auth.currentToken() != null },
+        ),
+        crashes = UncaughtCrashRecorder(crashDirectory(app)),
+        isDemo = { DemoMode.isActive },
     )
 
     /**
@@ -255,7 +301,12 @@ class AppContainer(private val app: Application) {
      * returns to the foreground. Started from `Application.onCreate`, after the
      * launch-time sweep.
      */
-    val autoSync: AutoSync = AutoSync(app, appScope) { drainPendingUploads() }
+    val autoSync: AutoSync = AutoSync(app, appScope) {
+        drainPendingUploads()
+        // Reports go out signed in or not, so this is not inside the drain,
+        // which stops at "nobody is signed in".
+        feedback.flush()
+    }
 
     /**
      * Why the last sign-in did not finish (never display copy — the UI maps
@@ -332,6 +383,7 @@ class AppContainer(private val app: Application) {
     fun onSignedIn() {
         _authError.value = null
         drainPendingUploads()
+        feedback.flush()
     }
 
     /**
@@ -441,6 +493,15 @@ class AppContainer(private val app: Application) {
         ImportNotice.of(session?.title, session?.state?.value)?.let { _importNotice.value = it }
         session?.cancel()
         _activeImport.value = null
+    }
+
+    companion object {
+        /**
+         * Where the uncaught-exception handler leaves a crash for the next
+         * launch. A function of the context alone, because the handler is
+         * installed before this container exists.
+         */
+        fun crashDirectory(context: Context): File = File(FeedbackCenter.directory(context), "crashes")
     }
 }
 

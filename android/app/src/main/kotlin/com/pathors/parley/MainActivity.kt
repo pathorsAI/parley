@@ -1,6 +1,8 @@
 package com.pathors.parley
 
+import android.app.Activity
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -35,6 +37,39 @@ class MainActivity : ComponentActivity() {
                 ParleyRoot()
             }
         }
+    }
+
+    /**
+     * "Report this screen?" after a screenshot — Android 14+, where the system
+     * tells an app its own window was captured (`DETECT_SCREEN_CAPTURE`, a
+     * normal permission granted at install). Older versions have no such
+     * signal and get no prompt: there is no honest way to detect a screenshot
+     * below 14 without reading the photo library, which this app will not do.
+     *
+     * Registered only while the activity is visible (the platform requires
+     * it); see `FeedbackCenter.screenshotTaken` for what happens next.
+     */
+    private val screenCaptureCallback: Any? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            Activity.ScreenCaptureCallback { parleyContainer.feedback.screenshotTaken(this) }
+        } else {
+            null
+        }
+
+    override fun onStart() {
+        super.onStart()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val callback = screenCaptureCallback as Activity.ScreenCaptureCallback
+            runCatching { registerScreenCaptureCallback(mainExecutor, callback) }
+        }
+    }
+
+    override fun onStop() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val callback = screenCaptureCallback as Activity.ScreenCaptureCallback
+            runCatching { unregisterScreenCaptureCallback(callback) }
+        }
+        super.onStop()
     }
 
     override fun onNewIntent(intent: Intent) {

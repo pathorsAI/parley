@@ -2,7 +2,6 @@ package com.pathors.parley.meeting
 
 import android.content.Context
 import android.net.Uri
-import android.util.Log
 import com.pathors.parley.audio.AudioDecodeException
 import com.pathors.parley.audio.AudioFileDecoder
 import com.pathors.parley.audio.DecodeEvent
@@ -11,6 +10,7 @@ import com.pathors.parley.audio.OpusEncodeException
 import com.pathors.parley.auth.AuthManager
 import com.pathors.parley.cloud.RecordingSource
 import com.pathors.parley.cloud.TranscriptSegmentDto
+import com.pathors.parley.feedback.Log
 import com.pathors.parley.kit.SttRelayClient
 import com.pathors.parley.kit.SttRelayEvent
 import com.pathors.parley.kit.TranscriptSegment

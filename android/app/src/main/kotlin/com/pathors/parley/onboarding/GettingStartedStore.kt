@@ -1,7 +1,6 @@
 package com.pathors.parley.onboarding
 
 import android.content.Context
-import android.util.Log
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
@@ -9,6 +8,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.pathors.parley.feedback.Log
 import com.pathors.parley.kit.GettingStartedState
 import com.pathors.parley.kit.GettingStartedStep
 import com.pathors.parley.screenshot.DemoMode

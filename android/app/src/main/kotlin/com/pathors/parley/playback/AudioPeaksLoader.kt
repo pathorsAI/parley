@@ -2,9 +2,9 @@ package com.pathors.parley.playback
 
 import android.content.Context
 import android.net.Uri
-import android.util.Log
 import com.pathors.parley.audio.AudioFileDecoder
 import com.pathors.parley.audio.DecodeEvent
+import com.pathors.parley.feedback.Log
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers

@@ -170,6 +170,14 @@ class MeetingUploader(
      * ticks on too (`MeetingUploader.finishAndUpload`).
      */
     private val onSaved: () -> Unit = {},
+    /**
+     * Told how each recording's turn in a drain pass ended: with the failure
+     * that left it in the queue, or with null once it is no longer failing —
+     * uploaded, or dropped for good. Called off the main thread. Feeds the
+     * "keeps failing to sync" prompt (`feedback/SyncFailureLedger`); a no-op
+     * by default so the upload tests need not care.
+     */
+    private val onSyncAttempt: (id: String, failure: Throwable?) -> Unit = { _, _ -> },
 ) {
     private val drainMutex = Mutex()
 
@@ -297,17 +305,24 @@ class MeetingUploader(
             // would block the queue head forever.
             withContext(Dispatchers.IO) { queue.remove(item.id) }
             tally.discarded++
+            noteAttempt(item.id, null)
             return true
         }
         return try {
             uploadAndRetire(item, audio)?.let { orgId -> tally.shared[item.id] = orgId }
             tally.uploaded++
+            noteAttempt(item.id, null)
             true
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
             onUploadFailed(item, e, tally)
         }
+    }
+
+    /** [onSyncAttempt], off the main thread, and never the reason a pass fails. */
+    private suspend fun noteAttempt(id: String, failure: Throwable?) {
+        withContext(Dispatchers.IO) { runCatching { onSyncAttempt(id, failure) } }
     }
 
     /** @return the organization the recording was copied into, if it was. */
@@ -337,9 +352,13 @@ class MeetingUploader(
                 withContext(Dispatchers.IO) { queue.remove(item.id) }
                 tally.discarded++
                 tally.refused[item.id] = e
+                noteAttempt(item.id, null)
                 true
             }
-            UploadFailureDisposition.STOP_PASS -> false
+            UploadFailureDisposition.STOP_PASS -> {
+                noteAttempt(item.id, e)
+                false
+            }
         }
     }
 
