@@ -198,7 +198,10 @@ final class DictationCoordinator: ObservableObject {
     /// the race. It is deliberately never used while a microphone window is
     /// open — an active recording session is what keeps the process resident,
     /// and mixing a background task into it risks the assertion's end
-    /// suspending an app the audio session was holding up.
+    /// suspending an app the audio session was holding up. The exception is
+    /// the hand-over instant when the microphone closes: the task begins just
+    /// before the audio session is deactivated, so there is no gap between
+    /// them (see `closeMicrophoneIntoLinger`).
     private var lingerTask: UIBackgroundTaskIdentifier = .invalid
     /// See `armLifecycleLinger`. Held for the process's whole life, like
     /// `requestObserver`.
@@ -921,11 +924,6 @@ final class DictationCoordinator: ObservableObject {
         let cap = capture
         capture = nil
         stopReportingLevel()
-        // Detached for the same reason `fail` does it: closing an audio session
-        // is slow and nothing below depends on it. It really does close now — a
-        // capture that had given up used to make `stop()` a no-op, which left
-        // the session un-deactivated and the music it interrupted paused.
-        Task { await cap?.stop() }
         closeWindowState()
         errorMessage = nil
         micTaken = false
@@ -940,7 +938,14 @@ final class DictationCoordinator: ObservableObject {
         // at the next heartbeat, so the glyph and the notice agree from the
         // moment the notice appears.
         publishPresence()
+        // The linger before the audio session goes, as everywhere (see
+        // `closeMicrophoneIntoLinger`). The stop is detached for the same
+        // reason `fail` does it: closing an audio session is slow and nothing
+        // here depends on it. It really does close now — a capture that had
+        // given up used to make `stop()` a no-op, which left the session
+        // un-deactivated and the music it interrupted paused.
         beginLinger()
+        Task { await cap?.stop() }
     }
 
     /// Publish a live state, with the microphone having the last word.
@@ -1293,7 +1298,8 @@ final class DictationCoordinator: ObservableObject {
         publish()
         // In this order, and for the same reason `finishUp` uses it:
         // `releaseMicrophone` declines to act while the session still looks
-        // live, and it is what arms either the window or the ~30 s linger.
+        // live, and it is what arms the window, the 30-second hold, or the
+        // ~30 s linger.
         active = false
         Task { await releaseMicrophone() }
     }
@@ -1337,10 +1343,11 @@ final class DictationCoordinator: ObservableObject {
         guard finishingPolish.drained(declined: polishDeclined()) else {
             settle()
             // Not `beginLinger()` any more: whether this leaves a ~30 s
-            // background task or an open microphone window is
-            // `releaseMicrophone`'s decision, and the two must never both be in
-            // flight. Reached from the relay signing off as well as from
-            // `stop`, hence the Task.
+            // background task, the 30-second hold or an open microphone window
+            // is `releaseMicrophone`'s decision, and a background task never
+            // runs alongside the other two (bar the hand-over instant in
+            // `closeMicrophoneIntoLinger`). Reached from the relay signing off
+            // as well as from `stop`, hence the Task.
             Task { await releaseMicrophone() }
             return
         }
@@ -1357,8 +1364,10 @@ final class DictationCoordinator: ObservableObject {
         // The session is over as far as this app's own UI is concerned, and
         // `releaseMicrophone` declines to act while it thinks otherwise. It
         // goes first on purpose: an HTTP call needs no microphone, and what
-        // releasing arms — the window, or the ~30 s linger — is exactly what
-        // keeps this process resident long enough to finish one.
+        // releasing arms — the window, the 30-second hold, or the ~30 s
+        // linger — is exactly what keeps this process resident long enough to
+        // finish one. (The hold then restarts at `settle`, so the time the
+        // polish took is not taken out of the user's thirty seconds.)
         active = false
         Task { await releaseMicrophone() }
 
@@ -1455,6 +1464,14 @@ final class DictationCoordinator: ObservableObject {
     private func settle() {
         finishingDeadline?.cancel()
         finishingDeadline = nil
+        // The 30-second hold counts from here, not from ⏹. It was armed when
+        // the session stopped being active (`finishUp`), and has to be — it is
+        // part of what keeps this process resident through the polish — but
+        // then the drain and the polish ate into it, and a user who read the
+        // words for a few seconds before tapping again found the microphone
+        // gone. Restarted now, the user gets the whole hold after the text
+        // lands, whatever finishing cost.
+        restartHoldFromDelivery()
         state = .done
         // Measured before the lexicon rewrites `committed`, so the counts in
         // the log are the transcript and the reply as they were.
@@ -1636,8 +1653,7 @@ final class DictationCoordinator: ObservableObject {
             holdMicrophone()
             return
         }
-        await closeMicrophone()
-        beginLinger()
+        await closeMicrophoneIntoLinger()
     }
 
     /// With no window, the microphone still stays open for `holdAfterDictation`
@@ -1646,18 +1662,36 @@ final class DictationCoordinator: ObservableObject {
     /// suspended process never hears the tap at all; either way the second
     /// dictation went through Parley. Sound that arrives during the hold is
     /// dropped exactly as it is during a window.
+    ///
+    /// The thirty seconds are the user's, after the words land: `settle`
+    /// restarts them (`restartHoldFromDelivery`) when a polish kept the session
+    /// finishing after the hold was armed.
     private func holdMicrophone() {
         endLinger()
         publishPresence()
+        armHold()
+    }
+
+    /// (Re)start the hold's clock. The expiry hands over to the linger rather
+    /// than closing first — see `closeMicrophoneIntoLinger`.
+    private func armHold() {
         holdTask?.cancel()
         holdTask = Task { [weak self] in
             try? await Task.sleep(for: Self.holdAfterDictation)
             guard !Task.isCancelled, let self else { return }
             self.holdTask = nil
             guard !self.active, self.window.openedAt == nil else { return }
-            await self.closeMicrophone()
-            self.beginLinger()
+            await self.closeMicrophoneIntoLinger()
         }
+    }
+
+    /// A hold that is running starts its thirty seconds again from now. Only a
+    /// hold that exists: with a window open, or with the microphone already
+    /// closed, there is nothing to restart, and one that has not been armed yet
+    /// will be armed after this by `releaseMicrophone`, which is later still.
+    private func restartHoldFromDelivery() {
+        guard holdTask != nil else { return }
+        armHold()
     }
 
     /// A meeting is about to take the microphone. There is one microphone, so
@@ -1714,6 +1748,30 @@ final class DictationCoordinator: ObservableObject {
     }
 
     private static let log = Logger(subsystem: "com.pathors.parley", category: "Dictation")
+
+    /// Close the microphone with the ~30 s linger already running: every
+    /// ending that leaves no window and no hold behind comes through here.
+    ///
+    /// **The order is the point.** It used to be close, then linger — and the
+    /// close is an `await` that deactivates the audio session. For that stretch
+    /// the process had neither an active audio session nor a background
+    /// assertion, which is exactly the state iOS suspends a backgrounded app
+    /// in; a process suspended there never got to `beginLinger`, never heard
+    /// the keyboard's next start note, and the next tap went through Parley.
+    /// Beginning the background task first means one of the two is always
+    /// holding the process up.
+    ///
+    /// That makes this the one moment a background task and a live audio
+    /// session deliberately overlap (see `beginLinger`): an instant, on the
+    /// way from one to the other, never an arrangement that lasts. The hold is
+    /// dropped first because `beginLinger` declines while one exists — and a
+    /// hold's own expiry is one of the callers.
+    private func closeMicrophoneIntoLinger() async {
+        holdTask?.cancel()
+        holdTask = nil
+        beginLinger()
+        await closeMicrophone()
+    }
 
     private func closeMicrophone() async {
         holdTask?.cancel()
@@ -1794,8 +1852,7 @@ final class DictationCoordinator: ObservableObject {
         windowTask = nil
         closeWindowState()
         guard !active else { return }
-        await closeMicrophone()
-        beginLinger()
+        await closeMicrophoneIntoLinger()
     }
 
     private func closeWindowState() {
@@ -1938,6 +1995,12 @@ final class DictationCoordinator: ObservableObject {
         // Never alongside a window or a hold. Their audio session is what is
         // holding the process up; a background assertion added on top buys
         // nothing and its expiry is a documented way to get suspended anyway.
+        //
+        // The one overlap there is, is on purpose and brief: every ending that
+        // closes the microphone begins this *before* deactivating the audio
+        // session (`closeMicrophoneIntoLinger`, `fail`,
+        // `endSessionWithMicTaken`), so the process is never left with
+        // neither. The session goes a moment later; the assertion stays.
         guard window.openedAt == nil, holdTask == nil else { return }
         endLinger()
         lingerTask = UIApplication.shared.beginBackgroundTask(withName: "dictation-relaunch") {
