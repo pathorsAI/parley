@@ -51,10 +51,28 @@ struct KeyCap: View {
     let tint: KeyTint
     let pressed: Bool
 
+    /// The 1pt shadow is the cap's own shape, one point lower, drawn under it —
+    /// which is exactly what a zero-radius `.shadow` renders, without making
+    /// every one of the forty-odd caps an offscreen shadow pass. It was also
+    /// still being applied in dark mode, at opacity zero; there the underlay
+    /// is simply not in the tree. Its alpha is scaled by the fill's, as a
+    /// shadow's is, so the one translucent fill — the pressed accent — casts
+    /// what it did before.
     var body: some View {
-        RoundedRectangle(cornerRadius: 5, style: .continuous)
-            .fill(fill)
-            .shadow(color: .black.opacity(dark ? 0 : 0.28), radius: 0, x: 0, y: 1)
+        ZStack {
+            if !dark {
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(.black.opacity(0.28 * fillOpacity))
+                    .offset(y: 1)
+            }
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(fill)
+        }
+    }
+
+    /// How opaque `fill` is: 0.75 for the pressed accent, 1 for the rest.
+    private var fillOpacity: Double {
+        tint == .accent && pressed ? 0.75 : 1
     }
 
     private var fill: Color {

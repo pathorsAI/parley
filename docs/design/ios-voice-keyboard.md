@@ -219,6 +219,15 @@ carrying no notification of its own. See the personal dictionary below.
 
 App Group id: `group.com.pathors.parley.ios` (entitlement on both targets).
 
+The container's URL is asked for once per process and remembered (only a real
+URL is — a `nil` is asked again), and every read shares one `JSONDecoder`: the
+keyboard reads these files a dozen times a second while someone speaks and nine
+or ten times per appearance. On the keyboard's side, anything read out of these
+files is clamped before it can trap: the uplink's `insertedCount` into
+`0...committed.count` before it slices the transcript, and the liveness
+watchdog's sleep — a deadline built from file timestamps — to a finite
+`0…60` s, a wake that only re-reads and sleeps again.
+
 ## Not leaving in the first place — the microphone window
 
 This section used to be called "the jump back to the previous app problem", and
@@ -953,6 +962,16 @@ invalidates once per key rather than twice: the composition and its
 candidates are one published `ZhuyinStrip`, the English word and its
 suggestions one `EnglishStrip`.
 
+The voice pane followed later. It had still been built inline in
+`KeyboardRootView.body`, which runs on every publish, so each English or 注音
+keystroke re-evaluated its forty-odd views off screen. It is `VoicePane` now,
+handed one `KeyboardBridge.VoiceState` value (the fields it draws, copied) and
+`Equatable` on it; measured on the simulator, sixteen English keystrokes
+re-evaluate the root sixteen times and the voice pane not once. It still
+redraws for its own state, the microphone level included. The strip's resting
+row — wordmark, microphone chip, pane tabs — is `StripHome`, `Equatable` on the
+pane, the pane list, the chip and the appearance, for the same reason.
+
 The rule this leaves: **a view below the root takes values, not the bridge.**
 Anything that observes it re-evaluates on every key and every microphone
 reading.
@@ -1306,8 +1325,10 @@ what was typed; there is no autocorrect, and no space-commits-the-suggestion
 rule. A keyboard that silently replaces a word it thinks is wrong is worse than
 one that suggests nothing — and this keyboard already asks for a lot of trust,
 since the personal dictionary learns from what the user retypes. Tapping a
-suggestion deletes one scalar per scalar of the partial and inserts the word plus
-a space; a prediction has an empty partial, so it deletes nothing. Case comes
+suggestion calls `deleteBackward()` once per grapheme of the partial and inserts
+the word plus a space — measured in a `UITextView` host, one call removes a whole
+`e`+U+0301 or 👍🏽 (so counting scalars, as it used to, also ate the character
+before the word), though for Devanagari `कि` it removes only the vowel sign; a prediction has an empty partial, so it deletes nothing. Case comes
 from what the user already said with the shift key: a capitalised partial gets a
 capitalised word, an ALL-CAPS partial of two letters or more gets an all-caps
 word, and one uppercase letter alone is read as a sentence starting rather than
@@ -1374,8 +1395,16 @@ nothing else. What it builds at load is the other order — the same words sorte
 alphabetically with each word's rank beside it — so a prefix is a contiguous
 range found by binary search and the answer is the lowest-ranked few in that
 range. A linear pass over 40,000 words per keystroke is the kind of cost that
-turns into dropped keys on an old phone; the only expensive case left is a
-one-letter prefix, and by the third letter the range is a handful. A missing
+turns into dropped keys on an old phone. The expensive walks are the one- and
+two-letter prefixes (four or five thousand words for `s`, `c` or `p`), so the
+load also stores the answer for every one- and two-letter prefix a word starts
+with, computed by the same walk; those keystrokes are a dictionary lookup, and
+by the third letter the range is small. The followers are indexed by their
+lowercase form at load too, so checking a run-together pair (`thankyou`) is a
+probe per cut rather than a copy of the follower list, and the user's lexicon is
+lowercased once when it is read rather than on every key. The equivalence tests
+hold the replaced implementation verbatim and compare every one-, two- and
+three-letter prefix and a few thousand real partials against it. A missing
 resource answers nothing rather than crashing, and each file can go missing
 without taking the other half with it.
 
@@ -1727,7 +1756,10 @@ composer's limit rather than a position anybody argued for.
   either; `selectionWillChange` never arrived at all. So the context cannot
   confirm a mark, and it cannot say which field a report came from. The field
   is told by `documentIdentifier` instead, read through key-value coding
-  because it is `nil` between fields and reading the Swift property then traps.
+  because it is `nil` between fields and reading the Swift property then traps
+  — and only after `responds(to:)` says the proxy has that getter
+  (`GuardedKVC`), because KVC on a key an object does not answer raises an
+  exception Swift cannot catch. An unknown field is `nil`.
   `MarkedTextLog` still accepts a context that holds the reading (what #427
   measured on iOS 26.3), and treats anything it cannot decide as consistent.
 - **A host that ignores marked text gets the 1.20 chip, for that field only.**

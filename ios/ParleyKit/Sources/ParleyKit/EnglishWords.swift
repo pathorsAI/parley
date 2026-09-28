@@ -26,7 +26,10 @@ import Foundation
 /// kind of cost that turns into dropped keys on an old phone. Binary search
 /// makes the search O(log n) and the walk proportional to the range, which is
 /// four thousand words for a one-letter prefix and a handful by the third
-/// letter — and a one-letter prefix is the only expensive case there is.
+/// letter. The one- and two-letter prefixes — the only expensive walks, and
+/// the first two keys of every word typed — are answered from a table built
+/// once at load instead (`Table.shortPrefixes`), so no keystroke walks more
+/// than a three-letter range.
 ///
 /// **Loaded lazily, never twice at once, and dropped under pressure**, like
 /// `ZhuyinPhrases` and for the same reason: this runs inside a keyboard
@@ -67,7 +70,24 @@ public final class EnglishWords {
         let words: [String]
         let ranks: [Int32]
         let followers: [String: [String]]
+        /// Each previous word's followers keyed by their lowercase form, the
+        /// first follower kept where two fold to the same key. It is what
+        /// `WordSuggestions.split` asks — "does this word follow that one,
+        /// whatever its case" — and it used to answer by copying the whole
+        /// follower list and lowercasing every entry, once per cut, on most
+        /// keystrokes in the middle of a word.
+        let followersByLowercase: [String: [String: String]]
+        /// The best `suggestionLimit` completions of every one- and two-letter
+        /// prefix any word starts with, computed by the very walk `completions`
+        /// does, so the answer is the same by construction. A one-letter prefix
+        /// walks four or five thousand words (`s`, `c`, `p`); a two-letter one
+        /// several hundred; and they are the first two keys of every word
+        /// typed. A few hundred entries of five short strings each.
+        let shortPrefixes: [String: [String]]
     }
+
+    /// The longest prefix `Table.shortPrefixes` answers, in characters.
+    private static let shortPrefixLength = 2
 
     private var wordsURL: URL?
     private var followersURL: URL?
@@ -169,16 +189,33 @@ public final class EnglishWords {
     /// Empty for an empty prefix. "Every word in the language" is not a
     /// suggestion; after a space, `nextWords(after:)` is.
     public func completions(for prefix: String, limit: Int = suggestionLimit) -> [String] {
-        let needle = Self.normalized(prefix)
-        guard !needle.isEmpty, limit > 0, let table = load() else { return [] }
+        completions(forNormalized: Self.normalized(prefix), limit: limit)
+    }
 
+    /// `completions(for:limit:)` for a prefix the caller has already put
+    /// through `normalized`, so a caller that needs the normalized form for
+    /// something else as well does not build it twice per keystroke.
+    func completions(forNormalized needle: String, limit: Int = suggestionLimit) -> [String] {
+        guard !needle.isEmpty, limit > 0, let table = load() else { return [] }
+        // The table holds the top `suggestionLimit` in rank order, so any
+        // smaller limit is its front. A larger one — no caller asks for it —
+        // walks, as does a prefix no word starts with.
+        if limit <= Self.suggestionLimit, let known = table.shortPrefixes[needle] {
+            return Array(known.prefix(limit))
+        }
+        return Self.walk(needle, in: table.words, ranks: table.ranks, limit: limit)
+    }
+
+    /// The best `limit` words in the alphabetical range sharing `needle`.
+    private static func walk(
+        _ needle: String, in words: [String], ranks: [Int32], limit: Int
+    ) -> [String] {
         // Best-so-far, kept sorted by rank. `limit` is five, so an insertion
         // into a five-element array beats any heap that could replace it.
         var best: [(rank: Int32, word: String)] = []
-        var index = Self.lowerBound(of: needle, in: table.words)
-        while index < table.words.count, table.words[index].hasPrefix(needle) {
-            Self.offer(
-                rank: table.ranks[index], word: table.words[index], to: &best, limit: limit)
+        var index = lowerBound(of: needle, in: words)
+        while index < words.count, words[index].hasPrefix(needle) {
+            offer(rank: ranks[index], word: words[index], to: &best, limit: limit)
             index += 1
         }
         return best.map(\.word)
@@ -187,7 +224,11 @@ public final class EnglishWords {
     /// The word's frequency rank, or `nil` if it is not in the list. Exact
     /// match, normalized the way `completions` normalizes a prefix.
     func rank(of word: String) -> Int? {
-        let needle = Self.normalized(word)
+        rank(ofNormalized: Self.normalized(word))
+    }
+
+    /// `rank(of:)` for a word already put through `normalized`.
+    func rank(ofNormalized needle: String) -> Int? {
         guard !needle.isEmpty, let table = load() else { return nil }
         let index = Self.lowerBound(of: needle, in: table.words)
         guard index < table.words.count, table.words[index] == needle else { return nil }
@@ -199,6 +240,15 @@ public final class EnglishWords {
     public func nextWords(after word: String, limit: Int = suggestionLimit) -> [String] {
         guard limit > 0, let table = load() else { return [] }
         return Array(table.followers[Self.normalized(word)]?.prefix(limit) ?? [])
+    }
+
+    /// The follower of `previous` whose lowercase form is `lowercased`, in the
+    /// data's own case, or `nil` if the table has no such pair. Both arguments
+    /// already normalized. The first match in best-first order, which is what
+    /// scanning `nextWords(after:limit: .max)` for it would find — without the
+    /// copy and without lowercasing every follower to compare.
+    func follower(ofNormalized previous: String, lowercased: String) -> String? {
+        load()?.followersByLowercase[previous]?[lowercased]
     }
 
     /// Put a candidate into the running best-of list, if it earns a place.
@@ -231,7 +281,16 @@ public final class EnglishWords {
     /// smart quotes replace. A user who typed `don’t` in a field with smart
     /// quotes on is asking the same question as one who typed `don't`.
     static func normalized(_ prefix: String) -> String {
-        prefix.lowercased().replacingOccurrences(of: "\u{2019}", with: "'")
+        foldingApostrophes(prefix.lowercased())
+    }
+
+    /// The apostrophe half of `normalized`, for a caller that already holds the
+    /// lowercased string. Most words have no typographic apostrophe, and for
+    /// them this hands the string back rather than copying it through a
+    /// Foundation search that finds nothing.
+    static func foldingApostrophes(_ lowercased: String) -> String {
+        guard lowercased.unicodeScalars.contains("\u{2019}") else { return lowercased }
+        return lowercased.replacingOccurrences(of: "\u{2019}", with: "'")
     }
 
     // MARK: the table
@@ -240,10 +299,50 @@ public final class EnglishWords {
         // Rank before sorting: the order they arrive in *is* the rank.
         let ranked = words.enumerated().map { (word: $0.element, rank: Int32($0.offset)) }
             .sorted { $0.word < $1.word }
+        let sorted = ranked.map(\.word)
+        let ranks = ranked.map(\.rank)
+        let followers = Dictionary(
+            followers.map { (normalized($0.key), $0.value) }, uniquingKeysWith: { first, _ in first })
         return Table(
-            words: ranked.map(\.word), ranks: ranked.map(\.rank),
-            followers: Dictionary(
-                followers.map { (normalized($0.key), $0.value) }, uniquingKeysWith: { first, _ in first }))
+            words: sorted, ranks: ranks, followers: followers,
+            followersByLowercase: followers.mapValues { list in
+                var byLowercase: [String: String] = [:]
+                byLowercase.reserveCapacity(list.count)
+                for follower in list where byLowercase[follower.lowercased()] == nil {
+                    byLowercase[follower.lowercased()] = follower
+                }
+                return byLowercase
+            },
+            shortPrefixes: shortPrefixTable(sorted, ranks: ranks))
+    }
+
+    /// `Table.shortPrefixes`: the walk's answer for every one- and two-letter
+    /// prefix a word actually starts with. A prefix nothing starts with is left
+    /// out and walks — which finds nothing, at the cost of one binary search.
+    ///
+    /// The words are sorted, so each word's prefixes are compared with the
+    /// previous word's rather than collected into a set: about 40,000 cheap
+    /// comparisons and some seven hundred walks, whose ranges add up to the
+    /// list twice over. Measured at about two milliseconds on top of a ~13 ms
+    /// parse (release build, Apple silicon Mac), on the warm's background
+    /// thread — and it is why no keystroke walks a one-letter range any more.
+    private static func shortPrefixTable(_ words: [String], ranks: [Int32]) -> [String: [String]] {
+        var table: [String: [String]] = [:]
+        // The previous word's prefix at each length, index 0 for one letter.
+        var previous = [Substring](repeating: "", count: shortPrefixLength)
+        for word in words {
+            for length in 1...shortPrefixLength {
+                let prefix = word.prefix(length)
+                guard prefix.count == length else { break }
+                if previous[length - 1] == prefix { continue }
+                previous[length - 1] = prefix
+                let key = String(prefix)
+                if table[key] == nil {
+                    table[key] = walk(key, in: words, ranks: ranks, limit: suggestionLimit)
+                }
+            }
+        }
+        return table
     }
 
     /// `nil` while a warm is in flight.

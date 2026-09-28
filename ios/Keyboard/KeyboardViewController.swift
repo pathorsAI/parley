@@ -114,7 +114,9 @@ final class KeyboardViewController: UIInputViewController {
     /// edited it in Parley is not typing at that moment. Empty without Full
     /// Access — the container is not openable then — which is a supported state
     /// rather than a failure, because the pane has to keep suggesting there.
-    private var lexiconTerms: [String] = []
+    /// Lowercased once here, as it is read, rather than on every keystroke —
+    /// see `WordSuggestions.LexiconTerms`.
+    private var lexiconTerms = WordSuggestions.LexiconTerms.none
 
     /// A keyboard has no intrinsic height — without one it collapses to the
     /// system minimum and the layout looks broken. Every pane is measured to the
@@ -332,7 +334,7 @@ final class KeyboardViewController: UIInputViewController {
         // The field may be a different one, with a different word half-typed in
         // front of the cursor, so both the user's terms and the bar are re-read
         // rather than carried over.
-        lexiconTerms = LexiconStore.recognitionTerms()
+        lexiconTerms = WordSuggestions.LexiconTerms(LexiconStore.recognitionTerms())
         refreshSuggestions()
         // The tail belongs to the field it was dictated into. Coming back to a
         // *different* field it would read as text that is already there, so it
@@ -737,7 +739,7 @@ final class KeyboardViewController: UIInputViewController {
             return
         }
         let target = session
-        let wait = deadline.timeIntervalSince(now) + 0.3
+        let wait = Self.livenessWait(until: deadline, from: now)
         liveness = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(wait))
             guard !Task.isCancelled, let self, self.session == target else { return }
@@ -746,6 +748,27 @@ final class KeyboardViewController: UIInputViewController {
             self.drainDownlink()
             self.checkLiveness()
         }
+    }
+
+    /// The longest the watchdog sleeps before it looks again.
+    ///
+    /// Every deadline above is seconds away in any state that can happen: the
+    /// stale periods, `startGrace` and `stopGrace` are all well under a
+    /// minute. But `presumedDeadAt` is built from timestamps in files the app
+    /// wrote, and a clock that jumped or a stamp from nowhere can put it
+    /// arbitrarily far out — and a non-finite or huge number of seconds traps
+    /// in the conversion to `Duration`. Waking early is harmless: the wake
+    /// re-reads everything and sleeps again, so a clamp can only add a check,
+    /// never skip one.
+    private static let longestLivenessWait: TimeInterval = 60
+
+    /// Seconds from `now` until just past `deadline` — the 0.3 s margin so the
+    /// wake lands after the deadline rather than on it — kept finite and
+    /// within `0...longestLivenessWait`.
+    private static func livenessWait(until deadline: Date, from now: Date) -> TimeInterval {
+        let wait = deadline.timeIntervalSince(now) + 0.3
+        guard wait.isFinite else { return longestLivenessWait }
+        return min(max(wait, 0), longestLivenessWait)
     }
 
     /// Nobody is serving the session on screen. End it here, the way ✕ would,
@@ -1171,8 +1194,10 @@ final class KeyboardViewController: UIInputViewController {
         }
 
         // A relaunched keyboard restores its position from the uplink it wrote.
+        // Never below zero: the file is only ours by convention, and a
+        // negative mark would slice the transcript from before its start.
         if insertedCount == 0, let up = DictationChannel.readUplink(), up.session == session {
-            insertedCount = up.insertedCount
+            insertedCount = max(0, up.insertedCount)
         }
 
         // One insertion, at the end. `.done` is the only state that has the
@@ -1182,9 +1207,16 @@ final class KeyboardViewController: UIInputViewController {
         // The high-water mark is still what makes this safe, because `.done`
         // republishes on every drain and the keyboard drains on every
         // appearance.
+        //
+        // The mark is clamped into the transcript before it slices anything. It
+        // comes from a file, and an index outside `0...count` is a trap, not an
+        // empty string — a keyboard that died delivering words is the one
+        // failure this path cannot afford. Past the end already means "all of
+        // it landed" and inserts nothing, as it always did.
         let committed = Array(d.committed)
-        if d.state == .done, committed.count > insertedCount {
-            typeOutsideComposition(String(committed[insertedCount...]))
+        let landed = min(max(insertedCount, 0), committed.count)
+        if d.state == .done, committed.count > landed {
+            typeOutsideComposition(String(committed[landed...]))
             insertedCount = committed.count
             var up = DictationChannel.readUplink() ?? .init(session: session)
             up.insertedCount = insertedCount
@@ -1501,8 +1533,13 @@ final class KeyboardViewController: UIInputViewController {
     /// Which field the proxy is on. Read through key-value coding because the
     /// property is declared non-optional in Swift but is nil while the
     /// keyboard is between fields, and reading it then traps.
+    ///
+    /// Guarded, because KVC trades that trap for a worse one: a proxy that did
+    /// not answer the key would raise an exception Swift cannot catch, on
+    /// every text and selection change. `nil` — an unknown field — is what
+    /// every caller already handles.
     private var fieldID: UUID? {
-        (textDocumentProxy as? NSObject)?.value(forKey: "documentIdentifier") as? UUID
+        GuardedKVC.value(forKey: "documentIdentifier", of: textDocumentProxy as AnyObject) as? UUID
     }
 
     /// The host changed its text or selection itself: a tap, a different
@@ -1677,7 +1714,7 @@ final class KeyboardViewController: UIInputViewController {
             suggestions: partial.isEmpty
                 ? WordSuggestions.predictions(after: context, in: EnglishWords.bundled)
                 : WordSuggestions.suggestions(
-                    for: partial, in: EnglishWords.bundled, lexiconTerms: lexiconTerms))
+                    for: partial, in: EnglishWords.bundled, lexicon: lexiconTerms))
     }
 
     /// One assignment, and only on a real change: a keystroke that changed
@@ -1691,11 +1728,17 @@ final class KeyboardViewController: UIInputViewController {
     /// The user tapped a word: take back the letters they typed and put the
     /// whole word in, with the space that ends it.
     ///
-    /// Deleting by `unicodeScalars.count` rather than by `count` because
-    /// `deleteBackward()` removes one scalar at a time, and a partial word can
-    /// contain a grapheme made of several — a combining accent typed into the
-    /// field by another keyboard, for instance. Counting graphemes would leave
-    /// the remainder of one behind.
+    /// Deleting by `count` — one call per grapheme — because that is what one
+    /// `deleteBackward()` removes for the text this bar can meet. This used to
+    /// count scalars on the belief that the host deletes a scalar at a time;
+    /// measured in a `UITextView` host (iOS 26.5 simulator), one call took all
+    /// of `e` + U+0301 and all of 👍🏽, so a partial with a combining accent
+    /// typed by another keyboard deleted a character *before* the word too.
+    /// The same measurement found one exception: Devanagari `कि` lost only its
+    /// vowel sign, so for such scripts this leaves part of a grapheme behind.
+    /// That is the rarer failure and the gentler one — a stray letter left in
+    /// place rather than the user's text in front of the word eaten — and the
+    /// bundled list is ASCII, so only a lexicon term can reach it.
     ///
     /// The suggestion already carries the case the partial asked for, so it is
     /// inserted as it is shown.
@@ -1705,7 +1748,7 @@ final class KeyboardViewController: UIInputViewController {
         let partial = bridge.english.partialWord
         keyPressed()
         apply(zhuyin.confirm())
-        for _ in 0..<partial.unicodeScalars.count { textDocumentProxy.deleteBackward() }
+        for _ in 0..<partial.count { textDocumentProxy.deleteBackward() }
         textDocumentProxy.insertText(word + " ")
         refreshSuggestions()
     }
