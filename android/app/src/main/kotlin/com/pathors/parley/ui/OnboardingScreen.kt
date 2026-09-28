@@ -1,14 +1,14 @@
 package com.pathors.parley.ui
 
-import androidx.annotation.StringRes
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -19,11 +19,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -34,7 +36,10 @@ import androidx.compose.ui.unit.sp
 import com.pathors.parley.AppContainer
 import com.pathors.parley.R
 import com.pathors.parley.auth.CustomTabsLauncher
+import com.pathors.parley.kit.SampleManifest
 import com.pathors.parley.ui.theme.ParleyTextStyles
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * First run — the screen a cold Play Store install lands on.
@@ -48,11 +53,20 @@ import com.pathors.parley.ui.theme.ParleyTextStyles
  *
  * So the account still comes first, but the screen earns it: say what the app
  * does, what signing in buys, and what it costs, before asking. This is the
- * Android half of iOS `OnboardingView.swift`, down to the three value points and
- * the order they are in.
+ * Android half of iOS `OnboardingView.swift`: since onboarding v2 (#450) the
+ * three static value points are a short film of the product's four beats
+ * ([IntroStage]), played once from the bundled sample recording.
  */
 @Composable
 fun OnboardingScreen(container: AppContainer) {
+    val language = LocalConfiguration.current.locales[0].language
+    // The manifest is an APK asset: read off the main thread, once per language.
+    val film = produceState<FilmLoad?>(initialValue = null, container, language) {
+        value = withContext(Dispatchers.IO) {
+            FilmLoad(container.sample.manifest(SampleManifest.langFor(language))?.let(IntroFilm::of))
+        }
+    }
+
     Column(Modifier.fillMaxSize()) {
         // The pitch scrolls; the sign-in button does not. At the largest font
         // scales this copy is taller than a phone, and the one control that
@@ -68,12 +82,7 @@ fun OnboardingScreen(container: AppContainer) {
             Spacer(Modifier.height(24.dp))
             Header()
             Spacer(Modifier.height(28.dp))
-            Column(
-                modifier = Modifier.widthIn(max = MAX_CONTENT_WIDTH),
-                verticalArrangement = Arrangement.spacedBy(22.dp),
-            ) {
-                POINTS.forEachIndexed { index, point -> PointRow(index + 1, point) }
-            }
+            Stage(film.value, Modifier.widthIn(max = MAX_CONTENT_WIDTH))
             Spacer(Modifier.height(24.dp))
         }
 
@@ -108,8 +117,15 @@ private fun Header() {
             color = MaterialTheme.colorScheme.onSurface,
         )
         Text(
-            text = stringResource(R.string.onboarding_tagline),
-            style = MaterialTheme.typography.bodyMedium,
+            text = stringResource(R.string.onboarding_headline),
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.widthIn(max = MAX_CONTENT_WIDTH),
+        )
+        Text(
+            text = stringResource(R.string.onboarding_subline),
+            style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
             modifier = Modifier.widthIn(max = MAX_CONTENT_WIDTH),
@@ -140,51 +156,32 @@ private fun WaveformMark() {
     }
 }
 
-/** One of the three reasons to sign in. */
-private data class Point(@StringRes val title: Int, @StringRes val detail: Int)
-
-private val POINTS = listOf(
-    Point(R.string.onboarding_point_room, R.string.onboarding_point_room_detail),
-    Point(R.string.onboarding_point_live, R.string.onboarding_point_live_detail),
-    Point(R.string.onboarding_point_sync, R.string.onboarding_point_sync_detail),
-)
-
 /**
- * A numbered row rather than an icon row.
- *
- * iOS marks these with SF Symbols, which cost nothing there. Here the equivalent
- * is `material-icons-extended`, a megabyte of vectors for three glyphs — and this
- * build verifies every dependency's checksum, so adding one is not free either.
- * The numerals also happen to be the better fit: the three points are a sequence
- * (put the phone down, it transcribes, it syncs), and the same restraint iOS
- * applies to its own numbered setup rows.
+ * The film, once the manifest is read. Until then — a frame or two — the stage's
+ * room is held, so the sign-in block below does not jump when it arrives. A build
+ * without the sample assets has no film to play and prints the three points it
+ * would have shown instead.
  */
 @Composable
-private fun PointRow(number: Int, point: Point) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
-        verticalAlignment = Alignment.Top,
-    ) {
-        Text(
-            text = number.toString(),
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.End,
-            // The number marks the row visually; the row's own text is what a
-            // screen reader should read out, without "1." in front of it.
-            modifier = Modifier
-                .widthIn(min = 16.dp)
-                .clearAndSetSemantics {},
-        )
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+private fun Stage(load: FilmLoad?, modifier: Modifier = Modifier) {
+    val film = load?.film
+    when {
+        film != null -> IntroStage(film, modifier.fillMaxWidth())
+        load != null -> IntroPoints(modifier)
+        else -> Box(modifier.heightIn(min = STAGE_PLACEHOLDER_HEIGHT))
+    }
+}
+
+/** The manifest has been read; [film] is null in a build without the sample. */
+private class FilmLoad(val film: IntroFilm?)
+
+/** The three points the film makes, as text — the same three TalkBack reads over the film. */
+@Composable
+private fun IntroPoints(modifier: Modifier = Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        listOf(R.string.intro_point_record, R.string.intro_point_folder, R.string.intro_point_share).forEach {
             Text(
-                text = stringResource(point.title),
-                style = ParleyTextStyles.bodyEmphasized,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Text(
-                text = stringResource(point.detail),
+                text = stringResource(it),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -253,3 +250,6 @@ fun LaunchScreen() {
 
 /** Copy stops widening past this; a full-width line on a tablet is unreadable. */
 private val MAX_CONTENT_WIDTH = 420.dp
+
+/** Roughly the film's height, held while the manifest is read. */
+private val STAGE_PLACEHOLDER_HEIGHT = 360.dp

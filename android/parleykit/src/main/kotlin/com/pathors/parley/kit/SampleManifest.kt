@@ -10,9 +10,13 @@ import kotlinx.serialization.json.JsonArray
  *
  * The same files the desktop and iOS read (iOS `SampleManifest.swift`). Only the
  * fields the phone uses are decoded; anything else in the file (the render
- * script's voices and rates, the desktop's MCP questions and filing suggestion)
- * is ignored rather than required, so a later render that adds a field cannot
- * break an installed app.
+ * script's voices and rates, the desktop's MCP questions) is ignored rather than
+ * required, so a later render that adds a field cannot break an installed app.
+ *
+ * The analysis half — [suggestion], [brief], [findings], [actionItems] — is
+ * optional on the way in. A manifest rendered before those fields existed still
+ * decodes, and the sample then simply opens on its transcript with no
+ * suggestion card, exactly like an unanalysed recording would.
  */
 @Serializable
 data class SampleManifest(
@@ -34,6 +38,12 @@ data class SampleManifest(
      * answer the user sees from their AI is a good one.
      */
     val questions: List<String> = emptyList(),
+    /**
+     * The filing suggestion the script ships with: the title a filing pass would
+     * have proposed and the folder it would have proposed it for. See
+     * [filingSuggestion] for how the card offers it.
+     */
+    val suggestion: Suggestion? = null,
     /** The prewritten analysis, passed through untouched into the recording's meta. */
     val brief: String? = null,
     val findings: JsonArray? = null,
@@ -42,6 +52,20 @@ data class SampleManifest(
 
     @Serializable
     data class Speakers(val me: String, val them: String)
+
+    /**
+     * The script's proposed title and folder. The folder never exists yet —
+     * accepting it is what creates it (unless the user already has one by that
+     * name; see [filingSuggestion]).
+     */
+    @Serializable
+    data class Suggestion(
+        val title: String,
+        val folders: List<Folder> = emptyList(),
+    ) {
+        @Serializable
+        data class Folder(val name: String, val reason: String = "")
+    }
 
     @Serializable
     data class Segment(
@@ -76,10 +100,43 @@ data class SampleManifest(
     val speakerNames: Map<String, String>
         get() = mapOf("$SPEAKER_ME-1" to speakers.me, "$SPEAKER_THEM-2" to speakers.them)
 
+    /**
+     * The filing suggestion as the card offers it: the script's proposed title,
+     * its new folder, and — so the card is not a single take-it-or-leave-it
+     * chip — up to two of the folders the user already works in, most recently
+     * used first. Never more than three. iOS `SampleManifest.filingSuggestion`.
+     *
+     * A proposed folder whose name the user already has (their own customer
+     * called 泓昇科技, say) points at that folder instead of proposing a second
+     * one under the same name, by [FolderSearch]'s loose rules. Organization
+     * folders are never offered. Null when the manifest carries no suggestion.
+     */
+    fun filingSuggestion(existingFolders: List<FilingFolder>): FilingSuggestion? {
+        val proposed = suggestion ?: return null
+        val personal = existingFolders.filter { it.orgId == null }
+        val chips = proposed.folders.take(1).map { folder ->
+            FilingFolderSuggestion(
+                folderId = FolderSearch.exactMatch(personal, folder.name) { it.name }?.id,
+                name = folder.name,
+                reason = folder.reason,
+            )
+        }
+        val taken = chips.mapNotNull { it.folderId }.toSet()
+        val room = (MAX_SUGGESTED_FOLDERS - chips.size).coerceIn(0, MAX_RECENT_FOLDERS)
+        val recent = personal
+            .filterNot { it.id in taken }
+            .sortedByDescending { it.lastUsedAtMs ?: 0.0 }
+            .take(room)
+            .map { FilingFolderSuggestion(folderId = it.id, name = it.name, reason = "") }
+        return FilingSuggestion(title = proposed.title, folders = chips + recent)
+    }
+
     companion object {
         const val ID_PREFIX = "sample-"
         private const val SPEAKER_ME = "me"
         private const val SPEAKER_THEM = "them"
+        private const val MAX_SUGGESTED_FOLDERS = 3
+        private const val MAX_RECENT_FOLDERS = 2
 
         private val json = Json { ignoreUnknownKeys = true }
 

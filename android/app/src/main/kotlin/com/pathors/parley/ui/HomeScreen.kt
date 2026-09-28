@@ -154,7 +154,7 @@ import kotlin.math.abs
 fun HomeScreen(
     onRecord: () -> Unit,
     onImport: () -> Unit,
-    onOpenRecording: (id: String, orgId: String?, openFor: OpenFor) -> Unit,
+    onOpenRecording: (id: String, orgId: String?, guided: Boolean) -> Unit,
 ) {
     val container = rememberContainer()
     val viewModel: HomeViewModel = viewModel(factory = HomeViewModel.factory(container))
@@ -182,8 +182,14 @@ fun HomeScreen(
     val visible = remember(library, state.folders, state.folderFilter, search.query) {
         HomeViewModel.visibleRecordings(library, state.folders, state.folderFilter, search.query)
     }
-    val checklist = rememberChecklist(viewModel, state, library, search.query) { id, openFor ->
-        onOpenRecording(id, null, openFor)
+    val checklist = rememberChecklist(viewModel, state, sample, search.query) { id ->
+        onOpenRecording(id, null, true)
+    }
+
+    // The walk-through's end: the sample, loaded, opens as the lap's recording.
+    val openRecording = rememberUpdatedState(onOpenRecording)
+    LaunchedEffect(viewModel) {
+        viewModel.lapOpens.collect { id -> openRecording.value(id, null, true) }
     }
 
     val meetingLive = rememberMeetingLive()
@@ -208,7 +214,10 @@ fun HomeScreen(
         onSelectFolder = viewModel::selectFolder,
         rowActions = { recording ->
             RecordingRowActions(
-                onClick = { onOpenRecording(recording.id, state.scopeOrgId, OpenFor.READ) },
+                onClick = {
+                    val guided = LapRules.isLapRecording(recording.id, state.scopeOrgId, state.recordings)
+                    onOpenRecording(recording.id, state.scopeOrgId, guided)
+                },
                 onMoveToFolder = { moving = recording },
                 onShare = { org -> viewModel.shareToOrg(recording, org, thenDelete = false) },
                 onMoveToOrg = { org -> viewModel.shareToOrg(recording, org, thenDelete = true) },
@@ -350,7 +359,7 @@ private class ImportNoticeText(val title: String, val orgName: String?)
  * library, no search, and then the checklist's own rule
  * ([GettingStartedState.showsInLibrary], unit-tested in parleykit).
  */
-private class ChecklistModel(val state: GettingStartedState, val actions: GettingStartedActions)
+private class ChecklistModel(val state: GettingStartedState, val header: ChecklistHeader)
 
 /** The checklist, and the list state "Show the getting-started list again" scrolls. */
 private class LibraryLap(val checklist: ChecklistModel?, val listState: LazyListState)
@@ -359,29 +368,30 @@ private class LibraryLap(val checklist: ChecklistModel?, val listState: LazyList
 private fun rememberChecklist(
     viewModel: HomeViewModel,
     state: HomeViewModel.UiState,
-    library: List<RecordingSummary>,
+    sample: RecordingSummary?,
     query: String,
-    onOpen: (id: String, openFor: OpenFor) -> Unit,
+    onContinue: (id: String) -> Unit,
 ): ChecklistModel? {
     val checklist by viewModel.gettingStarted.collectAsState()
     val existingUserChecked by viewModel.existingUserChecked.collectAsState()
+    val walkingThrough by viewModel.walkingThrough.collectAsState()
     val language = LocalConfiguration.current.locales[0].language
     val current = checklist ?: return null
     if (!state.isPersonal || query.isNotBlank()) return null
     val shows = current.showsInLibrary(
         libraryLoaded = state.personalLoaded,
         existingUserChecked = existingUserChecked,
-        libraryIsEmpty = library.isEmpty(),
+        libraryIsEmpty = state.recordings.isEmpty() && sample == null,
     )
     if (!shows) return null
-    val latest = HomeViewModel.latestRecording(library)
+    val lap = LapRules.lapRecording(state.recordings, sample)
     return ChecklistModel(
         state = current,
-        actions = GettingStartedActions(
-            canLoadSample = viewModel.canLoadSample(language),
-            hasRecording = latest != null,
-            onLoadSample = { viewModel.loadSample(language) },
-            onOpen = { step -> latest?.let { onOpen(it.id, OpenFor.of(step)) } },
+        header = ChecklistHeader(
+            action = LapRules.checklistAction(current, lap, viewModel.canLoadSample(language)),
+            transcribing = walkingThrough,
+            onWalkThrough = { viewModel.walkThroughSample(language) },
+            onContinue = { lap?.let { onContinue(it.id) } },
             onDismiss = viewModel::dismissChecklist,
         ),
     )
@@ -568,7 +578,7 @@ private fun LibraryList(
             item(key = "getting-started") {
                 GettingStartedList(
                     state = checklist.state,
-                    actions = checklist.actions,
+                    header = checklist.header,
                     modifier = Modifier.padding(bottom = 8.dp),
                 )
             }
