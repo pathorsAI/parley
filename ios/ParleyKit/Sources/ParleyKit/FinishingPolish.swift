@@ -47,22 +47,42 @@ public struct FinishingPolish: Equatable, Sendable {
     public private(set) var phase: Phase = .draining
     /// The user asked to skip while the drain was still running.
     public private(set) var skipRequested = false
+    /// The deadline ended a drain that never completed. Set alongside
+    /// `skipRequested` — the drain ends the same way either way — and kept
+    /// apart from it only so the outcome can say which of the two it was.
+    public private(set) var overdue = false
+    /// Why the session settled with the text it settled with: `.polished`, or
+    /// the reason it went out raw. `nil` until something has settled it.
+    ///
+    /// Kept here rather than worked out by the coordinator afterwards because
+    /// every ending already passes through one of these transitions, and the
+    /// transition that wins the race is the only one that knows which ending
+    /// it was. A skip and a deadline both settle raw, from the same two phases;
+    /// only the state machine can tell them apart after the fact.
+    public private(set) var outcome: PolishOutcome?
 
     public init() {}
 
     /// The drain is over. Returns whether to start the polish: `false` means
     /// the caller settles with the raw words now, and this value records that
-    /// it has.
+    /// it has, and why (`outcome`).
     ///
-    /// `wantsPolish` is everything else that decides it — the setting, a
-    /// token, whether the text is long enough to be worth a round trip.
-    public mutating func drained(wantsPolish: Bool) -> Bool {
+    /// `declined` is everything else that decides it, as a reason: `nil` when
+    /// the polish is wanted, otherwise why not — `.off` (the setting, or no
+    /// token) or `.tooShort`. That reason wins over a skip or a deadline that
+    /// was waiting on the drain: the label on the history entry answers "why
+    /// is this raw", and "it was never going to be polished" is the answer
+    /// that stays true whatever else happened. Between the other two the
+    /// deadline wins, since a skip during the drain only waits for it, and it
+    /// was the deadline that stopped waiting.
+    public mutating func drained(declined: PolishOutcome?) -> Bool {
         guard phase == .draining else { return false }
-        if wantsPolish, !skipRequested {
+        if declined == nil, !skipRequested {
             phase = .polishing
             return true
         }
         phase = .settled
+        outcome = declined ?? (overdue ? .overdue : .skipped)
         return false
     }
 
@@ -74,17 +94,21 @@ public struct FinishingPolish: Equatable, Sendable {
             return .afterDrain
         case .polishing:
             phase = .settled
+            outcome = .skipped
             return .settleRawNow
         case .settled:
             return .tooLate
         }
     }
 
-    /// The polish came back — with text, or with nothing. Returns whether the
-    /// caller may settle with it; `false` means a skip got there first.
-    public mutating func polishReturned() -> Bool {
+    /// The polish came back — with text, or with nothing — and `result` is
+    /// what it came to (`.polished`, or why not). Returns whether the caller
+    /// may settle with it; `false` means a skip or the deadline got there
+    /// first, and their outcome stands.
+    public mutating func polishReturned(_ result: PolishOutcome) -> Bool {
         guard phase == .polishing else { return false }
         phase = .settled
+        outcome = result
         return true
     }
 
@@ -111,9 +135,11 @@ public struct FinishingPolish: Equatable, Sendable {
         switch phase {
         case .draining:
             skipRequested = true
+            overdue = true
             return .endDrainNow
         case .polishing:
             phase = .settled
+            outcome = .overdue
             return .settleRawNow
         case .settled:
             return .settled

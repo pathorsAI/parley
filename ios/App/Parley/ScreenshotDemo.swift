@@ -40,7 +40,8 @@
     /// picker open over fifteen folders), `resetchecklist` (Settings'
     /// "Show the getting-started list again", pressed, landing on the Library),
     /// `summary` / `jump` / `nosummary` (the recording page's two faces — see
-    /// `docs/design/ios-recording-page.md`).
+    /// `docs/design/ios-recording-page.md`), and `voicehistory` (Library ›
+    /// Voice typing, one entry per polish outcome).
     @MainActor
     final class ScreenshotDemo: ObservableObject {
         static let shared = ScreenshotDemo()
@@ -68,6 +69,9 @@
         @Published var allowsChecklist = false
         /// Library pushes the sample recording, as the lap opens it.
         @Published var showSample = false
+        /// Library switches to its Voice typing section, seeded with one
+        /// history entry per polish outcome (`voicehistory`).
+        @Published var showVoiceTyping = false
         /// Which fixture `showTranscript` pushes. The featured one unless a
         /// route asks for the unanalysed one.
         @Published var recordingID = "demo-renewal"
@@ -138,6 +142,7 @@
             pressResetChecklist = false
             allowsChecklist = false
             showSample = false
+            showVoiceTyping = false
             recordingID = Self.featured.id
             forcedFace = nil
             jumpOnOpen = nil
@@ -152,6 +157,13 @@
                 showSettledFiling = true
                 wantsFilingAdjust = true
             case "library": tab = .library
+            case "voicehistory":
+                // Review frame for the history's polish labels (1.25): one
+                // entry per outcome, plus one from before 1.25 with none.
+                // Deferred a turn for the same reason `dictation` is.
+                tab = .library
+                showVoiceTyping = true
+                Task { @MainActor in DictationHistory.shared.seedDemo(Self.voiceHistory) }
             case "transcript":
                 tab = .library
                 forcedFace = .transcript
@@ -271,6 +283,59 @@
             }
             if !current.isEmpty { chunks.append(current) }
             return chunks
+        }
+
+        /// The Voice typing history for `voicehistory`: one entry per polish
+        /// outcome, newest first in the order below, and a last one with no
+        /// outcome at all — what every entry written before 1.25 looks like.
+        static var voiceHistory: [DictationHistoryEntry] {
+            let now = Date()
+            func entry(
+                _ minutesAgo: Double, _ en: String, _ zh: String, _ outcome: PolishOutcome?,
+                raw: (String, String)? = nil, host: String? = nil
+            ) -> DictationHistoryEntry {
+                DictationHistoryEntry(
+                    text: t(en, zh), startedAt: now.addingTimeInterval(-minutesAgo * 60),
+                    durationMs: 3_000 + t(en, zh).count * 180, source: .keyboard,
+                    hostBundleID: host, rawText: raw.map { t($0.0, $0.1) }, polish: outcome)
+            }
+            return [
+                entry(
+                    2,
+                    "Three things for tomorrow:\n1. Send the quote.\n2. Check the contract.\n3. Book the client meeting.",
+                    "明天三件事：\n1. 寄出報價。\n2. 確認合約。\n3. 約客戶開會。",
+                    .polished,
+                    raw: (
+                        "um so three things for tomorrow first send the quote uh second check the contract and third book the client meeting",
+                        "那個明天有三件事啦第一個就是寄報價然後第二個是合約要再看一下呃第三個就是要約客戶開會"
+                    ),
+                    host: "com.apple.mobilenotes"),
+                entry(9, "OK", "好", .tooShort, host: "jp.naver.line"),
+                entry(
+                    15, "running five minutes late sorry start without me",
+                    "我會晚五分鐘到你們先開始不用等我", .skipped, host: "com.apple.MobileSMS"),
+                entry(
+                    38, "can you send me the file from yesterday's meeting when you get a chance",
+                    "你方便的時候把昨天開會的檔案傳給我一下", .timedOut),
+                entry(
+                    64, "the deploy is done and the numbers look fine on staging",
+                    "部署已經好了測試環境的數字看起來都正常", .rejectedScript),
+                entry(
+                    95, "what time does the store close on Sundays",
+                    "星期天店裡幾點關門", .rejectedLength),
+                entry(
+                    140, "let's move the review to Thursday afternoon",
+                    "檢討會改到禮拜四下午", .failed),
+                entry(
+                    200, "remind me to call the bank about the transfer",
+                    "提醒我打給銀行問轉帳的事", .overdue),
+                entry(
+                    320, "pick up milk and eggs on the way home",
+                    "回家路上買牛奶跟雞蛋", .off),
+                entry(
+                    1_500, "notes from last week before the update",
+                    "更新前的舊紀錄，沒有潤飾標籤", nil),
+            ]
         }
 
         // MARK: account fixtures

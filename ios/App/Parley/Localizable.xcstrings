@@ -3278,6 +3278,168 @@
         }
       }
     },
+    "Original" : {
+      "comment" : "History row: showing the raw transcript of an entry that was polished",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Original"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "原文"
+          }
+        }
+      }
+    },
+    "Original · connection failed" : {
+      "comment" : "History row: not polished because the request failed",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Original · connection failed"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "原文 · 連線失敗"
+          }
+        }
+      }
+    },
+    "Original · length changed too much" : {
+      "comment" : "History row: polish rejected because its length was too different from what was said",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Original · length changed too much"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "原文 · 長度差太多"
+          }
+        }
+      }
+    },
+    "Original · model replied in Simplified" : {
+      "comment" : "History row: polish rejected because the model introduced Simplified Chinese",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Original · model replied in Simplified"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "原文 · 模型回了簡體"
+          }
+        }
+      }
+    },
+    "Original · polish is off" : {
+      "comment" : "History row: not polished because Polish with AI is off or the user is signed out",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Original · polish is off"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "原文 · 潤飾已關閉"
+          }
+        }
+      }
+    },
+    "Original · timed out" : {
+      "comment" : "History row: not polished because the polish took longer than its budget",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Original · timed out"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "原文 · 逾時"
+          }
+        }
+      }
+    },
+    "Original · too short" : {
+      "comment" : "History row: not polished because the dictation was too short",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Original · too short"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "原文 · 太短"
+          }
+        }
+      }
+    },
+    "Original · took too long" : {
+      "comment" : "History row: not polished because the session hit its finishing deadline",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Original · took too long"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "原文 · 等太久"
+          }
+        }
+      }
+    },
+    "Original · you skipped it" : {
+      "comment" : "History row: not polished because the user tapped insert without polishing",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Original · you skipped it"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "原文 · 你選擇略過"
+          }
+        }
+      }
+    },
     "Owner" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3648,6 +3810,24 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "AI 潤飾"
+          }
+        }
+      }
+    },
+    "Polished" : {
+      "comment" : "History row: this entry's text is the AI-polished version",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Polished"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已潤飾"
           }
         }
       }
@@ -4531,6 +4711,42 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "看建議"
+          }
+        }
+      }
+    },
+    "Show original" : {
+      "comment" : "History row toggle: show the transcript before polishing",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show original"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "看原文"
+          }
+        }
+      }
+    },
+    "Show polished" : {
+      "comment" : "History row toggle: show the polished text again",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show polished"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "看潤飾後"
           }
         }
       }

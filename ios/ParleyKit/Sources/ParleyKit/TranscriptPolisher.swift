@@ -9,9 +9,10 @@ import Foundation
 /// worse.** The raw text is already in the user's document before the first
 /// byte of this request leaves the phone, and every failure mode — no network,
 /// a slow model, a refusal, a model that answered the transcript instead of
-/// cleaning it — resolves to "keep the raw text". That is why `polish` returns
-/// an optional rather than throwing something the caller has to interpret, and
-/// why `accept` is deliberately suspicious of what comes back.
+/// cleaning it — resolves to "keep the raw text". That is why `polishOutcome`
+/// never throws — it returns the text to insert, if there is one, and the
+/// reason when there is not — and why `verdict` is deliberately suspicious of
+/// what comes back.
 public enum TranscriptPolisher {
     /// The cloud's OpenAI-compatible chat endpoint (see `CloudChat`).
     static let path = CloudChat.path
@@ -89,32 +90,82 @@ public enum TranscriptPolisher {
 
     // MARK: the call
 
-    /// Send `raw` to be rewritten. Returns the polished text, or `nil` when
-    /// what came back failed `accept` — the caller keeps the raw transcript
-    /// either way. Throws only on transport/HTTP failure, which means the same
-    /// thing to the caller.
+    /// What one polish attempt came to: the text to insert, if the rewrite is
+    /// usable, and — whether or not it is — why.
+    public struct Result: Equatable, Sendable {
+        /// The accepted rewrite, or `nil` to keep the raw transcript.
+        public var text: String?
+        /// `.polished` exactly when `text` is set; otherwise the reason it is
+        /// not.
+        public var outcome: PolishOutcome
+        /// How long the model's reply was, in characters, whether or not it was
+        /// accepted — `nil` when there was no reply to measure. Only ever
+        /// logged: for a `.rejectedLength` it is the number that says which
+        /// side of the band the reply fell on, and the reply itself is the
+        /// user's words and never leaves the device in a log.
+        public var replyLength: Int?
+
+        public init(text: String?, outcome: PolishOutcome, replyLength: Int? = nil) {
+            self.text = text
+            self.outcome = outcome
+            self.replyLength = replyLength
+        }
+
+        /// No usable reply, for a reason that is not the reply's fault.
+        public static func unpolished(_ outcome: PolishOutcome) -> Result {
+            Result(text: nil, outcome: outcome)
+        }
+    }
+
+    /// Send `raw` to be rewritten, and say what came of it.
+    ///
+    /// Never throws: every failure is a `Result` with no `text`, which the
+    /// caller reads as "keep the raw transcript" — the same single ending the
+    /// optional this used to return had. What changed is that the caller now
+    /// learns *which* failure it was. Before 1.25 a rejected reply and a
+    /// dropped connection both came back as a bare `nil`, and "why does my
+    /// text sometimes look unpolished" had no answer anywhere.
     ///
     /// `protectedTerms` is the user's personal dictionary. Those are words they
     /// have already corrected by hand, so the model must not "fix" them back:
     /// a cleanup pass that undoes a name the user spelled out themselves is
     /// exactly the kind of help nobody asked for.
-    public static func polish(
+    ///
+    /// The time budget is not in here — the coordinator races this against its
+    /// own clock and reports `.timedOut` itself — so a cancelled request
+    /// surfaces as `.failed`, to a caller that is already discarding it.
+    public static func polishOutcome(
         raw: String, cloud: CloudClient, protectedTerms: [String] = []
-    ) async throws -> String? {
-        let body = try JSONEncoder().encode(
-            CloudChat.Request(
-                model: model,
-                temperature: 0.2,
-                maxTokens: 2048,
-                messages: [
-                    .init(role: "system", content: systemPrompt(protecting: protectedTerms)),
-                    .init(role: "user", content: raw),
-                ]))
-        let data = try await cloud.postJSON(path, body: body)
-        guard let content = content(fromChatCompletion: data) else { return nil }
+    ) async -> Result {
+        do {
+            let body = try JSONEncoder().encode(
+                CloudChat.Request(
+                    model: model,
+                    temperature: 0.2,
+                    maxTokens: 2048,
+                    messages: [
+                        .init(role: "system", content: systemPrompt(protecting: protectedTerms)),
+                        .init(role: "user", content: raw),
+                    ]))
+            let data = try await cloud.postJSON(path, body: body)
+            return result(raw: raw, reply: data)
+        } catch {
+            return .unpolished(.failed)
+        }
+    }
+
+    /// The pure half of `polishOutcome`: what a chat-completion body amounts to
+    /// for this transcript. A body with no content in it is a decoding failure
+    /// (`.failed`); content that fails `verdict` is rejected with its reason.
+    static func result(raw: String, reply data: Data) -> Result {
+        guard let content = content(fromChatCompletion: data) else {
+            return .unpolished(.failed)
+        }
         let polished = content.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard accept(raw: raw, polished: polished) else { return nil }
-        return polished
+        let outcome = verdict(raw: raw, polished: polished)
+        return Result(
+            text: outcome == .polished ? polished : nil, outcome: outcome,
+            replyLength: polished.count)
     }
 
     static func content(fromChatCompletion data: Data) -> String? {
@@ -127,9 +178,20 @@ public enum TranscriptPolisher {
     /// trusted to have followed the prompt: this is the last gate before text
     /// the user did not type replaces text they did say.
     public static func accept(raw: String, polished: String) -> Bool {
+        verdict(raw: raw, polished: polished) == .polished
+    }
+
+    /// `accept`, with the reason: `.polished` when the rewrite may be swapped
+    /// in, otherwise `.rejectedLength` or `.rejectedScript`. Split out so the
+    /// history can say which gate a reply failed — the two say different
+    /// things about the model, and only one of them is a prompt problem.
+    public static func verdict(raw: String, polished: String) -> PolishOutcome {
         let trimmedRaw = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmed = polished.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !trimmedRaw.isEmpty else { return false }
+        // An empty reply is the limiting case of a collapsed one: ratio zero.
+        // (An empty `raw` never gets here — `shouldPolish` keeps it home — and
+        // has no ratio to speak of, so it is filed the same way.)
+        guard !trimmed.isEmpty, !trimmedRaw.isEmpty else { return .rejectedLength }
 
         // A rewrite moves the length in both directions — filler and
         // repetition come out, list markers and line breaks go in — but it
@@ -140,16 +202,16 @@ public enum TranscriptPolisher {
         // "rewrite" drifting into "condense" is the failure mode this feature
         // has to keep out of people's documents.
         let ratio = Double(trimmed.count) / Double(trimmedRaw.count)
-        guard ratio >= 0.3, ratio <= 2.0 else { return false }
+        guard ratio >= 0.3, ratio <= 2.0 else { return .rejectedLength }
 
         // Simplified drift: the model rewriting Traditional Chinese into
         // Simplified is the one failure that looks like success. Only a
         // *newly introduced* simplified character counts — a user who dictated
         // simplified text in the first place gets their script back untouched.
         if !containsSimplifiedChinese(trimmedRaw), containsSimplifiedChinese(trimmed) {
-            return false
+            return .rejectedScript
         }
-        return true
+        return .polished
     }
 
     /// A heuristic drift detector, not a converter: a membership test against

@@ -199,6 +199,100 @@ final class DictationHistoryStoreTests: XCTestCase {
         XCTAssertEqual(makeStore().load(), written)
     }
 
+    // MARK: the polish outcome (1.25)
+
+    /// The new fields survive the file: a polished entry with the words that
+    /// were said, and a raw one with the reason it stayed raw.
+    func testRoundTripKeepsThePolishOutcomeAndTheRawText() throws {
+        let written = [
+            DictationHistoryEntry(
+                text: "我想講三件事：\n1. 先把報價做出來。\n2. 合約需要再確認一次。",
+                startedAt: clock.now.addingTimeInterval(-20.5), durationMs: 14_000,
+                source: .keyboard, hostBundleID: "com.apple.mobilenotes",
+                rawText: "那個我想講三件事啦第一點就是我們要先把那個報價弄出來然後第二點是合約那邊要再看一下",
+                polish: .polished),
+            DictationHistoryEntry(
+                text: "Pick up milk", startedAt: clock.now.addingTimeInterval(-3_600),
+                durationMs: 1_200, source: .actionButton, polish: .tooShort),
+        ]
+        let first = makeStore()
+        for e in written.reversed() { first.append(e) }
+
+        let loaded = makeStore().load()
+        XCTAssertEqual(loaded, written)
+        XCTAssertEqual(loaded.map(\.polish), [.polished, .tooShort])
+        XCTAssertNotNil(loaded[0].rawText)
+        XCTAssertNil(loaded[1].rawText)
+    }
+
+    /// Every outcome's raw value reads back as itself — they are a stored
+    /// format, and a case that did not round-trip would silently lose its
+    /// label on the next launch.
+    func testEveryOutcomeRoundTrips() {
+        let store = makeStore()
+        let written = PolishOutcome.allCases.enumerated().map { i, outcome in
+            DictationHistoryEntry(
+                text: "entry \(i)", startedAt: clock.now.addingTimeInterval(-Double(i)),
+                durationMs: 1, source: .keyboard, polish: outcome)
+        }
+        for e in written { store.append(e) }
+        XCTAssertEqual(makeStore().load().map(\.polish), PolishOutcome.allCases)
+    }
+
+    /// The raw text is kept only when it says something `text` does not: an
+    /// entry that went out raw would otherwise carry its transcript twice.
+    func testRawTextIdenticalToTheTextIsNotStored() throws {
+        let same = DictationHistoryEntry(
+            text: "we should call them back", startedAt: clock.now, durationMs: 1,
+            source: .keyboard, rawText: "we should call them back", polish: .failed)
+        XCTAssertNil(same.rawText)
+
+        makeStore().append(same)
+        let onDisk = try String(contentsOf: makeStore().fileURL, encoding: .utf8)
+        XCTAssertFalse(onDisk.contains("rawText"), "absent, not null")
+        XCTAssertTrue(onDisk.contains(#""polish":"failed""#))
+    }
+
+    /// A file written before 1.25 — no `rawText`, no `polish` — still decodes,
+    /// entry for entry, with neither field set. This is the upgrade path: the
+    /// history someone already has must survive the update intact.
+    func testAPre125FileStillDecodes() throws {
+        let old = """
+            [{"id":"6F2C1A5E-8B7D-4C3E-9A1F-0D2B3C4E5F60","text":"舊的聽寫紀錄",\
+            "startedAt":\(clock.now.timeIntervalSinceReferenceDate - 60),"durationMs":4200,\
+            "source":"keyboard","hostBundleID":"jp.naver.line"},\
+            {"id":"7A3D2B6F-9C8E-4D4F-8B2A-1E3C4D5F6A71","text":"Pick up milk",\
+            "startedAt":\(clock.now.timeIntervalSinceReferenceDate - 120),"durationMs":900,\
+            "source":"actionButton"}]
+            """
+        try Data(old.utf8).write(to: directory.appendingPathComponent(DictationHistoryStore.fileName))
+
+        let loaded = makeStore().load()
+
+        XCTAssertEqual(loaded.map(\.text), ["舊的聽寫紀錄", "Pick up milk"])
+        XCTAssertEqual(loaded.map(\.hostBundleID), ["jp.naver.line", nil])
+        XCTAssertEqual(loaded.map(\.source), [.keyboard, .actionButton])
+        XCTAssertEqual(loaded.map(\.polish), [nil, nil])
+        XCTAssertEqual(loaded.map(\.rawText), [nil, nil])
+    }
+
+    /// An outcome this build has never heard of — written by a later version,
+    /// read back after a downgrade — costs that entry its label, not the file
+    /// its every entry.
+    func testAnUnknownOutcomeReadsAsNoOutcome() throws {
+        let future = """
+            [{"id":"6F2C1A5E-8B7D-4C3E-9A1F-0D2B3C4E5F60","text":"from the future",\
+            "startedAt":\(clock.now.timeIntervalSinceReferenceDate - 60),"durationMs":4200,\
+            "source":"keyboard","polish":"somethingNew"}]
+            """
+        try Data(future.utf8).write(to: directory.appendingPathComponent(DictationHistoryStore.fileName))
+
+        let loaded = makeStore().load()
+
+        XCTAssertEqual(loaded.map(\.text), ["from the future"])
+        XCTAssertNil(loaded.first?.polish)
+    }
+
     /// A torn write, a hand-edited file, a future format — none of it may take
     /// the app down. It loads as empty, and the next write replaces it.
     func testACorruptFileLoadsAsEmpty() throws {

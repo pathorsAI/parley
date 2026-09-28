@@ -23,10 +23,22 @@ public struct DictationHistoryEntry: Codable, Identifiable, Equatable, Sendable 
     /// The app the keyboard was typing into, when it could be resolved. Often
     /// `nil`: iOS 26.4 stopped handing it to keyboards (see `HostBundleID`).
     public var hostBundleID: String?
+    /// What the session would have inserted without the polish — the raw
+    /// transcript with the personal dictionary applied, which is exactly what
+    /// "insert without polishing" hands the keyboard. Kept only when it differs
+    /// from `text`, so in practice only for a polished entry: that is the one
+    /// case where the words someone said and the words that landed are
+    /// different strings, and the one where they may want the former back.
+    public var rawText: String?
+    /// Whether `text` is the AI polish, and if not, why not. `nil` for a
+    /// session that never reached the polish decision (an `error`, a `micTaken`,
+    /// one superseded while finishing) and for every entry written before 1.25.
+    public var polish: PolishOutcome?
 
     public init(
         id: UUID = UUID(), text: String, startedAt: Date, durationMs: Int,
-        source: Source, hostBundleID: String? = nil
+        source: Source, hostBundleID: String? = nil, rawText: String? = nil,
+        polish: PolishOutcome? = nil
     ) {
         self.id = id
         self.text = text
@@ -34,6 +46,33 @@ public struct DictationHistoryEntry: Codable, Identifiable, Equatable, Sendable 
         self.durationMs = durationMs
         self.source = source
         self.hostBundleID = hostBundleID
+        // Normalised here rather than trusted to the caller, so "only when it
+        // differs" holds for every entry the store ever sees.
+        self.rawText = rawText == text ? nil : rawText
+        self.polish = polish
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, text, startedAt, durationMs, source, hostBundleID, rawText, polish
+    }
+
+    /// Hand-written for one reason: `polish` is decoded leniently. The two new
+    /// fields are optional, so a pre-1.25 file (which has neither) decodes
+    /// with the synthesised behaviour too — but a `polish` value this build
+    /// does not recognise, written by a later one and read back after a
+    /// downgrade, would fail the synthesised decode of the entry, and a history
+    /// that fails to decode is treated as empty. One unfamiliar label is not
+    /// worth every dictation in the file, so it reads as "not recorded".
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        text = try c.decode(String.self, forKey: .text)
+        startedAt = try c.decode(Date.self, forKey: .startedAt)
+        durationMs = try c.decode(Int.self, forKey: .durationMs)
+        source = try c.decode(Source.self, forKey: .source)
+        hostBundleID = try c.decodeIfPresent(String.self, forKey: .hostBundleID)
+        rawText = try c.decodeIfPresent(String.self, forKey: .rawText)
+        polish = (try? c.decodeIfPresent(PolishOutcome.self, forKey: .polish)) ?? nil
     }
 }
 

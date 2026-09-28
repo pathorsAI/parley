@@ -88,6 +88,128 @@ final class TranscriptPolisherTests: XCTestCase {
                 polished: "We should call them back on Monday."))
     }
 
+    // MARK: verdict — accept, with the reason
+
+    func testVerdictNamesTheGateAReplyFailed() {
+        let raw = "um so I was thinking like we could maybe ship it tomorrow"
+        XCTAssertEqual(
+            TranscriptPolisher.verdict(raw: raw, polished: "I was thinking we could ship it tomorrow."),
+            .polished)
+        XCTAssertEqual(TranscriptPolisher.verdict(raw: raw, polished: ""), .rejectedLength)
+        XCTAssertEqual(TranscriptPolisher.verdict(raw: raw, polished: " \n "), .rejectedLength)
+        XCTAssertEqual(TranscriptPolisher.verdict(raw: raw, polished: "Ship."), .rejectedLength)
+        XCTAssertEqual(
+            TranscriptPolisher.verdict(raw: raw, polished: String(repeating: raw, count: 3)),
+            .rejectedLength, "too long is the same gate as too short")
+        XCTAssertEqual(
+            TranscriptPolisher.verdict(raw: "我們說好的時間到了", polished: "我们说好的时间到了。"),
+            .rejectedScript)
+    }
+
+    /// Length is checked before script, so a reply that fails both is filed
+    /// under length — the more fundamental of the two ("this is not a rewrite
+    /// at all" rather than "a rewrite in the wrong script").
+    func testALengthFailureOutranksAScriptFailure() {
+        XCTAssertEqual(
+            TranscriptPolisher.verdict(
+                raw: String(repeating: "我們說好的時間到了，", count: 6), polished: "说好了"),
+            .rejectedLength)
+    }
+
+    /// `accept` is `verdict == .polished`, over the same inputs the accept
+    /// tests above already pin down.
+    func testAcceptAgreesWithVerdict() {
+        let cases: [(String, String)] = [
+            ("so uh we should probably call them back on monday", "We should call them back on Monday."),
+            ("um so I was thinking about it", ""),
+            ("我們說好的時間到了", "我们说好的时间到了。"),
+            ("我们说好的时间到了嗯就是这样", "我们说好的时间到了，就是这样。"),
+            ("what is the capital of France", String(repeating: "Paris is the capital. ", count: 5)),
+        ]
+        for (raw, polished) in cases {
+            XCTAssertEqual(
+                TranscriptPolisher.accept(raw: raw, polished: polished),
+                TranscriptPolisher.verdict(raw: raw, polished: polished) == .polished)
+        }
+    }
+
+    // MARK: result — what a reply amounts to
+
+    private func completion(_ content: String) -> Data {
+        let escaped = String(
+            data: try! JSONEncoder().encode(content), encoding: .utf8)!
+        return Data(#"{"choices":[{"index":0,"message":{"role":"assistant","content":\#(escaped)}}]}"#.utf8)
+    }
+
+    func testAnAcceptedReplyIsPolishedWithItsTrimmedText() {
+        let result = TranscriptPolisher.result(
+            raw: "so uh we should probably call them back on monday",
+            reply: completion("  We should call them back on Monday.\n"))
+        XCTAssertEqual(result.outcome, .polished)
+        XCTAssertEqual(result.text, "We should call them back on Monday.")
+        XCTAssertEqual(result.replyLength, 35)
+    }
+
+    func testARejectedReplyKeepsNoTextButReportsWhyAndHowLong() {
+        let long = TranscriptPolisher.result(
+            raw: "what is the capital of France",
+            reply: completion(String(repeating: "Paris is the capital. ", count: 5)))
+        XCTAssertEqual(long.outcome, .rejectedLength)
+        XCTAssertNil(long.text)
+        // 5 × 22 characters, less the trailing space: measured trimmed.
+        XCTAssertEqual(long.replyLength, 109)
+
+        let script = TranscriptPolisher.result(
+            raw: "我們說好的時間到了", reply: completion("我们说好的时间到了。"))
+        XCTAssertEqual(script.outcome, .rejectedScript)
+        XCTAssertNil(script.text)
+    }
+
+    func testAReplyWithNoContentIsAFailure() {
+        for body in [#"{"choices":[]}"#, "not json", ""] {
+            let result = TranscriptPolisher.result(
+                raw: "so uh we should probably call them back", reply: Data(body.utf8))
+            XCTAssertEqual(result, .unpolished(.failed))
+        }
+    }
+
+    // MARK: polishOutcome — the whole call, never throwing
+
+    /// A client whose every request is answered by `PolishStubProtocol`.
+    private func stubbedCloud(
+        _ answer: @escaping @Sendable (URLRequest) throws -> (Int, Data)
+    ) -> CloudClient {
+        PolishStubProtocol.answer = answer
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [PolishStubProtocol.self]
+        return CloudClient(
+            baseURL: URL(string: "https://polish.test")!,
+            session: URLSession(configuration: config), tokenProvider: { "t" })
+    }
+
+    func testAnHTTPErrorIsAFailureWithNoText() async {
+        let cloud = stubbedCloud { _ in (500, Data(#"{"error":"boom"}"#.utf8)) }
+        let result = await TranscriptPolisher.polishOutcome(
+            raw: "so uh we should probably call them back", cloud: cloud)
+        XCTAssertEqual(result, .unpolished(.failed))
+    }
+
+    func testATransportErrorIsAFailureWithNoText() async {
+        let cloud = stubbedCloud { _ in throw URLError(.notConnectedToInternet) }
+        let result = await TranscriptPolisher.polishOutcome(
+            raw: "so uh we should probably call them back", cloud: cloud)
+        XCTAssertEqual(result, .unpolished(.failed))
+    }
+
+    func testAGoodReplyComesBackPolished() async {
+        let body = completion("We should probably call them back.")
+        let cloud = stubbedCloud { _ in (200, body) }
+        let result = await TranscriptPolisher.polishOutcome(
+            raw: "so uh we should probably call them back", cloud: cloud)
+        XCTAssertEqual(result.outcome, .polished)
+        XCTAssertEqual(result.text, "We should probably call them back.")
+    }
+
     // MARK: containsSimplifiedChinese
 
     func testDetectsSimplifiedOnlyCharacters() {
@@ -200,4 +322,30 @@ final class TranscriptPolisherTests: XCTestCase {
         XCTAssertTrue(prompt.contains("term30"))
         XCTAssertFalse(prompt.contains("term31"), "the dictionary grows; the prompt must not")
     }
+}
+
+/// Answers every request with whatever `answer` says: a status and a body, or a
+/// thrown transport error. One answer at a time — the tests that use it set it
+/// just before the call they make.
+private final class PolishStubProtocol: URLProtocol {
+    nonisolated(unsafe) static var answer: (@Sendable (URLRequest) throws -> (Int, Data))?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        do {
+            guard let answer = Self.answer else { throw URLError(.unknown) }
+            let (status, body) = try answer(request)
+            let response = HTTPURLResponse(
+                url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: body)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
 }

@@ -142,6 +142,18 @@ final class DictationCoordinator: ObservableObject {
     /// merely outrun it — the request is a metered model call, and one whose
     /// answer nobody will read is worth stopping.
     private var polishTask: Task<Void, Never>?
+    /// The transcript the polish was sent, as it stood before the request —
+    /// `nil` when no polish was started. Kept for the history entry, which
+    /// stores what "insert without polishing" would have produced next to the
+    /// polished text, and for the settle log's character count.
+    private var polishRaw: String?
+    /// When the polish request went out, for the latency the settle log
+    /// reports. Measured to the settle rather than to the reply, so a skip or
+    /// the deadline cutting the wait short reports how long the user waited.
+    private var polishStartedAt: ContinuousClock.Instant?
+    /// How long the model's reply was, accepted or not (see
+    /// `TranscriptPolisher.Result.replyLength`). Only ever logged.
+    private var polishReplyLength: Int?
     /// The backstop that settles a session still `finishing` at
     /// `finishingBudget` after ⏹ — see `finishingOverdue`.
     private var finishingDeadline: Task<Void, Never>?
@@ -396,6 +408,9 @@ final class DictationCoordinator: ObservableObject {
         finishingPolish = FinishingPolish()
         polishTask?.cancel()
         polishTask = nil
+        polishRaw = nil
+        polishStartedAt = nil
+        polishReplyLength = nil
         finishingDeadline?.cancel()
         finishingDeadline = nil
         reconnectTask?.cancel()
@@ -1131,14 +1146,21 @@ final class DictationCoordinator: ObservableObject {
     /// detached by the time `finishUp` runs, so no further segment can rebuild
     /// it from `runs`.
     private func applyLexicon() {
-        guard !committed.isEmpty else { return }
+        committed = lexiconApplied(committed)
+    }
+
+    /// `text` as `applyLexicon` would leave it, without touching `committed` —
+    /// so `settle` can put the raw transcript through the same dictionary for
+    /// the history's "original" as the polished one went through.
+    private func lexiconApplied(_ text: String) -> String {
+        guard !text.isEmpty else { return text }
         let typed = DictationChannel.readUplink().map {
             $0.session == session ? $0.insertedCount : 0
         } ?? 0
-        let boundary = min(max(typed, 0), committed.count)
-        let tail = String(committed.dropFirst(boundary))
-        guard !tail.isEmpty else { return }
-        committed = String(committed.prefix(boundary)) + LexiconStore.apply(to: tail)
+        let boundary = min(max(typed, 0), text.count)
+        let tail = String(text.dropFirst(boundary))
+        guard !tail.isEmpty else { return text }
+        return String(text.prefix(boundary)) + LexiconStore.apply(to: tail)
     }
 
     // MARK: stop / teardown
@@ -1310,8 +1332,9 @@ final class DictationCoordinator: ObservableObject {
 
         // A skip the keyboard sent while the drain was still running is
         // honoured here, now that the last words are in: straight to `done`,
-        // exactly as if the polish had been switched off.
-        guard finishingPolish.drained(wantsPolish: wantsPolish()) else {
+        // exactly as if the polish had been switched off. `FinishingPolish`
+        // records which of those it was, for the history and the settle log.
+        guard finishingPolish.drained(declined: polishDeclined()) else {
             settle()
             // Not `beginLinger()` any more: whether this leaves a ~30 s
             // background task or an open microphone window is
@@ -1345,7 +1368,7 @@ final class DictationCoordinator: ObservableObject {
         // The dictionary rides along so the model cannot "fix" the corrections
         // the user made by hand; `applyLexicon` then has the last word anyway.
         let terms = LexiconStore.recognitionTerms()
-        var polish: @Sendable () async -> String? = {
+        var polish: @Sendable () async -> TranscriptPolisher.Result = {
             await Self.polished(raw: raw, cloud: client, terms: terms)
         }
         #if DEBUG
@@ -1353,19 +1376,23 @@ final class DictationCoordinator: ObservableObject {
                 polish = { await Self.demoPolish(holding: hold) }
             }
         #endif
+        polishRaw = raw
+        polishStartedAt = .now
         polishTask = Task {
-            let polished = await polish()
+            let result = await polish()
             // A new session, or a `fail`, may have landed while the request was
             // out. Either way this is no longer the transcript the keyboard is
             // waiting for, and publishing it now would be publishing over
             // somebody else's. And the user may have skipped it: then the raw
             // words have already been settled, and this reply — cancelled or
-            // not — is the one that must not settle a second time.
+            // not — is the one that must not settle a second time, nor
+            // relabel the ending the skip already recorded.
             guard self.session == target, self.state == .finishing,
-                self.finishingPolish.polishReturned()
+                self.finishingPolish.polishReturned(result.outcome)
             else { return }
             self.polishTask = nil
-            self.committed = polished ?? raw
+            self.polishReplyLength = result.replyLength
+            self.committed = result.text ?? raw
             self.settle()
         }
     }
@@ -1398,21 +1425,29 @@ final class DictationCoordinator: ObservableObject {
         }
     }
 
-    /// Whether the finished transcript is worth a trip to the cloud.
-    private func wantsPolish() -> Bool {
+    /// Whether the finished transcript is worth a trip to the cloud: `nil`
+    /// when it is, otherwise why not. A reason rather than a Bool because the
+    /// history labels the entry with it — "too short" and "polish is off" are
+    /// different answers to "why does this look unpolished", and only one of
+    /// them is something the user can change.
+    ///
+    /// The setting and the token are checked before the length, so a short
+    /// phrase with the switch off reads `.off`: that is the reason that would
+    /// still hold for a longer one.
+    private func polishDeclined() -> PolishOutcome? {
         #if DEBUG
             // ScreenshotDemo runs with no account and no network by design —
             // the whole flow has to be capturable without either — so its
             // sessions keep the plain synchronous ending, unless it was asked
             // to hold `finishing` so the keyboard's polish wave can be seen
             // (`ScreenshotDemo.finishingHold`), which never touches the network.
-            if ScreenshotDemo.isActive { return ScreenshotDemo.finishingHold != nil }
+            if ScreenshotDemo.isActive { return ScreenshotDemo.finishingHold != nil ? nil : .off }
         #endif
-        guard polishEnabled else { return false }
+        guard polishEnabled else { return .off }
         // The keyboard only reaches a signed-in app, but a session can have
         // expired mid-dictation. No token, no request; the raw words stand.
-        guard KeychainStore.get(AppState.tokenKey) != nil else { return false }
-        return TranscriptPolisher.shouldPolish(committed)
+        guard KeychainStore.get(AppState.tokenKey) != nil else { return .off }
+        return TranscriptPolisher.shouldPolish(committed) ? nil : .tooShort
     }
 
     /// The last beat of a session: hand the finished text to the keyboard as
@@ -1421,15 +1456,24 @@ final class DictationCoordinator: ObservableObject {
         finishingDeadline?.cancel()
         finishingDeadline = nil
         state = .done
+        // Measured before the lexicon rewrites `committed`, so the counts in
+        // the log are the transcript and the reply as they were.
+        let outcome = finishingPolish.outcome
+        let rawCount = (polishRaw ?? committed).count
         // After the polish, never before. The dictionary holds corrections the
         // user made by hand, and a model that undid one of them has to lose to
         // the person who typed it.
         applyLexicon()
         publish()
+        logSettled(outcome: outcome, rawCount: rawCount)
         // After the lexicon and after the publish: what is kept is exactly the
         // text the keyboard was just handed, and the keyboard is not kept
-        // waiting on a file write to get it.
-        recordHistory()
+        // waiting on a file write to get it. The raw words go through the same
+        // dictionary, so "the original" in the history is exactly what "insert
+        // without polishing" would have typed — not a transcript with the
+        // user's own corrections undone. For any ending but a polish the two
+        // come out identical and the entry drops the copy.
+        recordHistory(polish: outcome, rawText: polishRaw.map(lexiconApplied))
         active = false
         // No haptic here, deliberately. `done` is not delivery — it is this
         // process saying the text is *ready* — and the transcript is only ever
@@ -1443,40 +1487,65 @@ final class DictationCoordinator: ObservableObject {
         // iOS drops haptics from a background app.
     }
 
+    /// One line per settled dictation: how the polish ended, how long the user
+    /// waited on it, and how long the transcript and the model's reply were.
+    ///
+    /// **Counts only, never the text.** These are the user's words; the log is
+    /// for telling "the polish is timing out for this person" from "the model
+    /// keeps answering instead of rewriting", and a length says that without
+    /// saying anything they said. `-` where there is nothing to measure — no
+    /// request was sent, or no reply came back.
+    private func logSettled(outcome: PolishOutcome?, rawCount: Int) {
+        let latency = polishStartedAt.map { start -> String in
+            let d = start.duration(to: .now).components
+            return String(d.seconds * 1000 + d.attoseconds / 1_000_000_000_000_000)
+        } ?? "-"
+        let reply = polishReplyLength.map(String.init) ?? "-"
+        Self.log.notice(
+            "dictation settled: polish=\(outcome?.rawValue ?? "none", privacy: .public) latencyMs=\(latency, privacy: .public) rawChars=\(rawCount, privacy: .public) polishedChars=\(reply, privacy: .public)"
+        )
+    }
+
     /// The cleanup pass with a deadline on it. Every way this can go wrong — a
-    /// timeout, no network, an HTTP error, a reply that failed `accept` — comes
-    /// back as `nil`, which the caller reads as "keep the raw transcript". None
-    /// of them is ever news the user has to be told.
+    /// timeout, no network, an HTTP error, a reply that failed `verdict` —
+    /// comes back with no text, which the caller reads as "keep the raw
+    /// transcript", and with the reason, which the history keeps. None of them
+    /// is ever news the user has to be told at the moment it happens.
     ///
     /// `nonisolated` so the waiting happens off the main actor: the coordinator
     /// is the main actor, and holding it for six seconds to be polite about
     /// punctuation would be a strange trade.
     private nonisolated static func polished(
         raw: String, cloud: CloudClient, terms: [String]
-    ) async -> String? {
-        let outcome = try? await withThrowingTaskGroup(of: String?.self) { group -> String? in
+    ) async -> TranscriptPolisher.Result {
+        await withTaskGroup(of: TranscriptPolisher.Result.self) { group in
             group.addTask {
-                try await TranscriptPolisher.polish(
+                await TranscriptPolisher.polishOutcome(
                     raw: raw, cloud: cloud, protectedTerms: terms)
             }
             group.addTask {
-                try await Task.sleep(for: polishBudget)
-                throw PolishTimedOut()
+                // Cut short (and so returning early) only when the group is
+                // cancelled — the reply won, or the whole task was cancelled by
+                // a skip or the deadline, whose outcome then stands instead.
+                try? await Task.sleep(for: polishBudget)
+                return .unpolished(.timedOut)
             }
             defer { group.cancelAll() }
-            return try await group.next() ?? nil
+            return await group.next() ?? .unpolished(.failed)
         }
-        return outcome ?? nil
     }
 
     #if DEBUG
         /// ScreenshotDemo's stand-in for the polish: hold `finishing` for as
         /// long as asked, then keep the raw words — no account, no network.
         /// Cancellable like the real one, so "insert without polishing" can be
-        /// exercised against it.
-        private nonisolated static func demoPolish(holding hold: Duration) async -> String? {
+        /// exercised against it. Reported as `.timedOut`, which is what a
+        /// real polish that held this long without an answer would have been.
+        private nonisolated static func demoPolish(
+            holding hold: Duration
+        ) async -> TranscriptPolisher.Result {
             try? await Task.sleep(for: hold)
-            return nil
+            return .unpolished(.timedOut)
         }
     #endif
 
@@ -1520,13 +1589,19 @@ final class DictationCoordinator: ObservableObject {
     /// **Never from `cancel`**: ✕ is the user throwing the words away, and
     /// `cancel` clears `committed` before it publishes for that reason. The
     /// switch in Settings and blank text are the store's to refuse.
-    private func recordHistory() {
+    ///
+    /// `polish` and `rawText` come only from `settle`, the one ending that
+    /// reaches the polish decision. The others keep neither: an `error` or a
+    /// `micTaken` session was never going to be polished, and one superseded
+    /// while finishing was never delivered, so a label saying why it "stayed
+    /// raw" would be answering a question nobody has about it.
+    private func recordHistory(polish: PolishOutcome? = nil, rawText: String? = nil) {
         guard !historyRecorded, let startedAt = sessionStartedAt else { return }
         guard !committed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         historyRecorded = true
         DictationHistory.shared.record(
             text: committed, startedAt: startedAt, source: sessionSource,
-            hostBundleID: sessionHost)
+            hostBundleID: sessionHost, rawText: rawText, polish: polish)
     }
 
     // MARK: the microphone window
@@ -2028,10 +2103,6 @@ final class DictationCoordinator: ObservableObject {
         }
     #endif
 }
-
-/// The polish budget ran out. Never surfaced: it exists only to lose the race
-/// inside `polished`, where losing means the raw transcript ships.
-private struct PolishTimedOut: Error {}
 
 /// A boolean the audio thread may read on every chunk.
 ///
