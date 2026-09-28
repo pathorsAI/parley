@@ -1,0 +1,22 @@
+{
+  "id": "2026-10-keyboard-steady",
+  "ships": { "ios": "1.26", "android": null, "desktop": null },
+  "audience": "keyboard",
+  "cta": { "ios": null },
+  "copy": {
+    "zh-Hant": {
+      "badge": "1.26 更新",
+      "title": "鍵盤更穩，講話不再被中途切斷",
+      "body": "切換 app 幾次之後鍵盤不會再自己消失。單次語音輸入延長到 10 分鐘，結束前會倒數；連線中斷時，已經講的內容照樣貼上。",
+      "also": "上一段講完 30 秒內再講不用跳回 Parley。打字也更順：鍵與鍵之間點得到、按下立即反應、長按刪除會加速。",
+      "button": "好"
+    },
+    "en": {
+      "badge": "New in 1.26",
+      "title": "A steadier keyboard that doesn't cut you off",
+      "body": "The keyboard no longer disappears after a few app switches. A dictation can run for 10 minutes and counts down before it ends, and if the connection drops, what you said is still typed.",
+      "also": "Dictate again within 30 seconds without leaving the app you're in. Typing is smoother too: taps between keys land, keys respond instantly, and held delete speeds up.",
+      "button": "Got it"
+    }
+  }
+}

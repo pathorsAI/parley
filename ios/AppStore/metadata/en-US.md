@@ -83,6 +83,16 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.26
+
+The voice keyboard no longer quits on its own after you switch between apps or fields a few times. It was holding on to every copy of itself it had ever shown until iOS closed it.
+
+Typing feels closer to the system keyboard. The Chinese candidate bar keeps up with fast typing, a tap in the gap between two keys types the nearer one, keys light up the moment you touch them and click if Keyboard Clicks is on, holding delete speeds up and then deletes whole words, and English sentences start with a capital letter.
+
+Dictating again within 30 seconds of the last dictation starts right where you are, without opening Parley. A single dictation can now run for 10 minutes instead of 2, the keyboard counts down its last 30 seconds, and whatever you said before the limit is typed. If the connection drops, the words you already said are typed instead of lost.
+
+You can report a problem from Settings in one tap, and crash reports are sent automatically. You can turn that off in Settings.
+
 ## What's New — 1.25
 
 The sign-in page now has a ring of blue and white light flowing slowly around the screen's edge. It quickens while you sign in and fades as the app opens.
