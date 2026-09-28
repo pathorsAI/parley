@@ -4,8 +4,7 @@ import android.content.Context
 import android.util.Log
 import androidx.media3.common.util.UnstableApi
 import com.pathors.parley.cloud.CloudClient
-import com.pathors.parley.cloud.CloudException
-import kotlinx.coroutines.CancellationException
+import com.pathors.parley.parleyContainer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -13,6 +12,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -85,8 +86,10 @@ data class PlaybackState(
  * The recording detail screen's player: one recording, from "is the audio even
  * here" to a moving playhead.
  *
- * Owns four things and nothing else: the [PlaybackEngine], the download that
- * feeds it, the position poll, and the overview waveform. It is deliberately
+ * Owns three things and nothing else: the [PlaybackEngine], the position
+ * poll, and the overview waveform. The download that feeds it belongs to the
+ * app-wide [AudioDownloads], so one started from the library shows its progress
+ * here, and leaving this screen does not cancel it for the library. It is deliberately
  * not a ViewModel — `RecordingDetailViewModel` holds one and forwards to it, so
  * the playback rules stay readable in one file and testable without Compose.
  *
@@ -110,6 +113,12 @@ class PlaybackController(
     private val scope: CoroutineScope,
     /** Swaps the engine for a clock and the audio for a fixture. See [DemoPlaybackEngine]. */
     private val demo: Boolean = false,
+    /**
+     * The shared downloader. Defaulted from the container so the detail
+     * screen's view model builds this exactly as it did before downloads were
+     * shared with the library.
+     */
+    private val downloads: AudioDownloads = context.parleyContainer.audioDownloads,
 ) {
     private val context = context.applicationContext
 
@@ -152,7 +161,13 @@ class PlaybackController(
 
         scope.launch {
             val present = withContext(Dispatchers.IO) { store.has(recordingId) }
-            if (present) prepare() else _state.value = PlaybackState(phase = PlaybackPhase.ABSENT)
+            when {
+                present -> prepare()
+                // Started from the library a moment ago: show that download
+                // rather than offering a second one.
+                !demo && downloads.isDownloading(recordingId) -> download()
+                else -> _state.value = PlaybackState(phase = PlaybackPhase.ABSENT)
+            }
         }
     }
 
@@ -231,35 +246,41 @@ class PlaybackController(
     // ── internals ────────────────────────────────────────────────────────────
 
     /**
-     * The body of the download job: stream the file down, then open it.
+     * The body of the download job: wait for the shared download — joining one
+     * that is already running — mirroring its progress into this player, then
+     * open the file.
      *
-     * Cancellation is rethrown rather than reported, because a cancelled job is
-     * the screen going away or a second [download] superseding this one —
-     * neither is a failure to show anybody.
+     * Cancelling this job (the screen going away) stops the waiting, not the
+     * download: that belongs to [AudioDownloads], and the library may be
+     * watching it too.
      */
     private suspend fun fetchAndPrepare(id: String) {
-        try {
-            cloud.downloadAudio(id, store.audioFile(id), ::publishDownloadProgress)
-            prepare()
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Throwable) {
-            Log.w(TAG, "audio download failed for $id", e)
-            fail(downloadFailure(e))
+        val mirror = scope.launch {
+            downloads.active
+                .map { it[id] }
+                .distinctUntilChanged()
+                .collect { state ->
+                    if (state is AudioDownloadState.Downloading) publishDownloadProgress(state.fraction)
+                }
+        }
+        val outcome = try {
+            downloads.download(id)
+        } finally {
+            mirror.cancel()
+        }
+        when (outcome) {
+            AudioDownloadOutcome.Done -> prepare()
+            is AudioDownloadOutcome.Failed -> fail(outcome.failure)
         }
     }
 
     /**
      * Report download progress, and only while the download is still the thing
-     * happening: the callback runs on the IO thread doing the copy, so a report
-     * already in flight when the job is cancelled must not write a progress bar
-     * back over whatever replaced it.
-     *
-     * A total of 0 or less is the server declaring no length; -1 is how
-     * [PlaybackState.downloadFraction] says "indeterminate".
+     * happening here, so a late report cannot write a progress bar back over
+     * whatever replaced it. -1 is how [PlaybackState.downloadFraction] says
+     * "indeterminate".
      */
-    private fun publishDownloadProgress(read: Long, total: Long) {
-        val fraction = if (total > 0L) (read.toDouble() / total).toFloat() else -1f
+    private fun publishDownloadProgress(fraction: Float) {
         _state.update { current ->
             if (current.phase == PlaybackPhase.DOWNLOADING) {
                 current.copy(downloadFraction = fraction.coerceIn(-1f, 1f))
@@ -268,18 +289,6 @@ class PlaybackController(
             }
         }
     }
-
-    /**
-     * A 404 is the server saying it has no audio for this recording, which is
-     * permanent and worth different copy; everything else is treated as a
-     * transport problem worth retrying.
-     */
-    private fun downloadFailure(e: Throwable): PlaybackFailure =
-        if ((e as? CloudException)?.isNotFound == true) {
-            PlaybackFailure.DOWNLOAD_MISSING
-        } else {
-            PlaybackFailure.DOWNLOAD_NETWORK
-        }
 
     private suspend fun prepare() {
         val id = recordingId ?: return

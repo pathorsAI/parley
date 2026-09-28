@@ -4,6 +4,11 @@ import com.pathors.parley.cloud.CloudFolder
 import com.pathors.parley.cloud.CloudOrg
 import com.pathors.parley.cloud.RecordingSource
 import com.pathors.parley.cloud.RecordingSummary
+import com.pathors.parley.meeting.ImportFailure
+import com.pathors.parley.meeting.ImportNotice
+import com.pathors.parley.meeting.ImportState
+import com.pathors.parley.playback.AudioDownloadState
+import com.pathors.parley.playback.PlaybackFailure
 import com.pathors.parley.playback.PlaybackPhase
 import com.pathors.parley.screenshot.DemoMode
 import org.junit.Assert.assertEquals
@@ -53,6 +58,69 @@ class LibraryRulesTest {
         assertTrue(row.canMoveToFolder)
         assertEquals("Northwind", row.folderName)
         assertTrue(row.shareTargets.isEmpty())
+    }
+
+    @Test
+    fun `a personal row offers download, then remove, and nothing while one runs`() {
+        val personal = HomeViewModel.UiState()
+        fun action(audio: AudioDownloadState) =
+            LibraryRules.recordingRow(personal, recording, audio).downloadAction
+
+        assertEquals(DownloadAction.DOWNLOAD, action(AudioDownloadState.Absent))
+        assertEquals(
+            "a failure is retried from the same entry",
+            DownloadAction.DOWNLOAD,
+            action(AudioDownloadState.Failed(PlaybackFailure.DOWNLOAD_NETWORK)),
+        )
+        assertNull(action(AudioDownloadState.Downloading(0.4f)))
+        assertEquals(DownloadAction.REMOVE, action(AudioDownloadState.Local))
+
+        val silent = recording.copy(hasAudio = false)
+        assertNull(
+            "the cloud has no audio to send",
+            LibraryRules.recordingRow(personal, silent, AudioDownloadState.Absent).downloadAction,
+        )
+    }
+
+    @Test
+    fun `an org row and the sample offer no download, but still say where the audio is`() {
+        val org = HomeViewModel.UiState(scopeOrgId = team.id, orgs = listOf(team))
+        val orgRow = LibraryRules.recordingRow(org, recording, AudioDownloadState.Local)
+        assertNull(orgRow.downloadAction)
+        assertEquals(AudioDownloadState.Local, orgRow.audio)
+
+        val sample = recording.copy(id = "sample-en")
+        assertNull(LibraryRules.recordingRow(HomeViewModel.UiState(), sample).downloadAction)
+    }
+
+    @Test
+    fun `the library reads the sample as on the phone and everything else from the store`() {
+        val audio = HomeViewModel.LibraryAudio(
+            active = mapOf("r2" to AudioDownloadState.Downloading(0.5f)),
+            onPhone = setOf("r1"),
+        )
+        assertEquals(AudioDownloadState.Local, audio.stateOf("r1"))
+        assertEquals(AudioDownloadState.Downloading(0.5f), audio.stateOf("r2"))
+        assertEquals(AudioDownloadState.Absent, audio.stateOf("r3"))
+        assertEquals(AudioDownloadState.Local, audio.stateOf("sample-en"))
+    }
+
+    @Test
+    fun `an import is announced only once it is in the cloud`() {
+        val landed = ImportState.Finished(recordingId = "r1", pendingUpload = false)
+        assertEquals(ImportNotice("Board.m4a", null), ImportNotice.of("Board.m4a", landed))
+        assertEquals(
+            ImportNotice("Board.m4a", ORG_ID),
+            ImportNotice.of("Board.m4a", landed.copy(sharedToOrgId = ORG_ID)),
+        )
+        assertNull(
+            "still on the phone: the upload queue is already saying so",
+            ImportNotice.of("Board.m4a", landed.copy(pendingUpload = true)),
+        )
+        assertNull(ImportNotice.of("Board.m4a", ImportState.Failed(ImportFailure.UNKNOWN)))
+        assertNull(ImportNotice.of("Board.m4a", ImportState.Cancelled))
+        assertNull(ImportNotice.of("Board.m4a", ImportState.Uploading))
+        assertNull(ImportNotice.of(null, null))
     }
 
     @Test

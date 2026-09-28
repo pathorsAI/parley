@@ -1,9 +1,11 @@
 package com.pathors.parley.ui
 
 import androidx.annotation.StringRes
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -12,14 +14,14 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -31,6 +33,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -39,24 +42,18 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -84,6 +81,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.AwaitPointerEventScope
@@ -96,6 +97,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -118,6 +120,7 @@ import com.pathors.parley.meeting.MeetingService
 import com.pathors.parley.meeting.MeetingState
 import com.pathors.parley.kit.GettingStartedState
 import com.pathors.parley.kit.SampleManifest
+import com.pathors.parley.playback.AudioDownloadState
 import com.pathors.parley.screenshot.DemoMode
 import com.pathors.parley.ui.theme.ParleyTheme
 import com.pathors.parley.upload.PendingUpload
@@ -148,6 +151,8 @@ fun HomeScreen(
     val viewModel: HomeViewModel = viewModel(factory = HomeViewModel.factory(container))
     val state by viewModel.state.collectAsState()
     val sample by viewModel.sample.collectAsState()
+    val audio by viewModel.audio.collectAsState()
+    val importNotice by viewModel.importNotice.collectAsState()
     var showAccount by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
@@ -207,6 +212,15 @@ fun HomeScreen(
                         pendingDelete = recording
                     }
                 },
+                onDownload = { viewModel.downloadAudio(recording) },
+                onRemoveDownload = { viewModel.removeDownload(recording) },
+            )
+        },
+        audioOf = audio::stateOf,
+        importNotice = importNotice?.let { notice ->
+            ImportNoticeText(
+                title = notice.title,
+                orgName = notice.sharedToOrgId?.let { id -> state.orgs.firstOrNull { it.id == id }?.name },
             )
         },
     )
@@ -303,7 +317,11 @@ private class LibrarySearch {
     }
 }
 
-/** What the library's banners, chips and rows call back into. */
+/**
+ * What the library's banners, chips and rows call back into — and the two
+ * facts from outside the library state they draw: where each recording's audio
+ * is, and the import that just landed.
+ */
 private class LibraryCallbacks(
     val onRecord: () -> Unit,
     val onImport: () -> Unit,
@@ -311,7 +329,12 @@ private class LibraryCallbacks(
     val onRefresh: () -> Unit,
     val onSelectFolder: (FolderFilter) -> Unit,
     val rowActions: (RecordingSummary) -> RecordingRowActions,
+    val audioOf: (String) -> AudioDownloadState = { AudioDownloadState.Absent },
+    val importNotice: ImportNoticeText? = null,
 )
+
+/** The import notice's parts; [orgName] null is the personal-only wording. */
+private class ImportNoticeText(val title: String, val orgName: String?)
 
 /**
  * The getting-started checklist above the list, when it shows: the personal
@@ -528,6 +551,7 @@ private fun LibraryList(
             meetingLive = meetingLive,
             state = state,
             searching = query.isNotBlank(),
+            importNotice = callbacks.importNotice,
             onRecord = callbacks.onRecord,
             onUpload = callbacks.onUpload,
         )
@@ -556,13 +580,26 @@ private fun LibraryList(
                 onDispose { cards.remove(recording.id) }
             }
             RecordingRow(
-                model = LibraryRules.recordingRow(state, recording),
+                model = LibraryRules.recordingRow(state, recording, callbacks.audioOf(recording.id)),
                 actions = callbacks.rowActions(recording),
-                modifier = Modifier.onGloballyPositioned { cards.put(recording.id, it) },
+                // The gap first, then the bounds: the whitespace between two
+                // rows belongs to no row, so a swipe that starts in it turns
+                // the folder page instead of being left to a row (iOS keeps
+                // `RecordingRow.spacing` outside every cell for the same reason).
+                modifier = Modifier
+                    .padding(vertical = RowGapPadding)
+                    .onGloballyPositioned { cards.put(recording.id, it) },
             )
         }
     }
 }
+
+/**
+ * The whitespace between two recordings — iOS `RecordingRow.spacing`, 28pt —
+ * made of the list's 8dp item spacing and this much above and below each row.
+ * Whitespace is the only separator: no card, no fill, no hairline.
+ */
+private val RowGapPadding = 10.dp
 
 /** How far across a finger has to travel before it is a swipe to the next page. */
 private val FolderSwipeDistance = 60.dp
@@ -571,7 +608,7 @@ private val FolderSwipeDistance = 60.dp
 private val PageEntranceOffset = 32.dp
 
 /**
- * Where the recording cards are, so a swipe that starts on one is left to it —
+ * Where the recording rows are, so a swipe that starts on one is left to it —
  * see [FolderSwipe]. Coordinates rather than rectangles, turned into bounds at
  * the moment a finger goes down, because the list scrolls under them between
  * one layout and the next. Rows leave as they leave the composition.
@@ -845,11 +882,13 @@ internal fun orgRoleLabel(role: String?): Int = when (role) {
  * too), horizontally scrollable because a folder is a customer and there are
  * dozens.
  *
- * Material filter chips rather than iOS's underlined labels: the chip *is* the
- * Android control for "narrow this list to one of these", and TalkBack already
- * announces its selected state. The row scrolls itself so the selected chip is
- * on screen, which matters when the selection changes from somewhere other than
- * a tap on it (a swipe across the list, or a scope switch resetting to All).
+ * iOS's underlined labels rather than Material filter chips. A filled chip was
+ * a fill behind content, and it made the folder row the loudest thing above the
+ * list; an underline says "this one" with the same signal blue and no area at
+ * all (see `docs/design/ios-visual-language.md`). Each chip is still a
+ * selectable tab to TalkBack. The row scrolls itself so the selected chip is on
+ * screen, which matters when the selection changes from somewhere other than a
+ * tap on it (a swipe across the list, or a scope switch resetting to All).
  */
 @Composable
 private fun FolderChips(
@@ -874,7 +913,7 @@ private fun FolderChips(
     val unfiled = stringResource(R.string.library_folder_unfiled)
     LazyRow(
         state = listState,
-        contentPadding = PaddingValues(horizontal = 16.dp),
+        contentPadding = PaddingValues(horizontal = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
@@ -890,25 +929,58 @@ private fun FolderChips(
                 FolderFilter.Unfiled -> unfiled
                 is FolderFilter.Folder -> folders.firstOrNull { it.id == page.id }?.name.orEmpty()
             }
-            FilterChip(
-                selected = page == selected,
-                onClick = { onSelect(page) },
-                label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                // Grey glyphs: the default tints them primary, which would make
-                // every folder chip louder than the selected one.
-                colors = FilterChipDefaults.filterChipColors(
-                    iconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                ),
-                leadingIcon = if (page is FolderFilter.Folder) {
-                    { Icon(LibraryIcons.Folder, contentDescription = null, modifier = Modifier.size(16.dp)) }
-                } else {
-                    null
-                },
-                modifier = Modifier.widthIn(max = 220.dp),
-            )
+            FolderChip(label = label, selected = page == selected, onClick = { onSelect(page) })
         }
     }
 }
+
+/**
+ * One folder: a label over a 1dp rule, blue and semibold when selected, the
+ * rule transparent otherwise — always laid out, so a chip does not change
+ * height on tap. The colour change runs 0.2 s, iOS's `easeInOut(0.2)`, so the
+ * underline and the blue carry across to the new chip instead of snapping.
+ */
+@Composable
+private fun FolderChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    val signal = MaterialTheme.colorScheme.primary
+    val quiet = MaterialTheme.colorScheme.onSurfaceVariant
+    val textColor by animateColorAsState(
+        targetValue = if (selected) signal else quiet,
+        animationSpec = tween(durationMillis = ChipAnimationMs),
+        label = "chip-text",
+    )
+    val ruleColor by animateColorAsState(
+        targetValue = if (selected) signal else Color.Transparent,
+        animationSpec = tween(durationMillis = ChipAnimationMs),
+        label = "chip-rule",
+    )
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .widthIn(max = 220.dp)
+            .selectable(selected = selected, role = Role.Tab, onClick = onClick)
+            .padding(horizontal = 4.dp, vertical = 8.dp)
+            // The rule is as wide as the label, not as the 220dp cap.
+            .width(IntrinsicSize.Max),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            color = textColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.height(5.dp))
+        Canvas(
+            Modifier
+                .fillMaxWidth()
+                .height(1.dp),
+        ) { drawRect(ruleColor) }
+    }
+}
+
+private const val ChipAnimationMs = 200
 
 /**
  * The second press before a recording goes away for good.
@@ -1035,9 +1107,15 @@ private fun LazyListScope.libraryHeader(
     meetingLive: Boolean,
     state: HomeViewModel.UiState,
     searching: Boolean,
+    importNotice: ImportNoticeText?,
     onRecord: () -> Unit,
     onUpload: () -> Unit,
 ) {
+    // First, as on iOS, where it sits above the error row and the list: the
+    // answer to "did my import work" belongs where the eye lands on return.
+    importNotice?.let { notice ->
+        item(key = "import-notice") { ImportNoticeLine(notice) }
+    }
     if (meetingLive && !searching) {
         item {
             ActiveMeetingCard(onClick = onRecord)
@@ -1110,26 +1188,50 @@ private fun LoadingRow() {
     }
 }
 
+/**
+ * iOS's green line above the list once an import has landed: "Imported “X”",
+ * or "… and shared to “Org”" when the default save location sent a copy there.
+ * The organization is named only while it is still in the membership list; a
+ * name it cannot find falls back to the plain wording rather than an empty pair
+ * of quotes.
+ */
+@Composable
+private fun ImportNoticeLine(notice: ImportNoticeText) {
+    Text(
+        text = if (notice.orgName != null) {
+            stringResource(R.string.library_import_notice_shared, notice.title, notice.orgName)
+        } else {
+            stringResource(R.string.library_import_notice, notice.title)
+        },
+        style = MaterialTheme.typography.bodySmall,
+        color = ParleyTheme.colors.success,
+        modifier = Modifier.padding(vertical = 4.dp),
+    )
+}
+
+/**
+ * A meeting still running behind the library. Words, not a tinted card: the
+ * red of the running recording is the whole signal, and it is the one place on
+ * this screen that colour is allowed.
+ */
 @Composable
 private fun ActiveMeetingCard(onClick: () -> Unit) {
-    Card(
-        modifier = Modifier
+    Column(
+        Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer,
-        ),
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
     ) {
-        Column(Modifier.padding(16.dp)) {
-            Text(
-                text = stringResource(R.string.home_recording_in_progress),
-                style = MaterialTheme.typography.titleSmall,
-            )
-            Text(
-                text = stringResource(R.string.home_recording_in_progress_action),
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
+        Text(
+            text = stringResource(R.string.home_recording_in_progress),
+            style = MaterialTheme.typography.titleSmall,
+            color = ParleyTheme.colors.recording,
+        )
+        Text(
+            text = stringResource(R.string.home_recording_in_progress_action),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -1177,26 +1279,24 @@ private fun PendingHeader(count: Int, uploading: Boolean, onUpload: () -> Unit) 
 
 @Composable
 private fun PendingRow(pending: PendingUpload) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-        ),
+    // Plain like the recording rows below it: whitespace, no fill.
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
     ) {
-        Column(Modifier.padding(16.dp)) {
-            Text(
-                text = pending.title.ifEmpty { stringResource(R.string.recording_untitled) },
-                style = MaterialTheme.typography.titleSmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = "${formatTimestamp(pending.startedAtMs.toDouble())} · " +
-                    formatDuration(pending.durationMs),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        Text(
+            text = pending.title.ifEmpty { stringResource(R.string.recording_untitled) },
+            style = MaterialTheme.typography.titleSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = "${formatTimestamp(pending.startedAtMs.toDouble())} · " +
+                formatDuration(pending.durationMs),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -1217,6 +1317,9 @@ private fun PendingRow(pending: PendingUpload) {
  * While a delete, move or share is in flight the row goes half-opaque and
  * stops responding — the request can take a moment on a bad connection, and a
  * row that still looks live invites a second tap on something already changing.
+ *
+ * No card: iOS separates rows with whitespace alone (see [RowGapPadding]), and
+ * a filled surface per row was the loudest thing on the page.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -1228,7 +1331,7 @@ private fun RecordingRow(
     var menu by remember { mutableStateOf<RowMenuPage?>(null) }
     val actionsLabel = stringResource(R.string.home_recording_actions)
 
-    Card(
+    Box(
         modifier = modifier
             .fillMaxWidth()
             .alpha(if (model.working) 0.5f else 1f)
@@ -1239,12 +1342,11 @@ private fun RecordingRow(
                 onClick = actions.onClick,
             ),
     ) {
-        Row(
-            modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 4.dp, bottom = 16.dp),
-            verticalAlignment = Alignment.Top,
-        ) {
-            RecordingRowText(model, Modifier.weight(1f))
-            Box {
+        Row(verticalAlignment = Alignment.Top) {
+            RecordingRowText(model, Modifier.weight(1f).padding(top = 4.dp))
+            // Nudged out by the button's own inset, so the glyph — not the
+            // 48dp touch target around it — lines up with the list's edge.
+            Box(Modifier.offset(x = 12.dp, y = (-8).dp)) {
                 if (model.working) {
                     CircularProgressIndicator(
                         modifier = Modifier
@@ -1290,14 +1392,14 @@ private fun RecordingRowText(model: RecordingRowModel, modifier: Modifier = Modi
             Spacer(Modifier.height(6.dp))
             Text(
                 text = snippet,
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
         }
         Spacer(Modifier.height(8.dp))
-        RecordingMeta(recording, model.folderName)
+        RecordingMeta(recording, model.folderName, model.audio)
         if (model.working) {
             Spacer(Modifier.height(6.dp))
             Text(
@@ -1325,6 +1427,15 @@ private fun RowMenu(
     DropdownMenu(expanded = page != null, onDismissRequest = { onPage(null) }) {
         when (page) {
             RowMenuPage.ROOT, null -> RowMenuRoot(
+                download = model.downloadAction,
+                onDownload = {
+                    onPage(null)
+                    when (model.downloadAction) {
+                        DownloadAction.DOWNLOAD -> actions.onDownload()
+                        DownloadAction.REMOVE -> actions.onRemoveDownload()
+                        null -> Unit
+                    }
+                },
                 canMoveToFolder = model.canMoveToFolder,
                 canShare = model.canShare,
                 onMoveToFolder = {
@@ -1353,14 +1464,36 @@ private fun RowMenu(
 /** Which page of a row's menu is open. */
 private enum class RowMenuPage { ROOT, SHARE, MOVE }
 
+/**
+ * The root page. Download / Remove download leads, as in iOS's context menu:
+ * both are about the copy on the phone, the cloud keeps its own, so neither is
+ * drawn as destructive — red here would say a recording is about to be lost.
+ */
 @Composable
 private fun RowMenuRoot(
+    download: DownloadAction?,
+    onDownload: () -> Unit,
     canMoveToFolder: Boolean,
     canShare: Boolean,
     onMoveToFolder: () -> Unit,
     onOpen: (RowMenuPage) -> Unit,
     onDelete: () -> Unit,
 ) {
+    when (download) {
+        DownloadAction.DOWNLOAD -> DropdownMenuItem(
+            text = { Text(stringResource(R.string.library_download)) },
+            leadingIcon = { Icon(LibraryIcons.Download, contentDescription = null) },
+            onClick = onDownload,
+        )
+
+        DownloadAction.REMOVE -> DropdownMenuItem(
+            text = { Text(stringResource(R.string.library_remove_download)) },
+            leadingIcon = { Icon(LibraryIcons.RemoveDownload, contentDescription = null) },
+            onClick = onDownload,
+        )
+
+        null -> Unit
+    }
     if (canMoveToFolder) {
         DropdownMenuItem(
             text = { Text(stringResource(R.string.library_move_to_folder)) },
@@ -1463,84 +1596,173 @@ private fun SourceBadge(recording: RecordingSummary) {
 }
 
 /**
- * The counts under a recording: how long, how many people, how many findings,
- * whether there is audio, and when it happened.
+ * The line under a recording, iOS's `RecordingCard` meta row item for item:
+ * how long, how many people, how many findings, the folder, then — pushed to
+ * the far edge — when it happened, whether it has audio, and whether that audio
+ * is on this phone.
  *
- * A `FlowRow` rather than the `Row` with pinned widths iOS uses. The problem is
- * the same one `LibraryView.RecordingCard` solves with `fixedSize` and
- * `layoutPriority` — under pressure a value breaks across lines mid-number,
- * "18:4 / 2" for a duration — but the pressure here is worse and the escape is
- * different. This app defaults to zh-TW, where every label is at its widest, and
- * Android's font scale goes to 200% where iOS's Dynamic Type is milder. There is
- * no room to win by prioritising, because none of these values is the one that
- * should give: a truncated duration and a truncated date are both simply wrong.
- *
- * So nothing truncates and nothing wraps *within* an item — `softWrap = false`
- * on each is the `fixedSize()` — and the row is allowed to become two rows
- * instead, breaking between whole values where a reader would break it. The card
- * grows by one line at 200% in Chinese, which is the correct thing to spend.
+ * One line, never two. Everything here is short and exact except the folder
+ * name, so every other item is pinned (`softWrap = false`, iOS's `fixedSize`)
+ * and the folder alone takes what is left and truncates in it — `weight` is
+ * iOS's `layoutPriority(1)`: the folder has the first claim on the slack, so it
+ * degrades only once the row is actually full rather than at one character with
+ * room beside it. Without a folder a spacer takes the slack instead, so the date
+ * sits at the edge either way. The previous `FlowRow` answered the same pressure
+ * by wrapping to a second line, which put the date under the duration on every
+ * row that had a long customer name.
  *
  * Zero counts are absent rather than shown as "0": a recording nobody has
  * analyzed has no findings line to report, and a row of zeroes reads as a
  * failure rather than as an absence.
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun RecordingMeta(recording: RecordingSummary, folderName: String?) {
-    FlowRow(
+private fun RecordingMeta(
+    recording: RecordingSummary,
+    folderName: String?,
+    audio: AudioDownloadState,
+) {
+    Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         MetaItem(
-            // No glyph: the core icon set has no clock, and `m:ss` needs no
-            // introduction. TalkBack still gets the word — see [MetaItem].
-            icon = null,
+            icon = LibraryIcons.Clock,
             label = stringResource(R.string.recording_meta_duration),
             value = formatDuration(recording.durationMs),
         )
         recording.speakerCount?.takeIf { it > 0 }?.let { speakers ->
             MetaItem(
-                icon = Icons.Default.Person,
+                icon = LibraryIcons.Group,
                 label = stringResource(R.string.recording_meta_speakers),
                 value = speakers.toString(),
             )
         }
         recording.findingsCount?.takeIf { it > 0 }?.let { findings ->
+            // The lightbulb, the glyph the detail screen's findings carry on iOS.
             MetaItem(
-                icon = Icons.Default.Info,
+                icon = LibraryIcons.Lightbulb,
                 label = stringResource(R.string.detail_findings),
                 value = findings.toString(),
             )
         }
+        if (folderName != null) {
+            FolderMetaItem(folderName, Modifier.weight(1f))
+        } else {
+            Spacer(Modifier.weight(1f))
+        }
+        MetaItem(icon = null, label = null, value = formatTimestamp(recording.createdAt))
         if (recording.hasAudio) {
             MetaItem(
-                icon = Icons.Default.PlayArrow,
+                icon = LibraryIcons.Speaker,
                 label = stringResource(R.string.recording_meta_audio),
                 value = null,
             )
         }
-        MetaItem(icon = null, label = null, value = formatTimestamp(recording.createdAt))
-        // Last, and the one value allowed to truncate: a customer's name can be
-        // any length, and every other item here is short and exact.
-        folderName?.let { FolderMetaItem(it) }
+        AudioIndicator(audio)
+    }
+}
+
+/**
+ * The last thing on the meta line — iOS `RecordingCard.audioIndicator`: a
+ * phone glyph when the audio is here, a ring while it is arriving, words when
+ * the last attempt failed, and nothing at all otherwise.
+ *
+ * The phone is as quiet as the glyphs beside it: a fact worth having on the
+ * row and never worth reading first, and blue would claim it can be tapped. The
+ * failure is words because a red glyph in a row of five is unreadable; the
+ * retry itself is the row's menu, where Download is offered again.
+ */
+@Composable
+private fun AudioIndicator(audio: AudioDownloadState) {
+    when (audio) {
+        AudioDownloadState.Local -> Icon(
+            imageVector = LibraryIcons.Phone,
+            contentDescription = stringResource(R.string.library_on_phone),
+            tint = MaterialTheme.colorScheme.outline,
+            modifier = Modifier.size(13.dp),
+        )
+
+        is AudioDownloadState.Downloading -> DownloadRing(audio.fraction)
+
+        is AudioDownloadState.Failed -> Text(
+            text = stringResource(R.string.library_download_failed_retry),
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            softWrap = false,
+        )
+
+        AudioDownloadState.Absent -> Unit
+    }
+}
+
+/**
+ * How far a download has got, in the width of a glyph — iOS `DownloadRing`: a
+ * faint track and a blue arc filling clockwise from twelve o'clock. Blue, unlike
+ * its neighbours, because it is the one thing on the row happening right now.
+ * Never quite empty, so a download that has just started does not read as a
+ * placeholder; a server that declared no length gets the spinning arc instead.
+ */
+@Composable
+private fun DownloadRing(fraction: Float) {
+    val label = stringResource(R.string.library_downloading)
+    val track = MaterialTheme.colorScheme.outlineVariant
+    val signal = MaterialTheme.colorScheme.primary
+    if (fraction < 0f) {
+        CircularProgressIndicator(
+            color = signal,
+            trackColor = track,
+            strokeWidth = 2.dp,
+            modifier = Modifier
+                .size(12.dp)
+                .semantics { contentDescription = label },
+        )
+        return
+    }
+    val percent = (fraction.coerceIn(0f, 1f) * 100).toInt()
+    Canvas(
+        Modifier
+            .size(12.dp)
+            .semantics { contentDescription = "$label $percent%" },
+    ) {
+        val stroke = 2.dp.toPx()
+        val inset = stroke / 2
+        val arcSize = Size(size.width - stroke, size.height - stroke)
+        drawArc(
+            color = track,
+            startAngle = 0f,
+            sweepAngle = 360f,
+            useCenter = false,
+            topLeft = Offset(inset, inset),
+            size = arcSize,
+            style = Stroke(width = stroke),
+        )
+        drawArc(
+            color = signal,
+            startAngle = -90f,
+            sweepAngle = 360f * fraction.coerceIn(0.02f, 1f),
+            useCenter = false,
+            topLeft = Offset(inset, inset),
+            size = arcSize,
+            style = Stroke(width = stroke, cap = StrokeCap.Round),
+        )
     }
 }
 
 /**
  * The folder a recording is in. Unlike [MetaItem] it ellipsizes: the others
- * are numbers that would be wrong if cut, a folder name is still recognisable
- * from its first dozen characters, and at 200% font scale a long one would
- * otherwise run off the card.
+ * are numbers that would be wrong if cut, and a folder name is still
+ * recognisable from its first dozen characters. [modifier] carries the weight
+ * that gives it the row's slack — see [RecordingMeta].
  */
 @Composable
-private fun FolderMetaItem(name: String) {
+private fun FolderMetaItem(name: String, modifier: Modifier = Modifier) {
     val label = stringResource(R.string.library_folder_meta)
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(3.dp),
-        modifier = Modifier
-            .widthIn(max = 200.dp)
+        modifier = modifier
             .semantics(mergeDescendants = true) { contentDescription = "$label $name" },
     ) {
         Icon(

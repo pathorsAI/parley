@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
@@ -60,6 +61,7 @@ fun AudioStorageSection() {
     // directory, not an observable, and a scan per sheet-opening is cheap.
     var revision by remember { mutableIntStateOf(0) }
     var removing by remember { mutableStateOf(false) }
+    var confirming by remember { mutableStateOf(false) }
 
     val usage by produceState(initialValue = null as AudioUsage?, revision) {
         value = withContext(Dispatchers.IO) {
@@ -122,14 +124,7 @@ fun AudioStorageSection() {
     if (current != null && current.count > 0) {
         TextButton(
             enabled = !removing,
-            onClick = {
-                removing = true
-                scope.launch {
-                    withContext(Dispatchers.IO) { container.localAudio.removeAll() }
-                    removing = false
-                    revision++
-                }
-            },
+            onClick = { confirming = true },
         ) {
             Text(
                 text = stringResource(R.string.account_audio_remove_all),
@@ -137,6 +132,45 @@ fun AudioStorageSection() {
             )
         }
     }
+
+    // Asked first, with iOS's words: one tap in a settings sheet should not be
+    // able to empty the phone of every recording somebody meant to play on the
+    // train. The removal goes through the shared downloader so the library's
+    // on-phone glyphs go with the files.
+    if (confirming) {
+        RemoveAllAudioDialog(
+            onConfirm = {
+                confirming = false
+                removing = true
+                scope.launch {
+                    container.audioDownloads.removeAll()
+                    removing = false
+                    revision++
+                }
+            },
+            onDismiss = { confirming = false },
+        )
+    }
+}
+
+@Composable
+private fun RemoveAllAudioDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.account_audio_remove_confirm_title)) },
+        text = { Text(stringResource(R.string.account_audio_remove_confirm_body)) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(
+                    text = stringResource(R.string.account_audio_remove_confirm_action),
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
+        },
+    )
 }
 
 /** What the local audio store currently holds. */

@@ -23,7 +23,8 @@ com.pathors.parley
     ParleyRoot.kt        sign-in wall, NavHost, the SAF picker
     SignInScreen.kt      Custom Tab hand-off
     HomeScreen.kt        library: scope switcher, folder chips, pending queue, row
-                         menu (folder / share / move to org / delete), the "add" actions
+                         menu (download / folder / share / move to org / delete),
+                         the import notice, the "add" actions
     HomeViewModel.kt     library state (scope, folders, moves, shares), account
                          state, save targets, sign-out
     FolderPickerSheet.kt searchable "Move to folder" sheet with create-as-you-type
@@ -184,10 +185,22 @@ The library mirrors iOS `LibraryView` (and the desktop History window):
   when the account belongs to an organization. A scope whose organization is
   missing from a *successful* membership list falls back to personal; a failed
   list keeps the selection (offline is not "removed").
-- **Folders.** Chips (All / Unfiled / folders, server order) filter the list,
+- **Folders.** Chips (All / Unfiled / folders, server order; iOS's underlined
+  labels, not filled Material chips) filter the list,
   and the search narrows whichever page is showing. A `folderId` that names no
   live folder renders under Unfiled with no folder name on the card — the
   desktop's orphan→root rule (`LibraryFolders`, unit-tested).
+- **Audio on this phone.** `playback/AudioDownloads` is iOS `AudioDownloadModel`:
+  one per process, shared by the row menu's Download / Remove download
+  (personal rows only, not the sample), the detail screen's player and
+  re-transcription, so a download started from the library shows its progress
+  when the recording is opened and a second request joins the first. The row's
+  meta line ends with a phone glyph when the file is here, a progress ring while
+  it downloads, and "Download failed · Retry" after a failure (the retry is the
+  menu). Account sheet › Remove all asks first, with iOS's copy.
+- **Import result.** The import keeps its own progress screen; once it lands in
+  the cloud, the library shows iOS's green "Imported “X”" (or "… and shared to
+  “Org”") line above the list until the next import or a scope switch.
 - **Row menu.** Move to folder… (personal: re-push of the fresh meta; org:
   `PATCH …/folder`; create only in personal scope), Share to organization
   (copy), Move to organization (share, *then* delete the original — a failure
