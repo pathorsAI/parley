@@ -1694,7 +1694,7 @@ struct RecordingDetailView: View {
                 trigger: .truncatedTranscript,
                 recordingId: summary.id,
                 text: Text(
-                    "The transcript stops at \(FeedbackConditions.clock(stopsAt)), and nothing after that came through."
+                    "The transcript stops at \(FeedbackConditions.clock(stopsAt)). The rest wasn't transcribed."
                 ),
                 secondary: reTranscribeOffer.map { action in ("Re-transcribe", action) },
                 send: {

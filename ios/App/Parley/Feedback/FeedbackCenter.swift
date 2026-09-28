@@ -297,7 +297,7 @@ final class FeedbackCenter: ObservableObject {
         noteOffered(.deleteFailed, recordingId: recordingId)
         FeedbackOverlay.shared.show(
             FeedbackToast(
-                text: String(localized: "Deleted. Send us this recording's diagnostics?"),
+                text: String(localized: "Deleted. Send us diagnostics for this recording?"),
                 action: String(localized: "Send report"),
                 perform: { [weak self] in
                     FeedbackOverlay.shared.dismiss(.bottom, used: true)

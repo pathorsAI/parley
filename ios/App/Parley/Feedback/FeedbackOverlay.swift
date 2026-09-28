@@ -119,11 +119,31 @@ final class FeedbackOverlay {
         case .top:
             return CGRect(x: x, y: insets.top + 4, width: width, height: fitting.height)
         case .bottom:
-            // Clear of the tab bar: its 49pt plus the home indicator's inset,
-            // so the toast never sits on the controls people are reaching for.
-            let y = bounds.height - insets.bottom - 49 - 8 - fitting.height
-            return CGRect(x: x, y: y, width: width, height: fitting.height)
+            // Clear of the tab bar, measured rather than assumed, so the toast
+            // never sits on the controls people are reaching for. A screen with
+            // no tab bar (sign-in, a full-screen sheet) keeps its primary
+            // button at the bottom instead, so there the toast moves to the top
+            // rather than covering it.
+            guard let tabBar = visibleTabBar(in: appWindow()) else {
+                return CGRect(x: x, y: insets.top + 4, width: width, height: fitting.height)
+            }
+            let tabTop = tabBar.convert(tabBar.bounds, to: nil).minY
+            return CGRect(
+                x: x, y: tabTop - 8 - fitting.height, width: width, height: fitting.height)
         }
+    }
+
+    /// The tab bar the user can currently see, if the visible screen has one.
+    private static func visibleTabBar(in window: UIWindow?) -> UITabBar? {
+        guard let window else { return nil }
+        var stack: [UIView] = [window]
+        while let view = stack.popLast() {
+            if let bar = view as? UITabBar, !bar.isHidden, bar.alpha > 0.01, bar.window != nil {
+                return bar
+            }
+            stack.append(contentsOf: view.subviews)
+        }
+        return nil
     }
 
     /// The foreground scene, or failing that any window scene the app has.

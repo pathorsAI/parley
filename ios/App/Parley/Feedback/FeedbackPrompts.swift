@@ -139,7 +139,7 @@ struct EmptyTranscriptState: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("No text came out of this recording")
+            Text("Nothing was transcribed")
                 .font(.parley.headline)
             Text("Recorded \(minutes) minutes, but the transcript is empty.")
                 .font(.parley.subheadline)
@@ -183,7 +183,7 @@ struct RetranscribeChips: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("What was wrong with the last one?")
+                Text("What was wrong last time?")
                     .font(.parley.footnote)
                     .foregroundStyle(Color(.secondaryLabel))
                 Spacer(minLength: 0)

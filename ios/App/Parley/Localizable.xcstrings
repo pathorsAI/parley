@@ -1362,13 +1362,13 @@
         }
       }
     },
-    "Deleted. Send us this recording's diagnostics?" : {
+    "Deleted. Send us diagnostics for this recording?" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Deleted. Send us this recording's diagnostics?"
+            "value" : "Deleted. Send us diagnostics for this recording?"
           }
         },
         "zh-Hant" : {
@@ -3109,13 +3109,13 @@
         }
       }
     },
-    "No text came out of this recording" : {
+    "Nothing was transcribed" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "No text came out of this recording"
+            "value" : "Nothing was transcribed"
           }
         },
         "zh-Hant" : {
@@ -6110,13 +6110,13 @@
         }
       }
     },
-    "The transcript stops at %@, and nothing after that came through." : {
+    "The transcript stops at %@. The rest wasn't transcribed." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The transcript stops at %@, and nothing after that came through."
+            "value" : "The transcript stops at %@. The rest wasn't transcribed."
           }
         },
         "zh-Hant" : {
@@ -6772,13 +6772,13 @@
         }
       }
     },
-    "What was wrong with the last one?" : {
+    "What was wrong last time?" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "What was wrong with the last one?"
+            "value" : "What was wrong last time?"
           }
         },
         "zh-Hant" : {
