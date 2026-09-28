@@ -27,10 +27,8 @@ class HandoffStringsParityTest {
     /**
      * Android key → the iOS catalogue key (which is also the English text).
      *
-     * Three checklist strings are not here: "Load sample", "or load the sample
-     * recording" and "ChatGPT and Claude are in the share sheet" left the iOS
-     * catalogue when iOS moved to the guided lap (#450). Android ports the
-     * checklist as it shipped in #435 and keeps that wording.
+     * The checklist and the sign-in page are onboarding v2 (#450) on both
+     * phones: v1's "Load sample" and the rows' detail lines are gone from each.
      */
     private val shared = mapOf(
         "handoff_preamble" to "You are my meeting analyst. Below is the full transcript of a meeting. " +
@@ -52,10 +50,27 @@ class HandoffStringsParityTest {
         "getting_started_not_now" to "Not now",
         "getting_started_recorded" to "Record your first meeting",
         "getting_started_filed" to "Put it in a folder",
-        "getting_started_filed_detail" to "One customer, one folder",
         "getting_started_replayed" to "Replay: tap a line to jump",
         "getting_started_shared" to "Share it with your AI",
         "getting_started_show_again" to "Show the getting-started list again",
+        "getting_started_done" to "Done",
+        "getting_started_walk_through" to "Walk through it with the sample recording",
+        "getting_started_continue" to "Continue →",
+        "getting_started_transcribing" to "Transcribing…",
+        // The sign-in page: the headline and the intro film (IntroStage).
+        "onboarding_headline" to "Record it. Hand it to the AI you already use.",
+        "onboarding_subline" to "Parley records in-person meetings, transcribes them live, and keeps them " +
+            "where your Mac and phone can both find them.",
+        "onboarding_sign_in_methods" to "Email and password, Google, and Apple all work. Before any recording " +
+            "starts, Parley asks you to confirm everyone in the room has agreed to it.",
+        "intro_recording_now" to "Recording now",
+        "intro_caption_recording" to "Parley records both sides of the conversation.",
+        "intro_caption_transcript" to "It turns into text as you go, with who said what.",
+        "intro_caption_folder" to "Then one customer, one folder.",
+        "intro_caption_share" to "And share it with ChatGPT or Claude to analyse.",
+        "intro_point_record" to "Record and transcribe live, even from the lock screen",
+        "intro_point_folder" to "One customer, one folder, synced with your Mac",
+        "intro_point_share" to "Share to ChatGPT or Claude for analysis",
         "recording_source_sample" to "SAMPLE",
         "sample_missing" to "The sample recording is no longer in the library.",
         // The account sheet, sign-in and What's New, ported from iOS Settings

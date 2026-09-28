@@ -3,6 +3,7 @@ package com.pathors.parley.kit
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -24,7 +25,11 @@ class SampleManifestTest {
             { "speaker": "them", "startMs": 7665, "endMs": 18608, "text": "Afternoon." }
           ],
           "questions": ["What was the price objection?"],
-          "mcpQuestions": ["Find the call."]
+          "mcpQuestions": ["Find the call."],
+          "suggestion": {
+            "title": "$SUGGESTED_TITLE",
+            "folders": [{ "name": "$CUSTOMER", "reason": "The customer's name" }]
+          }
         }
     """.trimIndent()
 
@@ -54,6 +59,53 @@ class SampleManifestTest {
         )
     }
 
+    // ── the prewritten filing suggestion ────────────────────────────────────
+
+    @Test
+    fun `decodes the suggestion, and a manifest without one has none`() {
+        val manifest = SampleManifest.decode(json)
+        assertEquals(SUGGESTED_TITLE, manifest.suggestion?.title)
+        assertEquals(listOf(CUSTOMER), manifest.suggestion?.folders?.map { it.name })
+
+        val bare = SampleManifest.decode(json.substringBefore(",\n  \"suggestion\"") + "\n}")
+        assertNull(bare.suggestion)
+        assertNull(bare.filingSuggestion(emptyList()))
+    }
+
+    @Test
+    fun `with no folders the card offers the new customer folder alone`() {
+        val suggestion = SampleManifest.decode(json).filingSuggestion(emptyList())
+
+        assertEquals(SUGGESTED_TITLE, suggestion?.title)
+        assertEquals(listOf(FilingFolderSuggestion(null, CUSTOMER, "The customer's name")), suggestion?.folders)
+    }
+
+    @Test
+    fun `two recent personal folders follow, newest first, never an organization's`() {
+        val folders = listOf(
+            FilingFolder(id = "old", name = "Old", lastUsedAtMs = 1.0),
+            FilingFolder(id = "team", name = "Team", orgId = "org-1", lastUsedAtMs = 9.0),
+            FilingFolder(id = "new", name = "New", lastUsedAtMs = 5.0),
+            FilingFolder(id = "never", name = "Never"),
+            FilingFolder(id = "mid", name = "Mid", lastUsedAtMs = 3.0),
+        )
+        val chips = SampleManifest.decode(json).filingSuggestion(folders)?.folders.orEmpty()
+
+        assertEquals(listOf(null, "new", "mid"), chips.map { it.folderId })
+        assertEquals(3, chips.size)
+    }
+
+    @Test
+    fun `a customer folder the user already has is pointed at, not proposed twice`() {
+        val folders = listOf(
+            FilingFolder(id = "mine", name = CUSTOMER.lowercase(), lastUsedAtMs = 1.0),
+            FilingFolder(id = "other", name = "Other", lastUsedAtMs = 2.0),
+        )
+        val chips = SampleManifest.decode(json).filingSuggestion(folders)?.folders.orEmpty()
+
+        assertEquals(listOf("mine", "other"), chips.map { it.folderId })
+    }
+
     @Test
     fun `a Chinese phone gets the zh-TW sample and everything else the English one`() {
         assertEquals("zh-TW", SampleManifest.langFor("zh"))
@@ -77,6 +129,13 @@ class SampleManifestTest {
             assertTrue(manifest.segments.isNotEmpty())
             assertEquals(3, manifest.questions.size)
             assertTrue(File(directory, manifest.audio).isFile)
+            assertTrue(manifest.suggestion?.title.orEmpty().isNotBlank())
+            assertEquals(1, manifest.suggestion?.folders?.size)
         }
+    }
+
+    private companion object {
+        const val SUGGESTED_TITLE = "Hongsheng · discovery call"
+        const val CUSTOMER = "Hongsheng Technology"
     }
 }

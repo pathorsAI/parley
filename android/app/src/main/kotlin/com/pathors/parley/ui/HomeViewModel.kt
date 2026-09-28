@@ -14,6 +14,7 @@ import com.pathors.parley.cloud.HostedQuota
 import com.pathors.parley.cloud.RecordingSummary
 import com.pathors.parley.kit.GettingStartedState
 import com.pathors.parley.kit.GettingStartedStep
+import com.pathors.parley.kit.LapMotion
 import com.pathors.parley.kit.SampleManifest
 import com.pathors.parley.kit.TranscriptSearch
 import com.pathors.parley.library.FolderFilter
@@ -28,11 +29,15 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
@@ -541,10 +546,46 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     /** Whether this build carries the sample in [language]. */
     fun canLoadSample(language: String): Boolean = container.sample.isBundled(language)
 
-    /** "Load sample": into the library, and back to All so the new row is on screen. */
-    fun loadSample(language: String) {
+    private val _walkingThrough = MutableStateFlow(false)
+
+    /**
+     * "Walk through it with the sample recording" was tapped and its 1.5 s
+     * "Transcribing…" is up on the checklist's header.
+     */
+    val walkingThrough: StateFlow<Boolean> = _walkingThrough.asStateFlow()
+
+    private val _lapOpens = MutableSharedFlow<String>(extraBufferCapacity = 1)
+
+    /**
+     * The id of a recording the checklist wants opened as the guided lap's
+     * recording — the sample at the end of the walk-through. The screen
+     * collects it while it is up; one that lands after the library has left
+     * the screen is dropped rather than replayed on the way back.
+     */
+    val lapOpens: SharedFlow<String> = _lapOpens.asSharedFlow()
+
+    /**
+     * 用範例錄音走一遍: a moment of "Transcribing…" on the list, then the sample
+     * goes into the library (back on All, so its row is on screen behind it) and
+     * opens on its summary with its suggestion waiting. iOS
+     * `LibraryView.walkThroughSample`.
+     *
+     * The pause is theatre, and deliberately so. The sample is transcribed
+     * already; opening it instantly made the name, the folder and the summary
+     * read as fixtures that were always there, where the point of the lap is
+     * that Parley *made* them from a recording. A second and a half is enough to
+     * see the step happen and short enough not to be a wait.
+     */
+    fun walkThroughSample(language: String) {
+        if (_walkingThrough.value) return
+        _walkingThrough.value = true
         viewModelScope.launch {
-            if (container.sample.load(language) != null) selectFolder(FolderFilter.All)
+            delay((LapMotion.TRANSCRIBING_BEAT * MILLIS_PER_SECOND).toLong())
+            val summary = container.sample.load(language)
+            _walkingThrough.value = false
+            if (summary == null) return@launch
+            selectFolder(FolderFilter.All)
+            _lapOpens.tryEmit(summary.id)
         }
     }
 
@@ -555,9 +596,15 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
      * The account sheet's "Show the getting-started list again": the list
      * reset, and everything that would keep it off screen gone — an org scope,
      * a folder page. The screen closes the search and scrolls up.
+     *
+     * The lap starts over from the sample, too: out of the library with its
+     * rename, its folder and its ticks, back to "Walk through it with the sample
+     * recording". The APK keeps the files. iOS
+     * `SettingsView.showGettingStartedAgain`.
      */
     fun showChecklistAgain() {
         container.gettingStarted.reset()
+        viewModelScope.launch { container.sample.remove() }
         selectScope(null)
         selectFolder(FolderFilter.All)
     }
@@ -811,6 +858,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     companion object {
+        private const val MILLIS_PER_SECOND = 1_000
 
         /**
          * The personal library with the sample merged in, at its place by date
@@ -828,10 +876,6 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 .let { if (it < 0) others.size else it }
             return others.take(index) + sample + others.drop(index)
         }
-
-        /** What checklist rows 2–4 open: the newest recording, the sample included. */
-        internal fun latestRecording(library: List<RecordingSummary>): RecordingSummary? =
-            library.maxByOrNull { it.createdAt }
 
         /**
          * What the list shows: the selected folder page of the scope, then the

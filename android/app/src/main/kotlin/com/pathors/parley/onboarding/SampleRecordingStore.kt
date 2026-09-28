@@ -9,6 +9,9 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import com.pathors.parley.cloud.RecordingMeta
 import com.pathors.parley.cloud.RecordingSource
 import com.pathors.parley.cloud.RecordingSummary
+import com.pathors.parley.cloud.CloudFolder
+import com.pathors.parley.kit.FilingFolder
+import com.pathors.parley.kit.FilingSuggestion
 import com.pathors.parley.kit.GettingStartedStep
 import com.pathors.parley.kit.SampleManifest
 import com.pathors.parley.playback.LocalAudioStore
@@ -62,7 +65,15 @@ private const val TAG = "SampleRecording"
  * here, so the row shows under that folder exactly as a real recording would —
  * but nothing is written to the cloud. The cloud-only actions (download,
  * re-transcribe, share to an organization, delete from the cloud) are not offered
- * on it.
+ * on it. The same goes for a rename, the ticks on its action items, and whether
+ * its filing suggestion has been answered: values here, none of them anywhere
+ * else.
+ *
+ * It arrives *pre-suggested and pre-analysed*. The manifest carries the title and
+ * folder a filing pass would have proposed ([filingSuggestion]) and the brief,
+ * findings and action items an analysis would have written, so the first
+ * recording a new user opens shows what every recording will get — without a
+ * model, a key or a network.
  *
  * Recognised everywhere by its id prefix, `sample-` ([SampleManifest.isSample]),
  * the same rule the desktop and iOS use.
@@ -99,7 +110,19 @@ class SampleRecordingStore(
          * for them (iOS `SampleRecordingStore.Entry.doneActionItems`).
          */
         val doneActionItems: List<String> = emptyList(),
-    )
+        /** The user's rename. Null = the manifest's title. */
+        val title: String? = null,
+        /**
+         * Whether the filing suggestion is still waiting on an answer. Null on an
+         * entry saved before the suggestion existed, read as "pending" while it
+         * has neither a name nor a folder of its own — see [isSuggestionPending].
+         */
+        val suggestionPending: Boolean? = null,
+    ) {
+        /** Whether the card should still offer the suggestion. iOS `SampleRecordingStore.suggestionPending`. */
+        val isSuggestionPending: Boolean
+            get() = suggestionPending ?: (folderId == null && title == null)
+    }
 
     /** The entry, or null when the sample is not in the library. */
     val entry: StateFlow<Entry?> =
@@ -177,7 +200,7 @@ class SampleRecordingStore(
         val loaded = currentEntry() ?: run {
             val lang = SampleManifest.langFor(language)
             if (manifest(lang) == null) return null
-            Entry(lang = lang, addedAtMs = clock().toDouble()).also { save(it) }
+            Entry(lang = lang, addedAtMs = clock().toDouble(), suggestionPending = true).also { save(it) }
         }
         val summary = summary(loaded) ?: return null
         gettingStarted.mark(GettingStartedStep.RECORDED)
@@ -188,6 +211,36 @@ class SampleRecordingStore(
     suspend fun setFolder(folderId: String?) {
         val current = currentEntry() ?: return
         save(current.copy(folderId = folderId))
+    }
+
+    /**
+     * Rename the sample. Local only — see the class doc. Blank, or the
+     * manifest's own title, puts the manifest's title back.
+     */
+    suspend fun setTitle(title: String) {
+        val current = currentEntry() ?: return
+        save(current.copy(title = storedTitle(title, manifestOf(current)?.title)))
+    }
+
+    /**
+     * The filing suggestion has been answered — accepted, or skipped — and the
+     * card is not offered again. Local only — see the class doc.
+     */
+    suspend fun answerSuggestion() {
+        val current = currentEntry() ?: return
+        save(current.copy(suggestionPending = false))
+    }
+
+    /**
+     * What the filing card offers on the sample, or null once it has been
+     * answered (or when the sample is not in the library, or this build's
+     * manifest carries no suggestion). [folders] is the user's folder list; up
+     * to two recently used personal ones join the manifest's customer folder —
+     * see [SampleManifest.filingSuggestion].
+     */
+    fun filingSuggestion(entry: Entry?, folders: List<CloudFolder>): FilingSuggestion? {
+        val manifest = manifestOf(entry) ?: return null
+        return entry?.let { suggestionOf(manifest, it, folders) }
     }
 
     /** Tick or untick one of the sample's action items. Local only — see the class doc. */
@@ -255,7 +308,7 @@ class SampleRecordingStore(
         internal fun summaryOf(manifest: SampleManifest, entry: Entry): RecordingSummary =
             RecordingSummary(
                 id = manifest.id,
-                title = manifest.title,
+                title = entry.title ?: manifest.title,
                 source = RecordingSource.UPLOAD,
                 createdAt = entry.addedAtMs,
                 durationMs = manifest.durationMs,
@@ -275,7 +328,7 @@ class SampleRecordingStore(
             RecordingMeta(
                 buildJsonObject {
                     put("id", manifest.id)
-                    put("title", manifest.title)
+                    put("title", entry.title ?: manifest.title)
                     put("source", RecordingSource.UPLOAD)
                     put("createdAt", entry.addedAtMs)
                     put("durationMs", manifest.durationMs)
@@ -291,8 +344,36 @@ class SampleRecordingStore(
                     put("findings", manifest.findings ?: JsonArray(emptyList()))
                     put("actionItems", actionItemsJson(manifest, entry))
                     put("folderId", entry.folderId?.let(::JsonPrimitive) ?: JsonNull)
+                    // The suggestion is prewritten, so no filing pass ever runs
+                    // on the sample; whether it is still on offer is the entry's
+                    // (see [filingSuggestion]).
+                    put("filingSuggested", true)
                 },
             )
+
+        /** A rename as stored: null when it is blank or just the manifest's own title. */
+        internal fun storedTitle(title: String, manifestTitle: String?): String? {
+            val trimmed = title.trim()
+            return trimmed.takeUnless { it.isEmpty() || it == manifestTitle }
+        }
+
+        /** [filingSuggestion], given the manifest: null once the suggestion has been answered. */
+        internal fun suggestionOf(
+            manifest: SampleManifest,
+            entry: Entry,
+            folders: List<CloudFolder>,
+        ): FilingSuggestion? {
+            if (!entry.isSuggestionPending) return null
+            return manifest.filingSuggestion(folders.map(::filingFolderOf))
+        }
+
+        /** A cloud folder as the sample's suggestion ranks it: most recently changed first. */
+        internal fun filingFolderOf(folder: CloudFolder): FilingFolder = FilingFolder(
+            id = folder.id,
+            name = folder.name,
+            orgId = folder.orgId,
+            lastUsedAtMs = folder.updatedAt ?: folder.createdAt,
+        )
 
         /**
          * The id an action item of the sample is ticked under. Positional, which

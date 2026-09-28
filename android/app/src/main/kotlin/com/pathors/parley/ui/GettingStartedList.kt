@@ -2,19 +2,19 @@ package com.pathors.parley.ui
 
 import androidx.annotation.StringRes
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -29,51 +29,57 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.pathors.parley.R
 import com.pathors.parley.kit.GettingStartedState
 import com.pathors.parley.kit.GettingStartedStep
 import com.pathors.parley.ui.theme.ParleyTheme
+import com.pathors.parley.ui.theme.ThemePreference
 
 /**
- * The getting-started checklist: four plain rows that teach the product by doing
- * it — record, file, replay, hand off — each ticked only by the real event (see
- * `GettingStartedStore`), never by a tap on the row. iOS `GettingStartedList`.
+ * The getting-started checklist: four plain rows, each ticked only by the real
+ * event (see `GettingStartedStore`), never by a tap on the row. iOS
+ * `GettingStartedList`, as onboarding v2 (#450) left it.
+ *
+ * Demoted in v2. The rows used to be doors — a chevron each, opening the newest
+ * recording "to file it" or "to share it" — and the verdict on iOS was that the
+ * list ticked but the recording it opened never said what to do. The teaching
+ * now happens on the recording (the guide bar); the list is the scoreboard. So
+ * the rows keep their ticks and titles and lose their actions and detail lines,
+ * and the header carries the one way in: walk through the sample, or continue
+ * the lap already started ([ChecklistAction]).
  *
  * Rows, hairlines and text, no card: the list is part of the page, not a promo
  * sitting on it. The one colour is the success green on a done item's check and
  * the tint on what can be tapped.
- *
- * Rows 2–4 open the newest recording with the intent that finishes them (the
- * folder picker, the share sheet); with no recording yet they are just text,
- * because there is nothing for them to open.
  */
 @Composable
 fun GettingStartedList(
     state: GettingStartedState,
-    actions: GettingStartedActions,
+    header: ChecklistHeader,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
-        Header(state, onDismiss = actions.onDismiss)
+        Header(state, onDismiss = header.onDismiss)
+        HeaderAction(header, Modifier.padding(bottom = 6.dp))
         GettingStartedStep.entries.forEach { step ->
             HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
-            StepRow(step = step, done = state[step], actions = actions)
+            StepRow(step = step, done = state[step])
         }
     }
 }
 
 /**
- * What the list can do, gathered so the call site stays readable and the row
- * code reads one value instead of five parameters.
+ * The header's one action and "Not now", gathered so the call site stays
+ * readable.
  */
-data class GettingStartedActions(
-    /** False in a build without the sample assets; the button is then absent rather than broken. */
-    val canLoadSample: Boolean,
-    /** Rows 2–4 open the newest recording; with none, they are just text. */
-    val hasRecording: Boolean,
-    val onLoadSample: () -> Unit,
-    val onOpen: (GettingStartedStep) -> Unit,
+data class ChecklistHeader(
+    val action: ChecklistAction,
+    /** The sample's 1.5 s "Transcribing…" moment is up; it stands in for [action]. */
+    val transcribing: Boolean,
+    val onWalkThrough: () -> Unit,
+    val onContinue: () -> Unit,
     val onDismiss: () -> Unit,
 )
 
@@ -85,9 +91,7 @@ private fun Header(state: GettingStartedState, onDismiss: () -> Unit) {
         GettingStartedState.TOTAL,
     )
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(bottom = 4.dp),
+        modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -109,75 +113,73 @@ private fun Header(state: GettingStartedState, onDismiss: () -> Unit) {
     }
 }
 
+/**
+ * "Walk through it with the sample recording", "Continue →", or — for the
+ * transcribing beat — a spinner and "Transcribing…" in the same place, so the
+ * list does not jump when one swaps for the other.
+ */
 @Composable
-private fun StepRow(step: GettingStartedStep, done: Boolean, actions: GettingStartedActions) {
-    val opensRecording = step != GettingStartedStep.RECORDED && !done && actions.hasRecording
-    // The whole row is the target when it leads somewhere: the words are what
-    // people reach for, not a chevron at the edge.
-    val rowModifier = if (opensRecording) {
-        Modifier.clickable { actions.onOpen(step) }
-    } else {
-        Modifier
-    }
-    Row(
-        modifier = rowModifier
-            .fillMaxWidth()
-            .padding(vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        StepText(step, done)
-        when {
-            opensRecording -> Icon(
-                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.outline,
+private fun HeaderAction(header: ChecklistHeader, modifier: Modifier = Modifier) {
+    val slot = modifier.heightIn(min = ACTION_HEIGHT)
+    when {
+        header.transcribing -> Row(
+            modifier = slot.semantics(mergeDescendants = true) {},
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+            Text(
+                text = stringResource(R.string.getting_started_transcribing),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
 
-            step == GettingStartedStep.RECORDED && !done && actions.canLoadSample ->
-                TextButton(onClick = actions.onLoadSample) {
-                    Text(
-                        text = stringResource(R.string.getting_started_load_sample),
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
+        header.action == ChecklistAction.WALK_THROUGH ->
+            ActionButton(R.string.getting_started_walk_through, header.onWalkThrough, slot)
+
+        header.action == ChecklistAction.CONTINUE_LAP ->
+            ActionButton(R.string.getting_started_continue, header.onContinue, slot)
+
+        else -> Unit
+    }
+}
+
+/** A text-weight blue button, flush with the title above it. */
+@Composable
+private fun ActionButton(@StringRes label: Int, onClick: () -> Unit, modifier: Modifier) {
+    Box(modifier, contentAlignment = Alignment.CenterStart) {
+        TextButton(
+            onClick = onClick,
+            contentPadding = PaddingValues(horizontal = 0.dp),
+        ) {
+            Text(text = stringResource(label), fontWeight = FontWeight.SemiBold)
         }
     }
 }
 
-/**
- * The mark and the words, one element to TalkBack with "Done" as its state; the
- * trailing button stays its own, so it can still be activated.
- */
+/** The mark and the words, one element to TalkBack with "Done" as its state. */
 @Composable
-private fun RowScope.StepText(step: GettingStartedStep, done: Boolean) {
+private fun StepRow(step: GettingStartedStep, done: Boolean) {
     val doneLabel = stringResource(R.string.getting_started_done)
     Row(
         modifier = Modifier
-            .weight(1f)
+            .fillMaxWidth()
+            .padding(vertical = 10.dp)
             .semantics(mergeDescendants = true) { if (done) stateDescription = doneLabel },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         CheckMark(done)
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(
-                text = stringResource(titleOf(step)),
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (done) {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                } else {
-                    MaterialTheme.colorScheme.onSurface
-                },
-            )
-            detailOf(step)?.let { detail ->
-                Text(
-                    text = stringResource(detail),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
+        Text(
+            text = stringResource(titleOf(step)),
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (done) {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            } else {
+                MaterialTheme.colorScheme.onSurface
+            },
+        )
     }
 }
 
@@ -209,39 +211,47 @@ private fun titleOf(step: GettingStartedStep): Int = when (step) {
     GettingStartedStep.SHARED_TO_AI -> R.string.getting_started_shared
 }
 
-@StringRes
-private fun detailOf(step: GettingStartedStep): Int? = when (step) {
-    GettingStartedStep.RECORDED -> R.string.getting_started_recorded_detail
-    GettingStartedStep.FILED -> R.string.getting_started_filed_detail
-    GettingStartedStep.REPLAYED -> null
-    GettingStartedStep.SHARED_TO_AI -> R.string.getting_started_shared_detail
+/** Tall enough for a text button, so the spinner line and the button line are the same height. */
+private val ACTION_HEIGHT = 40.dp
+
+// ── previews ─────────────────────────────────────────────────────────────────
+
+private fun previewHeader(action: ChecklistAction, transcribing: Boolean = false) = ChecklistHeader(
+    action = action,
+    transcribing = transcribing,
+    onWalkThrough = {},
+    onContinue = {},
+    onDismiss = {},
+)
+
+@Preview(name = "Nothing recorded: walk through the sample", showBackground = true, widthDp = 360)
+@Composable
+private fun GettingStartedWalkThroughPreview() {
+    ParleyTheme(preference = ThemePreference.LIGHT) {
+        GettingStartedList(GettingStartedState(), previewHeader(ChecklistAction.WALK_THROUGH), Modifier.padding(16.dp))
+    }
 }
 
-/**
- * What a recording's detail screen was opened *for*. The checklist opens a
- * recording to file it or to hand it off, and landing on the transcript with
- * nothing else happening would leave the user to find the menu the row was
- * pointing at. iOS `RecordingDetailView.Intent`.
- */
-enum class OpenFor {
-    READ,
+@Preview(name = "The transcribing beat", showBackground = true, widthDp = 360)
+@Composable
+private fun GettingStartedTranscribingPreview() {
+    ParleyTheme(preference = ThemePreference.LIGHT) {
+        GettingStartedList(
+            GettingStartedState(),
+            previewHeader(ChecklistAction.WALK_THROUGH, transcribing = true),
+            Modifier.padding(16.dp),
+        )
+    }
+}
 
-    /** Ask where to file it once the transcript is up. */
-    FILE,
-
-    /** Open the share sheet with the analysis prompt once it is up. */
-    SHARE,
-    ;
-
-    companion object {
-        /** The intent that finishes [step]'s row on the checklist. */
-        fun of(step: GettingStartedStep): OpenFor = when (step) {
-            GettingStartedStep.FILED -> FILE
-            GettingStartedStep.SHARED_TO_AI -> SHARE
-            GettingStartedStep.RECORDED, GettingStartedStep.REPLAYED -> READ
-        }
-
-        /** Tolerant of a route argument it does not know: that is a plain read. */
-        fun parse(value: String?): OpenFor = entries.firstOrNull { it.name == value } ?: READ
+@Preview(name = "Halfway: continue", showBackground = true, widthDp = 360)
+@Composable
+private fun GettingStartedContinuePreview() {
+    ParleyTheme(preference = ThemePreference.LIGHT) {
+        GettingStartedList(
+            GettingStartedState(recorded = true, filed = true),
+            previewHeader(ChecklistAction.CONTINUE_LAP),
+            Modifier.padding(16.dp),
+        )
     }
 }

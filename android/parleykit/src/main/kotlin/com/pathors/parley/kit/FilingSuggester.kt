@@ -18,6 +18,13 @@ data class FilingFolder(
     val id: String,
     val name: String,
     val orgId: String? = null,
+    /**
+     * Epoch ms of the folder's last change (the cloud's `updatedAt`, else its
+     * `createdAt`), for ordering "the folders the user works in now". Null sorts
+     * last. Only the sample's prewritten suggestion reads it
+     * ([SampleManifest.filingSuggestion]); the filing pass does not.
+     */
+    val lastUsedAtMs: Double? = null,
 )
 
 /**

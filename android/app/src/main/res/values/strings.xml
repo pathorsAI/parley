@@ -22,13 +22,17 @@
     <string name="launch_loading">Loading Parley</string>
 
     <!-- Onboarding: the screen a cold install lands on -->
-    <string name="onboarding_tagline">A pocket recorder for the meetings you have in person — live transcript while you talk, in the cloud by the time you stand up.</string>
-    <string name="onboarding_point_room">Put the phone on the table</string>
-    <string name="onboarding_point_room_detail">It picks up the whole room and keeps the speakers apart.</string>
-    <string name="onboarding_point_live">Live transcription, no API key</string>
-    <string name="onboarding_point_live_detail">Sign in and ride our hosted transcription. The free tier covers everyday use.</string>
-    <string name="onboarding_point_sync">Recordings sync to your account</string>
-    <string name="onboarding_point_sync_detail">Open a meeting you recorded on the phone in the desktop app for the deep analysis.</string>
+    <string name="onboarding_headline">Record it. Hand it to the AI you already use.</string>
+    <string name="onboarding_subline">Parley records in-person meetings, transcribes them live, and keeps them where your Mac and phone can both find them.</string>
+    <!-- The sign-in page's little film (IntroStage): one caption per beat, and what TalkBack reads instead -->
+    <string name="intro_recording_now">Recording now</string>
+    <string name="intro_caption_recording">Parley records both sides of the conversation.</string>
+    <string name="intro_caption_transcript">It turns into text as you go, with who said what.</string>
+    <string name="intro_caption_folder">Then one customer, one folder.</string>
+    <string name="intro_caption_share">And share it with ChatGPT or Claude to analyse.</string>
+    <string name="intro_point_record">Record and transcribe live, even from the lock screen</string>
+    <string name="intro_point_folder">One customer, one folder, synced with your Mac</string>
+    <string name="intro_point_share">Share to ChatGPT or Claude for analysis</string>
     <string name="onboarding_sign_in_methods">Email and password, Google, and Apple all work. Before any recording starts, Parley asks you to confirm everyone in the room has agreed to it.</string>
 
     <!-- Sign in -->
@@ -328,16 +332,15 @@
     <string name="getting_started_title">Do one lap, five minutes</string>
     <string name="getting_started_progress_spoken">%1$d of %2$d done</string>
     <string name="getting_started_not_now">Not now</string>
-    <string name="getting_started_load_sample">Load sample</string>
     <string name="getting_started_done">Done</string>
     <string name="getting_started_recorded">Record your first meeting</string>
-    <string name="getting_started_recorded_detail">or load the sample recording</string>
     <string name="getting_started_filed">Put it in a folder</string>
-    <string name="getting_started_filed_detail">One customer, one folder</string>
     <string name="getting_started_replayed">Replay: tap a line to jump</string>
     <string name="getting_started_shared">Share it with your AI</string>
-    <string name="getting_started_shared_detail">ChatGPT and Claude are in the share sheet</string>
     <string name="getting_started_show_again">Show the getting-started list again</string>
+    <string name="getting_started_walk_through">Walk through it with the sample recording</string>
+    <string name="getting_started_continue">Continue →</string>
+    <string name="getting_started_transcribing">Transcribing…</string>
     <string name="recording_source_sample">SAMPLE</string>
     <string name="sample_missing">The sample recording is no longer in the library.</string>
     <!-- Library scope and folders (see HomeScreen, LibraryFolders) -->
