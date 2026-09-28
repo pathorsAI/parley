@@ -83,6 +83,10 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.28
+
+Tapping Start recording now starts recording right away, without first asking you to confirm that everyone has agreed. As with any recorder, getting the consent of the people in the room, as the law where you are requires, is up to you.
+
 ## What's New — 1.27
 
 After dictating with the voice keyboard, tap the text to copy all of it. The keyboard confirms with "Copied" in its header, and for your first few dictations it reminds you that the text can be tapped.
