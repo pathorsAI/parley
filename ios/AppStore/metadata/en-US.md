@@ -83,6 +83,14 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.25
+
+The sign-in page now has a ring of blue and white light flowing slowly around the screen's edge. It quickens while you sign in and fades as the app opens.
+
+After a dictation, tap the voice keyboard's preview to copy the whole text, not just the lines on screen.
+
+Dictation history now shows whether each entry was polished by AI and, if not, why (too short, timed out, or you skipped it, for example). For polished entries you can switch to the original; copy takes whichever version is showing.
+
 ## What's New — 1.24
 
 Chinese transcripts always read in Traditional Chinese. The automatic re-transcription after a meeting — and tapping Re-transcribe — could turn a transcript Simplified; both now come back Traditional, and recordings you already have open in Traditional too.
