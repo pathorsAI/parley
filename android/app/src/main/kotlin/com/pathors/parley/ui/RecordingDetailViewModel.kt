@@ -8,6 +8,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.pathors.parley.AppContainer
 import com.pathors.parley.cloud.BatchTranscriptionProblem
 import com.pathors.parley.cloud.CloudClient
+import com.pathors.parley.cloud.CloudException
 import com.pathors.parley.cloud.CloudFolder
 import com.pathors.parley.cloud.RecordingMeta
 import com.pathors.parley.cloud.asBatchTranscriptionProblem
@@ -26,6 +27,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -43,18 +45,47 @@ import kotlinx.serialization.json.JsonPrimitive
  * rather than failing the whole screen.
  */
 data class FindingRow(
+    val id: String,
     val title: String,
     val detail: String,
-    val atMs: Long?,
+    /** Where on the recording it starts; 0 when the entry does not say, as on iOS. */
+    val atMs: Long,
     val severity: String?,
 )
 
 /** One action item (`src/lib/types.ts` `ActionItem`). */
 data class ActionItemRow(
+    /** The item's own id, or `action-{index}` — what a tick is keyed by. */
+    val id: String,
     val text: String,
-    val rationale: String,
     val done: Boolean,
+    /** Where on the recording it came from, when the analysis could say. */
+    val atMs: Long?,
 )
+
+/**
+ * Why the recording could not be shown. A code — the screen owns the copy for
+ * each, and says it under iOS's "Couldn't load".
+ */
+enum class DetailLoadFailure {
+    /** The bundled sample was taken out of the library meanwhile. */
+    SAMPLE_MISSING,
+
+    /** The request never reached the cloud, or it timed out. */
+    NETWORK,
+
+    /** The cloud answered with an error. */
+    SERVER,
+
+    /** The recording is not in the cloud any more (404). */
+    NOT_FOUND,
+
+    /** Signed in, but not allowed to read it (403) — typically an org it left. */
+    FORBIDDEN,
+
+    /** The session is dead (401). */
+    SIGNED_OUT,
+}
 
 /**
  * Why "transcribe again" cannot be offered right now.
@@ -318,12 +349,42 @@ class RecordingDetailViewModel(
     data class UiState(
         val loading: Boolean = true,
         val meta: RecordingMeta? = null,
+        /** The analysis's brief, as `BriefMarkup` source; empty when there is none. */
+        val brief: String = "",
         val findings: List<FindingRow> = emptyList(),
         val actionItems: List<ActionItemRow> = emptyList(),
-        val failed: Boolean = false,
-        /** The failure is the sample having been taken out of the library meanwhile. */
-        val sampleMissing: Boolean = false,
-    )
+        /** Why nothing could be shown, or null. */
+        val failure: DetailLoadFailure? = null,
+    ) {
+        val failed: Boolean get() = failure != null
+
+        /**
+         * Whether there is anything for the summary page to show: a brief, a
+         * finding, or an action item. What the screen opens on is decided by
+         * this — iOS `RecordingMeta.hasAnalysis`.
+         */
+        val hasAnalysis: Boolean
+            get() = brief.isNotEmpty() || findings.isNotEmpty() || actionItems.isNotEmpty()
+    }
+
+    /**
+     * Whether a tick on an action item is kept. The sample only: it keeps its
+     * ticks on the phone. A cloud recording shows the ticks it has and takes
+     * none, because the phone has no write path for them — iOS
+     * `canTickActionItems`.
+     */
+    val canTickActionItems: Boolean get() = isSample
+
+    /** Tick or untick one of the sample's action items, on screen and in its store. */
+    fun tickActionItem(id: String, done: Boolean) {
+        if (!canTickActionItems) return
+        val meta = _state.value.meta ?: return
+        _state.value = fromMeta(meta.withActionItem(id, done))
+        viewModelScope.launch { container.sample.setActionItem(id, done) }
+    }
+
+    /** An edge of the transcript is held (2×) or let go. See [PlaybackController.holdTwoX]. */
+    fun holdTwoX(holding: Boolean) = playback.holdTwoX(holding)
 
     /**
      * "Move to folder" from the overflow menu: the personal folders the picker
@@ -347,6 +408,36 @@ class RecordingDetailViewModel(
 
     init {
         load()
+        observeBackfills()
+    }
+
+    /**
+     * A re-transcription landed somewhere in the app, and it may well be this
+     * recording's: the queue drains on launch, on sign-in, on every
+     * foregrounding and from the Re-transcribe tap, so a repaired transcript
+     * can arrive while somebody is reading the recording it belongs to. iOS
+     * observes `backfillRevision` for exactly this; before it, the screen kept
+     * the transcript it had fetched and the new one turned up on some later
+     * visit.
+     *
+     * Not for the sample (never transcribed) or a screenshot run (no queue).
+     */
+    private fun observeBackfills() {
+        if (isSample || DemoMode.isActive) return
+        viewModelScope.launch {
+            container.backfiller.landed.drop(1).collect { backfillLanded() }
+        }
+    }
+
+    private suspend fun backfillLanded() {
+        val queued = runCatching { container.backfiller.isQueued(recordingId) }.getOrDefault(true)
+        if (!queued && _retranscribe.value.phase == RetranscribeState.Phase.QUEUED) {
+            // Ours landed while the screen was saying it was waiting.
+            val remaining = retriesRemaining()
+            _retranscribe.update { it.settled(remaining) }
+        }
+        refreshMeta()
+        syncRetranscribe()
     }
 
     fun load() {
@@ -364,8 +455,13 @@ class RecordingDetailViewModel(
         }
         viewModelScope.launch {
             _state.value = UiState(loading = true)
-            val result = runCatching { fetchMeta() }
-            _state.value = fromMeta(result.getOrNull())
+            _state.value = try {
+                fromMeta(fetchMeta())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                UiState(loading = false, failure = classifyLoadFailure(e))
+            }
             openPlayer()
             syncRetranscribe()
         }
@@ -382,7 +478,7 @@ class RecordingDetailViewModel(
         val entry = sample.currentEntry()
         val manifest = sample.manifestOf(entry)?.takeIf { it.id == recordingId }
         if (entry == null || manifest == null) {
-            _state.value = UiState(loading = false, failed = true, sampleMissing = true)
+            _state.value = UiState(loading = false, failure = DetailLoadFailure.SAMPLE_MISSING)
             return
         }
         sampleQuestions = manifest.questions
@@ -664,14 +760,29 @@ class RecordingDetailViewModel(
 
         /** The loaded state for a meta, or the failed state when there is none. */
         internal fun fromMeta(meta: RecordingMeta?): UiState = when (meta) {
-            null -> UiState(loading = false, failed = true)
+            null -> UiState(loading = false, failure = DetailLoadFailure.SERVER)
             else -> UiState(
                 loading = false,
                 meta = meta,
+                brief = meta.brief,
                 findings = readFindings(meta),
                 actionItems = readActionItems(meta),
             )
         }
+
+        /** What a failed meta fetch says to the reader. See [DetailLoadFailure]. */
+        internal fun classifyLoadFailure(error: Throwable): DetailLoadFailure {
+            val cloud = error as? CloudException ?: return DetailLoadFailure.NETWORK
+            return when {
+                cloud.isAuthExpired -> DetailLoadFailure.SIGNED_OUT
+                cloud.isForbidden -> DetailLoadFailure.FORBIDDEN
+                cloud.isNotFound -> DetailLoadFailure.NOT_FOUND
+                cloud.status == HTTP_TIMEOUT -> DetailLoadFailure.NETWORK
+                else -> DetailLoadFailure.SERVER
+            }
+        }
+
+        private const val HTTP_TIMEOUT = 408
 
         fun factory(
             container: AppContainer,
@@ -689,31 +800,49 @@ class RecordingDetailViewModel(
             }
         }
 
+        /**
+         * The findings, in timeline order — iOS `RecordingMeta.findings`. A
+         * finding needs a title to be a highlight (the older `label` / `text`
+         * spellings are accepted); one without a moment sits at 0.
+         */
         internal fun readFindings(meta: RecordingMeta): List<FindingRow> =
-            (meta.raw["findings"] as? JsonArray).orEmptyObjects().mapNotNull { obj ->
+            (meta.raw["findings"] as? JsonArray).orEmptyIndexedObjects().mapNotNull { (index, obj) ->
                 val title = obj.text("title") ?: obj.text("label") ?: obj.text("text")
-                val detail = obj.text("detail") ?: obj.text("description").orEmpty()
-                if (title == null && detail.isEmpty()) return@mapNotNull null
+                    ?: return@mapNotNull null
                 FindingRow(
-                    title = title.orEmpty(),
-                    detail = detail,
-                    atMs = obj.number("atMs")?.toLong(),
+                    id = obj.text("id") ?: "finding-$index",
+                    title = title,
+                    detail = obj.text("detail") ?: obj.text("description").orEmpty(),
+                    atMs = (obj.number("atMs") ?: 0.0).toLong().coerceAtLeast(0L),
                     severity = obj.text("severity"),
                 )
-            }
+            }.sortedBy { it.atMs }
 
+        /**
+         * The action items, in the order the analysis wrote them — which is the
+         * order of importance, not of time, so they are not re-sorted. iOS
+         * `RecordingMeta.actionItems`.
+         */
         internal fun readActionItems(meta: RecordingMeta): List<ActionItemRow> =
-            (meta.raw["actionItems"] as? JsonArray).orEmptyObjects().mapNotNull { obj ->
-                val text = obj.text("text") ?: obj.text("title") ?: return@mapNotNull null
+            (meta.raw["actionItems"] as? JsonArray).orEmptyIndexedObjects().mapNotNull { (index, obj) ->
+                val text = (obj.text("text") ?: obj.text("title"))?.takeIf { it.isNotBlank() }
+                    ?: return@mapNotNull null
                 ActionItemRow(
+                    id = obj.text("id") ?: "action-$index",
                     text = text,
-                    rationale = obj.text("rationale").orEmpty(),
                     done = obj.bool("done") ?: false,
+                    atMs = obj.number("atMs")?.toLong()?.coerceAtLeast(0L),
                 )
             }
 
-        private fun JsonArray?.orEmptyObjects(): List<JsonObject> =
-            this?.mapNotNull { it as? JsonObject }.orEmpty()
+        /**
+         * The objects of an array with their positions in it — the position is
+         * the id fallback, so it has to be the raw one, counting entries that
+         * are skipped.
+         */
+        private fun JsonArray?.orEmptyIndexedObjects(): List<Pair<Int, JsonObject>> =
+            this?.mapIndexedNotNull { index, element -> (element as? JsonObject)?.let { index to it } }
+                .orEmpty()
 
         private fun JsonObject.text(key: String): String? =
             (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotEmpty() }

@@ -5,12 +5,14 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * The two pure functions behind follow-the-audio.
+ * The pure rules behind the recording page: which turn the playhead is in,
+ * which turn a finding's 💡 line goes under, and which page a recording opens
+ * on.
  *
- * Both are arithmetic that is invisible until it is wrong: an off-by-one in
- * [firstSegmentItemIndex] scrolls the transcript to a findings card, and a
- * range-based [currentTurnIndex] would drop the highlight into nowhere every
- * time two people paused between turns.
+ * All three are invisible until they are wrong: a range-based
+ * [currentTurnIndex] would drop the highlight into nowhere every time two people
+ * paused between turns, a finding filed under the wrong turn points at somebody
+ * else's sentence, and a page that flips on reload moves the reader's place.
  */
 class TranscriptFollowTest {
 
@@ -61,35 +63,45 @@ class TranscriptFollowTest {
         assertEquals(0, currentTurnIndex(turns(0, 5_000), positionMs = 0))
     }
 
+    // ── the 💡 lines ─────────────────────────────────────────────────────────
+
+    private fun finding(title: String, atMs: Long) =
+        FindingRow(id = title, title = title, detail = "", atMs = atMs, severity = null)
+
     @Test
-    fun `the plain case is header, title, then the turns`() {
-        // 0 header, 1 "Transcript", 2 first turn.
-        assertEquals(2, firstSegmentItemIndex(findings = 0, actionItems = 0, hasSegments = true))
+    fun `a finding goes under the turn it starts in`() {
+        val starts = listOf(300L, 8_900L, 18_076L)
+        val byTurn = findingsByTurn(
+            listOf(finding("a", 12_000), finding("b", 20_000), finding("c", 13_000)),
+            starts,
+        )
+        assertEquals(listOf("a", "c"), byTurn[1]?.map { it.title })
+        assertEquals(listOf("b"), byTurn[2]?.map { it.title })
+        assertEquals(null, byTurn[0])
     }
 
     @Test
-    fun `each analysis section costs its title plus its rows`() {
-        // 0 header, 1 "Findings", 2-4 cards, 5 "Action items", 6-7 cards,
-        // 8 "Transcript", 9 first turn.
-        assertEquals(9, firstSegmentItemIndex(findings = 3, actionItems = 2, hasSegments = true))
+    fun `a floored moment goes under the turn it names, not the one before`() {
+        // The analysis floors 8.9 s to 8 s on the way to a clock.
+        assertEquals(listOf("x"), findingsByTurn(listOf(finding("x", 8_000)), listOf(300L, 8_900L))[1]?.map { it.title })
     }
 
     @Test
-    fun `an empty analysis section takes no room at all`() {
-        assertEquals(4, firstSegmentItemIndex(findings = 1, actionItems = 0, hasSegments = true))
-        assertEquals(4, firstSegmentItemIndex(findings = 0, actionItems = 1, hasSegments = true))
+    fun `a finding before every turn belongs to the first, and no turns means no lines`() {
+        assertEquals(listOf("early"), findingsByTurn(listOf(finding("early", 0)), listOf(5_000L))[0]?.map { it.title })
+        assertEquals(emptyMap<Int, List<FindingRow>>(), findingsByTurn(listOf(finding("x", 0)), emptyList()))
+    }
+
+    // ── the page it opens on ─────────────────────────────────────────────────
+
+    @Test
+    fun `a recording with analysis opens on its summary, one without on its transcript`() {
+        assertEquals(DetailFace.SUMMARY, initialFace(hasAnalysis = true))
+        assertEquals(DetailFace.TRANSCRIPT, initialFace(hasAnalysis = false))
     }
 
     @Test
-    fun `the no-transcript line sits where the first turn would`() {
-        assertEquals(3, firstSegmentItemIndex(findings = 0, actionItems = 0, hasSegments = false))
-    }
-
-    @Test
-    fun `the index matches a hand-counted demo recording`() {
-        // The featured demo meeting: three findings, two action items, six
-        // turns. Item 9 is the first thing the follow ever scrolls to, and
-        // getting it wrong parks the reader on an action-item card.
-        assertEquals(9, firstSegmentItemIndex(findings = 3, actionItems = 2, hasSegments = true))
+    fun `the store-listing transcript frame stays on the transcript`() {
+        assertEquals(DetailFace.TRANSCRIPT, initialFace(hasAnalysis = true, forceTranscript = true))
     }
 }

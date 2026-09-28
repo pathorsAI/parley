@@ -36,8 +36,9 @@ com.pathors.parley
     MeetingScreen.kt     permission gate, live transcript, level meter, mic/storage status, stop
     MeetingHaptics.kt    the four recording beats (start, stop, discard, mic lost)
     ImportScreen.kt      progress + phase label + cancel; the failure / partial endings
-    RecordingDetail*.kt  player, transcript + search, findings, action items,
+    RecordingDetail*.kt  player, Summary | Transcript pages, transcript search,
                          re-transcribe, move to folder (personal recordings)
+    RecordingSummaryPage.kt brief, action items, highlights, speakers
     Format.kt            duration/clock/date/speaker-label formatting
     theme/Theme.kt       Material 3, dynamic color on API 31+
 ```
@@ -254,6 +255,47 @@ unit-tested.
   44dp row.
 - **TalkBack.** The strip is an adjustable control: swipe up/down moves 15 s,
   and the position is spoken as a clock.
+
+## The recording page: Summary | Transcript
+
+A port of iOS #450 (`docs/design/ios-recording-page.md`). Under the pinned
+player, a segmented control switches two pages; only the one that is up is
+composed, but both `LazyListState`s live in `DetailBody`, so each keeps its
+scroll position.
+
+- **Which page.** Summary when the recording has any analysis (a brief, a
+  finding or an action item — `UiState.hasAnalysis`), Transcript otherwise.
+  Chosen once on the first load (`initialFace`), saved across rotation, never
+  flipped by a reload. `parley://demo/transcript` stays on the transcript.
+- **Summary** (`RecordingSummaryPage.kt`): the brief through parleykit's
+  `BriefMarkup` (bold runs, `[m:ss]` links), action items (ticking only on the
+  sample — `SampleRecordingStore.Entry.doneActionItems`; a cloud recording shows
+  its ticks and takes none), highlights (2dp ink rule, title, detail,
+  `m:ss →`), and speakers in order of first appearance. With no analysis:
+  "No summary yet." and "Generate a summary with AI", which is the Share-to-AI
+  hand-off.
+- **Jumps.** Every timestamp on the summary switches to the transcript, seeks
+  (`jumpTo`), scrolls the turn to the upper third and washes it for 2 s. The
+  turn is `TranscriptAnchor`'s — a brief's `[0:08]` names the turn that starts
+  at 8.9 s.
+- **Transcript.** Turns only (the title is in the top bar); a finding adds a
+  lightbulb line under the turn it starts in, which seeks and lights the turn.
+  The playing turn's *speaker label* is blue. A seek scrolls to its turn even
+  while paused (iOS #381); following during playback stops at a drag and
+  resumes on play or seek. Holding a 44dp band at either edge plays at 2×
+  (`PlaybackController.holdTwoX`, a "2× ▶" pill) until let go.
+- **Speaker names** are parleykit's `SpeakerLabel`, the desktop and iOS rules:
+  an assigned name, else "You" / "You N" and "Them" / "Remote N" for a desktop
+  recording's `me` / `them` sources, else "Speaker A", "Speaker B" … with `…`
+  for an undecided speaker. The screen, the clipboard, the hand-off prompt and
+  the filing pass all go through `Format.speakerLabel`.
+- **Reloads.** `TranscriptBackfiller.landed` counts finished re-transcriptions
+  (iOS `backfillRevision`); an open recording re-reads its meta on every bump,
+  so a better transcript that lands while it is on screen replaces the old one
+  in place.
+- **Couldn't load.** A failed load is an icon, "Couldn't load", and the reason
+  (`DetailLoadFailure`: offline, not found, no access, signed out, a server
+  error, or the sample gone).
 
 ## Strings
 

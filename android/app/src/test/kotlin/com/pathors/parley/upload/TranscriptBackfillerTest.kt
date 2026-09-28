@@ -190,6 +190,28 @@ class TranscriptBackfillerTest {
             assertTrue(summary.hasAudio)
         }
 
+    /**
+     * What an open recording screen watches to re-read a transcript that
+     * landed while it was up (iOS `backfillRevision`).
+     */
+    @Test
+    fun `a landed run is announced, and a failed one is not`() = runBlocking {
+        val queue = queue("landed")
+        queue.enqueueMoving(BackfillRequest(pending = pending("rec-1")), audio("a.ogg"))
+        val backfiller = backfiller(queue, ledger("landed-l"), FakeBatch(fullTranscript()))
+        assertEquals(0, backfiller.landed.value)
+
+        backfiller.drain()
+        assertEquals(1, backfiller.landed.value)
+
+        val stuck = queue("landed-stuck")
+        stuck.enqueueMoving(BackfillRequest(pending = pending(RECORDING)), audio("b.ogg"))
+        unreadable += RECORDING
+        val failing = backfiller(stuck, ledger("landed-stuck-l"), FakeBatch(fullTranscript()))
+        failing.drain()
+        assertEquals(0, failing.landed.value)
+    }
+
     /** Pushing the stale copy is the thing the re-read exists to stop. */
     @Test
     fun `an automatic run that cannot re-read the recording stays queued and pushes nothing`() =

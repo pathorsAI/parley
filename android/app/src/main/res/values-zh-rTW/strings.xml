@@ -138,8 +138,11 @@
     <string name="meeting_stopped_storage">提前結束——手機儲存空間不足</string>
     <string name="meeting_stopped_other">提前結束——發生了未預期的錯誤</string>
     <string name="meeting_title_format">會議 %1$s</string>
-    <string name="speaker_label">說話者 %1$d</string>
-    <string name="speaker_unknown">說話者</string>
+    <string name="speaker_label">講者 %1$s</string>
+    <string name="speaker_you">我</string>
+    <string name="speaker_you_numbered">我 %1$d</string>
+    <string name="speaker_them">對方</string>
+    <string name="speaker_remote_numbered">對方 %1$d</string>
 
     <!-- Failures shared by the meeting and import flows -->
     <string name="failure_not_signed_in">你已登出，請重新登入後再試。</string>
@@ -175,12 +178,24 @@
     <string name="detail_title">錄音</string>
     <string name="detail_load_failed">無法載入這筆錄音。</string>
     <string name="detail_transcript">逐字稿</string>
-    <string name="detail_no_transcript">這筆錄音沒有逐字稿。</string>
+    <string name="detail_no_transcript">這場錄音沒有逐字稿。</string>
     <string name="detail_findings">觀察重點</string>
     <string name="detail_action_items">後續行動</string>
-    <string name="detail_speakers">%1$d 位說話者</string>
-    <string name="detail_length">長度 %1$s</string>
     <string name="detail_more_actions">更多動作</string>
+    <string name="detail_load_failed_title">載入失敗</string>
+    <string name="detail_error_network">目前連不上雲端。請確認網路連線後，再開啟一次這筆錄音。</string>
+    <string name="detail_error_not_found">雲端上已經沒有這筆錄音。</string>
+    <string name="detail_error_forbidden">你已沒有權限查看這筆錄音。</string>
+    <string name="detail_face_summary">摘要</string>
+    <string name="summary_highlights">重點 %1$d</string>
+    <string name="summary_speakers">講者</string>
+    <string name="summary_empty">還沒有摘要。</string>
+    <string name="summary_generate">用 AI 產生摘要</string>
+    <string name="summary_done">完成</string>
+    <string name="summary_go_to">到逐字稿的 %1$s</string>
+    <string name="transcript_highlight">重點：%1$s</string>
+    <string name="transcript_two_x_zone">播放速度</string>
+    <string name="transcript_two_x_hint">按住以 2 倍速播放</string>
 
     <!-- 複製與分享逐字稿 -->
     <string name="transcript_clip_label">Parley 逐字稿</string>

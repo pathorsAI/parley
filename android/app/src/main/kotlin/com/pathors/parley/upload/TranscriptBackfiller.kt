@@ -15,6 +15,10 @@ import com.pathors.parley.util.deleteQuietly
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -83,6 +87,20 @@ class TranscriptBackfiller(
         TranscriptCoverage.BackfillPolicy.STANDARD,
 ) {
     private val drainMutex = Mutex()
+
+    private val _landed = MutableStateFlow(0)
+
+    /**
+     * Bumped every time a run finishes for some recording — iOS
+     * `AppState.backfillRevision`.
+     *
+     * A counter rather than the recording's id on purpose: the queue drains on
+     * launch, on sign-in, on every foregrounding and from the Re-transcribe tap,
+     * so a better transcript can land while somebody is reading the recording it
+     * belongs to, and a detail screen that re-reads its meta on every bump costs
+     * one wasted fetch where matching ids would cost bookkeeping.
+     */
+    val landed: StateFlow<Int> = _landed.asStateFlow()
 
     // ── what a screen needs to know ──────────────────────────────────────────
 
@@ -218,6 +236,7 @@ class TranscriptBackfiller(
             try {
                 run(request, audio)
                 repaired++
+                _landed.update { it + 1 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
