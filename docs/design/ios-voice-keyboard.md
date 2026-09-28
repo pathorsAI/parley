@@ -1661,8 +1661,17 @@ composer's limit rather than a position anybody argued for.
   is the first tone while the last syllable has no tone, and commits everything
   once it has one. So a sentence stays typeable without ever looking at the bar,
   and choosing one word does not cost the syllables behind it.
-- **⌄ opens every candidate as a grid.** The bar shows what fits in one row;
-  the ⌄ at its end (only while there are candidates) opens all of them as a
+- **The bar draws thirty; ⌄ opens every candidate as a grid.** The composer's
+  list can run to hundreds — forty phrases, then the first syllable's whole
+  toneless row (`~ㄧ` is 441 characters, `~ㄐㄧ` 378), then its fuzzy variants —
+  and the strip is a plain `HStack`, so until this cap every keystroke rebuilt a
+  button, a text and a hairline per candidate: typing ㄐㄧ rebuilt about 460 of
+  each, which is where the 注音 pane's per-key time and much of its footprint
+  went. `StripBar` now draws the first `drawnLimit` (30), about five strip-widths
+  of scrolling, and compares only those, so a keystroke that only changed the
+  tail does not redraw it. The list itself is not cut: the bar and the grid pick
+  from the same one.
+  The ⌄ at the bar's end (only while there are candidates) opens all of them as a
   grid in the 注音 pane's own 213pt key area — `CandidateGrid`, 22pt key-cap
   cells, `max(4, width ÷ 64)` columns, scrolling vertically — in exactly the
   composer's order, never re-sorted. The keyboard's height does not change: the
@@ -2014,8 +2023,9 @@ neighbours nearest-centre first — `ㄋ` → ㄌㄇㄎㄊㄍㄏ, `ㄓ` → ㄗ�
 - **The dictionary** answers the exact row first, untouched, then for each
   variant of the syllable (every syllable one substitution away, 模糊音 ones
   before slips) its first eight characters not already listed. The cap is
-  there because the strip draws every candidate and toneless rows run to 441
-  characters. A syllable with an exact row keeps its exact top; one with none
+  there because toneless rows run to 441 characters and fourteen variants'
+  whole rows would be well over a thousand candidates on a keystroke, every
+  one a cell in the ⌄ grid (the strip itself draws only thirty). A syllable with an exact row keeps its exact top; one with none
   (`ㄓㄨㄡ`) takes the first variant's (中), so return commits a character
   rather than raw 注音.
 - **The phrase table** counts, per row, how many typed syllables needed a symbol
