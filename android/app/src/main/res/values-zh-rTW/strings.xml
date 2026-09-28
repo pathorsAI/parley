@@ -3,7 +3,7 @@
   Traditional Chinese — first-class, not a translation afterthought.
   Keep in lockstep with values/strings.xml: same keys, same placeholders.
 -->
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <string name="app_name">Parley</string>
 
     <!-- Shared actions -->
@@ -342,6 +342,28 @@
     <string name="getting_started_walk_through">用範例錄音走一遍</string>
     <string name="getting_started_continue">繼續 →</string>
     <string name="getting_started_transcribing">轉錄中…</string>
+    <!-- The guided lap's guide bar on the recording page (GuideBar, iOS #450) -->
+    <string name="guide_file_title" tools:ignore="TypographyFractions">1 / 3 · 先看 Parley 幫你做了什麼</string>
+    <string name="guide_file_body">錄完的會議會自動取名、建議放哪個資料夾。標題可以改，資料夾也能自己選。按「採用」或任一個資料夾試試。</string>
+    <string name="guide_show_me">看建議</string>
+    <string name="guide_choose_folder">選資料夾</string>
+    <string name="guide_filed">已歸檔。之後每一場錄完都會這樣。</string>
+    <string name="guide_filed_in">已放進「%1$s」。之後每一場錄完都會這樣。</string>
+    <string name="guide_renamed_filed_in">已改名，放進「%1$s」。之後每一場錄完都會這樣。</string>
+    <string name="guide_replay_title" tools:ignore="TypographyFractions">2 / 3 · 回放</string>
+    <string name="guide_replay_body">點任一句，音訊會跳到那個時間。試試看。</string>
+    <string name="guide_open_transcript">開逐字稿</string>
+    <string name="guide_replay_confirmed">就是這樣。搜尋可以找關鍵字。</string>
+    <string name="guide_share_title" tools:ignore="TypographyFractions">3 / 3 · 交給你的 AI</string>
+    <string name="guide_share_body">分享出去、貼上，就能問：</string>
+    <string name="guide_share_to_ai">分享給 AI</string>
+    <string name="guide_copy_instead">先複製</string>
+    <string name="guide_done_named">已命名、歸檔</string>
+    <string name="guide_done_replayed">已回放</string>
+    <string name="guide_done_handed">已交給 AI</string>
+    <string name="guide_done_body">這就是 Parley 的一場會議：錄 → 自動命名與歸檔 → 回放 → 交給 AI。下次錄完會自動發生。</string>
+    <string name="guide_start_meeting">開始第一場真的會議</string>
+    <string name="guide_mac_footnote">在 Mac 上還能讓 Claude Code 透過 MCP 直接讀整個錄音資料庫。</string>
     <string name="recording_source_sample">範例</string>
     <string name="sample_missing">範例錄音已不在錄音庫裡。</string>
     <!-- Library scope and folders (see HomeScreen, LibraryFolders) -->

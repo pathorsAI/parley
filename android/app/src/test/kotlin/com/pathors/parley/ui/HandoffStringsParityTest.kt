@@ -126,6 +126,31 @@ class HandoffStringsParityTest {
         "retranscribe_already_running" to "Already re-transcribing this recording.",
         "retranscribe_did_not_finish" to "Re-transcribing didn't finish this time.",
         "retranscribe_budget_spent" to "This recording has been re-transcribed as many times as allowed.",
+        // The guided lap's guide bar and done card (iOS #450 GuideBar).
+        "guide_file_title" to "1 / 3 · See what Parley did for you",
+        "guide_file_body" to "Every recording gets a name and a suggested folder when it's done. You can change the " +
+            "title or pick your own folder — tap Accept or any folder to try it.",
+        "guide_show_me" to "Show me",
+        "guide_choose_folder" to "Choose a folder",
+        "guide_filed" to "Filed. Every recording will get a suggestion like this.",
+        "guide_filed_in" to "Filed in “%@”. Every recording will get a suggestion like this.",
+        "guide_renamed_filed_in" to "Renamed and filed in “%@”. Every recording will do this from now on.",
+        "guide_replay_title" to "2 / 3 · Replay",
+        "guide_replay_body" to "Tap any line and the audio jumps to that moment. Try it.",
+        "guide_open_transcript" to "Open the transcript",
+        "guide_replay_confirmed" to "That's it. Search finds any word you remember.",
+        "guide_share_title" to "3 / 3 · Hand it to your AI",
+        "guide_share_body" to "Share it, paste it, and ask:",
+        "guide_share_to_ai" to "Share to AI",
+        "guide_copy_instead" to "Copy instead",
+        "guide_done_named" to "Named and filed",
+        "guide_done_replayed" to "Replayed",
+        "guide_done_handed" to "Handed to your AI",
+        "guide_done_body" to "That's a meeting in Parley: record → named and filed for you → replay → " +
+            "hand it to your AI. Next time it all happens on its own.",
+        "guide_start_meeting" to "Start your first real meeting",
+        "guide_mac_footnote" to "On a Mac, Claude Code can also read your whole recording library directly over MCP.",
+        "action_close" to "Close",
     )
 
     /**

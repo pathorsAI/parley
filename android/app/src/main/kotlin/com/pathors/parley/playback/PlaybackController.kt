@@ -257,9 +257,12 @@ class PlaybackController(
      * Applied live and cheap to call on every frame of a drag: the position
      * moves at once, and the engine seek is conflated (see [seeks]), so a scrub
      * during playback keeps playing from under the finger.
+     *
+     * @return whether the playhead moved — false while there is no engine to
+     *   move, so a caller does not count a seek that did not happen.
      */
-    fun seekTo(ms: Long) {
-        if (engine == null) return
+    fun seekTo(ms: Long): Boolean {
+        if (engine == null) return false
         val duration = _state.value.durationMs
         val target = if (duration > 0L) ms.coerceIn(0L, duration) else ms.coerceAtLeast(0L)
         pendingSeekMs = target
@@ -267,19 +270,23 @@ class PlaybackController(
             it.copy(positionMs = target, seekGeneration = it.seekGeneration + 1)
         }
         seeks.trySend(target)
+        return true
     }
 
     /**
      * [seekTo], announced as a jump — a tapped turn or timecode rather than a
      * scrub. See [PlaybackState.jump]. iOS `PlaybackController.jump(to:)`.
+     *
+     * @return whether it moved: false before the audio is ready.
      */
-    fun jumpTo(ms: Long) {
-        if (!_state.value.isSeekable) return
+    fun jumpTo(ms: Long): Boolean {
+        if (!_state.value.isSeekable) return false
         val from = _state.value.positionMs
-        seekTo(ms)
+        if (!seekTo(ms)) return false
         _state.update {
             it.copy(jump = PlaybackJump(id = it.jump.id + 1, fromMs = from, toMs = it.positionMs))
         }
+        return true
     }
 
     /** Any menu speed. Remembered for the next recording and the next launch. */
