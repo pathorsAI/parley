@@ -107,6 +107,16 @@ struct DictationHistoryList: View {
                 if let outcome = entry.polish {
                     polishLine(entry, outcome: outcome)
                 }
+                if let ending = entry.ending {
+                    // Quiet, like the polish line: it answers "why did this
+                    // stop there", which is only a question once someone is
+                    // looking.
+                    Label(DictationHistory.endingLabel(ending), systemImage: "stop.circle")
+                        .labelStyle(DictationMetaLabelStyle())
+                        .font(.parley.caption)
+                        .foregroundStyle(Color(.secondaryLabel))
+                        .lineLimit(1)
+                }
                 DictationHistoryMeta(entry: entry)
                     .font(.parley.caption2.monospacedDigit())
                     .foregroundStyle(Color(.secondaryLabel))
