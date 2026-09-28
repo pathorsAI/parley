@@ -545,6 +545,23 @@
         }
       }
     },
+    "Always send automatically" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Always send automatically"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "以後自動傳送"
+          }
+        }
+      }
+    },
     "And share it with ChatGPT or Claude to analyse." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1141,6 +1158,23 @@
         }
       }
     },
+    "Couldn't save the report. Try again." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't save the report. Try again."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回報沒有存下來，請再試一次。"
+          }
+        }
+      }
+    },
     "Couldn't start" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1328,6 +1362,23 @@
         }
       }
     },
+    "Deleted. Send us this recording's diagnostics?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Deleted. Send us this recording's diagnostics?"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已刪除。要把這筆的診斷傳給我們嗎？"
+          }
+        }
+      }
+    },
     "Dictation needs microphone access. Turn it on in Settings › Parley." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1442,6 +1493,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "先跑一輪，5 分鐘"
+          }
+        }
+      }
+    },
+    "Don't send" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Don't send"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不用"
           }
         }
       }
@@ -1749,6 +1817,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已展開"
+          }
+        }
+      }
+    },
+    "FAQ" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "FAQ"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "常見問題"
+          }
+        }
+      }
+    },
+    "Feedback & diagnostics" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Feedback & diagnostics"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回饋與診斷"
           }
         }
       }
@@ -2701,6 +2803,40 @@
         }
       }
     },
+    "Misheard words" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Misheard words"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "聽錯字"
+          }
+        }
+      }
+    },
+    "Missing parts" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Missing parts"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "漏了一段"
+          }
+        }
+      }
+    },
     "More" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2973,6 +3109,23 @@
         }
       }
     },
+    "No text came out of this recording" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No text came out of this recording"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這場沒有轉出文字"
+          }
+        }
+      }
+    },
     "Not now" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3206,6 +3359,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "一個客戶一個資料夾。"
+          }
+        }
+      }
+    },
+    "Only the app version, device model, and where it crashed. Never your recordings or transcripts." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only the app version, device model, and where it crashed. Never your recordings or transcripts."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "只傳 App 版本、裝置型號與當機位置，不含錄音或逐字稿。"
           }
         }
       }
@@ -3453,6 +3623,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "擁有者"
+          }
+        }
+      }
+    },
+    "Parley closed unexpectedly last time" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Parley closed unexpectedly last time"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Parley 上次意外關閉了"
           }
         }
       }
@@ -4104,6 +4291,41 @@
         }
       }
     },
+    "Recorded %lld minutes, but the transcript is empty." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Recorded %lld minute, but the transcript is empty."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Recorded %lld minutes, but the transcript is empty."
+                }
+              }
+            }
+          }
+        },
+        "zh-Hant" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "錄了 %lld 分鐘，但逐字稿是空的。"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "Recording now" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4223,6 +4445,23 @@
         }
       }
     },
+    "Remove screenshot" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove screenshot"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拿掉截圖"
+          }
+        }
+      }
+    },
     "Remove the audio kept on this phone?" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4325,6 +4564,57 @@
         }
       }
     },
+    "Report" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Report"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回報"
+          }
+        }
+      }
+    },
+    "Report a problem" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Report a problem"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回報問題"
+          }
+        }
+      }
+    },
+    "Report this screen?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Report this screen?"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回報這個畫面？"
+          }
+        }
+      }
+    },
     "Resize controls" : {
       "comment" : "Accessibility label for the grabber that resizes the recording controls panel",
       "extractionState" : "manual",
@@ -4390,6 +4680,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在存進錄音庫…"
+          }
+        }
+      }
+    },
+    "Screenshot" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Screenshot"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "截圖"
           }
         }
       }
@@ -4492,6 +4799,108 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "搜尋語音輸入"
+          }
+        }
+      }
+    },
+    "Send" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "送出"
+          }
+        }
+      }
+    },
+    "Send a crash report? It contains nothing from your recordings." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send a crash report? It contains nothing from your recordings."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "要傳送當機報告嗎？不含錄音內容。"
+          }
+        }
+      }
+    },
+    "Send crash reports automatically" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send crash reports automatically"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自動傳送當機報告"
+          }
+        }
+      }
+    },
+    "Send diagnostics" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send diagnostics"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "傳診斷給我們"
+          }
+        }
+      }
+    },
+    "Send report" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send report"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "傳送"
+          }
+        }
+      }
+    },
+    "Sent. Thank you." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sent. Thank you."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已送出，謝謝你"
           }
         }
       }
@@ -4972,6 +5381,23 @@
         }
       }
     },
+    "Something else" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Something else"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "其他"
+          }
+        }
+      }
+    },
     "Something else is using the microphone. Tap the microphone on the Parley keyboard to start again." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5240,23 +5666,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "摘要"
-          }
-        }
-      }
-    },
-    "Support & feedback" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Support & feedback"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "支援與問題回報"
           }
         }
       }
@@ -5530,6 +5939,23 @@
         }
       }
     },
+    "The app version, device, and recent error log are attached. Never your recordings or transcripts." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The app version, device, and recent error log are attached. Never your recordings or transcripts."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "會一起附上 App 版本、裝置與最近的錯誤紀錄，不含錄音或逐字稿。"
+          }
+        }
+      }
+    },
     "The audio and transcript are thrown away. Nothing is saved or uploaded." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5560,6 +5986,41 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "連線不穩，登入沒有完成。請確認網路後再試一次。"
+          }
+        }
+      }
+    },
+    "The microphone dropped %lld times during this recording." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "The microphone dropped %lld time during this recording."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "The microphone dropped %lld times during this recording."
+                }
+              }
+            }
+          }
+        },
+        "zh-Hant" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "這場錄音時麥克風中斷了 %lld 次。"
+                }
+              }
+            }
           }
         }
       }
@@ -5645,6 +6106,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "範例錄音已不在錄音庫裡。"
+          }
+        }
+      }
+    },
+    "The transcript stops at %@, and nothing after that came through." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The transcript stops at %@, and nothing after that came through."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "逐字稿只到 %@，後面沒有轉出來。"
           }
         }
       }
@@ -5764,6 +6242,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "這場錄音沒有逐字稿。"
+          }
+        }
+      }
+    },
+    "This recording keeps failing to sync." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This recording keeps failing to sync."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這筆錄音一直同步不上去。"
           }
         }
       }
@@ -6243,6 +6738,23 @@
         }
       }
     },
+    "What happened? (optional)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "What happened? (optional)"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "發生了什麼事？（選填）"
+          }
+        }
+      }
+    },
     "What was this meeting about and what was concluded? Five sentences or fewer." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6256,6 +6768,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "這場會議談了什麼、結論是什麼？五句以內。"
+          }
+        }
+      }
+    },
+    "What was wrong with the last one?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "What was wrong with the last one?"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上一次哪裡不好？"
           }
         }
       }
@@ -6358,6 +6887,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "收尾中…"
+          }
+        }
+      }
+    },
+    "Wrong speakers" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wrong speakers"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "講者分錯"
           }
         }
       }

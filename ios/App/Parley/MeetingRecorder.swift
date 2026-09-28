@@ -115,6 +115,30 @@ final class MeetingRecorder: ObservableObject {
     /// honest moment to offer one is here. See `FilingSuggestionModel`.
     @Published private(set) var settled: Settled?
 
+    /// How many times this meeting's microphone had to be rebuilt and came
+    /// back — an interruption survived, a route change, a media-server reset.
+    ///
+    /// Counted here, where the capture reports each one (`.resumed`, and the
+    /// `.running` a quiet rebuild reports), rather than inside `AudioCapture`:
+    /// the capture outlives nothing and knows nothing about meetings, and the
+    /// question is per meeting. Five or more in one meeting is the
+    /// `mic_recovery` prompt — a microphone that keeps dropping is a recording
+    /// with holes in it, and the user may not have noticed.
+    @Published private(set) var micRecoveries = 0
+
+    /// The meeting that just ended, as the feedback prompts need to see it.
+    /// Set once the recording exists as a recording — uploaded, or safely in
+    /// the queue — and cleared when the next meeting starts.
+    @Published private(set) var finished: FinishedMeeting?
+
+    struct FinishedMeeting: Equatable {
+        let id: String
+        let durationMs: Double
+        let micRecoveries: Int
+        let transcriptSegments: Int
+        let lastSegmentEndMs: UInt64
+    }
+
     /// A recording the cloud has accepted. Carries the transcript too: the pass
     /// reads it, and reading it off `segments` instead would be reading a
     /// property the next meeting is free to clear.
@@ -193,6 +217,8 @@ final class MeetingRecorder: ObservableObject {
         segments = []
         // Whatever the last meeting left on screen belongs to the last meeting.
         settled = nil
+        finished = nil
+        micRecoveries = 0
         finishRequested = false
         lostMicrophone = false
         leg = 0
@@ -380,15 +406,23 @@ final class MeetingRecorder: ObservableObject {
         switch event {
         case .segment(let seg):
             upsert(seg)
-        case .closed:
+        case .closed(let reason):
             guard !finishRequested, isRecording else { return }
+            let code = Self.closeCode(reason)
+            AppLog.recording.error(
+                "relay leg \(eventLeg, privacy: .public) closed: \(code, privacy: .public)")
+            DiagnosticsJournal.record(code, "live transcription dropped")
             scheduleReconnect()
-        case .error:
+        case .error(_, let relayCode):
             // The message is wire text ("relay error 402: …"), never something
             // to put in front of someone. While recording the reconnect path
             // owns the copy; once the meeting is winding down the stop path
             // does, and neither wants this overwriting it.
             guard !finishRequested, isRecording else { return }
+            let code = "stt_relay_error_\(relayCode.map(String.init) ?? "unknown")"
+            AppLog.recording.error(
+                "relay leg \(eventLeg, privacy: .public) error: \(code, privacy: .public)")
+            DiagnosticsJournal.record(code, "live transcription error")
             guard !event.isQuotaExceeded else {
                 // Out of quota is the one failure a redial cannot fix: the
                 // next handshake is refused the same way.
@@ -472,17 +506,36 @@ final class MeetingRecorder: ObservableObject {
         await connect(client, leg: targetLeg)
     }
 
+    /// `stt_ws_closed_1006` out of the relay's `close code=1006 …`, and the two
+    /// closes that have no code of their own. The reason text is the server's
+    /// and never user content, but only the code goes into the journal: it is
+    /// what the admin inbox groups by.
+    static func closeCode(_ reason: String) -> String {
+        if let range = reason.range(of: #"code=(\d+)"#, options: .regularExpression) {
+            return "stt_ws_closed_" + reason[range].dropFirst("code=".count)
+        }
+        if reason.hasPrefix("no response") { return "stt_ws_silent" }
+        return "stt_ws_closed"
+    }
+
     // MARK: microphone status
 
     private func handle(_ captureStatus: AudioCapture.Status) {
         guard isRecording else { return }
         switch captureStatus {
         case .running:
-            break
+            // Only a rebuild reports `.running` — the first open does not go
+            // through `onStatus` — so this is a recovery too, just one the
+            // user never saw a status line for.
+            micRecoveries += 1
+            AppLog.capture.notice("microphone rebuilt (\(self.micRecoveries, privacy: .public) this meeting)")
         case .interrupted:
             micLevel = 0
+            AppLog.capture.notice("microphone interrupted by the system")
             status = String(localized: "Microphone paused by the system — waiting to resume")
         case .resumed:
+            micRecoveries += 1
+            AppLog.capture.notice("microphone resumed (\(self.micRecoveries, privacy: .public) this meeting)")
             status = String(localized: "Microphone is back — still recording")
         case .lost(let loss):
             // The mic is gone and the capture has run out of ways to take it
@@ -494,9 +547,13 @@ final class MeetingRecorder: ObservableObject {
             // audio stack that refused is not.
             switch loss {
             case .takenBySystem:
+                AppLog.capture.error("microphone lost: taken by the system")
+                DiagnosticsJournal.record("mic_lost_taken_by_system")
                 status = String(
                     localized: "Lost the microphone — something else is using it")
             case .broken(let message):
+                AppLog.capture.error("microphone lost: \(message, privacy: .public)")
+                DiagnosticsJournal.record("mic_lost_broken", message)
                 status = String(localized: "Lost the microphone: \(message)")
             }
             micLevel = 0
@@ -553,6 +610,7 @@ final class MeetingRecorder: ObservableObject {
                 defaultSave: app.defaultSave,
                 orgs: app.orgs)
             if let outcome {
+                noteFinished(id: outcome.recordingId, durationMs: uploader.durationMs)
                 app.pendingUploadCount = MeetingUploader.pendingCount
                 status =
                     outcome.sharedToOrgName.map { String(localized: "Synced, and shared to “\($0)”") }
@@ -565,17 +623,28 @@ final class MeetingRecorder: ObservableObject {
             }
         } catch let e as CloudError where e.status == 402 {
             app.pendingUploadCount = MeetingUploader.pendingCount
+            noteFinished(id: uploader.id, durationMs: uploader.durationMs)
             status = String(
                 localized:
                     "You're out of quota. The recording is safe on this phone and will sync once the quota resets."
             )
         } catch {
             app.pendingUploadCount = MeetingUploader.pendingCount
+            // Queued, not lost: the recording exists under this id and will
+            // arrive with it, so a report about it can name it.
+            noteFinished(id: uploader.id, durationMs: uploader.durationMs)
             status = String(
                 localized:
                     "Sync failed for now. The recording is safe on this phone and will retry automatically."
             )
         }
+    }
+
+    private func noteFinished(id: String, durationMs: Double) {
+        finished = FinishedMeeting(
+            id: id, durationMs: durationMs, micRecoveries: micRecoveries,
+            transcriptSegments: FeedbackConditions.transcriptSegmentCount(segments),
+            lastSegmentEndMs: FeedbackConditions.lastSegmentEndMs(segments))
     }
 
     #if DEBUG

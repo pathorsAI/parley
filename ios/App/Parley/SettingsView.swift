@@ -41,6 +41,14 @@ struct SettingsView: View {
     @State private var showDeleteConfirmation = false
     @State private var deletingAccount = false
     @State private var deleteAccountError: String?
+    /// Settings › Feedback & diagnostics. Read raw by `FeedbackCenter`, which
+    /// decides about a crash with no view alive; the `true` default is stated
+    /// in both places because `@AppStorage` cannot share one.
+    @AppStorage(FeedbackCenter.autoSendCrashReportsKey) private var autoSendCrashReports = true
+    /// The queued recording the `sync_failed` prompt is about, if one is stuck
+    /// and may be asked about. Found when the screen appears and latched —
+    /// see `findStuckUpload`.
+    @State private var stuckUpload: MeetingUploader.StuckUpload?
     #if DEBUG
         @State private var devToken = ""
     #endif
@@ -73,6 +81,10 @@ struct SettingsView: View {
                     keyboardsSection
                     appearanceSection
                     languageSection
+                    // Outside every gate: a report can be sent signed out —
+                    // someone whose sign-in is what broke is exactly who needs
+                    // to be able to send one.
+                    feedbackSection
                     aboutSection
                     #if DEBUG
                         debugSection
@@ -123,6 +135,10 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .task { await loadFolders() }
+            .task { findStuckUpload() }
+            .onChange(of: app.pendingUploadCount) { _, count in
+                if count == 0 { stuckUpload = nil }
+            }
             // The store is a directory, so its size is only ever as fresh as the
             // last time someone asked. Arriving on this screen is that moment.
             .task { downloads.refreshSize() }
@@ -231,6 +247,18 @@ struct SettingsView: View {
                 Button("Retry sync now") {
                     Task { await app.syncPendingUploads() }
                 }
+                if let stuckUpload {
+                    FeedbackPromptCard(
+                        trigger: .syncFailed,
+                        recordingId: stuckUpload.id,
+                        text: Text("This recording keeps failing to sync."),
+                        send: {
+                            self.stuckUpload = nil
+                            sendSyncReport(stuckUpload)
+                        },
+                        close: { self.stuckUpload = nil })
+                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 12))
+                }
             } else {
                 Label("Everything is synced", systemImage: "checkmark.icloud")
                     .foregroundStyle(Theme.success)
@@ -239,6 +267,49 @@ struct SettingsView: View {
             sectionHeader("Sync")
         } footer: {
             sectionFooter("When the network drops, the server goes quiet, or you run out of quota, the phone holds on to finished recordings until they sync.")
+        }
+    }
+
+    /// `sync_failed`: the oldest queued recording that has failed three times
+    /// running or waited a day, if it may still be asked about. Latched on
+    /// appearing rather than recomputed per render, because going on screen is
+    /// what spends the prompt's one showing for that recording.
+    private func findStuckUpload() {
+        guard stuckUpload == nil else { return }
+        stuckUpload = MeetingUploader.stuckUploads().first {
+            FeedbackCenter.shared.mayOffer(.syncFailed, recordingId: $0.id)
+        }
+    }
+
+    private func sendSyncReport(_ stuck: MeetingUploader.StuckUpload) {
+        let context = FeedbackDiagnostics.Context(
+            recordingId: stuck.id, recordingDurationMs: Int(stuck.durationMs),
+            transcriptSegments: stuck.segmentCount,
+            syncLastError: stuck.lastError)
+        Task {
+            await FeedbackCenter.shared.send(.syncFailed, recordingId: stuck.id, context: context)
+        }
+    }
+
+    // MARK: feedback & diagnostics
+
+    /// 「回饋與診斷」: the in-app report (which replaced the old "Support &
+    /// feedback" link to the website — the FAQ that link led to is inside the
+    /// report sheet now) and the one standing choice about what leaves the
+    /// phone without a tap. The footnote is the whole of what a crash report
+    /// is, stated where the switch is rather than in a policy page.
+    private var feedbackSection: some View {
+        Section {
+            Button {
+                FeedbackCenter.shared.presentReport(.manual)
+            } label: {
+                Label("Report a problem", systemImage: "exclamationmark.bubble")
+            }
+            Toggle("Send crash reports automatically", isOn: $autoSendCrashReports)
+        } header: {
+            sectionHeader("Feedback & diagnostics")
+        } footer: {
+            sectionFooter("Only the app version, device model, and where it crashed. Never your recordings or transcripts.")
         }
     }
 
@@ -720,7 +791,6 @@ struct SettingsView: View {
             LabeledContent("Version", value: Bundle.main.shortVersion)
             Link("Parley for Mac", destination: URL(string: "https://parley.tw")!)
             Link("Privacy Policy", destination: URL(string: "https://parley.tw/privacy/")!)
-            Link("Support & feedback", destination: URL(string: "https://parley.tw/support/")!)
             // Brings the Library's checklist back, unticked — for someone who
             // closed it with "Not now" and wants the lap after all.
             Button("Show the getting-started list again") {

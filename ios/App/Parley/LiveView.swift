@@ -26,6 +26,10 @@ struct LiveView: View {
     /// where the block goes and when a new recording retires it.
     @StateObject private var filing = FilingSuggestionModel()
     @State private var showRecordingConsent = false
+    /// The meeting the `mic_recovery` prompt is about, when it is up. Latched
+    /// on the meeting ending — see `MeetingRecorder.micRecoveries` — and
+    /// cleared by the next meeting, a send, or ✕.
+    @State private var micPrompt: MeetingRecorder.FinishedMeeting?
     @State private var showDiscardConfirm = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// How far open the controls panel is while recording, 0 (one row) to 1
@@ -55,6 +59,20 @@ struct LiveView: View {
                 // Above the controls, not in the transcript: it is about the
                 // recording that just ended, and it must not scroll away with
                 // the words.
+                if let micPrompt {
+                    FeedbackPromptCard(
+                        trigger: .micRecovery,
+                        recordingId: micPrompt.id,
+                        text: Text(
+                            "The microphone dropped \(micPrompt.micRecoveries) times during this recording."),
+                        send: {
+                            self.micPrompt = nil
+                            sendMicReport(micPrompt)
+                        },
+                        close: { withAnimation { self.micPrompt = nil } })
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 8)
+                }
                 FilingSuggestionCard(model: filing)
                 if dictation.window.isOpen() && !recorder.isRecording {
                     micWindowBar
@@ -108,6 +126,17 @@ struct LiveView: View {
             .onChange(of: recorder.lostMicrophone) {
                 if recorder.lostMicrophone { Task { await recorder.stop(app: app) } }
             }
+            // `mic_recovery`: asked once, as the meeting it is about ends.
+            .onChange(of: recorder.finished?.id) {
+                guard let finished = recorder.finished else {
+                    micPrompt = nil
+                    return
+                }
+                guard FeedbackConditions.isMicRecoveryWorthAsking(finished.micRecoveries),
+                    FeedbackCenter.shared.mayOffer(.micRecovery, recordingId: finished.id)
+                else { return }
+                withAnimation { micPrompt = finished }
+            }
             // Keyed on the settled recording rather than on the meeting ending:
             // the suggestion is a write against a recording the cloud already
             // holds, so it cannot be offered before the upload lands. The
@@ -123,6 +152,18 @@ struct LiveView: View {
             #if DEBUG
                 .task { ScreenshotDemo.seedRecordScreen(recorder, filing: filing) }
             #endif
+        }
+    }
+
+    private func sendMicReport(_ meeting: MeetingRecorder.FinishedMeeting) {
+        let context = FeedbackDiagnostics.Context(
+            recordingId: meeting.id, recordingDurationMs: Int(meeting.durationMs),
+            transcriptSegments: meeting.transcriptSegments,
+            lastSegmentEndMs: Int(meeting.lastSegmentEndMs),
+            micRecoveries: meeting.micRecoveries)
+        Task {
+            await FeedbackCenter.shared.send(
+                .micRecovery, recordingId: meeting.id, context: context)
         }
     }
 
