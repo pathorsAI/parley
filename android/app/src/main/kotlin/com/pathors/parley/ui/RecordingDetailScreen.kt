@@ -82,6 +82,7 @@ import com.pathors.parley.cloud.TranscriptSegmentDto
 import com.pathors.parley.kit.TranscriptSearch
 import com.pathors.parley.kit.TranscriptSegment
 import com.pathors.parley.playback.PlaybackBar
+import com.pathors.parley.playback.PlaybackBarActions
 import com.pathors.parley.playback.PlaybackState
 import com.pathors.parley.screenshot.DemoMode
 import kotlinx.coroutines.CoroutineScope
@@ -393,11 +394,15 @@ private fun DetailContent(
             if (LibraryRules.showsPlaybackBar(orgId, playback.phase)) {
                 PlaybackBar(
                     state = playback,
-                    onPlayPause = viewModel::togglePlayPause,
-                    onSeek = viewModel::seekTo,
-                    onSetRate = viewModel::setRate,
-                    onCycleRate = viewModel::cycleRate,
-                    onDownload = viewModel::downloadAudio,
+                    actions = remember(viewModel) {
+                        PlaybackBarActions(
+                            onPlayPause = viewModel::togglePlayPause,
+                            onSeek = viewModel::seekTo,
+                            onSetRate = viewModel::setRate,
+                            onCycleRate = viewModel::cycleRate,
+                            onDownload = viewModel::downloadAudio,
+                        )
+                    },
                     markers = state.findings.mapNotNull { it.atMs },
                 )
             }

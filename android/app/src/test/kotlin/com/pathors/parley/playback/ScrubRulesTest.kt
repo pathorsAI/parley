@@ -79,6 +79,29 @@ class ScrubRulesTest {
     }
 
     @Test
+    fun `a session starts where the playhead was and a touch alone moves nothing`() {
+        val session = ScrubSession(startMs = 12_000L, downX = 100f, downY = 10f)
+        assertEquals(12_000L, session.currentMs)
+        val changed = session.move(x = 100f, y = 10f, pxPerDp = 2f, widthPx = 400f, durationMs = 60_000L)
+        assertEquals(false, changed)
+        assertEquals(12_000L, session.currentMs)
+    }
+
+    @Test
+    fun `a session accumulates per tier and reports each tier change once`() {
+        val session = ScrubSession(startMs = 30_000L, downX = 200f, downY = 0f)
+        // 2 px per dp: 80 px down is 40 dp — Fine.
+        assertEquals(true, session.move(x = 200f, y = 80f, pxPerDp = 2f, widthPx = 400f, durationMs = 60_000L))
+        assertEquals(1, session.tier)
+        assertEquals(false, session.move(x = 300f, y = 80f, pxPerDp = 2f, widthPx = 400f, durationMs = 60_000L))
+        assertEquals(33_750L, session.currentMs)
+        // Back up to the strip: 1x again, and a tick.
+        assertEquals(true, session.move(x = 300f, y = 0f, pxPerDp = 2f, widthPx = 400f, durationMs = 60_000L))
+        assertEquals(0, session.tier)
+        assertEquals(33_750L, session.currentMs)
+    }
+
+    @Test
     fun `a TalkBack step is exactly 15 seconds`() {
         for (duration in listOf(1_000L, 15_000L, 16_000L, 61_500L, 2_400_000L)) {
             val range = ScrubRules.accessibilityRange(duration)

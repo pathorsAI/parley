@@ -4,6 +4,7 @@ import androidx.annotation.StringRes
 import com.pathors.parley.R
 import kotlin.math.abs
 import kotlin.math.ceil
+import kotlin.math.roundToLong
 
 /**
  * The arithmetic behind the waveform's scrub, kept out of the composable so it
@@ -112,6 +113,37 @@ internal object ScrubRules {
     }
 
     data class AccessibilityRange(val endSeconds: Float, val steps: Int)
+}
+
+/**
+ * One scrub, from touch-down to lift: the time it has accumulated and the tier
+ * the finger is in. Kept out of the gesture so the gesture is only plumbing.
+ *
+ * Starts at [startMs] — where the playhead was — so touching the strip does
+ * not move anything; only horizontal movement does.
+ */
+internal class ScrubSession(startMs: Long, downX: Float, private val downY: Float) {
+    private var timeMs: Double = startMs.toDouble()
+    private var lastX: Float = downX
+
+    var tier: Int = 0
+        private set
+
+    /** The accumulated time, rounded to the millisecond a seek takes. */
+    val currentMs: Long get() = timeMs.roundToLong()
+
+    /**
+     * The finger moved to ([x], [y]) in a strip [widthPx] wide over a file of
+     * [durationMs]. Returns whether the tier changed — the moment for a tick.
+     */
+    fun move(x: Float, y: Float, pxPerDp: Float, widthPx: Float, durationMs: Long): Boolean {
+        val newTier = ScrubRules.tierFor(if (pxPerDp > 0f) (y - downY) / pxPerDp else 0f)
+        val changed = newTier != tier
+        tier = newTier
+        timeMs = ScrubRules.advance(timeMs, x - lastX, widthPx, durationMs, tier)
+        lastX = x
+        return changed
+    }
 }
 
 /**
