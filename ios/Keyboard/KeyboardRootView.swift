@@ -37,6 +37,9 @@ struct KeyboardRootView: View {
     /// The track has taken the touch; the key it began on is cancelled.
     private var swiping: Bool { drag != 0 }
 
+    /// The panes whose views exist. See `paneSlot`.
+    @State private var builtPanes: Set<KeyboardPane> = []
+
     var body: some View {
         VStack(spacing: 0) {
             modeStrip
@@ -44,7 +47,7 @@ struct KeyboardRootView: View {
                 let width = geo.size.width
                 HStack(spacing: 0) {
                     ForEach(bridge.panes, id: \.self) { pane in
-                        paneView(pane).frame(width: width)
+                        paneSlot(pane).frame(width: width)
                     }
                 }
                 .disabled(swiping)
@@ -71,6 +74,13 @@ struct KeyboardRootView: View {
                         .updating($drag) { value, state, _ in
                             state = rubberBanded(value.translation.width, width: width)
                         }
+                        // The track is about to show a neighbour, so it had
+                        // better exist. Built in the same update that first
+                        // moves the track, which is fine here: a drag is not
+                        // animated, so the neighbour is simply drawn where the
+                        // finger has put it. By the time the release animates
+                        // a step, it has been there for many frames.
+                        .onChanged { _ in revealNeighbours() }
                         .onEnded { value in
                             let dx = value.translation.width
                             guard abs(dx) > KBMetrics.swipeThreshold,
@@ -86,6 +96,14 @@ struct KeyboardRootView: View {
                 .opacity(showsCandidateGrid ? 0 : 1)
                 .allowsHitTesting(!showsCandidateGrid)
             }
+            // A pane set without the tabs or the swipe — the controller
+            // sending the keyboard elsewhere because a pane was switched off,
+            // in `viewWillAppear`, before anything is on screen — has passed
+            // over nothing that was revealed first. The pane it lands on is
+            // drawn regardless (`paneSlot`); this records it and anything the
+            // move crossed as built, so they stay.
+            .onChange(of: bridge.pane) { from, to in reveal(from: from, to: to) }
+            .onAppear { builtPanes.insert(bridge.pane) }
             // The same content area the panes have, so opening the grid cannot
             // change the keyboard's height.
             .overlay {
@@ -99,6 +117,71 @@ struct KeyboardRootView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlayPreferenceValue(PressedKeys.self) { KeyCalloutLayer(dark: dark, keys: $0) }
+    }
+
+    /// A pane's view, or an empty space the same size until it is needed.
+    ///
+    /// The track used to build every pane when the keyboard loaded and keep
+    /// them all laid out off screen: the voice pane, forty-odd QWERTY keys and
+    /// forty-one 注音 keys, each a stack of views, in a process jetsam kills
+    /// somewhere around 48–70 MB. A keyboard opened for dictation never needs
+    /// the other two. So a pane is built the first time it is **needed** — it
+    /// is the current pane, a drag on the track has begun beside it
+    /// (`revealNeighbours`), or a move is about to slide across it (`reveal`) —
+    /// and then kept, so swiping back is as instant as it always was. Until
+    /// then it is `Color.clear` in the same frame, so the track's width and the
+    /// offset arithmetic are exactly what they were.
+    ///
+    /// `.transition(.identity)` because the swap usually happens inside the
+    /// track's animated update: without it the pane would fade in while it
+    /// slides.
+    @ViewBuilder
+    private func paneSlot(_ pane: KeyboardPane) -> some View {
+        if pane == bridge.pane || builtPanes.contains(pane) {
+            paneView(pane).transition(.identity)
+        } else {
+            Color.clear.transition(.identity)
+        }
+    }
+
+    /// Build every pane between two positions on the track, both ends
+    /// included: a tab from the voice pane to 注音 slides across English, and
+    /// what it slides across has to be there before the slide begins. `true`
+    /// when that built anything.
+    @discardableResult
+    private func reveal(from: KeyboardPane, to: KeyboardPane) -> Bool {
+        guard let a = bridge.panes.firstIndex(of: from) ?? bridge.panes.firstIndex(of: to),
+            let b = bridge.panes.firstIndex(of: to)
+        else { return false }
+        let span = Set(bridge.panes[min(a, b)...max(a, b)])
+        guard !builtPanes.isSuperset(of: span) else { return false }
+        builtPanes.formUnion(span)
+        return true
+    }
+
+    /// A tab: build what the slide will cross, then slide.
+    ///
+    /// Not in one update. SwiftUI animates the track by moving each view from
+    /// where it was to where it will be, and a view built in the same update as
+    /// the move has no "was" — it is simply drawn where it ends up. Measured on
+    /// the simulator, a first tap from the voice pane to 注音 did exactly that:
+    /// the 注音 keys sat in place from the first frame while the voice pane slid
+    /// away underneath them, and English never showed. So when the tap has
+    /// something to build, the build is committed first and the move follows on
+    /// the next turn of the main queue — one frame later, and only the first
+    /// time; after that every pane on the way exists and the tap moves at once.
+    private func select(_ pane: KeyboardPane) {
+        guard reveal(from: bridge.pane, to: pane) else { return bridge.setPane(pane) }
+        DispatchQueue.main.async { bridge.setPane(pane) }
+    }
+
+    /// Build the panes either side of the current one. Called on every change
+    /// of a drag, so it only touches the state the first time.
+    private func revealNeighbours() {
+        let index = bridge.paneIndex
+        let span = Set(
+            bridge.panes[max(0, index - 1)...min(bridge.panes.count - 1, index + 1)])
+        if !builtPanes.isSuperset(of: span) { builtPanes.formUnion(span) }
     }
 
     /// The typing panes are handed values rather than the bridge to observe,
@@ -172,7 +255,7 @@ struct KeyboardRootView: View {
             } else {
                 StripHome(
                     bridge: bridge, dark: dark, panes: bridge.panes, pane: bridge.pane,
-                    showsWindowChip: showsWindowChip
+                    showsWindowChip: showsWindowChip, select: select
                 )
                 .equatable()
             }
@@ -258,8 +341,9 @@ struct KeyboardRootView: View {
 
     /// What the front of the buffer could be — phrases first, then the first
     /// syllable's characters — most likely first, scrollable because some
-    /// readings have dozens. Tapping one commits as many syllables as it has
-    /// characters and the bar moves on to what is left.
+    /// readings have dozens, and cut at `StripBar.drawnLimit` because some have
+    /// hundreds (the grid behind ⌄ has them all). Tapping one commits as many
+    /// syllables as it has characters and the bar moves on to what is left.
     ///
     /// Each candidate sits between hairlines with a wide gutter, because the
     /// bar mixes one- and two-character candidates and a run of them with
@@ -371,12 +455,17 @@ struct KeyboardRootView: View {
 /// changes with any of them: only the pane, the pane list, the chip and the
 /// appearance do.
 private struct StripHome: View, Equatable {
-    /// Actions only: `setPane` and `endWindow`.
+    /// Actions only: `endWindow`.
     let bridge: KeyboardBridge
     var dark: Bool
     var panes: [KeyboardPane]
     var pane: KeyboardPane
     var showsWindowChip: Bool
+    /// A tab tap. The root view's `select`, not `bridge.setPane`, because the
+    /// root is what knows which panes are built: a tab that slides across an
+    /// unbuilt one has to build it first (see `KeyboardRootView.paneSlot`).
+    /// Always the same method on the same root, so `==` leaves it out.
+    var select: (KeyboardPane) -> Void
 
     /// Lets the selected tab's capsule slide between tabs instead of blinking
     /// from one to the next.
@@ -454,7 +543,7 @@ private struct StripHome: View, Equatable {
 
     private func paneTab(_ pane: KeyboardPane) -> some View {
         let selected = self.pane == pane
-        return Button(action: { bridge.setPane(pane) }) {
+        return Button(action: { select(pane) }) {
             paneName(pane)
                 .font(.caption.weight(.medium))
                 .foregroundStyle(selected ? KBTheme.ink(dark) : KBTheme.inkSoft(dark))
@@ -588,11 +677,33 @@ struct LevelRipple: View {
 /// English bar needs it just as much — `work` `world` `working` run together
 /// otherwise.
 ///
-/// `Equatable` on what it shows, so the publishes that do not touch it — the
-/// return key, the microphone chip — leave it alone. Ids stay positional:
-/// nothing guarantees a bar's words are distinct, and `\.element` would give
-/// two of them one identity.
+/// It draws at most `drawnLimit` of what it is handed; see there for why.
+///
+/// `Equatable` on what it draws, so the publishes that do not touch it — the
+/// return key, the microphone chip, a keystroke that only changed candidates
+/// past the ones drawn — leave it alone. Ids stay positional: nothing
+/// guarantees a bar's words are distinct, and `\.element` would give two of
+/// them one identity.
 private struct StripBar: View, Equatable {
+    /// The most items the bar draws. The 注音 composer hands it every
+    /// candidate, and that can be hundreds: forty phrases, then the first
+    /// syllable's whole toneless row — `~ㄧ` is 441 characters, `~ㄐㄧ` 378,
+    /// and sixty-odd rows run past a hundred — then its fuzzy variants. This
+    /// is not a lazy stack, so every one of them was a `Button`, a `Text` and a
+    /// hairline rebuilt on every keystroke and every tick of a held ⌫, which is
+    /// where the 注音 pane's time went (AttributeGraph churn and CJK glyph
+    /// rasterisation, measured) and a good part of why its footprint climbed.
+    ///
+    /// Thirty is about five strip-widths of scrolling at 320pt, where a
+    /// width shows about six single characters, and further than anyone scrolls
+    /// a bar rather than opening the grid: the ⌄ at the strip's end is shown
+    /// whenever there is any candidate at all, and `CandidateGrid` — a
+    /// `LazyVGrid` that only builds the cells on screen — is where the rest
+    /// live. The composer's list is not cut, only what is drawn of it, so a
+    /// tap here and a tap in the grid pick from the same list and insert the
+    /// same text. The English bar is handed five and never reaches the cap.
+    static let drawnLimit = 30
+
     var items: [String]
     var dark: Bool
     /// 22 for Chinese candidates, 17 for Latin words: the same point size makes
@@ -603,15 +714,18 @@ private struct StripBar: View, Equatable {
     var label: Text
     var action: (String) -> Void
 
+    /// The items the bar draws, which is all it compares.
+    private var drawn: ArraySlice<String> { items.prefix(Self.drawnLimit) }
+
     /// The action is always the same bridge method for a given bar.
     static func == (a: Self, b: Self) -> Bool {
-        a.items == b.items && a.dark == b.dark && a.fontSize == b.fontSize && a.label == b.label
+        a.drawn == b.drawn && a.dark == b.dark && a.fontSize == b.fontSize && a.label == b.label
     }
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 0) {
-                ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                ForEach(Array(drawn.enumerated()), id: \.offset) { index, item in
                     if index > 0 { separator }
                     Button(action: { action(item) }) {
                         Text(verbatim: item)

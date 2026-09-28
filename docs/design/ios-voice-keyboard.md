@@ -976,6 +976,27 @@ The rule this leaves: **a view below the root takes values, not the bridge.**
 Anything that observes it re-evaluates on every key and every microphone
 reading.
 
+**A pane is built the first time it is needed, then kept.** The track used to
+build all of them at `viewDidLoad` — the voice pane and every key of QWERTY
+and 注音, about 120 keys — and keep them laid out off screen, so a keyboard
+opened only to dictate paid for two keyboards it never showed. Now
+`KeyboardRootView.paneSlot` draws a pane only once it is the current one, a
+drag on the track has begun beside it (both neighbours are built on the drag's
+first movement, in the same update that first moves the track), or a tab is
+about to slide across it (a tap from the voice pane to 注音 builds English and
+注音 before the slide starts). "Before" means an update earlier: SwiftUI animates
+the track by moving each view from where it was, and a view built in the same
+update as the move has no "was" — on the simulator the 注音 keys sat in place
+from the first frame while the voice pane slid away beneath them. So a tab that
+has something to build commits the build and moves on the next turn of the main
+queue, one frame later and only the first time. A drag needs no such care: it
+is not animated, so a neighbour built on its first movement is simply drawn
+where the finger put it. A pane the controller moves to on its own — one
+switched off in Settings, in `viewWillAppear` — is drawn as it lands and
+recorded as built on the next update. Until then a pane is `Color.clear` in the
+same frame, so the track's geometry and offset arithmetic are unchanged, and
+once built it stays, so swiping back costs what it always did.
+
 ### What an appearance leaves behind
 
 iOS builds a new `KeyboardViewController` almost every time the keyboard comes
@@ -1389,8 +1410,9 @@ there is one load and one warm for both files. While a warm is in flight every
 lookup answers nothing instead of parsing the files a second time on the main
 thread, because the pane refreshes its bar in the same turn it warms and after a
 space that refresh asks for predictions; the warm refreshes the bar again when
-it lands. A lookup with no warm in flight still loads synchronously. Rank is the
-word list's order and
+it lands. A lookup with no warm in flight loads synchronously in the tests; the
+keyboard turns that off (`parsesOnLookup`), so there it starts the warm instead.
+Rank is the word list's order and
 nothing else. What it builds at load is the other order — the same words sorted
 alphabetically with each word's rank beside it — so a prefix is a contiguous
 range found by binary search and the answer is the lowest-ranked few in that
@@ -1660,8 +1682,17 @@ composer's limit rather than a position anybody argued for.
   is the first tone while the last syllable has no tone, and commits everything
   once it has one. So a sentence stays typeable without ever looking at the bar,
   and choosing one word does not cost the syllables behind it.
-- **⌄ opens every candidate as a grid.** The bar shows what fits in one row;
-  the ⌄ at its end (only while there are candidates) opens all of them as a
+- **The bar draws thirty; ⌄ opens every candidate as a grid.** The composer's
+  list can run to hundreds — forty phrases, then the first syllable's whole
+  toneless row (`~ㄧ` is 441 characters, `~ㄐㄧ` 378), then its fuzzy variants —
+  and the strip is a plain `HStack`, so until this cap every keystroke rebuilt a
+  button, a text and a hairline per candidate: typing ㄐㄧ rebuilt about 460 of
+  each, which is where the 注音 pane's per-key time and much of its footprint
+  went. `StripBar` now draws the first `drawnLimit` (30), about five strip-widths
+  of scrolling, and compares only those, so a keystroke that only changed the
+  tail does not redraw it. The list itself is not cut: the bar and the grid pick
+  from the same one.
+  The ⌄ at the bar's end (only while there are candidates) opens all of them as a
   grid in the 注音 pane's own 213pt key area — `CandidateGrid`, 22pt key-cap
   cells, `max(4, width ÷ 64)` columns, scrolling vertically — in exactly the
   composer's order, never re-sorted. The keyboard's height does not change: the
@@ -1936,6 +1967,15 @@ syllable is finished. libtabe's notice sits beside McBopomofo's in
   the same main-queue block that stores the table, and keys arrive on the main
   queue too, so a key is either before the landing or after it — never in
   between. `EnglishWords` and `ZhuyinDictionary` follow the same contract.
+  The keyboard starts the warm for whichever pane it is on **every** time it
+  sets one — on a swipe or a tab, and also in `viewDidLoad` and when a pane
+  switched off in Settings sends it elsewhere, which used not to warm, so a
+  keyboard without Full Access opening straight onto 注音 parsed both tables on
+  the main thread on its first keystrokes. And it turns `parsesOnLookup` off on
+  all three tables, so a lookup that ever finds nothing loaded and nothing in
+  flight starts a warm and answers nothing rather than parsing on a keystroke;
+  with the warms above, that path is only reachable in tests, which keep the
+  synchronous default.
 - **Given back under memory pressure.** `unload()` drops the table, and the
   next lookup reads the file again. `didReceiveMemoryWarning` unloads the
   phrase table and the English list when the pane on screen is not using them
@@ -1955,11 +1995,24 @@ syllable is finished. libtabe's notice sits beside McBopomofo's in
   rows drawn from several buckets be merged back into file order. A row is the
   phrase (four BMP characters or fewer, so inline too), the reading and the
   rank: 32 bytes, the same stride as the two strings it replaced, with no heap
-  behind it. Measured cold in a fresh process, building the index costs about
-  12.6 MB of footprint against 15.5 MB before, most of what remains being the
-  file and its split lines, which are freed but whose pages stay; after a warm
-  the index itself retains about 3 MB. Comparing a slot is now a mask, and a
-  keystroke allocates nothing per row.
+  behind it. Comparing a slot is now a mask, and a keystroke allocates nothing
+  per row.
+- **Parsed line by line, off a mapped file.** Building the index used to cost
+  about 12.6 MB of footprint for an index that retains about 3 MB: the rest was
+  the file decoded into a string, `split` into 61,000 lines, every row in one
+  array and then copied into its bucket — freed once the parse returned, but
+  their pages stayed, and freed-but-resident is still footprint to jetsam. Now
+  the file is memory-mapped (`ResourceLines`) — clean, file-backed pages
+  that are not footprint at all — each line is decoded, parsed and dropped
+  before the next is read, and a row goes straight into its bucket. Measured on
+  an M4 Mac mini (macOS 26.2, release build, `phys_footprint` sampled every
+  millisecond through the parse): the phrase table's peak went from +12.2 MB to
+  +3.4 MB, which is now also what it retains, and the parse from ~75 ms to
+  ~50 ms; the English list's from +5.9 MB to +1.9 MB and ~12 ms to ~6 ms. After
+  a parse the tables call `malloc_zone_pressure_relief` to ask for freed pages
+  back, but on macOS 26.2 the default zone reported nothing to return — its
+  allocator defers that to the kernel — so the lower peak is what actually
+  moved the number.
 
 #### Error tolerance
 
@@ -1991,8 +2044,9 @@ neighbours nearest-centre first — `ㄋ` → ㄌㄇㄎㄊㄍㄏ, `ㄓ` → ㄗ�
 - **The dictionary** answers the exact row first, untouched, then for each
   variant of the syllable (every syllable one substitution away, 模糊音 ones
   before slips) its first eight characters not already listed. The cap is
-  there because the strip draws every candidate and toneless rows run to 441
-  characters. A syllable with an exact row keeps its exact top; one with none
+  there because toneless rows run to 441 characters and fourteen variants'
+  whole rows would be well over a thousand candidates on a keystroke, every
+  one a cell in the ⌄ grid (the strip itself draws only thirty). A syllable with an exact row keeps its exact top; one with none
   (`ㄓㄨㄡ`) takes the first variant's (中), so return commits a character
   rather than raw 注音.
 - **The phrase table** counts, per row, how many typed syllables needed a symbol
