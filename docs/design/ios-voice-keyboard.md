@@ -219,6 +219,15 @@ carrying no notification of its own. See the personal dictionary below.
 
 App Group id: `group.com.pathors.parley.ios` (entitlement on both targets).
 
+The container's URL is asked for once per process and remembered (only a real
+URL is — a `nil` is asked again), and every read shares one `JSONDecoder`: the
+keyboard reads these files a dozen times a second while someone speaks and nine
+or ten times per appearance. On the keyboard's side, anything read out of these
+files is clamped before it can trap: the uplink's `insertedCount` into
+`0...committed.count` before it slices the transcript, and the liveness
+watchdog's sleep — a deadline built from file timestamps — to a finite
+`0…60` s, a wake that only re-reads and sleeps again.
+
 ## Not leaving in the first place — the microphone window
 
 This section used to be called "the jump back to the previous app problem", and
@@ -1735,7 +1744,10 @@ composer's limit rather than a position anybody argued for.
   either; `selectionWillChange` never arrived at all. So the context cannot
   confirm a mark, and it cannot say which field a report came from. The field
   is told by `documentIdentifier` instead, read through key-value coding
-  because it is `nil` between fields and reading the Swift property then traps.
+  because it is `nil` between fields and reading the Swift property then traps
+  — and only after `responds(to:)` says the proxy has that getter
+  (`GuardedKVC`), because KVC on a key an object does not answer raises an
+  exception Swift cannot catch. An unknown field is `nil`.
   `MarkedTextLog` still accepts a context that holds the reading (what #427
   measured on iOS 26.3), and treats anything it cannot decide as consistent.
 - **A host that ignores marked text gets the 1.20 chip, for that field only.**

@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// The shared channel between the Parley keyboard extension and the container
 /// app. A keyboard extension cannot open the microphone (iOS forbids it since
@@ -422,9 +423,32 @@ public enum DictationChannel {
     // mode. Left as-is rather than tightened back to `private` because the next
     // non-dictation mailbox will want the same plumbing and nothing in this
     // module abuses it meanwhile.
+    //
+    // Asked once and remembered. The keyboard reads these files a dozen times a
+    // second while someone is speaking and nine or ten times on every
+    // appearance, and each call used to go back to `containerURL(…)`, which
+    // asks the system for the container's path every time — an answer that
+    // cannot change while the process lives. Only a real URL is remembered: `nil`
+    // is asked again next time, so a process that could not see the container
+    // at first is not stuck without it — the one failure a cache can add.
     static var container: URL? {
-        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup)
+        containerCache.withLock { cached in
+            if let cached { return cached }
+            cached = FileManager.default.containerURL(
+                forSecurityApplicationGroupIdentifier: appGroup)
+            return cached
+        }
     }
+
+    /// Behind a lock because the channel is callable from any thread: the
+    /// keyboard calls it from the main one, and the app makes no such promise.
+    private static let containerCache = OSAllocatedUnfairLock<URL?>(initialState: nil)
+
+    /// One decoder for every read. `JSONDecoder` is `Sendable` — decoding with
+    /// a shared instance from several threads is safe as long as nobody changes
+    /// its options, and nothing here does — and a new one per read was an
+    /// allocation on the path the keyboard walks a dozen times a second.
+    private static let decoder = JSONDecoder()
 
     static func write<T: Encodable>(_ value: T, to name: String) {
         guard let url = container?.appendingPathComponent(name),
@@ -437,7 +461,7 @@ public enum DictationChannel {
         guard let url = container?.appendingPathComponent(name),
             let data = try? Data(contentsOf: url)
         else { return nil }
-        return try? JSONDecoder().decode(T.self, from: data)
+        return try? decoder.decode(T.self, from: data)
     }
 
     // MARK: Darwin notifications
