@@ -196,9 +196,8 @@ private fun ParleyNavHost(container: AppContainer) {
                     orgId = entry.arguments?.getString(Route.ARG_ORG),
                     openFor = OpenFor.parse(entry.arguments?.getString(Route.ARG_FOR)),
                     onBack = { navController.popBackStack() },
-                    // The meeting screen asks for consent itself, as it does
-                    // from the library; the recording is left behind, so the
-                    // meeting's "done" lands back on the library.
+                    // The recording is left behind, so the meeting's "done"
+                    // lands back on the library.
                     onStartMeeting = {
                         navController.navigate(Route.MEETING) { popUpTo(Route.HOME) }
                     },

@@ -31,7 +31,7 @@
     <string name="intro_point_record">錄音與即時轉錄，鎖屏也繼續</string>
     <string name="intro_point_folder">一個客戶一個資料夾，和 Mac 同步</string>
     <string name="intro_point_share">分享給 ChatGPT 或 Claude 分析</string>
-    <string name="onboarding_sign_in_methods">支援信箱密碼、Google 與 Apple 登入。開始錄音前，Parley 一定會先請你確認在場所有人都同意錄音。</string>
+    <string name="onboarding_sign_in_methods">支援信箱密碼、Google 與 Apple 登入。</string>
 
     <!-- Sign in -->
     <string name="sign_in_button">登入或建立帳號</string>
@@ -107,9 +107,6 @@
     <string name="meeting_permission_denied">麥克風權限被拒絕。沒有這個權限，Parley 無法錄音。</string>
     <string name="meeting_permission_blocked">Parley 的麥克風權限已被關閉，Android 不會再詢問。請到系統設定開啟後才能錄音。</string>
     <string name="meeting_permission_settings">前往系統設定</string>
-    <string name="meeting_consent_title">開始錄音前請確認</string>
-    <string name="meeting_consent_body">Parley 會用麥克風收取房間的聲音，將音訊送往你的 Parley 帳號進行即時轉錄，並把錄音與逐字稿同步到雲端。請先確認在場所有人都同意錄音。</string>
-    <string name="meeting_consent_confirm">所有人都已同意</string>
     <string name="meeting_discard">捨棄</string>
     <string name="meeting_discard_title">捨棄這次錄音？</string>
     <string name="meeting_discard_body">錄音與逐字稿會直接丟掉，不會儲存或上傳。</string>

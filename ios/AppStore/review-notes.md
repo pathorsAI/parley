@@ -43,8 +43,8 @@ Google or Apple identity.
 > Parley is a microphone-based recorder for in-person meetings, plus a voice
 > keyboard that dictates into other apps. It does not record phone calls,
 > FaceTime, or other apps’ audio — iOS provides no such API and the app does not
-> attempt it. Recording begins only after the reviewer taps Start Recording and
-> confirms they have consent from participants. The app sends microphone audio
+> attempt it. Recording begins only after the reviewer taps Start Recording.
+> The app sends microphone audio
 > to the signed-in account’s hosted transcription relay for live transcription,
 > then syncs the completed recording and transcript to that account.
 >
@@ -57,7 +57,7 @@ Google or Apple identity.
 > **To test recording:** the app opens on a welcome screen with a single "Sign in
 > or create an account" button. Tap it, sign in with the supplied email/password
 > account on the page that opens, and the app goes to the Record tab. Tap "Start
-> recording", confirm the consent message, and allow microphone access. Speak
+> recording" and allow microphone access. Speak
 > near the device, then tap "End meeting". Open Library to see the saved
 > recording and tap it for the transcript.
 >

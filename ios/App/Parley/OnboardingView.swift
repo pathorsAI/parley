@@ -107,7 +107,7 @@ struct OnboardingView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            Text("Email and password, Google, and Apple all work. Before any recording starts, Parley asks you to confirm everyone in the room has agreed to it.")
+            Text("Email and password, Google, and Apple all work.")
                 .font(.parley.caption)
                 .foregroundStyle(Color(.secondaryLabel))
                 .multilineTextAlignment(.center)

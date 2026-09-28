@@ -33,7 +33,7 @@
     <string name="intro_point_record">Record and transcribe live, even from the lock screen</string>
     <string name="intro_point_folder">One customer, one folder, synced with your Mac</string>
     <string name="intro_point_share">Share to ChatGPT or Claude for analysis</string>
-    <string name="onboarding_sign_in_methods">Email and password, Google, and Apple all work. Before any recording starts, Parley asks you to confirm everyone in the room has agreed to it.</string>
+    <string name="onboarding_sign_in_methods">Email and password, Google, and Apple all work.</string>
 
     <!-- Sign in -->
     <string name="sign_in_button">Sign in or create an account</string>
@@ -109,9 +109,6 @@
     <string name="meeting_permission_denied">Microphone permission was denied. Parley can\'t record without it.</string>
     <string name="meeting_permission_blocked">Microphone access is turned off for Parley, and Android won\'t ask again. Turn it on in system settings to record.</string>
     <string name="meeting_permission_settings">Open system settings</string>
-    <string name="meeting_consent_title">Before you start recording</string>
-    <string name="meeting_consent_body">Parley picks up the room through the microphone, sends the audio to your Parley account for live transcription, and syncs the recording and transcript there. Confirm that everyone present has agreed to be recorded.</string>
-    <string name="meeting_consent_confirm">Everyone has agreed</string>
     <string name="meeting_discard">Discard</string>
     <string name="meeting_discard_title">Discard this recording?</string>
     <string name="meeting_discard_body">The audio and transcript are thrown away. Nothing is saved or uploaded.</string>

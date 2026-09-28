@@ -43,7 +43,6 @@ quote from, not a wall of undifferentiated text.
 
 ALSO IN THE APP
 
-• A consent prompt before every single recording session
 • A library of your recordings to browse, search, and file into folders
 • Personal and organization spaces, with sharing and moving between them
 • Finished recordings survive a dead network: they queue on the phone and sync themselves once you are back
@@ -77,7 +76,8 @@ you are sitting in.
 
 YOUR DATA
 
-Recording never starts until you confirm that everyone present has agreed to it.
+Parley uses the microphone only while you have started a recording, and iOS
+shows its microphone indicator the whole time.
 You can delete your account and personal data permanently from Settings →
 Account → Delete Account. The privacy policy has the full detail.
 

@@ -112,12 +112,11 @@ and upload themselves once you are back.
   app does that the iPhone app does not (`android/README.md`,
   `ImportSession`), and it is the reason someone with an existing pile of audio
   installs it.
-- **No consent-prompt claim.** The iOS listing advertises "a consent prompt
-  before every single recording session". The Android app has no such prompt —
-  there is no consent string in either `strings.xml`. The copy therefore frames
-  consent as how the app is meant to be used, not as a feature. See
-  [`review-notes.md`](review-notes.md); if the prompt is added to Android, this
-  paragraph can be upgraded to the iOS wording.
+- **No consent-prompt claim.** Neither app asks "has everyone agreed?" before
+  recording (both dropped it on 2026-09-29): getting the room's permission is
+  the user's call, as with any recorder. The copy frames consent as how the app
+  is meant to be used, not as a feature. See
+  [`review-notes.md`](review-notes.md).
 - **"What it does not do" is deliberate**, exactly as on iOS: naming the
   missing player, folders, and call recording up front costs nothing with the
   buyer who wants a meeting recorder and heads off the one-star review from
