@@ -1,5 +1,22 @@
 # App Privacy answers
 
+> **Before the next submission (1.25 or whichever build first ships crash
+> reports and in-app feedback):** App Store Connect's App Privacy answers do
+> not update themselves from this file. Someone has to open App Store Connect ›
+> App Privacy and, by hand:
+>
+> - [ ] add **Diagnostics → Crash Data** — Linked to identity: Yes; Tracking:
+>       No; Purpose: App Functionality
+> - [ ] edit **Diagnostics → Other Diagnostic Data** so it covers in-app
+>       reports, not only server logs — same answers
+> - [ ] add **User Content → Customer Support** — Linked: Yes; Tracking: No;
+>       Purpose: App Functionality
+> - [ ] publish the answers, and only then submit the build
+>
+> Shipping the build first would put a binary that sends crash reports under a
+> label that says it does not — the kind of mismatch App Review rejects for,
+> and the kind a user is right to be upset about.
+
 Use these answers in **App Privacy**. They describe the official cloud edition
 as it ships on iOS, including the hosted transcription service. Do not mark any
 data as used for tracking.
@@ -12,9 +29,13 @@ data as used for tracking.
 | User Content → Other User Content | Yes | Yes | App Functionality | Transcripts, titles, folders, meeting metadata, and organization placement. |
 | Identifiers → User ID | Yes | Yes | App Functionality | Account and session association for cloud sync and authorization. |
 | Usage Data → Product Interaction | Yes | Yes | App Functionality | Hosted STT/LLM usage counters used to enforce included quotas. |
-| Diagnostics → Other Diagnostic Data | Yes, if server logs retain it | Yes | App Functionality | Request/error information used to diagnose service failures. Remove this row only after confirming logs are neither retained nor linkable. |
+| Diagnostics → Crash Data | Yes | Yes | App Functionality | MetricKit crash and hang diagnostics (call stacks, exception or signal, app and OS version, device model), sent **automatically by default** on the launch after a crash. The user can turn this off in Settings › Feedback & diagnostics; it is then asked about once per crash. Linked to the account when the user is signed in (the report carries the session token); sent anonymously otherwise. |
+| Diagnostics → Other Diagnostic Data | Yes | Yes | App Functionality | Two sources. (1) Server request/error logs used to diagnose service failures, including the `X-Parley-Client: ios/<version> (<build>)` header every request carries. (2) In-app reports, **collected only when the user taps to send one**: app version and build, OS version, device model, locale, time zone, audio route, microphone permission, sync queue length and last error code, recent error codes, and a scrubbed app log (email addresses, tokens and credentials removed; transcript and typed text are never logged in the reported categories). Linked to the account when signed in. |
+| User Content → Customer Support | Yes | Yes | App Functionality | What the user writes in the Report a problem sheet, the chips they pick after a re-transcription, and a screenshot of the app's own screen **only if the user sends a report and leaves the screenshot attached**. Collected only when the user sends a report. The screenshot is drawn by the app from its own window; the photo library is never read. |
 
-For every row select **No** for Tracking. For data use, select only **App
+For every row select **No** for Tracking — crash reports and in-app reports
+included: they are used to fix the app and are never combined with data from
+other companies or used for advertising. For data use, select only **App
 Functionality** unless the implementation begins using data for analytics,
 advertising, or personalization outside the service the user requested.
 
@@ -57,6 +78,30 @@ Data that never leaves the device is not "collected" in App Store terms. The
 dictation audio and transcript *in transit* are already covered above. If this
 history ever syncs to the account, it becomes **User Content → Other User
 Content** and this section has to go.
+
+## Crash reports and in-app feedback
+
+Since the feedback release the app is no longer "no telemetry" without
+qualification, and the two exceptions are worth being able to state exactly:
+
+- **Crash reports** go automatically by default (Settings › Feedback &
+  diagnostics › Send crash reports automatically). With the switch off, the
+  next launch after a crash shows a banner asking whether to send it, with a
+  tick box to turn automatic sending back on. A hang on its own does not raise
+  that banner and is dropped unsent while the switch is off.
+- **Everything else is sent only on a tap**: 「傳診斷給我們」 on an empty or
+  cut-short transcript, a recording that keeps failing to sync, a meeting whose
+  microphone kept dropping, the chips after a re-transcription, the toast after
+  deleting a failed recording, the screenshot toast, and Settings › Report a
+  problem.
+- **Never sent**, by any of these paths: audio recordings, transcript text, and
+  anything typed with the keyboard. The keyboard extension still opens no
+  network connection of its own, and its process's log is out of reach of the
+  app's report builder (`OSLogStore(scope: .currentProcessIdentifier)`).
+
+Reports that cannot be sent right away wait in the app's own Application
+Support directory (at most 20) and are retried on the next launch, when the
+network returns, or after sign-in. Deleting the app deletes them.
 
 ## URLs
 
