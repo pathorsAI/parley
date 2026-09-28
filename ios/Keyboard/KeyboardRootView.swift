@@ -255,7 +255,8 @@ struct KeyboardRootView: View {
             } else {
                 StripHome(
                     bridge: bridge, dark: dark, panes: bridge.panes, pane: bridge.pane,
-                    showsWindowChip: showsWindowChip, select: select
+                    showsWindowChip: showsWindowChip, justCopied: bridge.justCopied,
+                    select: select
                 )
                 .equatable()
             }
@@ -452,8 +453,8 @@ struct KeyboardRootView: View {
 ///
 /// Value-fed and `Equatable`, like the panes, because the root re-evaluates on
 /// every publish — every keystroke, every microphone reading — and nothing here
-/// changes with any of them: only the pane, the pane list, the chip and the
-/// appearance do.
+/// changes with any of them: only the pane, the pane list, the chip, the copy
+/// confirmation and the appearance do.
 private struct StripHome: View, Equatable {
     /// Actions only: `endWindow`.
     let bridge: KeyboardBridge
@@ -461,6 +462,10 @@ private struct StripHome: View, Equatable {
     var panes: [KeyboardPane]
     var pane: KeyboardPane
     var showsWindowChip: Bool
+    /// A tap on the voice pane's transcript just copied it: the wordmark says
+    /// "✓ Copied" instead, for `KeyboardViewController.copiedLabelHold`. See
+    /// `wordmark`.
+    var justCopied: Bool
     /// A tab tap. The root view's `select`, not `bridge.setPane`, because the
     /// root is what knows which panes are built: a tab that slides across an
     /// unbuilt one has to build it first (see `KeyboardRootView.paneSlot`).
@@ -471,16 +476,16 @@ private struct StripHome: View, Equatable {
     /// from one to the next.
     @Namespace private var paneTabStrip
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     static func == (a: Self, b: Self) -> Bool {
         a.dark == b.dark && a.panes == b.panes && a.pane == b.pane
-            && a.showsWindowChip == b.showsWindowChip
+            && a.showsWindowChip == b.showsWindowChip && a.justCopied == b.justCopied
     }
 
     var body: some View {
         HStack(spacing: 0) {
-            Text(verbatim: "Parley")
-                .font(.footnote.weight(.bold))
-                .foregroundStyle(KBTheme.wordmark(dark))
+            wordmark
             Spacer(minLength: 8)
             if showsWindowChip {
                 windowChip
@@ -488,6 +493,71 @@ private struct StripHome: View, Equatable {
             }
             paneTabs
         }
+    }
+
+    /// "Parley" — or, for a moment after the voice pane's transcript is tapped,
+    /// "✓ Copied" in its place.
+    ///
+    /// **Why the wordmark.** The copy's confirmation used to sit in the
+    /// transcript slot's corner, where it needed a copy glyph beside the words
+    /// at rest and a column kept clear for it — see `CopyTarget`. The wordmark
+    /// is the one thing on the strip that carries no information of its own,
+    /// it is already in the brand blue the pane uses for "this went fine", and
+    /// it is always there on the voice pane: a copy is only on offer once the
+    /// session is over, and nothing claims the strip from this view then — the
+    /// 注音 candidates and English suggestions belong to the other panes.
+    ///
+    /// **Nothing else moves.** Both states are always laid out, invisibly, so
+    /// the slot is as wide as the wider of the two in either state and the
+    /// chip and the tabs never learn that the label changed. The visible one
+    /// rolls: the outgoing text rises a few points as it fades and the incoming
+    /// one comes up from below — the same way in both directions, so the label
+    /// reads as passing through rather than as bouncing back. Reduce Motion
+    /// keeps the crossfade and drops the travel.
+    private var wordmark: some View {
+        let roll: AnyTransition = reduceMotion
+            ? .opacity
+            : .asymmetric(
+                insertion: .offset(y: Self.wordmarkRoll).combined(with: .opacity),
+                removal: .offset(y: -Self.wordmarkRoll).combined(with: .opacity))
+        return ZStack(alignment: .leading) {
+            parleyMark.hidden()
+            copiedMark.hidden()
+            if justCopied {
+                copiedMark.transition(roll)
+            } else {
+                parleyMark.transition(roll)
+            }
+        }
+        .foregroundStyle(KBTheme.wordmark(dark))
+        .lineLimit(1)
+        .fixedSize()
+        .animation(.easeOut(duration: 0.18), value: justCopied)
+    }
+
+    /// How far the wordmark and "✓ Copied" travel as they swap.
+    private static let wordmarkRoll: CGFloat = 4
+
+    private var parleyMark: some View {
+        Text(verbatim: "Parley")
+            .font(.footnote.weight(.bold))
+    }
+
+    /// Hidden from VoiceOver: a copy is announced when it happens (see
+    /// `KeyboardViewController.copyDictation`), and a label that disappears on
+    /// its own is a poor thing to leave a VoiceOver cursor on.
+    ///
+    /// The tick a size down from the word, and tight to it: the label is the
+    /// wider of the two states, so its width is the strip's at 320pt (see
+    /// `paneTabs`).
+    private var copiedMark: some View {
+        HStack(spacing: 2) {
+            Image(systemName: "checkmark")
+                .font(.caption.weight(.bold))
+            Text("Copied")
+                .font(.footnote.weight(.semibold))
+        }
+        .accessibilityHidden(true)
     }
 
     /// The pane's short name. 注音 keeps its own name in both localizations: the
@@ -519,11 +589,13 @@ private struct StripHome: View, Equatable {
     /// rule the keys on the next pane are read by.
     ///
     /// Widths at the narrowest keyboard the app runs on — 320pt, less the
-    /// strip's 12pt gutters, so 296pt: wordmark 41 + 8 + chip 92 + 8 + tabs 125
-    /// = 274. The tabs' horizontal padding is 7 rather than the 9 the rest of
-    /// the strip would suggest, and the mic chip's minutes are gone, because at
-    /// 9pt and with them the row wanted 335pt and the chip's label would have
-    /// truncated. Every wider phone has 30pt or more to spare.
+    /// strip's 12pt gutters, so 296pt: wordmark 60 + 8 + chip 92 + 8 + tabs 125
+    /// = 293. The wordmark's 60 is "✓ Copied", the wider of its two states,
+    /// which it keeps laid out even while it reads "Parley" (41) — see
+    /// `wordmark`. The tabs' horizontal padding is 7 rather than the 9 the rest
+    /// of the strip would suggest, and the mic chip's minutes are gone, because
+    /// at 9pt and with them the row wanted 335pt and the chip's label would
+    /// have truncated. Every wider phone has 30pt or more to spare.
     private var paneTabs: some View {
         HStack(spacing: 0) {
             ForEach(panes, id: \.self) { paneTab($0) }

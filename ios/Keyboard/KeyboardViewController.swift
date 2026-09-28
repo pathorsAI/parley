@@ -63,8 +63,8 @@ final class KeyboardViewController: UIInputViewController {
     private var waveReveal: Task<Void, Never>?
     /// Takes the wave down once its ease-out after `done` has played.
     private var waveFade: Task<Void, Never>?
-    /// Takes the "Copied" label in the slot's corner down again — see
-    /// `copyDictation`. Replaced on every tap, so a second tap restarts the
+    /// Takes the "Copied" label in the strip, and the wash over the words,
+    /// down again — see `copyDictation`. Replaced on every tap, so a second tap restarts the
     /// label's time rather than being cut short by the first tap's.
     private var copiedFade: Task<Void, Never>?
     /// The session whose copy target the user closed by typing after it — see
@@ -1565,10 +1565,12 @@ final class KeyboardViewController: UIInputViewController {
 
     // MARK: copying the finished dictation
 
-    /// How long "Copied" stays in the slot's corner after a tap. Long enough
-    /// to be read at a glance, short enough that the corner is back to its
-    /// copy glyph before the user has looked away from it and back.
-    private static let copiedLabelHold: Duration = .milliseconds(1500)
+    /// How long "Copied" stands in for the wordmark, and the wash stays on the
+    /// words, after a tap. Long enough to be read at a glance; shorter than the
+    /// 1.5 s the corner label had, because the wash is on the words the user is
+    /// looking at and a highlight that lingers starts to read as a selection
+    /// that is still there.
+    private static let copiedLabelHold: Duration = .milliseconds(1200)
 
     /// Make `text` what a tap on the slot copies, or make the slot not a copy
     /// target with `nil`.
@@ -1589,7 +1591,9 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     /// The user tapped the transcript slot of a finished dictation: put the
-    /// whole of it on the pasteboard, and say so with a tick and "Copied" in the slot's corner.
+    /// whole of it on the pasteboard, and say so — a wash over the words and
+    /// "✓ Copied" in place of the strip's wordmark (see `CopyTarget` and
+    /// `StripHome.wordmark`), and for VoiceOver, the same word spoken.
     ///
     /// `copyableText` rather than `tail`: the tail is the last `tailLimit`
     /// characters, and what is wanted on the pasteboard is everything that
@@ -1598,10 +1602,18 @@ final class KeyboardViewController: UIInputViewController {
     ///
     /// Behind Full Access twice over — the pasteboard and the haptic both need
     /// it — though without it `copyableText` is never set to begin with.
+    ///
+    /// The announcement is VoiceOver's whole confirmation: the label is in the
+    /// strip, away from the button VoiceOver is on and hidden from it, and the
+    /// wash is only something to see. Posted on every tap, like the haptic,
+    /// because every tap really did copy.
     func copyDictation() {
         guard hasFullAccess, let text = bridge.copyableText else { return }
         UIPasteboard.general.string = text
         Haptics.dictationCopied()
+        if UIAccessibility.isVoiceOverRunning {
+            UIAccessibility.post(notification: .announcement, argument: String(localized: "Copied"))
+        }
         if !bridge.justCopied { bridge.justCopied = true }
         // A repeated tap shows the label again if it had gone, and restarts
         // its time rather than stacking a second fade behind the first.
@@ -2217,8 +2229,8 @@ final class KeyboardBridge: ObservableObject {
     /// ✕, the pane being cleared, or the user typing after it. The same rule
     /// as the tail's, a few more kilobytes at most.
     @Published var copyableText: String?
-    /// A tap just copied `copyableText`: the slot's corner shows a checkmark
-    /// and "Copied" in place of the copy glyph, for `copiedLabelHold`.
+    /// A tap just copied `copyableText`: the strip shows "✓ Copied" in place of
+    /// the wordmark and the words wear a wash, for `copiedLabelHold`.
     @Published var justCopied = false
 
     /// What the record button is doing with the user's voice, smoothed and

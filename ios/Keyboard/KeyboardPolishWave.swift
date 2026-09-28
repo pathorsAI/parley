@@ -26,7 +26,8 @@ import SwiftUI
 ///
 /// `Equatable` on what it draws, so the dozen-a-second publishes a live session
 /// makes (the microphone level, mostly) leave it alone: only the text, the
-/// appearance, the wave and Reduce Motion can change what is on screen.
+/// appearance, the wave, Reduce Motion and the copy wash can change what is on
+/// screen.
 struct TranscriptText: View, Equatable {
     var tail: String
     var partial: String
@@ -35,6 +36,18 @@ struct TranscriptText: View, Equatable {
     /// Reduce Motion: no wave, only the text going uniformly to the wave's
     /// resting emphasis while the polish runs.
     var still: Bool
+    /// A tap just copied these words (`KeyboardBridge.justCopied`): they wear
+    /// a wash in the wordmark's blue, the way selected text does, for as long
+    /// as the strip says "Copied".
+    ///
+    /// Behind the words and sized to them — not to the slot — so a short
+    /// dictation at the foot of the slot is washed where it is, rather than
+    /// under a block of empty slot above it; and a background, so it moves no
+    /// layout. It comes up in about a tenth of a second, to land with the tap,
+    /// and goes down slowly, so it reads as the tap's echo fading rather than
+    /// as something switching off. Only ever set once the session is over, so
+    /// it never meets the polishing wave.
+    var washed = false
 
     var body: some View {
         Group {
@@ -55,10 +68,26 @@ struct TranscriptText: View, Equatable {
         }
         .font(.system(size: Self.fontSize))
         .multilineTextAlignment(.leading)
+        // Before the frame, so the wash hugs the text: one line is as wide as
+        // its words, several are as wide as the longest.
+        .background {
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(KBTheme.wordmark(dark).opacity(0.16))
+                .padding(-Self.washOutset)
+                .opacity(washed ? 1 : 0)
+                .animation(
+                    washed ? .easeOut(duration: 0.12) : .easeOut(duration: 0.5),
+                    value: washed)
+        }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     static let fontSize: CGFloat = 15
+
+    /// How far the copy wash reaches past the words on every side, so the
+    /// first and last glyphs are not flush with its edge. `TranscriptScroll`
+    /// clips this much outside its bounds for the same reason.
+    static let washOutset: CGFloat = 3
 
     /// The keyboard's inks: the wave rises from the soft ink the tail already
     /// wears, and its crest leans towards the wordmark's blue — brand in
@@ -111,6 +140,32 @@ struct TranscriptScroll<Content: View>: View {
             // A slot that is not full has nothing to scroll to, and a rubber
             // band under the finger would only suggest otherwise.
             .scrollBounceBehavior(.basedOnSize)
+            // The words sit flush with the slot's leading edge and, when short,
+            // its foot, so the scroll view's own clip would shave the copy
+            // wash's outset off those two sides. The clip moves out by exactly
+            // that much on the sides and the foot — into the pane's side margin
+            // and the gap above the deck, where nothing else is drawn — and
+            // stays at the top, where the lines scrolled out of view go.
+            .scrollClipDisabled()
+            .clipShape(
+                OutsetRect(
+                    leading: TranscriptText.washOutset, bottom: TranscriptText.washOutset,
+                    trailing: TranscriptText.washOutset))
         }
+    }
+}
+
+/// A rectangle grown past the view's bounds on the given sides — a clip that
+/// lets a few points of drawing out without letting everything out.
+private struct OutsetRect: Shape {
+    var leading: CGFloat = 0
+    var bottom: CGFloat = 0
+    var trailing: CGFloat = 0
+
+    func path(in rect: CGRect) -> Path {
+        Path(
+            CGRect(
+                x: rect.minX - leading, y: rect.minY,
+                width: rect.width + leading + trailing, height: rect.height + bottom))
     }
 }
