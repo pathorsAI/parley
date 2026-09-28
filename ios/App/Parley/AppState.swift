@@ -142,6 +142,15 @@ final class AppState: NSObject, ObservableObject {
         let token = KeychainStore.get(Self.tokenKey)
         hasStoredSession = token != nil
         bootstrapped = true
+        #if DEBUG
+            // `-ParleyForceSigningIn YES`: open on the sign-in page as though a
+            // sign-in were already under way — the button's spinner and the
+            // edge glow's signing-in state (`AuroraEdgeGlow`) — so both can be
+            // looked at and captured without an auth sheet on top of them.
+            if token == nil, UserDefaults.standard.bool(forKey: "ParleyForceSigningIn") {
+                signingIn = true
+            }
+        #endif
         // Launch is the one beat that has to republish unconditionally: iOS
         // restarts the app when microphone permission is changed in Settings,
         // so the grant may have flipped while nothing was running to notice.
