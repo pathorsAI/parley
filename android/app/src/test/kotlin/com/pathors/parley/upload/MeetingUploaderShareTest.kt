@@ -96,6 +96,7 @@ class MeetingUploaderShareTest {
         assertEquals("o1", body["orgId"]!!.jsonPrimitive.content)
         assertEquals("of1", body["folderId"]!!.jsonPrimitive.content)
         assertEquals(3, server.requestCount)
+        assertEquals("the pass reports where the copy went", mapOf("rec-org" to "o1"), result.shared)
     }
 
     @Test
@@ -106,7 +107,8 @@ class MeetingUploaderShareTest {
         ok(PUSH_ACCEPTED)
 
         uploader.enqueue(request("rec-personal"))
-        uploader.drain()
+        val result = uploader.drain()
+        assertTrue(result.shared.isEmpty())
 
         server.takeRequest()
         val push = json(server.takeRequest())
@@ -168,6 +170,7 @@ class MeetingUploaderShareTest {
         assertEquals(1, result.uploaded)
         assertEquals(0, result.remaining)
         assertNull(result.failure)
+        assertTrue("a refused copy must not be reported as shared", result.shared.isEmpty())
     }
 
     /** A server hiccup on the share is retried with the whole upload, later. */
