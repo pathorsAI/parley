@@ -1,0 +1,28 @@
+{
+  "id": "2026-10-android-problem-reports",
+  "ships": {
+    "ios": null,
+    "android": "1.18",
+    "desktop": null
+  },
+  "audience": "all",
+  "cta": {
+    "android": null
+  },
+  "copy": {
+    "zh-Hant": {
+      "badge": "1.18 更新",
+      "title": "出問題時，點一下就能告訴我們",
+      "body": "逐字稿是空的或只轉到一半、錄音一直同步不上去、錄音時麥克風反覆中斷，Parley 會在當下問你要不要回報，點一下就把診斷資料傳給我們，不含錄音或逐字稿內容。",
+      "also": "截圖時可以直接回報這個畫面；當機報告預設自動傳送，可在「回饋與診斷」關閉。",
+      "button": "好"
+    },
+    "en": {
+      "badge": "New in 1.18",
+      "title": "When something breaks, tell us in one tap",
+      "body": "An empty or cut-short transcript, a recording that won't sync, a microphone that kept dropping: Parley asks right then whether to report it, and one tap sends the diagnostics, never your recordings or transcripts.",
+      "also": "Take a screenshot to report that screen. Crash reports are sent automatically; turn that off under Feedback & diagnostics.",
+      "button": "Got it"
+    }
+  }
+}
