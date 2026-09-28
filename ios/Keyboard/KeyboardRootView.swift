@@ -258,8 +258,9 @@ struct KeyboardRootView: View {
 
     /// What the front of the buffer could be — phrases first, then the first
     /// syllable's characters — most likely first, scrollable because some
-    /// readings have dozens. Tapping one commits as many syllables as it has
-    /// characters and the bar moves on to what is left.
+    /// readings have dozens, and cut at `StripBar.drawnLimit` because some have
+    /// hundreds (the grid behind ⌄ has them all). Tapping one commits as many
+    /// syllables as it has characters and the bar moves on to what is left.
     ///
     /// Each candidate sits between hairlines with a wide gutter, because the
     /// bar mixes one- and two-character candidates and a run of them with
@@ -588,11 +589,33 @@ struct LevelRipple: View {
 /// English bar needs it just as much — `work` `world` `working` run together
 /// otherwise.
 ///
-/// `Equatable` on what it shows, so the publishes that do not touch it — the
-/// return key, the microphone chip — leave it alone. Ids stay positional:
-/// nothing guarantees a bar's words are distinct, and `\.element` would give
-/// two of them one identity.
+/// It draws at most `drawnLimit` of what it is handed; see there for why.
+///
+/// `Equatable` on what it draws, so the publishes that do not touch it — the
+/// return key, the microphone chip, a keystroke that only changed candidates
+/// past the ones drawn — leave it alone. Ids stay positional: nothing
+/// guarantees a bar's words are distinct, and `\.element` would give two of
+/// them one identity.
 private struct StripBar: View, Equatable {
+    /// The most items the bar draws. The 注音 composer hands it every
+    /// candidate, and that can be hundreds: forty phrases, then the first
+    /// syllable's whole toneless row — `~ㄧ` is 441 characters, `~ㄐㄧ` 378,
+    /// and sixty-odd rows run past a hundred — then its fuzzy variants. This
+    /// is not a lazy stack, so every one of them was a `Button`, a `Text` and a
+    /// hairline rebuilt on every keystroke and every tick of a held ⌫, which is
+    /// where the 注音 pane's time went (AttributeGraph churn and CJK glyph
+    /// rasterisation, measured) and a good part of why its footprint climbed.
+    ///
+    /// Thirty is about five strip-widths of scrolling at 320pt, where a
+    /// width shows about six single characters, and further than anyone scrolls
+    /// a bar rather than opening the grid: the ⌄ at the strip's end is shown
+    /// whenever there is any candidate at all, and `CandidateGrid` — a
+    /// `LazyVGrid` that only builds the cells on screen — is where the rest
+    /// live. The composer's list is not cut, only what is drawn of it, so a
+    /// tap here and a tap in the grid pick from the same list and insert the
+    /// same text. The English bar is handed five and never reaches the cap.
+    static let drawnLimit = 30
+
     var items: [String]
     var dark: Bool
     /// 22 for Chinese candidates, 17 for Latin words: the same point size makes
@@ -603,15 +626,18 @@ private struct StripBar: View, Equatable {
     var label: Text
     var action: (String) -> Void
 
+    /// The items the bar draws, which is all it compares.
+    private var drawn: ArraySlice<String> { items.prefix(Self.drawnLimit) }
+
     /// The action is always the same bridge method for a given bar.
     static func == (a: Self, b: Self) -> Bool {
-        a.items == b.items && a.dark == b.dark && a.fontSize == b.fontSize && a.label == b.label
+        a.drawn == b.drawn && a.dark == b.dark && a.fontSize == b.fontSize && a.label == b.label
     }
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 0) {
-                ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                ForEach(Array(drawn.enumerated()), id: \.offset) { index, item in
                     if index > 0 { separator }
                     Button(action: { action(item) }) {
                         Text(verbatim: item)
