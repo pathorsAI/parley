@@ -50,6 +50,12 @@ final class KeyboardViewController: UIInputViewController {
     /// answers a stop by publishing `finishing` within milliseconds; a session
     /// still `listening` seconds later is one nobody heard the stop for.
     private var stopRequestedAt: Date?
+    /// When the app's session cap will stop the session on screen, as the app
+    /// last published it (`Downlink.deadline`). What the countdown counts to.
+    private var sessionDeadline: Date?
+    /// Wakes the pane for the countdown's next second — see `updateCountdown`.
+    /// One at a time, tied to the session that armed it.
+    private var countdownTick: Task<Void, Never>?
     /// The 250 ms wait before a finishing session shows the polish wave — see
     /// `enterFinishing`. A cancellable task tied to the session that started
     /// it, never a timer: a finish that ends early, a ✕, or the next session
@@ -700,20 +706,24 @@ final class KeyboardViewController: UIInputViewController {
 
     // MARK: dictation control (called from SwiftUI)
 
-    /// How long the keyboard waits for the app to acknowledge a start request
-    /// before falling back to opening the app. An awake app publishes the
-    /// `starting` downlink within milliseconds of the Darwin note; a suspended
-    /// or dead app never will, and the only thing that can wake it is the URL.
-    private static let startAckWindow: Duration = .milliseconds(700)
+    /// How often the start handshake re-reads the downlink while it waits.
+    private static let startPoll: Duration = .milliseconds(80)
 
     /// Start a session, preferring the path with no app switch: publish the
     /// request to the App Group (which posts the uplink note) and wait briefly
     /// for the app to acknowledge by publishing our session's downlink. The
     /// app hears the note whenever it is awake — foreground, or lingering in
     /// the background right after a previous dictation — and starts the mic
-    /// there, so the user never leaves the app they're typing in. Only when
-    /// the ack never comes does `completion` hand back the `parley://dictate`
-    /// URL for the visible round trip.
+    /// there, so the user never leaves the app they're typing in.
+    ///
+    /// How long "briefly" is, is `StartHandshake`'s call: `firstAck` (700 ms)
+    /// for any sign of life; up to `microphoneWait` (3 s) once the app has
+    /// said it is opening a microphone for this session; and not a moment
+    /// longer once it has said iOS refused it one (`needsApp`). Only then does
+    /// `completion` hand back the `parley://dictate` URL for the visible round
+    /// trip. The pane is listening from the tap throughout — nothing about it
+    /// changes while the handshake runs, and the watchdog covers a session
+    /// that is never taken up (`checkLiveness`).
     func startDictation(completion: @escaping (URL?) -> Void) {
         guard hasFullAccess else { return }
         // A new session ends the last one's editing window: anything the user
@@ -734,7 +744,10 @@ final class KeyboardViewController: UIInputViewController {
         bridge.partial = ""
         bridge.tail = ""
         bridge.errorText = nil
+        bridge.noticeText = nil
         bridge.micTaken = false
+        sessionDeadline = nil
+        updateCountdown()
         // The last dictation's words leave the slot, so they stop being the
         // thing a tap there copies.
         offerCopy(nil)
@@ -744,16 +757,34 @@ final class KeyboardViewController: UIInputViewController {
 
         let target = session
         Task { @MainActor [weak self] in
-            let deadline = ContinuousClock.now + Self.startAckWindow
-            while ContinuousClock.now < deadline {
-                try? await Task.sleep(for: .milliseconds(80))
+            let started = ContinuousClock.now
+            var handshake = StartHandshake()
+            while true {
+                try? await Task.sleep(for: Self.startPoll)
                 guard let self, self.session == target else { return }
-                if DictationChannel.readDownlink()?.session == target {
-                    return  // acked — the app is recording, nobody moved
+                // The user ended it before the app took it up — ✕, or ⏹ with
+                // nothing said. The wait is up to three seconds now, long
+                // enough for that to happen, and opening Parley for a session
+                // the user has already finished with would be the jump for
+                // nothing.
+                guard self.cancelledSession != target, self.stopRequestedAt == nil else { return }
+                if let d = DictationChannel.readDownlink(), d.session == target {
+                    handshake.observe(d)
+                }
+                let elapsed = started.duration(to: .now)
+                let seconds =
+                    Double(elapsed.components.seconds)
+                    + Double(elapsed.components.attoseconds) / 1e18
+                switch handshake.decide(elapsed: seconds) {
+                case .wait:
+                    continue
+                case .acked:
+                    return  // the app is recording, nobody moved
+                case .openApp:
+                    completion(DictationChannel.startURL(session: target))
+                    return
                 }
             }
-            guard let self, self.session == target else { return }
-            completion(DictationChannel.startURL(session: target))
         }
     }
 
@@ -774,7 +805,7 @@ final class KeyboardViewController: UIInputViewController {
 
     /// How long a freshly minted session may go without the app publishing
     /// anything for it before the pane gives up on it. The no-jump path answers
-    /// within `startAckWindow`; the URL path answers once the app has come
+    /// within `StartHandshake.firstAck`; the URL path answers once the app has come
     /// forward and opened the microphone, which is a couple of seconds at
     /// most — and usually kills this keyboard on the way, in which case none of
     /// this runs. It matters on the path where the switch never happens: the
@@ -813,7 +844,11 @@ final class KeyboardViewController: UIInputViewController {
         let now = Date()
         let presence = DictationChannel.readPresence()
         var deadline: Date
-        if let d = DictationChannel.readDownlink(), d.session == session {
+        // `needsApp` counts as not answered yet: it is the app handing the
+        // session to the URL, and it is not live, so it has no presumed death
+        // of its own — without this the pane would wait on it forever if the
+        // URL never landed.
+        if let d = DictationChannel.readDownlink(), d.session == session, d.state != .needsApp {
             // A terminal state has nothing left to watch; `drainDownlink` has
             // already taken the pane out of `listening` for it.
             guard let dead = d.presumedDeadAt(presence: presence) else { return }
@@ -1067,6 +1102,7 @@ final class KeyboardViewController: UIInputViewController {
         // pressed. A stop nobody answers is still what the watchdog is for.
         stopRequestedAt = Date()
         enterFinishing()
+        updateCountdown()
         checkLiveness()
     }
 
@@ -1189,7 +1225,10 @@ final class KeyboardViewController: UIInputViewController {
         // Not an error, so nothing is left on screen saying otherwise — the
         // slot goes back to the idle invitation to speak.
         bridge.errorText = nil
+        bridge.noticeText = nil
         bridge.micTaken = false
+        sessionDeadline = nil
+        updateCountdown()
         // Nothing is on screen any more, so nothing is there to copy — which
         // also covers `abandonSession`, whose red copy follows with no words
         // under it.
@@ -1201,10 +1240,11 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     /// How old a downlink may be and still get adopted by a keyboard that
-    /// didn't mint its session. Sessions are hard-capped at 120 s (the app's
-    /// `maxSeconds`), and every segment and state change re-stamps the file, so
-    /// anything older is a leftover — a crashed app's frozen `listening` file
-    /// or a long-finished transcript that would land in the wrong field.
+    /// didn't mint its session. Measured from the file's last stamp, not from
+    /// the session's start — every segment and state change re-stamps it, so
+    /// the session cap (ten minutes) does not enter into it — and anything
+    /// older is a leftover: a crashed app's frozen `listening` file or a
+    /// long-finished transcript that would land in the wrong field.
     private static let adoptionWindow: TimeInterval = 150
 
     /// How much settled text the keyboard echoes above the record button.
@@ -1347,6 +1387,13 @@ final class KeyboardViewController: UIInputViewController {
         // not "the microphone is gone" takes the notice down — a resumed session
         // included, which is the whole point of it being recoverable.
         bridge.micTaken = false
+        // The note on a `done` that did not come from ⏹ — the cap, or a lost
+        // connection — shown after the words land, where an error would be but
+        // not in the error red: the words were delivered. Every other state
+        // takes it down.
+        bridge.noticeText = d.state == .done ? d.notice.map(Self.noticeCopy) : nil
+        // The cap's deadline, for the countdown. Only a live session has one.
+        sessionDeadline = d.state.isLive ? d.deadline : nil
         switch d.state {
         case .starting, .listening:
             bridge.listening = true
@@ -1355,6 +1402,15 @@ final class KeyboardViewController: UIInputViewController {
             // yet, not the session carrying on: the finishing face the tap put
             // up stays, and `stopGrace` decides if the stop went unheard.
             if stopRequestedAt == nil { leaveFinishing(settled: false) }
+        case .needsApp:
+            // The app could not open the microphone from the background and is
+            // handing the session to the URL, which `startDictation` opens on
+            // reading this. The pane stays exactly as the tap left it —
+            // listening, optimistically — because the same session carries on
+            // in Parley; if the jump never lands, `checkLiveness` treats this
+            // as unanswered and `startGrace` takes the pane back.
+            bridge.listening = true
+            bridge.reconnecting = false
         case .reconnecting:
             // Still a live session: the app's microphone is open and the audio
             // is being held for the next relay leg. Saying so — rather than
@@ -1457,9 +1513,54 @@ final class KeyboardViewController: UIInputViewController {
         // drains cost nothing — `restMicLevel` publishes only if something
         // moved, and a `done` being republished moves nothing.
         if !bridge.listening { restMicLevel() }
+        updateCountdown()
         // Every drain is a sign of life or the end of one; either way the
         // watchdog's deadline moved.
         checkLiveness()
+    }
+
+    /// What the pane says for a `done` that ended on its own. The cap's line is
+    /// the desktop's wording, with the minutes read from the constant.
+    private static func noticeCopy(_ ending: DictationEnding) -> String {
+        switch ending {
+        case .limitReached:
+            let minutes = DictationCountdown.limitMinutes()
+            return String(localized: "Single dictation limit reached (\(minutes) min)")
+        case .connectionLost:
+            return String(
+                localized:
+                    "Connection lost — inserted what was transcribed. Tap the mic to continue.")
+        }
+    }
+
+    // MARK: the cap's countdown
+
+    /// Show, or take down, the seconds left before the app's cap stops the
+    /// session on screen, and come back for the next second while it counts.
+    ///
+    /// The number is `DictationCountdown`'s, from the deadline the app
+    /// published — not from when this keyboard thinks the session began, which
+    /// a relaunched keyboard does not know. Only while the pane is listening
+    /// and not finishing: once ⏹ is pressed there is nothing left to warn
+    /// about. Idle drains cost one comparison.
+    private func updateCountdown() {
+        countdownTick?.cancel()
+        countdownTick = nil
+        let deadline = bridge.listening && !bridge.finishing ? sessionDeadline : nil
+        let now = Date()
+        let left = DictationCountdown.secondsLeft(until: deadline, at: now)
+        if bridge.countdown != left { bridge.countdown = left }
+        guard let next = DictationCountdown.nextTick(until: deadline, at: now) else { return }
+        // Clamped like the watchdog's sleep, and for the same reason: the
+        // deadline came out of a file, and a wake that only re-reads the clock
+        // is harmless however early it lands.
+        let wait = min(max(next.timeIntervalSince(now), 0.05), Self.longestLivenessWait)
+        let target = session
+        countdownTick = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(wait))
+            guard !Task.isCancelled, let self, self.session == target else { return }
+            self.updateCountdown()
+        }
     }
 
     // MARK: copying the finished dictation
@@ -2086,6 +2187,15 @@ final class KeyboardBridge: ObservableObject {
     /// The app's failure for the last session (sign-in, mic permission,
     /// connection), shown in the caption slot until the next start.
     @Published var errorText: String?
+    /// A note on a session that was delivered but ended on its own — the cap,
+    /// or a lost connection (`DictationEnding`). Shown where `errorText` would
+    /// be, over the words that were inserted, and not in the error red: the
+    /// session did not fail. Cleared by the next start and by any state but
+    /// `done`.
+    @Published var noticeText: String?
+    /// Whole seconds until the app's cap stops the session, during the last
+    /// `DictationCountdown.warningLead` of it; `nil` the rest of the time.
+    @Published var countdown: Int?
     /// The system took the microphone away from the app — its own dictation,
     /// Siri, a call — and Parley could not get it back.
     ///

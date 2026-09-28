@@ -30,15 +30,17 @@ final class DictationHistory: ObservableObject {
     ///
     /// `rawText` and `polish` are what the row's "Polished" / "Original ·
     /// reason" label and its "Show original" toggle are drawn from; the entry
-    /// drops `rawText` when it is the same as `text`.
+    /// drops `rawText` when it is the same as `text`. `ending` is the line
+    /// under it for a session that stopped on its own (`DictationEnding`).
     func record(
         text: String, startedAt: Date, source: DictationHistoryEntry.Source,
-        hostBundleID: String?, rawText: String? = nil, polish: PolishOutcome? = nil
+        hostBundleID: String?, rawText: String? = nil, polish: PolishOutcome? = nil,
+        ending: DictationEnding? = nil
     ) {
         let ms = max(0, Int(Date().timeIntervalSince(startedAt) * 1000))
         let entry = DictationHistoryEntry(
             text: text, startedAt: startedAt, durationMs: ms, source: source,
-            hostBundleID: hostBundleID, rawText: rawText, polish: polish)
+            hostBundleID: hostBundleID, rawText: rawText, polish: polish, ending: ending)
         if let kept = store.append(entry) { entries = kept }
     }
 
@@ -107,6 +109,20 @@ final class DictationHistory: ObservableObject {
         case .rejectedLength: String(localized: "Original · length changed too much")
         case .failed: String(localized: "Original · connection failed")
         case .overdue: String(localized: "Original · took too long")
+        }
+    }
+
+    /// The row's line for a session that ended without the user's ⏹. Worded
+    /// as the desktop words the cap ("Single dictation limit reached (10
+    /// min)"), with the minutes taken from the constant so the copy cannot
+    /// drift from the rule.
+    static func endingLabel(_ ending: DictationEnding) -> String {
+        switch ending {
+        case .limitReached:
+            let minutes = DictationCountdown.limitMinutes()
+            return String(localized: "Single dictation limit reached (\(minutes) min)")
+        case .connectionLost:
+            return String(localized: "Connection lost before you stopped")
         }
     }
 

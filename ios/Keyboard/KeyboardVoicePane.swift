@@ -432,6 +432,8 @@ struct VoicePane: View, Equatable {
                 } else {
                     failedText(error)
                 }
+            } else if let notice = voice.noticeText, !voice.listening {
+                noticedText(notice)
             } else if voice.micTaken {
                 micTakenNotice
             } else if voice.reconnecting {
@@ -620,6 +622,13 @@ struct VoicePane: View, Equatable {
         }
         if reduceMotion, voice.finishing, voice.wave != nil {
             captioned(Text("Polishing…"), in: KBTheme.accent) { transcript }
+        } else if let seconds = voice.countdown, voice.listening, !voice.finishing {
+            // The last half-minute before the app's cap stops the session. A
+            // caption in the reconnect caption's shape and the slot's soft ink:
+            // there to be seen by someone who glances at the pane, not an
+            // alarm — nothing is wrong, and when it runs out the words are
+            // delivered as if ⏹ had been pressed.
+            captioned(Text("Stops in \(seconds) s"), in: KBTheme.inkSoft(dark)) { transcript }
         } else {
             TranscriptScroll { transcript }
         }
@@ -643,6 +652,34 @@ struct VoicePane: View, Equatable {
             captioned(Text(error), in: KBTheme.recording) {
                 TranscriptText(tail: voice.tail, partial: "", dark: dark, wave: nil, still: false)
                     .equatable()
+            }
+        }
+    }
+
+    /// The session was delivered but ended on its own — the cap, or a
+    /// connection that did not come back — and the words above are what was
+    /// inserted. Laid out as `failedText` lays out an error, caption on the
+    /// words, but in the reconnect amber rather than the error red: it is
+    /// something to know, not something that went wrong with the text. A cap
+    /// reached in silence has no words to caption, and gets the note centred
+    /// on its own, the way an error with no words does.
+    @ViewBuilder
+    private func noticedText(_ notice: String) -> some View {
+        if voice.tail.isEmpty {
+            centered {
+                Text(notice)
+                    .font(.footnote)
+                    .foregroundStyle(KBTheme.reconnecting)
+                    .multilineTextAlignment(.center)
+            }
+        } else {
+            clearOfCopyCorner(true) {
+                captioned(Text(notice), in: KBTheme.reconnecting) {
+                    TranscriptText(
+                        tail: voice.tail, partial: "", dark: dark, wave: nil, still: false
+                    )
+                    .equatable()
+                }
             }
         }
     }
@@ -796,6 +833,10 @@ extension KeyboardBridge {
         var tail: String
         var showsGlobe: Bool
         var errorText: String?
+        /// See `KeyboardBridge.noticeText`.
+        var noticeText: String?
+        /// See `KeyboardBridge.countdown`.
+        var countdown: Int?
         var micTaken: Bool
         var copyableText: String?
         var justCopied: Bool
@@ -809,7 +850,8 @@ extension KeyboardBridge {
         VoiceState(
             hasFullAccess: hasFullAccess, listening: listening, finishing: finishing, wave: wave,
             reconnecting: reconnecting, partial: partial, tail: tail, showsGlobe: showsGlobe,
-            errorText: errorText, micTaken: micTaken, copyableText: copyableText,
+            errorText: errorText, noticeText: noticeText, countdown: countdown,
+            micTaken: micTaken, copyableText: copyableText,
             justCopied: justCopied, mic: mic, ready: ready, returnKey: returnKeyStyle)
     }
 }

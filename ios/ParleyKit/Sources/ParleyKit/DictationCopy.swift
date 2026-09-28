@@ -49,7 +49,7 @@ public enum DictationCopy {
             // pasteboard over whatever the user had there.
             let isEmpty = committed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             return isEmpty ? nil : committed
-        case .starting, .listening, .reconnecting, .finishing, .cancelled, .micTaken:
+        case .starting, .listening, .reconnecting, .finishing, .cancelled, .micTaken, .needsApp:
             return nil
         }
     }

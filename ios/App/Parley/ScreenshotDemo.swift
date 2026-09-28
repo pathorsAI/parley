@@ -72,6 +72,13 @@
         /// Library switches to its Voice typing section, seeded with one
         /// history entry per polish outcome (`voicehistory`).
         @Published var showVoiceTyping = false
+        /// A sheet with a focused text field, so the Parley keyboard is on
+        /// screen, and an Action-Button-style demo dictation into it a moment
+        /// later (`keyboardharness`). The only way to watch the keyboard's
+        /// voice pane follow a session on a simulator with no touch input and
+        /// no microphone. While it is up the dictation screen is not presented
+        /// over it (see `ParleyApp.dictationPresented`).
+        @Published var keyboardHarness = false
         /// Which fixture `showTranscript` pushes. The featured one unless a
         /// route asks for the unanalysed one.
         @Published var recordingID = "demo-renewal"
@@ -113,6 +120,17 @@
             return seconds > 0 ? .milliseconds(Int(seconds * 1000)) : nil
         }
 
+        /// `-ParleyDemoLoseConnectionAfter <seconds>` ends a demo dictation
+        /// that long after it starts listening as if the relay's reconnect
+        /// ladder had run out — through the real `endAfterLostConnection` —
+        /// so the lost-connection delivery and its notice can be seen with no
+        /// network to cut.
+        static var loseConnectionAfter: Duration? {
+            guard isActive else { return nil }
+            let seconds = UserDefaults.standard.double(forKey: "ParleyDemoLoseConnectionAfter")
+            return seconds > 0 ? .milliseconds(Int(seconds * 1000)) : nil
+        }
+
         private init() {
             // Applying the launch route here — not from a view — is what lets the
             // script skip `openurl`. Nothing observes these properties yet, so the
@@ -143,6 +161,7 @@
             allowsChecklist = false
             showSample = false
             showVoiceTyping = false
+            keyboardHarness = false
             recordingID = Self.featured.id
             forcedFace = nil
             jumpOnOpen = nil
@@ -225,6 +244,18 @@
                 tab = .settings
                 allowsChecklist = true
                 pressResetChecklist = true
+            case "keyboardharness":
+                // Review frames for the voice pane following a session: the
+                // countdown and the cap's ending (with
+                // `-ParleyDebugDictationLimit`), the lost-connection notice
+                // (with `-ParleyDemoLoseConnectionAfter`). The session starts
+                // the way the Action Button starts one, so the keyboard adopts
+                // it the way it adopts any session it did not mint.
+                keyboardHarness = true
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(4))
+                    await DictationCoordinator.shared.beginFromIntent()
+                }
             case "dictation":
                 // The keyboard hand-off screen in its stranded-listening state
                 // (manual swipe-back, the iOS 26.4+ regime). Deferred a turn
@@ -288,16 +319,23 @@
         /// The Voice typing history for `voicehistory`: one entry per polish
         /// outcome, newest first in the order below, and a last one with no
         /// outcome at all — what every entry written before 1.25 looks like.
+        /// Two carry an ending as well (`DictationEnding`): one stopped by the
+        /// cap, and one delivered after its connection was lost, which never
+        /// reached the polish and so has no polish label.
         static var voiceHistory: [DictationHistoryEntry] {
             let now = Date()
             func entry(
                 _ minutesAgo: Double, _ en: String, _ zh: String, _ outcome: PolishOutcome?,
-                raw: (String, String)? = nil, host: String? = nil
+                raw: (String, String)? = nil, host: String? = nil,
+                ending: DictationEnding? = nil
             ) -> DictationHistoryEntry {
                 DictationHistoryEntry(
                     text: t(en, zh), startedAt: now.addingTimeInterval(-minutesAgo * 60),
-                    durationMs: 3_000 + t(en, zh).count * 180, source: .keyboard,
-                    hostBundleID: host, rawText: raw.map { t($0.0, $0.1) }, polish: outcome)
+                    durationMs: ending == .limitReached
+                        ? Int(MicActivityPolicy.dictationLimit * 1000)
+                        : 3_000 + t(en, zh).count * 180,
+                    source: .keyboard, hostBundleID: host, rawText: raw.map { t($0.0, $0.1) },
+                    polish: outcome, ending: ending)
             }
             return [
                 entry(
@@ -310,6 +348,14 @@
                         "那個明天有三件事啦第一個就是寄報價然後第二個是合約要再看一下呃第三個就是要約客戶開會"
                     ),
                     host: "com.apple.mobilenotes"),
+                entry(
+                    5, "and that is the whole plan for the offsite, the rest we can decide on the day",
+                    "以上就是外訓的整個規劃，其他的我們當天再決定", .polished,
+                    host: "com.apple.mobilenotes", ending: .limitReached),
+                entry(
+                    7, "the numbers for last quarter are in the shared folder under",
+                    "上一季的數字在共用資料夾的", nil, host: "com.apple.MobileSMS",
+                    ending: .connectionLost),
                 entry(9, "OK", "好", .tooShort, host: "jp.naver.line"),
                 entry(
                     15, "running five minutes late sorry start without me",
@@ -674,6 +720,44 @@
                     isFinal: false, startMs: 58_000, endMs: 62_000))
             recorder.seedDemo(
                 segments: seeded, status: String(localized: "Transcribing live"))
+        }
+    }
+
+    /// The `keyboardharness` sheet: a text field that takes focus as soon as it
+    /// appears, so whichever keyboard the simulator has selected — the Parley
+    /// keyboard, on the review simulator — comes up and stays up while a demo
+    /// dictation runs and lands in the field.
+    struct KeyboardHarnessView: View {
+        @State private var text = ""
+        @FocusState private var focused: Bool
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(verbatim: "Keyboard harness (DEBUG)")
+                    .font(.headline)
+                TextField(text: $text, axis: .vertical) { Text(verbatim: "Dictation lands here") }
+                    .lineLimit(4...8)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($focused)
+                Spacer()
+            }
+            .padding()
+            .task {
+                try? await Task.sleep(for: .milliseconds(600))
+                focused = true
+            }
+            .interactiveDismissDisabled()
+        }
+    }
+
+    /// Presents `KeyboardHarnessView` while `ScreenshotDemo.keyboardHarness`
+    /// is set. A modifier so the app scene can observe the flag without
+    /// holding the demo object itself.
+    struct KeyboardHarnessPresenter: ViewModifier {
+        @ObservedObject private var demo = ScreenshotDemo.shared
+
+        func body(content: Content) -> some View {
+            content.sheet(isPresented: $demo.keyboardHarness) { KeyboardHarnessView() }
         }
     }
 

@@ -17,8 +17,9 @@ public enum TranscriptPolisher {
     /// The cloud's OpenAI-compatible chat endpoint (see `CloudChat`).
     static let path = CloudChat.path
     /// The cloud's alias for the small, fast, Groq-hosted model. Dictation is
-    /// capped at 120 s, so the transcripts are short and latency is the only
-    /// thing that matters here.
+    /// capped at ten minutes (`MicActivityPolicy.dictationLimit`) and almost
+    /// always far shorter, so the transcripts are short and latency is the
+    /// only thing that matters here.
     static let model = "parley-fast"
 
     /// The standing instruction. It authorises a *rewrite*, not a tidy-up.

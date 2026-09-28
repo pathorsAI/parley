@@ -920,6 +920,23 @@
         }
       }
     },
+    "Connection lost before you stopped" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connection lost before you stopped"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "錄到一半連線中斷"
+          }
+        }
+      }
+    },
     "Context: %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5360,6 +5377,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "登入中…"
+          }
+        }
+      }
+    },
+    "Single dictation limit reached (%lld min)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Single dictation limit reached (%lld min)"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已達單次語音輸入上限（%lld 分鐘）"
           }
         }
       }

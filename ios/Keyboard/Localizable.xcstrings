@@ -120,6 +120,23 @@
         }
       }
     },
+    "Connection lost — inserted what was transcribed. Tap the mic to continue.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connection lost — inserted what was transcribed. Tap the mic to continue."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "連線中斷，已貼上中斷前的內容。點麥克風繼續。"
+          }
+        }
+      }
+    },
     "Copied": {
       "extractionState": "manual",
       "localizations": {
@@ -602,6 +619,23 @@
         }
       }
     },
+    "Single dictation limit reached (%lld min)": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Single dictation limit reached (%lld min)"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已達單次語音輸入上限（%lld 分鐘）"
+          }
+        }
+      }
+    },
     "Space": {
       "extractionState": "manual",
       "localizations": {
@@ -663,6 +697,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "停止語音輸入"
+          }
+        }
+      }
+    },
+    "Stops in %lld s": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stops in %lld s"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 秒後自動結束"
           }
         }
       }
