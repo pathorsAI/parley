@@ -158,6 +158,16 @@ final class DictationCoordinator: ObservableObject {
     /// `finishingBudget` after ⏹ — see `finishingOverdue`.
     private var finishingDeadline: Task<Void, Never>?
     private var capTimer: Task<Void, Never>?
+    /// When `capTimer` will stop the running session, published on every live
+    /// downlink (`Downlink.deadline`) so the keyboard can count the last
+    /// seconds down from this clock rather than guess at it. `nil` until the
+    /// session is listening.
+    private var capDeadline: Date?
+    /// Why the running session is ending on its own, if it is — the cap, or a
+    /// connection that did not come back. Rides on the `done` downlink so the
+    /// keyboard can say so after inserting, and on the history entry. Fresh
+    /// per session (`launch`). See `DictationEnding`.
+    private var endingNotice: DictationEnding?
     /// Persistent uplink listener (armed for the process's whole life): stop
     /// requests for the running session, and — the no-jump path — start
     /// requests from a keyboard while this process is awake in the background.
@@ -198,7 +208,10 @@ final class DictationCoordinator: ObservableObject {
     /// the race. It is deliberately never used while a microphone window is
     /// open — an active recording session is what keeps the process resident,
     /// and mixing a background task into it risks the assertion's end
-    /// suspending an app the audio session was holding up.
+    /// suspending an app the audio session was holding up. The exception is
+    /// the hand-over instant when the microphone closes: the task begins just
+    /// before the audio session is deactivated, so there is no gap between
+    /// them (see `closeMicrophoneIntoLinger`).
     private var lingerTask: UIBackgroundTaskIdentifier = .invalid
     /// See `armLifecycleLinger`. Held for the process's whole life, like
     /// `requestObserver`.
@@ -209,20 +222,35 @@ final class DictationCoordinator: ObservableObject {
     /// is the tentative partial. Dictation doesn't care who spoke.
     private var runs: [(id: String, text: String)] = []
 
-    /// Safety cap mirroring the desktop's single-session voice-typing limit: a
-    /// session the user forgets to stop can't quietly burn the whole hosted
-    /// quota. The backstop stops the mic; the tail still flushes.
+    /// Safety cap mirroring the desktop's single-session voice-typing limit
+    /// (ten minutes): a session the user forgets to stop can't quietly burn
+    /// the whole hosted quota. The backstop is an ordinary ⏹ — the words so far
+    /// are drained, polished and delivered — with `DictationEnding.limitReached`
+    /// riding along so the keyboard can say why it stopped. The keyboard warns
+    /// in the last `DictationCountdown.warningLead` seconds, from the deadline
+    /// this object publishes (`capDeadline`).
     ///
     /// The number itself is `MicActivityPolicy.dictationLimit` rather than a
     /// literal here, because the Live Activity needs it as well: its clock is a
     /// `Text(timerInterval:)`, which reserves the width of the widest value its
     /// range can reach, so the card has to be told where this session ends or
     /// it lays out for eight hours. Written up where the constant is.
-    private let maxSeconds: TimeInterval = MicActivityPolicy.dictationLimit
+    ///
+    /// DEBUG builds can shorten it with `-ParleyDebugDictationLimit <seconds>`
+    /// so the countdown and the cap's ending can be seen without talking for
+    /// ten minutes. Release builds never read the key.
+    private var maxSeconds: TimeInterval {
+        #if DEBUG
+            let override = UserDefaults.standard.double(forKey: "ParleyDebugDictationLimit")
+            if override > 0 { return override }
+        #endif
+        return MicActivityPolicy.dictationLimit
+    }
 
     /// Dictation redials faster and gives up sooner than a meeting does:
-    /// someone is standing there mid-sentence, and the whole session is capped
-    /// at two minutes. `ReconnectPolicy.dictation` is that ladder.
+    /// someone is standing there mid-sentence, waiting on the words to move.
+    /// `ReconnectPolicy.dictation` is that ladder; running out of it delivers
+    /// what had settled (`endAfterLostConnection`).
     private static let reconnect = ReconnectPolicy.dictation
 
     /// Where the chosen window length lives. `AppState` binds a picker to the
@@ -379,6 +407,8 @@ final class DictationCoordinator: ObservableObject {
         partial = ""
         sessionStartedAt = Date()
         historyRecorded = false
+        capDeadline = nil
+        endingNotice = nil
         state = .starting
         micTaken = false
         active = true
@@ -424,15 +454,26 @@ final class DictationCoordinator: ObservableObject {
             // Only the transcript source is faked — the App Group hand-off,
             // keyboard insertion, and stop path are the production code.
             if ScreenshotDemo.servesFixtures {
+                armCap()
                 state = .listening
                 publish()
-                armCap()
                 // The real path stays awake through the live audio session;
                 // the fake one has no audio, so it needs background-task time
                 // or iOS suspends the app the moment the user swipes back and
                 // the stream (and the Darwin channel) freezes.
                 beginLinger()
                 demoTask = Task { [weak self] in await self?.streamDemoTranscript() }
+                if let after = ScreenshotDemo.loseConnectionAfter {
+                    // The relay's ladder running out, on cue: the real
+                    // ending, with a fake transcript under it.
+                    Task { [weak self] in
+                        try? await Task.sleep(for: after)
+                        guard let self, self.owns(owner) else { return }
+                        self.demoTask?.cancel()
+                        self.demoTask = nil
+                        self.endAfterLostConnection()
+                    }
+                }
                 return
             }
         #endif
@@ -441,7 +482,9 @@ final class DictationCoordinator: ObservableObject {
         // the token — recording and the relay are the app's job), but a session
         // can still have expired. Fail loudly into the keyboard, not silently.
         guard let token = KeychainStore.get(AppState.tokenKey) else {
-            fail(String(localized: "Sign in to the Parley app before using the voice keyboard."))
+            fail(
+                String(localized: "Sign in to the Parley app before using the voice keyboard."),
+                .notSignedIn)
             return
         }
 
@@ -452,7 +495,8 @@ final class DictationCoordinator: ObservableObject {
             fail(
                 String(
                     localized:
-                        "Dictation needs microphone access. Turn it on in Settings › Parley."))
+                        "Dictation needs microphone access. Turn it on in Settings › Parley."),
+                .microphone)
             return
         default:
             // First ask. The flag swaps the dictation screen's guidance from
@@ -476,12 +520,13 @@ final class DictationCoordinator: ObservableObject {
                         String(
                             localized:
                                 "Dictation needs microphone access. Turn it on in Settings › Parley."
-                        ))
+                        ), .microphone)
                 } else {
                     fail(
                         String(
                             localized:
-                                "Microphone access wasn't granted. Tap the mic to try again."))
+                                "Microphone access wasn't granted. Tap the mic to try again."),
+                        .microphone)
                 }
                 return
             }
@@ -516,16 +561,16 @@ final class DictationCoordinator: ObservableObject {
             relay = nil
             audio.discard()
             // The realistic cause is iOS refusing a backgrounded process the
-            // microphone. `fail` closes the window too, so the keyboard's pane
-            // goes back to promising a trip through Parley, where the
-            // microphone can be opened from the foreground.
+            // microphone. A microphone failure closes the window too, so the
+            // keyboard's pane goes back to promising a trip through Parley,
+            // where the microphone can be opened from the foreground.
             fail(
                 UIApplication.shared.applicationState == .active
                     ? String(localized: "Couldn't open the microphone.")
                     : String(
                         localized:
                             "Couldn't open the microphone. Open Parley and tap the mic again."
-                    ))
+                    ), .microphone)
             return
         }
 
@@ -536,15 +581,16 @@ final class DictationCoordinator: ObservableObject {
             guard owns(owner) else { return }
             relay = nil
             audio.discard()
-            // `fail` closes the microphone and any window with it — see there
-            // for why an error is not something to leave an open window behind.
-            fail(String(localized: "Connection failed. Please try again."))
+            // A connection failure, so the microphone that just opened is
+            // kept — handed to the window, or held for 30 s — and the retry
+            // the copy asks for is served in place. See `fail`.
+            fail(String(localized: "Connection failed. Please try again."), .connection)
             return
         }
         guard owns(owner) else { return }
 
-        publishLive(.listening)
         armCap()
+        publishLive(.listening)
     }
 
     /// Whether the session that read `owner` off `leg` is still the one
@@ -680,7 +726,9 @@ final class DictationCoordinator: ObservableObject {
     ///     to be awake (foreground, or lingering in the background right after
     ///     a session). Starting here means the user never leaves their app —
     ///     the keyboard only falls back to `parley://dictate` when this note
-    ///     lands on nobody (see `KeyboardViewController.startDictation`).
+    ///     lands on nobody, when the app says it cannot open the microphone
+    ///     from here (`needsApp`), or when a provisional answer never becomes
+    ///     a session (see `StartHandshake`).
     private func armRequestObserver() {
         requestObserver = DarwinObserver(DictationChannel.upNote) { [weak self] in
             Task { @MainActor in
@@ -727,10 +775,37 @@ final class DictationCoordinator: ObservableObject {
                         || UIApplication.shared.applicationState == .active
                     else { return }
                     if !self.canServeInPlace {
-                        // Ahead of `begin`, so a refusal leaves the request
-                        // unanswered and the keyboard's URL fallback brings the
-                        // app forward, instead of `launch` publishing a failure.
-                        guard await self.openMicrophone() != nil else { return }
+                        let target = up.session
+                        // Answer first, then try. Opening a microphone from
+                        // the background is slow when iOS allows it at all,
+                        // and this used to say nothing until it was done — so
+                        // the keyboard's 700 ms ran out first and it jumped to
+                        // Parley over a microphone that was about to open:
+                        // "the next dictation always jumps to the app". The
+                        // provisional `starting` tells it the start is being
+                        // worked on, and buys `StartHandshake.microphoneWait`.
+                        //
+                        // Written straight to the channel rather than through
+                        // `publish()`: this is not the session yet. `session`
+                        // still names the previous one, which is what lets the
+                        // URL fallback for `target` start it for real.
+                        DictationChannel.writeDownlink(
+                            .init(session: target, state: .starting, openingMicrophone: true))
+                        // Ahead of `begin`, so a refusal is answered as one
+                        // rather than by `launch` publishing a failure.
+                        guard await self.openMicrophone() != nil else {
+                            // Unless the URL fallback got here first and the
+                            // session is already being served in the
+                            // foreground — a refusal written now would be
+                            // written over it.
+                            guard self.session != target else { return }
+                            // iOS will not give a backgrounded process the
+                            // microphone. Say so, so the keyboard opens Parley
+                            // now instead of waiting out a start that is not
+                            // coming.
+                            DictationChannel.writeDownlink(.init(session: target, state: .needsApp))
+                            return
+                        }
                     }
                     await self.begin(session: up.session)
                 }
@@ -800,13 +875,32 @@ final class DictationCoordinator: ObservableObject {
         ]
     }
 
+    /// Arm the session cap, and note when it will fire so the keyboard can
+    /// count down to it. Called just before the session first publishes
+    /// `listening`, so that downlink already carries the deadline; from then
+    /// it rides on every live one (`publish`).
     private func armCap() {
         let limit = maxSeconds
+        capDeadline = Date().addingTimeInterval(limit)
         capTimer = Task { [weak self] in
             try? await Task.sleep(for: .seconds(limit))
             guard !Task.isCancelled else { return }
-            await self?.stop()
+            await self?.reachLimit()
         }
+    }
+
+    /// The cap fired. End the session exactly as ⏹ would — drain, polish,
+    /// deliver — and note why, so the keyboard can say it after the words land
+    /// instead of leaving the user to find out by reading back what was typed.
+    /// That silence was the bug: the words after the cap simply went nowhere.
+    private func reachLimit() async {
+        // Dropped before `stop`, which cancels `capTimer` — and this is
+        // running *inside* that task, so the cancel would land on the drain
+        // `stop` is about to wait on and cut the last words short.
+        capTimer = nil
+        guard active else { return }
+        endingNotice = .limitReached
+        await stop()
     }
 
     /// The microphone's own state. `AudioCapture` recovers from interruptions and
@@ -889,7 +983,7 @@ final class DictationCoordinator: ObservableObject {
                 // The audio stack itself refused, rather than somebody else
                 // holding the input. Name it: "tap to restart" would be advice
                 // that cannot work.
-                fail(String(localized: "Lost the microphone: \(message)"))
+                fail(String(localized: "Lost the microphone: \(message)"), .microphone)
             }
         }
     }
@@ -921,11 +1015,6 @@ final class DictationCoordinator: ObservableObject {
         let cap = capture
         capture = nil
         stopReportingLevel()
-        // Detached for the same reason `fail` does it: closing an audio session
-        // is slow and nothing below depends on it. It really does close now — a
-        // capture that had given up used to make `stop()` a no-op, which left
-        // the session un-deactivated and the music it interrupted paused.
-        Task { await cap?.stop() }
         closeWindowState()
         errorMessage = nil
         micTaken = false
@@ -940,7 +1029,14 @@ final class DictationCoordinator: ObservableObject {
         // at the next heartbeat, so the glyph and the notice agree from the
         // moment the notice appears.
         publishPresence()
+        // The linger before the audio session goes, as everywhere (see
+        // `closeMicrophoneIntoLinger`). The stop is detached for the same
+        // reason `fail` does it: closing an audio session is slow and nothing
+        // here depends on it. It really does close now — a capture that had
+        // given up used to make `stop()` a no-op, which left the session
+        // un-deactivated and the music it interrupted paused.
         beginLinger()
+        Task { await cap?.stop() }
     }
 
     /// Publish a live state, with the microphone having the last word.
@@ -1003,7 +1099,7 @@ final class DictationCoordinator: ObservableObject {
                     String(
                         localized:
                             "You're out of transcription quota. Dictation works again once it resets."
-                    ))
+                    ), .quotaExhausted)
             } else {
                 scheduleReconnect()
             }
@@ -1047,7 +1143,9 @@ final class DictationCoordinator: ObservableObject {
             // The session expired mid-dictation. Redialling would only be
             // refused, and the user needs to be told the actual reason.
             audio.discard()
-            fail(String(localized: "Sign in to the Parley app before using the voice keyboard."))
+            fail(
+                String(localized: "Sign in to the Parley app before using the voice keyboard."),
+                .notSignedIn)
             return
         }
         guard case .retry(let backoff) = Self.reconnect.decide(attempt: reconnectAttempts + 1)
@@ -1091,21 +1189,59 @@ final class DictationCoordinator: ObservableObject {
         }
     }
 
-    /// Out of redials. End the session rather than leave a microphone running
-    /// into nothing.
+    /// Out of redials. End the session rather than leave the relay's half of
+    /// it dialling into nothing — and **deliver what had settled**.
     ///
-    /// The copy used to say the settled words had already been typed. They had,
-    /// when the keyboard inserted every delta as it arrived; it now inserts once
-    /// at `.done`, and an error is not `.done` — so an ended session leaves the
-    /// user's field untouched, and saying otherwise would send them looking for
-    /// text that is not there.
+    /// This used to be a `fail`, and the keyboard never inserts from `error`: a
+    /// long dictation whose connection died at minute three typed nothing at
+    /// all, and the words were only in the history. Now anything that had
+    /// settled (with the dead leg's tail folded in, as every ending does) is
+    /// handed over as an ordinary `done`, with `DictationEnding.connectionLost`
+    /// beside it so the keyboard says what happened after inserting. The AI
+    /// polish is skipped: it needs the network that just went away, and it
+    /// would only spend its six seconds finding that out.
+    ///
+    /// With nothing settled there is nothing to deliver, and it is still the
+    /// error it always was — whose copy says, truthfully, that nothing was
+    /// typed.
+    ///
+    /// Either way this is a *network* ending (`DictationFailure.connection`):
+    /// the microphone is fine and goes back to the window or the 30-second
+    /// hold, so "tap the mic to continue" is served where the user is.
     private func endAfterLostConnection() {
         audio.discard()
-        fail(
-            String(
-                localized:
-                    "Lost the connection before anything could be typed. Tap the mic to try again."
-            ))
+        foldPartialIn()
+        guard !committed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            fail(
+                String(
+                    localized:
+                        "Lost the connection before anything could be typed. Tap the mic to try again."
+                ), .connection)
+            return
+        }
+        deliverAfterLostConnection()
+    }
+
+    /// `endAfterLostConnection`'s delivery: the ending `finishUp` would give a
+    /// session with the polish declined, minus the drain (there is no relay
+    /// left to drain) and with the notice set.
+    private func deliverAfterLostConnection() {
+        finishRequested = true
+        capTimer?.cancel()
+        capTimer = nil
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        let dying = relay
+        relay = nil
+        dying?.cancel()
+        micTaken = false
+        stopReportingLevel()
+        endingNotice = .connectionLost
+        // Settled raw, and the history says why rather than labelling it with
+        // a polish outcome: the polish was never reached (see
+        // `recordHistory`), and the ending line already names the connection.
+        settle()
+        Task { await releaseMicrophone() }
     }
 
     /// Move the tentative tail into the settled text, as a run of its own.
@@ -1262,7 +1398,7 @@ final class DictationCoordinator: ObservableObject {
     ///
     /// Not `fail()` either: nothing went wrong, so this keeps the microphone
     /// window the user chose (`releaseMicrophone` decides) instead of closing
-    /// it the way an error does. The next tap is still served in place.
+    /// it the way most errors do. The next tap is still served in place.
     func cancel() async {
         guard active else { return }
         #if DEBUG
@@ -1293,7 +1429,8 @@ final class DictationCoordinator: ObservableObject {
         publish()
         // In this order, and for the same reason `finishUp` uses it:
         // `releaseMicrophone` declines to act while the session still looks
-        // live, and it is what arms either the window or the ~30 s linger.
+        // live, and it is what arms the window, the 30-second hold, or the
+        // ~30 s linger.
         active = false
         Task { await releaseMicrophone() }
     }
@@ -1337,10 +1474,11 @@ final class DictationCoordinator: ObservableObject {
         guard finishingPolish.drained(declined: polishDeclined()) else {
             settle()
             // Not `beginLinger()` any more: whether this leaves a ~30 s
-            // background task or an open microphone window is
-            // `releaseMicrophone`'s decision, and the two must never both be in
-            // flight. Reached from the relay signing off as well as from
-            // `stop`, hence the Task.
+            // background task, the 30-second hold or an open microphone window
+            // is `releaseMicrophone`'s decision, and a background task never
+            // runs alongside the other two (bar the hand-over instant in
+            // `closeMicrophoneIntoLinger`). Reached from the relay signing off
+            // as well as from `stop`, hence the Task.
             Task { await releaseMicrophone() }
             return
         }
@@ -1357,8 +1495,10 @@ final class DictationCoordinator: ObservableObject {
         // The session is over as far as this app's own UI is concerned, and
         // `releaseMicrophone` declines to act while it thinks otherwise. It
         // goes first on purpose: an HTTP call needs no microphone, and what
-        // releasing arms — the window, or the ~30 s linger — is exactly what
-        // keeps this process resident long enough to finish one.
+        // releasing arms — the window, the 30-second hold, or the ~30 s
+        // linger — is exactly what keeps this process resident long enough to
+        // finish one. (The hold then restarts at `settle`, so the time the
+        // polish took is not taken out of the user's thirty seconds.)
         active = false
         Task { await releaseMicrophone() }
 
@@ -1455,6 +1595,14 @@ final class DictationCoordinator: ObservableObject {
     private func settle() {
         finishingDeadline?.cancel()
         finishingDeadline = nil
+        // The 30-second hold counts from here, not from ⏹. It was armed when
+        // the session stopped being active (`finishUp`), and has to be — it is
+        // part of what keeps this process resident through the polish — but
+        // then the drain and the polish ate into it, and a user who read the
+        // words for a few seconds before tapping again found the microphone
+        // gone. Restarted now, the user gets the whole hold after the text
+        // lands, whatever finishing cost.
+        restartHoldFromDelivery()
         state = .done
         // Measured before the lexicon rewrites `committed`, so the counts in
         // the log are the transcript and the reply as they were.
@@ -1473,7 +1621,8 @@ final class DictationCoordinator: ObservableObject {
         // without polishing" would have typed — not a transcript with the
         // user's own corrections undone. For any ending but a polish the two
         // come out identical and the entry drops the copy.
-        recordHistory(polish: outcome, rawText: polishRaw.map(lexiconApplied))
+        recordHistory(
+            polish: outcome, rawText: polishRaw.map(lexiconApplied), ending: endingNotice)
         active = false
         // No haptic here, deliberately. `done` is not delivery — it is this
         // process saying the text is *ready* — and the transcript is only ever
@@ -1549,7 +1698,25 @@ final class DictationCoordinator: ObservableObject {
         }
     #endif
 
-    private func fail(_ message: String) {
+    /// End the session as an `error`, and decide what happens to the
+    /// microphone by what kind of failure it was (`DictationFailure`).
+    ///
+    /// **A network failure keeps the microphone.** The relay handshake failing,
+    /// or the reconnect ladder running out with nothing to deliver, says
+    /// nothing about the microphone — and closing it guaranteed that the
+    /// obvious next move, tapping the mic again, threw the user into Parley,
+    /// because a backgrounded process may not open one. So those go through
+    /// `releaseMicrophone` exactly as a ⏹ does: an open window stays open (the
+    /// user chose it, and it is working), otherwise the 30-second hold.
+    ///
+    /// **Everything else closes it**, which is the rule every error used to
+    /// follow: a window is the microphone the user agreed to leave open for a
+    /// keyboard that works, and after being told something went wrong, an
+    /// indicator they now have no reason to expect is the worst of both. It
+    /// still holds wherever the next tap cannot succeed anyway — signed out,
+    /// out of quota — or the microphone is itself the problem: refused, lost,
+    /// broken. Those end with the microphone visibly off and the ~30 s linger.
+    private func fail(_ message: String, _ kind: DictationFailure) {
         errorMessage = message
         micTaken = false
         state = .error
@@ -1561,24 +1728,31 @@ final class DictationCoordinator: ObservableObject {
         relay = nil
         audio.discard()
         dying?.cancel()
+        stopReportingLevel()
+        if kind.keepsMicrophone {
+            publish()
+            // The case the history exists for: the keyboard never inserts from
+            // `error`, so whatever had settled is lost unless it is kept here.
+            recordHistory()
+            // In this order for the reason `finishUp` gives: releasing declines
+            // while the session still looks live.
+            active = false
+            Task { await releaseMicrophone() }
+            return
+        }
         let cap = capture
         capture = nil
-        stopReportingLevel()
-        // Detached because `fail` is the sync tail of half a dozen paths and
-        // closing the audio session is slow; nothing after this depends on it.
-        Task { await cap?.stop() }
-        // And the window goes with it. A window is the microphone the user
-        // agreed to leave open for a keyboard that works; after being told
-        // something went wrong, an indicator they now have no reason to expect
-        // is the worst of both — so an error always ends with the microphone
-        // visibly off.
+        // And the window goes with it — see above.
         closeWindowState()
         publish()
-        // The case the history exists for: the keyboard never inserts from
-        // `error`, so whatever had settled is lost unless it is kept here.
         recordHistory()
         active = false
+        // The linger before the audio session goes, never after: see
+        // `closeMicrophoneIntoLinger`. The stop is detached because `fail` is
+        // the sync tail of half a dozen paths and closing the audio session is
+        // slow; nothing after this depends on it.
         beginLinger()
+        Task { await cap?.stop() }
     }
 
     /// Keep this session's transcript in the app's voice-typing history
@@ -1594,14 +1768,22 @@ final class DictationCoordinator: ObservableObject {
     /// reaches the polish decision. The others keep neither: an `error` or a
     /// `micTaken` session was never going to be polished, and one superseded
     /// while finishing was never delivered, so a label saying why it "stayed
-    /// raw" would be answering a question nobody has about it.
-    private func recordHistory(polish: PolishOutcome? = nil, rawText: String? = nil) {
+    /// raw" would be answering a question nobody has about it. A session
+    /// delivered after its connection died settles without a polish outcome
+    /// for the same reason, and says why through `ending` instead.
+    ///
+    /// `ending` is also `settle`'s alone: the cap and a lost connection are
+    /// the two endings that deliver without the user's ⏹, and the history
+    /// keeps which it was (`DictationEnding`).
+    private func recordHistory(
+        polish: PolishOutcome? = nil, rawText: String? = nil, ending: DictationEnding? = nil
+    ) {
         guard !historyRecorded, let startedAt = sessionStartedAt else { return }
         guard !committed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         historyRecorded = true
         DictationHistory.shared.record(
             text: committed, startedAt: startedAt, source: sessionSource,
-            hostBundleID: sessionHost, rawText: rawText, polish: polish)
+            hostBundleID: sessionHost, rawText: rawText, polish: polish, ending: ending)
     }
 
     // MARK: the microphone window
@@ -1636,8 +1818,7 @@ final class DictationCoordinator: ObservableObject {
             holdMicrophone()
             return
         }
-        await closeMicrophone()
-        beginLinger()
+        await closeMicrophoneIntoLinger()
     }
 
     /// With no window, the microphone still stays open for `holdAfterDictation`
@@ -1646,18 +1827,36 @@ final class DictationCoordinator: ObservableObject {
     /// suspended process never hears the tap at all; either way the second
     /// dictation went through Parley. Sound that arrives during the hold is
     /// dropped exactly as it is during a window.
+    ///
+    /// The thirty seconds are the user's, after the words land: `settle`
+    /// restarts them (`restartHoldFromDelivery`) when a polish kept the session
+    /// finishing after the hold was armed.
     private func holdMicrophone() {
         endLinger()
         publishPresence()
+        armHold()
+    }
+
+    /// (Re)start the hold's clock. The expiry hands over to the linger rather
+    /// than closing first — see `closeMicrophoneIntoLinger`.
+    private func armHold() {
         holdTask?.cancel()
         holdTask = Task { [weak self] in
             try? await Task.sleep(for: Self.holdAfterDictation)
             guard !Task.isCancelled, let self else { return }
             self.holdTask = nil
             guard !self.active, self.window.openedAt == nil else { return }
-            await self.closeMicrophone()
-            self.beginLinger()
+            await self.closeMicrophoneIntoLinger()
         }
+    }
+
+    /// A hold that is running starts its thirty seconds again from now. Only a
+    /// hold that exists: with a window open, or with the microphone already
+    /// closed, there is nothing to restart, and one that has not been armed yet
+    /// will be armed after this by `releaseMicrophone`, which is later still.
+    private func restartHoldFromDelivery() {
+        guard holdTask != nil else { return }
+        armHold()
     }
 
     /// A meeting is about to take the microphone. There is one microphone, so
@@ -1714,6 +1913,30 @@ final class DictationCoordinator: ObservableObject {
     }
 
     private static let log = Logger(subsystem: "com.pathors.parley", category: "Dictation")
+
+    /// Close the microphone with the ~30 s linger already running: every
+    /// ending that leaves no window and no hold behind comes through here.
+    ///
+    /// **The order is the point.** It used to be close, then linger — and the
+    /// close is an `await` that deactivates the audio session. For that stretch
+    /// the process had neither an active audio session nor a background
+    /// assertion, which is exactly the state iOS suspends a backgrounded app
+    /// in; a process suspended there never got to `beginLinger`, never heard
+    /// the keyboard's next start note, and the next tap went through Parley.
+    /// Beginning the background task first means one of the two is always
+    /// holding the process up.
+    ///
+    /// That makes this the one moment a background task and a live audio
+    /// session deliberately overlap (see `beginLinger`): an instant, on the
+    /// way from one to the other, never an arrangement that lasts. The hold is
+    /// dropped first because `beginLinger` declines while one exists — and a
+    /// hold's own expiry is one of the callers.
+    private func closeMicrophoneIntoLinger() async {
+        holdTask?.cancel()
+        holdTask = nil
+        beginLinger()
+        await closeMicrophone()
+    }
 
     private func closeMicrophone() async {
         holdTask?.cancel()
@@ -1794,8 +2017,7 @@ final class DictationCoordinator: ObservableObject {
         windowTask = nil
         closeWindowState()
         guard !active else { return }
-        await closeMicrophone()
-        beginLinger()
+        await closeMicrophoneIntoLinger()
     }
 
     private func closeWindowState() {
@@ -1915,16 +2137,20 @@ final class DictationCoordinator: ObservableObject {
     /// `finishing`); the four states outside it are claims about the past, and
     /// there is no dictation left to draw.
     ///
-    /// `trouble` is `micTaken` and `error` only. Not `reconnecting`: the
-    /// microphone is still open there and the audio is being held, so it is a
-    /// pause in the words arriving rather than an interruption — the same
-    /// distinction `publishLive` and `DictationChannel.Downlink.State` draw, and
-    /// the one the card would lose first if nobody wrote it down again here.
+    /// `trouble` is `micTaken`, and an `error` that took the microphone with
+    /// it. Not `reconnecting`: the microphone is still open there and the
+    /// audio is being held, so it is a pause in the words arriving rather than
+    /// an interruption — the same distinction `publishLive` and
+    /// `DictationChannel.Downlink.State` draw, and the one the card would lose
+    /// first if nobody wrote it down again here. Not a connection `error`
+    /// either: that one keeps the microphone and the window (`fail`), and a
+    /// standby card turned red over a microphone that is working would be the
+    /// card lying in the other direction.
     private func publishMicActivity() {
         MicActivityController.shared.dictationChanged(
             startedAt: state.isLive ? sessionStartedAt : nil,
             window: window,
-            trouble: state == .micTaken || state == .error)
+            trouble: state == .micTaken || (state == .error && capture?.isCapturing != true))
     }
 
     // MARK: background linger
@@ -1938,6 +2164,12 @@ final class DictationCoordinator: ObservableObject {
         // Never alongside a window or a hold. Their audio session is what is
         // holding the process up; a background assertion added on top buys
         // nothing and its expiry is a documented way to get suspended anyway.
+        //
+        // The one overlap there is, is on purpose and brief: every ending that
+        // closes the microphone begins this *before* deactivating the audio
+        // session (`closeMicrophoneIntoLinger`, `fail`,
+        // `endSessionWithMicTaken`), so the process is never left with
+        // neither. The session goes a moment later; the assertion stays.
         guard window.openedAt == nil, holdTask == nil else { return }
         endLinger()
         lingerTask = UIApplication.shared.beginBackgroundTask(withName: "dictation-relaunch") {
@@ -2037,11 +2269,17 @@ final class DictationCoordinator: ObservableObject {
     }
 
     /// Mirror the live state into the downlink the keyboard reads.
+    ///
+    /// The cap's deadline only on a live state — it is a claim about when this
+    /// session *will* stop — and the ending note only on `done`, the one state
+    /// it annotates.
     private func publish() {
         DictationChannel.writeDownlink(
             .init(
                 session: session, committed: committed, partial: partial,
-                state: state, errorMessage: errorMessage))
+                state: state, errorMessage: errorMessage,
+                deadline: state.isLive ? capDeadline : nil,
+                notice: state == .done ? endingNotice : nil))
         publishMicActivity()
     }
 

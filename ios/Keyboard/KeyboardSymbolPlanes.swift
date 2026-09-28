@@ -50,14 +50,17 @@ struct SymbolPlanes: View, Equatable {
         case symbols
     }
 
+    /// Four rows of caps whose touch targets tile the pane, like the letter
+    /// plane's — see `RowReach`.
     var body: some View {
         GeometryReader { geo in
             let m = KeyRowMetrics(width: geo.size.width)
             VStack(spacing: KBMetrics.rowSpacing) {
                 switch plane {
                 case .numbers:
-                    fixedRow(Self.keys("1234567890"), m)
+                    fixedRow(0, Self.keys("1234567890"), m)
                     fixedRow(
+                        1,
                         fullWidth
                             ? FullWidthPunctuation.numbersMiddle : Self.keys("-/:;()$&@\""), m)
                     punctuationRow(
@@ -66,8 +69,10 @@ struct SymbolPlanes: View, Equatable {
                             ? FullWidthPunctuation.numbersPunctuation : Self.keys(".,?!'"))
                 case .symbols:
                     fixedRow(
+                        0,
                         fullWidth ? FullWidthPunctuation.symbolsTop : Self.keys("[]{}#%^*+="), m)
                     fixedRow(
+                        1,
                         fullWidth
                             ? FullWidthPunctuation.symbolsMiddle : Self.keys("_\\|~<>$£¥•"), m)
                     punctuationRow(
@@ -81,15 +86,26 @@ struct SymbolPlanes: View, Equatable {
             .padding(.top, KBMetrics.paneTop)
             .padding(.bottom, KBMetrics.paneBottom)
         }
+        // The keys' targets stop at the pane's edge (see `RowReach`). The
+        // panes sit side by side on one track, and an end key reaching past
+        // its own pane would take touches meant for the pane beside it.
+        .contentShape(Rectangle())
     }
 
     private static func keys(_ row: String) -> [String] { row.map { String($0) } }
 
+    private static func reach(_ row: Int) -> RowReach {
+        RowReach(row: row, of: 4, spacing: KBMetrics.rowSpacing)
+    }
+
     /// Ten keys at the unit width. Indexed rather than keyed by the text,
     /// because a row may carry the same mark twice.
-    private func fixedRow(_ keys: [String], _ m: KeyRowMetrics) -> some View {
-        row {
-            ForEach(Array(keys.enumerated()), id: \.offset) { key($0.element, width: m.unit) }
+    private func fixedRow(_ index: Int, _ keys: [String], _ m: KeyRowMetrics) -> some View {
+        let reach = Self.reach(index)
+        return row {
+            ForEach(Array(keys.enumerated()), id: \.offset) { i, text in
+                key(text, width: m.unit, reach: reach.key(i, of: keys.count))
+            }
         }
     }
 
@@ -99,28 +115,41 @@ struct SymbolPlanes: View, Equatable {
     private func punctuationRow(
         _ m: KeyRowMetrics, toggleLabel: String, toggleTarget: Plane, keys: [String]
     ) -> some View {
-        row {
-            altKey(toggleLabel, width: m.wide) { plane = toggleTarget }
-            ForEach(Array(keys.enumerated()), id: \.offset) { key($0.element, width: nil) }
-            DeleteKey(dark: dark, width: m.wide) { bridge.backspace() }
-                .equatable()
+        let reach = Self.reach(2)
+        return row {
+            altKey(toggleLabel, width: m.wide, reach: reach.key(first: true)) {
+                plane = toggleTarget
+            }
+            ForEach(Array(keys.enumerated()), id: \.offset) {
+                key($0.element, width: nil, reach: reach.key())
+            }
+            DeleteKey(
+                dark: dark, width: m.wide, reach: reach.key(last: true),
+                action: bridge.backspace, repeatAction: bridge.backspaceRepeat,
+                onRelease: bridge.backspaceReleased
+            )
+            .equatable()
         }
     }
 
     private func bottomRow(_ m: KeyRowMetrics) -> some View {
-        row {
-            altKey(homeLabel, width: m.wide, action: onHome)
+        let reach = Self.reach(3)
+        return row {
+            altKey(homeLabel, width: m.wide, reach: reach.key(first: true), action: onHome)
             if showsGlobe {
-                GlobeKey(controller: bridge.controller, dark: dark)
+                GlobeKey(controller: bridge.controller, dark: dark, reach: reach.key())
                     .frame(width: m.unit, height: KBMetrics.keyHeight)
             }
-            KeyButton(dark: dark, width: nil, action: { bridge.space() }) {
+            KeyButton(dark: dark, width: nil, reach: reach.key(), action: { bridge.space() }) {
                 Text("Space").font(.system(size: 15))
             }
             .equatable()
             .accessibilityLabel(Text("Space"))
-            ReturnKey(bridge: bridge, style: returnKey, dark: dark, width: m.wide)
-                .equatable()
+            ReturnKey(
+                bridge: bridge, style: returnKey, dark: dark, width: m.wide,
+                reach: reach.key(last: true)
+            )
+            .equatable()
         }
     }
 
@@ -131,8 +160,8 @@ struct SymbolPlanes: View, Equatable {
 
     /// A key that types itself as-is. A `nil` width means "share the row's slack
     /// with your neighbours".
-    private func key(_ text: String, width: CGFloat?) -> some View {
-        KeyButton(dark: dark, width: width, action: { bridge.type(text) }) {
+    private func key(_ text: String, width: CGFloat?, reach: EdgeInsets) -> some View {
+        KeyButton(dark: dark, width: width, reach: reach, action: { bridge.type(text) }) {
             Text(verbatim: text).font(.system(size: 22))
         }
         .equatable()
@@ -140,9 +169,9 @@ struct SymbolPlanes: View, Equatable {
     }
 
     private func altKey(
-        _ label: String, width: CGFloat, action: @escaping () -> Void
+        _ label: String, width: CGFloat, reach: EdgeInsets, action: @escaping () -> Void
     ) -> some View {
-        KeyButton(dark: dark, tint: .alt, width: width, action: action) {
+        KeyButton(dark: dark, tint: .alt, width: width, reach: reach, action: action) {
             Text(verbatim: label).font(.system(size: 16, weight: .regular))
         }
         .equatable()
@@ -166,15 +195,18 @@ struct ReturnKey: View, Equatable {
     var dark: Bool
     var width: CGFloat
     var height: CGFloat = KBMetrics.keyHeight
+    /// See `RowReach`.
+    var reach = EdgeInsets()
 
     static func == (a: Self, b: Self) -> Bool {
         a.style == b.style && a.dark == b.dark && a.width == b.width && a.height == b.height
+            && a.reach == b.reach
     }
 
     var body: some View {
         KeyButton(
             dark: dark, tint: style.isAccented ? .accent : .alt, width: width, height: height,
-            ink: style.isAccented ? .white : KBTheme.ink(dark),
+            reach: reach, ink: style.isAccented ? .white : KBTheme.ink(dark),
             action: { bridge.newline() }
         ) {
             Text(style.label).font(.system(size: 15))

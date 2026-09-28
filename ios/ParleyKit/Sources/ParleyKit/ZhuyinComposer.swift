@@ -219,7 +219,14 @@ public struct ZhuyinComposer {
     /// Delete edits the buffer before it edits the document: the tone first,
     /// then the syllable slot by slot, then back into the syllable before it,
     /// and only once nothing is left does it reach the field.
-    public mutating func delete() -> Outcome {
+    ///
+    /// `refreshingCandidates: false` is for a held delete key: it unwinds the
+    /// buffer up to twenty times a second, and looking the phrases up again on
+    /// every tick only to redraw a bar nobody can read at that speed is wasted
+    /// work. The bar keeps its last answer until the key is let go and the
+    /// keyboard calls `refresh()` — except that an emptied buffer always has an
+    /// empty bar, so a hold that clears the reading clears the bar with it.
+    public mutating func delete(refreshingCandidates: Bool = true) -> Outcome {
         guard var last = syllables.last else { return .passThrough }
         if last.tone != nil {
             last.tone = nil
@@ -231,7 +238,11 @@ public struct ZhuyinComposer {
         } else {
             syllables[syllables.count - 1] = last
         }
-        refreshCandidates()
+        if refreshingCandidates {
+            refreshCandidates()
+        } else if syllables.isEmpty {
+            candidates = []
+        }
         return .handled
     }
 

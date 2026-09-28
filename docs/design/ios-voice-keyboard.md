@@ -107,6 +107,11 @@ sentence lands, or the field is exactly as it was and the error says so. This is
 also what the copy on the failure paths now says (it used to promise that what
 was already said "has been typed").
 
+Two endings that do not come from the user's ⏹ still deliver, and say so: the
+session cap, and a connection that did not come back. Both are an ordinary `done`
+with a note on the downlink (`notice`, a `DictationEnding`), which the keyboard
+shows after inserting — see *Endings that keep the words* below.
+
 The price is that the keyboard's own text slot stops being a nicety and becomes
 the only place the words are visible while they are being spoken — see *The live
 transcript* below — and that the transcript now depends on the keyboard coming
@@ -125,7 +130,9 @@ design:
    transcript is never inserted.
 2. **`looksDead`.** A live state nobody has vouched for is abandoned — the app
    was suspended, jetsammed or swiped away mid-session.
-3. **`error`.** Never inserted, whatever had settled before the failure.
+3. **`error`.** Never inserted, whatever had settled before the failure. (A
+   connection that dies for good with words settled is no longer one of these:
+   it delivers them as `done` — see *Endings that keep the words*.)
 4. **The wrong field.** `insertText` goes to whatever is focused when `done`
    arrives; if the user moved, the text lands somewhere else or nowhere.
 
@@ -171,7 +178,13 @@ list, not behind the detail sheet.
 single-writer mailboxes, each with its own Darwin notification, so the two
 processes never contend on a file:
 
-- `dictation-down.json` — app → keyboard: `{session, committed, partial, state}`.
+- `dictation-down.json` — app → keyboard: `{session, committed, partial, state,
+  errorMessage?, openingMicrophone?, deadline?, notice?}`. The last three are
+  the continuity fields: a provisional `starting` (*Knowing whether the app is
+  there*), when the session cap will fire, and why a `done` ended on its own.
+  All optional and decoded leniently — an older file decodes, and a `notice`
+  this build does not know is dropped rather than failing the file, because a
+  downlink that fails to decode is a `done` never inserted.
 - `dictation-up.json` — keyboard → app: `{session, hostBundleID, stopRequested,
   cancelRequested?, insertedCount}`. `cancelRequested` is optional so an uplink
   written by an older build still decodes — a mailbox that fails to decode
@@ -245,7 +258,7 @@ at all. Parley already had the shape of that path and almost never won it.
 ### Why the old path lost
 
 `KeyboardViewController.startDictation` publishes the request to the App Group,
-waits `startAckWindow` (700 ms) for the app to answer, and only opens
+waits 700 ms (`StartHandshake.firstAck`) for the app to answer, and only opens
 `parley://dictate` if nothing does. An app that is awake answers in
 milliseconds. The problem was how briefly the app stayed awake:
 `DictationCoordinator.beginLinger` is a `beginBackgroundTask`, and iOS grants one
@@ -387,11 +400,26 @@ next window open.
 ### What ends a window
 
 Expiry, the user (from the keyboard, the Record tab, or Settings), a session
-failure of any kind, the microphone being interrupted or lost, and a meeting
-recording starting — there is one microphone, and `MeetingRecorder.start` takes
-it. Interruption is deliberately fatal to the window rather than something to
-wait out: **a window that cannot be honoured is worse than one that ended early,
-because the user can see the second and cannot see the first.**
+failure that is not a network failure, the microphone being interrupted or lost,
+and a meeting recording starting — there is one microphone, and
+`MeetingRecorder.start` takes it. Interruption is deliberately fatal to the window
+rather than something to wait out: **a window that cannot be honoured is worse
+than one that ended early, because the user can see the second and cannot see
+the first.**
+
+**Which failures end it** is `DictationFailure` (ParleyKit). It used to be every
+failure, on the owner's rule that an error always ends with the microphone
+visibly off: after being told something went wrong, an indicator the user no
+longer has a reason to expect is the worst of both. That rule still holds where
+it is true — **not signed in, out of quota, the microphone refused, lost or
+broken** — because there the next tap cannot work, or the microphone is itself
+the problem. It does not hold for a **connection failure** (the relay handshake,
+the reconnect ladder running out, a socket error): the microphone is fine, the
+user chose the window, and closing it guaranteed that the obvious next move —
+tap the mic again — went through Parley, because a backgrounded process may not
+open a microphone. So a connection failure ends the way a ⏹ does:
+`releaseMicrophone` keeps an open window open, or starts the 30-second hold. The
+Live Activity's standby card is not marked as in trouble for it either.
 
 A background task is never held while a window is open. `beginBackgroundTask` is
 worth nothing next to an active audio session, and ending an assertion in the
@@ -418,6 +446,62 @@ dropped exactly as in a window. A new session, a window opening, a meeting
 taking the microphone, or the microphone closing for any other reason ends the
 hold, and the linger is not armed on top of it.
 
+**The thirty seconds count from delivery, not from ⏹.** The hold is armed when
+the session stops being active (`finishUp`), which is before the relay's last
+words drain and before the AI polish — it has to be, because it is part of what
+keeps the process resident through the polish. But that meant the drain and the
+polish (up to six seconds) came out of the user's thirty, and someone who read
+the words for a moment before tapping again found the microphone gone. `settle`
+now restarts a running hold, so the full thirty seconds start when the text
+lands.
+
+**And the linger begins before the microphone closes.** Every ending that closes
+the microphone — the hold expiring, a window ending, an ending with neither, a
+non-network failure, the microphone taken — used to close first and then begin
+the ~30 s background task. The close is an `await` that deactivates the audio
+session, and for as long as it took the process had neither an active audio
+session nor a background assertion: exactly the state iOS suspends a
+backgrounded app in. Suspended there, it never began the linger and never heard
+the next start note. `closeMicrophoneIntoLinger` (and the same order in `fail`
+and `endSessionWithMicTaken`) begins the background task first. It is the one
+moment a background task and a live audio session overlap on purpose — an
+instant on the way from one to the other, never an arrangement that lasts.
+
+### Endings that keep the words: the cap and a lost connection
+
+The owner's report: *"after dictating for a while it stops by itself, and
+everything said after that is lost."*
+
+**The cap is ten minutes, and it warns.** `MicActivityPolicy.dictationLimit` was
+120 s under a comment claiming to mirror the desktop, whose limit is 600 s
+(`HOSTED_VOICE_TYPING_MAX_SECONDS`). The relay's own cap is hours, so nothing
+server-side needed the short one, and two minutes is inside an ordinary long
+message. It is the desktop's number now, and it is not silent: the app publishes
+when its backstop will fire (`Downlink.deadline`, set before the first
+`listening`), and the voice pane counts the last 30 seconds down from that
+clock — *Stops in 25 s* (25 秒後自動結束), a caption in the slot's soft ink over
+the live words (`DictationCountdown`). When it fires the words are delivered
+exactly as ⏹ delivers them, polish included, and the `done` carries
+`limitReached`: the pane shows *Single dictation limit reached (10 min)*
+(已達單次語音輸入上限（10 分鐘）), the desktop's own wording, over the inserted
+words. DEBUG builds can shorten the cap with `-ParleyDebugDictationLimit
+<seconds>` to see all of this without talking for ten minutes.
+
+**A lost connection delivers what was said.** When the reconnect ladder ran out,
+the session used to `fail`, and the keyboard never inserts from `error` — so a
+long dictation whose socket died at minute three typed nothing. Now
+`endAfterLostConnection` folds the dead leg's tail in and, if anything had
+settled, settles it as `done` without the AI polish (which needs the network
+that just went away), with `connectionLost` beside it: *Connection lost —
+inserted what was transcribed. Tap the mic to continue.* (連線中斷，已貼上中斷前的內容。
+點麥克風繼續。) With nothing settled it is still the error it was. Either way it
+is a connection failure, so the microphone stays (see *What ends a window*) and
+the tap the copy asks for is served in place.
+
+Both notes are shown where an error would be, over the inserted words, but in
+the reconnect amber rather than the error red: the session did not fail. The
+history entry keeps the ending too, as a line under the polish label.
+
 ### When the system takes the microphone: iOS's own dictation
 
 The report this section exists for: *"If I turn on voice typing and then press the
@@ -442,7 +526,7 @@ another process with a stronger claim on the input.
    stamping while the process is awake, and `Downlink.presumedDeadAt` takes the
    *newer* of the downlink's stamp and that heartbeat. So ⏹ stayed on screen over
    a microphone iOS had taken away, for as long as two minutes, until the
-   session's own cap ended it as a success with nothing to insert.
+   session's own cap (then 120 s) ended it as a success with nothing to insert.
 3. **`.ended` does not reliably arrive.** System services raise interruptions
    that never announce their end. Recovery hung entirely off `.ended`, and the
    watchdog that exists precisely as the backstop for "iOS announced nothing" was
@@ -566,21 +650,40 @@ from one phone's log and is false on others, where the linger had been buying
 in-place starts since #222, and the guard turned every one of those into a trip
 through Parley: the "every dictation jumps to Parley once" regression. So the
 app now *tries*: a lingering process with nothing to borrow opens a microphone
-before acknowledging, and only a refused activation goes unanswered, at which
-point the keyboard's 700 ms fallback opens the app and the microphone is opened
-in the foreground where it can be. The glyph stays pessimistic on purpose. A tap
-promised as a jump that stays put is a surprise in the right direction; the
-reverse is the one the user notices.
+before starting the session, and the microphone is only opened in the foreground
+(via the URL) when the background activation is refused. The glyph stays
+pessimistic on purpose. A tap promised as a jump that stays put is a surprise in
+the right direction; the reverse is the one the user notices.
 
-Trying costs the ack its speed on this one path: `starting` is written after
-`AudioCapture.start()` rather than milliseconds after the note, and the keyboard
-only waits `startAckWindow` (700 ms). A background activation slower than that
-makes the keyboard open `parley://dictate` over a microphone that is already
-running; `begin(session:)` then stops that session and relaunches it in the
-foreground, so the user gets the jump they would have had anyway plus a restart,
-and nothing worse. How long the activation takes on a given phone is unmeasured;
-the app logs it (`subsystem com.pathors.parley`, category `Dictation`, "background
-mic start took N ms") so a phone can answer.
+Trying used to cost the ack its speed on this one path, and that cost was the
+owner's *"after every dictation, the next one jumps to the app"*: `starting` was
+written after `AudioCapture.start()` rather than milliseconds after the note,
+the keyboard only waited 700 ms, and a background activation slower than that
+made the keyboard open `parley://dictate` over a microphone that was about to
+open. It now answers in two steps (`StartHandshake`, ParleyKit):
+
+- The observer publishes a **provisional** `starting` for the session
+  (`openingMicrophone: true`) the moment it decides to serve it — before it
+  awaits the microphone. It is written straight to the channel, not as the
+  coordinator's session, so a URL fallback for the same id still starts it.
+- If the microphone opens, the session starts as usual (`starting`, then
+  `listening`). If iOS refuses it, the observer publishes **`needsApp`** for the
+  session — unless the URL fallback has already started it in the foreground.
+- The keyboard waits 700 ms for any answer, as before. A provisional one buys
+  it up to **3 s** from the tap (`StartHandshake.microphoneWait`) to become the
+  session; still provisional at that bound, it opens the app as it always did,
+  and a start that lands late is harmless (the URL for the same id is a
+  duplicate the app ignores). `needsApp` opens the app at once. An ordinary
+  `starting` — a borrowed microphone, or the app in front — is an ack on sight,
+  so a slow relay handshake never reads as provisional. ✕ or ⏹ during the wait
+  ends it without opening anything.
+
+The pane is listening from the tap throughout. `needsApp` is not live, so the
+watchdog treats it as not yet answered and `startGrace` takes the pane back if
+the jump never lands. How long the activation takes on a given phone is still
+unmeasured; the app logs it (`subsystem com.pathors.parley`, category
+`Dictation`, "mic start took N ms") so a phone can answer — and the 3 s bound is
+the number to revisit when one does.
 
 **Whether the session on screen is still being served.** The downlink says
 `listening` and keeps saying it whatever happens to the app. A backgrounded
@@ -600,7 +703,8 @@ keyboard watches the earliest of three deadlines and gives up at it:
 - the live downlink's presumed death, as above;
 - 10 s from minting, for a session the app never answered (the URL was refused,
   or the app is gone — on the usual path the app switch kills the keyboard first
-  and none of this runs);
+  and none of this runs). A `needsApp` counts as unanswered: it is the app
+  handing the session to a URL that may never land;
 - 3 s from ⏹, for a session the app has not started ending. The app publishes
   `finishing` synchronously on hearing the note, so a session still `listening`
   three seconds later is one nobody heard the stop for.
@@ -955,7 +1059,9 @@ only, take what they actually draw — `dark`, `showsGlobe` and a
 parameters, and are `Equatable` on those; `KeyboardRootView` wraps them in
 `.equatable()` and SwiftUI skips their bodies whenever those values are
 unchanged, which on a keystroke is always. A pane still redraws for its own
-`@State` — shift, the symbol planes — and there `KeyButton` and `DeleteKey`,
+state — the symbol planes, and on the English pane shift, which the controller
+drives (see *English pane*) through a small `ShiftModel` only that pane
+observes, not through the bridge — and there `KeyButton` and `DeleteKey`,
 also `Equatable` on their looks, keep the keys that did not change from being
 re-evaluated. The strip is the one thing a keystroke should redraw, and it now
 invalidates once per key rather than twice: the composition and its
@@ -1022,6 +1128,66 @@ So the controller's `deinit` takes its own subviews — the hosting view and the
 backdrop — out of the input view. The tree and the bridge are then released
 with the controller, and what UIKit keeps is an empty input view. After the
 change: 34 MB cold, 42 MB after the first few cycles, **43–44 MB after forty**.
+
+### Touch: what makes a key feel like a system key
+
+The keys looked right well before they felt right. Measured against the system
+keyboard, what was missing was all in how a touch is taken, not in how a key is
+drawn:
+
+- **Every point of a typing pane belongs to a key.** The caps are drawn with
+  6pt between them and 11pt between rows, and the keys used to hit-test only
+  the drawn cap. A touch in a gap, in the half-key strip beside `a` and `l`, in
+  the 8pt above the top row or in the 注音 rows' stagger fell through to the
+  track, where only the swipe listens, and was dropped — about a third of the
+  pane on a 390pt phone. On the system keyboard a touch there types the nearest
+  key. Each key now has a touch target (`RowReach`, `KeyTarget`): its cap plus
+  half the gap to each neighbour and half the row spacing above and below, and
+  for the keys at the ends of the rows and in the top and bottom rows,
+  everything out to the pane's edge. The targets tile the pane. The end keys
+  reach a few points past the side edges (the 注音 plane's fourth row sits 3pt
+  right of the others, and would otherwise start with a dead strip), and each
+  pane cuts its keys' targets at its own edge, because the panes sit side by
+  side on one track and an end key reaching into the next pane took its
+  touches — the first measurement typed `ㄅ` for a tap beside `p`. They are hit
+  shapes, not layout — the caps are laid out exactly as before, and a
+  screenshot of every plane is pixel-identical to 1.25's — because growing the
+  keys' frames instead nudged the 注音 caps by a pixel (its 34.6pt rows round to
+  the pixel grid differently one level deeper). The globe is a `UIButton`, which
+  a hit shape does not reach, so its button overhangs the cap by the same
+  amount instead. Measured on the simulator with coordinate taps at points
+  taken from 1.25's caps: 20 of 27 gap taps typed the nearest key before —
+  SwiftUI's own touch slop catches some — and 27 of 27 after; before, a tap
+  2pt right of `g` typed `h`, and taps at the screen edge beside `a`, `l` and at
+  the end of a 注音 staggered row typed nothing.
+- **Pressed on the frame the finger lands.** The press shading used to fade in
+  over 80ms, which reads as a key a beat behind the finger. It is now instant;
+  only the release eases out.
+- **No delay at the screen's edges.** The system watches the left and bottom
+  edges for its own gestures with a recognizer on the keyboard's window
+  (`_UISystemGestureGateGestureRecognizer` on the iOS 26.5 simulator) that holds
+  a touch back until it has ruled a gesture out, so `q`, `a`, shift, `123` and
+  space darkened late and their callouts flashed late or not at all.
+  `delaysTouchesBegan` is switched off on it every time the keyboard appears or
+  moves to a window — the standard workaround for custom keyboards; the system
+  gestures still work.
+- **Keys click.** `UIDevice.playInputClick()` only sounds when the input view
+  adopts `UIInputViewAudioFeedback`, which the stock one does not, so the
+  keyboard was silent even with Keyboard Clicks on. The controller's input view
+  is now `KeyboardInputView`, the same `UIInputView` with that adoption (same
+  style, so the system paints the same backdrop, and the same self-sizing and
+  height constraint). Every key clicks on touch-down — characters, space,
+  delete and each of its repeats, return, shift, `123`/`ABC`, the globe — and
+  the user's Keyboard Clicks setting decides whether anything is heard. **No
+  haptics**: the system's key haptic is a separate setting a third-party
+  keyboard cannot read, and playing one anyway would buzz on every letter for
+  the people who turned it off.
+
+Not done here, and a project of its own: multi-touch rollover and committing a
+key on touch-down. Each key is still its own SwiftUI control, so a second
+finger landing before the first lifts is handled key by key, and a character
+types on release. Both need one pane-level touch surface in place of the
+per-key buttons.
 
 ### The backdrop: the system's, unless it would disagree
 
@@ -1265,14 +1431,42 @@ being told there are eleven columns instead of ten.
 The behaviours that make it feel like a keyboard rather than a grid of buttons:
 
 - **Shift** is three-state. Tap arms it for one letter; a second tap within
-  0.3 s locks it (`capslock.fill`); a slow tap turns it off. An armed shift
-  borrows the light letter-key cap, the way iOS signals it.
-- **Delete repeats while held** — ~0.4 s before it starts, then ~0.1 s a tick,
-  matching the system key. It can't be a `Button` (a button only reports on
+  0.3 s locks it (`capslock.fill`); a tap on an armed or locked shift turns it
+  off. An armed shift borrows the light letter-key cap, the way iOS signals it.
+  It acts on **touch-down**, as the system's does, not on release.
+- **Shift arms itself** where the host field asks for it
+  (`textDocumentProxy.autocapitalizationType`): at the start of the field,
+  after `.` `?` `!` and a space (closing quotes and brackets allowed between
+  them; `e.g. ` counts too, as on the system keyboard), after a line break and
+  after the double-space full stop, for `.sentences` — what a field that says
+  nothing gets; after any space for `.words`; after every letter for
+  `.allCharacters`, which types like caps lock but can still be tapped off for
+  one letter; never for `.none` (URLs, e-mail addresses). The controller
+  re-decides after every edit and every caret move, and that one rule is also
+  what spends a one-shot shift on the letter it capitalised; a locked shift is
+  never touched. The rule is `AutoCapitalization` and the key's state machine
+  `ShiftLatch`, both in ParleyKit and tested there. Shift lives with the
+  controller rather than the pane for that reason, in a `ShiftModel` only the
+  letter pane observes.
+- **Delete repeats while held, and speeds up** (`DeleteRepeat`, ParleyKit): the
+  first repeat after 0.5 s, then one every 0.1 s, every 0.05 s after about a
+  second, and after twenty characters — 2 s into the hold — a word per repeat,
+  every 0.1 s. A word is back to the previous space or punctuation, taking the
+  trailing spaces and punctuation with it; a line break is a unit of its own;
+  Han and kana, which have no spaces to find a word by, go two characters at a
+  time. A pending 注音 reading is always unwound symbol by symbol first, never a
+  word at a time. The repeats skip the per-keystroke refreshes — the suggestion
+  bar, shift, the 注音 candidate lookup — and all of it is redone once when the
+  key is let go. The timer runs in the run loop's common modes so nothing
+  tracking stalls it. It can't be a `Button` (a button only reports on
   touch-up), so it is a zero-distance drag gesture driving a `KeyRepeater`.
+  Measured on the simulator against a long English field: a 1 s hold deleted 7
+  characters, a 1.6 s hold 15, and a 3 s hold 77, ending on a word boundary
+  (1.25: 8, 14 and 28).
 - **Double-tapping space** types `". "` instead of a second space, but only when
   the character before it is a letter or a digit — after punctuation or at the
-  start of a line, two taps are two spaces, which is what iOS does.
+  start of a line, two taps are two spaces, which is what iOS does. The next
+  letter is a capital, as after any sentence end.
 - **Return always inserts `"\n"`.** The host's `returnKeyType` changes what the
   key *says* (Go / Send / Search / Done / Next) and whether it is tinted, and
   nothing else: a keyboard extension has no public way to fire the host's return
@@ -1721,6 +1915,10 @@ composer's limit rather than a position anybody argued for.
 - **Delete unwinds the buffer before it reaches the document**: the last
   syllable's tone, then its slots, then the empty syllable itself, and on into
   the syllable before it. Only with nothing pending does it reach the field.
+  Held, it keeps doing that one symbol at a time however long it has been held
+  — the word-at-a-time repeat (see *English pane*) only starts once the reading
+  is gone — and the candidate bar waits for the key to be let go rather than
+  being looked up again twenty times a second.
 - **Punctuation commits first.** A mark typed from the symbol planes or the
   function row flushes the pending syllables and then lands, rather than
   arriving in front of the word that was being typed.

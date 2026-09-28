@@ -3,8 +3,8 @@ import Foundation
 /// How long Parley may hold the microphone open after a dictation, so the next
 /// tap on the keyboard's mic never has to leave the app being typed into.
 ///
-/// This is **not** a limit on one dictation (that is the coordinator's 120 s
-/// `maxSeconds`) and it is not the relay's reconnect ladder. It is the window
+/// This is **not** a limit on one dictation (that is the coordinator's
+/// ten-minute `maxSeconds`, `MicActivityPolicy.dictationLimit`) and it is not the relay's reconnect ladder. It is the window
 /// during which the *process* stays resident with a live audio session, which
 /// is the only thing that makes a keyboard tap a no-op instead of an app
 /// switch. See `docs/design/ios-voice-keyboard.md`.

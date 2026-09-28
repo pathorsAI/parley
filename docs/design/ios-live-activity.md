@@ -99,8 +99,9 @@ So the range each mode is given is a layout decision as much as a temporal one,
 and each one is now the tightest end the card can actually stand behind:
 
 - `.standby` counts down to the window's real expiry,
-- `.dictation` counts up to `MicActivityPolicy.dictationLimit`, the 120 s cap
-  `DictationCoordinator` already enforces, so the clock is laid out as `M:SS`.
+- `.dictation` counts up to `MicActivityPolicy.dictationLimit`, the ten-minute
+  cap `DictationCoordinator` already enforces (120 s until it was aligned with
+  the desktop), so the clock is laid out as `MM:SS`.
   The constant moved into ParleyKit for this: the widget extension cannot import
   the app target, and a copied literal would go stale silently, the only symptom
   being a clock slightly too wide.
@@ -182,8 +183,8 @@ screen in a stale state for up to 4 more. `MicActivityPolicy.outlivesSystemLimit
 is where that is detected, and `MicActivityController.refreshNow` lets go of the
 handle rather than pushing into an activity that is no longer there.
 
-Nothing the card now describes can reach it — a dictation stops itself at 120 s
-and the longest microphone window is an hour — so this is a guard rather than a
+Nothing the card now describes can reach it — a dictation stops itself at ten
+minutes and the longest microphone window is an hour — so this is a guard rather than a
 case. It stays because the refresh loop is what would do the pretending, and it
 costs one comparison a minute. It mattered concretely while meetings were on the
 card: a nine-hour recording would have watched its own card be taken away with

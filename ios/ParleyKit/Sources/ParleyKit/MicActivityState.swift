@@ -150,20 +150,32 @@ public enum MicActivityPolicy {
     public static let systemLimit: TimeInterval = 8 * 3600
 
     /// How long one dictation session may run before `DictationCoordinator`
-    /// stops the microphone itself — the safety cap that keeps a session
-    /// somebody forgot about from burning the hosted quota.
+    /// stops it itself — the safety cap that keeps a session somebody forgot
+    /// about from burning the hosted quota.
+    ///
+    /// **Ten minutes, the desktop's number** (`HOSTED_VOICE_TYPING_MAX_SECONDS`
+    /// in `src/lib/limits.ts`). It was 120 s under a comment claiming to mirror
+    /// the desktop, and two minutes is well inside an ordinary long message: the
+    /// owner's "it stops by itself after a while, and everything I said after
+    /// that is gone" was this cap firing silently mid-sentence. The relay's own
+    /// limit is hours, so nothing server-side needed the short one. The cap is
+    /// no longer silent either: the app publishes when it will fire
+    /// (`DictationChannel.Downlink.deadline`), the keyboard counts down the
+    /// last `DictationCountdown.warningLead` seconds, and reaching it delivers
+    /// the words exactly as ⏹ would, with a note saying why
+    /// (`DictationEnding.limitReached`).
     ///
     /// **It lives here, rather than in the coordinator that enforces it,
     /// because the widget has to know it too.** A `Text(timerInterval:)`
     /// reserves the width of the *widest* value its range can reach, up front,
     /// so the range handed to a dictation clock is what decides whether the
-    /// card lays out for `2:00` or for `8:00:00`. The widget extension cannot
-    /// import the app target, and a second literal `120` in
+    /// card lays out for `10:00` or for `8:00:00`. The widget extension cannot
+    /// import the app target, and a second literal `600` in
     /// `MicActivityWidget.swift` would go stale the first time this number is
     /// tuned — silently, since the only symptom is a clock a little too wide.
     /// So the coordinator reads it from here and the card's range is derived
     /// from the same constant.
-    public static let dictationLimit: TimeInterval = 120
+    public static let dictationLimit: TimeInterval = 600
 
     /// The stale horizon for a content update published at `now`. `nil` when
     /// `staleAfter` is — meaning "make no claim", not "stale immediately".

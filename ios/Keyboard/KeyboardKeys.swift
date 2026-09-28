@@ -1,3 +1,4 @@
+import ParleyKit
 import SwiftUI
 import UIKit
 
@@ -43,6 +44,114 @@ struct KeyRowMetrics {
 
     /// The half-key iOS insets the QWERTY home row by.
     var halfKey: CGFloat { (unit + KBMetrics.keyGap) / 2 }
+}
+
+/// How far each key in one row reaches past its cap to catch a touch.
+///
+/// **Every point of a typing pane belongs to a key.** The caps are drawn with
+/// gaps between them, but on the system keyboard a finger that lands in a gap,
+/// in the half-key strip beside `a`, or in the margin above the top row still
+/// types the nearest key. Parley's keys used to hit-test only their drawn cap,
+/// so all of that — about a third of the pane on a 390pt phone — fell through
+/// to the track, where only the swipe listens, and the tap was lost. A fast
+/// typist lands in a gap many times a sentence; that was most of "it doesn't
+/// feel like the real keyboard".
+///
+/// So each key's touch target is its cap plus its share of the space around
+/// it: half the gap to each neighbour, half the row spacing above and below,
+/// and — for the keys at the ends of a row, the top row and the bottom row —
+/// everything out to the pane's edge. Together the targets tile the pane.
+///
+/// The reach is a hit shape (`KeyTarget`), not layout: the rows keep their
+/// spacing and padding and the caps are laid out exactly as before. Growing
+/// the keys' frames instead and laying the rows out edge to edge moved the
+/// 注音 caps by a pixel — its 34.6pt rows round to the pixel grid differently
+/// once they are nested one level deeper — and a keyboard whose keys shift
+/// when nothing about them changed is exactly the wrong way round. The callout
+/// and the press shading follow the cap, as they always did.
+struct RowReach {
+    /// Above and below every key in the row.
+    var top: CGFloat
+    var bottom: CGFloat
+    /// Beyond the first key's cap, out to the pane's leading edge.
+    var leadingEdge: CGFloat
+    /// Beyond the last key's cap, out to the pane's trailing edge.
+    var trailingEdge: CGFloat
+
+    /// Row `index` of `count` rows `spacing` apart, in a pane whose top and
+    /// bottom margins are `KBMetrics.paneTop` and `KBMetrics.paneBottom`, with
+    /// the row's first and last caps `leading` and `trailing` in from the
+    /// pane's sides (the screen-edge margin, plus any inset or stagger).
+    init(
+        row index: Int, of count: Int, spacing: CGFloat,
+        leading: CGFloat = KBMetrics.sideInset, trailing: CGFloat = KBMetrics.sideInset
+    ) {
+        top = index == 0 ? KBMetrics.paneTop : spacing / 2
+        bottom = index == count - 1 ? KBMetrics.paneBottom : spacing / 2
+        leadingEdge = leading + Self.edgeOverhang
+        trailingEdge = trailing + Self.edgeOverhang
+    }
+
+    /// How far past the pane's side edges the end keys reach, so a row drawn a
+    /// few points off its computed inset still leaves no dead strip at the
+    /// edge — the 注音 plane's fourth row does sit 3pt right of the others (see
+    /// `ZhuyinPane`). Every pane cuts its keys' targets at its own edge with a
+    /// `contentShape`, so this never reaches into the pane beside it on the
+    /// track; without that cut, a tap beside `p` typed the 注音 pane's `ㄅ`.
+    /// Not applied above the top row or below the bottom one: above is the
+    /// strip, whose own buttons must keep their touches.
+    static let edgeOverhang: CGFloat = KBMetrics.keyGap
+
+    /// The reach of one key, by where it sits in the row.
+    func key(first: Bool = false, last: Bool = false) -> EdgeInsets {
+        EdgeInsets(
+            top: top, leading: first ? leadingEdge : KBMetrics.keyGap / 2,
+            bottom: bottom, trailing: last ? trailingEdge : KBMetrics.keyGap / 2)
+    }
+
+    /// The reach of key `index` of `count` in the row.
+    func key(_ index: Int, of count: Int) -> EdgeInsets {
+        key(first: index == 0, last: index == count - 1)
+    }
+}
+
+/// A key's touch target: its frame grown by its reach on each side. Used as a
+/// `contentShape`, which SwiftUI hit-tests even where it extends past the
+/// view's own frame; nothing draws it.
+struct KeyTarget: Shape {
+    var reach: EdgeInsets
+
+    func path(in rect: CGRect) -> Path {
+        Path(
+            CGRect(
+                x: rect.minX - reach.leading, y: rect.minY - reach.top,
+                width: rect.width + reach.leading + reach.trailing,
+                height: rect.height + reach.top + reach.bottom))
+    }
+}
+
+extension EdgeInsets {
+    /// The same insets pointing the other way, for a view that has to overhang
+    /// its layout frame by them.
+    var negated: EdgeInsets {
+        EdgeInsets(top: -top, leading: -leading, bottom: -bottom, trailing: -trailing)
+    }
+}
+
+/// The system keyboard's click.
+///
+/// `playInputClick` plays only when the input view on screen adopts
+/// `UIInputViewAudioFeedback` — `KeyboardInputView` does — and only when the
+/// user has Keyboard Clicks switched on in Settings › Sounds & Haptics, which
+/// it checks by itself. So every key calls this on touch-down, like the system
+/// keys, and the user's setting decides.
+///
+/// No haptic goes with it. The system keyboard's key haptic is a separate
+/// setting (Keyboard Feedback › Haptic) that a third-party keyboard cannot
+/// read, and playing one regardless would buzz on every letter for the people
+/// who turned it off.
+enum KeyClick {
+    static func play() { UIDevice.current.playInputClick() }
 }
 
 /// A key cap. 5pt corners and a 1pt hard shadow, which is what UIKit draws.
@@ -121,7 +230,12 @@ struct PressableButton<Content: View>: View {
 
         func makeBody(configuration: Configuration) -> some View {
             content(configuration.isPressed)
-                .animation(.easeOut(duration: 0.08), value: configuration.isPressed)
+                // Pressed on the frame the finger lands, like a system key;
+                // only the release eases out. Fading the press in over 80 ms
+                // made every key feel a beat behind the finger.
+                .animation(
+                    configuration.isPressed ? nil : .easeOut(duration: 0.1),
+                    value: configuration.isPressed)
                 .onChange(of: configuration.isPressed) { _, isPressed in
                     if isPressed { onPressDown?() }
                 }
@@ -129,33 +243,52 @@ struct PressableButton<Content: View>: View {
     }
 }
 
-/// Owns the timers behind a hold-to-repeat key. A small class rather than
+/// Owns the timer behind a hold-to-repeat key. A small class rather than
 /// `@State` timers because the repeat has to keep firing from outside the view
 /// update cycle, and because `stop()` must be able to run from `deinit` when
 /// the pane is swapped out mid-press.
+///
+/// The pace is `DeleteRepeat`'s (ParleyKit): half a second before the first
+/// repeat, a tenth of a second between repeats, twice that pace after about a
+/// second, and a word at a time after twenty characters. Each repeat is told
+/// its number so the key can ask what it should delete.
+///
+/// One-shot timers, each scheduling the next, because the interval changes as
+/// the hold goes on. They are added to the main run loop in `.common` modes
+/// rather than the default mode `scheduledTimer` uses, so a repeat does not
+/// stall while the run loop is tracking — the drag gesture behind the key is
+/// itself a tracking interaction.
 final class KeyRepeater: ObservableObject {
-    /// The system's own delete key waits about four tenths of a second before
-    /// it starts running, then deletes roughly ten times a second.
-    private static let initialDelay: TimeInterval = 0.4
-    private static let interval: TimeInterval = 0.1
-
     private var timer: Timer?
+    /// Repeats fired in the current hold; 0 while none have.
+    private(set) var repeats = 0
 
-    func start(_ tick: @escaping () -> Void) {
+    func start(_ tick: @escaping (Int) -> Void) {
         stop()
-        timer = Timer.scheduledTimer(withTimeInterval: Self.initialDelay, repeats: false) {
-            [weak self] _ in
-            guard let self else { return }
-            tick()
-            self.timer = Timer.scheduledTimer(withTimeInterval: Self.interval, repeats: true) {
-                _ in tick()
-            }
-        }
+        schedule(tick)
     }
 
-    func stop() {
+    private func schedule(_ tick: @escaping (Int) -> Void) {
+        let next = repeats + 1
+        let timer = Timer(timeInterval: DeleteRepeat.delay(beforeRepeat: next), repeats: false) {
+            [weak self] _ in
+            guard let self else { return }
+            self.repeats = next
+            tick(next)
+            self.schedule(tick)
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    /// Ends the hold. Says whether it repeated at all, so the key can tell a
+    /// tap from a hold on release.
+    @discardableResult
+    func stop() -> Bool {
         timer?.invalidate()
         timer = nil
+        defer { repeats = 0 }
+        return repeats > 0
     }
 
     deinit { timer?.invalidate() }
@@ -172,8 +305,17 @@ final class KeyRepeater: ObservableObject {
 /// the touch over mid-swipe. A cancelled drag never reaches `onEnded`, so the
 /// repeater is started and stopped from the state itself, and a swipe that
 /// began on ⌫ cannot leave it deleting.
+///
+/// `action` is the press. `repeatAction`, when given, is each repeat, told its
+/// number (see `DeleteRepeat`); without it a repeat is the press again.
+/// `onRelease` runs when a hold that repeated ends — not after a plain tap —
+/// which is where the work skipped on every repeat is done once. `reach` grows
+/// the touch target past the content, as on every other key (`RowReach`).
 struct RepeatingKey<Content: View>: View {
     let action: () -> Void
+    var repeatAction: ((Int) -> Void)?
+    var onRelease: (() -> Void)?
+    var reach = EdgeInsets()
     @ViewBuilder var content: (Bool) -> Content
 
     @GestureState private var pressed = false
@@ -181,8 +323,9 @@ struct RepeatingKey<Content: View>: View {
 
     var body: some View {
         content(pressed)
-            .contentShape(Rectangle())
-            .animation(.easeOut(duration: 0.08), value: pressed)
+            .contentShape(KeyTarget(reach: reach))
+            // Pressed on the frame the finger lands; see `PressableButton`.
+            .animation(pressed ? nil : .easeOut(duration: 0.1), value: pressed)
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .updating($pressed) { _, state, _ in state = true }
@@ -190,12 +333,18 @@ struct RepeatingKey<Content: View>: View {
             .onChange(of: pressed) { _, down in
                 if down {
                     action()
-                    repeater.start(action)
+                    repeater.start { n in
+                        if let repeatAction { repeatAction(n) } else { action() }
+                    }
                 } else {
-                    repeater.stop()
+                    release()
                 }
             }
-            .onDisappear { repeater.stop() }
+            .onDisappear { release() }
+    }
+
+    private func release() {
+        if repeater.stop() { onRelease?() }
     }
 }
 
@@ -205,6 +354,13 @@ struct RepeatingKey<Content: View>: View {
 /// which is how space ends up at roughly its system width without anyone naming
 /// a number for it. `height` is a parameter because the 注音 plane fits five
 /// rows into the four rows' worth of space QWERTY uses.
+///
+/// `reach` is how far the key's touch target extends past its cap on each
+/// side — see `RowReach`. It changes what the key catches, not where it sits.
+///
+/// Every key clicks on touch-down (`KeyClick`). `onPressDown` is for a key
+/// whose action itself belongs on touch-down — shift, as on the system
+/// keyboard.
 ///
 /// The label is built once, when the key is, rather than kept as a closure, so
 /// that a key whose label is a `Text` — nearly all of them — can be compared.
@@ -216,28 +372,40 @@ struct KeyButton<Label: View>: View {
     var tint: KeyTint = .letter
     var width: CGFloat?
     var height: CGFloat = KBMetrics.keyHeight
+    var reach: EdgeInsets
     var ink: Color?
     var callout: String?
     let action: () -> Void
+    var onPressDown: (() -> Void)?
     let label: Label
 
     init(
         dark: Bool, tint: KeyTint = .letter, width: CGFloat? = nil,
-        height: CGFloat = KBMetrics.keyHeight, ink: Color? = nil, callout: String? = nil,
-        action: @escaping () -> Void, @ViewBuilder label: () -> Label
+        height: CGFloat = KBMetrics.keyHeight, reach: EdgeInsets = EdgeInsets(),
+        ink: Color? = nil, callout: String? = nil,
+        action: @escaping () -> Void, onPressDown: (() -> Void)? = nil,
+        @ViewBuilder label: () -> Label
     ) {
         self.dark = dark
         self.tint = tint
         self.width = width
         self.height = height
+        self.reach = reach
         self.ink = ink
         self.callout = callout
         self.action = action
+        self.onPressDown = onPressDown
         self.label = label()
     }
 
     var body: some View {
-        PressableButton(action: action) { pressed in
+        PressableButton(
+            action: action,
+            onPressDown: {
+                KeyClick.play()
+                onPressDown?()
+            }
+        ) { pressed in
             ZStack {
                 KeyCap(dark: dark, tint: tint, pressed: pressed)
                 label.foregroundStyle(ink ?? KBTheme.ink(dark))
@@ -248,6 +416,8 @@ struct KeyButton<Label: View>: View {
                 guard pressed, let callout else { return [] }
                 return [PressedKey(label: callout, bounds: bounds)]
             }
+            // The whole target takes the touch, not just the painted cap.
+            .contentShape(KeyTarget(reach: reach))
         }
     }
 }
@@ -259,12 +429,20 @@ struct KeyButton<Label: View>: View {
 extension KeyButton: Equatable where Label: Equatable {
     static func == (a: Self, b: Self) -> Bool {
         a.dark == b.dark && a.tint == b.tint && a.width == b.width && a.height == b.height
-            && a.ink == b.ink && a.callout == b.callout && a.label == b.label
+            && a.reach == b.reach && a.ink == b.ink && a.callout == b.callout
+            && a.label == b.label
     }
 }
 
 /// Delete, with the system key's hold-to-repeat. Its own type rather than a
 /// `KeyButton` because a `Button` only reports on touch-up — see `RepeatingKey`.
+///
+/// `action` is one delete, with everything a delete refreshes. A key that
+/// passes `repeatAction` gets the system key's whole run instead: each repeat
+/// is handed the `DeleteRepeat.Unit` its number calls for and is expected to
+/// skip the per-keystroke refresh, and `onRelease` does that refresh once when
+/// the hold ends. Without it every repeat is `action` again, at the same pace.
+/// It clicks on the press and on every repeat, as the system key does.
 ///
 /// `Equatable` on its looks, like `KeyButton`; every delete key's action is
 /// the same backspace.
@@ -272,14 +450,32 @@ struct DeleteKey: View, Equatable {
     let dark: Bool
     var width: CGFloat?
     var height: CGFloat = KBMetrics.keyHeight
+    var reach = EdgeInsets()
     let action: () -> Void
+    var repeatAction: ((DeleteRepeat.Unit) -> Void)?
+    var onRelease: (() -> Void)?
 
     static func == (a: Self, b: Self) -> Bool {
-        a.dark == b.dark && a.width == b.width && a.height == b.height
+        a.dark == b.dark && a.width == b.width && a.height == b.height && a.reach == b.reach
     }
 
     var body: some View {
-        RepeatingKey(action: action) { pressed in
+        RepeatingKey(
+            action: {
+                KeyClick.play()
+                action()
+            },
+            repeatAction: { n in
+                KeyClick.play()
+                if let repeatAction {
+                    repeatAction(DeleteRepeat.unit(forRepeat: n))
+                } else {
+                    action()
+                }
+            },
+            onRelease: onRelease,
+            reach: reach
+        ) { pressed in
             ZStack {
                 KeyCap(dark: dark, tint: .alt, pressed: pressed)
                 Image(systemName: "delete.left")
@@ -310,11 +506,19 @@ struct DeleteKey: View, Equatable {
 /// it. Wiring the whole touch sequence to that one selector is UIKit's own
 /// globe behaviour: a tap advances to the next keyboard, a hold presents the
 /// system keyboard picker.
+///
+/// On a typing pane it takes a `reach` like every other key (see `RowReach`).
+/// A `contentShape` means nothing to a `UIButton`, so the transparent button
+/// itself is made that much bigger and overhangs the cap by it — negative
+/// padding, so the key's own frame, and every cap around it, stay where they
+/// were — and the gap beside the globe switches keyboards rather than dropping
+/// the touch. The voice pane passes none.
 struct GlobeKey: View {
     weak var controller: UIInputViewController?
     let dark: Bool
     /// The voice pane draws its controls as discs, the letter pane as caps.
     var round = false
+    var reach = EdgeInsets()
 
     @State private var pressed = false
 
@@ -330,8 +534,10 @@ struct GlobeKey: View {
                 .foregroundStyle(round ? KBTheme.inkSoft(dark) : KBTheme.ink(dark))
                 .accessibilityHidden(true)
             InputModeSwitchButton(controller: controller, pressed: $pressed)
+                .padding(reach.negated)
         }
-        .animation(.easeOut(duration: 0.08), value: pressed)
+        // Pressed on the frame the finger lands; see `PressableButton`.
+        .animation(pressed ? nil : .easeOut(duration: 0.1), value: pressed)
     }
 }
 
@@ -382,7 +588,10 @@ private struct InputModeSwitchButton: UIViewRepresentable {
 
     final class Coordinator: NSObject {
         var report: (Bool) -> Void = { _ in }
-        @objc func down() { report(true) }
+        @objc func down() {
+            KeyClick.play()
+            report(true)
+        }
         @objc func up() { report(false) }
     }
 }
