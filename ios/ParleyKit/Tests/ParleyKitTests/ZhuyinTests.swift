@@ -931,6 +931,116 @@ final class ZhuyinTableLoadingTests: XCTestCase {
         XCTAssertEqual(dictionary.parseCount, 2)
     }
 
+    // MARK: the streaming parse
+
+    /// The parse as it was before it streamed: the whole file as a string,
+    /// split into lines, every kept row into one array, then bucketed. Kept
+    /// here as the reference the streaming parse must agree with.
+    private static func wholeFileParse(_ url: URL) throws -> [String: [ZhuyinPhrases.Entry]] {
+        let text = try String(contentsOf: url, encoding: .utf8)
+        var entries: [ZhuyinPhrases.Entry] = []
+        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            guard !line.hasPrefix("#"), let tab = line.firstIndex(of: "\t") else { continue }
+            let phrase = String(line[line.startIndex..<tab])
+            guard !phrase.isEmpty,
+                let entry = ZhuyinPhrases.Entry(
+                    phrase: phrase, reading: line[line.index(after: tab)...],
+                    rank: UInt32(entries.count))
+            else { continue }
+            entries.append(entry)
+        }
+        return ZhuyinPhrases.indexed(entries)
+    }
+
+    /// Every bucket as comparable text, in order.
+    private static func flattened(_ index: [String: [ZhuyinPhrases.Entry]]) -> [String: [String]] {
+        index.mapValues { $0.map { "\($0.phrase) \(String($0.reading, radix: 16)) \($0.rank)" } }
+    }
+
+    func testTheStreamingParseBuildsTheBucketsTheWholeFileParseDid() throws {
+        // Comments, blank lines, a row with no tab, rows the table refuses (one
+        // syllable, five, a character count that disagrees) and two rows in one
+        // bucket, so ranks among kept rows and order within a bucket both show.
+        let fixture = """
+            # a comment
+            你好\tㄋㄧˇ ㄏㄠˇ
+
+            no tab here
+            你\tㄋㄧˇ
+            逆號\tㄋㄧˋ ㄏㄠˋ
+            #你好嗎\tㄋㄧˇ ㄏㄠˇ ㄇㄚ˙
+            你好嗎\tㄋㄧˇ ㄏㄠˇ ㄇㄚ˙
+            一二三四五\tㄧ ㄦˋ ㄙㄢ ㄙˋ ㄨˇ
+            很有意\tㄏㄣˇ ㄧㄡˇ ㄧˋ
+            很\tㄏㄣˇ ㄧㄡˇ
+            年會\tㄋㄧㄢˊ ㄏㄨㄟˋ
+            """
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zhuyin-phrases-\(UUID().uuidString).txt")
+        try fixture.write(to: url, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let streamed = ZhuyinPhrases.parse(url)
+        XCTAssertEqual(Self.flattened(streamed), Self.flattened(try Self.wholeFileParse(url)))
+        XCTAssertEqual(streamed["ㄋㄏ"]?.map(\.phrase), ["你好", "逆號", "你好嗎", "年會"])
+        XCTAssertEqual(streamed["ㄋㄏ"]?.map(\.rank), [0, 1, 2, 4])
+
+        let bundled = try XCTUnwrap(ZhuyinPhrases.bundledURL)
+        XCTAssertEqual(
+            Self.flattened(ZhuyinPhrases.parse(bundled)),
+            Self.flattened(try Self.wholeFileParse(bundled)))
+    }
+
+    func testParsingThePhraseTable() throws {
+        // What a warm costs, off the main thread. On an M4 Mac mini: ~50 ms in
+        // a release build against ~75 ms for the whole-file parse it replaced,
+        // and ~170 ms in the debug build `swift test` makes.
+        let url = try XCTUnwrap(ZhuyinPhrases.bundledURL)
+        measure { XCTAssertFalse(ZhuyinPhrases.parse(url).isEmpty) }
+    }
+
+    // MARK: parsesOnLookup
+
+    func testWithParsingOnLookupOffAColdLookupWarmsInsteadOfParsing() {
+        let table = ZhuyinPhrases(url: ZhuyinPhrases.bundledURL)
+        table.parsesOnLookup = false
+        let landed = expectation(description: "a warm the lookup started lands")
+        XCTAssertEqual(table.matches(ZhuyinPhrasesTests.buffer("ㄋㄏ")), [])
+        XCTAssertEqual(table.parseCount, 1, "the lookup started a warm")
+        XCTAssertFalse(table.isWarm, "and did not parse in place")
+        // A second lookup joins that warm rather than starting another.
+        XCTAssertEqual(table.matches(ZhuyinPhrasesTests.buffer("ㄋㄏ")), [])
+        table.warm { landed.fulfill() }
+        waitForMain(landed)
+        XCTAssertEqual(table.matches(ZhuyinPhrasesTests.buffer("ㄋㄏ")).first?.phrase, "你好")
+        XCTAssertEqual(table.parseCount, 1)
+
+        // The same after `unload`, which is how the keyboard gets back here.
+        table.unload()
+        XCTAssertEqual(table.matches(ZhuyinPhrasesTests.buffer("ㄋㄏ")), [])
+        XCTAssertEqual(table.parseCount, 2)
+    }
+
+    func testWithParsingOnLookupOffTheDictionaryWarmsToo() {
+        let dictionary = ZhuyinDictionary(url: ZhuyinDictionary.bundledURL)
+        dictionary.parsesOnLookup = false
+        XCTAssertEqual(dictionary.candidates(for: "ㄋㄧˇ"), [])
+        XCTAssertEqual(dictionary.parseCount, 1)
+        XCTAssertFalse(dictionary.isWarm)
+        let landed = expectation(description: "the warm lands")
+        dictionary.warm { landed.fulfill() }
+        waitForMain(landed)
+        XCTAssertEqual(dictionary.candidates(for: "ㄋㄧˇ").first, "你")
+        XCTAssertEqual(dictionary.parseCount, 1)
+    }
+
+    func testWithParsingOnLookupOffAMissingResourceStillAnswersNothingAtOnce() {
+        let table = ZhuyinPhrases(url: nil)
+        table.parsesOnLookup = false
+        XCTAssertEqual(table.matches(ZhuyinPhrasesTests.buffer("ㄋㄏ")), [])
+        XCTAssertTrue(table.isWarm, "the empty index is cached, as before")
+    }
+
     func testRefreshPutsTheBarRightOnceThePhrasesLand() {
         // What the keyboard does in the warm's completion: the keys typed while
         // the table was in flight got a bar without phrases, and `refresh`
