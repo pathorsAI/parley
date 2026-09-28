@@ -3,6 +3,7 @@ package com.pathors.parley.feedback
 import android.app.Activity
 import android.content.Context
 import com.pathors.parley.cloud.CloudClient
+import com.pathors.parley.util.deleteQuietly
 import java.io.File
 import java.util.Locale
 import java.util.UUID
@@ -358,10 +359,15 @@ class FeedbackCenter(
         }
     }
 
-    /** These crashes are dealt with — sent or declined — and must not come back. */
+    /**
+     * These crashes are dealt with — sent or declined — and must not come back.
+     * A handler file the system refuses to delete would be offered again next
+     * launch; that is not worth failing over, but it is worth a warning, which
+     * [deleteQuietly] logs.
+     */
     private suspend fun settle(selection: CrashSelection.Selection) {
         selection.watermarkMs?.let { settings.setExitWatermarkMs(it) }
-        withContext(Dispatchers.IO) { selection.handledFiles.forEach { it.delete() } }
+        withContext(Dispatchers.IO) { selection.handledFiles.forEach { it.deleteQuietly() } }
     }
 
     companion object {

@@ -123,11 +123,16 @@ class FeedbackQueue(
     fun enqueue(payload: FeedbackPayload, screenshot: File? = null, nowMs: Long = System.currentTimeMillis()) {
         directory.mkdirs()
         val image = screenshotFile(payload.id)
-        if (screenshot != null && screenshot.isFile && screenshot.absolutePath != image.absolutePath) {
-            if (!screenshot.renameTo(image)) {
-                screenshot.copyTo(image, overwrite = true)
-                screenshot.deleteQuietly()
-            }
+        // A rename is the cheap move; copy-then-delete covers a source on another
+        // filesystem, where rename refuses. `renameTo` runs only when there is a
+        // distinct screenshot to move, so short-circuiting keeps the order.
+        if (screenshot != null &&
+            screenshot.isFile &&
+            screenshot.absolutePath != image.absolutePath &&
+            !screenshot.renameTo(image)
+        ) {
+            screenshot.copyTo(image, overwrite = true)
+            screenshot.deleteQuietly()
         }
         val report = QueuedReport(id = payload.id, queuedAtMs = nowMs, payload = payload.toJson())
         val target = manifestFile(payload.id)
