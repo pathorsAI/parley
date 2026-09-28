@@ -36,7 +36,7 @@
     <string name="sign_in_in_progress">Signing in…</string>
     <string name="sign_in_waiting">Waiting for the browser to hand the session back…</string>
     <string name="sign_in_no_browser">No browser is available to sign in with.</string>
-    <string name="sign_in_failed">Sign-in did not complete (%1$s).</string>
+    <string name="sign_in_didnt_finish">Sign-in didn\'t finish. Please try again.</string>
 
     <!-- Home -->
     <string name="home_title">Recordings</string>
@@ -275,7 +275,7 @@
     <!-- About -->
     <string name="account_about_title">About</string>
     <string name="account_version">Version %1$s (%2$d)</string>
-    <string name="account_about_detail">Live coaching and deep analysis live in the desktop app; the phone handles recording, transcribing, and reading back in-person meetings.</string>
+    <string name="account_about_detail">Live coaching and deep analysis live in the desktop app; the phone handles recording, transcribing, and reading back in-person meetings. On the Mac, Claude Code can also read your whole recording library over MCP.</string>
     <string name="link_desktop">Parley for desktop</string>
     <string name="link_privacy_policy">Privacy Policy</string>
     <string name="link_support">Support &amp; feedback</string>
@@ -378,4 +378,11 @@
     <string name="filing_move_to_folder">Move to folder</string>
     <string name="filing_new_tag">New</string>
     <string name="filing_other_folder">Choose another folder…</string>
+
+    <!-- What's New. The announcement copy itself is not here: it is the
+         repository's announcements/ folder, shared with iOS and the desktop.
+         whats_new_copy_language picks which of its two languages to show, so
+         the sheet speaks whatever language these resources resolved to. -->
+    <string name="whats_new_also">Also</string>
+    <string name="whats_new_copy_language">en</string>
 </resources>
