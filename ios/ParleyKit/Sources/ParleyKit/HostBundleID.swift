@@ -60,15 +60,39 @@ public enum HostBundleID {
     /// actually declares it. The check is the whole point: without it an
     /// unfamiliar host — anything whose parent is not the operator class —
     /// takes the process down instead of returning `nil`.
+    ///
+    /// Not `responds(to:)`, which `GuardedKVC` uses and which is always `false`
+    /// for an ivar with no getter — the reason this path never ran before. The
+    /// ivar check is the equivalent for this case, with one more condition KVC
+    /// itself imposes: it only falls back to an ivar when the class allows
+    /// direct ivar access, and raises the same uncatchable exception when it
+    /// does not. `NSObject` allows it by default; a class that opts out and
+    /// has no getter of that name is unknown here rather than a crash.
     private static func ivar(on object: NSObject, named name: String) -> String? {
-        guard class_getInstanceVariable(type(of: object), name) != nil else { return nil }
+        let cls = type(of: object)
+        guard class_getInstanceVariable(cls, name) != nil,
+            object.responds(to: NSSelectorFromString(name)) || cls.accessInstanceVariablesDirectly
+        else { return nil }
         return clean(object.value(forKey: name) as? String)
     }
 
+    /// Call a zero-argument getter that returns an object.
+    ///
+    /// `perform(_:)` treats whatever comes back as an object pointer, so a
+    /// method of that name returning a `BOOL` or an integer would be read as
+    /// one and crash on first touch. The method's own type encoding is checked
+    /// first — `@`, an object — and anything else is unknown.
     private static func getter(on object: NSObject, named name: String) -> String? {
         let sel = NSSelectorFromString(name)
-        guard object.responds(to: sel) else { return nil }
+        guard object.responds(to: sel), returnsObject(type(of: object), sel) else { return nil }
         return clean(object.perform(sel)?.takeUnretainedValue() as? String)
+    }
+
+    private static func returnsObject(_ type: AnyClass, _ sel: Selector) -> Bool {
+        guard let method = class_getInstanceMethod(type, sel) else { return false }
+        let encoding = method_copyReturnType(method)
+        defer { free(encoding) }
+        return encoding.pointee == CChar(UInt8(ascii: "@"))
     }
 
     private static func clean(_ value: String?) -> String? {

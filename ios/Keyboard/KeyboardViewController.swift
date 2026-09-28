@@ -739,7 +739,7 @@ final class KeyboardViewController: UIInputViewController {
             return
         }
         let target = session
-        let wait = deadline.timeIntervalSince(now) + 0.3
+        let wait = Self.livenessWait(until: deadline, from: now)
         liveness = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(wait))
             guard !Task.isCancelled, let self, self.session == target else { return }
@@ -748,6 +748,27 @@ final class KeyboardViewController: UIInputViewController {
             self.drainDownlink()
             self.checkLiveness()
         }
+    }
+
+    /// The longest the watchdog sleeps before it looks again.
+    ///
+    /// Every deadline above is seconds away in any state that can happen: the
+    /// stale periods, `startGrace` and `stopGrace` are all well under a
+    /// minute. But `presumedDeadAt` is built from timestamps in files the app
+    /// wrote, and a clock that jumped or a stamp from nowhere can put it
+    /// arbitrarily far out — and a non-finite or huge number of seconds traps
+    /// in the conversion to `Duration`. Waking early is harmless: the wake
+    /// re-reads everything and sleeps again, so a clamp can only add a check,
+    /// never skip one.
+    private static let longestLivenessWait: TimeInterval = 60
+
+    /// Seconds from `now` until just past `deadline` — the 0.3 s margin so the
+    /// wake lands after the deadline rather than on it — kept finite and
+    /// within `0...longestLivenessWait`.
+    private static func livenessWait(until deadline: Date, from now: Date) -> TimeInterval {
+        let wait = deadline.timeIntervalSince(now) + 0.3
+        guard wait.isFinite else { return longestLivenessWait }
+        return min(max(wait, 0), longestLivenessWait)
     }
 
     /// Nobody is serving the session on screen. End it here, the way ✕ would,
@@ -1173,8 +1194,10 @@ final class KeyboardViewController: UIInputViewController {
         }
 
         // A relaunched keyboard restores its position from the uplink it wrote.
+        // Never below zero: the file is only ours by convention, and a
+        // negative mark would slice the transcript from before its start.
         if insertedCount == 0, let up = DictationChannel.readUplink(), up.session == session {
-            insertedCount = up.insertedCount
+            insertedCount = max(0, up.insertedCount)
         }
 
         // One insertion, at the end. `.done` is the only state that has the
@@ -1184,9 +1207,16 @@ final class KeyboardViewController: UIInputViewController {
         // The high-water mark is still what makes this safe, because `.done`
         // republishes on every drain and the keyboard drains on every
         // appearance.
+        //
+        // The mark is clamped into the transcript before it slices anything. It
+        // comes from a file, and an index outside `0...count` is a trap, not an
+        // empty string — a keyboard that died delivering words is the one
+        // failure this path cannot afford. Past the end already means "all of
+        // it landed" and inserts nothing, as it always did.
         let committed = Array(d.committed)
-        if d.state == .done, committed.count > insertedCount {
-            typeOutsideComposition(String(committed[insertedCount...]))
+        let landed = min(max(insertedCount, 0), committed.count)
+        if d.state == .done, committed.count > landed {
+            typeOutsideComposition(String(committed[landed...]))
             insertedCount = committed.count
             var up = DictationChannel.readUplink() ?? .init(session: session)
             up.insertedCount = insertedCount
@@ -1503,8 +1533,13 @@ final class KeyboardViewController: UIInputViewController {
     /// Which field the proxy is on. Read through key-value coding because the
     /// property is declared non-optional in Swift but is nil while the
     /// keyboard is between fields, and reading it then traps.
+    ///
+    /// Guarded, because KVC trades that trap for a worse one: a proxy that did
+    /// not answer the key would raise an exception Swift cannot catch, on
+    /// every text and selection change. `nil` — an unknown field — is what
+    /// every caller already handles.
     private var fieldID: UUID? {
-        (textDocumentProxy as? NSObject)?.value(forKey: "documentIdentifier") as? UUID
+        GuardedKVC.value(forKey: "documentIdentifier", of: textDocumentProxy as AnyObject) as? UUID
     }
 
     /// The host changed its text or selection itself: a tap, a different
