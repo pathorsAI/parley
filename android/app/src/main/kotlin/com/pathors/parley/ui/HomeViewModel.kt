@@ -635,7 +635,10 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 loading = false,
                 user = user.getOrNull(),
                 quota = quota.getOrNull(),
-                failed = user.isFailure && quota.isFailure,
+                // Who is signed in is the part the sheet cannot do without: a
+                // quota that loaded under an identity that did not still
+                // offers Refresh.
+                failed = user.getOrNull() == null,
                 saveTargets = _account.value.saveTargets,
             )
             loadSaveTargets()
@@ -670,6 +673,12 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
 
     /** "Default save location" in the account sheet. */
     fun setSaveDestination(destination: SaveDestination) {
+        // Choosing a real home for every recording to come — a folder or an
+        // organization, not the personal root — is filing (iOS SettingsView).
+        // The store routes this to demo mode's checklist by itself.
+        if (destination != SaveDestination.PERSONAL_ROOT) {
+            container.gettingStarted.mark(GettingStartedStep.FILED)
+        }
         if (DemoMode.isActive) {
             demoDestination.value = destination
             return

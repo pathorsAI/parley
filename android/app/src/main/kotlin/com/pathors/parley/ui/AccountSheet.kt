@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.annotation.StringRes
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
@@ -49,6 +51,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -56,14 +59,17 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.pathors.parley.BuildConfig
 import com.pathors.parley.R
 import com.pathors.parley.auth.CustomTabsLauncher
 import com.pathors.parley.cloud.CloudOrg
+import com.pathors.parley.cloud.CloudUser
 import com.pathors.parley.cloud.HostedQuota
 import com.pathors.parley.library.SaveDestination
 import com.pathors.parley.playback.AudioStorageSection
@@ -143,7 +149,7 @@ fun AccountSheet(
                 style = MaterialTheme.typography.titleLarge,
             )
 
-            AccountIdentity(account)
+            AccountIdentity(account, orgs = library.orgs, onRefresh = viewModel::loadAccount)
 
             account.quota?.let { quota -> UsageSection(quota) }
 
@@ -243,10 +249,26 @@ private fun appearanceLabel(preference: ThemePreference): Int = when (preference
 }
 
 /**
- * Who is signed in and which plan they are on — or why neither is known yet.
+ * Who is signed in, which organizations they belong to and in what role, and
+ * which plan they are on — or why none of that is known yet.
+ *
+ * iOS Settings › Account: an initial on a tinted disc, the name over the email,
+ * then one row per organization with the role at the end. The organizations are
+ * the library's own `GET /orgs/mine` list (the scope switcher's), so the two
+ * can never disagree.
+ *
+ * When `GET /me` did not come back — offline, or the server is not answering —
+ * the session is kept (see `AuthManager.isSignedIn`), so this says so and offers
+ * Refresh rather than anything that implies the account is gone. Sign out stays
+ * at the foot of the sheet, as on iOS.
  */
 @Composable
-private fun AccountIdentity(account: HomeViewModel.AccountState) {
+private fun AccountIdentity(
+    account: HomeViewModel.AccountState,
+    orgs: List<CloudOrg>,
+    onRefresh: () -> Unit,
+) {
+    val user = account.user
     when {
         account.loading -> Text(
             text = stringResource(R.string.account_loading),
@@ -254,16 +276,51 @@ private fun AccountIdentity(account: HomeViewModel.AccountState) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        account.failed -> Text(
-            text = stringResource(R.string.account_load_failed),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.error,
-        )
+        account.failed -> Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = stringResource(R.string.account_load_failed),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onRefresh) {
+                Text(stringResource(R.string.action_refresh))
+            }
+        }
+
+        // Not asked yet: the frame before the sheet's first load starts.
+        user == null -> Unit
 
         else -> {
-            account.user?.let { user ->
-                Text(text = user.email, style = MaterialTheme.typography.bodyLarge)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                AccountAvatar(user)
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = user.displayName,
+                        style = ParleyTextStyles.bodyEmphasized,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = user.email,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
+            orgs.forEach { org -> OrgMembershipRow(org) }
             account.quota?.plan?.takeIf { it.isNotEmpty() }?.let { plan ->
                 Text(
                     text = stringResource(R.string.account_plan, plan),
@@ -272,6 +329,63 @@ private fun AccountIdentity(account: HomeViewModel.AccountState) {
                 )
             }
         }
+    }
+}
+
+/** The name when the account has one, the email otherwise — iOS `user.name ?? user.email`. */
+private val CloudUser.displayName: String
+    get() = name?.takeIf { it.isNotBlank() } ?: email
+
+/**
+ * The initial on a quiet fill — a list's way of standing an avatar in for a
+ * photo. Decorative: the name next to it says the same thing to TalkBack.
+ */
+@Composable
+private fun AccountAvatar(user: CloudUser) {
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = user.displayName.take(1).uppercase(),
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.clearAndSetSemantics { },
+        )
+    }
+}
+
+/** One organization and this account's role in it. */
+@Composable
+private fun OrgMembershipRow(org: CloudOrg) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = LibraryIcons.Group,
+            contentDescription = null,
+            modifier = Modifier.size(20.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = org.name,
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = stringResource(orgRoleLabel(org.role)),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

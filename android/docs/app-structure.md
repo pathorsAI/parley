@@ -19,6 +19,9 @@ com.pathors.parley
   onboarding/
     GettingStartedStore.kt the library checklist's state (DataStore `parley_onboarding`)
     SampleRecordingStore.kt the bundled sample's local-only library entry and audio
+    AnnouncementStore.kt which What's New announcements this phone has seen
+                         (DataStore `parley_announcements`)
+    WhatsNewPresenter.kt when the What's New sheet may come up
   ui/
     ParleyRoot.kt        sign-in wall, NavHost, the SAF picker
     SignInScreen.kt      Custom Tab hand-off
@@ -31,8 +34,10 @@ com.pathors.parley
     HandoffText.kt       the analysis prompt for "Share to AI" / "Copy with analysis
                          prompt", and the chooser callback that ticks the checklist
     LibraryIcons.kt      folder / new folder / tray / group glyphs (not in core icons)
-    AccountSheet.kt      identity, usage, default save location, sync, storage,
+    AccountSheet.kt      identity (initial, name, email, organizations and roles),
+                         usage, default save location, sync, storage,
                          appearance, language, about, sign out, delete account
+    WhatsNewSheet.kt     the What's New bottom sheet and its host on the library
     MeetingScreen.kt     permission gate, live transcript, level meter, mic/storage status, stop
     MeetingHaptics.kt    the four recording beats (start, stop, discard, mic lost)
     ImportScreen.kt      progress + phase label + cancel; the failure / partial endings
@@ -210,7 +215,8 @@ moved on to a guided lap, #450):
 
 - **Checklist.** Above the personal library, not while searching: record, put
   it in a folder, replay, share with your AI. Each item ticks only from the real
-  event — a recording saved in the upload queue, a successful filing, a user
+  event — a recording saved in the upload queue, a successful filing (or a
+  folder or an organization chosen as the default save location), a user
   seek in the player, a share target picked (`HandoffShareReceiver`) or "Copy
   with analysis prompt". Rows 2–4 open the newest recording with `OpenFor.FILE`
   (folder picker) or `OpenFor.SHARE` (share sheet). The rules are parleykit's
@@ -227,6 +233,35 @@ moved on to a guided lap, #450):
   analysis prompt)" and "Copy with analysis prompt": parleykit's `HandoffPrompt`,
   line for line the iOS text (`HandoffStringsParityTest` checks the copy against
   the iOS catalogue). The sample asks the three questions written for its script.
+
+## What's New after an update
+
+A port of iOS #478. The copy is the repository's `announcements/` folder,
+shared with iOS and the desktop and copied into the APK's assets at build time
+(`copyAnnouncementAssets` in `app/build.gradle.kts`); see
+`announcements/README.md` for the schema.
+
+- **Which.** parleykit's `AnnouncementGate`: `ships.android` set and at most
+  the running `versionName` (numeric by component), audience met (Android has
+  no keyboard, so a `keyboard` announcement never shows), newest only with the
+  older ones retired alongside it, and never one already seen.
+  `AnnouncementCatalogTest` checks the real folder against the schema.
+- **Who never sees one.** A fresh install: `AnnouncementStore` marks everything
+  seen on its first launch unless a session was already stored — the same
+  first-launch check `GettingStartedStore` makes. It reads only after that
+  first write has landed, one-shot, under the same lock as its writes (no
+  long-lived collector; see the DataStore race in `GettingStartedStore`).
+- **When.** `WhatsNewPresenter`, 600 ms after the signed-in library appears
+  or the app comes to the foreground, and not if that foreground was opened by
+  a `parley://` link (`MainActivity.handleDeepLink`), a meeting holds the
+  microphone, it has already been shown this foreground, or demo mode is on.
+  A sheet the app takes down (a link arrived, the library went away) is not
+  marked seen; one the user closes in any way is.
+- **What.** `ui/WhatsNewSheet.kt`: a Material 3 bottom sheet sized to its
+  content — badge, title, body, hairline, "Also" line, one button that follows
+  `cta.android` when the announcement has one. The copy's language follows the
+  resources the app resolved (`whats_new_copy_language`), so the sheet never
+  speaks a different language from the screen under it. No hero registry yet.
 
 ## Strings
 

@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.lifecycle.lifecycleScope
 import com.pathors.parley.auth.AuthCallback
+import com.pathors.parley.auth.SignInError
 import com.pathors.parley.screenshot.DemoMode
 import com.pathors.parley.ui.ParleyRoot
 import com.pathors.parley.ui.theme.ParleyTheme
@@ -26,7 +27,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        handleDeepLink(intent)
+        // A recreated activity (rotation, say) is handed its original intent
+        // again; that is not a new foreground arriving by a link.
+        handleDeepLink(intent, arriving = savedInstanceState == null)
         setContent {
             ParleyTheme {
                 ParleyRoot()
@@ -37,19 +40,22 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handleDeepLink(intent)
+        handleDeepLink(intent, arriving = true)
     }
 
-    private fun handleDeepLink(intent: Intent?) {
+    private fun handleDeepLink(intent: Intent?, arriving: Boolean) {
         val uri = intent?.data ?: return
+        val container = parleyContainer
+        // Whoever sent a link was in the middle of something; this foreground
+        // is not the moment for the What's New sheet (see WhatsNewPresenter).
+        if (arriving) container.whatsNew.noteOpenedByDeepLink()
         // Screenshot demo first: it claims only `parley://demo/…` in debug builds
         // and hands everything else straight on to the sign-in handler.
         if (DemoMode.handle(uri)) return
-        val container = parleyContainer
         lifecycleScope.launch {
             when (val result = container.auth.handleAuthCallback(uri)) {
-                is AuthCallback.Success -> container.onSignedIn()
-                is AuthCallback.Failure -> container.setAuthError(result.reason)
+                is AuthCallback.Success -> container.completeSignIn()
+                is AuthCallback.Failure -> container.setAuthError(SignInError.fromCallback(result.reason))
                 AuthCallback.Ignored -> Unit
             }
         }

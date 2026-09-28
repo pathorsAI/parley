@@ -35,7 +35,7 @@
     <string name="sign_in_in_progress">登入中…</string>
     <string name="sign_in_waiting">等待瀏覽器回傳登入狀態…</string>
     <string name="sign_in_no_browser">找不到可以用來登入的瀏覽器。</string>
-    <string name="sign_in_failed">登入沒有完成（%1$s）。</string>
+    <string name="sign_in_didnt_finish">登入沒有完成，請再試一次。</string>
 
     <!-- Home -->
     <string name="home_title">錄音</string>
@@ -266,7 +266,7 @@
     <!-- About -->
     <string name="account_about_title">關於</string>
     <string name="account_version">版本 %1$s（%2$d）</string>
-    <string name="account_about_detail">即時教練與深度分析以桌面版為主；手機負責面對面會議的錄音、轉錄與閱讀。</string>
+    <string name="account_about_detail">即時教練與深度分析以桌面版為主；手機負責面對面會議的錄音、轉錄與閱讀。在 Mac 上還能讓 Claude Code 透過 MCP 直接讀整個錄音資料庫。</string>
     <string name="link_desktop">Parley 桌面版</string>
     <string name="link_privacy_policy">隱私權政策</string>
     <string name="link_support">支援與問題回報</string>
@@ -367,4 +367,7 @@
     <string name="filing_move_to_folder">移到資料夾</string>
     <string name="filing_new_tag">新增</string>
     <string name="filing_other_folder">選其他資料夾…</string>
+
+    <string name="whats_new_also">也改了</string>
+    <string name="whats_new_copy_language">zh-Hant</string>
 </resources>
