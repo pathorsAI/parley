@@ -141,6 +141,10 @@ struct LibraryView: View {
                         RecordingDetailView(summary: summary, orgId: nil, isLapRecording: true)
                     }
                 }
+                // `-ParleyDemoRoute voicehistory` lands on the Voice typing list.
+                .onChange(of: demo.showVoiceTyping, initial: true) { _, show in
+                    if show { section = .voiceTyping }
+                }
             #endif
         }
     }

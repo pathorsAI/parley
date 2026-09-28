@@ -9,6 +9,21 @@ import SwiftUI
 /// land in another app; the one thing they want is those words back on the
 /// clipboard, and every extra tap is a tap between them and pasting. The sheet
 /// is for reading a long entry in full, sharing it, or deleting it.
+///
+/// **Each row says whether its text was AI-polished**, and when it was not, why
+/// (1.25). The polish falls back to the raw words silently — by design, since
+/// none of its failures is worth interrupting someone's typing for — and that
+/// made "sometimes it looks unpolished" unanswerable. The label is the answer,
+/// kept quiet: one caption line, accent for polished, secondary for the rest.
+///
+/// **The original of a polished entry is one tap away on the row**, as a
+/// "Show original" / "Show polished" toggle beside that label, rather than in a
+/// context menu. The row's design is "everything worth doing is visible and one
+/// tap": copy is a button on the row, not a menu item, and the reason is the
+/// same — the person comparing the two versions wants to *see* the difference,
+/// and a long-press menu offering "Copy original" copies it blind. So the
+/// toggle swaps the text in place, and every copy on the row (the button, the
+/// swipe, the detail sheet it opens) takes whichever version is showing.
 struct DictationHistoryList: View {
     /// The Library's search text, applied to the transcript.
     let search: String
@@ -19,6 +34,10 @@ struct DictationHistoryList: View {
     /// The row whose copy button just fired, for its brief "Copied".
     @State private var copiedID: UUID?
     @State private var revert: Task<Void, Never>?
+    /// Polished rows currently showing their original. Per screen visit, not
+    /// persisted: the polished text is what was inserted, so it is what a row
+    /// should say when the list is next opened.
+    @State private var showingOriginal: Set<UUID> = []
 
     var body: some View {
         List {
@@ -50,25 +69,44 @@ struct DictationHistoryList: View {
         // Entries age out while the app is not looking; arriving here prunes.
         .onAppear { history.reload() }
         .sheet(item: $opened) { entry in
-            DictationHistoryDetail(entry: entry) {
+            DictationHistoryDetail(entry: entry, text: shownText(entry)) {
                 history.delete(entry.id)
                 opened = nil
             }
         }
     }
 
+    /// The transcript matches whichever version holds the words: someone
+    /// searching for what they *said* should find a polished entry that
+    /// reworded it.
     private var items: [DictationHistoryEntry] {
         guard !search.isEmpty else { return history.entries }
-        return history.entries.filter { $0.text.localizedCaseInsensitiveContains(search) }
+        return history.entries.filter {
+            $0.text.localizedCaseInsensitiveContains(search)
+                || ($0.rawText?.localizedCaseInsensitiveContains(search) ?? false)
+        }
+    }
+
+    /// The row is showing the original of a polished entry.
+    private func isShowingOriginal(_ entry: DictationHistoryEntry) -> Bool {
+        entry.rawText != nil && showingOriginal.contains(entry.id)
+    }
+
+    /// What the row shows, and so what every copy on it takes.
+    private func shownText(_ entry: DictationHistoryEntry) -> String {
+        isShowingOriginal(entry) ? entry.rawText ?? entry.text : entry.text
     }
 
     private func row(_ entry: DictationHistoryEntry) -> some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 7) {
-                Text(verbatim: entry.text)
+                Text(verbatim: shownText(entry))
                     .font(.parley.subheadline)
                     .lineLimit(3)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                if let outcome = entry.polish {
+                    polishLine(entry, outcome: outcome)
+                }
                 DictationHistoryMeta(entry: entry)
                     .font(.parley.caption2.monospacedDigit())
                     .foregroundStyle(Color(.secondaryLabel))
@@ -80,6 +118,50 @@ struct DictationHistoryList: View {
 
             copyButton(entry)
         }
+    }
+
+    /// "Polished" in the accent, or "Original · <why>" in secondary — and, on
+    /// a polished entry that kept its original, the toggle between the two.
+    /// The label describes the text above it: while the original is showing
+    /// it reads "Original", so the words and the label never disagree. Entries
+    /// from before 1.25 have no outcome and get no line at all.
+    private func polishLine(_ entry: DictationHistoryEntry, outcome: PolishOutcome) -> some View {
+        let original = isShowingOriginal(entry)
+        return HStack(spacing: 10) {
+            Group {
+                if original {
+                    Text("Original")
+                        .foregroundStyle(Color(.secondaryLabel))
+                } else {
+                    Text(verbatim: DictationHistory.polishLabel(outcome))
+                        .foregroundStyle(outcome.isPolished ? Theme.primary : Color(.secondaryLabel))
+                }
+            }
+            .lineLimit(1)
+            if entry.rawText != nil {
+                // Borderless, for the same reason the copy button is: a tap on
+                // it is the toggle's, not the row's.
+                Button {
+                    withAnimation(.snappy) {
+                        if original {
+                            showingOriginal.remove(entry.id)
+                        } else {
+                            showingOriginal.insert(entry.id)
+                        }
+                    }
+                } label: {
+                    Label(
+                        original ? "Show polished" : "Show original",
+                        systemImage: "arrow.left.arrow.right"
+                    )
+                    .labelStyle(DictationMetaLabelStyle())
+                    .foregroundStyle(Theme.primary)
+                }
+                .buttonStyle(.borderless)
+                .lineLimit(1)
+            }
+        }
+        .font(.parley.caption)
     }
 
     /// Borderless, so a tap on it is the button's and not the row's.
@@ -103,7 +185,7 @@ struct DictationHistoryList: View {
     }
 
     private func copy(_ entry: DictationHistoryEntry) {
-        TranscriptClipboard.write(entry.text)
+        TranscriptClipboard.write(shownText(entry))
         withAnimation { copiedID = entry.id }
         revert?.cancel()
         revert = Task {
@@ -175,6 +257,10 @@ private struct DictationMetaLabelStyle: LabelStyle {
 /// and copy / share / delete.
 private struct DictationHistoryDetail: View {
     let entry: DictationHistoryEntry
+    /// The version the row was showing when it was opened — the polished text,
+    /// or its original — so the sheet's copy and share take what the user was
+    /// just looking at.
+    let text: String
     let delete: () -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -185,7 +271,7 @@ private struct DictationHistoryDetail: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    Text(verbatim: entry.text)
+                    Text(verbatim: text)
                         .font(.parley.body)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -232,7 +318,7 @@ private struct DictationHistoryDetail: View {
     private var actions: some View {
         HStack(spacing: 12) {
             Button {
-                TranscriptClipboard.write(entry.text)
+                TranscriptClipboard.write(text)
                 withAnimation { copied = true }
             } label: {
                 Label(
@@ -243,7 +329,7 @@ private struct DictationHistoryDetail: View {
             }
             .buttonStyle(.borderedProminent)
 
-            ShareLink(item: entry.text) {
+            ShareLink(item: text) {
                 Label("Share", systemImage: "square.and.arrow.up")
                     .frame(maxWidth: .infinity)
             }

@@ -27,16 +27,34 @@ final class DictationHistory: ObservableObject {
 
     /// Keep a finished or failed session. A no-op when the switch in Settings
     /// is off or the text is blank — the store decides both.
+    ///
+    /// `rawText` and `polish` are what the row's "Polished" / "Original ·
+    /// reason" label and its "Show original" toggle are drawn from; the entry
+    /// drops `rawText` when it is the same as `text`.
     func record(
         text: String, startedAt: Date, source: DictationHistoryEntry.Source,
-        hostBundleID: String?
+        hostBundleID: String?, rawText: String? = nil, polish: PolishOutcome? = nil
     ) {
         let ms = max(0, Int(Date().timeIntervalSince(startedAt) * 1000))
         let entry = DictationHistoryEntry(
             text: text, startedAt: startedAt, durationMs: ms, source: source,
-            hostBundleID: hostBundleID)
+            hostBundleID: hostBundleID, rawText: rawText, polish: polish)
         if let kept = store.append(entry) { entries = kept }
     }
+
+    #if DEBUG
+        /// ScreenshotDemo (`-ParleyDemoRoute voicehistory`): replace the
+        /// history with fixtures, one per polish outcome, so the labels can be
+        /// looked at without dictating nine times into a flaky network. Goes
+        /// through the real store — this is the simulator's own sandbox — so
+        /// the list's `reload()` on appearing reads the same thing back.
+        func seedDemo(_ fixtures: [DictationHistoryEntry]) {
+            guard ScreenshotDemo.isActive else { return }
+            store.clearAll()
+            for entry in fixtures { store.append(entry) }
+            entries = store.load()
+        }
+    #endif
 
     func delete(_ id: UUID) {
         entries = store.remove(id: id)
@@ -70,6 +88,25 @@ final class DictationHistory: ObservableObject {
         case "com.anthropic.claude": return "Claude"
         case "com.tinyspeck.chatlyio": return "Slack"
         default: return nil
+        }
+    }
+
+    /// The row's polish label: "Polished", or "Original · <why>". Short on
+    /// purpose — it sits under the text in caption size, and it answers one
+    /// question ("was this polished, and if not, why not") rather than
+    /// explaining the pipeline. The reasons are worded as the user would put
+    /// them, not as the code does: "you skipped it", not "skipped by user".
+    static func polishLabel(_ outcome: PolishOutcome) -> String {
+        switch outcome {
+        case .polished: String(localized: "Polished")
+        case .tooShort: String(localized: "Original · too short")
+        case .off: String(localized: "Original · polish is off")
+        case .skipped: String(localized: "Original · you skipped it")
+        case .timedOut: String(localized: "Original · timed out")
+        case .rejectedScript: String(localized: "Original · model replied in Simplified")
+        case .rejectedLength: String(localized: "Original · length changed too much")
+        case .failed: String(localized: "Original · connection failed")
+        case .overdue: String(localized: "Original · took too long")
         }
     }
 
