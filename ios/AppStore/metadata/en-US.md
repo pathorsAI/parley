@@ -87,6 +87,8 @@ Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
 Start recording from the lock screen. Touch and hold the lock screen, tap Customize, and put Parley's Record in place of the flashlight or camera button. Press it, unlock, and Parley opens already recording. The same control works from Control Center and the Action button, there is a lock screen widget that does the same, and you can ask Siri to "Record with Parley".
 
+Also since the last release: tapping Start recording now starts recording right away, without first asking you to confirm that everyone has agreed. As with any recorder, getting the consent of the people in the room, as the law where you are requires, is up to you.
+
 ## What's New — 1.28
 
 Tapping Start recording now starts recording right away, without first asking you to confirm that everyone has agreed. As with any recorder, getting the consent of the people in the room, as the law where you are requires, is up to you.
