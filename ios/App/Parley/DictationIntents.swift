@@ -42,5 +42,15 @@ struct ParleyShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Voice Typing",
             systemImageName: "mic.fill")
+        AppShortcut(
+            intent: StartRecordingIntent(),
+            phrases: [
+                "Record with \(.applicationName)",
+                "Start a \(.applicationName) recording",
+                "用 \(.applicationName) 錄音",
+                "\(.applicationName) 開始錄音",
+            ],
+            shortTitle: "Record Meeting",
+            systemImageName: "record.circle")
     }
 }

@@ -55,6 +55,60 @@
         }
       }
     },
+    "Open Parley and start recording the meeting in the room." : {
+      "comment" : "The record control's and lock-screen widget's description in the system's pickers.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open Parley and start recording the meeting in the room."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打開 Parley，直接開始錄下現場的會議。"
+          }
+        }
+      }
+    },
+    "Record" : {
+      "comment" : "The lock-screen / Control Center control's label, under its icon. One word: the space is a single short line.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Record"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "錄音"
+          }
+        }
+      }
+    },
+    "Start Recording" : {
+      "comment" : "Name of the record control and the lock-screen widget in the system's pickers, and the widget's VoiceOver label.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start Recording"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "開始錄音"
+          }
+        }
+      }
+    },
     "This may have stopped" : {
       "comment" : "Nobody has vouched for the card within MicActivityPolicy.staleAfter and the app may be dead. A hedge on purpose — it is the strongest claim still supported.",
       "extractionState" : "manual",

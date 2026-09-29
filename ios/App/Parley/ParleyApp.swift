@@ -56,6 +56,11 @@ struct ParleyApp: App {
                     WhatsNewPresenter.shared.noteOpenedByURL()
                     if let session = DictationChannel.session(fromStart: url) {
                         Task { await dictation.begin(session: session) }
+                    } else if QuickRecord.isRequest(url) {
+                        // The lock-screen control, the lock-screen widget or
+                        // the Siri shortcut. The Record tab picks it up; see
+                        // `QuickRecordInbox`.
+                        QuickRecordInbox.shared.post()
                     }
                 }
                 // Presented for both entry points: the keyboard URL and the
@@ -160,6 +165,9 @@ struct MainTabs: View {
                 .tag(AppTab.settings)
         }
         .environmentObject(router)
+        // A lock-screen "start recording" lands on the Record tab whatever tab
+        // was up when the app was last left.
+        .onReceive(QuickRecordInbox.shared.$requestedAt) { if $0 != nil { router.tab = .record } }
         // Once, after an update, when nothing else is going on — see
         // `WhatsNewPresenter` for what "nothing" has to mean.
         .whatsNewSheet()
