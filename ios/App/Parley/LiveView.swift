@@ -109,6 +109,11 @@ struct LiveView: View {
                         isEmpty: recorder.segments.isEmpty)
                 }
             }
+            // `parley://record`, from the lock screen. `.onAppear` covers the
+            // cold launch, where the note was left before this view existed;
+            // `.onReceive` covers a warm one, where it already does.
+            .onAppear { takeQuickRecord() }
+            .onReceive(QuickRecordInbox.shared.$requestedAt) { if $0 != nil { takeQuickRecord() } }
             // The microphone is not coming back. End the meeting rather than
             // leave a recording on screen that records nothing — the audio up
             // to the failure is on disk and worth keeping.
@@ -759,6 +764,18 @@ struct LiveView: View {
         if recorder.isBusy { return Text("Wrapping up…") }
         if recorder.isRecording { return Text("Stop recording") }
         return app.hasAccount ? Text("Start recording") : Text("Sign in again to record")
+    }
+
+    /// Start a recording for a lock-screen request, if there is a fresh one.
+    /// Already recording, or wrapping one up, it only brings this screen
+    /// forward: a second tap on the lock screen is someone checking that it is
+    /// still going, not asking for it to stop. Signed out, the request is
+    /// dropped rather than turned into a sign-in prompt the user did not ask
+    /// for — the gate in `RootView` is already showing them one.
+    private func takeQuickRecord() {
+        guard QuickRecordInbox.shared.take() else { return }
+        guard !recorder.isBusy, !recorder.isRecording, app.hasAccount else { return }
+        Task { await recorder.start(token: KeychainStore.get(AppState.tokenKey)) }
     }
 
     private func toggle() {

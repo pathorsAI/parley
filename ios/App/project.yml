@@ -20,6 +20,10 @@ targets:
     platform: iOS
     sources:
       - Parley
+      # The lock-screen control's intent, shared with ParleyActivities: the
+      # control is declared there, and an intent that opens the app has to be
+      # known to the app as well. See StartRecordingIntent.swift.
+      - ../Shared
       # The getting-started sample recording (manifest + Ogg/Opus, zh-TW and
       # en), shared with the desktop app, which serves the same files from
       # `public/`. A folder reference, so it lands in the bundle as `sample/`
@@ -53,8 +57,8 @@ targets:
       path: Parley/Info.plist
       properties:
         CFBundleDisplayName: Parley
-        CFBundleShortVersionString: "1.28"
-        CFBundleVersion: "45"
+        CFBundleShortVersionString: "1.29"
+        CFBundleVersion: "46"
         UILaunchScreen: {}
         # Localized in Parley/InfoPlist.xcstrings; this is the fallback value.
         NSMicrophoneUsageDescription: Parley records the meeting in the room so it can transcribe it live. Audio goes only to the transcription provider tied to your account.
@@ -119,8 +123,8 @@ targets:
       properties:
         # Localized in ../Keyboard/InfoPlist.xcstrings; this is the fallback.
         CFBundleDisplayName: Parley Voice
-        CFBundleShortVersionString: "1.28"
-        CFBundleVersion: "45"
+        CFBundleShortVersionString: "1.29"
+        CFBundleVersion: "46"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.keyboard-service
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).KeyboardViewController
@@ -147,7 +151,7 @@ targets:
   ParleyActivities:
     type: app-extension
     platform: iOS
-    sources: [../Activities]
+    sources: [../Activities, ../Shared]
     dependencies:
       # For MicActivityAttributes and MicActivityState. The widget cannot
       # import the app target, so the only way it and the app agree on what the
@@ -173,8 +177,8 @@ targets:
       properties:
         # Localized in ../Activities/InfoPlist.xcstrings; this is the fallback.
         CFBundleDisplayName: Parley Live Activity
-        CFBundleShortVersionString: "1.28"
-        CFBundleVersion: "45"
+        CFBundleShortVersionString: "1.29"
+        CFBundleVersion: "46"
         NSExtension:
           # There is no ActivityKit extension point: a Live Activity is drawn by
           # a WidgetKit extension, from the same `ActivityConfiguration` that a

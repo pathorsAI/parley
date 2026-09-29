@@ -3380,6 +3380,24 @@
         }
       }
     },
+    "Open Parley and start recording the meeting in the room." : {
+      "comment" : "StartRecordingIntent's description in Shortcuts.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open Parley and start recording the meeting in the room."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打開 Parley，直接開始錄下現場的會議。"
+          }
+        }
+      }
+    },
     "Open the transcript" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4202,6 +4220,24 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "錄音"
+          }
+        }
+      }
+    },
+    "Record Meeting" : {
+      "comment" : "The Siri / Shortcuts tile for StartRecordingIntent. Short: it sits under an icon.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Record Meeting"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "錄會議"
           }
         }
       }
@@ -5462,6 +5498,24 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在目前的 App 直接開始 Parley 語音輸入，不用切換畫面。"
+          }
+        }
+      }
+    },
+    "Start Recording" : {
+      "comment" : "StartRecordingIntent's title: what Shortcuts, Siri and the Action button picker call the lock-screen record shortcut.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start Recording"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "開始錄音"
           }
         }
       }

@@ -1,0 +1,28 @@
+{
+  "id": "2026-10-lock-screen-record",
+  "ships": {
+    "ios": "1.29",
+    "android": null,
+    "desktop": null
+  },
+  "audience": "all",
+  "cta": {
+    "ios": null
+  },
+  "copy": {
+    "zh-Hant": {
+      "badge": "1.29 更新",
+      "title": "從鎖定畫面直接開始錄音",
+      "body": "長按鎖定畫面、點「自訂」，把左下或右下的按鈕換成 Parley 的「錄音」。之後按一下、解鎖，Parley 打開時就已經在錄了。",
+      "also": "也可以放進控制中心、設成動作按鈕，或對 Siri 說「用 Parley 錄音」。",
+      "button": "好"
+    },
+    "en": {
+      "badge": "New in 1.29",
+      "title": "Start recording from the lock screen",
+      "body": "Touch and hold the lock screen, tap Customize, and swap one of the bottom buttons for Parley's Record. Press it, unlock, and Parley opens already recording.",
+      "also": "It also works from Control Center, the Action button, or by asking Siri to “Record with Parley”.",
+      "button": "Got it"
+    }
+  }
+}
