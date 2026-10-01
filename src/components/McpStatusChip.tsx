@@ -1,55 +1,30 @@
-import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { useState } from "react";
 import { Popover } from "radix-ui";
 import { AlertCircle, Plug } from "lucide-react";
 import { isTauri } from "../lib/tauriEvents";
+import { clientLabel, connState, useMcpActivity, type McpConnState } from "../lib/mcp/activity";
+import { useMcpEndpoint } from "../lib/mcp/connect";
 import { useI18n } from "../i18n";
 import { cn } from "@/lib/utils";
 import { CopyButton } from "@/components/CopyButton";
 
-/** One tool call recorded by the MCP server (newest first in `recent`). */
-export interface McpActivityEntry {
-  at: number;
-  tool: string;
-  kind: "read" | "write";
-  ok: boolean;
-  error?: string;
-}
-
-export interface McpActivityInfo {
-  client: { name?: string; version?: string } | null;
-  lastRequestAt: number | null;
-  recent: McpActivityEntry[];
-}
-
-/** Derived connection state. HTTP MCP has no persistent session, so this is
- *  recency of the last request: active (seconds), connected (minutes), idle
- *  (client seen before, quiet now), none (no client ever). */
-export type McpConnState = "active" | "connected" | "idle" | "none";
-
-export function connState(info: McpActivityInfo | null, now: number): McpConnState {
-  const last = info?.lastRequestAt;
-  if (!last) return "none";
-  const age = now - last;
-  if (age <= 15_000) return "active";
-  if (age <= 5 * 60_000) return "connected";
-  return "idle";
-}
+// The activity types and helpers moved to lib/mcp/activity.ts so the report's
+// hand-off section can share them; re-exported for existing importers.
+export {
+  clientLabel,
+  connState,
+  type McpActivityEntry,
+  type McpActivityInfo,
+  type McpConnState,
+} from "../lib/mcp/activity";
 
 /** Status-dot classes per connection state. */
 const DOT_CLASS: Record<McpConnState, string> = {
-  active: "bg-emerald-500 animate-pulse",
-  connected: "bg-emerald-500",
+  active: "bg-success-foreground animate-pulse",
+  connected: "bg-success-foreground",
   idle: "bg-muted-foreground/50",
   none: "bg-muted-foreground/25",
 };
-
-/** "name vX" for the connected client, or null when nobody has connected. */
-export function clientLabel(client: McpActivityInfo["client"] | undefined): string | null {
-  if (!client) return null;
-  const version = client.version ? ` v${client.version}` : "";
-  return `${client.name ?? "?"}${version}`;
-}
 
 export function relativeTime(t: ReturnType<typeof useI18n>["t"], at: number, now: number): string {
   const s = Math.max(0, Math.round((now - at) / 1000));
@@ -61,48 +36,21 @@ export function relativeTime(t: ReturnType<typeof useI18n>["t"], at: number, now
 }
 
 /**
- * Titlebar MCP indicator: a plug icon with a status dot (pulsing green = a
- * client is actively calling tools, green = recent traffic, grey = idle/none).
+ * Titlebar MCP indicator: a plug icon with a status dot (pulsing success
+ * dot = a client is actively calling tools, success = recent traffic,
+ * grey = idle/none).
  * Clicking opens a popover with who's connected (clientInfo from initialize),
  * the endpoint, and the recent read/write tool calls — so MCP data access is
  * never invisible.
  */
 export function McpStatusChip() {
   const { t } = useI18n();
-  const [info, setInfo] = useState<McpActivityInfo | null>(null);
-  const [endpoint, setEndpoint] = useState("");
-  const [now, setNow] = useState(() => Date.now());
+  const endpoint = useMcpEndpoint() ?? "";
   const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    if (!isTauri()) return;
-    let alive = true;
-    async function refresh() {
-      try {
-        const a = await invoke<McpActivityInfo>("get_mcp_activity");
-        if (alive) {
-          setInfo(a);
-          setNow(Date.now());
-        }
-      } catch {
-        /* server not up yet; retry next tick */
-      }
-    }
-    refresh();
-    // Faster while the panel is open so the feed reads live.
-    const id = setInterval(refresh, open ? 1000 : 3000);
-    return () => {
-      alive = false;
-      clearInterval(id);
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (!isTauri() || endpoint) return;
-    invoke<{ endpoint: string }>("get_mcp_server_info")
-      .then((i) => setEndpoint(i.endpoint))
-      .catch(() => {});
-  }, [endpoint]);
+  // Faster while the panel is open so the feed reads live. The hook also ticks
+  // the "handed off" checklist step on the first successful tool call — the chip
+  // is always mounted in the main window, so that fires wherever the user is.
+  const { info, now } = useMcpActivity({ fast: open });
 
   if (!isTauri()) return null;
 
@@ -165,7 +113,7 @@ export function McpStatusChip() {
           </div>
 
           <div className="mt-3 border-t pt-2">
-            <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
+            <div className="mb-1 text-[11px] font-semibold text-muted-foreground">
               {t("mcp.panel.activity")}
             </div>
             {info?.recent?.length ? (
@@ -176,8 +124,8 @@ export function McpStatusChip() {
                       className={cn(
                         "w-6 shrink-0 rounded px-1 text-center text-[9.5px] font-semibold",
                         e.kind === "write"
-                          ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
-                          : "bg-sky-500/15 text-sky-600 dark:text-sky-400",
+                          ? "bg-warning text-warning-foreground"
+                          : "bg-info text-info-foreground",
                       )}
                     >
                       {t(`mcp.kind.${e.kind}`)}

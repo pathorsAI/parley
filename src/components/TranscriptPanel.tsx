@@ -1,7 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown } from "lucide-react";
 import { useStore, speakerKey } from "../lib/store";
-import { speakerBadgeClass } from "../lib/speakerColors";
 import { useStickToBottom } from "../lib/useStickToBottom";
 import { useI18n } from "../i18n";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -25,6 +24,17 @@ export function TranscriptPanel() {
         .sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs),
     [segments]
   );
+
+  // Consecutive runs by the same speaker form one turn block.
+  const blocks = useMemo(() => {
+    const out: (typeof runs)[] = [];
+    for (const r of runs) {
+      const last = out[out.length - 1];
+      if (last && speakerKey(last[0]) === speakerKey(r)) last.push(r);
+      else out.push([r]);
+    }
+    return out;
+  }, [runs]);
 
   const { viewportRef, following, scrollToBottom, programmaticScroll } = useStickToBottom([runs]);
 
@@ -69,32 +79,36 @@ export function TranscriptPanel() {
   return (
     <div className="relative h-full">
       <ScrollArea className="h-full" viewportRef={viewportRef}>
-        <div className="select-text mx-auto max-w-3xl px-5 py-5 text-sm leading-8">
-          {runs.map((seg, i) => {
-            const showBadge = i === 0 || speakerKey(seg) !== speakerKey(runs[i - 1]);
+        <div className="select-text mx-auto max-w-3xl space-y-4 px-5 py-5">
+          {blocks.map((block, bi) => {
+            const tail = block[block.length - 1];
+            // The block holding the live (non-final) tail is the speaker talking now.
+            const live = bi === blocks.length - 1 && !tail.isFinal;
             return (
-              <Fragment key={seg.id}>
-                {showBadge && (
-                  <span
-                    className={`mx-0.5 inline-flex translate-y-[-1px] items-center rounded-md px-1.5 py-0.5 align-middle text-[10px] font-medium uppercase tracking-wide ring-1 ${speakerBadgeClass(
-                      seg
-                    )}`}
-                  >
-                    {label(seg)}
-                  </span>
-                )}{" "}
-                <span
-                  ref={(el) => {
-                    runRefs.current[seg.id] = el;
-                  }}
-                  className={`${seg.isFinal ? "text-foreground/90" : "text-muted-foreground"} ${
-                    flashId === seg.id ? "rounded bg-amber-400/30" : ""
-                  }`}
+              <div key={block[0].id}>
+                <div
+                  className={`text-xs font-semibold ${live ? "text-primary" : "text-muted-foreground"}`}
                 >
-                  {seg.text}
-                  {!seg.isFinal && <span className="animate-pulse">▍</span>}
-                </span>{" "}
-              </Fragment>
+                  {label(block[0])}
+                </div>
+                <p className="text-[15px] leading-7">
+                  {block.map((seg) => (
+                    <Fragment key={seg.id}>
+                      <span
+                        ref={(el) => {
+                          runRefs.current[seg.id] = el;
+                        }}
+                        className={`${seg.isFinal ? "text-foreground" : "text-muted-foreground"} ${
+                          flashId === seg.id ? "rounded bg-warning" : ""
+                        }`}
+                      >
+                        {seg.text}
+                        {!seg.isFinal && <span className="animate-pulse">▍</span>}
+                      </span>{" "}
+                    </Fragment>
+                  ))}
+                </p>
+              </div>
             );
           })}
         </div>

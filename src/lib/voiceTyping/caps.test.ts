@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { keyLabel, shortcutCaps } from "./caps";
+import {
+  isModifierAvailable,
+  keyLabel,
+  modifierIdsFor,
+  modifierLabelKey,
+  shortcutCaps,
+} from "./caps";
 import type { TranslationKey } from "../../i18n/messages";
 
 /**
@@ -15,9 +21,9 @@ import type { TranslationKey } from "../../i18n/messages";
 const MAC = true;
 const PC = false;
 
-/** The dictionary is irrelevant here: only the macOS-only HID-tap triggers go
- *  through `t`, and this file is about the keys that don't. Echoing the key
- *  keeps a missed lookup visible instead of silently empty. */
+/** The dictionary is irrelevant here: only the hold-a-modifier triggers go
+ *  through `t`, and echoing the key both keeps a missed lookup visible
+ *  instead of silently empty and shows WHICH label a trigger was given. */
 const t = (k: TranslationKey): string => k;
 
 describe("a recorded key is spelled in the host keyboard's own alphabet", () => {
@@ -91,8 +97,34 @@ describe("shortcutCaps renders a whole stored shortcut, modifiers and key togeth
   it("keeps the two shorthands that are not combos readable on both", () => {
     expect(shortcutCaps("alt-space", t, MAC)).toBe("⌥ Space");
     expect(shortcutCaps("alt-space", t, PC)).toBe("Alt + Space");
-    // The HID-tap modifiers exist only on macOS, so only macOS gets a label.
+  });
+});
+
+describe("hold-a-modifier triggers are named per keyboard", () => {
+  it("names right Ctrl / right Alt the way each keyboard prints them", () => {
+    // One stored id, the same physical key: ⌥ on a Mac is Alt on a PC.
     expect(shortcutCaps("right-option", t, MAC)).toBe("settings.voiceTyping.shortcut.right-option");
-    expect(shortcutCaps("right-option", t, PC)).toBe("right-option");
+    expect(shortcutCaps("right-option", t, PC)).toBe("settings.voiceTyping.shortcut.rightAltWindows");
+    expect(shortcutCaps("right-control", t, MAC)).toBe("settings.voiceTyping.shortcut.right-control");
+    expect(shortcutCaps("right-control", t, PC)).toBe("settings.voiceTyping.shortcut.rightCtrlWindows");
+  });
+
+  it("promises no key a PC keyboard lacks", () => {
+    // fn and ⌘ have no Windows key; a value synced off a Mac stays its raw id.
+    expect(shortcutCaps("fn", t, PC)).toBe("fn");
+    expect(shortcutCaps("right-command", t, PC)).toBe("right-command");
+    expect(modifierLabelKey("fn", PC)).toBeNull();
+    expect(modifierLabelKey("right-command", PC)).toBeNull();
+  });
+
+  it("offers all four keys on macOS and only right Ctrl / right Alt on Windows", () => {
+    expect(modifierIdsFor(MAC)).toEqual(["fn", "right-option", "right-command", "right-control"]);
+    expect(modifierIdsFor(PC)).toEqual(["right-control", "right-option"]);
+    expect(isModifierAvailable("right-control", PC)).toBe(true);
+    expect(isModifierAvailable("right-option", PC)).toBe(true);
+    expect(isModifierAvailable("right-command", PC)).toBe(false);
+    expect(isModifierAvailable("fn", PC)).toBe(false);
+    expect(isModifierAvailable("fn", MAC)).toBe(true);
+    expect(isModifierAvailable("combo:control+alt+Space", PC)).toBe(false);
   });
 });

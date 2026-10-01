@@ -43,7 +43,6 @@ quote from, not a wall of undifferentiated text.
 
 ALSO IN THE APP
 
-• A consent prompt before every single recording session
 • A library of your recordings to browse, search, and file into folders
 • Personal and organization spaces, with sharing and moving between them
 • Finished recordings survive a dead network: they queue on the phone and sync themselves once you are back
@@ -77,11 +76,274 @@ you are sitting in.
 
 YOUR DATA
 
-Recording never starts until you confirm that everyone present has agreed to it.
+Parley uses the microphone only while you have started a recording, and iOS
+shows its microphone indicator the whole time.
 You can delete your account and personal data permanently from Settings →
 Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
+
+## What's New — 1.29
+
+Start recording from the lock screen. Touch and hold the lock screen, tap Customize, and put Parley's Record in place of the flashlight or camera button. Press it, unlock, and Parley opens already recording. The same control works from Control Center and the Action button, there is a lock screen widget that does the same, and you can ask Siri to "Record with Parley".
+
+Also since the last release: tapping Start recording now starts recording right away, without first asking you to confirm that everyone has agreed. As with any recorder, getting the consent of the people in the room, as the law where you are requires, is up to you.
+
+## What's New — 1.28
+
+Tapping Start recording now starts recording right away, without first asking you to confirm that everyone has agreed. As with any recorder, getting the consent of the people in the room, as the law where you are requires, is up to you.
+
+## What's New — 1.27
+
+After dictating with the voice keyboard, tap the text to copy all of it. The keyboard confirms with "Copied" in its header, and for your first few dictations it reminds you that the text can be tapped.
+
+The voice keyboard no longer quits on its own after you switch between apps or fields a few times. It was holding on to every copy of itself it had ever shown until iOS closed it.
+
+Typing feels closer to the system keyboard. The Chinese candidate bar keeps up with fast typing, a tap in the gap between two keys types the nearer one, keys light up the moment you touch them and click if Keyboard Clicks is on, holding delete speeds up and then deletes whole words, and English sentences start with a capital letter.
+
+Dictating again within 30 seconds of the last dictation starts right where you are, without opening Parley. A single dictation can now run for 10 minutes instead of 2, the keyboard counts down its last 30 seconds, and whatever you said before the limit is typed. If the connection drops, the words you already said are typed instead of lost.
+
+When a transcript comes back empty or cut short, a recording keeps failing to sync, or the microphone kept dropping, Parley offers to send us the diagnostics in one tap, never your recordings or transcripts. You can also report a problem from Settings, and crash reports are sent automatically; you can turn that off in Settings.
+
+## What's New — 1.26
+
+The voice keyboard no longer quits on its own after you switch between apps or fields a few times. It was holding on to every copy of itself it had ever shown until iOS closed it.
+
+Typing feels closer to the system keyboard. The Chinese candidate bar keeps up with fast typing, a tap in the gap between two keys types the nearer one, keys light up the moment you touch them and click if Keyboard Clicks is on, holding delete speeds up and then deletes whole words, and English sentences start with a capital letter.
+
+Dictating again within 30 seconds of the last dictation starts right where you are, without opening Parley. A single dictation can now run for 10 minutes instead of 2, the keyboard counts down its last 30 seconds, and whatever you said before the limit is typed. If the connection drops, the words you already said are typed instead of lost.
+
+You can report a problem from Settings in one tap, and crash reports are sent automatically. You can turn that off in Settings.
+
+## What's New — 1.25
+
+The sign-in page now has a ring of blue and white light flowing slowly around the screen's edge. It quickens while you sign in and fades as the app opens.
+
+After a dictation, tap the voice keyboard's preview to copy the whole text, not just the lines on screen.
+
+Dictation history now shows whether each entry was polished by AI and, if not, why (too short, timed out, or you skipped it, for example). For polished entries you can switch to the original; copy takes whichever version is showing.
+
+## What's New — 1.24
+
+Chinese transcripts always read in Traditional Chinese. The automatic re-transcription after a meeting — and tapping Re-transcribe — could turn a transcript Simplified; both now come back Traditional, and recordings you already have open in Traditional too.
+
+While recording, drag the top of the controls down to give the live transcript more room. It stays where you leave it, and the stop button is always there.
+
+In the Library, swipe left or right on empty space — between recordings or below them — to move between folders. Swiping on a recording still opens Delete and Download.
+
+The sample recording's transcript no longer runs into the suggestion card when you scroll up.
+
+See Parley polish your words after you stop. When you tap stop on the voice keyboard, the button turns blue right away, and while AI polishes your dictation a wave of light runs through the words, with the three dots on the button lighting in step. Don't want to wait? Tap again to insert the raw text. Long dictations no longer stop at three lines: the text stays on the newest line, and you can scroll back up.
+
+Your first lap through Parley now shows you what it does, instead of listing it. Load the sample call from the Library and a guide walks you through three steps on the recording itself: Parley proposes a title and a folder (accept both in one tap, or pick another from a searchable list), you tap a line to jump the audio there, and you share the transcript — with an analysis prompt and three questions already written — to ChatGPT or Claude. Each step ticks off from the thing you actually did. The sign-in page opens with a short film of the app assembling itself.
+
+Summary and transcript are two pages now. A recording opens on its summary — what was said in a paragraph, the action items, the highlights with their timestamps, the speakers — and the transcript sits one tap away under the same player. Tap a timestamp in the summary and the transcript opens at that line.
+
+Keyboard: hold a key to see it magnified above your finger; the English pane predicts the next word and offers the space you missed; the voice pane's tab is a microphone.
+
+The first time you open the app after an update, a short card tells you what changed.
+
+## What's New — 1.23
+
+See Parley polish your words after you stop. When you tap stop on the voice keyboard, the button turns blue right away, and while AI polishes your dictation a wave of light runs through the words, with the three dots on the button lighting in step. Don't want to wait? Tap again to insert the raw text. Long dictations no longer stop at three lines: the text stays on the newest line, and you can scroll back up.
+
+Your first lap through Parley now shows you what it does, instead of listing it. Load the sample call from the Library and a guide walks you through three steps on the recording itself: Parley proposes a title and a folder (accept both in one tap, or pick another from a searchable list), you tap a line to jump the audio there, and you share the transcript — with an analysis prompt and three questions already written — to ChatGPT or Claude. Each step ticks off from the thing you actually did. The sign-in page opens with a short film of the app assembling itself.
+
+Summary and transcript are two pages now. A recording opens on its summary — what was said in a paragraph, the action items, the highlights with their timestamps, the speakers — and the transcript sits one tap away under the same player. Tap a timestamp in the summary and the transcript opens at that line.
+
+Keyboard: hold a key to see it magnified above your finger; the English pane predicts the next word and offers the space you missed; the voice pane's tab is a microphone.
+
+The first time you open the app after an update, a short card tells you what changed.
+
+## What's New — 1.22
+
+Your first lap through Parley now shows you what it does, instead of listing it.
+
+Load the sample call from the Library and a guide walks you through three steps on the recording itself: Parley proposes a title and a folder (accept both in one tap, or pick another folder from a searchable list), you tap a line to jump the audio there, and you share the transcript — with an analysis prompt and three questions already written — to ChatGPT or Claude. Each step ticks off from the thing you actually did. The sign-in page opens with a short film of the app assembling itself.
+
+Summary and transcript are two pages now, not one long scroll.
+
+A recording opens on its summary — what was said in a paragraph, the action items, the highlights with their timestamps, the speakers — and the transcript sits one tap away under the same player. Tap a timestamp in the summary and the transcript opens at that line. Recordings with no analysis yet offer to generate one with your AI instead of showing an empty page.
+
+Keyboard: hold a key on the English or 注音 pane to see it magnified above your finger; the English pane predicts the next word and offers the space you missed; the voice pane's tab is a microphone.
+
+## What's New — 1.21
+
+What you dictate is kept, so words that never landed are one tap away.
+
+If a dictation didn't make it into the app you were typing in, open Parley and
+go to Library › Voice typing. Everything you dictated in the last 30 days is
+there, newest first; tap the copy button beside it and paste it where it
+belongs. Tap an entry to read it in full, share it, or delete it. The history
+stays on your phone and never leaves it. Settings › Voice typing history turns
+it off or clears it.
+
+The Parley keyboard stays readable in dark mode, Notes included.
+
+In a few apps, Apple's Notes among them, dark mode drew the candidates above
+the keys in near-black on a black keyboard, where they could not be read. The
+keys and the words above them now follow the same dark or light setting as the
+keyboard behind them, including when you switch dark mode while typing.
+
+Bopomofo is typed where you are typing, and the whole bar above the keys is for candidates.
+
+The syllables you haven't turned into characters yet now appear underlined at
+the cursor in the app you're typing in, as they do on the system keyboard,
+instead of in a small box beside the candidates. That box is gone, so the bar
+has room for more candidates. Pick one and the underline shrinks to what is
+left; delete edits the underlined syllables before anything else. If you
+dismiss the keyboard or move to another field before choosing, some apps keep
+the bare symbols as typed; the next time the keyboard comes up right after
+them, Parley swaps them for its best guess. In the rare app that doesn't show
+underlined text, the syllables appear in the bar as before.
+
+## What's New — 1.20
+
+The Parley keyboard looks right in dark mode, in every app.
+
+In apps that follow the system's dark mode — Claude and LINE among them — the
+keys were drawn white with black letters on a dark keyboard. They now match the
+keyboard around them, and change with it when you switch dark mode on or off
+while typing.
+
+注音 types Chinese punctuation. 「，」 and 「。」 sit on either side of the space
+bar, and the 123 and #+= keys on the 注音 keyboard now bring up full-width
+marks — 、？！：；「」（）…～ and more. Tapping space twice ends a sentence with 「。」.
+
+Tap ⌄ at the end of the candidate bar to see every candidate at once, in a grid
+where the keys were. Tap one to type it, or ⌃ to go back to the keys.
+
+More candidates stay in view while you type a long phrase: the reading above the
+keys now shows its last two syllables instead of all of them, so the candidates
+keep most of the bar.
+
+The keyboard is lighter and quicker.
+
+Typing on the 注音 and English keyboards now redraws only what changed — the
+bar of candidates above the keys — instead of every key on every tap, so the
+keyboard keeps up when you type fast.
+
+It also holds less in memory. Its word lists are never loaded twice at once,
+and the ones you are not using are let go when your phone runs short, which
+makes the keyboard much less likely to close unexpectedly in the middle of a
+sentence.
+
+One wrong 注音 symbol no longer empties the candidate bar.
+
+Mix up two symbols that sound alike — n and l, a retroflex and its flat
+twin, a front and a back nasal — or catch the key next to the one you meant,
+and the 注音 keyboard still offers the word you were after, right behind the
+words that match exactly what you typed, so typing correctly works just as it
+did. A syllable no character is read as now commits its closest character on
+return instead of the raw 注音. Tones still have to be right.
+
+## What's New — 1.19
+
+Dictating twice in a row stays where you are.
+
+After a dictation, Parley now keeps the microphone for 30 seconds, even with
+"Keep the microphone ready" off. Tap the mic again within that time and it
+records right in the app you are typing in, instead of bringing Parley forward a
+second time. iOS shows the orange microphone dot for those 30 seconds, because
+Parley really is holding the microphone; nothing is recorded, transcribed, or
+sent until you tap.
+
+A dictation you start right after stopping the last one shows only its own
+words. The previous one can no longer flash into it for a moment or be typed a
+second time.
+
+Swipe between Voice, English and 注音 from anywhere on the keyboard, including
+the empty space on the voice pane, not only from the record button.
+
+While you dictate, delete, return and @ now stay in place, dimmed, instead of
+disappearing, so the voice pane no longer looks like it emptied out.
+
+## What's New — 1.18
+
+Dictating twice in a row stays where you are.
+
+After a dictation, Parley now keeps the microphone for 30 seconds, even with
+"Keep the microphone ready" off. Tap the mic again within that time and it
+records right in the app you are typing in, instead of bringing Parley forward a
+second time. iOS shows the orange microphone dot for those 30 seconds, because
+Parley really is holding the microphone; nothing is recorded, transcribed, or
+sent until you tap.
+
+While you dictate, delete, return and @ now stay in place, dimmed, instead of
+disappearing, so the voice pane no longer looks like it emptied out.
+
+## What's New — 1.17
+
+The English keyboard suggests words as you type.
+
+Start a word and the likeliest endings line up above the keys; tap one and it
+lands with a space after it. Nothing is ever rewritten on its own: space and
+punctuation type exactly what you typed, and a suggestion only goes in when you
+tap it. Capitalisation follows what you started.
+
+The voice pane is quieter while you speak. Delete, return and @ step aside for
+as long as the microphone is open — nothing has landed in the field yet, so
+there was nothing for them to act on — and come back the moment the words do.
+
+And once voice typing is set up, the record button is a microphone. It used to
+show an "opens Parley" arrow whenever the app was not already awake in the
+background. The first tap after a while may still bring Parley forward once,
+but that is how it starts, not something the button needs to warn about.
+
+## What's New — 1.16
+
+Typing 注音 now works the way the system keyboard does.
+
+Type a whole sentence without stopping, and stop finishing every character
+before the next one. The keyboard tells one syllable from the next on its own,
+and it guesses words from what you have typed so far — ㄋㄏ is already 你好,
+before a single vowel or tone. Tones still work — space is the first tone, as
+before — and they sharpen the guess rather than being the price of moving on.
+Words and characters line up above the keys as you go: tap one to take it, or
+press return to take the best guess for everything still pending. Punctuation
+from the 123 plane commits what you were typing first instead of landing in
+front of it.
+
+Delete moved to where your thumb expects it: the right end of the bottom
+symbol row, where the system's 注音 keyboard keeps it.
+
+The voice, English and 注音 panes are now named tabs at the top of the
+keyboard, so switching is something you can see rather than something to
+discover. Swiping still works, from anywhere on the keyboard: start on a key
+and the pane follows your finger, and the key under it is not typed.
+
+And dictation stops taking a detour through Parley on every tap. A Parley that
+is still awake in the background answers the keyboard's mic where you are, and
+only comes forward when iOS will not let it record from the background.
+
+## What's New — 1.15
+
+Voice typing now says so on the Lock Screen, and the record button listens.
+
+Swipe the keyboard away mid-sentence and Parley is still listening — which
+until now was something you could only find out by bringing the keyboard back.
+Now it moves to the Dynamic Island and the Lock Screen, with the time running,
+so you can see it without unlocking.
+
+It also covers the quiet state that was hardest to explain: when you have asked
+Parley to keep the microphone ready between dictations, the card says the
+microphone is open, says plainly that nothing is being recorded, counts down how
+long is left, and lets you end it in one tap.
+
+None of your words appear on the card, in either state. A Lock Screen is a
+public surface, and what you are dictating stays inside the app.
+
+The record button follows your voice. It used to pulse on a loop whether or not
+anyone was speaking; now it swells with what you actually say and rings ripple
+out from it, and in silence it is completely still.
+
+And you can feel more of it. Opening the microphone is a rising two-beat rather
+than a single tap that got lost against the keyclick. Swiping the keyboard away
+while a dictation is still running has its own falling one, so you know the
+microphone stayed behind without looking. Stopping a recording has a beat that
+comes to rest. And if iOS takes the microphone — its own dictation key sits just
+below this keyboard, and it is easy to hit by mistake — you feel that too,
+instead of talking on into nothing.
 
 ## What's New — 1.14
 

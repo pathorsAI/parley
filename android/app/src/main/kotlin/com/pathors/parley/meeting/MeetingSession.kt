@@ -10,16 +10,18 @@ import android.os.Handler
 import android.os.Looper
 import android.os.StatFs
 import android.os.SystemClock
-import android.util.Log
 import com.pathors.parley.audio.MicCapture
 import com.pathors.parley.audio.MicCaptureException
 import com.pathors.parley.audio.MicRecoveryState
 import com.pathors.parley.audio.OggOpusEncoder
 import com.pathors.parley.audio.OpusEncodeException
+import com.pathors.parley.audio.PlatformSilenceEdge
 import com.pathors.parley.audio.StorageHeadroom
 import com.pathors.parley.auth.AuthManager
 import com.pathors.parley.cloud.RecordingSource
 import com.pathors.parley.cloud.TranscriptSegmentDto
+import com.pathors.parley.feedback.Log
+import com.pathors.parley.kit.RelayAudioBridge
 import com.pathors.parley.kit.SttRelayClient
 import com.pathors.parley.kit.SttRelayEvent
 import com.pathors.parley.kit.TranscriptSegment
@@ -69,12 +71,29 @@ sealed interface MeetingState {
      * the foreground service, an unexpected exception reached the capture loop.
      * The recording is real and complete up to that moment; the flag is there so
      * the UI can say so instead of implying the user stopped when they did not.
+     *
+     * [waitingForQuota] narrows [pendingUpload] to "the cloud said 402": the
+     * recording stays queued (see `MeetingUploader.dispositionOf`), and the
+     * screen has to say it waits for the quota to reset, not for a network that
+     * is fine. [sharedToOrgName] is the organization the default save location
+     * copied it into, so the status can say where it went — both iOS
+     * `MeetingRecorder.upload`'s endings.
      */
     data class Finished(
         val recordingId: String?,
         val pendingUpload: Boolean,
         val dropped: Boolean,
         val interruptedBy: MeetingFailure? = null,
+        val waitingForQuota: Boolean = false,
+        val sharedToOrgName: String? = null,
+        /**
+         * How many times the microphone had to be recovered during the
+         * recording — five or more and the screen offers to send diagnostics
+         * (`feedback/ProblemSignals.isMicRecoveryWorthAsking`).
+         */
+        val micRecoveries: Int = 0,
+        /** The input it was recording from at the end, for those diagnostics. */
+        val audioRoute: String? = null,
     ) : MeetingState
 
     /** The recording could not happen (or could not be saved). */
@@ -104,12 +123,29 @@ enum class MeetingFailure {
 /**
  * A transcription problem that did **not** stop the recording. The mic keeps
  * running and the audio is still saved and uploaded — only the live transcript
- * stopped growing — so this is a banner, not an error screen.
+ * paused or stopped growing — so this is a status line, not an error screen.
+ *
+ * iOS `MeetingRecorder.TranscriptionHealth` draws the same split: a reconnect
+ * is a pause the transcript comes back from, and must not be announced as the
+ * end of it; everything else here is the end of the *live* transcript for this
+ * meeting (the backfill pass re-transcribes the upload).
  */
 enum class TranscriptionIssue {
+    /** The socket dropped; the audio is held in the bridge for the next leg. */
+    RECONNECTING,
+
+    /** Out of quota: the next handshake would be refused the same way. */
     QUOTA_EXCEEDED,
-    RELAY_ERROR,
-    RELAY_CLOSED,
+
+    /** The reconnect budget is spent. */
+    STOPPED,
+
+    /** Signed out mid-meeting: there is no token to redial with. */
+    SIGNED_OUT,
+    ;
+
+    /** True once no leg is coming for this meeting. */
+    val isTerminal: Boolean get() = this != RECONNECTING
 }
 
 /**
@@ -218,6 +254,11 @@ class MeetingSession(
     /** Display title for the finished recording; built by the UI layer. */
     private val title: String,
     private val scope: CoroutineScope = defaultSessionScope(),
+    /**
+     * The display name of an organization, by id, for the "shared to" status.
+     * Null when it cannot be found, in which case the status just says synced.
+     */
+    private val orgName: suspend (orgId: String) -> String? = { null },
 ) : LiveMeeting {
     private val mic = MicCapture(context)
 
@@ -248,9 +289,21 @@ class MeetingSession(
     /** Wall-clock start, carried into the recording's `createdAt`. */
     val startedAtMs: Long = System.currentTimeMillis()
 
-    /** `@Volatile` because the microphone coroutine reads it for every chunk
-     *  while a reconnect may be swapping it on another thread. */
+    /**
+     * The leg currently attached to [bridge], or null between legs. The
+     * microphone never reads this — it only ever talks to the bridge — so this
+     * is the session's handle for finishing or cancelling the socket.
+     */
     @Volatile private var relay: SttRelayClient? = null
+
+    /**
+     * The microphone's only route to the relay, and what keeps the words spoken
+     * while there is no socket. See [RelayAudioBridge]: it holds audio between
+     * legs and hands the next leg its `timeOffsetMs`, so a reconnect costs a
+     * pause in the live transcript rather than the sentences said during it.
+     */
+    private val bridge = RelayAudioBridge()
+    private val bridgeSink = RelaySink { chunk -> bridge.send(chunk) }
     private var encoder: OggOpusEncoder? = null
     private var captureJob: Job? = null
     private var eventsJob: Job? = null
@@ -271,9 +324,9 @@ class MeetingSession(
     /** When there is too little room left to start, and when to stop and save. */
     private val storage = StorageHeadroom()
 
-    /** `elapsedRealtime` at the first microphone chunk — the offset a
-     *  reconnected leg needs to place its timestamps after the audio that
-     *  came before it. */
+    /** `elapsedRealtime` when recording began — the clock the ticker shows.
+     *  Not the relay's offset: that comes from [bridge], which counts the
+     *  audio actually captured rather than the time that passed. */
     private var captureStartedAt = 0L
 
     @Volatile private var finishRequested = false
@@ -348,6 +401,9 @@ class MeetingSession(
 
         val client = newRelay(token, leg = 0, timeOffsetMs = 0)
         relay = client
+        // Attached before the socket exists: the client queues what it is
+        // handed until the upgrade lands, so the first leg needs nothing held.
+        bridge.attach { client }
         // Collect before connecting: open() does not wait for the handshake, and
         // a rejected one arrives as an event rather than an exception.
         eventsJob = scope.launch { client.events.collect(::onRelayEvent) }
@@ -374,9 +430,10 @@ class MeetingSession(
 
         val pipeline = CapturePipeline(
             audio = { chunk -> encoder.append(chunk) },
-            // The field, not the local: a reconnect swaps the client, and a
-            // captured one would keep feeding a socket nobody reads.
-            relay = { this.relay?.let { client -> RelaySink { chunk -> client.enqueuePcm(chunk) } } },
+            // Always the bridge, never a client: a reconnect swaps the leg
+            // behind it, and while there is no leg the bridge holds the audio
+            // for the next one instead of dropping it.
+            relay = { bridgeSink },
         )
 
         try {
@@ -390,20 +447,29 @@ class MeetingSession(
 
     private fun onRelayEvent(event: SttRelayEvent) {
         when (event) {
-            is SttRelayEvent.Segment -> upsert(event.segment)
-            // Out of quota is the one failure reconnecting cannot fix: the next
-            // handshake is refused the same way, so this stays a banner.
-            is SttRelayEvent.QuotaExceeded -> _issue.value = TranscriptionIssue.QUOTA_EXCEEDED
-            is SttRelayEvent.Error -> {
-                _issue.value = TranscriptionIssue.RELAY_ERROR
-                scheduleReconnect()
+            is SttRelayEvent.Segment -> {
+                upsert(event.segment)
+                // Words arriving are the proof a reconnect worked, even when the
+                // handshake outlived the wait in [scheduleReconnect] and so was
+                // never counted there.
+                if (_issue.value == TranscriptionIssue.RECONNECTING) _issue.value = null
             }
+            // Out of quota is the one failure reconnecting cannot fix: the next
+            // handshake is refused the same way, so this is the end of the live
+            // transcript — and nothing is held for a leg that is never coming.
+            is SttRelayEvent.QuotaExceeded -> {
+                _issue.value = TranscriptionIssue.QUOTA_EXCEEDED
+                bridge.discard()
+                retireRelay()
+            }
+            // A dropped socket is a pause, not the end: [scheduleReconnect] says
+            // "reconnecting" and only declares the transcript over when there is
+            // genuinely no leg coming. Announcing every drop as "stopped", as
+            // this used to, told the user the transcript had ended when it was
+            // about to come back.
+            is SttRelayEvent.Error -> scheduleReconnect()
             // A close after finalize is the normal end of the stream.
-            is SttRelayEvent.Closed ->
-                if (!finishRequested) {
-                    _issue.value = TranscriptionIssue.RELAY_CLOSED
-                    scheduleReconnect()
-                }
+            is SttRelayEvent.Closed -> if (!finishRequested) scheduleReconnect()
         }
     }
 
@@ -437,26 +503,56 @@ class MeetingSession(
      * The budget is [ReconnectPolicy]'s, which counts *consecutive* failures:
      * see there for why a meeting that reconnects successfully must get its
      * retries back.
+     *
+     * The gap itself is no longer lost. Until the bridge landed, the dead
+     * client kept receiving (and dropping) every chunk until the backoff ran
+     * out, and the new leg was offset to "now", so the words spoken during a
+     * blip never reached the relay at all (#284). Now the bridge holds them and
+     * the next leg starts from the first held chunk.
      */
     private fun scheduleReconnect() {
         if (finishRequested || reconnectJob != null) return
-        if (_state.value !is MeetingState.Recording) return
+        // Connecting too: offline at the tap, the first handshake can fail
+        // before the session has flipped to Recording, and that must not cost
+        // the whole meeting its live transcript.
+        if (!isCapturing()) return
+
+        // The leg that reported this is spent. From here the microphone's audio
+        // waits in the bridge for the next one, instead of going to a client
+        // that silently drops it.
+        bridge.hold()
+        retireRelay()
+
         val backoff = reconnect.nextDelayMs()
         if (backoff == null) {
             Log.w(TAG, "relay reconnect budget spent; the live transcript stops here")
+            // Nothing is coming for the held audio; do not carry up to 45 s of
+            // it for the rest of the meeting.
+            bridge.discard()
+            _issue.value = TranscriptionIssue.STOPPED
             return
         }
+        _issue.value = TranscriptionIssue.RECONNECTING
         reconnectJob = scope.launch {
             delay(backoff)
             reconnectJob = null
-            if (finishRequested || _state.value !is MeetingState.Recording) return@launch
-            val token = auth.currentToken() ?: return@launch
+            if (finishRequested || !isCapturing()) return@launch
+            val token = auth.currentToken()
+            if (token == null) {
+                bridge.discard()
+                _issue.value = TranscriptionIssue.SIGNED_OUT
+                return@launch
+            }
 
             relayLeg += 1
-            val offset = SystemClock.elapsedRealtime() - captureStartedAt
-            val next = newRelay(token, relayLeg, offset)
-            eventsJob?.cancel()
-            runCatching { relay?.cancel() }
+            val leg = relayLeg
+            // The bridge decides the offset, because the bridge is what knows
+            // where in the recording the audio it is holding was spoken. The
+            // wall clock ("now") would file the gap's speech after the words
+            // that followed it — and would drift from the file whenever the
+            // microphone itself paused.
+            val next = bridge.attach { offsetMs -> newRelay(token, leg, offsetMs) }
+                ?: return@launch
             relay = next
             eventsJob = scope.launch { next.events.collect(::onRelayEvent) }
             next.open()
@@ -478,6 +574,23 @@ class MeetingSession(
     }
 
     /**
+     * Let go of the current leg: stop listening to it and close it. Called from
+     * inside that leg's own event collector, which is fine — its terminal event
+     * is the last thing it would have delivered anyway.
+     */
+    private fun retireRelay() {
+        val events = eventsJob
+        eventsJob = null
+        val dying = relay
+        relay = null
+        events?.cancel()
+        runCatching { dying?.cancel() }
+    }
+
+    private fun isCapturing(): Boolean =
+        _state.value.let { it is MeetingState.Recording || it is MeetingState.Connecting }
+
+    /**
      * Watch for the platform silencing our microphone. See [LiveMeeting.micSilenced]
      * — on Android 10 and up an app only ever sees its own recordings here, so
      * "any silenced configuration" means ours.
@@ -485,6 +598,7 @@ class MeetingSession(
     private fun startMicMonitor() {
         if (finishRequested) return
         val audio = context.getSystemService(AudioManager::class.java) ?: return
+        val edge = PlatformSilenceEdge()
         val callback = object : AudioManager.AudioRecordingCallback() {
             override fun onRecordingConfigChanged(configs: MutableList<AudioRecordingConfiguration>) {
                 val silenced = configs.any { it.isClientSilenced }
@@ -495,7 +609,15 @@ class MeetingSession(
                 // microphone. Handing it to the capture turns the same signal
                 // into an attempt to take the input back. See
                 // [MicCapture.notePlatformSilenced].
-                mic.notePlatformSilenced(silenced)
+                //
+                // Only the *edges* go through, and only from a delivery that
+                // lists a live recording. This callback also fires for our own
+                // record starting and stopping — including every stop/start of
+                // a rebuild — and forwarding those as "interruption ended" made
+                // the capture rebuild itself in a loop for the whole meeting
+                // (1.13). See [PlatformSilenceEdge].
+                edge.observe(anyRecording = configs.isNotEmpty(), anySilenced = silenced)
+                    ?.let(mic::notePlatformSilenced)
             }
         }
         // A Handler is required: this runs on Dispatchers.IO, which has no Looper.
@@ -633,6 +755,9 @@ class MeetingSession(
         if (!beginFinishing()) return
         quiesce()
         withTimeoutOrNull(CAPTURE_JOIN_TIMEOUT_MS) { captureJob?.join() }
+        // Whatever the bridge still holds belongs to no leg now; the finalize
+        // below drains what actually reached the relay.
+        bridge.discard()
         closeRelay()
         save(interruptedBy = null, detail = null)
     }
@@ -658,6 +783,7 @@ class MeetingSession(
         Log.w(TAG, "meeting interrupted ($reason): $detail — saving what was recorded")
         quiesce()
         withTimeoutOrNull(CAPTURE_JOIN_TIMEOUT_MS) { captureJob?.join() }
+        bridge.discard()
         closeRelay()
         save(interruptedBy = reason, detail = detail)
     }
@@ -672,6 +798,7 @@ class MeetingSession(
         if (!beginFinishing()) return
         Log.w(TAG, "capture ended early ($reason): $detail — saving what was recorded")
         quiesce()
+        bridge.discard()
         closeRelay()
         save(interruptedBy = reason, detail = detail)
     }
@@ -704,6 +831,10 @@ class MeetingSession(
      * the same act as throwing the recording away. See [CaptureEnding].
      */
     private fun quiesce() {
+        // Nothing is going to reconnect now, and "reconnecting" on a stopped
+        // meeting would be a promise nobody keeps. A terminal issue stays: it
+        // explains why the transcript on screen is short.
+        _issue.compareAndSet(TranscriptionIssue.RECONNECTING, null)
         tickerJob?.cancel()
         reconnectJob?.cancel()
         reconnectJob = null
@@ -765,13 +896,37 @@ class MeetingSession(
             }
 
             val result = if (id == null) null else runCatching { uploader.drain() }.getOrNull()
+            val pending = result == null || result.remaining > 0
+            val sharedTo = id?.let { result?.shared?.get(it) }
             _state.value = terminalStateFor(
                 recordingId = id,
-                pendingUpload = result == null || result.remaining > 0,
+                pendingUpload = pending,
                 interruptedBy = interruptedBy,
                 detail = detail,
+                // A 402 keeps the recording queued (MeetingUploader.dispositionOf);
+                // the screen must say it waits for the quota, not the network.
+                waitingForQuota = result?.quotaExhausted == true,
+                sharedToOrgName = sharedTo?.let { resolveOrgName(it) },
+                health = CaptureHealth(
+                    micRecoveries = mic.recoveries,
+                    audioRoute = mic.activeRoute,
+                ),
             )
         }
+
+    /**
+     * The organization's name for the "shared to" status, or null. Bounded,
+     * because this sits between the upload landing and the screen saying so; a
+     * slow `GET /orgs/mine` costs the name, never the outcome.
+     */
+    private suspend fun resolveOrgName(orgId: String): String? = try {
+        withTimeoutOrNull(ORG_NAME_TIMEOUT_MS) { orgName(orgId) }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (t: Throwable) {
+        Log.w(TAG, "could not name org $orgId", t)
+        null
+    }
 
     /**
      * Close the Ogg container, and keep the bytes even when closing fails.
@@ -834,6 +989,7 @@ class MeetingSession(
      */
     private fun release(ending: CaptureEnding) {
         quiesce()
+        bridge.discard()
         eventsJob?.cancel()
         runCatching { relay?.cancel() }
         if (ending.deletesAudio) {
@@ -906,5 +1062,8 @@ class MeetingSession(
         /** Ceiling on waiting for a reconnect's handshake to resolve; the
          *  client's own connect timeout is shorter, so this is a backstop. */
         const val HANDSHAKE_TIMEOUT_MS = 20_000L
+
+        /** How long the finished status waits for the shared-to org's name. */
+        const val ORG_NAME_TIMEOUT_MS = 5_000L
     }
 }

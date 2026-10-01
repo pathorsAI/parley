@@ -1,4 +1,13 @@
 import java.util.Properties
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.provider.Property
+import org.gradle.api.provider.SetProperty
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.InputDirectory
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.TaskAction
 
 plugins {
     alias(libs.plugins.android.application)
@@ -86,7 +95,7 @@ android {
         // MediaMuxer's OGG output — which also needed 29 — no longer figures.
         minSdk = 29
         targetSdk = 36
-        versionCode = 6
+        versionCode = 12
 
         // 1.13, not 0.2: the jump is the point. Android shipped as 0.1.x while it
         // carried iOS 1.1's feature set, and this release is the one that closes
@@ -95,7 +104,11 @@ android {
         // iOS number also means the two stores stop describing the same product
         // with numbers ten releases apart. There is no Android 1.0–1.12; the gap
         // in the tag history is the honest record of how this went.
-        versionName = "1.13"
+        //
+        // 1.14 is the hotfix for 1.13's microphone: a meeting recorded through it
+        // rebuilt the input in a loop and sent the relay nothing it could
+        // transcribe (see audio/PlatformSilenceEdge.kt).
+        versionName = "1.19"
 
         // Instrumented tests only: audio/OggOpusEncoderDeviceTest drives the real
         // MediaCodec Opus encoder, which has no JVM stand-in.
@@ -142,6 +155,71 @@ android {
     }
 }
 
+// ── Assets shared with the other apps ───────────────────────────────────────
+// Two folders at the repository root are the one copy of something every app
+// ships, and are copied into the APK's assets at build time rather than kept a
+// second time in this tree, where they would drift:
+//
+// - `public/sample/` → `sample/`: the bundled sample recording. The desktop
+//   serves it, iOS references it from project.yml, and a copy here would go
+//   stale the next time `scripts/sample/render.ts` re-renders ~700 KB of audio.
+//   See onboarding/SampleRecordingStore.kt.
+// - `announcements/` → `announcements/`: the What's New copy, one JSON file per
+//   announcement, written once for every platform (announcements/README.md).
+//   See onboarding/AnnouncementStore.kt.
+
+abstract class CopySharedAssets : DefaultTask() {
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val source: DirectoryProperty
+
+    /** The folder the files land in, under the assets root. */
+    @get:Input
+    abstract val assetFolder: Property<String>
+
+    /** Which files to take, by extension; nothing else in the folder is copied. */
+    @get:Input
+    abstract val fileExtensions: SetProperty<String>
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun copy() {
+        val target = outputDir.get().asFile.resolve(assetFolder.get())
+        target.deleteRecursively()
+        target.mkdirs()
+        val wanted = fileExtensions.get()
+        source.get().asFile
+            .listFiles { file -> file.isFile && file.extension in wanted }
+            .orEmpty()
+            .forEach { it.copyTo(target.resolve(it.name), overwrite = true) }
+    }
+}
+
+val copySampleAssets = tasks.register<CopySharedAssets>("copySampleAssets") {
+    group = "build"
+    description = "Copies public/sample (the bundled sample recording) into the APK's assets."
+    source.set(rootProject.layout.projectDirectory.dir("../public/sample"))
+    assetFolder.set("sample")
+    fileExtensions.set(setOf("json", "ogg"))
+}
+
+val copyAnnouncementAssets = tasks.register<CopySharedAssets>("copyAnnouncementAssets") {
+    group = "build"
+    description = "Copies announcements/ (the What's New sheets) into the APK's assets."
+    source.set(rootProject.layout.projectDirectory.dir("../announcements"))
+    assetFolder.set("announcements")
+    fileExtensions.set(setOf("json"))
+}
+
+androidComponents {
+    onVariants { variant ->
+        variant.sources.assets?.addGeneratedSourceDirectory(copySampleAssets, CopySharedAssets::outputDir)
+        variant.sources.assets?.addGeneratedSourceDirectory(copyAnnouncementAssets, CopySharedAssets::outputDir)
+    }
+}
+
 dependencies {
     implementation(project(":parleykit"))
 
@@ -155,6 +233,8 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+    // ProcessLifecycleOwner: "the app came back" drains the sync queues (AutoSync).
+    implementation(libs.androidx.lifecycle.process)
     implementation(libs.androidx.datastore.preferences)
     // Media3/ExoPlayer plays the recording back. Its OggExtractor seeks
     // Opus streams natively, which is why Android needs none of the

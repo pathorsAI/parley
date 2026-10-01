@@ -28,7 +28,7 @@ export function MeetingContextButton({ className }: Readonly<{ className?: strin
       >
         <FileText className="size-3.5" />
         {t("meeting.contextButton")}
-        {hasContext && <span className="size-1.5 rounded-full bg-emerald-400" />}
+        {hasContext && <span className="size-1.5 rounded-full bg-primary" />}
       </button>
       <MeetingContextSheet open={open} onOpenChange={setOpen} />
     </>

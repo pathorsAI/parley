@@ -10,15 +10,18 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavHostController
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.pathors.parley.AppContainer
 import com.pathors.parley.R
 import com.pathors.parley.screenshot.DemoMode
@@ -28,9 +31,62 @@ private object Route {
     const val HOME = "home"
     const val MEETING = "meeting"
     const val IMPORT = "import"
-    const val RECORDING = "recording/{id}"
 
-    fun recording(id: String) = "recording/$id"
+    /**
+     * A recording, and — as an optional argument — the organization whose
+     * library it was opened from. An org recording is read through the org's
+     * endpoints under an id of its own, so the detail screen has to know.
+     */
+    const val ARG_ORG = "org"
+
+    /** What it was opened for — see [OpenFor]. Absent is a plain read. */
+    const val ARG_FOR = "for"
+
+    /**
+     * Opened as the guided lap's recording — see [LocalLapRecording]. Absent is
+     * false.
+     */
+    const val ARG_GUIDED = "guided"
+    const val RECORDING = "recording/{id}?$ARG_ORG={$ARG_ORG}&$ARG_FOR={$ARG_FOR}&$ARG_GUIDED={$ARG_GUIDED}"
+
+    fun recording(
+        id: String,
+        orgId: String? = null,
+        openFor: OpenFor = OpenFor.READ,
+        guided: Boolean = false,
+    ): String {
+        val query = listOfNotNull(
+            orgId?.let { "$ARG_ORG=$it" },
+            openFor.takeIf { it != OpenFor.READ }?.let { "$ARG_FOR=${it.name}" },
+            "$ARG_GUIDED=true".takeIf { guided },
+        )
+        return if (query.isEmpty()) "recording/$id" else "recording/$id?" + query.joinToString("&")
+    }
+}
+
+/**
+ * What a recording's detail screen was opened *for*, beyond reading it. iOS
+ * `RecordingDetailView.Intent`.
+ *
+ * Onboarding v1's checklist opened a recording to file it or to hand it off.
+ * v2 (iOS #450) took those row actions away — the guide bar on the recording
+ * teaches the step instead — so nothing opens [FILE] or [SHARE] today; the
+ * screen still honours them, as iOS still does.
+ */
+enum class OpenFor {
+    READ,
+
+    /** Ask where to file it once the transcript is up. */
+    FILE,
+
+    /** Open the share sheet with the analysis prompt once it is up. */
+    SHARE,
+    ;
+
+    companion object {
+        /** Tolerant of a route argument it does not know: that is a plain read. */
+        fun parse(value: String?): OpenFor = entries.firstOrNull { it.name == value } ?: READ
+    }
 }
 
 /**
@@ -66,6 +122,9 @@ fun ParleyRoot() {
             signedIn == false -> OnboardingScreen(container)
             else -> ParleyNavHost(container)
         }
+        // Over every screen, signed in or not (a crash report does not need an
+        // account) — but never over a store screenshot.
+        if (!demo) FeedbackHost(container.feedback)
     }
 }
 
@@ -74,7 +133,7 @@ private fun ParleyNavHost(container: AppContainer) {
     val navController = rememberNavController()
     val context = LocalContext.current
 
-    DemoNavigation(navController)
+    DemoNavigation(navController, container)
 
     // The Storage Access Framework: no storage permission, any provider (Files,
     // Drive, a recorder app), and the grant lives as long as we need the Uri.
@@ -98,8 +157,12 @@ private fun ParleyNavHost(container: AppContainer) {
             HomeScreen(
                 onRecord = { navController.navigate(Route.MEETING) },
                 onImport = { picker.launch(arrayOf("audio/*")) },
-                onOpenRecording = { id -> navController.navigate(Route.recording(id)) },
+                onOpenRecording = { id, orgId, guided ->
+                    navController.navigate(Route.recording(id, orgId, guided = guided))
+                },
             )
+            // What's New after an update: only ever over the signed-in library.
+            WhatsNewHost(container.whatsNew)
         }
         composable(Route.MEETING) {
             MeetingScreen(onDone = { navController.popBackStack(Route.HOME, inclusive = false) })
@@ -107,11 +170,39 @@ private fun ParleyNavHost(container: AppContainer) {
         composable(Route.IMPORT) {
             ImportScreen(onDone = { navController.popBackStack(Route.HOME, inclusive = false) })
         }
-        composable(Route.RECORDING) { entry ->
-            RecordingDetailScreen(
-                recordingId = entry.arguments?.getString("id").orEmpty(),
-                onBack = { navController.popBackStack() },
-            )
+        composable(
+            route = Route.RECORDING,
+            arguments = listOf(
+                navArgument(Route.ARG_ORG) {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+                navArgument(Route.ARG_FOR) {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+                navArgument(Route.ARG_GUIDED) {
+                    type = NavType.BoolType
+                    defaultValue = false
+                },
+            ),
+        ) { entry ->
+            val guided = entry.arguments?.getBoolean(Route.ARG_GUIDED) ?: false
+            CompositionLocalProvider(LocalLapRecording provides guided) {
+                RecordingDetailScreen(
+                    recordingId = entry.arguments?.getString("id").orEmpty(),
+                    orgId = entry.arguments?.getString(Route.ARG_ORG),
+                    openFor = OpenFor.parse(entry.arguments?.getString(Route.ARG_FOR)),
+                    onBack = { navController.popBackStack() },
+                    // The recording is left behind, so the meeting's "done"
+                    // lands back on the library.
+                    onStartMeeting = {
+                        navController.navigate(Route.MEETING) { popUpTo(Route.HOME) }
+                    },
+                )
+            }
         }
     }
 }
@@ -125,15 +216,24 @@ private fun ParleyNavHost(container: AppContainer) {
  * cue and opens its account sheet.
  */
 @Composable
-private fun DemoNavigation(navController: NavHostController) {
+private fun DemoNavigation(navController: NavHostController, container: AppContainer) {
     val navigation by DemoMode.navigation.collectAsState()
     LaunchedEffect(navigation) {
         val target = navigation ?: return@LaunchedEffect
         navController.popBackStack(Route.HOME, inclusive = false)
         when (target.screen) {
             DemoMode.Screen.LIBRARY, DemoMode.Screen.ACCOUNT -> Unit
-            DemoMode.Screen.TRANSCRIPT -> navController.navigate(Route.recording(DemoMode.FEATURED_ID))
+            DemoMode.Screen.TRANSCRIPT, DemoMode.Screen.MOVE_TO_FOLDER ->
+                navController.navigate(Route.recording(DemoMode.FEATURED_ID))
             DemoMode.Screen.MEETING -> navController.navigate(Route.MEETING)
+            DemoMode.Screen.IMPORT -> navController.navigate(Route.IMPORT)
+            // Read straight off the seeded entry rather than the store's flow,
+            // which catches up a moment after the route seeded it.
+            DemoMode.Screen.SAMPLE, DemoMode.Screen.SHARE_MENU ->
+                container.sample.manifestOf(DemoMode.sampleEntry.value)?.let { sample ->
+                    // The sample is always the lap's recording (LapRules.isLapRecording).
+                    navController.navigate(Route.recording(sample.id, guided = true))
+                }
         }
     }
 }

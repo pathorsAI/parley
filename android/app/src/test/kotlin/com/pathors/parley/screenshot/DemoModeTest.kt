@@ -66,7 +66,7 @@ class DemoModeTest {
             assertEquals(3, findings.size)
             assertEquals(2, actions.size)
             assertTrue(findings.all { it.title.isNotBlank() && it.detail.isNotBlank() })
-            assertTrue(findings.all { it.atMs != null })
+            assertTrue(findings.all { it.atMs > 0 })
             assertTrue(actions.all { it.text.isNotBlank() && !it.done })
         }
     }
@@ -125,6 +125,91 @@ class DemoModeTest {
         assertTrue(DemoMode.user(en).email.endsWith("@example.com"))
         assertFalse(text.contains("pathors", ignoreCase = true))
         assertFalse(text.contains("parley.tw", ignoreCase = true))
+    }
+
+    @Test
+    fun `folders and the organization exist in both languages`() {
+        val english = DemoMode.folders(en).map { it.name } + DemoMode.orgs(en).map { it.name } +
+            DemoMode.orgFolders(DemoMode.ORG_ID, en).map { it.name }
+        val chinese = DemoMode.folders(zh).map { it.name } + DemoMode.orgs(zh).map { it.name } +
+            DemoMode.orgFolders(DemoMode.ORG_ID, zh).map { it.name }
+        assertEquals(english.size, chinese.size)
+        english.zip(chinese).forEach { (a, b) ->
+            assertTrue(a.isNotBlank() && b.isNotBlank())
+            assertNotEquals(a, b)
+        }
+    }
+
+    /**
+     * The library shows folder chips and a folder name on the cards, so the
+     * fixtures must file some recordings and leave one at the root — every
+     * page of the chip row has something on it.
+     */
+    @Test
+    fun `the library has filed and unfiled recordings in live folders`() {
+        val folderIds = DemoMode.folders(en).map { it.id }.toSet()
+        val filed = DemoMode.recordings(en).mapNotNull { it.folderId }
+        assertTrue(filed.isNotEmpty())
+        assertTrue(filed.all { it in folderIds })
+        assertTrue(DemoMode.recordings(en).any { it.folderId == null })
+        assertEquals(
+            DemoMode.recordings(en).first { it.id == DemoMode.FEATURED_ID }.folderId,
+            DemoMode.meta(DemoMode.FEATURED_ID, en)?.folderId,
+        )
+    }
+
+    /** Enough folders that the picker scrolls, with the library's own among them. */
+    @Test
+    fun `the picker folders are many, distinct, and include the library's`() {
+        listOf(en, zh).forEach { locale ->
+            val picker = DemoMode.pickerFolders(locale)
+            assertEquals(15, picker.size)
+            assertEquals(picker.size, picker.map { it.id }.toSet().size)
+            assertEquals(picker.size, picker.map { it.name }.toSet().size)
+            assertTrue(picker.map { it.id }.containsAll(DemoMode.folders(locale).map { it.id }))
+        }
+    }
+
+    @Test
+    fun `the org library is filed into the org's own folders`() {
+        val orgFolderIds = DemoMode.orgFolders(DemoMode.ORG_ID, en).map { it.id }.toSet()
+        val shared = DemoMode.orgRecordings(DemoMode.ORG_ID, en)
+        assertTrue(shared.isNotEmpty())
+        assertTrue(shared.mapNotNull { it.folderId }.all { it in orgFolderIds })
+        assertTrue(DemoMode.orgRecordings("someone-else", en).isEmpty())
+        assertEquals(DemoMode.ORG_ID, DemoMode.saveDestination().orgId)
+        assertTrue(DemoMode.saveDestination().folderId in orgFolderIds)
+    }
+
+    /**
+     * The `settled` and `adjust` frames: an offer worth capturing — a real name,
+     * an existing folder first (so the one-tap accept files somewhere the user
+     * knows) and one new folder as the runner-up — over the clock name it
+     * replaces, in both languages.
+     */
+    @Test
+    fun `the filing suggestion files into a folder the picker knows`() {
+        listOf(en, zh).forEach { locale ->
+            val suggestion = DemoMode.filingSuggestion(locale)
+            val pickerIds = DemoMode.pickerFolders(locale).map { it.id }
+            assertTrue(suggestion.title.isNotBlank())
+            assertTrue(suggestion.folders.first().folderId in pickerIds)
+            assertEquals("at most one new folder", 1, suggestion.folders.count { it.folderId == null })
+            assertTrue(suggestion.folders.all { it.reason.isNotBlank() })
+            assertNotEquals(suggestion.title, DemoMode.settledTitle(locale))
+        }
+        assertNotEquals(DemoMode.filingSuggestion(en), DemoMode.filingSuggestion(zh))
+        assertNotEquals(DemoMode.settledTitle(en), DemoMode.settledTitle(zh))
+    }
+
+    @Test
+    fun `the filing scenarios are settled meetings with their own routes`() {
+        assertTrue(DemoMode.MeetingScenario.SETTLED.isSettled)
+        assertTrue(DemoMode.MeetingScenario.ADJUST.isSettled)
+        assertFalse(DemoMode.MeetingScenario.LIVE.isSettled)
+        assertFalse(DemoMode.MeetingScenario.INTERRUPTED.isSettled)
+        assertEquals(DemoMode.MeetingScenario.ADJUST, DemoMode.MeetingScenario.fromRoute("adjust"))
+        assertEquals(DemoMode.MeetingScenario.SETTLED, DemoMode.MeetingScenario.fromRoute("settled"))
     }
 
     private fun assertNotEquals(a: Any?, b: Any?) {

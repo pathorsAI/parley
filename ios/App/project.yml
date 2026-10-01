@@ -18,11 +18,34 @@ targets:
   Parley:
     type: application
     platform: iOS
-    sources: [Parley]
+    sources:
+      - Parley
+      # The lock-screen control's intent, shared with ParleyActivities: the
+      # control is declared there, and an intent that opens the app has to be
+      # known to the app as well. See StartRecordingIntent.swift.
+      - ../Shared
+      # The getting-started sample recording (manifest + Ogg/Opus, zh-TW and
+      # en), shared with the desktop app, which serves the same files from
+      # `public/`. A folder reference, so it lands in the bundle as `sample/`
+      # and a re-render needs no project change. See SampleRecording.swift.
+      - path: ../../public/sample
+        type: folder
+        buildPhase: resources
+      # The What's New announcements, shared with Android and the desktop app
+      # (see announcements/README.md). A folder reference for the same reason
+      # as the sample: it lands as `announcements/`, and a new entry is a new
+      # file with no project change. See WhatsNew.swift.
+      - path: ../../announcements
+        type: folder
+        buildPhase: resources
     dependencies:
       - package: ParleyKit
       # Embeds the keyboard extension into the app bundle.
       - target: ParleyKeyboard
+      # Same, for the widget extension that draws the microphone Live Activity.
+      # An extension that is built but not embedded is a card that never
+      # appears, with nothing anywhere saying why.
+      - target: ParleyActivities
     entitlements:
       path: Parley/Parley.entitlements
       properties:
@@ -34,12 +57,20 @@ targets:
       path: Parley/Info.plist
       properties:
         CFBundleDisplayName: Parley
-        CFBundleShortVersionString: "1.14"
-        CFBundleVersion: "26"
+        CFBundleShortVersionString: "1.29"
+        CFBundleVersion: "46"
         UILaunchScreen: {}
         # Localized in Parley/InfoPlist.xcstrings; this is the fallback value.
         NSMicrophoneUsageDescription: Parley records the meeting in the room so it can transcribe it live. Audio goes only to the transcription provider tied to your account.
         UIBackgroundModes: [audio]
+        # Without this key ActivityKit is not merely disabled, it is silent:
+        # `ActivityAuthorizationInfo().areActivitiesEnabled` reads false and
+        # `Activity.request` throws `unsupported`, with nothing on screen and
+        # nothing in the log to connect that to a missing Info.plist entry. It
+        # is the easiest thing in this feature to forget and the hardest to
+        # diagnose afterwards, which is why it is commented and the other
+        # booleans here are not.
+        NSSupportsLiveActivities: true
         ITSAppUsesNonExemptEncryption: false
         CFBundleURLTypes:
           - CFBundleURLName: com.pathors.parley.ios.auth
@@ -92,8 +123,8 @@ targets:
       properties:
         # Localized in ../Keyboard/InfoPlist.xcstrings; this is the fallback.
         CFBundleDisplayName: Parley Voice
-        CFBundleShortVersionString: "1.14"
-        CFBundleVersion: "26"
+        CFBundleShortVersionString: "1.29"
+        CFBundleVersion: "46"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.keyboard-service
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).KeyboardViewController
@@ -116,3 +147,52 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: SXHVCQXJHZ
+
+  ParleyActivities:
+    type: app-extension
+    platform: iOS
+    sources: [../Activities, ../Shared]
+    dependencies:
+      # For MicActivityAttributes and MicActivityState. The widget cannot
+      # import the app target, so the only way it and the app agree on what the
+      # card says — down to the blue — is that both link this package.
+      - package: ParleyKit
+    entitlements:
+      path: ../Activities/ParleyActivities.entitlements
+      properties:
+        # The same App Group as the app and the keyboard, and it is worth being
+        # explicit about why an extension that never reads the container needs
+        # it. This target links ParleyKit, and ParleyKit contains
+        # `DictationChannel`; an extension holding a build of that which it is
+        # not entitled to use is a discrepancy that would only surface the day
+        # someone calls one line of it. Both halves declare the same group so
+        # neither can drift. It mattered more when the card carried buttons —
+        # a `LiveActivityIntent` is declared here and performed in the app's
+        # process, writing exactly those mailboxes — and it is kept now that
+        # they are gone because the link is what creates the hazard, not the
+        # call.
+        com.apple.security.application-groups: [group.com.pathors.parley.ios]
+    info:
+      path: ../Activities/Info.plist
+      properties:
+        # Localized in ../Activities/InfoPlist.xcstrings; this is the fallback.
+        CFBundleDisplayName: Parley Live Activity
+        CFBundleShortVersionString: "1.29"
+        CFBundleVersion: "46"
+        NSExtension:
+          # There is no ActivityKit extension point: a Live Activity is drawn by
+          # a WidgetKit extension, from the same `ActivityConfiguration` that a
+          # home-screen widget would declare a `StaticConfiguration` in. And no
+          # NSExtensionPrincipalClass — unlike the keyboard, the entry point is
+          # the `@main` WidgetBundle the extension compiles.
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.pathors.parley.ios.activities
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: SXHVCQXJHZ
+    # No UIAppFonts here, for the same reason ParleyKeyboard has none: a widget
+    # draws under a tight memory budget, the card is four short lines of text,
+    # and the system faces are what a lock screen is already set in.

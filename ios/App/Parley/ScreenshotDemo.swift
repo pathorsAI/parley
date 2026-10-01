@@ -35,14 +35,18 @@
     /// argument never leaves the process.
     ///
     /// Routes: `record`, `settled`, `adjust`, `library`, `transcript`,
-    /// `keyboard`, `settings`, `dictation`.
+    /// `keyboard`, `settings`, `dictation`, and some that are not store frames
+    /// but review frames: `movetofolder` (the transcript with the folder
+    /// picker open over fifteen folders), `resetchecklist` (Settings'
+    /// "Show the getting-started list again", pressed, landing on the Library),
+    /// `summary` / `jump` / `nosummary` (the recording page's two faces — see
+    /// `docs/design/ios-recording-page.md`), and `voicehistory` (Library ›
+    /// Voice typing, one entry per polish outcome).
     @MainActor
     final class ScreenshotDemo: ObservableObject {
         static let shared = ScreenshotDemo()
 
-        enum Tab: Hashable { case record, library, settings }
-
-        @Published var tab: Tab = .record
+        @Published var tab: AppTab = .record
         /// Library pushes the demo transcript when this flips.
         @Published var showTranscript = false
         /// Settings scrolls the voice-keyboard section into view.
@@ -55,6 +59,37 @@
         /// know which of the two `task`s SwiftUI ran first — set from the route
         /// it can open onto a model that has not been seeded yet.
         @Published var openFilingAdjust = false
+        /// The transcript opens the folder picker over `pickerFolders`.
+        @Published var openFolderPicker = false
+        /// Settings runs its "Show the getting-started list again" action, the
+        /// same function the button calls.
+        @Published var pressResetChecklist = false
+        /// The Library draws the checklist even though it is serving fixtures.
+        /// Off for every store frame, which must not carry it.
+        @Published var allowsChecklist = false
+        /// Library pushes the sample recording, as the lap opens it.
+        @Published var showSample = false
+        /// Library switches to its Voice typing section, seeded with one
+        /// history entry per polish outcome (`voicehistory`).
+        @Published var showVoiceTyping = false
+        /// A sheet with a focused text field, so the Parley keyboard is on
+        /// screen, and an Action-Button-style demo dictation into it a moment
+        /// later (`keyboardharness`). The only way to watch the keyboard's
+        /// voice pane follow a session on a simulator with no touch input and
+        /// no microphone. While it is up the dictation screen is not presented
+        /// over it (see `ParleyApp.dictationPresented`).
+        @Published var keyboardHarness = false
+        /// Which fixture `showTranscript` pushes. The featured one unless a
+        /// route asks for the unanalysed one.
+        @Published var recordingID = "demo-renewal"
+        /// The face the pushed recording opens on, overriding the "summary when
+        /// analysed" rule — the store's transcript frame has to stay a
+        /// transcript, and the empty summary is only reachable by force.
+        var forcedFace: RecordingDetailView.Face?
+        /// A summary timestamp the pushed recording "taps" once it is up, and
+        /// whether the lit turn stays lit so the frame can be taken.
+        var jumpOnOpen: UInt64?
+        var holdsLitTurn = false
         /// `adjust` asks for the sheet; `seedSettled` is what grants it.
         private var wantsFilingAdjust = false
 
@@ -73,6 +108,28 @@
         /// True when the app should answer from the fixtures below instead of the
         /// cloud. Guards every injection point so a normal DEBUG run is untouched.
         static var servesFixtures: Bool { isActive && startsSignedIn }
+
+        /// `-ParleyDemoHoldFinishing <seconds>` keeps a demo dictation in
+        /// `finishing` that long after ⏹, standing in for the AI polish, so
+        /// the keyboard's polish wave and its "insert without polishing" tap
+        /// can be seen and captured. Absent, a demo dictation settles the
+        /// moment it stops, as it always has.
+        static var finishingHold: Duration? {
+            guard isActive else { return nil }
+            let seconds = UserDefaults.standard.double(forKey: "ParleyDemoHoldFinishing")
+            return seconds > 0 ? .milliseconds(Int(seconds * 1000)) : nil
+        }
+
+        /// `-ParleyDemoLoseConnectionAfter <seconds>` ends a demo dictation
+        /// that long after it starts listening as if the relay's reconnect
+        /// ladder had run out — through the real `endAfterLostConnection` —
+        /// so the lost-connection delivery and its notice can be seen with no
+        /// network to cut.
+        static var loseConnectionAfter: Duration? {
+            guard isActive else { return nil }
+            let seconds = UserDefaults.standard.double(forKey: "ParleyDemoLoseConnectionAfter")
+            return seconds > 0 ? .milliseconds(Int(seconds * 1000)) : nil
+        }
 
         private init() {
             // Applying the launch route here — not from a view — is what lets the
@@ -99,6 +156,16 @@
             showSettledFiling = false
             openFilingAdjust = false
             wantsFilingAdjust = false
+            openFolderPicker = false
+            pressResetChecklist = false
+            allowsChecklist = false
+            showSample = false
+            showVoiceTyping = false
+            keyboardHarness = false
+            recordingID = Self.featured.id
+            forcedFace = nil
+            jumpOnOpen = nil
+            holdsLitTurn = false
             switch route {
             case "record": tab = .record
             case "settled":
@@ -109,13 +176,93 @@
                 showSettledFiling = true
                 wantsFilingAdjust = true
             case "library": tab = .library
+            case "voicehistory":
+                // Review frame for the history's polish labels (1.25): one
+                // entry per outcome, plus one from before 1.25 with none.
+                // Deferred a turn for the same reason `dictation` is.
+                tab = .library
+                showVoiceTyping = true
+                Task { @MainActor in DictationHistory.shared.seedDemo(Self.voiceHistory) }
             case "transcript":
                 tab = .library
+                forcedFace = .transcript
+                showTranscript = true
+            case "summary":
+                tab = .library
+                forcedFace = .summary
+                showTranscript = true
+            case "jump":
+                // The summary's first highlight, tapped: the transcript with
+                // that turn lit and the 💡 notes beside it.
+                tab = .library
+                forcedFace = .summary
+                jumpOnOpen = 44_000
+                holdsLitTurn = true
+                showTranscript = true
+            case "lap1", "lap3", "lapdone":
+                // The guided lap on the sample, at step 1 (suggestion card and
+                // bar), step 3 (hand it to your AI), or finishing — the last
+                // one ticks the share a beat after the screen is up, so the
+                // finish is reached the way a user reaches it.
+                tab = .library
+                let step = route
+                Task { @MainActor in
+                    let sample = SampleRecordingStore.shared
+                    sample.remove()
+                    sample.load()
+                    if let id = sample.summary?.id { LapMotion.forgetCelebration(id) }
+                    var state = GettingStartedState(recorded: true)
+                    if step != "lap1" {
+                        state.filed = true
+                        state.replayed = true
+                        sample.setTitle(sample.manifest?.suggestion?.title ?? "")
+                        sample.setFolder(Self.folders.first?.id)
+                        sample.answerSuggestion()
+                    }
+                    GettingStartedStore.shared.seedDemo(state)
+                    showSample = true
+                    if step == "lapdone" {
+                        try? await Task.sleep(for: .seconds(2.5))
+                        GettingStartedStore.shared.mark(.sharedToAI)
+                    }
+                }
+            case "nosummary":
+                tab = .library
+                recordingID = "demo-review"
+                forcedFace = .summary
                 showTranscript = true
             case "keyboard":
                 tab = .settings
                 focusKeyboardSection = true
             case "settings": tab = .settings
+            case "movetofolder":
+                tab = .library
+                forcedFace = .transcript
+                showTranscript = true
+                openFolderPicker = true
+            case "resetchecklist":
+                tab = .settings
+                allowsChecklist = true
+                pressResetChecklist = true
+            case "keyboardharness":
+                // Review frames for the voice pane following a session: the
+                // countdown and the cap's ending (with
+                // `-ParleyDebugDictationLimit`), the lost-connection notice
+                // (with `-ParleyDemoLoseConnectionAfter`). The session starts
+                // the way the Action Button starts one, so the keyboard adopts
+                // it the way it adopts any session it did not mint.
+                keyboardHarness = true
+                // `-ParleyDemoResetCopyHint YES`: the keyboard's first-run
+                // "Tap text to copy" hint back to never shown, so its first
+                // sessions — and its retirement — can be captured again. The
+                // keyboard reads the ledger on its next appearance.
+                if UserDefaults.standard.bool(forKey: "ParleyDemoResetCopyHint") {
+                    CopyHintLedger.shared.reset()
+                }
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(4))
+                    await DictationCoordinator.shared.beginFromIntent()
+                }
             case "dictation":
                 // The keyboard hand-off screen in its stranded-listening state
                 // (manual swipe-back, the iOS 26.4+ regime). Deferred a turn
@@ -149,10 +296,20 @@
         /// The dictation transcript, pre-chunked roughly the way the relay
         /// settles text. `DictationCoordinator.streamDemoTranscript` plays it
         /// back at speaking pace.
+        ///
+        /// `-ParleyDemoLongDictation YES` plays a paragraph instead of a line —
+        /// past the transcript slot's three visible lines, with an emoji and
+        /// Latin inside the Chinese — so the slot's scrolling and the polish
+        /// wave can be seen on text that needs them.
         static var dictationScript: [String] {
-            let text = t(
-                "Hi Anna, just wanted to let you know that my new number is 0912 345 678. Talk soon!",
-                "嗨 Anna，跟你說一聲我的新電話號碼是 0912345678，之後再聊！")
+            let text =
+                UserDefaults.standard.bool(forKey: "ParleyDemoLongDictation")
+                ? t(
+                    "Hi Anna, just wanted to let you know that my new number is 0912 345 678. I'll be at Tuesday's Q3 review on time 👍 and I'll send you the deck tonight. The client also asked to move the contract to two years at the same price, so let's go over the details when we meet. Talk soon!",
+                    "嗨 Anna，跟你說一聲我的新電話號碼是 0912345678。下週二的 Q3 review 我會準時到 👍，簡報我今晚先寄給你看。另外客戶那邊說合約想改成兩年約，價格維持不變，細節我們見面再討論。之後再聊！")
+                : t(
+                    "Hi Anna, just wanted to let you know that my new number is 0912 345 678. Talk soon!",
+                    "嗨 Anna，跟你說一聲我的新電話號碼是 0912345678，之後再聊！")
             var chunks: [String] = []
             var current = ""
             for ch in text {
@@ -164,6 +321,74 @@
             }
             if !current.isEmpty { chunks.append(current) }
             return chunks
+        }
+
+        /// The Voice typing history for `voicehistory`: one entry per polish
+        /// outcome, newest first in the order below, and a last one with no
+        /// outcome at all — what every entry written before 1.25 looks like.
+        /// Two carry an ending as well (`DictationEnding`): one stopped by the
+        /// cap, and one delivered after its connection was lost, which never
+        /// reached the polish and so has no polish label.
+        static var voiceHistory: [DictationHistoryEntry] {
+            let now = Date()
+            func entry(
+                _ minutesAgo: Double, _ en: String, _ zh: String, _ outcome: PolishOutcome?,
+                raw: (String, String)? = nil, host: String? = nil,
+                ending: DictationEnding? = nil
+            ) -> DictationHistoryEntry {
+                DictationHistoryEntry(
+                    text: t(en, zh), startedAt: now.addingTimeInterval(-minutesAgo * 60),
+                    durationMs: ending == .limitReached
+                        ? Int(MicActivityPolicy.dictationLimit * 1000)
+                        : 3_000 + t(en, zh).count * 180,
+                    source: .keyboard, hostBundleID: host, rawText: raw.map { t($0.0, $0.1) },
+                    polish: outcome, ending: ending)
+            }
+            return [
+                entry(
+                    2,
+                    "Three things for tomorrow:\n1. Send the quote.\n2. Check the contract.\n3. Book the client meeting.",
+                    "明天三件事：\n1. 寄出報價。\n2. 確認合約。\n3. 約客戶開會。",
+                    .polished,
+                    raw: (
+                        "um so three things for tomorrow first send the quote uh second check the contract and third book the client meeting",
+                        "那個明天有三件事啦第一個就是寄報價然後第二個是合約要再看一下呃第三個就是要約客戶開會"
+                    ),
+                    host: "com.apple.mobilenotes"),
+                entry(
+                    5, "and that is the whole plan for the offsite, the rest we can decide on the day",
+                    "以上就是外訓的整個規劃，其他的我們當天再決定", .polished,
+                    host: "com.apple.mobilenotes", ending: .limitReached),
+                entry(
+                    7, "the numbers for last quarter are in the shared folder under",
+                    "上一季的數字在共用資料夾的", nil, host: "com.apple.MobileSMS",
+                    ending: .connectionLost),
+                entry(9, "OK", "好", .tooShort, host: "jp.naver.line"),
+                entry(
+                    15, "running five minutes late sorry start without me",
+                    "我會晚五分鐘到你們先開始不用等我", .skipped, host: "com.apple.MobileSMS"),
+                entry(
+                    38, "can you send me the file from yesterday's meeting when you get a chance",
+                    "你方便的時候把昨天開會的檔案傳給我一下", .timedOut),
+                entry(
+                    64, "the deploy is done and the numbers look fine on staging",
+                    "部署已經好了測試環境的數字看起來都正常", .rejectedScript),
+                entry(
+                    95, "what time does the store close on Sundays",
+                    "星期天店裡幾點關門", .rejectedLength),
+                entry(
+                    140, "let's move the review to Thursday afternoon",
+                    "檢討會改到禮拜四下午", .failed),
+                entry(
+                    200, "remind me to call the bank about the transfer",
+                    "提醒我打給銀行問轉帳的事", .overdue),
+                entry(
+                    320, "pick up milk and eggs on the way home",
+                    "回家路上買牛奶跟雞蛋", .off),
+                entry(
+                    1_500, "notes from last week before the update",
+                    "更新前的舊紀錄，沒有潤飾標籤", nil),
+            ]
         }
 
         // MARK: account fixtures
@@ -190,6 +415,27 @@
                 id: "f-new", name: t("New business", "新客戶"),
                 orgId: nil, createdAt: nil, updatedAt: nil),
         ]
+
+        /// Enough folders that the picker has to scroll and the search earns its
+        /// place — the account the action sheet failed. The first two are the
+        /// library's own, so the featured recording's folder is ticked.
+        static var pickerFolders: [CloudFolder] {
+            let more: [(String, String)] = [
+                ("Halcyon Labs", "晴光實驗室"), ("Meridian", "子午線"),
+                ("Acme Logistics", "頂峰物流"), ("Blue Harbor Hotels", "藍港酒店"),
+                ("Café Luna", "月光咖啡"), ("Evergreen Clinics", "長青診所"),
+                ("Foxglove Retail", "毛地黃零售"), ("Granite Insurance", "磐石保險"),
+                ("Harbourline Freight", "港線貨運"), ("Ironwood Motors", "鐵木汽車"),
+                ("Juniper Schools", "杜松教育"), ("Kestrel Energy", "紅隼能源"),
+                ("Lumen Dental", "流明牙醫"),
+            ]
+            return folders
+                + more.enumerated().map { i, names in
+                    CloudFolder(
+                        id: "f-picker-\(i)", name: t(names.0, names.1),
+                        orgId: nil, createdAt: nil, updatedAt: nil)
+                }
+        }
 
         // MARK: library fixtures
 
@@ -228,6 +474,11 @@
         ]
 
         static var featured: CloudRecordingSummary { recordings[0] }
+
+        /// The fixture `showTranscript` pushes.
+        static var pushed: CloudRecordingSummary {
+            recordings.first { $0.id == shared.recordingID } ?? featured
+        }
 
         /// Which fixtures count as "audio is on this phone".
         ///
@@ -330,6 +581,42 @@
             ]
         }
 
+        /// The meta the detail screen reads for a fixture: the featured
+        /// recording's, analysed, or a bare transcript for any other — which is
+        /// what the "no summary yet" frame needs.
+        static func meta(for id: String) -> RecordingMeta {
+            guard id != featured.id else { return meta }
+            var bare = meta
+            bare.raw["id"] = id
+            bare.raw["findings"] = [Any]()
+            bare.raw["actionItems"] = [Any]()
+            bare.raw["brief"] = nil
+            return bare
+        }
+
+        /// The analysis's short read, with the moments it cites as links.
+        private static var brief: String {
+            t(
+                "**Renewal held at forty seats, the enterprise floor.** The client budgeted forty against an eighty-seat quote [0:12]; forty is the minimum, so the lever became a price hold through the next renewal [0:27].\n\n**Next:** onboarding is two weeks because SSO is already on Okta [0:58]. The revised quote goes out tomorrow with the security questionnaire [1:32].",
+                "**續約鎖在四十席，企業版的底線。** 客戶編了四十席、報價是八十席 [0:12]；四十席已是最低門檻，可談的變成把價格鎖到下一次續約 [0:27]。\n\n**接下來：** SSO 已在 Okta 上，導入兩週 [0:58]。修訂報價明天寄出，附資安問卷 [1:32]。")
+        }
+
+        private static var actionItems: [[String: Any]] {
+            [
+                [
+                    "id": "a-quote", "done": false, "atMs": 92_000.0,
+                    "text": t(
+                        "Send the revised quote with the price hold in writing",
+                        "寄出含鎖價條款的修訂報價"),
+                ],
+                [
+                    "id": "a-security", "done": false, "atMs": 92_000.0,
+                    "text": t(
+                        "Attach the security questionnaire", "附上資安問卷"),
+                ],
+            ]
+        }
+
         static var meta: RecordingMeta {
             RecordingMeta(raw: [
                 "id": featured.id,
@@ -348,7 +635,7 @@
                     "mix-1": t("Client lead", "客戶窗口"),
                     "mix-2": t("You", "我"),
                 ],
-                "findings": findings, "actionItems": [Any](),
+                "findings": findings, "actionItems": actionItems, "brief": brief,
                 "audio": "audio.ogg", "analyzed": true,
             ])
         }
@@ -440,6 +727,44 @@
                     isFinal: false, startMs: 58_000, endMs: 62_000))
             recorder.seedDemo(
                 segments: seeded, status: String(localized: "Transcribing live"))
+        }
+    }
+
+    /// The `keyboardharness` sheet: a text field that takes focus as soon as it
+    /// appears, so whichever keyboard the simulator has selected — the Parley
+    /// keyboard, on the review simulator — comes up and stays up while a demo
+    /// dictation runs and lands in the field.
+    struct KeyboardHarnessView: View {
+        @State private var text = ""
+        @FocusState private var focused: Bool
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(verbatim: "Keyboard harness (DEBUG)")
+                    .font(.headline)
+                TextField(text: $text, axis: .vertical) { Text(verbatim: "Dictation lands here") }
+                    .lineLimit(4...8)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($focused)
+                Spacer()
+            }
+            .padding()
+            .task {
+                try? await Task.sleep(for: .milliseconds(600))
+                focused = true
+            }
+            .interactiveDismissDisabled()
+        }
+    }
+
+    /// Presents `KeyboardHarnessView` while `ScreenshotDemo.keyboardHarness`
+    /// is set. A modifier so the app scene can observe the flag without
+    /// holding the demo object itself.
+    struct KeyboardHarnessPresenter: ViewModifier {
+        @ObservedObject private var demo = ScreenshotDemo.shared
+
+        func body(content: Content) -> some View {
+            content.sheet(isPresented: $demo.keyboardHarness) { KeyboardHarnessView() }
         }
     }
 

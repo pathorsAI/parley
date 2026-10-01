@@ -27,6 +27,33 @@ pub const LEVEL_EVENT: &str = "audio://level";
 /// [`crate::audio::prosody::ProsodyAnalyzer`].
 pub const PROSODY_EVENT: &str = "audio://prosody";
 
+/// The `source` label of a voice-typing session's events.
+pub const VOICE_TYPING_SOURCE: &str = "voice-typing";
+
+tokio::task_local! {
+    /// The voice-typing session the current task belongs to, set by
+    /// `run_metered_session` for the whole session task and `None` for
+    /// meetings.
+    pub static SESSION: Option<u64>;
+}
+
+/// The session id to stamp on an event for `source`. A voice-typing event
+/// emitted outside its session scope (a task spawned inside an adapter does
+/// not inherit it) would be dropped by the overlay, so that is an error here.
+pub fn session_for(source: &str) -> Option<u64> {
+    let session = SESSION.try_with(|s| *s).ok().flatten();
+    if session.is_none() && source == VOICE_TYPING_SOURCE {
+        debug_assert!(
+            false,
+            "voice-typing event emitted outside its session scope"
+        );
+        log::error!(
+            "[stt:{source}] event emitted outside its session scope; the overlay will drop it"
+        );
+    }
+    session
+}
+
 /// rustls 0.23 requires a process-wide default CryptoProvider before any TLS
 /// handshake; installing it lazily (once) avoids a panic in the ws task.
 pub fn ensure_crypto_provider() {
@@ -108,6 +135,7 @@ struct TranscriptEvent {
     is_final: bool,
     start_ms: u64,
     end_ms: u64,
+    session: Option<u64>,
 }
 
 /// Live input level (0.0–1.0) emitted ~10×/s so the UI can show a meter.
@@ -115,6 +143,7 @@ struct TranscriptEvent {
 struct LevelEvent {
     source: String,
     level: f32,
+    session: Option<u64>,
 }
 
 /// Emit a single transcript segment update to the frontend.
@@ -140,6 +169,7 @@ pub fn emit_segment(
             is_final,
             start_ms,
             end_ms,
+            session: session_for(source),
         },
     );
 }
@@ -261,6 +291,7 @@ impl LevelMeter {
                 LevelEvent {
                     source: self.source.to_string(),
                     level,
+                    session: session_for(self.source),
                 },
             );
             self.peak = 0;

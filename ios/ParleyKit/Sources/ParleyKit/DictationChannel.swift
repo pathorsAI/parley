@@ -1,11 +1,12 @@
 import Foundation
+import os
 
 /// The shared channel between the Parley keyboard extension and the container
 /// app. A keyboard extension cannot open the microphone (iOS forbids it since
 /// iOS 8, Full Access included), so dictation runs in the app and the transcript
 /// is handed back through the App Group container.
 ///
-/// Six single-writer mailboxes, each with its own Darwin notification, so the
+/// Seven single-writer mailboxes, each with its own Darwin notification, so the
 /// two processes never contend on the same file:
 ///   - `downlink` (app → keyboard): the growing transcript + session state.
 ///   - `uplink`   (keyboard → app): the session request, host bundle id, and
@@ -18,6 +19,9 @@ import Foundation
 ///   - `presence` (app → keyboard): the app process is alive, and whether a
 ///     start request would be served without opening Parley. A heartbeat,
 ///     like the window's — see `AppPresence`.
+///   - `level` (app → keyboard): how loud the microphone is right now, so the
+///     record button can swell with the voice instead of miming it. The
+///     fastest of them by an order of magnitude — see `MicLevelReading`.
 ///
 /// The window pair is separate from the session pair on purpose: a window
 /// outlives any one dictation and most of what it has to say happens when no
@@ -28,7 +32,9 @@ import Foundation
 /// questions — "is the process there" outlives and underlies "is it holding a
 /// microphone" — and separate from the downlink because a downlink is stamped
 /// only when the transcript moves, and a user pausing to think is not a dead
-/// app.
+/// app. The level is separate from the downlink for the sharper version of
+/// that same reason: it moves whether or not a word does, and the downlink's
+/// stamp is what the liveness watchdog reads (see `MicLevelReading`).
 ///
 /// Darwin notifications carry no payload — they are pure "go re-read" signals.
 /// The files are the source of truth, which is what makes this robust to the
@@ -59,6 +65,12 @@ public enum DictationChannel {
     /// app → keyboard: the app re-stamped its presence, or announced that it
     /// is about to be suspended. See `AppPresence`.
     public static let presenceNote = "com.pathors.parley.dictation.presence"
+    /// app → keyboard: a new microphone level. Posted about twelve times a
+    /// second while someone is speaking and not at all otherwise, which makes
+    /// it the only note here that is a stream rather than an event — and the
+    /// reason its mailbox is not a field on the downlink. See
+    /// `MicLevelReading`.
+    public static let levelNote = "com.pathors.parley.dictation.level"
 
     /// The URL the keyboard opens to start a session. The app routes this in
     /// `onOpenURL`. The session id round-trips so a stale downlink from a prior
@@ -96,6 +108,26 @@ public enum DictationChannel {
         /// keyboard uses it to bound how long a finished session's tail is still
         /// worth inserting after a relaunch (see `KeyboardViewController`).
         public var updatedAt: Date?
+        /// Set on a `starting` the app publishes *before* it has a microphone:
+        /// it heard the keyboard's start request in the background with no
+        /// capture to borrow, and is trying to open one. A provisional answer —
+        /// the keyboard gives it `StartHandshake.microphoneWait` to become the
+        /// session (or a `needsApp`) instead of opening the app at the 700 ms
+        /// mark. `nil` (every other downlink, and every file written before the
+        /// field existed) means the app has a microphone or is in front, where
+        /// it can open one.
+        public var openingMicrophone: Bool?
+        /// When the app's session cap will stop this session — see
+        /// `MicActivityPolicy.dictationLimit`. Published with `listening`, so
+        /// the keyboard counts the last seconds down from the app's own clock
+        /// rather than assuming when the session began (`DictationCountdown`).
+        /// `nil` before the session is listening and once it is over.
+        public var deadline: Date?
+        /// Something the user should read after a `done` that did not come from
+        /// their ⏹ — the cap, or a lost connection. See `DictationEnding`.
+        /// Never a reason not to insert: a `done` with a notice inserts exactly
+        /// like one without.
+        public var notice: DictationEnding?
 
         /// `CaseIterable` so the wire-format test iterates the states rather
         /// than listing them: a state that decodes to something the other
@@ -135,6 +167,24 @@ public enum DictationChannel {
             /// session in place — a recovery republishes `listening` for the
             /// same id and the transcript carries on where it stopped.
             case micTaken
+            /// The app heard the start request in the background, tried to open
+            /// the microphone, and iOS refused: the session can only start with
+            /// Parley in front.
+            ///
+            /// The keyboard's answer is to open `parley://dictate` for the same
+            /// session at once, rather than waiting out
+            /// `StartHandshake.microphoneWait` for a start that is not coming.
+            /// It used to be expressed as silence — the app published nothing
+            /// and let the keyboard's 700 ms run out — which only worked while
+            /// the app said nothing *before* trying, and the provisional
+            /// `starting` it now publishes first (`openingMicrophone`) would
+            /// have turned that silence into a 3-second wait.
+            ///
+            /// Not live — nothing holds a microphone for it — and not an
+            /// ending the pane shows: it is a hand-off in flight. A keyboard
+            /// that survives the trip (the URL was refused) treats it as a
+            /// session the app has not answered, and `startGrace` takes it back.
+            case needsApp
 
             /// The session is still being served: a process somewhere is
             /// holding a microphone (or draining a relay) on its behalf. The
@@ -154,9 +204,15 @@ public enum DictationChannel {
             public var isLive: Bool {
                 switch self {
                 case .starting, .listening, .reconnecting, .finishing: return true
-                case .done, .error, .cancelled, .micTaken: return false
+                case .done, .error, .cancelled, .micTaken, .needsApp: return false
                 }
             }
+        }
+
+        /// The app's `starting` is provisional: it is still opening the
+        /// microphone. See `openingMicrophone`.
+        public var isOpeningMicrophone: Bool {
+            state == .starting && openingMicrophone == true
         }
 
         /// When this live session should be presumed dead unless something
@@ -192,7 +248,8 @@ public enum DictationChannel {
         public init(
             session: String, committed: String = "", partial: String = "",
             state: State = .starting, errorMessage: String? = nil,
-            updatedAt: Date? = nil
+            updatedAt: Date? = nil, openingMicrophone: Bool? = nil,
+            deadline: Date? = nil, notice: DictationEnding? = nil
         ) {
             self.session = session
             self.committed = committed
@@ -200,6 +257,33 @@ public enum DictationChannel {
             self.state = state
             self.errorMessage = errorMessage
             self.updatedAt = updatedAt
+            self.openingMicrophone = openingMicrophone
+            self.deadline = deadline
+            self.notice = notice
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case session, committed, partial, state, errorMessage, updatedAt
+            case openingMicrophone, deadline, notice
+        }
+
+        /// Hand-written so the three fields added for continuity decode
+        /// leniently. All optional, so a file from before them decodes either
+        /// way; but `notice` is an enum, and a value this build does not know
+        /// would otherwise fail the whole file — and a downlink that fails to
+        /// decode reads as "nothing there", which is a `done` never inserted.
+        /// An unknown note is dropped instead; the words still land.
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            session = try c.decode(String.self, forKey: .session)
+            committed = try c.decode(String.self, forKey: .committed)
+            partial = try c.decode(String.self, forKey: .partial)
+            state = try c.decode(State.self, forKey: .state)
+            errorMessage = try c.decodeIfPresent(String.self, forKey: .errorMessage)
+            updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt)
+            openingMicrophone = (try? c.decodeIfPresent(Bool.self, forKey: .openingMicrophone)) ?? nil
+            deadline = (try? c.decodeIfPresent(Date.self, forKey: .deadline)) ?? nil
+            notice = (try? c.decodeIfPresent(DictationEnding.self, forKey: .notice)) ?? nil
         }
     }
 
@@ -233,6 +317,17 @@ public enum DictationChannel {
         /// mailbox that fails to decode reads as "nothing there", which here
         /// would mean a stop request the app never hears.
         public var cancelRequested: Bool?
+        /// The user tapped the record button while the session was finishing:
+        /// insert the raw words now rather than wait for the AI polish.
+        ///
+        /// Written alongside `stopRequested` for the same reason ✕ is — an app
+        /// that does not know this field still reads "end this session", which
+        /// is the right thing for it to do — and optional for the same reason
+        /// `cancelRequested` is: an uplink from an older build has no such key,
+        /// and a mailbox that fails to decode reads as no request at all.
+        ///
+        /// It never cuts the relay's drain: see `FinishingPolish`.
+        public var skipPolishRequested: Bool?
         /// How much of `committed` the keyboard has already inserted. Persisted
         /// here so a keyboard that was killed mid-session does not double-insert
         /// when it relaunches.
@@ -240,17 +335,22 @@ public enum DictationChannel {
 
         public init(
             session: String, hostBundleID: String? = nil,
-            stopRequested: Bool = false, cancelRequested: Bool? = nil, insertedCount: Int = 0
+            stopRequested: Bool = false, cancelRequested: Bool? = nil,
+            skipPolishRequested: Bool? = nil, insertedCount: Int = 0
         ) {
             self.session = session
             self.hostBundleID = hostBundleID
             self.stopRequested = stopRequested
             self.cancelRequested = cancelRequested
+            self.skipPolishRequested = skipPolishRequested
             self.insertedCount = insertedCount
         }
 
         /// The keyboard asked for this session to be thrown away.
         public var wantsCancel: Bool { cancelRequested == true }
+
+        /// The keyboard asked for the raw transcript now, unpolished.
+        public var wantsSkipPolish: Bool { skipPolishRequested == true }
     }
 
     public static func writeUplink(_ value: Uplink) {
@@ -350,11 +450,36 @@ public enum DictationChannel {
         read("dictation-presence.json")
     }
 
+    // MARK: microphone level (app writes, keyboard reads)
+
+    /// Publish how loud the microphone is. Stamped on every write, like the
+    /// window and the presence heartbeat, and for a sharper version of the same
+    /// reason: a reader that believed an unstamped level would draw a swollen
+    /// button for a voice that stopped — or for a process that died — until
+    /// something else happened to take the pane out of its listening shape.
+    ///
+    /// Caller-throttled rather than throttled here, because the throttle has to
+    /// be a decision the writer can suspend: the app writes one final
+    /// `MicLevelReading.silent` the moment a session ends, and that write must
+    /// not be the one the rate limiter swallows. See
+    /// `DictationCoordinator.publishKeyboardLevel`.
+    public static func writeMicLevel(_ value: MicLevelReading) {
+        var stamped = value
+        stamped.updatedAt = Date()
+        write(stamped, to: "dictation-level.json")
+        post(levelNote)
+    }
+
+    public static func readMicLevel() -> MicLevelReading? {
+        read("dictation-level.json")
+    }
+
     public static func clear() {
         for name in [
             "dictation-down.json", "dictation-up.json",
             "dictation-window.json", "dictation-window-control.json",
             "dictation-ready.json", "dictation-presence.json",
+            "dictation-level.json",
         ] {
             if let url = container?.appendingPathComponent(name) {
                 try? FileManager.default.removeItem(at: url)
@@ -364,22 +489,51 @@ public enum DictationChannel {
 
     // MARK: file plumbing
 
-    private static var container: URL? {
-        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup)
+    // Module-internal rather than private, and no longer for a reason: this was
+    // opened up for `MeetingControlChannel`, a mailbox in the very same App
+    // Group container, and that channel went with the Live Activity's meeting
+    // mode. Left as-is rather than tightened back to `private` because the next
+    // non-dictation mailbox will want the same plumbing and nothing in this
+    // module abuses it meanwhile.
+    //
+    // Asked once and remembered. The keyboard reads these files a dozen times a
+    // second while someone is speaking and nine or ten times on every
+    // appearance, and each call used to go back to `containerURL(…)`, which
+    // asks the system for the container's path every time — an answer that
+    // cannot change while the process lives. Only a real URL is remembered: `nil`
+    // is asked again next time, so a process that could not see the container
+    // at first is not stuck without it — the one failure a cache can add.
+    static var container: URL? {
+        containerCache.withLock { cached in
+            if let cached { return cached }
+            cached = FileManager.default.containerURL(
+                forSecurityApplicationGroupIdentifier: appGroup)
+            return cached
+        }
     }
 
-    private static func write<T: Encodable>(_ value: T, to name: String) {
+    /// Behind a lock because the channel is callable from any thread: the
+    /// keyboard calls it from the main one, and the app makes no such promise.
+    private static let containerCache = OSAllocatedUnfairLock<URL?>(initialState: nil)
+
+    /// One decoder for every read. `JSONDecoder` is `Sendable` — decoding with
+    /// a shared instance from several threads is safe as long as nobody changes
+    /// its options, and nothing here does — and a new one per read was an
+    /// allocation on the path the keyboard walks a dozen times a second.
+    private static let decoder = JSONDecoder()
+
+    static func write<T: Encodable>(_ value: T, to name: String) {
         guard let url = container?.appendingPathComponent(name),
             let data = try? JSONEncoder().encode(value)
         else { return }
         try? data.write(to: url, options: .atomic)
     }
 
-    private static func read<T: Decodable>(_ name: String) -> T? {
+    static func read<T: Decodable>(_ name: String) -> T? {
         guard let url = container?.appendingPathComponent(name),
             let data = try? Data(contentsOf: url)
         else { return nil }
-        return try? JSONDecoder().decode(T.self, from: data)
+        return try? decoder.decode(T.self, from: data)
     }
 
     // MARK: Darwin notifications
@@ -404,8 +558,9 @@ public enum DictationChannel {
 ///    with Parley in the foreground hosting the keyboard. `servesInPlace` is
 ///    the app's own answer: it is in the foreground, or it is backgrounded but
 ///    holding a running microphone (a window) that the next session can borrow.
-///    A backgrounded app with no microphone says no, because iOS refuses to let
-///    it *start* one — so the keyboard's tap opens Parley, where it can.
+///    A backgrounded app with no microphone says no, because it cannot know
+///    whether iOS will let it *start* one. It still tries when the tap comes,
+///    and only a refused activation sends the keyboard's tap through Parley.
 ///
 /// 2. **Is the session I am showing still being served?** A `listening`
 ///    downlink is re-stamped only when the transcript moves. If the app is
@@ -458,6 +613,158 @@ public struct AppPresence: Codable, Sendable, Equatable {
     /// The next tap will be served where the user already is.
     public func canServeInPlace(at now: Date = Date()) -> Bool {
         isAwake(at: now) && servesInPlace
+    }
+}
+
+/// How loud the microphone is right now, so the keyboard's record button can
+/// swell with the voice rather than mime listening on a loop.
+///
+/// ## Why this is a mailbox of its own
+///
+/// The obvious home for a number about the running session is `Downlink`,
+/// beside the transcript it belongs to, and that is the one place it must not
+/// go. A downlink is re-stamped *only when the transcript moves*, and that
+/// property is load-bearing rather than incidental: `Downlink.presumedDeadAt`
+/// takes the newer of the downlink's stamp and the presence heartbeat, and it
+/// is what tells the keyboard that a file still saying `listening` belongs to a
+/// process nobody is running any more. Several bugs were spent getting that
+/// right — a keyboard drawing ⏹ over a microphone iOS had taken away, a stop
+/// nobody answered, a jetsammed app leaving a pane listening forever.
+///
+/// A level moves ten-plus times a second whether or not a word does. Put it on
+/// the downlink and that file is re-stamped continuously, so the watchdog whose
+/// entire input is the stamp's staleness can never fire, and the mechanism is
+/// not weakened but switched off. The cheaper objections point the same way: it
+/// would rewrite the whole transcript twelve times a second to carry one
+/// `Float`, and it would wake `KeyboardViewController.drainDownlink` — adoption,
+/// insertion, the liveness re-arm — for each of them.
+///
+/// So it is its own file with its own note, like the window and the presence
+/// heartbeat, because it answers a different question on a different clock.
+///
+/// ## Shape: one number, not a trace
+///
+/// A ring of the last N readings would let the keyboard draw a scrolling
+/// waveform, and that is deliberately not what is here. What the pane draws is
+/// a button that swells and rings that follow it outward, and both are
+/// functions of *how loud it is now*; the history would be written twelve times
+/// a second and read for its newest entry alone. It would also be history the
+/// reader already has — every earlier value arrived in an earlier note — which
+/// only buys something for a reader that was suspended, and a keyboard that
+/// missed a second of audio has no use for a second-old waveform when it comes
+/// back. The smallest thing that serves the drawing is one `Float`, and the
+/// lag a ripple needs is a *derived* value the keyboard makes for itself (see
+/// `KeyboardBridge.MicMeter`) rather than one this channel has to carry.
+///
+/// ## Silence is a value, and it is the resting state
+///
+/// `level` is normalised and floored, so a room with nobody in it reads as
+/// exactly zero rather than as a small permanent shimmer. A missing file, an
+/// unstamped one and one the app stopped writing all read as zero too — see
+/// `current(at:)`. That is the honest half of the rule the record button used
+/// to break: the visualiser is driven by real amplitude, and in silence it is
+/// flat.
+public struct MicLevelReading: Codable, Sendable, Equatable {
+    /// How full the meter is, 0…1, already normalised for drawing — see
+    /// `gain`. Not the raw RMS: the shape of that number is a fact about the
+    /// microphone, and a reader should be handed "how loud" rather than
+    /// something it has to know about audio to use.
+    public var level: Float
+    /// When the app last wrote this (stamped by
+    /// `DictationChannel.writeMicLevel`). Optional so a file written before
+    /// this mailbox existed still decodes — and a decoded `nil` reads as
+    /// silence, which is the safe answer.
+    public var updatedAt: Date?
+
+    /// How often the app publishes while someone is speaking — 12 Hz.
+    ///
+    /// The floor of the useful range is around 10 Hz: below it a button that
+    /// swells arrives visibly after the syllable that caused it, which reads as
+    /// lag rather than as a meter. The ceiling is what this costs, and the cost
+    /// is not the drawing. **Every write is a file write plus a Darwin post,
+    /// and the app is usually backgrounded while a dictation runs** — so each
+    /// one is a wake-up in a process iOS is looking for a reason to suspend,
+    /// and doubling the rate doubles that bill for a difference nobody can see.
+    ///
+    /// 12 rather than 15 or 20 because the measurement itself arrives at about
+    /// that rate: `AudioCapture` taps 4096 frames at a time, which is ~85 ms at
+    /// 48 kHz. A faster mailbox would mostly republish readings that had not
+    /// changed and pay full price for them; a slower one would throw away
+    /// readings that exist. This is a *minimum* interval rather than a timer,
+    /// so a device whose buffers are larger simply publishes less often instead
+    /// of publishing stale numbers on a schedule.
+    public static let publishInterval: TimeInterval = 1.0 / 12
+
+    /// How old a reading may be before it reads as silence.
+    ///
+    /// The same stamping-and-staleness rule as `MicWindowState`, and here it is
+    /// the only thing standing between a killed app and a button frozen
+    /// mid-swell. The keyboard learns about levels from a Darwin note; a
+    /// process that has been jetsammed, suspended or swiped away posts none, so
+    /// without an expiry the last value written is the last value drawn — and
+    /// nothing else would take it down for a long time, since the liveness
+    /// watchdog needs ~25 s to give up on the session itself.
+    ///
+    /// Seven publish intervals, which is a far looser ratio than the window's
+    /// or the presence heartbeat's (both a little under three). The asymmetry
+    /// is deliberate, because what a wrong answer costs is different at this
+    /// speed: a window wrongly read as closed changes a word on screen once,
+    /// while a level wrongly read as silence makes the button drop to rest and
+    /// jump back — and audio callbacks in a backgrounded app genuinely do
+    /// bunch. Still comfortably under a second, which is the number that
+    /// matters: a dead app's last reading is gone before anyone could call the
+    /// button stuck.
+    public static let staleAfter: TimeInterval = 0.6
+
+    /// At or below this the reading *is* silence: the button rests and nothing
+    /// ripples. Room tone through a phone microphone normalises to a few
+    /// hundredths, and a meter that answers room tone is a meter that is never
+    /// flat — which is the whole thing the rule exists to prevent.
+    public static let silence: Float = 0.05
+
+    /// What turns `AudioCapture`'s RMS into the 0…1 this carries.
+    ///
+    /// The capture reports the plain RMS of a chunk, which for speech at the
+    /// distance someone holds a phone sits around 0.05–0.25 and essentially
+    /// never approaches 1; ×5 puts ordinary speech across the top half of the
+    /// meter and leaves headroom for a shout. It is a display mapping, not a
+    /// second measurement — the number multiplied here is the same one the
+    /// app's own dictation screen has always drawn.
+    public static let gain: Float = 5
+
+    /// Nothing is being said. The resting value, and what the app writes once
+    /// on its way out of a session so the keyboard is never left mid-swell.
+    public static let silent = MicLevelReading(level: 0)
+
+    public init(level: Float = 0, updatedAt: Date? = nil) {
+        self.level = level
+        self.updatedAt = updatedAt
+    }
+
+    /// Normalise a chunk's RMS. Clamped at both ends, which also disposes of a
+    /// NaN from an empty chunk: `max(0, .nan)` is 0 here, and a meter that drew
+    /// a NaN would not come back.
+    public init(rms: Float, updatedAt: Date? = nil) {
+        self.init(level: min(1, max(0, rms * Self.gain)), updatedAt: updatedAt)
+    }
+
+    /// Nobody has vouched for this reading lately.
+    public func isFresh(at now: Date = Date()) -> Bool {
+        guard let updatedAt else { return false }
+        return now.timeIntervalSince(updatedAt) < Self.staleAfter
+    }
+
+    /// Quiet enough to be nothing.
+    public var isSilent: Bool { level <= Self.silence }
+
+    /// What a reader should actually draw: the published level while it is
+    /// fresh and above the floor, and silence in every other case — stale,
+    /// unstamped, or merely quiet. One accessor rather than three checks at the
+    /// call site, so "a reading nobody refreshed reads as silence, not as the
+    /// last thing seen" cannot be got wrong in one place and right in another.
+    public func current(at now: Date = Date()) -> Float {
+        guard isFresh(at: now), !isSilent else { return 0 }
+        return level
     }
 }
 

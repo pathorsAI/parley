@@ -6,28 +6,18 @@ import { useI18n } from "../../i18n";
 import { useEvalNames } from "./useAnalysis";
 import type { TimelineEvent } from "../../lib/types";
 
+/**
+ * Severity dot. The dot is the ONLY place severity is colour-coded — the lane is
+ * already shown by the timeline, so the title stays plain foreground text.
+ */
 const SEVERITY_DOT: Record<TimelineEvent["severity"], string> = {
-  info: "bg-sky-400",
-  warn: "bg-amber-500",
-  critical: "bg-red-500",
+  info: "bg-info-foreground",
+  warn: "bg-warning-foreground",
+  critical: "bg-danger-foreground",
 };
 
-/** Moment ME already defused → green, overriding the severity colour. */
-const RESOLVED_DOT = "bg-emerald-500";
-
-/**
- * Title colour, shared by the row and both solution windows. Sided findings keep
- * the lane colours; a decision-lens finding has no lane, so it reads by what it
- * IS — a settled decision earns emphasis, an open question a warning tint, a
- * plain fact nothing.
- */
-export function findingTitleClass(event: TimelineEvent): string {
-  if (event.side === "me") return "text-sky-400";
-  if (event.side === "them") return "text-amber-400";
-  if (event.category === "decision") return "text-emerald-600 dark:text-emerald-400";
-  if (event.category === "open") return "text-amber-500 dark:text-amber-400";
-  return "text-foreground";
-}
+/** Moment ME already defused → success, overriding the severity colour. */
+const RESOLVED_DOT = "bg-success-foreground";
 
 /**
  * One finding in the right-hand list. Clicking the row HIGHLIGHTS the finding and
@@ -67,51 +57,57 @@ export function FindingRow({
   return (
     <li
       ref={ref}
-      className={cn("rounded-lg border", selected ? "border-primary/50 bg-muted/30" : "border-border")}
+      className={cn(
+        "border-b border-border px-4 py-3 last:border-b-0",
+        selected ? "bg-primary/5 shadow-[inset_2px_0_0_var(--primary)]" : "hover:bg-muted/60"
+      )}
     >
       <button
         type="button"
         onClick={() => onSelect(event)}
-        className="flex w-full cursor-pointer items-start gap-2 rounded-lg px-2.5 py-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        className="flex w-full cursor-pointer items-start gap-2 rounded text-left outline-none focus-visible:ring-1 focus-visible:ring-ring"
       >
         <span
-          className={cn("mt-1 size-2 shrink-0 rounded-full", event.resolved ? RESOLVED_DOT : SEVERITY_DOT[event.severity])}
+          className={cn(
+            "mt-1.5 size-[7px] shrink-0 rounded-full",
+            event.resolved ? RESOLVED_DOT : SEVERITY_DOT[event.severity]
+          )}
         />
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-1.5">
-            <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+            <span className="text-[11px] tabular-nums text-muted-foreground">
               {formatClock(event.atMs)}
             </span>
             {event.category && (
-              <span className="shrink-0 rounded bg-muted px-1 text-[9px] text-muted-foreground">
+              <span className="shrink-0 rounded bg-muted px-1.5 text-[10px] text-muted-foreground">
                 {t(`finding.cat.${event.category}`)}
               </span>
             )}
-            <span className={cn("text-xs font-medium", findingTitleClass(event))}>{event.title}</span>
+            <span className="text-[13px] font-semibold text-foreground">{event.title}</span>
             {event.resolved && (
-              <span className="rounded bg-emerald-500/10 px-1 text-[9px] font-medium text-emerald-600 dark:text-emerald-400">
+              <span className="rounded bg-success px-1.5 text-[10px] font-medium text-success-foreground">
                 {t("timeline.resolved")}
               </span>
             )}
             {event.source === "extra" && (
-              <span className="rounded bg-muted px-1 text-[9px] text-muted-foreground">{t("timeline.extra")}</span>
+              <span className="rounded bg-muted px-1.5 text-[10px] text-muted-foreground">{t("timeline.extra")}</span>
             )}
             {evalLabels.map(({ id, name }) => (
               <span
                 key={id}
-                className="truncate rounded bg-muted px-1 text-[9px] text-muted-foreground"
+                className="truncate rounded bg-muted px-1.5 text-[10px] text-muted-foreground"
                 title={`${t("timeline.evalLabel")}: ${name}`}
               >
                 {name}
               </span>
             ))}
           </span>
-          <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">{event.detail}</span>
+          <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">{event.detail}</span>
           {/* The referenced transcript quote is intentionally NOT shown — clicking
               the row already seeks to that moment in the transcript. Quotes are
               still kept on the event for time-anchoring. */}
           {event.resolved && event.resolution && (
-            <span className="mt-1 block text-[11px] leading-snug text-emerald-600 dark:text-emerald-400">
+            <span className="mt-1 block text-[11px] leading-snug text-success-foreground">
               {t("timeline.resolvedHow")}: {event.resolution}
             </span>
           )}
@@ -120,7 +116,7 @@ export function FindingRow({
       <button
         type="button"
         onClick={() => onOpenSolution(event)}
-        className="mb-2 ml-8 inline-flex items-center gap-1 rounded text-[11px] font-medium text-primary hover:underline"
+        className="mt-1.5 ml-[15px] inline-flex items-center gap-1 rounded text-[11px] font-medium text-primary hover:underline"
       >
         <ChevronRight className="size-3" />
         {t("solution.show")}

@@ -17,6 +17,24 @@ private final class OperatorStandIn: NSObject {
 /// Swift cannot catch, so the guard has to stop before KVC is reached.
 private final class UnfamiliarParent: NSObject {}
 
+/// A parent with WebKit's getter — a real method rather than the ivar.
+private final class GetterParent: NSObject {
+    @objc var _hostApplicationBundleIdentifier: String?
+}
+
+/// A parent whose method of that name does not return an object. `perform`
+/// would read the integer as an object pointer and crash on first touch.
+private final class ScalarGetterParent: NSObject {
+    @objc func _hostApplicationBundleIdentifier() -> Int { 0x2a }
+}
+
+/// The ivar is there, with a getter of the same name, but the class refuses
+/// KVC's direct ivar access — KVC still reaches it through the getter.
+private final class NoDirectAccessStandIn: NSObject {
+    @objc var _hostBundleID: String?
+    override class var accessInstanceVariablesDirectly: Bool { false }
+}
+
 final class HostBundleIDTests: XCTestCase {
     func testTheStandInReallyDeclaresTheIvar() {
         XCTAssertNotNil(
@@ -57,5 +75,23 @@ final class HostBundleIDTests: XCTestCase {
         let parent = OperatorStandIn()
         parent._hostBundleID = "<null>"
         XCTAssertNil(HostBundleID.resolve(from: parent))
+    }
+
+    func testReadsTheGetterWhenThereIsNoIvar() {
+        let parent = GetterParent()
+        parent._hostApplicationBundleIdentifier = "com.apple.mobilesafari"
+        XCTAssertEqual(HostBundleID.resolve(from: parent), "com.apple.mobilesafari")
+    }
+
+    /// Unguarded, `perform` hands back 0x2a as an object and the process dies.
+    func testAGetterThatDoesNotReturnAnObjectIsNilRatherThanACrash() {
+        XCTAssertNil(HostBundleID.resolve(from: ScalarGetterParent()))
+    }
+
+    func testAClassThatRefusesDirectIvarAccessIsStillReadThroughItsGetter() {
+        XCTAssertFalse(NoDirectAccessStandIn.accessInstanceVariablesDirectly)
+        let parent = NoDirectAccessStandIn()
+        parent._hostBundleID = "com.apple.MobileSMS"
+        XCTAssertEqual(HostBundleID.resolve(from: parent), "com.apple.MobileSMS")
     }
 }

@@ -146,11 +146,10 @@ a real account on screen), and the video is **silent**, because
 - **Recording consent.** The listing copy frames Parley as a note-taker used
   with the room's knowledge and never suggests covert recording, which is the
   framing that passed App Store review. Note for anyone answering follow-up
-  questions: **the Android app shows no consent prompt** — iOS does, and the
-  iOS listing advertises it, but there is no such string in either
-  `values/strings.xml` or `values-zh-rTW/strings.xml`. Do not tell a reviewer
-  there is one. Porting the iOS consent confirmation to Android is an open
-  product decision (issue #244).
+  questions: **neither app shows a consent prompt.** Both used to ask "has
+  everyone agreed?" before recording; that was dropped on 2026-09-29 because
+  getting the room's permission is the user's call, as with any recorder, and
+  the privacy policy tells them to. Do not tell a reviewer there is one.
 - **Ads:** none. **In-app purchases:** none in this build. **Target audience:**
   general/adult, not child-directed. **Content rating:** the IARC
   questionnaire has nothing to declare beyond user-generated content that is

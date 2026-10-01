@@ -15,6 +15,10 @@ import com.pathors.parley.util.deleteQuietly
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -41,6 +45,30 @@ data class BackfillResult(
  */
 class ManualRetryBudgetSpentException(val recordingId: String) :
     IllegalStateException("manual retry budget spent for $recordingId")
+
+/**
+ * What a recording's re-transcription is actually doing, as opposed to what
+ * the queue directory happens to contain — iOS `MeetingUploader.BackfillState`.
+ *
+ * The distinction is the bug this type exists for (iOS 1.14). "Is there a
+ * manifest" cannot tell a run that is under way from one the system killed
+ * with the app, so a screen that asked it spun "Re-transcribing…" over a
+ * request nothing was running, with the retry that would have moved it
+ * disabled because of it.
+ */
+sealed interface BackfillStatus {
+    /** Nothing queued for this recording. */
+    data object None : BackfillStatus
+
+    /** A run is alive in this process right now. */
+    data object Running : BackfillStatus
+
+    /**
+     * A manifest is on disk and nothing is running it. [lastAttemptAtMs] is
+     * when a run last started — null if none ever has.
+     */
+    data class Queued(val lastAttemptAtMs: Long?) : BackfillStatus
+}
 
 /**
  * The transcript safety net: recordings whose live transcript came up short get
@@ -81,8 +109,34 @@ class TranscriptBackfiller(
     private val keepsAudioOnPhone: suspend () -> Boolean = { false },
     private val policy: TranscriptCoverage.BackfillPolicy =
         TranscriptCoverage.BackfillPolicy.STANDARD,
+    /** The clock a run's start is stamped with. Injectable for tests. */
+    private val now: () -> Long = System::currentTimeMillis,
 ) {
     private val drainMutex = Mutex()
+
+    private val _running = MutableStateFlow<Set<String>>(emptySet())
+
+    /**
+     * The recordings a run is alive for in this process, right now. In memory
+     * on purpose: a process that dies takes its runs with it, and a set that
+     * outlived them would be the very "it says it's running but it isn't" this
+     * exists to end.
+     */
+    val running: StateFlow<Set<String>> = _running.asStateFlow()
+
+    private val _landed = MutableStateFlow(0)
+
+    /**
+     * Bumped every time a run finishes for some recording — iOS
+     * `AppState.backfillRevision`.
+     *
+     * A counter rather than the recording's id on purpose: the queue drains on
+     * launch, on sign-in, on every foregrounding and from the Re-transcribe tap,
+     * so a better transcript can land while somebody is reading the recording it
+     * belongs to, and a detail screen that re-reads its meta on every bump costs
+     * one wasted fetch where matching ids would cost bookkeeping.
+     */
+    val landed: StateFlow<Int> = _landed.asStateFlow()
 
     // ── what a screen needs to know ──────────────────────────────────────────
 
@@ -94,6 +148,22 @@ class TranscriptBackfiller(
      * detail screen can say so and not offer a second one.
      */
     suspend fun isQueued(id: String): Boolean = withContext(Dispatchers.IO) { queue.has(id) }
+
+    /**
+     * Whether this recording's re-transcription is running, merely waiting, or
+     * not queued at all. Keyed off the manifest file rather than a successful
+     * decode: a manifest this build cannot read is still work somebody is owed.
+     */
+    suspend fun status(id: String): BackfillStatus {
+        if (id in _running.value) return BackfillStatus.Running
+        return withContext(Dispatchers.IO) {
+            if (!queue.has(id)) {
+                BackfillStatus.None
+            } else {
+                BackfillStatus.Queued(lastAttemptAtMs = queue.request(id)?.lastAttemptAtMs)
+            }
+        }
+    }
 
     /** How many hand-triggered re-runs this recording has left, 0…3. */
     suspend fun retriesRemaining(id: String): Int =
@@ -132,10 +202,8 @@ class TranscriptBackfiller(
      * the phone at all.
      *
      * @param meta the recording's full entry as the cloud holds it. Required,
-     *   not optional: a request that reached the queue without it would fall
-     *   through to the automatic path and rebuild the entry from the new
-     *   transcript alone — wiping the analysis this whole detour exists to
-     *   protect.
+     *   not optional: the run edits the new transcript into exactly this, so
+     *   the analysis this whole detour exists to protect survives it.
      * @param summary the library card, when the caller has one. A detail screen
      *   fetches only the meta, so null derives it via [RecordingSummary.fromMeta]
      *   rather than making every caller find one.
@@ -217,14 +285,19 @@ class TranscriptBackfiller(
                 discarded++
                 continue
             }
+            markAttempt(request)
+            _running.update { it + request.id }
             try {
                 run(request, audio)
                 repaired++
+                _landed.update { it + 1 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
                 failure = e
                 break
+            } finally {
+                _running.update { it - request.id }
             }
         }
 
@@ -234,6 +307,23 @@ class TranscriptBackfiller(
             discarded = discarded,
             failure = failure,
         )
+    }
+
+    /**
+     * Stamp a request as tried, in its manifest, before the work starts — so a
+     * run the system kills still leaves its time behind. Guarded on the
+     * manifest still being there, so this never writes one back that
+     * something else has just finished and deleted. Best-effort: a stamp that
+     * fails costs a less specific sentence, never the run.
+     */
+    private suspend fun markAttempt(request: BackfillRequest) = withContext(Dispatchers.IO) {
+        if (!queue.has(request.id)) return@withContext
+        runCatching {
+            queue.writeManifest(
+                request.copy(lastAttemptAtMs = now(), attemptCount = request.attemptCount + 1),
+            )
+        }
+        Unit
     }
 
     private suspend fun run(request: BackfillRequest, audio: File) {
@@ -277,21 +367,56 @@ class TranscriptBackfiller(
             meta = existingMeta.replacingTranscript(segments, durationMs)
             summary = existingSummary.replacingTranscript(segments, durationMs)
         } else {
-            // The automatic path: this recording was created by the upload that
-            // queued the backfill, so there is nothing on it to preserve.
-            val repaired = request.pending.copy(
-                durationMs = durationMs,
-                segments = segments,
-                folderId = request.folderId ?: request.pending.folderId,
-            )
-            meta = MeetingUploader.buildMeta(repaired)
-            summary = MeetingUploader.buildSummary(repaired)
+            // The automatic path. It used to rebuild the entry out of
+            // `request.pending`, on the reasoning that the recording had been
+            // created seconds earlier by the upload that queued this and so had
+            // nothing on it worth keeping. That holds at the moment of queueing
+            // and stops holding immediately afterwards: the batch job takes
+            // minutes and the run may happen on a later launch, and in between
+            // the user may have renamed the recording, moved it, and answered a
+            // filing suggestion on it. Pushing the rebuilt entry put the clock
+            // name back over the name they typed, along with the folder and
+            // `filingSuggested` — a rename undone later by a background job is
+            // silent data loss. (iOS fixed the same thing in 1.14.)
+            //
+            // So read the recording as it stands right now and edit the
+            // transcript inside it, exactly as the manual path does.
+            // `request.folderId` is not applied: the recording's own folder is
+            // the current one.
+            //
+            // Not wrapped: a fetch that failed would leave only the stale copy
+            // to push, which is the very thing this branch exists to stop. The
+            // request stays queued, and the network that just failed here is
+            // the network the push below needs anyway.
+            meta = cloud.recordingMeta(id).replacingTranscript(segments, durationMs)
+            summary = repushSummary(meta, request.pending)
         }
 
         // Audio is already in the cloud and unchanged, so this is a metadata
         // push only.
         cloud.pushRecording(id, summary, meta)
         finish(id, audio)
+    }
+
+    /**
+     * The summary that goes up beside a re-pushed meta on the automatic path,
+     * derived from that meta rather than from the queued request: every field
+     * except the ones the transcript speaks for is a fact the *recording* owns
+     * — its name, its folder, how much analysis is on it — and the request is
+     * out of date about all of them by the time the run happens. [fallback]
+     * covers a meta too sparse to name itself, which the server should never
+     * return but is cheap to survive.
+     */
+    private fun repushSummary(meta: RecordingMeta, fallback: PendingUpload): RecordingSummary {
+        val derived = RecordingSummary.fromMeta(meta)
+        return derived.copy(
+            id = derived.id.ifEmpty { fallback.id },
+            title = derived.title.ifEmpty { fallback.title },
+            source = if (meta.raw.containsKey(SOURCE_KEY)) derived.source else fallback.source,
+            createdAt = if (derived.createdAt > 0) derived.createdAt else fallback.startedAtMs.toDouble(),
+            // The audio this run transcribed is the blob the cloud holds.
+            hasAudio = true,
+        )
     }
 
     /**
@@ -312,6 +437,8 @@ class TranscriptBackfiller(
     }
 
     companion object {
+        private const val SOURCE_KEY = "source"
+
         fun create(context: Context, cloud: CloudClient): TranscriptBackfiller {
             val retention = AudioRetention(context)
             return TranscriptBackfiller(

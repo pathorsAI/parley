@@ -1,14 +1,6 @@
 import { RefreshCw } from "lucide-react";
 import { useI18n, type TranslationKey } from "../../i18n";
-import type { FindingSolution, FindingSolutionEntry, WargameStrategyKind } from "../../lib/types";
-
-/** Reply angle → accent color (mirrors the old war-game card grammar). */
-const KIND_ACCENT: Record<WargameStrategyKind, string> = {
-  rebut: "text-sky-400",
-  reframe: "text-violet-400",
-  trade: "text-emerald-400",
-  concede_redirect: "text-amber-400",
-};
+import type { FindingSolution, FindingSolutionEntry } from "../../lib/types";
 
 /**
  * Pure presentational drilldown body: given a solution entry (status + result),
@@ -42,7 +34,7 @@ export function FindingSolutionView({
   }
   if (status === "error") {
     return (
-      <div className="mt-2 flex items-center gap-2 text-[11px] text-orange-500">
+      <div className="mt-2 flex items-center gap-2 text-[11px] text-destructive">
         <span className="min-w-0 truncate">{t("solution.failed", { error: error ?? "—" })}</span>
         <button
           type="button"
@@ -64,7 +56,7 @@ export function FindingSolutionView({
     <div className="mt-2.5 flex flex-col gap-2">
       {solution.replies.map((r) => (
         <div key={`${r.kind}-${r.reply}`} className="rounded-md border bg-muted/30 px-2.5 py-2">
-          <div className={`text-[11px] font-semibold ${KIND_ACCENT[r.kind]}`}>
+          <div className="text-[11px] font-semibold text-foreground">
             {t(`wargame.kind.${r.kind}` as const)}
           </div>
           <p className="mt-1 text-xs italic leading-relaxed text-foreground/90">“{r.reply}”</p>

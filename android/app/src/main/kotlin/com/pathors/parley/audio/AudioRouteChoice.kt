@@ -127,29 +127,26 @@ object AudioRouteChoice {
      *    built-in mic, but it is a category rather than a device, so it ranks
      *    below the two things that announce themselves as headsets.
      * 4. [TYPE_BLE_HEADSET] — LE Audio. Wireless, but LC3 at a real bitrate is
-     *    a different world from SCO.
-     * 5. [TYPE_BLUETOOTH_SCO] — classic Bluetooth hands-free. The narrowband
-     *    path, and genuinely worse than a good built-in microphone on quality
-     *    alone. It still ranks above it, because the user put the headset on
-     *    and is talking into it: proximity to the speaker's mouth beats
-     *    bandwidth, and a phone in a pocket records nothing usable at any
-     *    sample rate.
-     * 6. [TYPE_BUILTIN_MIC] — the default, and the fallback that always exists.
-     * 7. everything else — unknown or exotic inputs. Ranked last rather than
+     *    a different world from SCO, and — the part that matters here — it
+     *    needs no SCO audio link: pinning a record to it is enough to capture
+     *    from it.
+     * 5. [TYPE_BUILTIN_MIC] — the default, and the fallback that always exists.
+     * 6. everything else — unknown or exotic inputs. Ranked last rather than
      *    excluded: if a device somehow offers no built-in microphone, an input
      *    we do not recognise still beats recording nothing.
      *
-     * [TYPE_TELEPHONY] is not in the table at all; [preferred] drops it before
-     * ranking. See there for why.
+     * Two types are not in the table at all; [preferred] drops them before
+     * ranking. [TYPE_TELEPHONY] because it is not a microphone, and
+     * [TYPE_BLUETOOTH_SCO] because this app cannot capture from it. See there
+     * for why.
      */
     private fun tierOf(type: Int): Int = when (type) {
         TYPE_WIRED_HEADSET -> 0
         TYPE_USB_HEADSET -> 1
         TYPE_USB_DEVICE -> 2
         TYPE_BLE_HEADSET -> 3
-        TYPE_BLUETOOTH_SCO -> 4
-        TYPE_BUILTIN_MIC -> 5
-        else -> 6
+        TYPE_BUILTIN_MIC -> 4
+        else -> 5
     }
 
     /**
@@ -166,6 +163,21 @@ object AudioRouteChoice {
      * either: on a device that exposes telephony but whose built-in mic is
      * already held by the call, last place is first place.
      *
+     * **[TYPE_BLUETOOTH_SCO] is excluded outright too**, for a different reason
+     * with the same outcome. Classic Bluetooth hands-free only carries a
+     * microphone while a SCO audio link is up, and bringing one up is the app's
+     * job — `startBluetoothSco()`, or `setCommunicationDevice()` on newer
+     * platforms. This app does neither. An `AudioRecord` pinned to a SCO input
+     * with no link open does not fail; on most devices it opens happily and
+     * captures silence, for the whole meeting, with nothing to say so until
+     * playback. That is far worse than the built-in microphone, which at least
+     * records the room. And because merely pairing earbuds, a watch or a car
+     * kit is enough to make a SCO input appear in the list, ranking it
+     * anywhere above the built-in mic would silently empty the recording of
+     * every user who happens to own one. Excluding it only means *we* never
+     * pin a record to it: when the user does have SCO active for some other
+     * reason, the platform's own routing still applies.
+     *
      * Ties inside a tier are broken by ascending [InputDevice.id], purely so the
      * answer is **deterministic**. It barely matters which of two equivalent
      * inputs wins; it matters enormously that the same set of devices always
@@ -178,7 +190,7 @@ object AudioRouteChoice {
      */
     fun preferred(devices: List<InputDevice>): InputDevice? =
         devices
-            .filter { it.type != TYPE_TELEPHONY }
+            .filter { it.type != TYPE_TELEPHONY && it.type != TYPE_BLUETOOTH_SCO }
             .minWithOrNull(compareBy<InputDevice>({ tierOf(it.type) }, { it.id }))
 
     /**
@@ -188,8 +200,9 @@ object AudioRouteChoice {
      * The four answers, and why each is the way it is:
      *
      * - **No preferred device at all → false.** Every input vanished, or the
-     *   only one left is telephony. Rebuilding against nothing cannot produce a
-     *   better recording; it can only turn a working-but-possibly-wrong
+     *   only ones left are telephony or classic Bluetooth. Rebuilding against
+     *   nothing cannot produce a better recording; it can only turn a
+     *   working-but-possibly-wrong
      *   recording into no recording, and it would do so at the exact moment the
      *   device list is unreliable (mid-transition, the list momentarily empties
      *   on some devices). This is the one place in the whole capture path where

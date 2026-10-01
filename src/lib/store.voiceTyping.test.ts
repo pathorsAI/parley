@@ -30,13 +30,20 @@ describe("migrateVoiceTypingShortcut", () => {
     expect(DEFAULT_VOICE_TYPING_SHORTCUT).toBe("combo:control+alt+Space");
   });
 
-  it("moves a Windows install off the macOS modifier-key triggers", async () => {
+  it("moves a Windows install off the modifier keys a PC keyboard lacks", async () => {
     const { migrateVoiceTypingShortcut, DEFAULT_VOICE_TYPING_SHORTCUT } = await loadStore(false);
-    // These ride a CGEventTap; the Windows backend cannot register them, so a
-    // value synced off a Mac would be a dead trigger.
-    for (const id of ["fn", "right-option", "right-command", "right-control"] as const) {
+    // No fn key and no ⌘ on Windows: a value synced off a Mac would be a dead
+    // trigger.
+    for (const id of ["fn", "right-command"] as const) {
       expect(migrateVoiceTypingShortcut(id)).toBe(DEFAULT_VOICE_TYPING_SHORTCUT);
     }
+  });
+
+  it("keeps right Ctrl and right Alt on Windows", async () => {
+    const { migrateVoiceTypingShortcut } = await loadStore(false);
+    // The low-level keyboard hook holds these (#462), so they are real choices.
+    expect(migrateVoiceTypingShortcut("right-control")).toBe("right-control");
+    expect(migrateVoiceTypingShortcut("right-option")).toBe("right-option");
   });
 
   it("keeps a combo the Windows user recorded themselves", async () => {

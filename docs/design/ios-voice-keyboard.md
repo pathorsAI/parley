@@ -107,19 +107,84 @@ sentence lands, or the field is exactly as it was and the error says so. This is
 also what the copy on the failure paths now says (it used to promise that what
 was already said "has been typed").
 
+Two endings that do not come from the user's ⏹ still deliver, and say so: the
+session cap, and a connection that did not come back. Both are an ordinary `done`
+with a note on the downlink (`notice`, a `DictationEnding`), which the keyboard
+shows after inserting — see *Endings that keep the words* below.
+
 The price is that the keyboard's own text slot stops being a nicety and becomes
 the only place the words are visible while they are being spoken — see *The live
 transcript* below — and that the transcript now depends on the keyboard coming
 back within the downlink's adoption window (150 s) rather than on it having been
 alive at the right moments.
 
+#### Where the words go when they don't land: voice-typing history
+
+One insertion has a cost the paragraph above only half states: when the
+insertion does not happen, the words exist nowhere. The keyboard's
+`drainDownlink` has four ways of ending without typing anything, all silent by
+design:
+
+1. **The adoption window runs out.** A relaunched keyboard adopts a foreign
+   downlink only within 150 s of its last stamp; come back later and a `done`
+   transcript is never inserted.
+2. **`looksDead`.** A live state nobody has vouched for is abandoned — the app
+   was suspended, jetsammed or swiped away mid-session.
+3. **`error`.** Never inserted, whatever had settled before the failure. (A
+   connection that dies for good with words settled is no longer one of these:
+   it delivers them as `done` — see *Endings that keep the words*.)
+4. **The wrong field.** `insertText` goes to whatever is focused when `done`
+   arrives; if the user moved, the text lands somewhere else or nowhere.
+
+So since 1.21 the app keeps what was dictated (pathorsAI/parley#290).
+`DictationHistoryStore` (ParleyKit, Foundation only, unit-tested) is one JSON
+file, `dictation-history.json`, and `DictationCoordinator` writes to it from the
+three endings that carry words: `settle` (`done`, after the personal
+dictionary, so the entry is exactly what the keyboard was handed), `fail`
+(`error`) and `endSessionWithMicTaken`, each only when `committed` is non-empty.
+**Never from ✕**: `cancel` is the user throwing the words away, and it clears
+`committed` before it publishes. Entries carry the text, when, how long, the
+entry point (keyboard or Action Button) and the host bundle id when the keyboard
+could resolve one. Retention is the most recent 200 **and** nothing older than
+30 days, pruned on every write and every load. Settings › Voice typing history
+switches it off (the store refuses writes; existing entries stay until "Clear
+all") and clears it.
+
+**App side, on purpose.** The file lives in the app's own sandbox (Application
+Support, excluded from backup), not the App Group. The App Group is shared with
+the keyboard, and the keyboard is the one process that must never hold
+transcript history: it runs inside every app the user types into. The keyboard
+target does not reference the type at all. The relay was checked before building
+this: it meters seconds per feature and relays frames, and stores no transcript
+text, so there was nothing server-side to fetch instead.
+
+**Error is the case worth saving.** A `done` that inserted is already in a
+field; history is merely convenient for it. An `error` — and exits 1 and 4,
+where the app did reach `done` but nothing landed — is where the words would
+otherwise be gone, and it happens precisely when something already went wrong.
+Exit 2 is covered when the app survives to end the session itself; when the
+process was killed outright, the words die with it. The stale downlink that
+`reapOrphanedSession` rewrites on the next launch still carries them, and
+keeping that too is a possible follow-up (it has no reliable start time or
+duration, which is why it is not in the first cut). That is also why there is no
+"paste last" key on the keyboard: rescuing words is the app's job, reading
+history back into a keyboard is exactly what the sandbox choice rules out, and
+copy is the primary row action in Library › Voice typing — one tap from the
+list, not behind the detail sheet.
+
 ### App Group channel
 
-`DictationChannel` (in ParleyKit, so both targets share it) is six
+`DictationChannel` (in ParleyKit, so both targets share it) is seven
 single-writer mailboxes, each with its own Darwin notification, so the two
 processes never contend on a file:
 
-- `dictation-down.json` — app → keyboard: `{session, committed, partial, state}`.
+- `dictation-down.json` — app → keyboard: `{session, committed, partial, state,
+  errorMessage?, openingMicrophone?, deadline?, notice?}`. The last three are
+  the continuity fields: a provisional `starting` (*Knowing whether the app is
+  there*), when the session cap will fire, and why a `done` ended on its own.
+  All optional and decoded leniently — an older file decodes, and a `notice`
+  this build does not know is dropped rather than failing the file, because a
+  downlink that fails to decode is a `done` never inserted.
 - `dictation-up.json` — keyboard → app: `{session, hostBundleID, stopRequested,
   cancelRequested?, insertedCount}`. `cancelRequested` is optional so an uplink
   written by an older build still decodes — a mailbox that fails to decode
@@ -134,6 +199,10 @@ processes never contend on a file:
   updatedAt}`, the app's heartbeat: the process is there, and whether a start
   request would be served without opening Parley. See *Knowing whether the app
   is there* below.
+- `dictation-level.json` — app → keyboard: `{level, updatedAt}`, how loud the
+  microphone is right now, normalised to 0…1. Written ~12 times a second while
+  a session is live and somebody is speaking, and not at all otherwise. See
+  *A record button that swells with the voice* below.
 
 The window pair is separate from the session pair because a window outlives any
 one dictation, and most of what it has to say happens when no session exists.
@@ -163,6 +232,15 @@ carrying no notification of its own. See the personal dictionary below.
 
 App Group id: `group.com.pathors.parley.ios` (entitlement on both targets).
 
+The container's URL is asked for once per process and remembered (only a real
+URL is — a `nil` is asked again), and every read shares one `JSONDecoder`: the
+keyboard reads these files a dozen times a second while someone speaks and nine
+or ten times per appearance. On the keyboard's side, anything read out of these
+files is clamped before it can trap: the uplink's `insertedCount` into
+`0...committed.count` before it slices the transcript, and the liveness
+watchdog's sleep — a deadline built from file timestamps — to a finite
+`0…60` s, a wake that only re-reads and sleeps again.
+
 ## Not leaving in the first place — the microphone window
 
 This section used to be called "the jump back to the previous app problem", and
@@ -180,22 +258,25 @@ at all. Parley already had the shape of that path and almost never won it.
 ### Why the old path lost
 
 `KeyboardViewController.startDictation` publishes the request to the App Group,
-waits `startAckWindow` (700 ms) for the app to answer, and only opens
+waits 700 ms (`StartHandshake.firstAck`) for the app to answer, and only opens
 `parley://dictate` if nothing does. An app that is awake answers in
 milliseconds. The problem was how briefly the app stayed awake:
 `DictationCoordinator.beginLinger` is a `beginBackgroundTask`, and iOS grants one
 of those roughly **30 seconds**. Pause to think mid-sentence and the window is
 gone — so in practice every tap took the round trip.
 
-There is also a second, harder reason, and it is the one that makes "keep the
-process awake longer" insufficient on its own: **iOS refuses to let a
-backgrounded process start recording.** Activating a record session from the
-background returns `AVAudioSessionErrorCodeCannotStartRecording` with
-`Client … is in the background and doesn't have the entitlement to start
-recording in the background` in the log. Apple has never published exactly how
-this interacts with `UIBackgroundModes: audio`, and we cannot settle it from a
-simulator. A resident process that still could not open the microphone would
-have had to come forward anyway.
+There is also a second reason, and it turned out to be a fact about some phones
+rather than a rule: **a backgrounded process can be refused when it starts
+recording.** Activating a record session from the background has returned
+`AVAudioSessionErrorCodeCannotStartRecording` with `Client … is in the
+background and doesn't have the entitlement to start recording in the
+background` in the log. On other phones, with the same `UIBackgroundModes:
+audio`, the activation succeeds, and the linger had been buying in-place starts
+there since #222. Apple has never published exactly how this interacts with the
+background mode, and we cannot settle it from a simulator. So the app assumes
+neither answer: a lingering process with nothing to borrow opens the microphone
+*before* acknowledging a start, and a refusal goes unanswered (see *Knowing
+whether the app is there*). A window sidesteps the question entirely.
 
 ### What a window is
 
@@ -267,14 +348,15 @@ the point where adding an element moves the record button. It is hidden during a
 session — the record button already says the microphone is live, and the chip is
 about the *next* tap.
 
-The negative signal cannot be the mere absence of the chip. It used to be a
-second line under *Tap to speak* — *This tap opens Parley first* — shown only to
-someone who had turned a window on, on the grounds that without the setting
-every tap had always opened Parley and saying so would be noise. That reasoning
-was wrong in the one way that mattered: the headline still said *Tap to speak*,
-which is a promise about this keyboard, and the button still drew a microphone.
-The fix is in the state list below — the promise now lives in the headline and on
-the button's own glyph, so the caption has nothing left to add and is gone.
+There used to be a negative signal too, and there no longer is. First a second
+line under *Tap to speak* — *This tap opens Parley first* — then, when that read
+backwards, a headline that changed to *Dictation starts in Parley* with the jump
+glyph on the button. Both were the keyboard answering "will this tap jump", and
+#404 took the question away: a lingering Parley serves the tap in place, so the
+jump is the exception rather than the rule, and the owner ruled that a first tap
+opening the app once is expected behaviour and not a warning's worth of screen.
+The button now follows **readiness** — see the state list below — and the chip is
+the only thing in the strip that talks about windows at all.
 
 ### Bounded on purpose: there is no "until I turn it off"
 
@@ -303,9 +385,11 @@ then jump anyway.
 
 So the app re-stamps the file every `MicWindowState.heartbeat` (20 s) for as long
 as the window is really open, and a reader disbelieves a stamp older than
-`staleAfter` (55 s). One mechanism, two jobs: the same heartbeat is what ticks the
-chip's countdown without the extension running a timer of its own. Expiry is
-still punctual — the app's loop sleeps the *shorter* of a heartbeat and whatever
+`staleAfter` (55 s). One mechanism, two jobs: the same heartbeat is what keeps the
+chip honest without the extension running a timer of its own. (The chip used to
+carry the minutes left as well; that went when the pane tabs took the right of
+the strip — the Record tab, Settings and the Live Activity still count down.)
+Expiry is still punctual — the app's loop sleeps the *shorter* of a heartbeat and whatever
 is left, because five minutes has to mean five minutes.
 
 Ending early is a **timestamp, not a flag**: the keyboard writes
@@ -316,15 +400,107 @@ next window open.
 ### What ends a window
 
 Expiry, the user (from the keyboard, the Record tab, or Settings), a session
-failure of any kind, the microphone being interrupted or lost, and a meeting
-recording starting — there is one microphone, and `MeetingRecorder.start` takes
-it. Interruption is deliberately fatal to the window rather than something to
-wait out: **a window that cannot be honoured is worse than one that ended early,
-because the user can see the second and cannot see the first.**
+failure that is not a network failure, the microphone being interrupted or lost,
+and a meeting recording starting — there is one microphone, and
+`MeetingRecorder.start` takes it. Interruption is deliberately fatal to the window
+rather than something to wait out: **a window that cannot be honoured is worse
+than one that ended early, because the user can see the second and cannot see
+the first.**
+
+**Which failures end it** is `DictationFailure` (ParleyKit). It used to be every
+failure, on the owner's rule that an error always ends with the microphone
+visibly off: after being told something went wrong, an indicator the user no
+longer has a reason to expect is the worst of both. That rule still holds where
+it is true — **not signed in, out of quota, the microphone refused, lost or
+broken** — because there the next tap cannot work, or the microphone is itself
+the problem. It does not hold for a **connection failure** (the relay handshake,
+the reconnect ladder running out, a socket error): the microphone is fine, the
+user chose the window, and closing it guaranteed that the obvious next move —
+tap the mic again — went through Parley, because a backgrounded process may not
+open a microphone. So a connection failure ends the way a ⏹ does:
+`releaseMicrophone` keeps an open window open, or starts the 30-second hold. The
+Live Activity's standby card is not marked as in trouble for it either.
 
 A background task is never held while a window is open. `beginBackgroundTask` is
 worth nothing next to an active audio session, and ending an assertion in the
 background is a documented way to get suspended anyway.
+
+### With the window off: a 30-second hold
+
+The window being off used to mean the microphone closed with the dictation and
+only the ~30 s background-task linger was left. That linger could not deliver
+what it was for. A second tap within those seconds either reached a process
+iOS had already suspended, or reached a live one that then had to *start* a
+microphone from the background, which iOS can refuse (see *The jump that is
+left*). The owner hit it on 1.17: first tap opens Parley, back to the host,
+dictate, tap again, and Parley opens again.
+
+So the end of a dictation with no window now keeps the running capture for
+`holdAfterDictation` (30 s) in `DictationCoordinator.holdMicrophone`, the same
+way a window keeps it, and the next tap borrows it. Nothing is published as a
+window: no chip, no Record-tab bar, no Live Activity, because the hold is not
+something the user set and ends before any of those would be read. The orange
+dot is on for those 30 seconds, and the Settings footer under *Keeping the
+microphone ready* says so even when the picker is off. Sound during the hold is
+dropped exactly as in a window. A new session, a window opening, a meeting
+taking the microphone, or the microphone closing for any other reason ends the
+hold, and the linger is not armed on top of it.
+
+**The thirty seconds count from delivery, not from ⏹.** The hold is armed when
+the session stops being active (`finishUp`), which is before the relay's last
+words drain and before the AI polish — it has to be, because it is part of what
+keeps the process resident through the polish. But that meant the drain and the
+polish (up to six seconds) came out of the user's thirty, and someone who read
+the words for a moment before tapping again found the microphone gone. `settle`
+now restarts a running hold, so the full thirty seconds start when the text
+lands.
+
+**And the linger begins before the microphone closes.** Every ending that closes
+the microphone — the hold expiring, a window ending, an ending with neither, a
+non-network failure, the microphone taken — used to close first and then begin
+the ~30 s background task. The close is an `await` that deactivates the audio
+session, and for as long as it took the process had neither an active audio
+session nor a background assertion: exactly the state iOS suspends a
+backgrounded app in. Suspended there, it never began the linger and never heard
+the next start note. `closeMicrophoneIntoLinger` (and the same order in `fail`
+and `endSessionWithMicTaken`) begins the background task first. It is the one
+moment a background task and a live audio session overlap on purpose — an
+instant on the way from one to the other, never an arrangement that lasts.
+
+### Endings that keep the words: the cap and a lost connection
+
+The owner's report: *"after dictating for a while it stops by itself, and
+everything said after that is lost."*
+
+**The cap is ten minutes, and it warns.** `MicActivityPolicy.dictationLimit` was
+120 s under a comment claiming to mirror the desktop, whose limit is 600 s
+(`HOSTED_VOICE_TYPING_MAX_SECONDS`). The relay's own cap is hours, so nothing
+server-side needed the short one, and two minutes is inside an ordinary long
+message. It is the desktop's number now, and it is not silent: the app publishes
+when its backstop will fire (`Downlink.deadline`, set before the first
+`listening`), and the voice pane counts the last 30 seconds down from that
+clock — *Stops in 25 s* (25 秒後自動結束), a caption in the slot's soft ink over
+the live words (`DictationCountdown`). When it fires the words are delivered
+exactly as ⏹ delivers them, polish included, and the `done` carries
+`limitReached`: the pane shows *Single dictation limit reached (10 min)*
+(已達單次語音輸入上限（10 分鐘）), the desktop's own wording, over the inserted
+words. DEBUG builds can shorten the cap with `-ParleyDebugDictationLimit
+<seconds>` to see all of this without talking for ten minutes.
+
+**A lost connection delivers what was said.** When the reconnect ladder ran out,
+the session used to `fail`, and the keyboard never inserts from `error` — so a
+long dictation whose socket died at minute three typed nothing. Now
+`endAfterLostConnection` folds the dead leg's tail in and, if anything had
+settled, settles it as `done` without the AI polish (which needs the network
+that just went away), with `connectionLost` beside it: *Connection lost —
+inserted what was transcribed. Tap the mic to continue.* (連線中斷，已貼上中斷前的內容。
+點麥克風繼續。) With nothing settled it is still the error it was. Either way it
+is a connection failure, so the microphone stays (see *What ends a window*) and
+the tap the copy asks for is served in place.
+
+Both notes are shown where an error would be, over the inserted words, but in
+the reconnect amber rather than the error red: the session did not fail. The
+history entry keeps the ending too, as a line under the polish label.
 
 ### When the system takes the microphone: iOS's own dictation
 
@@ -350,7 +526,7 @@ another process with a stronger claim on the input.
    stamping while the process is awake, and `Downlink.presumedDeadAt` takes the
    *newer* of the downlink's stamp and that heartbeat. So ⏹ stayed on screen over
    a microphone iOS had taken away, for as long as two minutes, until the
-   session's own cap ended it as a success with nothing to insert.
+   session's own cap (then 120 s) ended it as a success with nothing to insert.
 3. **`.ended` does not reliably arrive.** System services raise interruptions
    that never announce their end. Recovery hung entirely off `.ended`, and the
    watchdog that exists precisely as the backstop for "iOS announced nothing" was
@@ -461,15 +637,53 @@ time, for as long as the linger lasted.
 
 The app now writes its own answer every ten seconds while it runs:
 `servesInPlace` is true in the foreground, or in the background while a running
-capture (a window) is there to borrow, and false otherwise. The keyboard draws
-the microphone glyph and *Tap to speak* when the window is open **or** a fresh
-presence says the app can answer in place (`KeyboardBridge.staysPut`), and the
-jump glyph otherwise. And `armRequestObserver` applies the same condition
-before honoring a start, so the glyph is not merely accurate but causal: a
-backgrounded app with no microphone declines the note, the keyboard's 700 ms
-fallback opens the app, and the microphone is opened in the foreground where it
-can be. The linger still matters — a ⏹ or ✕ has to reach a process that is
-awake — but it no longer buys an in-place *start*, which it never really could.
+capture (a window) is there to borrow, and false otherwise. `staysPut` — a
+window being open **or** a fresh presence saying the app can answer in place —
+is what the app reasons with. It used to drive the record button's glyph as well;
+it no longer does, because a tap that opens Parley once is not worth a warning.
+See *Three states, and only one of them is a microphone*.
+
+`armRequestObserver` used to apply the same condition before honoring a start:
+a backgrounded app with no microphone declined the note outright, on the premise
+that iOS never lets a backgrounded process start recording. That premise came
+from one phone's log and is false on others, where the linger had been buying
+in-place starts since #222, and the guard turned every one of those into a trip
+through Parley: the "every dictation jumps to Parley once" regression. So the
+app now *tries*: a lingering process with nothing to borrow opens a microphone
+before starting the session, and the microphone is only opened in the foreground
+(via the URL) when the background activation is refused. The glyph stays
+pessimistic on purpose. A tap promised as a jump that stays put is a surprise in
+the right direction; the reverse is the one the user notices.
+
+Trying used to cost the ack its speed on this one path, and that cost was the
+owner's *"after every dictation, the next one jumps to the app"*: `starting` was
+written after `AudioCapture.start()` rather than milliseconds after the note,
+the keyboard only waited 700 ms, and a background activation slower than that
+made the keyboard open `parley://dictate` over a microphone that was about to
+open. It now answers in two steps (`StartHandshake`, ParleyKit):
+
+- The observer publishes a **provisional** `starting` for the session
+  (`openingMicrophone: true`) the moment it decides to serve it — before it
+  awaits the microphone. It is written straight to the channel, not as the
+  coordinator's session, so a URL fallback for the same id still starts it.
+- If the microphone opens, the session starts as usual (`starting`, then
+  `listening`). If iOS refuses it, the observer publishes **`needsApp`** for the
+  session — unless the URL fallback has already started it in the foreground.
+- The keyboard waits 700 ms for any answer, as before. A provisional one buys
+  it up to **3 s** from the tap (`StartHandshake.microphoneWait`) to become the
+  session; still provisional at that bound, it opens the app as it always did,
+  and a start that lands late is harmless (the URL for the same id is a
+  duplicate the app ignores). `needsApp` opens the app at once. An ordinary
+  `starting` — a borrowed microphone, or the app in front — is an ack on sight,
+  so a slow relay handshake never reads as provisional. ✕ or ⏹ during the wait
+  ends it without opening anything.
+
+The pane is listening from the tap throughout. `needsApp` is not live, so the
+watchdog treats it as not yet answered and `startGrace` takes the pane back if
+the jump never lands. How long the activation takes on a given phone is still
+unmeasured; the app logs it (`subsystem com.pathors.parley`, category
+`Dictation`, "mic start took N ms") so a phone can answer — and the 3 s bound is
+the number to revisit when one does.
 
 **Whether the session on screen is still being served.** The downlink says
 `listening` and keeps saying it whatever happens to the app. A backgrounded
@@ -489,7 +703,8 @@ keyboard watches the earliest of three deadlines and gives up at it:
 - the live downlink's presumed death, as above;
 - 10 s from minting, for a session the app never answered (the URL was refused,
   or the app is gone — on the usual path the app switch kills the keyboard first
-  and none of this runs);
+  and none of this runs). A `needsApp` counts as unanswered: it is the app
+  handing the session to a URL that may never land;
 - 3 s from ⏹, for a session the app has not started ending. The app publishes
   `finishing` synchronously on hearing the note, so a session still `listening`
   three seconds later is one nobody heard the stop for.
@@ -520,7 +735,8 @@ Two things are worth writing down rather than repeating:
 
 - **There is no public way to do any of this, on any iOS.** Apple's DTS has
   answered that nothing identifies the host from an extension and nothing
-  returns the user to it (FB22247647 remains open). The destination does not
+  returns the user to it (FB22247647 remains open) — and, since June 2026, that
+  the *container app* cannot identify it either. The destination does not
   have to be *detected* though — it can be *chosen*, which is how KeyboardKit
   10.4 handles it, and is tracked separately.
 
@@ -529,7 +745,11 @@ Two things are worth writing down rather than repeating:
   `UIApplication.suspend()` does land on the Home Screen because the app was
   launched by an extension. But keyboards in this category are observably still
   returning users to their host app on iPadOS 26.5 — so "26.4 closed the door"
-  is at best not the whole story. It was nonetheless compiled into Parley as
+  is at best not the whole story. (The 2026 evidence has since narrowed this a
+  long way: the category *leader* gave up and now tells users to swipe, and the
+  keyboards that still round-trip do it by a mechanism nobody — including Apple
+  DTS — has explained. See "Asking from the app instead of from the keyboard".)
+  It was nonetheless compiled into Parley as
   `if #available(iOS 26.4, *) { return false }`, and that is the part that had
   to go: not because the number was wrong, but because **a number is the wrong
   shape of answer**. See below.
@@ -584,6 +804,89 @@ version check could never produce: **a device that finds out.**
 Until `GET /v1/flags` exists server-side every device runs on compiled defaults.
 A 404 is folded into "no opinion" rather than into an error, so publishing the
 endpoint is the only remaining step to gain the switch — no client release.
+
+### Asking from the app instead of from the keyboard
+
+The runtime decision does not help when there is no destination to decide about,
+and on iOS 26.4+ there never is: `HostBundleID` returns `nil` on every call, so
+`begin()` fails its `guard let host` and the ledger never even learns anything —
+every session is `.skip(.noHost)`, which is indistinguishable from a device that
+cannot do the jump at all.
+
+The obvious next idea is to stop asking the keyboard and ask the app. The
+premise was a sentence of Apple's own — DTS saying
+`LSApplicationWorkspace.frontmostApplication` is unavailable **from an
+extension** — plus the observation that the container app is not an extension.
+
+It was investigated and **not shipped**. The premise does not survive contact
+with the rest of that sentence, and what replaced it is written down here so
+nobody spends another week on it. A probe was written and then dropped; it is in
+the history of `feature/host-return-frontmost` if the ground ever shifts.
+
+#### What the evidence actually says
+
+- **Apple DTS answered "No" twice, to two different questions.** Developer
+  forums thread 826851 (June 2026, tested against 26.4.2) asks both whether a
+  keyboard can identify its host and whether *the container app* can identify
+  which app hosted the extension that opened it. Both answers are "No".
+  FB22247647 is open and unscheduled. The same engineer called host identity
+  "an obvious privacy concern" and sketched a replacement that returns the user
+  **without naming the app** — which is the strongest signal available that no
+  future API hands over a bundle id at all.
+- **`frontmostApplication` is not an `LSApplicationWorkspace` method.** It does
+  not appear in any published header for the class; it is `NSWorkspace`'s
+  property, on macOS. The likeliest outcome of the probe is not a refusal but
+  `responds(to:)` returning false.
+- **`sourceApplication` is dead by design, not by regression.** Apple documents
+  that it is `nil` when the opening app's team identifier differs from ours —
+  so every host that matters is `nil` — and when the opener *is* ours, it
+  correctly reports our own keyboard's container. Both spellings, both
+  lifecycles.
+- **The rest of the family is unevidenced this decade.** SpringBoardServices and
+  FrontBoardServices frontmost queries are declared only in headers from
+  2010–2014, and the 26.4.2 probes that reached for neighbouring services got
+  `EPERM` and RunningBoard service errors. `openApplicationWithBundleID:` — the
+  half we already use — was still entitlement-free as recently as iOS 18.5, and
+  is useless without an id to pass it.
+- **The category has already given up in public.** KeyboardKit's
+  `hostApplicationBundleID` has returned `nil` since the 26.4 betas and still
+  does on iOS 27 betas; its fallback is a curated list of well-known apps plus
+  asking the user. Wispr Flow's own support docs now tell users to **swipe right
+  on the bottom bar** to get back. That is the same instruction `SwipeBackGuide`
+  gives.
+
+**So nothing about this was expected to work, and the reason it was dropped is
+sharper than that.** Even granting the selector existed and LaunchServices
+answered it, the question is the wrong one. By the time `parley://dictate` is
+delivered, **Parley is what LaunchServices considers frontmost** — the honest
+answer to "who is in front" is us. What the jump needs is who was in front a
+moment *ago*, and nothing reachable from a sandboxed app records that. The probe
+could only ever have returned our own bundle id, which would have `HostReturn`
+relaunch Parley from Parley.
+
+Weighed against a payoff of roughly nothing: more private-API surface, in a
+keyboard that already asks for Full Access, on a code path App Review templates
+name explicitly. That is why the implementation was written, verified for
+crash-safety, and then left out of the build.
+
+#### The answer that is not a probe
+
+The one thing the category found that does work is to stop round-tripping.
+KeyboardKit's own pivot in early 2026 was to open the container app **once**,
+keep the dictation engine and its audio session alive, and serve every
+subsequent dictation from inside the keyboard. That is the microphone window,
+described above, which Parley already ships — and it is worth being explicit
+that it is not a workaround for the jump but the replacement for it. The jump is
+what happens on the first tap and after a window closes; everything else about
+this section is about making those two taps less bad, not about making the
+feature work.
+
+If this is ever revisited, the rules are `HostBundleID`'s rules for
+`HostBundleID`'s reasons: symbols assembled from fragments so no literal is in
+the binary, `responds(to:)` and `class_getInstanceVariable` before anything is
+touched, and every failure path returning `nil` rather than a guess. A keyboard
+extension that crashes on appearance is far worse than one that never takes you
+back.
 
 ## Personal dictionary
 
@@ -719,15 +1022,258 @@ that moment.
 `UserDefaults` rather than a `DictationChannel` mailbox for the same reason —
 the mailboxes need Full Access, and the pane list must not.
 
-### Not painting a background
+**Holding a character key shows it magnified above the finger**, the way the
+system keyboard does: every letter and `@` on the English pane, and every 大千
+key on the 注音 pane, tone marks included. The callout is drawn by one
+`KeyCalloutLayer` on the root view, not by the key. A key's own overlay would
+sit under the key to its right, and the pane track is clipped at the pane's
+top, which would cut a top-row callout in half. Each held key publishes its
+label and bounds as a preference, and the root places the bubble with
+`KeyCalloutGeometry` (ParleyKit). The proportions come from the system 注音
+keyboard: a bubble 1.8 keys wide and 1.5 keys tall, a quarter of a key above
+the cap. Its headroom is the key's distance from the top of the keyboard,
+strip included. A top-row key has 46pt of it, so its bubble is shorter and
+stops at the keyboard's top edge. No row is marked as the top one. An edge
+key's bubble lines up with the key's outer edge and flares inward only, as on
+the system keyboard, which keeps it off the backdrop's rounded corner. The
+callout does not follow a finger that slides to the next key. Each key is its
+own `Button`, so sliding off ends that press and the next key never sees a
+touch-down. The system keyboard's slide-to-retarget would need one pane-level
+touch tracker in place of those buttons. The layer would stay as it is.
 
-The keyboard draws **no canvas of its own**. `view.backgroundColor` is clear,
-the SwiftUI root is clear, and the system's own `UIInputView` shows through.
-This is not a style choice: the input view is already the exact colour iOS uses,
-already rounds its corners the way the host expects, and already covers exactly
-the area the system keyboard would. A canvas painted over it is a slightly wrong
-grey that seams against whatever sits below the keyboard and a top-left corner
-that doesn't line up — which is precisely how the bug reported as 跑版 looked.
+### What a keystroke redraws
+
+The controller talks to SwiftUI through one `ObservableObject`,
+`KeyboardBridge`, and every keystroke publishes on it — the 注音 composition and
+its candidates, the English suggestions, and while dictating the microphone
+level twelve times a second. Until 1.20 every typing pane held the bridge as
+`@ObservedObject`, and so did `SymbolPlanes` and `ReturnKey` inside them, so
+each of those publishes re-evaluated **every pane on the track**, the
+off-screen ones included: one 注音 keystroke re-diffed the 注音 pane's 41 keys
+*and* the QWERTY pane's, about seventy key bodies, to draw keys none of which
+had changed. That is where the owner's "注音 typing lags" pointed.
+
+So the panes do not observe the bridge any more. They hold it for its actions
+only, take what they actually draw — `dark`, `showsGlobe` and a
+`ReturnKeyStyle` (the return key's word, glyph and tint as one value) — as plain
+parameters, and are `Equatable` on those; `KeyboardRootView` wraps them in
+`.equatable()` and SwiftUI skips their bodies whenever those values are
+unchanged, which on a keystroke is always. A pane still redraws for its own
+state — the symbol planes, and on the English pane shift, which the controller
+drives (see *English pane*) through a small `ShiftModel` only that pane
+observes, not through the bridge — and there `KeyButton` and `DeleteKey`,
+also `Equatable` on their looks, keep the keys that did not change from being
+re-evaluated. The strip is the one thing a keystroke should redraw, and it now
+invalidates once per key rather than twice: the composition and its
+candidates are one published `ZhuyinStrip`, the English word and its
+suggestions one `EnglishStrip`.
+
+The voice pane followed later. It had still been built inline in
+`KeyboardRootView.body`, which runs on every publish, so each English or 注音
+keystroke re-evaluated its forty-odd views off screen. It is `VoicePane` now,
+handed one `KeyboardBridge.VoiceState` value (the fields it draws, copied) and
+`Equatable` on it; measured on the simulator, sixteen English keystrokes
+re-evaluate the root sixteen times and the voice pane not once. It still
+redraws for its own state, the microphone level included. The strip's resting
+row — wordmark, microphone chip, pane tabs — is `StripHome`, `Equatable` on the
+pane, the pane list, the chip and the appearance, for the same reason.
+
+The rule this leaves: **a view below the root takes values, not the bridge.**
+Anything that observes it re-evaluates on every key and every microphone
+reading.
+
+**A pane is built the first time it is needed, then kept.** The track used to
+build all of them at `viewDidLoad` — the voice pane and every key of QWERTY
+and 注音, about 120 keys — and keep them laid out off screen, so a keyboard
+opened only to dictate paid for two keyboards it never showed. Now
+`KeyboardRootView.paneSlot` draws a pane only once it is the current one, a
+drag on the track has begun beside it (both neighbours are built on the drag's
+first movement, in the same update that first moves the track), or a tab is
+about to slide across it (a tap from the voice pane to 注音 builds English and
+注音 before the slide starts). "Before" means an update earlier: SwiftUI animates
+the track by moving each view from where it was, and a view built in the same
+update as the move has no "was" — on the simulator the 注音 keys sat in place
+from the first frame while the voice pane slid away beneath them. So a tab that
+has something to build commits the build and moves on the next turn of the main
+queue, one frame later and only the first time. A drag needs no such care: it
+is not animated, so a neighbour built on its first movement is simply drawn
+where the finger put it. A pane the controller moves to on its own — one
+switched off in Settings, in `viewWillAppear` — is drawn as it lands and
+recorded as built on the next update. Until then a pane is `Color.clear` in the
+same frame, so the track's geometry and offset arithmetic are unchanged, and
+once built it stays, so swiping back costs what it always did.
+
+### What an appearance leaves behind
+
+iOS builds a new `KeyboardViewController` almost every time the keyboard comes
+up — a new field, a return from another app — and releases the old one. The
+controller does go, but on iOS 26.5 UIKit keeps holding its `UIInputView`,
+detached, with no window and no superview. Until 1.26 everything the
+controller had put in it stayed alive with it: the hosting view, its view
+graph, the layers of every key, and through the root view's `@ObservedObject`
+the bridge. Nothing in our code held any of it; the probe that settled it
+attached a marker object to the hosting view and to the input view and logged
+their lifetimes — seven appearances, seven of each still alive, and the
+bridge's live count climbing with them.
+
+The cost was measured on the simulator with the harness that taps the keyboard
+from outside (no XCUITest, whose accessibility snapshots distort the process's
+CPU and memory): 28 MB cold, **175 MB after twenty show/hide cycles**, climbing
+5–10 MB per appearance and never coming back. A keyboard extension is
+jetsam-killed somewhere past 50–70 MB on a phone, and a jetsam kill writes no
+crash report — which is how "the keyboard sometimes disappears" reached us
+without a single log.
+
+So the controller's `deinit` takes its own subviews — the hosting view and the
+backdrop — out of the input view. The tree and the bridge are then released
+with the controller, and what UIKit keeps is an empty input view. After the
+change: 34 MB cold, 42 MB after the first few cycles, **43–44 MB after forty**.
+
+### Touch: what makes a key feel like a system key
+
+The keys looked right well before they felt right. Measured against the system
+keyboard, what was missing was all in how a touch is taken, not in how a key is
+drawn:
+
+- **Every point of a typing pane belongs to a key.** The caps are drawn with
+  6pt between them and 11pt between rows, and the keys used to hit-test only
+  the drawn cap. A touch in a gap, in the half-key strip beside `a` and `l`, in
+  the 8pt above the top row or in the 注音 rows' stagger fell through to the
+  track, where only the swipe listens, and was dropped — about a third of the
+  pane on a 390pt phone. On the system keyboard a touch there types the nearest
+  key. Each key now has a touch target (`RowReach`, `KeyTarget`): its cap plus
+  half the gap to each neighbour and half the row spacing above and below, and
+  for the keys at the ends of the rows and in the top and bottom rows,
+  everything out to the pane's edge. The targets tile the pane. The end keys
+  reach a few points past the side edges (the 注音 plane's fourth row sits 3pt
+  right of the others, and would otherwise start with a dead strip), and each
+  pane cuts its keys' targets at its own edge, because the panes sit side by
+  side on one track and an end key reaching into the next pane took its
+  touches — the first measurement typed `ㄅ` for a tap beside `p`. They are hit
+  shapes, not layout — the caps are laid out exactly as before, and a
+  screenshot of every plane is pixel-identical to 1.25's — because growing the
+  keys' frames instead nudged the 注音 caps by a pixel (its 34.6pt rows round to
+  the pixel grid differently one level deeper). The globe is a `UIButton`, which
+  a hit shape does not reach, so its button overhangs the cap by the same
+  amount instead. Measured on the simulator with coordinate taps at points
+  taken from 1.25's caps: 20 of 27 gap taps typed the nearest key before —
+  SwiftUI's own touch slop catches some — and 27 of 27 after; before, a tap
+  2pt right of `g` typed `h`, and taps at the screen edge beside `a`, `l` and at
+  the end of a 注音 staggered row typed nothing.
+- **Pressed on the frame the finger lands.** The press shading used to fade in
+  over 80ms, which reads as a key a beat behind the finger. It is now instant;
+  only the release eases out.
+- **No delay at the screen's edges.** The system watches the left and bottom
+  edges for its own gestures with a recognizer on the keyboard's window
+  (`_UISystemGestureGateGestureRecognizer` on the iOS 26.5 simulator) that holds
+  a touch back until it has ruled a gesture out, so `q`, `a`, shift, `123` and
+  space darkened late and their callouts flashed late or not at all.
+  `delaysTouchesBegan` is switched off on it every time the keyboard appears or
+  moves to a window — the standard workaround for custom keyboards; the system
+  gestures still work.
+- **Keys click.** `UIDevice.playInputClick()` only sounds when the input view
+  adopts `UIInputViewAudioFeedback`, which the stock one does not, so the
+  keyboard was silent even with Keyboard Clicks on. The controller's input view
+  is now `KeyboardInputView`, the same `UIInputView` with that adoption (same
+  style, so the system paints the same backdrop, and the same self-sizing and
+  height constraint). Every key clicks on touch-down — characters, space,
+  delete and each of its repeats, return, shift, `123`/`ABC`, the globe — and
+  the user's Keyboard Clicks setting decides whether anything is heard. **No
+  haptics**: the system's key haptic is a separate setting a third-party
+  keyboard cannot read, and playing one anyway would buzz on every letter for
+  the people who turned it off.
+
+Not done here, and a project of its own: multi-touch rollover and committing a
+key on touch-down. Each key is still its own SwiftUI control, so a second
+finger landing before the first lifts is handled key by key, and a character
+types on release. Both need one pane-level touch surface in place of the
+per-key buttons.
+
+### The backdrop: the system's, unless it would disagree
+
+The keyboard's canvas is the system's `UIInputView`. `view.backgroundColor` is
+clear, the SwiftUI root is clear, and the input view shows through. This is not
+a style choice: the input view is already the exact colour iOS uses, already
+rounds its corners the way the host expects and already covers exactly the area
+the system keyboard would — on every device, in every orientation, in every
+host. A canvas once painted over it was a slightly wrong grey that seamed
+against whatever sat below the keyboard, with a top-left corner that didn't
+line up, which is precisely how the bug reported as 跑版 looked.
+
+What that costs is ownership of one of the three colours on screen. The caps
+and the ink are this keyboard's decision, made from `isDark`; the backdrop is
+the system's, made from the trait collection. Any time the two decisions come
+out differently, the keyboard draws one appearance on top of the other. 1.19 did
+it in Claude and LINE (white caps on a dark backdrop). 1.20 fixed that by
+teaching `isDark` to believe a host that reports the opposite of the system
+style — and #441 is the other side of the same coin: Apple Notes in Dark Mode
+reports `.light` while the trait is dark, so 1.20 drew white caps and near-black
+candidates on the system's black backdrop, and the candidates disappeared.
+
+1.21 answers it in two parts, and the order matters.
+
+**First, make the two decisions agree wherever they can** — the rule in *Which
+appearance* below. With the trait collection first and a host's `.light` never
+overriding it, `isDark` and the system's backdrop agree in every host that
+leaves `keyboardAppearance` at `.default` (Claude, LINE), every system app that
+mirrors the system style (Reminders, Safari, Contacts, Messages, Settings) and
+Notes. In all of those the keyboard paints nothing and looks exactly as 1.20 did
+where 1.20 was right.
+
+**Then paint only where they cannot.** After that rule there is exactly one way
+for them to disagree: a host that forces `.dark` while the phone is light — a
+dark-themed app — where the system paints its light glass and the keyboard has
+chosen dark caps and white ink. There, and only there
+(`KeyboardViewController.needsOwnBackdrop`: `isDark` differs from the trait),
+the keyboard shows a `backdrop` view of its own, filled with
+`KBTheme.backdrop(dark)`, and hides it again the moment the two agree.
+`refreshAppearance()` toggles it together with rebuilding the SwiftUI root, on
+every appearance, every `textDidChange` and every trait change, so caps, ink and
+canvas always come from one answer.
+
+Painting only in that case is the smallest blast radius available. The painted
+backdrop's shape was fitted on one device; the system's is right on all of
+them. So the fitted shape is used in the one case where the alternative is
+white ink on a light keyboard, and nowhere else.
+
+How it is painted when it is, so that it does not reintroduce the seam:
+
+- **The grey is measured, not remembered.** With the system keyboard up in
+  Reminders on the iOS 26.5 simulator, the pixels between keys are
+  **`#E2E4E8`** in light mode and **`#171717`** in dark (the same 23 the dark
+  caps were measured against, below). The iOS 18-era values in #441 (`#D1D3D9`,
+  `#2B2B2B`) are visibly off on iOS 26. Only the dark value is painted today;
+  the light one is kept because `backdrop(_:)` is keyed on `dark` like every
+  other colour here, and the rule could one day paint it.
+- **It stays inside the system's card.** On iOS 26 the system draws the
+  keyboard as a card whose continuous top corners begin at the top of our view,
+  reach the screen edge only about 37pt down, and in light mode carry a 2px rim
+  along the top and down the sides. A full-width `view.backgroundColor` — the
+  obvious way to paint — poked square corners out of that curve and covered the
+  rim, which is the old top-left misalignment in new clothes. The backdrop is
+  therefore its own `UIView` behind the SwiftUI root, **1pt inside the view on
+  the top and both sides, with 32pt continuous top corners**
+  (`KBMetrics.backdropInset`, `backdropCorner`). On the iPhone 17 Pro simulator
+  that lies inside the card everywhere and leaves the rim visible. Other
+  devices are unmeasured, which is part of why it is painted so rarely.
+- **The system's globe-and-dictation strip stays the system's.** Under a
+  third-party keyboard on Face ID phones iOS draws that strip itself, below our
+  view, in the trait's appearance. In the forced-dark case it stays light under
+  our dark keys. Nothing inside the extension can reach it.
+- **Nothing else tints the canvas.** The hosting view stays clear. The
+  sub-visible fills that make empty points take touches (see *The strip takes
+  touches everywhere*) are the backdrop's colour at 1% (`KBTheme.hitFill`)
+  rather than white: white at 1% lifted the dark keyboard from 23 to 25 over
+  exactly the SwiftUI area, a two-level step against the home indicator's strip.
+
+The dark caps are measured against the same backdrop: iOS 26.5 draws every key
+at sRGB 61/255 over a backdrop of 23, so `KBTheme.key(true)` is
+`Color(white: 0.24)`. iOS 26 no longer draws the non-letter keys a different
+grey; ours keep a darker `keyAlt` (0.17) anyway, because an engaged shift is
+shown by borrowing the letter cap and would otherwise have no way to look armed.
+The candidate ink is `KBTheme.ink` — `Color(white: 0.08)` (sRGB 20) in light,
+white in dark — which is **14.5:1** against `#E2E4E8` and **17.9:1** against
+`#171717`, far above WCAG's 4.5:1.
 
 Two more pieces of the same recipe:
 
@@ -765,22 +1311,89 @@ knowing about:
   ÷ 5 ≈ 34.6pt — rather than picked. Shorter 注音 caps are also what iOS's own
   注音 keyboard does, for exactly this reason.
 
+#### Which appearance
+
+`KeyboardViewController.isDark` is now two lines:
+
+- **The trait collection first.** The system picks its own chrome — the card,
+  the globe-and-dictation strip under a third-party keyboard — from
+  `traitCollection.userInterfaceStyle`, so that is the one signal that agrees
+  with everything around the keyboard.
+- **A host asking for `.dark` is an additional way in.** A dark-themed app on a
+  light phone gets a dark keyboard.
+- **A host's `.light` never overrides a dark trait.** That is the Notes case.
+  Believing `.light` could only ever be right for a light-themed app on a dark
+  phone, which would get a light keyboard against a dark screen; believing it
+  wrongly is what made the candidates invisible. A dark keyboard on a dark
+  phone is what the system is painting anyway, so the case given up costs
+  nothing.
+
+`hostAppearance`, `hostFollowsSystem` and `readHostAppearance` — the machinery
+1.20 needed to guess which hosts meant their report — are gone. One piece of it
+survives in a narrower form, because the simulator showed the regression without
+it: Reminders and Safari report `.dark` while the phone is dark and **keep
+reporting it after the user flips to light with the keyboard on screen**; typing
+does not refresh it, only activating the field again does. Taken at its word
+that `.dark` kept the keyboard dark on a light phone, above a system strip that
+had already turned light — and now that a disagreement is what makes the
+keyboard paint, it would also have painted a dark backdrop over the system's
+light one for no reason at all. So `staleHostDark` sets aside a `.dark` that was
+already there when the trait went from dark to light, until the field is read
+again (`viewWillAppear`, or a `textDidChange` that sees any other value). The one
+host this misjudges is a dark-themed app on a phone flipped from dark to light:
+it gets a light keyboard until the field is next activated — readable, and
+corrected on the next appearance.
+
 ### Mode strip
 
-Across the top: the **Parley wordmark** on the left, and on the right the
-current pane named beside one dot per pane — a long one for where you are, short
-ones for the panes you haven't got to. The dots stay tappable, so nothing is
-lost. The names are *Voice*, *English*, and *注音* — which keeps its own name in
-both localizations, because the keys on that pane are 注音 and no English word
+Across the top: the **Parley wordmark** on the left, and on the right the panes
+as **tabs** — a small segmented control sized to the 38pt strip, the
+current pane on a key-cap-coloured capsule that slides when the pane changes.
+The voice pane's tab is a microphone, the outline `mic` symbol. It sits inside
+the tab's `Text`, so it takes the same line height, baseline and colours as the
+named tabs and the capsule keeps its height when it moves. VoiceOver still reads
+it as "Voice dictation". The filled `mic.fill` was tried and dropped, because at
+caption size its solid body reads darker than the words beside it. The other
+two tabs are named *English* and *注音*, and 注音 keeps its own name in both
+localizations, because the keys on that pane are 注音 and no English word
 identifies it faster.
 
-This replaced a two-segment control, which read as the *only* way across and
-hid the fact that the pane swipes at all. **The panes sit side by side on a
-track that follows the finger**: a `DragGesture` with a 24pt minimum distance
+The tabs have been three things. A two-segment control first, dropped because it
+read as the *only* way across and hid the fact that the pane swipes at all. Then
+one dot per pane, long for the current one, on the theory that dots say "there
+is another one of these, sideways" — and in use nobody took the dots for a
+control, so the switch was invisible to exactly the user who never thinks to
+drag. So the panes are named again, and the two ways across now coexist: **the
+panes sit side by side on a track that follows the finger**, and the tabs are
+the second door, not the first. A `DragGesture` with a 24pt minimum distance
 drives the track's offset live and commits past a 56pt threshold, so a mistyped
 key is never read as a swipe but a real drag shows the next pane arriving. The
 previous gesture only committed on release — nothing moved while the finger did,
 which is why nobody found it.
+
+The track reads the touch *alongside* the keys (`simultaneousGesture`) rather
+than competing with them, and disables the panes for as long as its drag is in
+flight. A plain `.gesture` on the track lost to whatever the finger landed on: a
+`Button` holds the touch until it lifts, so a swipe that began on a key only
+registered at release and never followed the finger, and the zero-distance drag
+behind ⌫ took the touch outright — which on the voice pane, where the record
+button is the one big target, read as "only the record button swipes". Once the
+track has engaged, the key under the finger is cancelled the way a scroll view
+cancels a button's touch when it starts to scroll, so the swipe neither types
+the key nor leaves ⌫ repeating (`RepeatingKey` keeps its press in a
+`@GestureState`, which resets on that cancellation).
+
+That arbitration was only half of it, and the half that could be tested off
+the phone. On iOS a **fully transparent point of the keyboard never receives the
+touch at all**: the voice pane is mostly empty space over the system's own
+`UIInputView`, so a finger that landed anywhere but a drawn control went
+nowhere, and the track's `contentShape(Rectangle())` could not change that from
+inside SwiftUI. The track therefore carries a fill at 1% white, below what the
+eye can see in either appearance and above what hit-testing ignores. It covers
+the gaps between keys on the typing panes too. Measured on the iPhone 17 Pro
+simulator (iOS 26.3): before, a swipe from the voice pane's blank space did
+nothing while one from the record button switched panes; with the fill, both do,
+and so does a swipe from between two rows of English keys.
 
 A swipe moves **one pane**, clamped rather than wrapped, with the track rubber-
 banding at both ends. Clamped because the rubber band is a promise that there is
@@ -790,10 +1403,12 @@ would contradict it two panes later.
 The strip defaults to the first typing pane when there is no Full Access,
 because that is the pane that still works in that state.
 
-While a 注音 syllable is being typed the strip gives its whole row over to the
-composition and its candidates — see below. It is the one row the keyboard has
-to spare, and a candidate bar of its own above the keys would make that pane
-taller than its neighbours every time somebody started a word.
+While 注音 is being typed the strip gives its whole row over to the candidates
+for the oldest pending syllable; see below. The composition itself is marked
+text in the host's field, as on the system keyboard, so the row holds only the
+candidates. It is the one row the keyboard has to spare, and a candidate bar of
+its own above the keys would make that pane taller than its neighbours every
+time somebody started a word.
 
 ### English pane
 
@@ -816,19 +1431,198 @@ being told there are eleven columns instead of ten.
 The behaviours that make it feel like a keyboard rather than a grid of buttons:
 
 - **Shift** is three-state. Tap arms it for one letter; a second tap within
-  0.3 s locks it (`capslock.fill`); a slow tap turns it off. An armed shift
-  borrows the light letter-key cap, the way iOS signals it.
-- **Delete repeats while held** — ~0.4 s before it starts, then ~0.1 s a tick,
-  matching the system key. It can't be a `Button` (a button only reports on
+  0.3 s locks it (`capslock.fill`); a tap on an armed or locked shift turns it
+  off. An armed shift borrows the light letter-key cap, the way iOS signals it.
+  It acts on **touch-down**, as the system's does, not on release.
+- **Shift arms itself** where the host field asks for it
+  (`textDocumentProxy.autocapitalizationType`): at the start of the field,
+  after `.` `?` `!` and a space (closing quotes and brackets allowed between
+  them; `e.g. ` counts too, as on the system keyboard), after a line break and
+  after the double-space full stop, for `.sentences` — what a field that says
+  nothing gets; after any space for `.words`; after every letter for
+  `.allCharacters`, which types like caps lock but can still be tapped off for
+  one letter; never for `.none` (URLs, e-mail addresses). The controller
+  re-decides after every edit and every caret move, and that one rule is also
+  what spends a one-shot shift on the letter it capitalised; a locked shift is
+  never touched. The rule is `AutoCapitalization` and the key's state machine
+  `ShiftLatch`, both in ParleyKit and tested there. Shift lives with the
+  controller rather than the pane for that reason, in a `ShiftModel` only the
+  letter pane observes.
+- **Delete repeats while held, and speeds up** (`DeleteRepeat`, ParleyKit): the
+  first repeat after 0.5 s, then one every 0.1 s, every 0.05 s after about a
+  second, and after twenty characters — 2 s into the hold — a word per repeat,
+  every 0.1 s. A word is back to the previous space or punctuation, taking the
+  trailing spaces and punctuation with it; a line break is a unit of its own;
+  Han and kana, which have no spaces to find a word by, go two characters at a
+  time. A pending 注音 reading is always unwound symbol by symbol first, never a
+  word at a time. The repeats skip the per-keystroke refreshes — the suggestion
+  bar, shift, the 注音 candidate lookup — and all of it is redone once when the
+  key is let go. The timer runs in the run loop's common modes so nothing
+  tracking stalls it. It can't be a `Button` (a button only reports on
   touch-up), so it is a zero-distance drag gesture driving a `KeyRepeater`.
+  Measured on the simulator against a long English field: a 1 s hold deleted 7
+  characters, a 1.6 s hold 15, and a 3 s hold 77, ending on a word boundary
+  (1.25: 8, 14 and 28).
 - **Double-tapping space** types `". "` instead of a second space, but only when
   the character before it is a letter or a digit — after punctuation or at the
-  start of a line, two taps are two spaces, which is what iOS does.
+  start of a line, two taps are two spaces, which is what iOS does. The next
+  letter is a capital, as after any sentence end.
 - **Return always inserts `"\n"`.** The host's `returnKeyType` changes what the
   key *says* (Go / Send / Search / Done / Next) and whether it is tinted, and
   nothing else: a keyboard extension has no public way to fire the host's return
   action, and a key labelled Send that quietly did nothing would be worse than
   one that visibly types.
+
+#### Word suggestions
+
+The 注音 pane has predicted as you type since 1.16; the English pane made you
+spell every word out, which is how the owner put it — 「中文有 auto complete 英文
+卻沒有」 — and it was the one thing the system QWERTY had that ours did not.
+
+**While the cursor is inside a word, the mode strip is given over to a
+suggestion bar**: up to five completions of the run of letters before the cursor,
+most frequent first, on the same terms the 注音 candidates take the strip. The
+argument is the same one, too — the strip is the one row this keyboard has to
+spare, and a bar of its own above the keys would make the English pane taller
+than its neighbours every time somebody started a word, which shoves the host
+app's content up and down mid-swipe. Right after a word and a single space the
+bar holds **next-word predictions** instead: `thank ` offers `you`. So the
+wordmark and the tabs come back only when nothing is predicted, which is at the
+start of a field, after punctuation, and after a word the data has no line for.
+That costs the strip its wordmark for most of a sentence, and it is the right
+trade: the swipe, not the tabs, is the primary way across panes. 注音
+candidates win the row, though they cannot arise while the English pane is
+current.
+
+A prediction is offered only after exactly one U+0020 space that follows a word.
+Two spaces, punctuation or a new line say the sentence moved on. The data's own
+case is kept whatever the case of the word before: `Thank ` and `THANK ` both
+offer `you`, and `new ` offers `York`. An all-caps word before a space is as
+often an acronym as caps lock, and upcasing after `the US ` offered
+`TO THAT IN AND A`. The pronoun rule below still applies, so `I` is capitalised
+by code rather than by an accident of the data.
+
+**Two words typed without a space are offered with it**: `thankyou` offers
+`thank you`, after the user's own terms and ahead of the completions. The one
+exception is a partial whose best completion is among the 20,000 most common
+words: then the split goes second, right behind that completion, because a
+partial that begins a common word is more likely that word half typed. Typing
+`usin` offers `using` then `us in`, and `stayin` offers `staying` then
+`stay in`, while `iam` still offers `I am` first, since its best completion
+ranks past 34,000. At 5,000, 144 prefixes of list words put a split first
+(`stayin`, `foundin`, `downto`); at 20,000, 52 do, all of rare words
+(`himalaya`, `ataxia`, `candor`).
+
+Only a **known pair** splits: the partial must be a word from the next-word
+table followed by one of its followers. The table, not the word list, is what
+proves both halves are words, so `unitedstates` offers `united States` and
+`resultsin` offers `results in` even though the list has no inflections. The
+right half keeps the table's case, so `newyork` offers `new York`. Among known
+pairs the most common wins, by the rarer half's rank. A cut that merely lands on
+two list words is not enough; allowing it produced `iphone` → `I phone`,
+`idont` → `id ont`, `begining` → `begin ing` and `occured` → `occur ed`, and no
+rank floor separated those from the real cases. So `meetingtomorrow` no longer
+splits, and that is accepted. A partial that is itself a list word is never
+split, which keeps `into`, `area`, `maybe` and `cannot` whole. A partial longer
+than 40 letters is not tried, since each cut is a lookup. One split only, never
+three words.
+
+The partial word is the run of letters and apostrophes immediately before the
+cursor in `textDocumentProxy.documentContextBeforeInput`, recomputed after every
+key this keyboard types and on `textDidChange` — because the cursor can also move
+without us, and a bar describing a word that is no longer there would replace the
+wrong letters on a tap. "Letter" is Unicode's answer, so `café` is one word.
+`WordSuggestions` (ParleyKit) owns that rule and the case rule as pure functions,
+because a keyboard extension cannot be unit-tested and a string function can.
+
+**Nothing is ever rewritten without a tap.** Space and punctuation type exactly
+what was typed; there is no autocorrect, and no space-commits-the-suggestion
+rule. A keyboard that silently replaces a word it thinks is wrong is worse than
+one that suggests nothing — and this keyboard already asks for a lot of trust,
+since the personal dictionary learns from what the user retypes. Tapping a
+suggestion calls `deleteBackward()` once per grapheme of the partial and inserts
+the word plus a space — measured in a `UITextView` host, one call removes a whole
+`e`+U+0301 or 👍🏽 (so counting scalars, as it used to, also ate the character
+before the word), though for Devanagari `कि` it removes only the vowel sign; a prediction has an empty partial, so it deletes nothing. Case comes
+from what the user already said with the shift key: a capitalised partial gets a
+capitalised word, an ALL-CAPS partial of two letters or more gets an all-caps
+word, and one uppercase letter alone is read as a sentence starting rather than
+as caps lock. On top of that the pronoun is always `I`: any word that is `i` or
+starts with `i'` is capitalised, so `iam` offers `I am` and `i'm` offers `I'm`.
+
+There is **no quoted literal in the first slot**, the `"thankyou"` iOS puts
+there. It exists on iOS to undo autocorrect on space, and this keyboard has no
+autocorrect: space already keeps exactly what was typed, and a finished word is
+already offered as itself.
+
+The user's own `Lexicon` terms are offered ahead of the bundled list — they are
+the one source that knows the names and jargon this particular person types. They
+live in the App Group, so a keyboard without Full Access simply has none of them
+and the list answers alone; that is a supported state, not a failure, and it is
+the state App Review 4.4.1 judges the keyboard in. The suggestions themselves
+need no network and no App Group at all.
+
+**The data** is `english-words.txt` in ParleyKit: 40,000 lowercase words, 338 KiB,
+frequency ordered, generated by `scripts/gen-english-words.mjs` from
+hackerb9/gwordlist's `frequency-alpha-alldicts.txt` — the alphabetic words of
+Google's Books Ngram corpus verified against dictionaries, sorted by corpus
+frequency. **CC-BY 3.0** for the data (that repository's *programs* are GPL and
+are not used); the notice is in `ios/THIRD-PARTY.md`, and the download is pinned
+to a commit stamped into the resource's header, exactly as the 注音 tables are.
+Lists that were rejected on licensing, so nobody re-litigates it: Norvig's
+`count_1w` (LDC-derived, terms unclear), hermitdave/FrequencyWords (CC-BY-**SA**),
+SUBTLEX (non-commercial), google-10000-english (LDC-derived). The generator also
+drops thirteen words that are two words the scanner ran together, such as
+`ofthe` at rank 5,864: kept, `ofthe` would be a list word and would never split.
+They are the list words that equal a top-5,000 2-gram with the space removed and
+are at least 100 times rarer than that 2-gram, minus the real words among them
+(`cannot`, `tome`, `togo`, `goto`, `forme`, `goon`, `todo`, `ashe`).
+
+The predictions are `english-next-words.txt`: 1,077 lines, 32 KiB, one per
+previous word with every follower it has, most frequent first. The bar shows the
+first five; the split needs them all, since a cap of five dropped `i want`,
+`can you`, `a lot`, `of course` and `i think` from the known pairs.
+`scripts/gen-english-next-words.mjs` builds it from
+orgtre/google-books-ngram-frequency's `2grams_english.csv`, the 5,000 most
+frequent English 2-grams of Google Books Ngram (books 2010-2019), keeping
+letter-only pairs and merging pairs that differ only in case. **CC-BY 3.0**, for
+that repository's content and for the corpus it counts; the notice is in
+`ios/THIRD-PARTY.md` and the download is pinned the same way.
+
+A corpus of books from 1880 onward has two blind spots a keyboard cannot live
+with: Google's tokenizer splits every contraction, so there is not one apostrophe
+in 246,591 rows, and it is too old for words like `app` and `wifi`. The generator
+adds a short hand-written supplement for both, scored as if the corpus had seen
+each word 50 million times — the same device, for the same reason, as
+`CONVERSATIONAL` in `gen-zhuyin-phrases.mjs`.
+
+`EnglishWords` reads the file the way `ZhuyinPhrases` reads its table: **lazily,
+once, and warmed off the main thread** when the English pane becomes current (and
+in `viewDidLoad` when the keyboard opens on it, which every keyboard without Full
+Access does). The followers are parsed into the same table in the same load, so
+there is one load and one warm for both files. While a warm is in flight every
+lookup answers nothing instead of parsing the files a second time on the main
+thread, because the pane refreshes its bar in the same turn it warms and after a
+space that refresh asks for predictions; the warm refreshes the bar again when
+it lands. A lookup with no warm in flight loads synchronously in the tests; the
+keyboard turns that off (`parsesOnLookup`), so there it starts the warm instead.
+Rank is the word list's order and
+nothing else. What it builds at load is the other order — the same words sorted
+alphabetically with each word's rank beside it — so a prefix is a contiguous
+range found by binary search and the answer is the lowest-ranked few in that
+range. A linear pass over 40,000 words per keystroke is the kind of cost that
+turns into dropped keys on an old phone. The expensive walks are the one- and
+two-letter prefixes (four or five thousand words for `s`, `c` or `p`), so the
+load also stores the answer for every one- and two-letter prefix a word starts
+with, computed by the same walk; those keystrokes are a dictionary lookup, and
+by the third letter the range is small. The followers are indexed by their
+lowercase form at load too, so checking a run-together pair (`thankyou`) is a
+probe per cut rather than a copy of the follower list, and the user's lexicon is
+lowercased once when it is read rather than on every key. The equivalence tests
+hold the replaced implementation verbatim and compare every one-, two- and
+three-letter prefix and a few thousand real partials against it. A missing
+resource answers nothing rather than crashing, and each file can go missing
+without taking the other half with it.
 
 ### Voice pane
 
@@ -876,14 +1670,67 @@ which one you're on.
 
 The record button is one of exactly two places the keyboard is allowed to look
 like Parley rather than iOS: idle it carries Pathors' brand gradient (`#1469D4`
-→ `#2DB6F3`); listening it goes flat recording red inside two rings breathing
-outward, so "armed" is never something you have to read out of a gradient — and
-never needs a second element saying "Listening…" beside it. The other is the
-wordmark (`#1469D4` light, `#2DB6F3` dark). Nothing else on the pane carries a
-colour, including `⏎` when the host has asked for an action and `✕` when a
-session is running.
+→ `#2DB6F3`); listening it goes flat recording red and swells with the voice
+inside two rings the voice pushes outward, so "armed" is never something you
+have to read out of a gradient — and never needs a second element saying
+"Listening…" beside it. The other is the wordmark (`#1469D4` light, `#2DB6F3`
+dark). Nothing else on the pane carries a colour, including `⏎` when the host
+has asked for an action and `✕` when a session is running.
 
-#### Four states, and only one of them is a microphone
+#### A record button that swells with the voice
+
+The rings used to breathe on a 1.2 s `repeatForever`, and the note beside them
+said a real meter would cost more than the reassurance was worth — the audio is
+in the app, and streaming levels across the App Group at frame rate is not a
+thing a keyboard extension should be doing. Both halves of that were wrong in
+the same way. A canned pulse is reassuring in the precise way that is a lie: it
+looks identical over a microphone that has stopped hearing anything, which is a
+state this feature genuinely reaches (see *When the system takes the
+microphone*). And a level is not frame-rate streaming — it is **one `Float`,
+twelve times a second, in a mailbox of its own**.
+
+- **Its own mailbox, not a field on the downlink.** The downlink is re-stamped
+  only when the transcript moves, and that stamp is the liveness watchdog's
+  only input (`Downlink.presumedDeadAt`). A value that moves whether or not a
+  word does would refresh it forever, which does not weaken the watchdog but
+  switches it off — and several bugs were spent getting it right.
+- **12 Hz.** Below ~10 Hz the swell visibly trails the syllable that caused it.
+  Above it, each write is a file write plus a Darwin post in a process that is
+  usually *backgrounded* while dictating. 12 is also the rate the measurement
+  arrives at — `AudioCapture` taps 4096 frames, ~85 ms at 48 kHz — so a faster
+  mailbox would mostly republish readings that had not changed.
+- **One number, not a trace.** A ring of recent values would let the keyboard
+  draw a scrolling waveform; nothing on this pane draws one. The lag the ripple
+  needs is derived in the keyboard (a slower copy of the same smoothed value)
+  rather than carried on the wire.
+- **Silence is the resting state, and it is representable.** A reading at or
+  below the floor, a reading older than 0.6 s, an unstamped one and a missing
+  file all read as zero. Staleness is what stops a killed app leaving the button
+  frozen mid-swell — the keyboard only re-reads on a note, and a dead process
+  posts none, so the keyboard also runs one cheap watchdog (waking once per
+  stale period, and only while the meter is off its rest) to ask.
+- **Smoothed, asymmetrically.** A raw 12 Hz sample twitches, and a meter that
+  twitches reads as broken. Each reading moves the drawn value a fraction of the
+  way towards it — fast up (~0.25 s to full), slower down (~0.5 s) — so the
+  swell lands with the syllable and what happens between words is a settle
+  rather than a collapse.
+- **The ripple travels because it is late.** The outer ring is driven by the
+  same value put through a slower filter, so a syllable pushes the inner ring
+  out first and the outer one after it. In silence there is no ripple at all:
+  the rings leave the view tree, and inside it every opacity is multiplied by
+  the value driving it.
+
+Reduce Motion rests the button and drops the rings, which is exactly what
+shipped before this change.
+
+The keyboard also has one haptic for the pane's worst moment: the system taking
+the microphone is `.heavy` → `.heavy`, a two-beat pattern that deliberately goes
+nowhere. Every other beat in `Haptics` moves, and the direction is what says
+which way the session went — all of them answer a press. This one answers
+nothing the user did, so it has no direction to borrow. Once per transition into
+the state, not on every drain that republishes it.
+
+#### Three states, and only one of them is a microphone
 
 The pane used to draw the mic button and *Tap to speak* in every state, so a
 keyboard that could not transcribe a word looked identical to one that could —
@@ -895,12 +1742,19 @@ but a **microphone is only drawn when speaking here would actually work.**
 |---|---|---|
 | no Full Access | dimmed, mic | *Voice typing needs Full Access* + the Settings path |
 | not set up (`!ready`) | gradient, `arrow.up.forward.app` | *Set up voice typing in Parley* / *Tap to open the app* |
-| set up, tap would open Parley | gradient, `arrow.up.forward.app` | *Dictation starts in Parley* |
-| set up, tap stays put | gradient, `mic.fill` | *Tap to speak* |
+| set up (`ready`) | gradient, `mic.fill` | *Tap to speak* |
 
-"Stays put" (`KeyboardBridge.staysPut`) is a microphone window being open **or**
-the app's presence heartbeat saying it can answer in place — Parley in the
-foreground hosting this keyboard, or holding a running microphone. See *Knowing
+**The glyph follows readiness, not presence.** There used to be a fourth row
+between the last two: set up, but this particular tap would open Parley first,
+drawn with the jump glyph and captioned *Dictation starts in Parley*. Since #404
+a lingering Parley serves the tap where the user is, so the jump stopped being
+the common case — and the owner ruled that a first tap opening the app once is
+expected behaviour rather than something the button should warn about. Warning
+about it every time made the keyboard look less capable than it is.
+
+`KeyboardBridge.staysPut` and the presence machinery behind it are unchanged and
+still used: they are how the *app* decides whether it can answer a start note in
+place. They just no longer change what the button looks like. See *Knowing
 whether the app is there*.
 
 These are the *idle* states. A live session takes the slot ahead of all four
@@ -955,33 +1809,260 @@ own" was true about a full IME and beside the point about the pane actually
 needed: per-syllable 注音 with a frequency-ordered candidate bar is a week of
 work, not a product.
 
-**v1 is 傳統注音, one syllable at a time.**
+**Measured against the system keyboard, not against a memory of it.** On
+iOS 26.5 the system 注音 keyboard does not ask for a tone before it will take the
+next syllable. Typing ㄋㄧㄏㄠ straight through leaves a buffer reading
+`ㄋㄧ ㄏㄠ` — segmented by the keyboard itself, shown space-separated, with
+candidates for it above the keys. SPACE there is not a confirm key: it applies
+the **first tone** to the syllable being typed, after which the buffer reads
+`ㄋㄧ ㄏㄠˉ`. Tapping a candidate commits, and so does return. Punctuation
+commits what was pending before the punctuation itself lands. Its delete key is
+not in the function row at all: it sits at the right end of the fourth symbol
+row, an eleventh column under `ㄦ`. Rows 2 and 3 are not centred under row 1
+either — they are staggered rightwards by roughly one and two thirds of a key
+pitch — and `123` and return are about 2.5 keys wide.
+
+The pane now does all of that. Where 1.15 differed, the difference was the
+composer's limit rather than a position anybody argued for.
+
+**v1 is 傳統注音: typed continuously, predicted by phrase, converted greedily.**
 
 - **大千 layout**, as it is actually defined: a mapping onto a QWERTY board. So
-  the top row is *eleven* keys (`1234567890-`) and the three below it are ten,
-  centred by the same half-key inset QWERTY's home row uses. A tidy 4×10 grid
-  would have to drop `ㄦ`, and 兒/二/而/耳 are not optional. 37 symbols + 4 tone
-  marks = 41 keys, which is the whole block.
-- **Slots, not a string.** `ZhuyinSyllable` is at most one 聲母, one 介音, one
-  韻母 and one tone, so a symbol *replaces* whatever is in its slot. Typing
-  `ㄅㄆ` leaves `ㄆ`. An out-of-order or doubled reading is unrepresentable
-  rather than something to validate after the fact — and the slots are what give
-  delete a definition: it clears the last slot filled.
-- **Tones finalize.** 大千 has no first-tone key, so **space is the first tone**;
-  `ˊˇˋ˙` finalize with theirs. A finalized syllable queries the dictionary and
-  its candidates take over the strip. A second tone key re-tones and re-queries,
-  because `ㄕˋ` for `ㄕˊ` is the mistake everyone makes.
-- **Space confirms; the next syllable auto-confirms.** Once candidates are up,
-  space commits the first one and starting the next syllable commits it too.
-  That second rule is what makes a sentence typeable without ever looking at the
-  bar.
-- **Delete edits the buffer before the document**: out of the candidate bar,
-  then the syllable slot by slot, and only then does it reach the field.
-- **Return** commits a pending syllable and otherwise types a line break, the
-  way the system keyboard behaves.
-- Leaving the pane commits what was pending — the user swiped, they didn't press
-  delete. Coming back to a *different* field drops it, the same rule the
-  transcript tail follows and for the same reason.
+  the top row is *eleven* keys (`1234567890-`) and the three below it are ten
+  symbols each. A tidy 4×10 grid would have to drop `ㄦ`, and 兒/二/而/耳 are not
+  optional. 37 symbols + 4 tone marks = 41 keys, which is the whole block.
+- **Delete lives in the symbol block, not in the function row.** It used to sit
+  between space and return; it is now an eleventh column at the right end of row
+  4, under `ㄦ` — where the system's 注音 keyboard keeps it, and where a right
+  thumb already is. Rows 2 and 3 are staggered rightwards by one and two thirds
+  of a key pitch rather than centred, for the same reason: the shape of the block
+  is the thing a 注音 typist has learned, and ours differing from it bought
+  nothing. The function row is then `123`, the globe where the system asks for
+  one, `，`, space, `。` and return, with `123` and return at 2.5 units each. The pane is
+  still five rows and still measures 213pt — none of this moved a height, and it
+  could not, because the panes are one swipe apart.
+- **Slots inside a syllable, an ordered list of syllables above them.**
+  `ZhuyinSyllable` is unchanged: at most one 聲母, one 介音, one 韻母 and one
+  tone, so an out-of-order or doubled reading stays unrepresentable rather than
+  something to validate after the fact. What changed is the layer above it.
+  `ZhuyinComposer` now holds up to `maxPending` (6) syllables in order. A symbol
+  extends the last syllable when its slot is empty *and* later than the last slot
+  filled; otherwise — the slot is taken, the symbol is out of order, or the last
+  syllable already carries a tone — it **starts a new syllable**. The old rule
+  that a symbol replaces whatever is in its slot is gone at the composer level,
+  because that rule is exactly what made continuous typing impossible: `ㄋㄧ`
+  followed by `ㄏ` used to become `ㄏㄧ`. When a seventh syllable starts, the
+  first one commits itself at its best guess.
+- **A toneless reading is a reading, not an unfinished one.** A syllable carrying
+  no tone is matched across all five tones at once, so ㄋㄧㄏㄠ has candidates
+  without anyone pressing a tone key. The generated dictionary carries that as
+  `~`-prefixed rows: `~ㄋㄧ` is the union of ㄋㄧ / ㄋㄧˊ / ㄋㄧˇ / ㄋㄧˋ / ㄋㄧ˙,
+  ordered by each character's corpus frequency across the five. The prefix is not
+  decoration. First tone is written with **no** mark, so `ㄋㄧ` already means
+  "ㄋㄧ, first tone" and cannot also mean "ㄋㄧ, tone not given"; one of the two
+  needs a key of its own, and the toneless one is the one that is new.
+- **Tones sharpen the guess; they no longer gate the next syllable.** A tone
+  applies to the **last** syllable — `ˊˇˋ˙` with theirs, space with the first,
+  since 大千 has no first-tone key — and a second tone key re-tones and
+  re-queries, because `ㄕˋ` for `ㄕˊ` is the mistake everyone makes. What a tone
+  is no longer is the price of moving on.
+- **The bar belongs to the front of the buffer**, not to the syllable under the
+  finger. With two or more syllables pending it opens with the **phrases** the
+  buffer could still become (see *The phrase table*), then the single characters
+  of the oldest syllable not yet converted. Tapping a candidate commits as many
+  syllables as it has characters — one character is one syllable, so no span has
+  to be carried — and the bar moves on to what is left. **Return** commits every
+  pending syllable at its best guess, and otherwise types a line break. **Space**
+  is the first tone while the last syllable has no tone, and commits everything
+  once it has one. So a sentence stays typeable without ever looking at the bar,
+  and choosing one word does not cost the syllables behind it.
+- **The bar draws thirty; ⌄ opens every candidate as a grid.** The composer's
+  list can run to hundreds — forty phrases, then the first syllable's whole
+  toneless row (`~ㄧ` is 441 characters, `~ㄐㄧ` 378), then its fuzzy variants —
+  and the strip is a plain `HStack`, so until this cap every keystroke rebuilt a
+  button, a text and a hairline per candidate: typing ㄐㄧ rebuilt about 460 of
+  each, which is where the 注音 pane's per-key time and much of its footprint
+  went. `StripBar` now draws the first `drawnLimit` (30), about five strip-widths
+  of scrolling, and compares only those, so a keystroke that only changed the
+  tail does not redraw it. The list itself is not cut: the bar and the grid pick
+  from the same one.
+  The ⌄ at the bar's end (only while there are candidates) opens all of them as a
+  grid in the 注音 pane's own 213pt key area — `CandidateGrid`, 22pt key-cap
+  cells, `max(4, width ÷ 64)` columns, scrolling vertically — in exactly the
+  composer's order, never re-sorted. The keyboard's height does not change: the
+  grid takes the keys' place rather than growing the keyboard. It *replaces*
+  them rather than covering them, because the SwiftUI tree paints no background
+  of its own (see *The backdrop: the system's, unless it would disagree*): the pane track is hidden and stops taking
+  touches while the grid is up. The strip keeps the way back and flips ⌄ to ⌃ to
+  close it; the grid carries its own ⌫ (bottom right, hold-to-repeat), because
+  the pane's is hidden with the keys and delete still unwinds the buffer. The
+  open state lives on the bridge (`candidatesExpanded`) because the controller
+  closes it: whenever the reading empties — a pick that used the last
+  syllables, return, space, punctuation, leaving the pane — the grid goes and
+  the keys come back. A pick that leaves syllables pending keeps it open with
+  their candidates.
+- **The strip takes touches everywhere.** A fully transparent point in a
+  keyboard extension never receives a touch, and the strip had no fill, so only
+  the drawn pixels of a candidate's glyphs were tappable — and of ⌄, just two
+  thin strokes. It now carries the same sub-visible fill the pane track does.
+- **Two lone 聲母 already predict.** `ㄋㄏ` offers 你好 before a vowel or a tone
+  has been typed, because a phrase is matched **by prefix within each
+  syllable**: the slots the user has filled must agree with the phrase's
+  syllable, `nil` included (`ㄧㄡ` has no 聲母 and does not match `ㄌㄧㄡˊ`), the
+  slots they have not filled are wildcards, and a tone is a wildcard until it is
+  typed. This is the behaviour the product owner named as the gap — "就算只打
+  幾個字的第一個注音，它還是猜得出來" — and it is what the system keyboard does.
+- **Delete unwinds the buffer before it reaches the document**: the last
+  syllable's tone, then its slots, then the empty syllable itself, and on into
+  the syllable before it. Only with nothing pending does it reach the field.
+  Held, it keeps doing that one symbol at a time however long it has been held
+  — the word-at-a-time repeat (see *English pane*) only starts once the reading
+  is gone — and the candidate bar waits for the key to be let go rather than
+  being looked up again twenty times a second.
+- **Punctuation commits first.** A mark typed from the symbol planes or the
+  function row flushes the pending syllables and then lands, rather than
+  arriving in front of the word that was being typed.
+- **Punctuation is full-width.** Chinese is punctuated with 。，、？！「」, and
+  until 1.20 the 注音 pane could only type the ASCII marks it shared with
+  QWERTY. Two parts:
+  - **「，」 and 「。」 flank space on the function row**: `123`, the globe where
+    the system asks for one, `，`, space, `。`, return. This is *not* where the
+    system puts them — iOS 26.5's 注音 keyboard has no punctuation on its main
+    plane at all (screenshotted in Reminders), so every sentence costs two trips
+    to `123`. They go beside space because that is where both thumbs already
+    are. `123` and return keep their 2.5 units: on a 320pt SE with the globe,
+    space still gets about 81pt (11-column unit ≈ 23.1pt, 2.5 units ≈ 66.7pt).
+  - **The symbol planes opened from 注音 are the system 注音 keyboard's planes**
+    (`SymbolPlanes(fullWidth: true)`; the rows are in `FullWidthPunctuation`,
+    ParleyKit, with tests). Numbers: `1234567890` / `- / ： ； （ ） $ @ 「 」` /
+    `#+=` `。 ， 、 ？ ！ .` ⌫. Symbols: `[]{}#%^*+=` / `_ — \ | ～ 《 》 ¥ & ·` /
+    `123` `… ， 。 ？ ！ '` ⌫. The system's `^^` emoticon key is replaced by `。`;
+    one ASCII `.` stays on the numbers plane for decimals, as it does on the
+    system's. Marks with no full-width convention in Taiwanese writing (`$ @ & #
+    - /` …) stay ASCII — a `＠` in an email address is a broken address — and
+    digits stay half-width. The mapping itself: `, . ? ! : ; ( ) [ ] ' ~ < >` →
+    `， 。 ？ ！ ： ； （ ） 「 」 、 ～ 《 》`.
+  - **Double-space types 「。」** on the 注音 pane, with no trailing space — the
+    full-width mark carries its own. QWERTY keeps `. `.
+- **The composition is marked text in the host's field**, underlined and
+  provisional, as the system keyboard shows it: the pending syllables
+  space-separated, tone marks included, with `ˉ` after one toned with space
+  (`ZhuyinComposer.reading`). On iOS 26.3 the system keyboard shows `ㄋ ㄏ` and
+  `ㄋㄧˇ ㄏ` for those keys, and does not convert a toned syllable inline. It
+  shows converted text only for a candidate picked from the front (`你ㄏ`), and
+  a pick here commits at once, so that part is already committed text. The
+  strip holds only the candidates, so `StripBar` has the full width: the 1.20
+  chip (last two syllables, 120 pt) is kept only for a host that ignores marked
+  text, below. The proxy cannot read marked text back, and
+  `textDidChange` reports the host's text as it was when the host answered,
+  which with fast typing is two or three keystrokes old. So the keyboard keeps
+  every marked state it has sent and the host has not yet confirmed
+  (`MarkedTextLog`), and accepts a report that matches any of them.
+- **A keyboard-initiated end commits with `insertText`.** A candidate, return,
+  space on a toned syllable, punctuation, leaving the pane (the user swiped,
+  they didn't press delete) and buffer overflow all call `insertText`, which
+  replaces the marked text. `setMarkedText` with the committed text followed by
+  `unmarkText` looks more explicit and is wrong: when the next `setMarkedText`
+  (the rest of the reading) follows in the same turn, Reminders applied them out
+  of order, dropped the picked character and left the rest unmarked. Deleting
+  the last symbol ends with a single `setMarkedText("")`: the proxy drops an
+  empty `insertText`, and one call has no order to lose. Text from outside the composer, a finished
+  transcript or an English suggestion, commits the composition first, so it
+  lands after the reading instead of replacing it.
+- **A host-initiated end keeps what the host shows.** When the host no longer
+  holds the marked text around the caret (a host that cleared or rewrote its
+  text, a caret moved out of the marked range), the keyboard calls
+  `unmarkText` and drops the buffer. Nothing is inserted: committing the best
+  guess would put it wherever the cursor has gone. A caret moved *inside* the
+  marked range keeps composing, as on the system keyboard, which is also where
+  UIKit puts a tap in the field while marked text is showing. A host that
+  reports no context at all cannot contradict anything, so it keeps composing.
+- **Hosts leave marked text out of the context they report (iOS 26.5).**
+  Measured on the simulator in Reminders and Safari's address bar:
+  `documentContextBeforeInput` is `nil` while the field holds nothing but the
+  reading, and holds only the text *before* the mark once there is some. No
+  `textDidChange` or `selectionDidChange` arrives for the keyboard's own edits
+  either; `selectionWillChange` never arrived at all. So the context cannot
+  confirm a mark, and it cannot say which field a report came from. The field
+  is told by `documentIdentifier` instead, read through key-value coding
+  because it is `nil` between fields and reading the Swift property then traps
+  — and only after `responds(to:)` says the proxy has that getter
+  (`GuardedKVC`), because KVC on a key an object does not answer raises an
+  exception Swift cannot catch. An unknown field is `nil`.
+  `MarkedTextLog` still accepts a context that holds the reading (what #427
+  measured on iOS 26.3), and treats anything it cannot decide as consistent.
+- **A host that ignores marked text gets the 1.20 chip, for that field only.**
+  0.4 s after the first marks in a field, if no report has confirmed them, the
+  keyboard asks again (`MarkedTextLog.hostSettled`). The only answer it can
+  trust is an empty field: the reading as the field's only text (`hasText`
+  with no context) confirms the mark, and a field that still reports no text at
+  all has dropped it. Then `usesMarkedText` goes false for the field: the
+  buffer is kept, the reading is published to the strip's chip (last two
+  syllables, 120 pt, as in 1.20), commits are plain `insertText`, and
+  `setMarkedText` is not called again until the field changes or the keyboard
+  comes back. The brief for this asked for a stronger rule — a host that has
+  never confirmed a mark and then reports context without it ignores marked
+  text — but on iOS 26.5 that describes *every* host, Reminders included,
+  because none of them ever puts the mark in the context. A field with text in
+  it therefore stays on marked text whatever the host does (fail open). No
+  simulator host ignored marked text, so the fallback has run only in
+  `MarkedTextLogTests`.
+- **Every exit commits or removes, as far as the proxy reaches.** Return,
+  punctuation, the symbol planes, English suggestions, the dictation transcript
+  and leaving the pane commit with `insertText` (above). The keyboard going away
+  and the field changing are the host's doing, and the hook experiment on
+  iOS 26.5 found no callback in which the proxy still edits the old field:
+  - In Reminders, dismissing (Done) calls `textWillChange`, `textDidChange`,
+    then `viewWillDisappear`. An `insertText(best)` in `textWillChange` or in
+    `viewWillDisappear` does not land; the title is saved with the raw reading
+    as plain text, the underline gone.
+  - Changing fields in Reminders (title → note) calls only `textWillChange` and
+    `textDidChange`, and by `textWillChange` the proxy is already on the *new*
+    field: the `insertText(best)` landed in the note. So on a field change the
+    keyboard edits nothing. It lets go of the buffer when `documentIdentifier`
+    changes, and the old field keeps the raw reading.
+  - In Safari's address bar, ✕ discards the whole entry, reading included, so
+    nothing is left either way.
+  `viewWillDisappear` still tries `insertText(best)` — it is where the system
+  keyboard commits, a host that honours it gets the right text, and in
+  Reminders it was verified to add nothing — and it is idempotent: an empty
+  composer does nothing.
+- **The backstop repairs a stranded reading on the way back.** Whenever the
+  keyboard leaves a reading behind (dismissal, field change) it stores the
+  reading and its best guess (`StrandedReading`) in a static on the
+  controller — static because UIKit makes a new controller every time the
+  keyboard comes up, and in memory because the keyboard never writes what the
+  user types to disk (`ios/AppStore/privacy-label.md`, #290). On `viewWillAppear`, and on any `textDidChange` with nothing
+  composing, if the text before the caret ends with exactly that reading —
+  spaces and tone marks included, which is what makes the match unambiguous —
+  the keyboard deletes it and types the best guess: `你好ㄨㄛ` became `你好我`
+  when the reminder was tapped again, and a title left as `…我ㄋ ㄏ` by a field
+  change became `…我你好` on tapping back into it. The record lives for 30
+  minutes. The cost is honest: in such a host the raw 注音 is visible while the
+  keyboard is away, and stays if the user never comes back to that field — or
+  if iOS ends the keyboard's process before they do, since the record goes with
+  it.
+- **A drop is an explicit removal.** When the keyboard comes back after
+  leaving a reading behind and the backstop did not match, whatever may still
+  be marked — a reading a keyboard switch left underlined — is removed with
+  `setMarkedText("")` followed by `unmarkText()`, so it is neither kept raw nor
+  finalized as typed. Only then, and never over a selection, because an empty
+  `setMarkedText` replaces the selected text when nothing is marked. On
+  Reminders the pair was verified to leave the field's committed text intact.
+- **Switching keyboards cannot commit.** The system 注音 keyboard commits its
+  best guess when the globe switches away. Ours cannot: by `viewWillDisappear`
+  the host has already stopped taking the proxy's edits, and on phones where
+  the system draws the globe there is no earlier callback. The reading stays in
+  the field, still underlined, until the next keyboard's first key finalizes it
+  as typed, after which the backstop no longer matches it.
+
+**Nothing commits itself on the way past.** The rule that starting a syllable
+confirmed the one before it went with one-at-a-time: starting the next syllable
+only appends. Every commit is one of five deliberate things — tapping a
+candidate (the first pending syllable), return, space on a last syllable that
+already carries a tone, punctuation from the symbol planes, leaving the pane
+(all of them) — plus the one the buffer forces, a seventh syllable pushing the
+oldest out at its best guess.
 
 Everything above is `ZhuyinComposer` in ParleyKit, which never touches the
 document: it answers `handled` / `insert(_)` / `passThrough` and the keyboard
@@ -992,23 +2073,26 @@ exists.
 
 #### The dictionary
 
-`zhuyin-dict.txt` (~93 KiB, in ParleyKit's resources) is reading → characters,
-most frequent first, generated by `scripts/gen-zhuyin-dict.mjs` from
+`zhuyin-dict.txt` (in ParleyKit's resources) is reading → characters, most
+frequent first, generated by `scripts/gen-zhuyin-dict.mjs` from
 **McBopomofo's MIT-licensed data**: `BPMFBase.txt` for the readings and
-`phrase.occ` for the ordering. `BPMFMappings.txt` is deliberately skipped — it
-is the file their README marks as simplified from libtabe's `tsi.src`, so it
-carries a second license's provenance, and it is phrases, which v1 does not
-convert. Attribution is in `ios/THIRD-PARTY.md`; the generator pins the download
-to a commit and stamps it into the resource's header, so the committed file names
-what it was built from.
+`phrase.occ` for the ordering. Since 1.16 it also carries the `~`-prefixed
+toneless rows described above: 1,413 toned rows and 429 toneless ones, about
+52,000 characters in all, which takes the file from 94 KiB to 172 KiB. Every
+character in a toneless row already appears in a toned one, so what the second
+copy buys is one lookup instead of five merged and re-sorted on every keystroke,
+in the process that can least afford to do the work. Attribution is in
+`ios/THIRD-PARTY.md`; the generator pins the download to a commit and stamps it
+into the resource's header, so the committed file names what it was built from.
 
-It is loaded **lazily and once**, on the first finalized syllable, because this
-process runs against a jetsam limit far tighter than an app's — a keyboard opened
-on the voice or QWERTY pane never pays for it. ~1,400 readings over ~27,000
-characters is a few hundred kilobytes resident, and the file's own string is
-dropped as soon as it is parsed. Rows are stored with no separator between
-characters because every character in the source is exactly one Unicode scalar,
-including the ones outside the BMP.
+It is loaded **lazily and once**, on the **first 注音 symbol typed** — a syllable
+with no tone already has candidates, so there is no later moment to wait for —
+because this process runs against a jetsam limit far tighter than an app's, and a
+keyboard opened on the voice or QWERTY pane still never pays for it. Those
+~52,000 characters are a few hundred kilobytes resident, and the file's own
+string is dropped as soon as it is parsed. Rows are stored with no separator
+between characters because every character in the source is exactly one Unicode
+scalar, including the ones outside the BMP.
 
 The 大千 table was checked, not eyeballed: McBopomofo's data carries a 大千
 keystroke column beside every reading, and the table in `ZhuyinDachen` agrees
@@ -1016,19 +2100,210 @@ with 26,648 of their 26,652 rows (the four misses are typos in their key column,
 e.g. `公 ㄍㄨㄥ˙ … ej/5`). That is why the table is written out in Swift rather
 than derived from the data.
 
+#### The phrase table
+
+`zhuyin-phrases.txt` (`ZhuyinPhrases`, generated by
+`scripts/gen-zhuyin-phrases.mjs`) is what turns the pane from a transcriber into
+a predictor. It comes from McBopomofo's `BPMFMappings.txt` — phrase → toned
+syllables — which their README marks as simplified from **libtabe's `tsi.src`
+(BSD)**; an earlier version of this file skipped it for that second provenance,
+and the reason it is in now is that the owner's test against the system keyboard
+made the gap concrete: no per-syllable data can answer `ㄋㄏ`, because neither
+syllable is finished. libtabe's notice sits beside McBopomofo's in
+`ios/THIRD-PARTY.md`.
+
+- **2–4 character phrases only**, one row per (phrase, reading), about 61,000
+  rows in 1.7 MB: everything with a corpus count of ten or more, plus every
+  zero-count two-character phrase (upstream order is alphabetical, so a prefix of
+  the zero-count rows would be a biased slice, and the two-character ones are
+  the words). Keeping every count > 0 row was 3 MB and 102,000 rows, which is a
+  lot to hold in a keyboard extension for phrases that occur nine times in a
+  corpus.
+- **Ordered once, at generation time.** The file's order is the ranking and the
+  class does no sorting. The score is not raw occurrence: the corpus is written
+  news, and by raw count `ㄋㄏ` puts 女孩, 年後, 男孩, 南韓 and 內涵 ahead of 你好
+  (12th). So the score is `ln(occ + 1)` plus the mean `ln(charOcc + 1)` of the
+  phrase's characters — a phrase built of common characters is more likely to be
+  the word somebody is typing into a message than one built of rare ones — and a
+  short list of everyday words (你好, 謝謝, 請問, 不好意思, 沒問題 …) is given a
+  floor of 3,000 occurrences before scoring, because this keyboard types
+  messages and the corpus never did. That list is in the generator with its
+  reason, and it is the one place in the data where an opinion was written down.
+- **Indexed by the first symbol of each of the first two syllables** — 你好
+  lives under `ㄋㄏ` — because two first symbols is the least a user can have
+  typed and still be asking a question. A lookup is that bucket filtered
+  syllable by syllable with the prefix rule above, split into three groups in
+  frequency order: phrases exactly as long as the buffer, longer ones (the
+  predictions — `ㄋㄧㄏㄠ` offers 你好嗎 after 你好, and picking it takes the
+  whole buffer), and shorter ones covering a prefix of it. Forty at most. Since
+  1.20 a lookup can read **more than one bucket**: a wrong first symbol files the
+  intended phrase under a different key, so the forgiving half of a lookup (see
+  *Error tolerance*) also reads every key a first-symbol substitution could
+  reach — the typed symbol or one of its alternatives, for each of the two —
+  which is up to about forty buckets for two lone 聲母. The exact half still
+  reads only the typed key.
+- **`best` is greedy, not a lattice.** Return, space-on-a-toned-syllable,
+  punctuation and leaving the pane all commit `best`, which walks the buffer
+  left to right taking the longest phrase that exactly covers the syllables in
+  front of it (four, then three, then two) and otherwise that syllable's top
+  character. Deterministic and explainable, and wrong in ways the user can see
+  in the bar and fix by tapping instead. A viterbi over the same table is the
+  obvious next step and is not this one.
+- **Loaded lazily, warmed early, never twice at once.** Parsing and indexing
+  61,000 rows is about 100 ms on a current phone, which is not a hitch to spend
+  on the user's second syllable. So both tables are warmed on a background
+  queue the moment the 注音 pane becomes current. A lookup that arrives before
+  the warm has landed **answers nothing** rather than parsing a table of its
+  own: until 1.20 it loaded synchronously, and for the length of that parse two
+  whole tables and their source strings coexisted — the highest this process's
+  memory ever went, in a process iOS kills without warning at its limit. No
+  crash was ever matched to it (there was no log to match against); the change
+  is preventive. `warm(onReady:)` calls back on the main queue when the table
+  lands, and the keyboard uses that to answer whatever is pending again
+  (`ZhuyinComposer.refresh()`), so the key that lost the race shows an empty
+  bar for a fraction of a second and then the right one. The completion runs in
+  the same main-queue block that stores the table, and keys arrive on the main
+  queue too, so a key is either before the landing or after it — never in
+  between. `EnglishWords` and `ZhuyinDictionary` follow the same contract.
+  The keyboard starts the warm for whichever pane it is on **every** time it
+  sets one — on a swipe or a tab, and also in `viewDidLoad` and when a pane
+  switched off in Settings sends it elsewhere, which used not to warm, so a
+  keyboard without Full Access opening straight onto 注音 parsed both tables on
+  the main thread on its first keystrokes. And it turns `parsesOnLookup` off on
+  all three tables, so a lookup that ever finds nothing loaded and nothing in
+  flight starts a warm and answers nothing rather than parsing on a keystroke;
+  with the warms above, that path is only reachable in tests, which keep the
+  synchronous default.
+- **Given back under memory pressure.** `unload()` drops the table, and the
+  next lookup reads the file again. `didReceiveMemoryWarning` unloads the
+  phrase table and the English list when the pane on screen is not using them
+  and logs what it dropped (`com.pathors.parley.ios.keyboard`, category
+  `memory`), so a sysdiagnose from a keyboard that died has something to say.
+  The table under the user's fingers is kept: dropping it would make the next
+  keystroke re-parse it at exactly the moment memory is shortest. The 注音
+  dictionary is never dropped — a few hundred kilobytes, needed by every key.
+- **Readings are packed once, at load.** Until 1.20 a row kept its reading as
+  text and it was split and parsed on every keystroke for every row of the
+  bucket, on the argument that pre-parsing rows nobody types costs memory. It
+  was the other way round: a reading is 20-odd bytes of UTF-8, past the 15 Swift
+  keeps inline, so every one of the 61,000 rows owned a heap string. Now each
+  syllable is `ZhuyinSyllable.packed` — the 聲母, 介音 and 韻母 as one-based
+  indices into their alphabets and the tone, 0 for an empty slot, fourteen bits
+  in all — four of them to a `UInt64`, beside a `UInt32` file rank that lets
+  rows drawn from several buckets be merged back into file order. A row is the
+  phrase (four BMP characters or fewer, so inline too), the reading and the
+  rank: 32 bytes, the same stride as the two strings it replaced, with no heap
+  behind it. Comparing a slot is now a mask, and a keystroke allocates nothing
+  per row.
+- **Parsed line by line, off a mapped file.** Building the index used to cost
+  about 12.6 MB of footprint for an index that retains about 3 MB: the rest was
+  the file decoded into a string, `split` into 61,000 lines, every row in one
+  array and then copied into its bucket — freed once the parse returned, but
+  their pages stayed, and freed-but-resident is still footprint to jetsam. Now
+  the file is memory-mapped (`ResourceLines`) — clean, file-backed pages
+  that are not footprint at all — each line is decoded, parsed and dropped
+  before the next is read, and a row goes straight into its bucket. Measured on
+  an M4 Mac mini (macOS 26.2, release build, `phys_footprint` sampled every
+  millisecond through the parse): the phrase table's peak went from +12.2 MB to
+  +3.4 MB, which is now also what it retains, and the parse from ~75 ms to
+  ~50 ms; the English list's from +5.9 MB to +1.9 MB and ~12 ms to ~6 ms. After
+  a parse the tables call `malloc_zone_pressure_relief` to ask for freed pages
+  back, but on macOS 26.2 the default zone reported nothing to return — its
+  allocator defers that to the kernel — so the lower peak is what actually
+  moved the number.
+
+#### Error tolerance
+
+The owner's report on build 34: one wrong 注音 symbol and the bar was empty,
+while the system keyboard still guessed. Both tables matched exactly, so a
+syllable nobody pronounces answered nothing and a mistyped real one answered a
+different word. Since 1.20 both forgive **one wrong symbol per syllable**, by two
+rules kept in `ZhuyinFuzzy`:
+
+- **模糊音 pairs**, both ways: ㄣ/ㄥ, ㄓ/ㄗ, ㄔ/ㄘ, ㄕ/ㄙ, ㄈ/ㄏ, ㄌ/ㄋ, ㄖ/ㄌ. These
+  are facts about how Taiwanese speakers talk, so they are written down by hand.
+  They are not transitive (ㄋ and ㄖ are not each other's), and ㄧㄣ/ㄧㄥ needs
+  no entry because the 介音 is its own slot.
+- **Adjacent keys**, computed from `ZhuyinDachen.rows` and the pane's stagger
+  (`ZhuyinDachen.rowOffsets`, 0, ⅓, ⅔ and 0 key pitches — kept in step with
+  `KeyboardZhuyinPane.swift` by hand): left and right on the row, and on the rows
+  above and below every key whose centre is less than one pitch away. That is
+  always the same-index key plus one staggered neighbour, whose direction
+  depends on the row pair — the fourth row is not staggered, so `ㄋ` (s) sits
+  over `ㄏ` (c) and `ㄌ` (x), not over `ㄌ` and `ㄈ` as on a physical board.
+
+Both rules keep to the syllable model: a substitute must be in the **same slot**
+as the typed symbol, a tone mark is never substituted and never substitutes, an
+empty slot is never filled (a missing symbol is not a wrong one), and a typed
+tone is never forgiven. The resulting table is 模糊音 partners first, then
+neighbours nearest-centre first — `ㄋ` → ㄌㄇㄎㄊㄍㄏ, `ㄓ` → ㄗㄔㄐ,
+`ㄣ` → ㄥㄟㄢㄦㄤㄠ, `ㄧ` → ㄨ.
+
+- **The dictionary** answers the exact row first, untouched, then for each
+  variant of the syllable (every syllable one substitution away, 模糊音 ones
+  before slips) its first eight characters not already listed. The cap is
+  there because toneless rows run to 441 characters and fourteen variants'
+  whole rows would be well over a thousand candidates on a keystroke, every
+  one a cell in the ⌄ grid (the strip itself draws only thirty). A syllable with an exact row keeps its exact top; one with none
+  (`ㄓㄨㄡ`) takes the first variant's (中), so return commits a character
+  rather than raw 注音.
+- **The phrase table** counts, per row, how many typed syllables needed a symbol
+  forgiven. Every exact match comes first, in the three groups as before; then
+  the forgiving ones, fewest errors first, then the same three groups, then file
+  order; forty in all, and a phrase already offered is never offered again. Only
+  the best few forgiving matches can reach the bar while two lone 聲母 can match
+  five thousand rows, so they are kept in a short sorted list rather than
+  collected and sorted, and a tier of buckets whose every row carries more
+  errors than the list's worst is not read. So `ㄌㄧㄏㄠ` still offers 良好,
+  理好 … first and 你好 right after them, `ㄋㄧㄎㄠ` offers 你好 first, and
+  `ㄗㄨㄥ ㄨㄣˊ` offers 中文 first.
+- **`best` is stricter than the bar**, because the bar is a list to choose from
+  and `best` is text that lands unasked. An exact cover of any length beats a
+  forgiven one of any length. A forgiven cover is taken only for a window
+  holding a syllable with **no exact row** — one that cannot be right as typed
+  — and then the fewest errors win, length breaking a tie. So `ㄓㄨㄡ ㄨㄣˊ`
+  commits 中文, but `ㄗㄨㄥ ㄨㄣˊ`, whose syllables are both real readings (從,
+  文), commits as typed with 中文 first in the bar. Letting any forgiven cover
+  beat one character per syllable was tried first and changed five of twenty
+  correctly typed everyday sentences — 他說的人 became 他說到任, 吃飯了麼
+  吃飯老馬 — because two real syllables that are not a phrase are exactly where
+  a one-symbol-off phrase is always waiting.
+
+The cost, with both tables warm, measured per keystroke on an M4 Mac mini in a
+debug build: about 0.1 ms for one syllable, about 1.1 ms for two and for six
+pending syllables whose every symbol has alternatives, 0.65 ms for two lone
+聲母 (the widest fan-out); a release build is under 0.1 ms throughout. Exact
+matching alone was 0.02–0.8 ms in the same debug build. The budget is 8 ms on a
+phone.
+
 #### What v1 does not do
 
 Named here so nobody has to guess whether it was forgotten:
 
-- **No phrase conversion.** No lattice, no viterbi, no 2–6 character lexicon. A
-  sentence is typed one character at a time with a frequency-ordered bar. This is
-  the deliberate line: per-syllable done well before phrases done adequately.
+- **No lattice.** Phrases are predicted and committed greedily (above); there is
+  no viterbi over segmentations, and no 5–6 character phrases. That includes
+  error tolerance: `best` weighs a forgiven cover against the covers at the same
+  position, never against a whole alternative segmentation.
+- **One wrong symbol per syllable, and only a wrong one.** A syllable with two
+  substitutions, a missing symbol, an extra one, two symbols swapped between
+  syllables, or a wrong tone is not forgiven (see *Error tolerance*).
 - **No user dictionary and no learning.** The bar's order is the corpus's, not
   yours. A keyboard extension that accumulated a per-user model would be holding
   state this process is deliberately kept free of.
-- **No 漢語拼音 or 倚天 layouts**, and no half-width/full-width punctuation
-  switch — punctuation comes from the symbol planes shared with QWERTY.
+- **No 漢語拼音 or 倚天 layouts.**
+- **No half-width/full-width toggle.** The 注音 pane types full-width marks and
+  the English pane ASCII (see *Punctuation is full-width* above); a user who
+  wants `,` in Chinese text swipes to English for it.
 - **No associated-phrase prompts** after a commit.
+- **No unbounded buffer.** Six syllables may be pending; a seventh commits the
+  oldest at its best guess. A sentence-length buffer would be a sentence this
+  process has to hold, redraw and unwind, and phrases are four syllables at
+  most anyway.
+
+What is *not* on this list any more is having to finish a syllable before
+starting the next. Until 1.16 a tone key was the only way to move on; that was
+the composer's limit, and it read as a rule. Nor, since 1.20, is exact-only
+matching: one wrong symbol per syllable no longer empties the bar.
 
 #### The globe, and why it is still not on every device
 
@@ -1050,6 +2325,19 @@ pane read as crowded.
 devices) the globe appears — bottom-left in the voice pane, in its usual place in
 the QWERTY and 注音 bottom rows. Where it is false the system's own key is the
 exit and we draw nothing.
+
+**The system's dictation key in that same strip cannot be removed.** It sits a
+thumb's length from our record button and starts Apple's dictation into the
+same field, and the owner asked for it to go. `UIInputViewController.
+hasDictationKey` is documented as "when set to YES, the system dictation key,
+if provided, will be disabled" — measured on iOS 26.5 (iPhone 17 Pro
+simulator, a fresh extension process), set in both initialisers and again in
+`viewDidLoad`, the key was still drawn and still opened Apple's dictation
+prompt. So the property is not set, and the only mitigation is the one the
+pane already makes: our record button is the large, coloured, obvious control,
+and the system's mic is a small glyph in the bezel strip. A user who wants it
+gone can turn off *Enable Dictation* in Settings, which is the system's switch,
+not ours.
 
 ### Which keyboards are on
 
@@ -1087,8 +2375,9 @@ more tap.
   that draw one, and ours on the devices that don't — `needsInputModeSwitchKey`
   decides, on every pane. See the 注音 section above.
 - **Third-party data**: the 注音 dictionary is generated from McBopomofo's
-  MIT-licensed lexicon and attributed in `ios/THIRD-PARTY.md`. No phrase data
-  with murkier provenance is shipped; see that section.
+  MIT-licensed lexicon, and the phrase table from their `BPMFMappings.txt`,
+  which descends from libtabe's BSD-licensed `tsi.src`; both notices are in
+  `ios/THIRD-PARTY.md`. Nothing with an unclear licence is shipped.
 - **2.5.1** (private APIs): the only private code in the project is the
   pre-26.4 auto-return — reading the host's bundle id, and asking
   `LSApplicationWorkspace` to open it — version-gated to where it works. Every

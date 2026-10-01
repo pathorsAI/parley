@@ -48,6 +48,11 @@ final class AudioDownloadModel: ObservableObject {
     }
 
     func state(for id: String) -> AudioDownloadState {
+        // The sample's audio ships in the app bundle, so it is always here —
+        // see `SampleRecordingStore`.
+        if SampleManifest.isSample(id: id) {
+            return SampleRecordingStore.shared.audioURL(for: id) != nil ? .local : .absent
+        }
         #if DEBUG
             if ScreenshotDemo.servesFixtures { return ScreenshotDemo.audioState(for: id) }
         #endif
@@ -62,6 +67,7 @@ final class AudioDownloadModel: ObservableObject {
     /// would be asked for a file the simulator's empty store does not have — the
     /// two answers have to agree.
     func url(for id: String) -> URL? {
+        if SampleManifest.isSample(id: id) { return SampleRecordingStore.shared.audioURL(for: id) }
         #if DEBUG
             if ScreenshotDemo.servesFixtures { return ScreenshotDemo.audioURL(for: id) }
         #endif

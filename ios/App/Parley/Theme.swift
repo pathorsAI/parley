@@ -1,3 +1,4 @@
+import ParleyKit
 import SwiftUI
 import UIKit
 
@@ -16,7 +17,9 @@ import UIKit
 /// `ParleyApp`, so most call sites do not have to name it at all. It is never a
 /// fill behind content.
 ///
-/// Primitive values live in `ParleyDesignTokens.swift`; typography is
+/// Primitive values live in ParleyKit's `ParleyDesignTokens.swift` — there
+/// rather than here because the Live Activity's widget extension draws the same
+/// marks and cannot import the app; typography is
 /// `Font.parley` (`ParleyTypography.swift`). See
 /// `docs/design/ios-visual-language.md`.
 enum Theme {
@@ -40,7 +43,10 @@ enum Theme {
     /// the system is showing that exact dot in the status bar, and the app's
     /// mark for the same fact should be recognisably the same mark. Fixed in
     /// both appearances, because the system's is.
-    static let micWindow = Color(red: 0.99, green: 0.62, blue: 0.05)
+    ///
+    /// Taken from the token rather than written here, because the Live Activity
+    /// marks the same fact from a process that cannot see this file.
+    static let micWindow = Color(UIColor(hex: ParleyDesignTokens.micWindow))
 
     private static func adaptive(_ light: UInt32, _ dark: UInt32) -> Color {
         Color(

@@ -44,7 +44,7 @@ export function DeliveryNudgeHost() {
         onClick={clear}
         className={`pointer-events-auto flex max-w-[80vw] items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium shadow-lg backdrop-blur-sm animate-in fade-in slide-in-from-top-2 duration-200 ${
           warn
-            ? "border-amber-400/40 bg-amber-500/15 text-amber-200"
+            ? "border-warning-border bg-warning text-warning-foreground"
             : "border-border bg-background/90 text-muted-foreground"
         }`}
       >

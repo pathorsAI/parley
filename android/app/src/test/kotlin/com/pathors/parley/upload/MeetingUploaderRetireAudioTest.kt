@@ -116,8 +116,11 @@ class MeetingUploaderRetireAudioTest {
     fun `a failed upload keeps the recording queued and its audio where it is`() = runBlocking {
         val (queue, audio) = queueWith("rec-offline")
         val store = LocalAudioStore(temporary.newFolder("Audio-offline"))
-        // 400: not retryable, so the pass gives up immediately.
-        server.enqueue(MockResponse().setResponseCode(400).setBody("""{"error":"bad_request"}"""))
+        // 401: not retried within the pass, and not a refusal that drops the
+        // recording either (signing in again clears it), so the pass stops with
+        // the queue untouched. A 400 used to serve here; it is now dropped, as
+        // on iOS — see MeetingUploaderDrainTest.
+        server.enqueue(MockResponse().setResponseCode(401).setBody("""{"error":"unauthorized"}"""))
 
         val result = uploader(queue, store, keep = true).drain()
 

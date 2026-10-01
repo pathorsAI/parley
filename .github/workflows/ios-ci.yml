@@ -16,10 +16,16 @@ on:
     branches: [main]
     paths:
       - "ios/**"
+      # ParleyKit's tests read this folder (AnnouncementCatalogTests), and the
+      # app bundles it.
+      - "announcements/**"
       - ".github/workflows/ios-ci.yml"
   pull_request:
     paths:
       - "ios/**"
+      # ParleyKit's tests read this folder (AnnouncementCatalogTests), and the
+      # app bundles it.
+      - "announcements/**"
       - ".github/workflows/ios-ci.yml"
 
 # macOS runners are the expensive ones. A force-push mid-review should not leave
@@ -57,6 +63,18 @@ jobs:
             echo "::error::Xcode $major is too old for this project (need 16+)"
             exit 1
           fi
+
+      # The app target compiles a Metal shader (the sign-in page's edge glow,
+      # AuroraEdgeGlow.metal), and from Xcode 26 the Metal compiler is a
+      # separate download rather than part of Xcode. Most runner images carry
+      # it; this only fetches it when the selected Xcode cannot find it, so an
+      # image that dropped it costs a download instead of a red build.
+      - name: Ensure Metal toolchain
+        run: |
+          if ! xcrun -sdk iphoneos metal --version >/dev/null 2>&1; then
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+          xcrun -sdk iphoneos metal --version
 
       - name: Install XcodeGen
         run: brew install xcodegen

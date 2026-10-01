@@ -1,0 +1,150 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Interrupted" : {
+      "comment" : "The app looked and the microphone is gone, or the relay is down. An assertion, not a hedge — see `isStale` for the other one.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Interrupted"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已中斷"
+          }
+        }
+      }
+    },
+    "Mic ready" : {
+      "comment" : "Standby state label. Matches the keyboard's mode-strip chip word for word, because it is the same fact.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mic ready"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "麥克風待命"
+          }
+        }
+      }
+    },
+    "Microphone open · nothing is being recorded" : {
+      "comment" : "The standby card's whole reason for existing: the system's orange dot says the microphone is open, and every user reads that as \"something is listening\". Here it is not.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Microphone open · nothing is being recorded"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "麥克風開著，沒有錄任何東西"
+          }
+        }
+      }
+    },
+    "Open Parley and start recording the meeting in the room." : {
+      "comment" : "The record control's and lock-screen widget's description in the system's pickers.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open Parley and start recording the meeting in the room."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打開 Parley，直接開始錄下現場的會議。"
+          }
+        }
+      }
+    },
+    "Record" : {
+      "comment" : "The lock-screen / Control Center control's label, under its icon. One word: the space is a single short line.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Record"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "錄音"
+          }
+        }
+      }
+    },
+    "Start Recording" : {
+      "comment" : "Name of the record control and the lock-screen widget in the system's pickers, and the widget's VoiceOver label.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start Recording"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "開始錄音"
+          }
+        }
+      }
+    },
+    "This may have stopped" : {
+      "comment" : "Nobody has vouched for the card within MicActivityPolicy.staleAfter and the app may be dead. A hedge on purpose — it is the strongest claim still supported.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This may have stopped"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "可能已經停了"
+          }
+        }
+      }
+    },
+    "Voice typing" : {
+      "comment" : "Dictation state label.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Voice typing"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "聽寫中"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

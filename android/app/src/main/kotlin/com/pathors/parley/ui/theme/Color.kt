@@ -72,7 +72,19 @@ object ParleyPalette {
     val DarkPrimary = Color(0xFF2DB6F3) // --v2-sky
     val DarkRecording = Color(0xFFFF453A)
 
-    /** 12, not Material's 8 or 16: the same softer corner the iOS app rounds to. */
+    // The platform green, iOS `Theme.success`: a done item on the
+    // getting-started checklist, "this is fine" in the system's own words.
+    val LightSuccess = Color(0xFF248A3D)
+    val DarkSuccess = Color(0xFF30D158)
+
+    // iOS `Theme.warning` (`systemOrange`): a pause the app is recovering from
+    // — the live transcript reconnecting. Dark is the platform value; light is
+    // darkened from `#FF9500`, which is 2.2:1 on white and is used here for a
+    // caption, to `#B25000` (5.2:1) while still reading as amber, not red.
+    val LightWarning = Color(0xFFB25000)
+    val DarkWarning = Color(0xFFFF9F0A)
+
+    /** 12,not Material's 8 or 16: the same softer corner the iOS app rounds to. */
     const val RADIUS_DP = 12
 }
 
@@ -83,14 +95,28 @@ object ParleyPalette {
  * @property recording a recording is running — the waveform playhead, the LIVE
  *   badge, the stop control. The one colour allowed to outrank the blue, and
  *   nothing else may use it.
+ * @property success something is done — the check on a finished
+ *   getting-started item, and nothing louder than that.
+ * @property warning a pause that is being recovered from — the live
+ *   transcript reconnecting. Not a failure, so not `error`.
  */
 @androidx.compose.runtime.Immutable
 data class ParleyExtendedColors(
     val recording: Color,
+    val success: Color,
+    val warning: Color,
 )
 
-private val LightExtendedColors = ParleyExtendedColors(recording = ParleyPalette.LightRecording)
-private val DarkExtendedColors = ParleyExtendedColors(recording = ParleyPalette.DarkRecording)
+private val LightExtendedColors = ParleyExtendedColors(
+    recording = ParleyPalette.LightRecording,
+    success = ParleyPalette.LightSuccess,
+    warning = ParleyPalette.LightWarning,
+)
+private val DarkExtendedColors = ParleyExtendedColors(
+    recording = ParleyPalette.DarkRecording,
+    success = ParleyPalette.DarkSuccess,
+    warning = ParleyPalette.DarkWarning,
+)
 
 /**
  * Provided by `ParleyTheme`. Defaults to the light set so a stray `@Preview` that

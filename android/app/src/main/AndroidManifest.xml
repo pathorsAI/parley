@@ -2,10 +2,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- AutoSync: drain the upload and re-transcription queues when a validated network returns. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Android 14+: be told when the user screenshots Parley, to offer "Report this
+         screen?" (feedback/FeedbackCenter.screenshotTaken). A normal permission, granted
+         at install; it reveals only that a capture happened, never the image. -->
+    <uses-permission android:name="android.permission.DETECT_SCREEN_CAPTURE" />
 
     <application
         android:name=".ParleyApplication"
@@ -44,5 +50,12 @@
             android:name=".meeting.MeetingService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <!-- Hears that "Share to AI" reached a share target (the getting-started
+             checklist's last item). Only the chooser's own PendingIntent reaches
+             it, so it is not exported. -->
+        <receiver
+            android:name=".ui.HandoffShareReceiver"
+            android:exported="false" />
     </application>
 </manifest>

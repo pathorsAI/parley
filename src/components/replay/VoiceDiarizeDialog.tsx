@@ -112,7 +112,7 @@ export function VoiceDiarizeDialog({ onClose }: Readonly<{ onClose: () => void }
       />
       <div className="relative flex max-h-[85vh] w-full max-w-md flex-col rounded-xl border bg-background shadow-xl">
         <div className="flex items-center gap-2 border-b px-4 py-3">
-          <AudioLines className="size-4 text-emerald-400" />
+          <AudioLines className="size-4 text-muted-foreground" />
           <span className="text-sm font-semibold">{t("speakers.voiceTitle")}</span>
           <button
             type="button"
@@ -166,7 +166,7 @@ export function VoiceDiarizeDialog({ onClose }: Readonly<{ onClose: () => void }
                         onClick={() => setNumSpeakers(opt)}
                         className={`h-8 min-w-9 rounded-md border px-3 text-xs transition-colors disabled:opacity-50 ${
                           selected
-                            ? "border-emerald-500/60 bg-emerald-500/15 text-foreground"
+                            ? "border-primary bg-primary/10 text-foreground"
                             : "text-muted-foreground hover:text-foreground"
                         }`}
                       >
@@ -180,7 +180,7 @@ export function VoiceDiarizeDialog({ onClose }: Readonly<{ onClose: () => void }
               {busy && <ProgressBar progress={progress} stageLabel={stageLabel(progress, t)} />}
 
               {error && (
-                <p className="rounded-md bg-orange-500/10 px-2.5 py-1.5 text-[11px] text-orange-400">
+                <p className="rounded-md bg-danger px-2.5 py-1.5 text-[11px] text-danger-foreground">
                   {t("speakers.failed", { error })}
                 </p>
               )}
@@ -230,9 +230,9 @@ function ProgressBar({ progress, stageLabel }: Readonly<{ progress: DiarizeProgr
       <span className="text-[11px] text-muted-foreground">{stageLabel}</span>
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
         {indeterminate ? (
-          <div className="h-full w-1/3 animate-pulse rounded-full bg-emerald-500/70" />
+          <div className="h-full w-1/3 animate-pulse rounded-full bg-primary/70" />
         ) : (
-          <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${pct}%` }} />
+          <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
         )}
       </div>
     </div>

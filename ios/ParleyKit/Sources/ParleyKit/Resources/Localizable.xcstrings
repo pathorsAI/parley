@@ -1,6 +1,23 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "End Standby": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "End Standby"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "結束待命"
+          }
+        }
+      }
+    },
     "Hosted transcription failed (HTTP %lld)": {
       "extractionState": "manual",
       "localizations": {

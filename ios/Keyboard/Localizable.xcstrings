@@ -35,6 +35,23 @@
         }
       }
     },
+    "Candidates": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Candidates"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "候選字"
+          }
+        }
+      }
+    },
     "Caps lock": {
       "extractionState": "manual",
       "localizations": {
@@ -52,6 +69,40 @@
         }
       }
     },
+    "Chinese comma": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chinese comma"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "逗號"
+          }
+        }
+      }
+    },
+    "Chinese period": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chinese period"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "句號"
+          }
+        }
+      }
+    },
     "Composing": {
       "extractionState": "manual",
       "localizations": {
@@ -65,6 +116,57 @@
           "stringUnit": {
             "state": "translated",
             "value": "組字中"
+          }
+        }
+      }
+    },
+    "Connection lost — inserted what was transcribed. Tap the mic to continue.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connection lost — inserted what was transcribed. Tap the mic to continue."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "連線中斷，已貼上中斷前的內容。點麥克風繼續。"
+          }
+        }
+      }
+    },
+    "Copied": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copied"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已複製"
+          }
+        }
+      }
+    },
+    "Copy dictated text": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy dictated text"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "複製語音輸入的文字"
           }
         }
       }
@@ -186,6 +288,23 @@
         }
       }
     },
+    "Fewer candidates": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fewer candidates"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "收合候選字"
+          }
+        }
+      }
+    },
     "Fourth tone": {
       "extractionState": "manual",
       "localizations": {
@@ -216,6 +335,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "前往"
+          }
+        }
+      }
+    },
+    "Insert without polishing": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Insert without polishing"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "跳過潤飾，直接插入"
           }
         }
       }
@@ -337,6 +473,23 @@
         }
       }
     },
+    "Polishing…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Polishing…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "潤飾中…"
+          }
+        }
+      }
+    },
     "Reconnecting… keep talking": {
       "extractionState": "manual",
       "localizations": {
@@ -449,6 +602,40 @@
         }
       }
     },
+    "Show more candidates": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show more candidates"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顯示更多候選字"
+          }
+        }
+      }
+    },
+    "Single dictation limit reached (%lld min)": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Single dictation limit reached (%lld min)"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已達單次語音輸入上限（%lld 分鐘）"
+          }
+        }
+      }
+    },
     "Space": {
       "extractionState": "manual",
       "localizations": {
@@ -510,6 +697,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "停止語音輸入"
+          }
+        }
+      }
+    },
+    "Stops in %lld s": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stops in %lld s"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 秒後自動結束"
+          }
+        }
+      }
+    },
+    "Tap text to copy": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tap text to copy"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "點文字可複製"
           }
         }
       }
@@ -576,23 +797,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "三聲"
-          }
-        }
-      }
-    },
-    "Voice": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Voice"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "語音"
           }
         }
       }

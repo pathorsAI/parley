@@ -101,3 +101,87 @@ struct CopyTranscriptButton: View {
         .accessibilityLabel(copied ? Text("Copied") : Text("Copy transcript"))
     }
 }
+
+/// The recording screen's share-and-copy menu: the hand-off to the user's own
+/// AI first, the plain copy below a divider.
+///
+/// Replaces `CopyTranscriptButton` on the recording screen only. The live
+/// screen keeps the single button — mid-meeting the reason to copy is the line
+/// that was just said, and there is nothing yet to analyse.
+///
+/// Same confirmation as the button: the glyph turns into a checkmark for a
+/// moment after either copy, since the app has no toast layer. The share
+/// sheet is its own confirmation.
+struct TranscriptShareMenu: View {
+    /// The transcript alone. Evaluated on tap.
+    let plain: () -> String
+    /// The analysis prompt plus the transcript — `HandoffPrompt`.
+    let withPrompt: () -> String
+    let isEmpty: Bool
+    /// Present the share sheet. The screen owns it, because the checklist can
+    /// ask for it too (`RecordingDetailView.presentsShareOnLoad`).
+    let share: () -> Void
+
+    @State private var copied = false
+    @State private var revert: Task<Void, Never>?
+
+    var body: some View {
+        Menu {
+            Button {
+                share()
+            } label: {
+                Label("Share to AI (with analysis prompt)", systemImage: "square.and.arrow.up")
+            }
+            Button {
+                if copy(withPrompt()) { GettingStartedStore.shared.mark(.sharedToAI) }
+            } label: {
+                Label("Copy with analysis prompt", systemImage: "doc.on.clipboard")
+            }
+            Divider()
+            Button {
+                copy(plain())
+            } label: {
+                Label("Copy transcript", systemImage: "doc.on.doc")
+            }
+        } label: {
+            Image(systemName: copied ? "checkmark" : "square.and.arrow.up")
+                .contentTransition(.symbolEffect(.replace))
+        }
+        .disabled(isEmpty)
+        .accessibilityLabel(copied ? Text("Copied") : Text("Share or copy transcript"))
+    }
+
+    @discardableResult
+    private func copy(_ payload: String) -> Bool {
+        guard !payload.isEmpty else { return false }
+        TranscriptClipboard.write(payload)
+        withAnimation { copied = true }
+        revert?.cancel()
+        revert = Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled else { return }
+            withAnimation { copied = false }
+        }
+        return true
+    }
+}
+
+/// `UIActivityViewController`, for a SwiftUI `.sheet`.
+///
+/// `ShareLink` would be less code and cannot do the one thing needed here: say
+/// whether the user actually sent the text somewhere, which is what ticks the
+/// checklist's hand-off item. `completed` is false for a cancel.
+struct ShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+    var onFinish: (_ completed: Bool) -> Void = { _ in }
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let controller = UIActivityViewController(activityItems: items, applicationActivities: nil)
+        controller.completionWithItemsHandler = { _, completed, _, _ in
+            onFinish(completed)
+        }
+        return controller
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}

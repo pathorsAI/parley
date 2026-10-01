@@ -14,6 +14,8 @@ struct SettingsView: View {
     /// ready is settings, but *whether it is open right now* is live state that
     /// belongs to the thing holding it.
     @ObservedObject private var dictation = DictationCoordinator.shared
+    /// For "Show the getting-started list again", which ends on the Library.
+    @EnvironmentObject private var router: TabRouter
     /// The keyboard's typing panes. Read once here and written straight through
     /// to the App Group's defaults, which is where the extension looks for them
     /// on every appearance — there is no live binding across a process boundary.
@@ -28,11 +30,25 @@ struct SettingsView: View {
     /// where the `true` default is stated for both readers.
     @AppStorage(LocalAudioStore.keepAudioKey) private var keepAudioOnPhone = true
     @State private var showRemoveAudioConfirmation = false
+    /// "Keep voice typing history". Bound here, read raw by the store on every
+    /// write (`DictationHistoryStore.isEnabled`) — the coordinator keeps a
+    /// session with no view alive.
+    @AppStorage(DictationHistoryStore.enabledKey) private var keepDictationHistory = true
+    @ObservedObject private var dictationHistory = DictationHistory.shared
+    @State private var showClearHistoryConfirmation = false
     @State private var personalFolders: [CloudFolder] = []
     @State private var orgFolders: [String: [CloudFolder]] = [:]
     @State private var showDeleteConfirmation = false
     @State private var deletingAccount = false
     @State private var deleteAccountError: String?
+    /// Settings › Feedback & diagnostics. Read raw by `FeedbackCenter`, which
+    /// decides about a crash with no view alive; the `true` default is stated
+    /// in both places because `@AppStorage` cannot share one.
+    @AppStorage(FeedbackCenter.autoSendCrashReportsKey) private var autoSendCrashReports = true
+    /// The queued recording the `sync_failed` prompt is about, if one is stuck
+    /// and may be asked about. Found when the screen appears and latched —
+    /// see `findStuckUpload`.
+    @State private var stuckUpload: MeetingUploader.StuckUpload?
     #if DEBUG
         @State private var devToken = ""
     #endif
@@ -56,9 +72,19 @@ struct SettingsView: View {
                         dictationSection.id(Self.keyboardSectionID)
                         micWindowSection
                     }
+                    // Also shown signed out while anything is kept: the history
+                    // is on this phone, not in the account, and signing out must
+                    // not strand the only switch that clears it.
+                    if app.hasAccount || !dictationHistory.entries.isEmpty {
+                        dictationHistorySection
+                    }
                     keyboardsSection
                     appearanceSection
                     languageSection
+                    // Outside every gate: a report can be sent signed out —
+                    // someone whose sign-in is what broke is exactly who needs
+                    // to be able to send one.
+                    feedbackSection
                     aboutSection
                     #if DEBUG
                         debugSection
@@ -97,10 +123,22 @@ struct SettingsView: View {
                         // section header under the blur.
                         if focus { proxy.scrollTo(Self.keyboardSectionID, anchor: .center) }
                     }
+                    .onReceive(ScreenshotDemo.shared.$pressResetChecklist) { press in
+                        guard press else { return }
+                        // A beat on Settings first, the way a person gets there.
+                        Task { @MainActor in
+                            try? await Task.sleep(for: .milliseconds(600))
+                            showGettingStartedAgain()
+                        }
+                    }
                 #endif
             }
             .navigationTitle("Settings")
             .task { await loadFolders() }
+            .task { findStuckUpload() }
+            .onChange(of: app.pendingUploadCount) { _, count in
+                if count == 0 { stuckUpload = nil }
+            }
             // The store is a directory, so its size is only ever as fresh as the
             // last time someone asked. Arriving on this screen is that moment.
             .task { downloads.refreshSize() }
@@ -113,6 +151,16 @@ struct SettingsView: View {
                 }
             } message: {
                 Text("The recordings themselves stay in the cloud. You can download the audio again whenever you need it.")
+            }
+            .confirmationDialog(
+                "Clear voice typing history?",
+                isPresented: $showClearHistoryConfirmation, titleVisibility: .visible
+            ) {
+                Button("Clear all", role: .destructive) {
+                    dictationHistory.clearAll()
+                }
+            } message: {
+                Text("Everything you have dictated is removed from this phone. This can't be undone.")
             }
             .confirmationDialog(
                 "Delete your account permanently?", isPresented: $showDeleteConfirmation,
@@ -199,6 +247,18 @@ struct SettingsView: View {
                 Button("Retry sync now") {
                     Task { await app.syncPendingUploads() }
                 }
+                if let stuckUpload {
+                    FeedbackPromptCard(
+                        trigger: .syncFailed,
+                        recordingId: stuckUpload.id,
+                        text: Text("This recording keeps failing to sync."),
+                        send: {
+                            self.stuckUpload = nil
+                            sendSyncReport(stuckUpload)
+                        },
+                        close: { self.stuckUpload = nil })
+                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 12))
+                }
             } else {
                 Label("Everything is synced", systemImage: "checkmark.icloud")
                     .foregroundStyle(Theme.success)
@@ -207,6 +267,49 @@ struct SettingsView: View {
             sectionHeader("Sync")
         } footer: {
             sectionFooter("When the network drops, the server goes quiet, or you run out of quota, the phone holds on to finished recordings until they sync.")
+        }
+    }
+
+    /// `sync_failed`: the oldest queued recording that has failed three times
+    /// running or waited a day, if it may still be asked about. Latched on
+    /// appearing rather than recomputed per render, because going on screen is
+    /// what spends the prompt's one showing for that recording.
+    private func findStuckUpload() {
+        guard stuckUpload == nil else { return }
+        stuckUpload = MeetingUploader.stuckUploads().first {
+            FeedbackCenter.shared.mayOffer(.syncFailed, recordingId: $0.id)
+        }
+    }
+
+    private func sendSyncReport(_ stuck: MeetingUploader.StuckUpload) {
+        let context = FeedbackDiagnostics.Context(
+            recordingId: stuck.id, recordingDurationMs: Int(stuck.durationMs),
+            transcriptSegments: stuck.segmentCount,
+            syncLastError: stuck.lastError)
+        Task {
+            await FeedbackCenter.shared.send(.syncFailed, recordingId: stuck.id, context: context)
+        }
+    }
+
+    // MARK: feedback & diagnostics
+
+    /// 「回饋與診斷」: the in-app report (which replaced the old "Support &
+    /// feedback" link to the website — the FAQ that link led to is inside the
+    /// report sheet now) and the one standing choice about what leaves the
+    /// phone without a tap. The footnote is the whole of what a crash report
+    /// is, stated where the switch is rather than in a policy page.
+    private var feedbackSection: some View {
+        Section {
+            Button {
+                FeedbackCenter.shared.presentReport(.manual)
+            } label: {
+                Label("Report a problem", systemImage: "exclamationmark.bubble")
+            }
+            Toggle("Send crash reports automatically", isOn: $autoSendCrashReports)
+        } header: {
+            sectionHeader("Feedback & diagnostics")
+        } footer: {
+            sectionFooter("Only the app version, device model, and where it crashed. Never your recordings or transcripts.")
         }
     }
 
@@ -348,6 +451,11 @@ struct SettingsView: View {
                     app.defaultSave = SaveDestination(
                         scope: "personal", orgId: nil,
                         folderId: parts.count > 1 ? parts[1] : nil)
+                }
+                // Choosing a real home for every recording to come — a folder
+                // or an organization, not the personal root — is filing.
+                if app.defaultSave != .personalRoot {
+                    GettingStartedStore.shared.mark(.filed)
                 }
             })
     }
@@ -513,6 +621,32 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: voice typing history
+
+    /// The switch and the clear for Library › Voice typing (#290), in the same
+    /// shape as "Keep audio on this phone": a toggle with its caption, then the
+    /// destructive button behind a confirmation. Its own section, directly under
+    /// the two voice-keyboard ones, because it is about what they produce — and
+    /// because it has to outlive the account gate they sit behind.
+    private var dictationHistorySection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle("Keep voice typing history", isOn: $keepDictationHistory)
+                Text("What you dictate is kept on this phone for 30 days, up to 200 entries, so you can copy it again from Library › Voice typing if it didn't land. It never leaves the phone. Turning this off keeps what is already there until you clear it.")
+                    .font(.parley.caption)
+                    .foregroundStyle(Color(.secondaryLabel))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.vertical, 2)
+            Button("Clear all", role: .destructive) {
+                showClearHistoryConfirmation = true
+            }
+            .disabled(dictationHistory.entries.isEmpty)
+        } header: {
+            sectionHeader("Voice typing history")
+        }
+    }
+
     // MARK: which keyboards the swipe track carries
 
     /// The typing panes on the Parley keyboard, beside the voice pane that is
@@ -586,7 +720,7 @@ struct SettingsView: View {
         } header: {
             sectionHeader("Keeping the microphone ready")
         } footer: {
-            sectionFooter("After you dictate, Parley can hold the microphone open for a while, so the next tap on the keyboard's mic types where you already are instead of opening Parley.\n\niOS shows the orange microphone dot for the whole time, because Parley really is holding the microphone. It is not listening through it: nothing is recorded, transcribed, or sent until you tap the mic, and sound that arrives before then is thrown away as it comes in. The window ends on its own, and you can end it early here or from the keyboard.")
+            sectionFooter("After you dictate, Parley can hold the microphone open for a while, so the next tap on the keyboard's mic types where you already are instead of opening Parley. Even when this is off, Parley keeps the microphone for 30 seconds after each dictation, so dictating again right away stays where you are too.\n\niOS shows the orange microphone dot for the whole time, because Parley really is holding the microphone. It is not listening through it: nothing is recorded, transcribed, or sent until you tap the mic, and sound that arrives before then is thrown away as it comes in. The window ends on its own, and you can end it early here or from the keyboard.")
         }
     }
 
@@ -657,10 +791,34 @@ struct SettingsView: View {
             LabeledContent("Version", value: Bundle.main.shortVersion)
             Link("Parley for Mac", destination: URL(string: "https://parley.tw")!)
             Link("Privacy Policy", destination: URL(string: "https://parley.tw/privacy/")!)
-            Link("Support & feedback", destination: URL(string: "https://parley.tw/support/")!)
+            // Brings the Library's checklist back, unticked — for someone who
+            // closed it with "Not now" and wants the lap after all.
+            Button("Show the getting-started list again") {
+                showGettingStartedAgain()
+            }
         } footer: {
-            sectionFooter("Live coaching and deep analysis live in the desktop app; the phone handles recording, transcribing, and reading back in-person meetings.")
+            sectionFooter("Live coaching and deep analysis live in the desktop app; the phone handles recording, transcribing, and reading back in-person meetings. On the Mac, Claude Code can also read your whole recording library over MCP.")
         }
+    }
+
+    /// Reset the checklist and go and show it.
+    ///
+    /// Resetting alone was the bug: the list lives on another tab, so the tap
+    /// changed nothing anyone could see, and the owner concluded the button did
+    /// nothing. The reset now ends where its result is — the Library, scrolled
+    /// to the list — with a success haptic for the tap itself.
+    ///
+    /// Nothing to pop on this side: the button is on Settings' root page, so
+    /// Settings has no pushed screen when it is pressed. The Library pops its
+    /// own stack when it takes the request (`LibraryView.revealChecklist`).
+    private func showGettingStartedAgain() {
+        GettingStartedStore.shared.reset()
+        // The lap starts over from the sample: out of the Library with its
+        // rename, its folder and its ticks, back to "Walk through it with the
+        // sample recording". The bundle keeps the files.
+        SampleRecordingStore.shared.remove()
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        router.showGettingStarted()
     }
 
     #if DEBUG

@@ -16,6 +16,17 @@ struct ParleyApp: App {
     /// the first scene is built. See `ParleyAppearance.swift`.
     init() {
         ParleyAppearance.apply()
+        // Before anything can sign in: the checklist's first-launch migration
+        // reads whether a session token is *already* in the Keychain, and it
+        // has to ask before this launch could have put one there.
+        _ = GettingStartedStore.shared
+        // Same reason, for What's New: a fresh install marks every bundled
+        // announcement seen on its first launch, and it can only tell a fresh
+        // install from an update before this launch could have signed in.
+        _ = AnnouncementStore.shared
+        // As early as the app has: MetricKit hands the previous run's crash to
+        // a subscriber as soon as it is added. See `FeedbackCenter.start`.
+        FeedbackCenter.shared.start()
     }
 
     var body: some Scene {
@@ -39,8 +50,17 @@ struct ParleyApp: App {
                     #if DEBUG
                         if ScreenshotDemo.shared.handle(url) { return }
                     #endif
+                    // Any URL — the keyboard's dictate, the Live Activity's
+                    // card — means the user came here in the middle of
+                    // something, so What's New waits for another foreground.
+                    WhatsNewPresenter.shared.noteOpenedByURL()
                     if let session = DictationChannel.session(fromStart: url) {
                         Task { await dictation.begin(session: session) }
+                    } else if QuickRecord.isRequest(url) {
+                        // The lock-screen control, the lock-screen widget or
+                        // the Siri shortcut. The Record tab picks it up; see
+                        // `QuickRecordInbox`.
+                        QuickRecordInbox.shared.post()
                     }
                 }
                 // Presented for both entry points: the keyboard URL and the
@@ -49,6 +69,9 @@ struct ParleyApp: App {
                 .fullScreenCover(isPresented: dictationPresented) {
                     DictationView(coordinator: dictation)
                 }
+                #if DEBUG
+                    .modifier(KeyboardHarnessPresenter())
+                #endif
                 // Every foregrounding, not only launch: a trip to Settings to
                 // grant the microphone brings the app back here rather than
                 // through `init`, and the keyboard's pane is only honest for as
@@ -56,6 +79,14 @@ struct ParleyApp: App {
                 .onChange(of: scenePhase) { _, phase in
                     guard phase == .active else { return }
                     AppState.publishKeyboardReadiness()
+                    // The crash banner needs a scene to draw in, and this is
+                    // the first moment there reliably is one.
+                    FeedbackCenter.shared.sceneBecameActive()
+                    // A Live Activity can only be *started* from the foreground,
+                    // so a refusal is remembered rather than retried at the rate
+                    // the transcript moves. This is the only event that can make
+                    // the next attempt different.
+                    MicActivityController.shared.appBecameActive()
                     Task { await app.refreshFeatureFlags() }
                     // The line that turns "dead until force-quit" into
                     // "recovers by itself". `UIBackgroundModes` here is `audio`
@@ -78,7 +109,14 @@ struct ParleyApp: App {
 
     private var dictationPresented: Binding<Bool> {
         Binding(
-            get: { dictation.active },
+            get: {
+                #if DEBUG
+                    // The keyboard harness is the screen to watch; a cover
+                    // over it would take the keyboard away with the focus.
+                    if ScreenshotDemo.shared.keyboardHarness { return false }
+                #endif
+                return dictation.active
+            },
             set: { if !$0 { Task { await dictation.dismiss() } } })
     }
 }
@@ -92,41 +130,50 @@ struct RootView: View {
     @EnvironmentObject private var app: AppState
 
     var body: some View {
-        if !app.bootstrapped {
-            LaunchView()
-        } else if app.hasAccount {
-            MainTabs()
-        } else {
-            OnboardingView()
+        Group {
+            if !app.bootstrapped {
+                LaunchView()
+            } else if app.hasAccount {
+                MainTabs()
+            } else {
+                OnboardingView()
+            }
         }
+        // The sign-in page's edge glow lives here rather than in
+        // `OnboardingView` so that it can outlast it: a successful sign-in
+        // swaps the page out in one frame, and the glow fades over the app that
+        // replaces it. It removes itself once faded. See `AuroraEdgeGlow`.
+        .overlay { AuroraEdgeGlow() }
     }
 }
 
 struct MainTabs: View {
-    /// Selection is bound rather than implicit only so the DEBUG screenshot
-    /// routes can land on a tab without a tap; behaviour is otherwise identical.
-    @State private var tab: ScreenshotTab = .record
+    /// The selection, lifted out of this view so Settings can send the user to
+    /// the Library — see `TabRouter`.
+    @StateObject private var router = TabRouter()
 
     var body: some View {
-        TabView(selection: $tab) {
+        TabView(selection: $router.tab) {
             LiveView()
                 .tabItem { Label("Record", systemImage: "record.circle") }
-                .tag(ScreenshotTab.record)
+                .tag(AppTab.record)
             LibraryView()
                 .tabItem { Label("Library", systemImage: "rectangle.stack") }
-                .tag(ScreenshotTab.library)
+                .tag(AppTab.library)
             SettingsView()
                 .tabItem { Label("Settings", systemImage: "gearshape") }
-                .tag(ScreenshotTab.settings)
+                .tag(AppTab.settings)
         }
+        .environmentObject(router)
+        // A lock-screen "start recording" lands on the Record tab whatever tab
+        // was up when the app was last left.
+        .onReceive(QuickRecordInbox.shared.$requestedAt) { if $0 != nil { router.tab = .record } }
+        // Once, after an update, when nothing else is going on — see
+        // `WhatsNewPresenter` for what "nothing" has to mean.
+        .whatsNewSheet()
         #if DEBUG
-            .onReceive(ScreenshotDemo.shared.$tab) { tab = $0 }
+            // The DEBUG screenshot routes land on a tab without a tap.
+            .onReceive(ScreenshotDemo.shared.$tab) { router.tab = $0 }
         #endif
     }
 }
-
-#if DEBUG
-    typealias ScreenshotTab = ScreenshotDemo.Tab
-#else
-    enum ScreenshotTab: Hashable { case record, library, settings }
-#endif

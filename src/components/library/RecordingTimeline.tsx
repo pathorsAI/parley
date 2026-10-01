@@ -74,7 +74,7 @@ export function RecordingTimeline({
       {groups.map((group) => (
         <section key={group.key} className="flex flex-col">
           {/* Sticky so the band you are reading keeps saying which one it is. */}
-          <h2 className="sticky top-0 z-10 bg-background/95 py-1.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground backdrop-blur">
+          <h2 className="sticky top-0 z-10 bg-background/95 py-1.5 text-[11px] font-semibold text-muted-foreground backdrop-blur">
             {groupLabel(group.bucket, locale, t)}
           </h2>
           {group.items.map((entry) => (
@@ -193,7 +193,7 @@ function TimelineRow({
   }
 
   const stats = (
-    <span className="flex shrink-0 items-center gap-3 text-[11px] text-muted-foreground">
+    <span className="flex shrink-0 items-center gap-3 text-[11px] tabular-nums text-muted-foreground">
       <span
         className="inline-flex items-center gap-1"
         title={t("history.speakers", { count: entry.speakerCount })}
@@ -224,7 +224,8 @@ function TimelineRow({
   );
 
   return (
-    <div className="group relative flex items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors hover:bg-muted/60">
+    // Rows are split by hairlines, not boxed.
+    <div className="group relative flex items-center gap-2.5 border-b border-border px-2 py-2 transition-colors last:border-b-0 hover:bg-muted/60">
       <span
         className="w-11 shrink-0 text-[11px] tabular-nums text-muted-foreground"
         title={new Date(entry.createdAt).toLocaleString(locale)}

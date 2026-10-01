@@ -1,0 +1,88 @@
+<!doctype html>
+<!--
+  Open Graph card for parley.tw, rendered to website/assets/og-<lang>.png by
+  render.mjs (1200×630). The {{…}} slots are filled from website/src/i18n, so the card always matches the hero.
+-->
+<html lang="{{htmlLang}}">
+<head>
+<meta charset="utf-8">
+<title>Parley</title>
+<style>
+@font-face { font-family: "DM Sans"; font-weight: 100 1000; src: url({{fontDmSans}}) format("woff2"); }
+@font-face { font-family: "Alexandria"; font-weight: 100 900; src: url({{fontAlexandria}}) format("woff2"); }
+:root {
+  --ink: #111418; --secondary: #5B6470; --tertiary: #9AA3AE;
+  --hairline: #E6E9ED; --signal: #1469D4; --recording: #E5322D;
+  --font: "DM Sans", "PingFang TC", "Noto Sans TC", sans-serif;
+}
+* { box-sizing: border-box; margin: 0; }
+html, body { width: 1200px; height: 630px; overflow: hidden; background: #FFFFFF; }
+body {
+  font-family: var(--font); color: var(--ink); -webkit-font-smoothing: antialiased;
+  display: grid; grid-template-columns: 1.2fr 1fr; gap: 56px;
+  padding: 64px 72px 60px;
+}
+.left { display: flex; flex-direction: column; justify-content: space-between; }
+.wm { font-family: "Alexandria", var(--font); font-weight: 700; font-size: 34px; letter-spacing: -.01em; }
+h1 { font-size: 54px; font-weight: 700; line-height: 1.16; letter-spacing: -.02em; }
+:lang(zh) h1 { font-size: 46px; line-height: 1.3; letter-spacing: 0; }
+.url { font-size: 18px; font-weight: 600; color: var(--secondary); margin-top: 22px; }
+.right { display: flex; flex-direction: column; justify-content: flex-end; min-width: 0; }
+/* The hero's route, own-keys state, frozen: your computer, two direct wires, no Parley. */
+.map { position: relative; width: 470px; height: 300px; }
+.map svg { position: absolute; inset: 0; overflow: visible; }
+.map path { fill: none; stroke: var(--signal); stroke-width: 2; stroke-dasharray: 2 10; stroke-linecap: round; }
+.map circle { fill: #FFFFFF; stroke: var(--signal); stroke-width: 2; }
+.dev {
+  position: absolute; left: 0; top: 18px; width: 212px; height: 264px;
+  padding: 20px 20px 18px; border-radius: 16px; background: #F6F7F9;
+  display: flex; flex-direction: column;
+}
+.k { font-size: 15px; font-weight: 600; color: var(--secondary); }
+.lib { list-style: none; padding: 0; margin-top: 10px; }
+.lib li { display: flex; justify-content: space-between; padding: 10px 0; border-top: 1px solid #D5DAE0; font-size: 17px; }
+.lib li:first-child::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--recording); margin: 8px 8px 0 0; }
+.lib li span { flex: 1; }
+.lib time { font-size: 14px; color: var(--tertiary); }
+.note { margin-top: auto; padding-top: 12px; border-top: 1px solid #D5DAE0; font-size: 14px; color: var(--secondary); line-height: 1.5; }
+.node {
+  position: absolute; left: 282px; width: 188px; height: 96px;
+  padding: 14px 16px; border: 1.5px solid #D5DAE0; border-radius: 14px; background: #FFFFFF;
+}
+.node.stt { top: 36px; } .node.ai { top: 168px; }
+.host { font: 15px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; margin-top: 4px; }
+.direct { font-size: 14px; color: var(--secondary); margin-top: 2px; }
+.cap { font-size: 18px; font-weight: 600; margin-top: 20px; }
+</style>
+</head>
+<body>
+  <div class="left">
+    <div class="wm">Parley</div>
+    <div>
+      <h1>{{h1}}</h1>
+      <p class="url">{{url}}</p>
+    </div>
+  </div>
+  <div class="right">
+    <div class="map">
+      <svg width="470" height="300" viewBox="0 0 470 300" aria-hidden="true">
+        <path d="M212,150 C247,150 247,84 282,84"/>
+        <path d="M212,150 C247,150 247,216 282,216"/>
+        <circle cx="212" cy="150" r="4"/><circle cx="282" cy="84" r="4"/><circle cx="282" cy="216" r="4"/>
+      </svg>
+      <div class="dev">
+        <p class="k">{{device}}</p>
+        <ul class="lib">
+          <li><span>{{rec1}}</span><time>18:47</time></li>
+          <li><span>{{rec2}}</span><time>32:10</time></li>
+          <li><span>{{rec3}}</span><time>45:03</time></li>
+        </ul>
+        <p class="note">{{deviceNote}}</p>
+      </div>
+      <div class="node stt"><p class="k">{{stt}}</p><p class="host">stt-rt.soniox.com</p><p class="direct">{{direct}}</p></div>
+      <div class="node ai"><p class="k">{{ai}}</p><p class="host">api.anthropic.com</p><p class="direct">{{direct}}</p></div>
+    </div>
+    <p class="cap">{{capByok}}</p>
+  </div>
+</body>
+</html>

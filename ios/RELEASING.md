@@ -11,7 +11,8 @@ phone calls or other apps' audio.
 
 Already configured for the Pathors Apple team (`SXHVCQXJHZ`):
 
-- Bundle IDs: `com.pathors.parley.ios`, `com.pathors.parley.ios.keyboard`
+- Bundle IDs: `com.pathors.parley.ios`, `com.pathors.parley.ios.keyboard`,
+  `com.pathors.parley.ios.activities` (the Live Activity widget, since 1.15)
 - App Group: `group.com.pathors.parley.ios` (the app ↔ keyboard transcript handoff)
 - App Store Connect app: `Parley` (`6795031201`)
 - Sign in with Apple capability and hosted Better Auth Apple provider
@@ -79,14 +80,15 @@ The archive is given a generated `.xcconfig`; the export is given a generated
 the API key, so **no step can create a certificate or a profile**, and a signing
 setup that has drifted fails at once instead of silently repairing itself.
 
-Two bundle ids need two different profiles, and a build setting passed on the
+Each bundle id needs its own profile, and a build setting passed on the
 `xcodebuild` command line applies to every target at once — a single
-`PROVISIONING_PROFILE_SPECIFIER=` would give the keyboard extension the app's
-profile. The generated xcconfig looks the profile up per target instead:
+`PROVISIONING_PROFILE_SPECIFIER=` would give the extensions the app's profile.
+The generated xcconfig looks the profile up per target instead:
 
 ```
-PARLEY_CI_PROFILE_com_pathors_parley_ios          = parley-ci com.pathors.parley.ios
-PARLEY_CI_PROFILE_com_pathors_parley_ios_keyboard = parley-ci com.pathors.parley.ios.keyboard
+PARLEY_CI_PROFILE_com_pathors_parley_ios            = parley-ci com.pathors.parley.ios
+PARLEY_CI_PROFILE_com_pathors_parley_ios_keyboard   = parley-ci com.pathors.parley.ios.keyboard
+PARLEY_CI_PROFILE_com_pathors_parley_ios_activities = parley-ci com.pathors.parley.ios.activities
 
 CODE_SIGN_STYLE = Manual
 CODE_SIGN_IDENTITY = Apple Distribution
@@ -95,6 +97,13 @@ PROVISIONING_PROFILE_SPECIFIER = $(PARLEY_CI_PROFILE_$(PRODUCT_BUNDLE_IDENTIFIER
 
 `PRODUCT_BUNDLE_IDENTIFIER` is per-target and `:identifier` rewrites its dots to
 underscores, so each target resolves the indirection to its own profile.
+
+**Adding an embedded target means adding its bundle id to `SIGNED_BUNDLES` in
+`asc_signing.py`, and registering that id on the developer portal first.**
+Nothing derives that list from `project.yml`. An embedded extension with no
+profile does not fail politely: the run gets twenty minutes in and then reports
+`No profiles for '…' were found`, naming a target whoever reads the log was not
+thinking about. The Live Activity widget added the third one in 1.15.
 
 It has to be an xcconfig rather than command-line settings for a second reason:
 `project.yml` commits `CODE_SIGN_STYLE: Automatic` as a *target* setting — which
@@ -212,7 +221,7 @@ keychain. That is how 1.0 through 1.3 actually shipped.
 not seen. `xcodegen generate` writes `App/Parley/Info.plist` from
 `App/project.yml`, so bump it in **`project.yml`** — editing the plist alone is
 overwritten on the next generate — and commit the regenerated plist with it.
-Both targets carry the number and both must move together. To re-upload without
+All three targets carry the number and they must move together. To re-upload without
 a commit, run the workflow manually with the `build_number` input.
 
 **Building by hand is still a first-class path**, and it is how 1.0 through 1.3
@@ -286,7 +295,7 @@ the App Store Connect API and does six things, then optionally a seventh:
 | Step | What it does |
 | --- | --- |
 | 1 | resolves the app by bundle id |
-| 2 | finds or creates the App Store version, refusing one Apple has taken out of our hands |
+| 2 | finds or creates the App Store version — or renames the one already waiting, when asked to — refusing one Apple has taken out of our hands |
 | 3 | attaches the TestFlight build, waiting up to 30 minutes if it is still processing |
 | 4 | sets **What's New** in both locales from `AppStore/metadata/*.md` |
 | 5 | replaces the **6.9-inch screenshot set** in both locales from `AppStore/screenshots/` |
@@ -318,19 +327,20 @@ not a script you can run: **there is no local path**, because the key exists
 nowhere outside GitHub. It is also why the unit tests
 ([`test_asc_submit.py`](../.github/scripts/test_asc_submit.py)) run in this
 workflow rather than in `ci.yml`, which ignores `ios/**` entirely — they need no
-network and no secrets, and they cover the three failures a dry run cannot
-reveal: the What's New parser reading the wrong version's section, screenshots
-uploading in an order nobody chose, and a version already in review being
-patched instead of refused.
+network and no secrets, and they cover the failures a dry run cannot reveal: the
+What's New parser reading the wrong version's section, screenshots uploading in
+an order nobody chose, a version already in review being patched instead of
+refused, and every branch of the rename described below.
 
 **What it will not do, and what that leaves you.** The script sets `whatsNew` and
 nothing else on the localization unless it is given `--sync-metadata`, which the
 workflow deliberately does not pass. Description, keywords, and promotional text
 are the copy people argue about; they are reviewed in Connect against the
-rendered page, not pushed blind from a Markdown table. Also still manual: the
-**App Privacy** label, **pricing and availability**, and **App Review
-Information** with the reviewer account — see
-[`AppStore/README.md`](AppStore/README.md).
+rendered page, not pushed blind from a Markdown table. It will not rename an
+existing version unless `rename_editable_version` says so, and if two versions
+are somehow editable it refuses rather than picks. Also still manual: the **App
+Privacy** label, **pricing and availability**, and **App Review Information**
+with the reviewer account — see [`AppStore/README.md`](AppStore/README.md).
 
 **Order matters.** The build has to be in TestFlight and finished processing
 before there is anything to attach, so this runs after `ios-release.yml`, not
@@ -345,6 +355,49 @@ either is missing — a version must never go to review carrying the previous
 release's notes. It un-wraps the Markdown (one line per paragraph, blank lines
 kept, and no space inserted where two Chinese lines were joined), so the files
 stay wrapped for reading in a diff.
+
+### One pending version at a time
+
+App Store Connect allows exactly **one** version in an editable state
+(`PREPARE_FOR_SUBMISSION`, `DEVELOPER_REJECTED`, `REJECTED`,
+`METADATA_REJECTED`, `INVALID_BINARY`). So if a version was prepared and never
+submitted — 1.14 sat there while the store stayed on 1.13 — the next release
+cannot be created at all, and step 2 fails like this:
+
+```
+2. App Store version 1.15
+  no 1.15 yet — creating it, releaseType AFTER_APPROVAL
+POST https://api.appstoreconnect.apple.com/v1/appStoreVersions → 409
+  [409 ENTITY_ERROR.RELATIONSHIP.INVALID] The provided entity includes a relationship with an invalid value
+      You cannot create a new version of the App in the current state.
+      source: {'pointer': '/data/relationships/app'}
+```
+
+**That pointer is a red herring.** `/data/relationships/app` reads as "the app id
+is wrong"; the app id is fine, and the version actually in the way is not named
+anywhere in Apple's response. The script now recognises this one 409 and re-raises
+it with the pending version's number, id and state, plus Apple's original text
+underneath — but the message above is what the run that predates the fix left in
+the log, which is why it is quoted here in full.
+
+The fix a human performs in the Connect web form is one field: change the waiting
+version's number from 1.14 to 1.15 and carry on. `rename_editable_version` is
+that field, and it exists because the API key is a GitHub secret — there is no
+machine outside CI that can change it:
+
+```bash
+# 1.15 does not exist and 1.14 is sitting in PREPARE_FOR_SUBMISSION:
+# rename 1.14 to 1.15 and prepare it as this release
+gh workflow run "iOS store submission" -f version=1.15 -f build=27 \
+  -f rename_editable_version=true -f dry_run=true
+```
+
+It is off by default and only ever acts when the requested version does not exist
+yet — a version that is already there is found, not renamed. If nothing is
+editable it creates the version as usual. If *two* versions are editable it stops
+and lists them, because picking one could rename a version somebody else is
+preparing and then submit it. Release notes still come from
+`## What's New — 1.15`, so write them under the number you are renaming **to**.
 
 ## Before submission
 
@@ -374,7 +427,12 @@ unit tests.
 - [ ] Mic button → Parley records → the transcript types into the field you
       started from, in a third-party app (Notes, Messages, Mail).
 - [ ] The Action Button intent starts dictation without bringing Parley forward.
-- [ ] A session left running stops itself at the 120-second cap.
+- [ ] A session left running counts down its last 30 seconds in the keyboard
+      ("Stops in 25 s"), stops itself at the ten-minute cap, types what was said,
+      and says "Single dictation limit reached (10 min)".
+- [ ] With Wi-Fi and cellular cut mid-dictation, the words said before the cut
+      are typed once the reconnect gives up, with "Connection lost — inserted
+      what was transcribed", and the next tap starts without opening Parley.
 
 **Localization**
 

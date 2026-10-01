@@ -8,6 +8,12 @@ import { useThemePreference } from "../lib/theme";
 import { formatChordLabel, modChordCap } from "../lib/commands/format";
 import { log } from "../lib/log";
 import {
+  SessionTranscript,
+  type Segment,
+  type SessionEvent,
+  type TextReport,
+} from "../lib/voiceTyping/transcript";
+import {
   SUGGEST_ACTION_EVENT,
   SUGGEST_EVENT,
   SUGGEST_STATE_EVENT,
@@ -35,19 +41,10 @@ const WAVE_PROFILE = [
 const DONE_DWELL_MS = 2150;
 const FADE_MS = 450;
 
-interface SegPayload {
-  id: string;
-  source: string;
-  text: string;
-  is_final: boolean;
-}
 interface LevelPayload {
   source: string;
   level: number;
-}
-interface SessionPayload {
-  phase: "start" | "stop" | "polishing" | "done" | "error" | "limit";
-  message?: string;
+  session: number | null;
 }
 
 /** Overlay message per error phase `message`: the host's own "no-key", or a
@@ -68,12 +65,6 @@ const ERROR_KEYS: Record<string, TranslationKey> = {
  *  of the pipeline the user waits a noticeable beat for, and a spinner that
  *  does not say why reads as a hang. */
 type Phase = "listening" | "finalizing" | "polishing" | "done";
-
-/** Numeric index from a "voice-typing-{n}" segment id (tail sorts last). */
-function idIndex(id: string): number {
-  const m = /-(\d+)$/.exec(id);
-  return m ? Number.parseInt(m[1], 10) : Number.MAX_SAFE_INTEGER;
-}
 
 /** Report a bubble button back to the host, which owns every decision. */
 function suggestAct(action: SuggestActionPayload["action"]): void {
@@ -134,11 +125,7 @@ export const VoiceTypingApp = () => {
     Array.from({ length: BAR_COUNT }, () => BAR_FLOOR),
   );
 
-  const finalsRef = useRef<Map<string, string>>(new Map());
-  const interimRef = useRef("");
-  // Cache the Simplified→Traditional conversion per final segment so a long
-  // dictation doesn't re-convert the whole transcript on every incoming token.
-  const convertedRef = useRef<Map<string, { raw: string; conv: string }>>(new Map());
+  const transcript = useRef(new SessionTranscript());
   // Stable per-position keys for the waveform bars (values shift, positions don't).
   const barKeys = useRef(Array.from({ length: BAR_COUNT }, (_, i) => `bar-${i}`));
 
@@ -158,30 +145,26 @@ export const VoiceTypingApp = () => {
     };
   }, []);
 
-  // Recompute display text from the raw refs, convert, and publish to the host.
-  // Final segments are converted once and cached; only the live interim tail is
-  // converted every token, so cost stays flat no matter how long the dictation.
   const publish = useRef(async () => {});
   publish.current = async () => {
-    const entries = [...finalsRef.current.entries()].sort((a, b) => idIndex(a[0]) - idIndex(b[0]));
-    let finals = "";
-    for (const [id, raw] of entries) {
-      const cached = convertedRef.current.get(id);
-      let conv: string;
-      if (cached && cached.raw === raw) {
-        conv = cached.conv;
-      } else {
-        conv = await normalizeTranscriptText(raw);
-        convertedRef.current.set(id, { raw, conv });
-      }
-      finals += conv;
-    }
-    const interim = interimRef.current ? await normalizeTranscriptText(interimRef.current) : "";
-    const full = (finals + interim).trim();
-    setText(full);
-    emit("voicetyping://text", { text: full }).catch((error) =>
+    const report = await transcript.current.report(normalizeTranscriptText);
+    if (!report) return;
+    setText(report.text);
+    emit("voicetyping://text", report satisfies TextReport).catch((error) =>
       log.warn("voice typing overlay: text publish failed", { error: String(error) }),
     );
+  };
+
+  // Back to a blank pill: the last dictation's text, verdict, and fade are
+  // gone, whatever comes next.
+  const resetPresentation = () => {
+    setText("");
+    setError(null);
+    setLimited(false);
+    setFading(false);
+    setPasteBlocked(false);
+    setSuggest(null);
+    setSuggestAdded(false);
   };
 
   useEffect(() => {
@@ -207,15 +190,9 @@ export const VoiceTypingApp = () => {
     preloadZhConverter();
 
     track(
-      listen<SegPayload>("transcript://segment", (e) => {
+      listen<Segment>("transcript://segment", (e) => {
         const p = e.payload;
-        if (p.source !== "voice-typing") return;
-        if (p.is_final) {
-          finalsRef.current.set(p.id, p.text);
-          interimRef.current = ""; // the committed run supersedes the tail
-        } else {
-          interimRef.current = p.text;
-        }
+        if (!transcript.current.accept(p)) return;
         publish.current().catch((error) =>
           log.warn("voice typing overlay: transcript publish failed", {
             segmentId: p.id,
@@ -227,27 +204,26 @@ export const VoiceTypingApp = () => {
 
     track(
       listen<LevelPayload>("audio://level", (e) => {
-        if (e.payload.source !== "voice-typing") return;
+        if (!transcript.current.owns(e.payload)) return;
         setBars(instantWaveform(e.payload.level));
       }),
     );
 
     track(
-      listen<SessionPayload>("voicetyping://session", (e) => {
-        const { phase: p, message } = e.payload;
-        if (p === "start") {
-          finalsRef.current.clear();
-          convertedRef.current.clear();
-          interimRef.current = "";
-          setText("");
-          setError(null);
-          setLimited(false);
-          setFading(false);
-          setPasteBlocked(false);
-          setSuggest(null);
-          setSuggestAdded(false);
+      listen<SessionEvent>("voicetyping://session", (e) => {
+        if (e.payload.phase === "start") {
+          transcript.current.reset(e.payload.session);
+          resetPresentation();
           setPhase("listening");
-        } else if (p === "stop") {
+          // Tell the host the new session has no text yet, so the previous
+          // dictation's last report is not what it pastes.
+          publish.current().catch((error) =>
+            log.warn("voice typing overlay: reset publish failed", { error: String(error) }),
+          );
+          return;
+        }
+        const { phase: p, message } = e.payload;
+        if (p === "stop") {
           setPhase("finalizing");
         } else if (p === "polishing") {
           setPhase("polishing");
@@ -264,6 +240,7 @@ export const VoiceTypingApp = () => {
           setPasteBlocked(message === "clipboard-only");
           setPhase("done");
         } else if (p === "error") {
+          resetPresentation();
           setError(message || "error");
           setPhase("done");
         }
@@ -276,12 +253,8 @@ export const VoiceTypingApp = () => {
     // the question is what's on screen.
     track(
       listen<SuggestPayload>(SUGGEST_EVENT, (e) => {
+        resetPresentation();
         setSuggest(e.payload);
-        setSuggestAdded(false);
-        setText("");
-        setError(null);
-        setLimited(false);
-        setFading(false);
         setPhase("done");
       }),
     );
@@ -334,6 +307,12 @@ export const VoiceTypingApp = () => {
   } else if (phase === "done") {
     phaseIcon = <Check className="size-2.5" strokeWidth={3} />;
   }
+  let indicatorTone = "bg-primary text-primary-foreground";
+  if (phase === "listening") {
+    indicatorTone = "bg-recording text-white";
+  } else if (phase === "done") {
+    indicatorTone = "bg-success text-success-foreground";
+  }
 
   return (
     <div
@@ -341,9 +320,9 @@ export const VoiceTypingApp = () => {
       style={{ opacity: fading ? 0 : 1, transition: `opacity ${FADE_MS}ms ease-in` }}
     >
       {/* Hosted single-dictation cap note: shown above the transcript, which is
-          still delivered. Amber to read as a limit, not an error. */}
+          still delivered. Warning tone to read as a limit, not an error. */}
       {limited && !error && (
-        <div className="rounded-full bg-amber-500 px-3 py-1 text-center text-[12px] font-medium text-white shadow-md">
+        <div className="rounded-full border border-warning-border bg-warning px-3 py-1 text-center text-[12px] font-medium text-warning-foreground shadow-md">
           {t("voiceTyping.limit")}
         </div>
       )}
@@ -353,7 +332,7 @@ export const VoiceTypingApp = () => {
       {bubble && (
         <div
           className={`flex max-h-[84px] max-w-[420px] flex-col justify-end overflow-hidden rounded-[14px] px-3.5 py-1.5 text-center text-[14px] font-medium leading-snug shadow-md ${
-            error ? "bg-red-600 text-white" : "bg-foreground text-background"
+            error ? "bg-destructive text-white" : "bg-foreground text-background"
           }`}
         >
           {/* Bottom-anchored + clipped: the newest words stay visible while a
@@ -365,9 +344,9 @@ export const VoiceTypingApp = () => {
 
       {/* Polishing note. The one beat in the pipeline the user actually waits
           for, so it says what it is waiting on rather than spinning silently.
-          Same pill language as the "copied" confirmation below. */}
+          Primary: processing is what is happening now. */}
       {phase === "polishing" && !error && (
-        <div className="flex items-center gap-1 rounded-full bg-sky-500 px-2.5 py-0.5 text-[11px] font-medium text-white shadow-md">
+        <div className="flex items-center gap-1 rounded-full bg-primary px-2.5 py-0.5 text-[11px] font-medium text-primary-foreground shadow-md">
           <Sparkles className="size-2.5 animate-pulse" />
           {t("voiceTyping.polishing")}
         </div>
@@ -376,13 +355,15 @@ export const VoiceTypingApp = () => {
       {/* Copied-to-clipboard confirmation. The transcript is always on the
           clipboard, so the "done" state announces it near the overlay. When the
           auto-paste was refused as well (no Accessibility on macOS, UIPI
-          refusing an elevated window on Windows) it turns amber and names the
+          refusing an elevated window on Windows) it turns warning and names the
           paste key — otherwise the user reads "Copied", sees nothing appear
           where they were typing, and assumes the dictation was lost. */}
       {phase === "done" && !error && text && (
         <div
-          className={`flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-medium text-white shadow-md ${
-            pasteBlocked ? "bg-amber-500" : "bg-emerald-500"
+          className={`flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-medium shadow-md ${
+            pasteBlocked
+              ? "border-warning-border bg-warning text-warning-foreground"
+              : "border-success-border bg-success text-success-foreground"
           }`}
         >
           {!pasteBlocked && <Check className="size-2.5" strokeWidth={3} />}
@@ -406,7 +387,7 @@ export const VoiceTypingApp = () => {
             <button
               type="button"
               onPointerDown={() => suggestAct("add")}
-              className="flex items-center gap-1 rounded-full bg-sky-500 px-2.5 py-0.5 text-[11px] font-medium text-white"
+              className="flex items-center gap-1 rounded-full bg-primary px-2.5 py-0.5 text-[11px] font-medium text-primary-foreground"
             >
               {t("dict.suggest.add")}
               {/* The cap for host.ts's SUGGEST_SHORTCUT ("Alt+Enter"), computed
@@ -428,7 +409,7 @@ export const VoiceTypingApp = () => {
 
       {/* Accepted: confirm it landed, and keep an undo within reach for a beat. */}
       {suggest && suggestAdded && (
-        <div className="flex items-center gap-1.5 rounded-full bg-emerald-500 px-2.5 py-0.5 text-[11px] font-medium text-white shadow-md">
+        <div className="flex items-center gap-1.5 rounded-full border border-success-border bg-success px-2.5 py-0.5 text-[11px] font-medium text-success-foreground shadow-md">
           <Check className="size-2.5" strokeWidth={3} />
           {t("dict.suggest.added")}
           <span className="opacity-60">·</span>
@@ -442,13 +423,12 @@ export const VoiceTypingApp = () => {
         </div>
       )}
 
-      {/* Layer 2 — audio waver pill: same inverted bg as the transcript, blue
-          bars, with a small state indicator. */}
+      {/* Layer 2 — audio waver pill: same inverted bg as the transcript, with a
+          small state indicator. Recording red while dictation is live, primary
+          while finalizing/polishing, success once done. */}
       <div className="flex items-center gap-2 rounded-full bg-foreground px-3 py-1.5 shadow-md">
         <div
-          className={`grid size-4 place-items-center rounded-full text-white transition-colors ${
-            phase === "done" ? "bg-emerald-500" : "bg-sky-500"
-          }`}
+          className={`grid size-4 place-items-center rounded-full transition-colors ${indicatorTone}`}
         >
           {phaseIcon}
         </div>
@@ -456,7 +436,7 @@ export const VoiceTypingApp = () => {
           {bars.map((b, i) => (
             <span
               key={barKeys.current[i]}
-              className="w-[2px] rounded-full bg-sky-500"
+              className={`w-[2px] rounded-full ${phase === "listening" ? "bg-recording" : "bg-primary"}`}
               style={{ height: `${Math.max(2, Math.round(b * BAR_MAX_PX))}px` }}
             />
           ))}

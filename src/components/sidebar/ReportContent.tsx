@@ -26,7 +26,7 @@ function makeMarkdownComponents(jump: (ms: number) => void, onJump?: () => void)
         return (
           <button
             type="button"
-            className="rounded bg-sky-500/15 px-1 font-mono text-[0.85em] text-sky-300 no-underline hover:bg-sky-500/25"
+            className="rounded bg-primary/10 px-1 text-[0.85em] tabular-nums text-primary no-underline hover:bg-primary/15"
             onClick={() => {
               jump(seconds * 1000);
               onJump?.();

@@ -14,6 +14,9 @@ struct LibraryView: View {
     /// Shared with the recording screen, so a download started from a row is the
     /// same download the detail toolbar is showing.
     @EnvironmentObject private var downloads: AudioDownloadModel
+    /// Settings sends the user here to see the getting-started list it just
+    /// brought back; see `takeChecklistRequest`.
+    @EnvironmentObject private var router: TabRouter
 
     /// nil = personal scope; else an org id.
     @State private var scope: String?
@@ -21,12 +24,18 @@ struct LibraryView: View {
     /// id. Written by a chip tap and by the folder swipe, which move through
     /// `folderPages` in order.
     @State private var folderFilter: String?
+    /// Where the rows and the chip strip are, for `folderSwipe` to tell a
+    /// row's swipe from the page's.
+    @State private var swipeGeometry = SwipeGeometry()
     @State private var recordings: [CloudRecordingSummary] = []
     @State private var folders: [CloudFolder] = []
     @State private var loading = false
     @State private var error: String?
     @State private var busyId: String?
     @State private var search = ""
+    /// Whether the search field is active, so a request to show the checklist
+    /// can close it — the checklist is not drawn while searching.
+    @State private var searchPresented = false
     /// One importer for the whole screen, so every door — the toolbar button
     /// and the empty state — drives the same single in-flight import.
     @StateObject private var importer = RecordingImporter()
@@ -34,24 +43,65 @@ struct LibraryView: View {
     /// What the last finished import landed, shown above the list until the
     /// user moves on. Failures go to `error` instead, with everything else.
     @State private var importNotice: String?
+    /// The getting-started checklist above the list, and the sample recording
+    /// it can put in it. Both are local to this phone.
+    @ObservedObject private var gettingStarted = GettingStartedStore.shared
+    @ObservedObject private var sample = SampleRecordingStore.shared
+    /// Whether the personal library has loaded at least once. The checklist
+    /// waits for it, so it never flashes up over a library still on its way
+    /// from the cloud — and so the existing-user check has run first.
+    @State private var personalLoaded = false
+    /// What is pushed on the Library's stack: the recording a row or the
+    /// checklist opened, and what for. A path rather than destination-closure
+    /// links, so the stack can be popped from here — the checklist request has
+    /// to land on the list, not on whatever recording was left open.
+    @State private var path: [OpenedRecording] = []
+    /// The last `TabRouter.checklistRequest` acted on.
+    @State private var handledChecklistRequest = 0
+    /// "Walk through the sample" was tapped and its 1.5 s "Transcribing…" is up.
+    @State private var walkingThrough = false
+    /// The recording the folder picker is moving, while it is up.
+    @State private var moving: CloudRecordingSummary?
+    /// Meetings (the cloud library, everything below) or Voice typing (what was
+    /// dictated on this phone, `DictationHistoryList`).
+    @State private var section: LibrarySection = .meetings
     #if DEBUG
         @ObservedObject private var demo = ScreenshotDemo.shared
     #endif
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if !app.signedIn {
-                    unavailable
-                } else {
-                    list
+        NavigationStack(path: $path) {
+            VStack(spacing: 0) {
+                sectionPicker
+                switch section {
+                case .meetings:
+                    Group {
+                        if !app.signedIn {
+                            unavailable
+                        } else {
+                            list
+                        }
+                    }
+                    // Here rather than on the stack: pulling the voice-typing
+                    // list must not reload the cloud library behind it.
+                    .refreshable { await load() }
+                case .voiceTyping:
+                    // Local to this phone, so it needs no account and no
+                    // network — it is drawn signed out and offline too.
+                    DictationHistoryList(search: search)
                 }
             }
             .background(Theme.background)
+            // Settings' "Show the getting-started list again" lands on the
+            // checklist, which lives in Meetings; the list itself then takes
+            // the request on appearing (`takeChecklistRequest`).
+            .onChange(of: router.checklistRequest) { _, _ in section = .meetings }
             .navigationTitle("Library")
             .toolbar {
-                importButton
-                scopeMenu
+                if section == .meetings {
+                    importButton
+                    scopeMenu
+                }
             }
             // `.audio` is the whole family — mp3, m4a, wav, aac, caf and the
             // rest — which is what the desktop's extension list adds up to.
@@ -64,18 +114,53 @@ struct LibraryView: View {
             ) { result in
                 Task { await runImport(result) }
             }
-            .searchable(text: $search, prompt: Text("Search titles and snippets"))
-            .refreshable { await load() }
+            .navigationDestination(for: OpenedRecording.self) { target in
+                if let rec = allRecordings.first(where: { $0.id == target.id }) {
+                    RecordingDetailView(
+                        summary: rec, orgId: target.orgId, intent: target.intent,
+                        isLapRecording: target.guided || isLapRecording(rec, orgId: target.orgId),
+                        onFolderChange: folderChanged(rec.id),
+                        onTitleChange: titleChanged(rec.id))
+                }
+            }
+            .sheet(item: $moving) { rec in folderPicker(for: rec) }
+            .searchable(
+                text: $search, isPresented: $searchPresented,
+                prompt: section == .meetings
+                    ? Text("Search titles and snippets") : Text("Search voice typing"))
             .task(id: "\(scope ?? "personal")-\(app.signedIn)") { await load() }
             // `parley://demo/transcript` pushes the demo recording, so the
             // transcript frame is captured through the real navigation stack
             // (back chevron and all) rather than as a detached view.
             #if DEBUG
                 .navigationDestination(isPresented: $demo.showTranscript) {
-                    RecordingDetailView(summary: ScreenshotDemo.featured, orgId: nil)
+                    RecordingDetailView(summary: ScreenshotDemo.pushed, orgId: nil)
+                }
+                .navigationDestination(isPresented: $demo.showSample) {
+                    if let summary = sample.summary {
+                        RecordingDetailView(summary: summary, orgId: nil, isLapRecording: true)
+                    }
+                }
+                // `-ParleyDemoRoute voicehistory` lands on the Voice typing list.
+                .onChange(of: demo.showVoiceTyping, initial: true) { _, show in
+                    if show { section = .voiceTyping }
                 }
             #endif
         }
+    }
+
+    /// Meetings / Voice typing, above everything else on the page. Segmented
+    /// rather than a tab of its own: both are "what I said, kept", and the
+    /// Library is where someone goes looking for either.
+    private var sectionPicker: some View {
+        Picker("Library", selection: $section) {
+            Text("Meetings").tag(LibrarySection.meetings)
+            Text("Voice typing").tag(LibrarySection.voiceTyping)
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal, 20)
+        .padding(.top, 4)
+        .padding(.bottom, 6)
     }
 
     /// The library is the account's cloud recordings, so it needs a confirmed
@@ -92,6 +177,135 @@ struct LibraryView: View {
             : String(localized: "Sign in under Settings → Account and your cloud recordings show up here.")
         return ContentUnavailableView(
             title, systemImage: "icloud.slash", description: Text(detail))
+    }
+
+    // MARK: getting started
+
+    /// The personal scope's list with the sample merged in. The sample is
+    /// local-only and belongs to no organization, so an org scope never shows
+    /// it. See `SampleRecordingStore`.
+    private var allRecordings: [CloudRecordingSummary] {
+        guard scope == nil, let entry = sample.summary else { return recordings }
+        return recordings + [entry]
+    }
+
+    /// Personal scope, not searching — and then the checklist's own rule
+    /// (`GettingStartedState.showsInLibrary`, unit-tested in ParleyKit).
+    ///
+    /// The list used to wait for the personal library to come back from the
+    /// cloud every time the screen was built, so after "Show the
+    /// getting-started list again" the Library came up with a spinner and the
+    /// list arrived a network round trip later — or never, offline. It now
+    /// waits only while the once-per-install existing-user check is pending;
+    /// after that it is local state, drawn at once, and the recordings fill in
+    /// underneath.
+    private var showsChecklist: Bool {
+        #if DEBUG
+            if ScreenshotDemo.servesFixtures && !demo.allowsChecklist { return false }
+        #endif
+        guard scope == nil, search.isEmpty else { return false }
+        return gettingStarted.state.showsInLibrary(
+            libraryLoaded: personalLoaded,
+            existingUserChecked: gettingStarted.existingUserChecked,
+            libraryIsEmpty: allRecordings.isEmpty)
+    }
+
+    private static let checklistID = "getting-started"
+
+    /// Settings asked for the checklist ("Show the getting-started list
+    /// again"). Everything that would keep it off screen goes: a pushed
+    /// recording, an org scope, a folder page, a search. Then the list is
+    /// scrolled to the top of the page.
+    ///
+    /// Called from the list's `onAppear` as well as on the change, because the
+    /// Library may not have been built when the request was made — a tab is
+    /// built on its first visit — and the counter is compared rather than
+    /// consumed, so neither path can act twice.
+    private func takeChecklistRequest(_ proxy: ScrollViewProxy) {
+        guard router.checklistRequest != handledChecklistRequest else { return }
+        handledChecklistRequest = router.checklistRequest
+        path = []
+        searchPresented = false
+        search = ""
+        if scope != nil {
+            scope = nil
+            importNotice = nil
+        }
+        folderFilter = nil
+        // A beat for the pop and the tab switch to settle: a scroll issued
+        // mid-transition is dropped.
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(350))
+            withAnimation { proxy.scrollTo(Self.checklistID, anchor: .top) }
+        }
+    }
+
+    /// The recording the guided lap is about: the sample when it is in the
+    /// Library, else the user's only recording, else the newest one.
+    private var lapRecording: CloudRecordingSummary? {
+        if let sample = sample.summary { return sample }
+        if recordings.count == 1 { return recordings[0] }
+        return allRecordings.max { $0.createdAt < $1.createdAt }
+    }
+
+    /// Whether a row opens with the guide bar: the sample, or the user's only
+    /// recording. On the fortieth recording the lap would be noise.
+    private func isLapRecording(_ rec: CloudRecordingSummary, orgId: String?) -> Bool {
+        guard orgId == nil else { return false }
+        if SampleManifest.isSample(id: rec.id) { return true }
+        return recordings.count == 1 && recordings[0].id == rec.id
+    }
+
+    /// The checklist header's one action. "Walk through the sample" while
+    /// nothing has been recorded (or there is nothing left to continue on),
+    /// "Continue" once there is a lap recording to go back to.
+    private var checklistAction: GettingStartedList.Action {
+        if gettingStarted.state.recorded, lapRecording != nil { return .continueLap }
+        return SampleRecordingStore.isBundled ? .walkThrough : .none
+    }
+
+    /// 用範例錄音走一遍: a moment of "Transcribing…" on the list, then the
+    /// sample opens on its summary with its suggestion waiting.
+    ///
+    /// The pause is theatre, and deliberately so. The sample is transcribed
+    /// already; opening it instantly made the name, the folder and the summary
+    /// read as fixtures that were always there, where the point of the lap is
+    /// that Parley *made* them from a recording. A second and a half is enough
+    /// to see the step happen and short enough not to be a wait.
+    private func walkThroughSample() {
+        guard !walkingThrough else { return }
+        walkingThrough = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.5))
+            walkingThrough = false
+            guard let summary = sample.load() else { return }
+            select(nil)
+            path.append(OpenedRecording(id: summary.id, orgId: nil, intent: .read, guided: true))
+        }
+    }
+
+    /// 繼續 →: back into the lap recording.
+    private func continueLap() {
+        guard let rec = lapRecording else { return }
+        path.append(OpenedRecording(id: rec.id, orgId: nil, intent: .read, guided: true))
+    }
+
+    /// Keeps a row's folder in step with a move made inside the recording, so
+    /// going back does not show where it used to be. The sample needs nothing:
+    /// its folder lives in `SampleRecordingStore`, which this view observes.
+    private func folderChanged(_ id: String) -> (String?) -> Void {
+        { folderId in
+            guard let index = recordings.firstIndex(where: { $0.id == id }) else { return }
+            recordings[index].folderId = folderId
+        }
+    }
+
+    /// The same for a rename.
+    private func titleChanged(_ id: String) -> (String) -> Void {
+        { title in
+            guard let index = recordings.firstIndex(where: { $0.id == id }) else { return }
+            recordings[index].title = title
+        }
     }
 
     // MARK: import (desktop History "+ Import", phone-sized)
@@ -165,7 +379,9 @@ struct LibraryView: View {
     // MARK: list
 
     /// Chip row above, one folder's worth of recordings below, and a horizontal
-    /// swipe on the chip row moves between them.
+    /// swipe moves between folders — from anywhere on the page except a
+    /// recording row, which keeps its own swipe (leading download, trailing
+    /// delete).
     ///
     /// **A `TabView(selection:)` in `.page` style was tried first and it does not
     /// work here.** It pages beautifully, and it takes the rows' swipe actions
@@ -174,12 +390,27 @@ struct LibraryView: View {
     /// starts on a row. Measured, not guessed — an XCUITest drove a measured drag
     /// on a row with the pager in place (both actions failed to open) and again
     /// with the pager bypassed (both opened). Losing delete to gain paging is not
-    /// a trade worth making, so the drag lives on the chip row instead, where
-    /// nothing else wants it.
+    /// a trade worth making.
     ///
-    /// The chip row therefore stays put instead of scrolling away with the list —
-    /// a swipe target that scrolls off screen is a swipe target that mostly is
-    /// not there.
+    /// So the page reads the drag instead of paging on it: `folderSwipe` sits on
+    /// this whole container as a simultaneous gesture, which claims nothing —
+    /// the rows, the list's scroll and the chips all get the touch exactly as
+    /// before — and when the drag ends it asks where the finger went down. On a
+    /// row (every visible row reports its frame into `swipeGeometry`), the
+    /// swipe was the row's and the folder stays. Anywhere else — the space under
+    /// the last row, the gaps between rows (kept outside every cell, see
+    /// `RecordingRow.spacing`), the chips while they fit, the empty state, the
+    /// checklist — it steps to the neighbouring folder. The decision itself is
+    /// `FolderSwipe.step`, unit-tested in ParleyKit.
+    ///
+    /// Not covered: the navigation bar (title, search field) and the
+    /// Meetings / Voice typing picker. The first is UIKit's, outside this
+    /// view; the second already turns a horizontal drag into its own
+    /// selection change.
+    ///
+    /// The chip row stays put instead of scrolling away with the list, so the
+    /// selected folder is always named on screen while the list under it
+    /// changes.
     private var list: some View {
         VStack(spacing: 0) {
             if !folders.isEmpty {
@@ -187,15 +418,25 @@ struct LibraryView: View {
             }
             folderList(folderFilter)
         }
+        .simultaneousGesture(folderSwipe)
     }
 
     /// One folder's worth of the library.
     private func folderList(_ folder: String?) -> some View {
         let items = filtered(folder)
-        return List {
+        let checklist = folder == nil && showsChecklist
+        return ScrollViewReader { proxy in
+            folderRows(items, checklist: checklist)
+                .onAppear { takeChecklistRequest(proxy) }
+                .onChange(of: router.checklistRequest) { _, _ in takeChecklistRequest(proxy) }
+        }
+    }
+
+    private func folderRows(_ items: [CloudRecordingSummary], checklist: Bool) -> some View {
+        List {
             if importer.isRunning || importNotice != nil {
                 importStatus
-                    .listRowInsets(EdgeInsets(top: 10, leading: 20, bottom: 10, trailing: 20))
+                    .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
             }
@@ -206,13 +447,39 @@ struct LibraryView: View {
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
             }
+            if checklist {
+                GettingStartedList(
+                    state: gettingStarted.state,
+                    action: checklistAction,
+                    transcribing: walkingThrough,
+                    walkThrough: walkThroughSample,
+                    continueLap: continueLap,
+                    dismiss: { withAnimation { gettingStarted.dismiss() } })
+                    .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+                    .id(Self.checklistID)
+                // The list is drawn before the first load lands; the spinner
+                // goes under it rather than over it.
+                if loading && recordings.isEmpty {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 24)
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                }
+            }
             ForEach(items) { rec in
-                NavigationLink {
-                    RecordingDetailView(summary: rec, orgId: scope)
-                } label: {
+                NavigationLink(value: OpenedRecording(id: rec.id, orgId: scope, intent: .read)) {
                     RecordingCard(
                         summary: rec, folders: folders, audio: downloads.state(for: rec.id))
                 }
+                .onGeometryChange(for: CGRect.self) { proxy in
+                    proxy.frame(in: .global)
+                } action: { frame in
+                    swipeGeometry.rows[rec.id] = frame
+                }
+                .onDisappear { swipeGeometry.rows[rec.id] = nil }
                 .modifier(RecordingRow())
                 .swipeActions(edge: .trailing) {
                     Button("Delete", systemImage: "trash", role: .destructive) {
@@ -234,8 +501,18 @@ struct LibraryView: View {
             }
         }
         .listStyle(.plain)
+        // The gap between rows lives here, outside every cell — see
+        // `RecordingRow.spacing` — and the list's own top and bottom margins
+        // stand in for the half-gap the first and last row used to carry.
+        .listRowSpacing(RecordingRow.spacing)
+        .contentMargins(.vertical, RecordingRow.spacing / 2, for: .scrollContent)
         .scrollContentBackground(.hidden)
-        .overlay { if loading && recordings.isEmpty { ProgressView() } }
+        .onGeometryChange(for: CGRect.self) { proxy in
+            proxy.frame(in: .global)
+        } action: {
+            swipeGeometry.list = $0
+        }
+        .overlay { if loading && recordings.isEmpty && !checklist { ProgressView() } }
     }
 
     /// An import in flight, or the one that just landed.
@@ -307,13 +584,8 @@ struct LibraryView: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 56)
+        .padding(.top, 42)
         .padding(.bottom, 24)
-        // The other place a folder swipe is safe: an empty folder has no rows to
-        // take the drag away from, and it is exactly where someone lands when
-        // they switch to a folder they have not filed anything into yet.
-        .contentShape(Rectangle())
-        .simultaneousGesture(folderSwipe)
     }
 
     /// The pages, in the order the chips and the swipe both run: everything,
@@ -322,25 +594,32 @@ struct LibraryView: View {
         [Self.allPage, Self.unfiledPage] + folders.map(\.id)
     }
 
-    /// Swipe left for the next folder, right for the previous one.
+    /// Swipe left for the next folder, right for the previous one — unless the
+    /// drag started on a recording row, whose swipe actions it was.
     ///
-    /// `simultaneousGesture`, so the chip row can still be scrolled and its chips
-    /// still tapped — this reads the drag, it does not claim it. The two
-    /// conditions are what keep it from firing on gestures that were meant for
-    /// something else: 60pt so a thumb resting and moving slightly does nothing,
-    /// and more horizontal than vertical so a diagonal flick towards the list
-    /// scrolls rather than switching folder.
+    /// `simultaneousGesture` on the whole page (see `list`), so the rows, the
+    /// list's scroll and the chips all still get their touches — this reads the
+    /// drag, it does not claim it.
+    ///
+    /// Measured in `.global`, the space the rows and the chip strip report
+    /// their frames in. Not a named space on `list`: a name set outside the
+    /// `List` does not reach into its cells, so a row asked for its frame in it
+    /// answers in window coordinates, and the hit test came out shifted by the
+    /// height of everything above the list — row swipes switched folder and the
+    /// blank area did not.
     ///
     /// The ends are ends: at `All` a rightward swipe has nowhere to go and the
     /// selection stays where it is, which is what the chip row already shows.
     private var folderSwipe: some Gesture {
-        DragGesture(minimumDistance: 20)
+        DragGesture(minimumDistance: 20, coordinateSpace: .global)
             .onEnded { drag in
-                let horizontal = drag.translation.width
-                guard abs(horizontal) >= 60,
-                    abs(horizontal) > abs(drag.translation.height)
+                guard
+                    let delta = FolderSwipe.step(
+                        start: drag.startLocation, translation: drag.translation,
+                        rows: swipeGeometry.rows.values, list: swipeGeometry.list,
+                        scrollingStrip: swipeGeometry.scrollingChipStrip)
                 else { return }
-                step(horizontal < 0 ? 1 : -1)
+                step(delta)
             }
     }
 
@@ -385,6 +664,20 @@ struct LibraryView: View {
                 }
                 .padding(.vertical, 4)
                 .padding(.horizontal, 2)
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: {
+                    swipeGeometry.chipsWidth = $0
+                }
+            }
+            // While the chips fit, a swipe across them is a folder switch (see
+            // `SwipeGeometry.scrollingChipStrip`), and the strip rubber-banding
+            // under the finger at the same time would read as a scroll that
+            // went nowhere. Once they overflow, the strip scrolls as it always
+            // has and the switch is left to the rest of the page.
+            .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+            .onGeometryChange(for: CGRect.self) { proxy in
+                proxy.frame(in: .global)
+            } action: {
+                swipeGeometry.chipStrip = $0
             }
             .onChange(of: folderFilter) { _, _ in
                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -395,10 +688,9 @@ struct LibraryView: View {
         .padding(.horizontal, 20)
         .padding(.top, 8)
         .padding(.bottom, 4)
-        // The whole strip is the swipe target, padding included, so the gesture
-        // does not require hitting a chip.
+        // The padding round the strip is page too, so a swipe that misses the
+        // chips still switches folder.
         .contentShape(Rectangle())
-        .simultaneousGesture(folderSwipe)
         // Carries the underline and the semibold to the new chip instead of
         // snapping them across.
         .animation(.easeInOut(duration: 0.2), value: folderFilter)
@@ -434,15 +726,14 @@ struct LibraryView: View {
         .buttonStyle(.plain)
     }
 
-    /// The rows one page shows. Takes the folder rather than reading
-    /// `folderFilter`, because every page of the pager is built at once and each
-    /// one has to filter by *its* folder, not by the selected one.
+    /// The rows one folder shows. Takes the folder as a parameter so the list
+    /// is plainly a function of the selection it is drawn for.
     ///
     /// The search text is deliberately not a parameter: it is one query across
     /// the whole library, so a search with the folder filter on "All" and the
     /// same search two chips over are the same search, narrowed.
     private func filtered(_ folderFilter: String?) -> [CloudRecordingSummary] {
-        var items = recordings
+        var items = allRecordings
         if let folderFilter {
             // Desktop orphan→root rule: an id not in the live folder list
             // renders at root.
@@ -478,7 +769,9 @@ struct LibraryView: View {
     /// `.destructive` would paint it says a recording is about to be lost.
     @ViewBuilder
     private func downloadAction(for rec: CloudRecordingSummary) -> some View {
-        if scope == nil {
+        // The sample's audio is in the app bundle: there is nothing to fetch
+        // and nothing to give back.
+        if scope == nil && !SampleManifest.isSample(id: rec.id) {
             switch downloads.state(for: rec.id) {
             case .local:
                 Button {
@@ -505,15 +798,16 @@ struct LibraryView: View {
     @ViewBuilder
     private func actions(for rec: CloudRecordingSummary) -> some View {
         downloadAction(for: rec)
-        if !folders.isEmpty {
-            Menu("Move to folder") {
-                Button("Unfiled (top level)") { Task { await moveToFolder(rec, folderId: nil) } }
-                ForEach(folders) { f in
-                    Button(f.name) { Task { await moveToFolder(rec, folderId: f.id) } }
-                }
-            }
+        // The picker sheet rather than a submenu of every folder: a submenu
+        // has no search and no way to add the customer you have just met.
+        // Personal scope can create a folder, so it always has somewhere to
+        // go; an org scope has no create endpoint here, so it needs folders.
+        if scope == nil || !folders.isEmpty {
+            Button("Move to folder…", systemImage: "folder") { moving = rec }
         }
-        if scope == nil && !app.orgs.isEmpty {
+        // Not for the sample: sharing is a server-side copy of something the
+        // server does not have.
+        if scope == nil && !app.orgs.isEmpty && !SampleManifest.isSample(id: rec.id) {
             Menu("Share to organization (copy)") {
                 ForEach(app.orgs) { org in
                     Button(org.name) { Task { await shareToOrg(rec, org: org, thenDelete: false) } }
@@ -528,6 +822,25 @@ struct LibraryView: View {
         Button("Delete", systemImage: "trash", role: .destructive) {
             Task { await remove(rec) }
         }
+    }
+
+    /// The same picker the recording screen uses, over this scope's folders.
+    private func folderPicker(for rec: CloudRecordingSummary) -> some View {
+        // The orphan→root rule the list renders by, so the tick agrees with
+        // the page the row is on.
+        let current = rec.folderId.flatMap { id in folders.contains { $0.id == id } ? id : nil }
+        let create: ((String) async throws -> Void)? =
+            scope == nil
+            ? { name in
+                let folder = try await app.cloud.createFolder(name: name)
+                folders.append(folder)
+                await moveToFolder(rec, folderId: folder.id)
+            } : nil
+        return FolderPickerSheet(
+            folders: folders,
+            currentFolderId: current,
+            onSelect: { folderId in Task { await moveToFolder(rec, folderId: folderId) } },
+            onCreate: create)
     }
 
     // MARK: data ops
@@ -580,6 +893,10 @@ struct LibraryView: View {
                 async let f = app.cloud.listFolders()
                 recordings = try await r
                 folders = try await f.filter { $0.orgId == nil }
+                // Before `personalLoaded` flips, so an existing user's library
+                // has dismissed the checklist before it could be drawn.
+                gettingStarted.noteLibraryLoaded(recordingCount: recordings.count)
+                personalLoaded = true
             }
         } catch let e as CloudError {
             error =
@@ -594,6 +911,12 @@ struct LibraryView: View {
 
     /// Personal: meta re-push (full POST upsert). Org: dedicated PATCH.
     private func moveToFolder(_ rec: CloudRecordingSummary, folderId: String?) async {
+        // Filed on this phone and nowhere else — see `SampleRecordingStore`.
+        if SampleManifest.isSample(id: rec.id) {
+            sample.setFolder(folderId)
+            if folderId != nil { gettingStarted.mark(.filed) }
+            return
+        }
         busyId = rec.id
         defer { busyId = nil }
         do {
@@ -607,6 +930,7 @@ struct LibraryView: View {
                 summary.folderId = folderId
                 try await app.cloud.pushRecording(id: rec.id, summary: summary, meta: meta)
             }
+            if folderId != nil { gettingStarted.mark(.filed) }
             await load()
         } catch {
             self.error = String(localized: "Move failed: \(error.localizedDescription)")
@@ -622,6 +946,7 @@ struct LibraryView: View {
             if thenDelete {
                 try await app.cloud.deleteRecording(id: rec.id)
             }
+            gettingStarted.mark(.filed)
             await load()
         } catch let e as CloudError where e.status == 403 {
             error = String(localized: "You don't have permission to share to “\(org.name)”")
@@ -631,8 +956,17 @@ struct LibraryView: View {
     }
 
     private func remove(_ rec: CloudRecordingSummary) async {
+        // Out of the Library, not out of the app: the checklist can load it
+        // again.
+        if SampleManifest.isSample(id: rec.id) {
+            sample.remove()
+            return
+        }
         busyId = rec.id
         defer { busyId = nil }
+        // Before the delete, because afterwards there is nothing left to ask
+        // the server about.
+        let failure = await failedTranscript(rec)
         do {
             if let orgId = scope {
                 try await app.cloud.deleteOrgRecording(orgId: orgId, id: rec.id)
@@ -640,10 +974,232 @@ struct LibraryView: View {
                 try await app.cloud.deleteRecording(id: rec.id)
             }
             recordings.removeAll { $0.id == rec.id }
+            TranscriptHealthCache.forget(rec.id)
+            if let failure {
+                FeedbackCenter.shared.offerReportAfterDelete(
+                    recordingId: rec.id, context: failure.context(recordingId: rec.id))
+            }
         } catch let e as CloudError where e.status == 403 {
             error = String(localized: "Only the uploader or an admin can delete this recording")
         } catch {
             self.error = String(localized: "Delete failed: \(error.localizedDescription)")
+        }
+    }
+}
+
+extension LibraryView {
+    /// Whether the recording about to be deleted came back empty or cut short
+    /// — the `delete_failed` condition — and its numbers if so.
+    ///
+    /// Answered without the network whenever possible: from what the detail
+    /// screen saw if the recording was opened in this session (the usual way
+    /// someone arrives at deleting a disappointing recording), else from the
+    /// row itself, which is enough for the empty case. Only a recording long
+    /// enough to be truncated, never opened, with words in its preview, needs
+    /// its transcript fetched — and that fetch is bounded, because it stands
+    /// between the user and a delete they asked for. A fetch that runs out of
+    /// time is a report not offered, never a delete delayed further.
+    fileprivate func failedTranscript(_ rec: CloudRecordingSummary) async
+        -> TranscriptHealthCache.Health?
+    {
+        guard FeedbackCenter.shared.mayOffer(.deleteFailed, recordingId: rec.id) else { return nil }
+        if let seen = TranscriptHealthCache.health(for: rec.id) { return seen.failed ? seen : nil }
+        if let empty = TranscriptHealthCache.Health(row: rec) { return empty }
+        guard rec.durationMs >= FeedbackConditions.truncatedMinimumMs else { return nil }
+        let cloud = app.cloud
+        let orgId = scope
+        let id = rec.id
+        let rowDuration = rec.durationMs
+        let found = FetchedHealth()
+        await Deadline.wait(atMost: .seconds(3)) {
+            let fetched: RecordingMeta?
+            if let orgId {
+                fetched = try? await cloud.orgRecordingMeta(orgId: orgId, id: id)
+            } else {
+                fetched = try? await cloud.recordingMeta(id: id)
+            }
+            guard let meta = fetched else { return }
+            found.set(
+                durationMs: max(meta.durationMs, rowDuration), segments: meta.segments)
+        }
+        guard let health = found.value, health.failed else { return nil }
+        return health
+    }
+}
+
+/// The bounded fetch's answer, handed out of a `@Sendable` closure.
+private final class FetchedHealth: @unchecked Sendable {
+    private let lock = NSLock()
+    private var durationMs: Double = 0
+    private var segments: [TranscriptSegment]?
+
+    func set(durationMs: Double, segments: [TranscriptSegment]) {
+        lock.lock()
+        defer { lock.unlock() }
+        self.durationMs = durationMs
+        self.segments = segments
+    }
+
+    @MainActor var value: TranscriptHealthCache.Health? {
+        lock.lock()
+        defer { lock.unlock() }
+        return segments.map { TranscriptHealthCache.Health(durationMs: durationMs, segments: $0) }
+    }
+}
+
+/// A recording on the Library's stack, and what it was opened for: `.read`
+/// from a row, `.file` or `.share` from the getting-started checklist.
+private enum LibrarySection: Hashable {
+    case meetings
+    case voiceTyping
+}
+
+/// The frames the folder swipe hit-tests against, in `.global` coordinates.
+///
+/// A class held in `@State` rather than state itself: every visible row writes
+/// its frame on every frame of a scroll, and a write here must not rebuild the
+/// Library. Nothing draws from it — it is read once, when a drag ends.
+private final class SwipeGeometry {
+    /// Recording id → that row's frame. A row leaving the screen takes its
+    /// entry with it.
+    var rows: [String: CGRect] = [:]
+    /// The list's visible bounds, which the rows are clipped to.
+    var list: CGRect = .zero
+    var chipStrip: CGRect?
+    var chipsWidth: CGFloat = 0
+
+    /// The chip strip, while it has more chips than width and so scrolls on a
+    /// horizontal drag of its own. A fitting strip is just more of the page.
+    var scrollingChipStrip: CGRect? {
+        guard let chipStrip, chipsWidth > chipStrip.width + 0.5 else { return nil }
+        return chipStrip
+    }
+}
+
+private struct OpenedRecording: Hashable {
+    let id: String
+    /// nil = personal scope.
+    let orgId: String?
+    let intent: RecordingDetailView.Intent
+    /// Opened from the checklist's own action, so the guide bar is up even on
+    /// a recording that is not the only one.
+    var guided = false
+}
+
+/// The getting-started checklist: four plain rows, each ticked only by the real
+/// event (see `GettingStartedStore`), never by a tap on the row.
+///
+/// Demoted in onboarding v2. The rows used to be doors — a chevron each,
+/// opening the newest recording "to file it" or "to share it" — and the owner's
+/// verdict was that the list ticked but the recording it opened never said what
+/// to do. The teaching now happens on the recording (`GuideBar`); the list is
+/// the scoreboard. So the rows keep their ticks and titles and lose their
+/// actions, and the header carries the one way in: walk through the sample, or
+/// continue the lap already started.
+///
+/// Rows, hairlines and text, no card: the page is white and the list is part
+/// of it. The one colour is the system green on a done item's check — "this
+/// is fine" in the platform's own words — and the tint on what can be tapped.
+struct GettingStartedList: View {
+    enum Action {
+        /// 用範例錄音走一遍 — nothing recorded yet.
+        case walkThrough
+        /// 繼續 → — back into the lap recording.
+        case continueLap
+        /// A build without the sample and nothing to continue.
+        case none
+    }
+
+    let state: GettingStartedState
+    let action: Action
+    /// The sample's "Transcribing…" moment is up.
+    let transcribing: Bool
+    let walkThrough: () -> Void
+    let continueLap: () -> Void
+    let dismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("Do one lap, five minutes")
+                    .font(.parley.subheadlineEmphasized)
+                    .foregroundStyle(Color(.label))
+                Text(verbatim: "\(state.done) / \(GettingStartedState.total)")
+                    .font(.parley.caption.monospacedDigit())
+                    .foregroundStyle(Color(.secondaryLabel))
+                    .accessibilityLabel(
+                        Text("\(state.done) of \(GettingStartedState.total) done"))
+                Spacer(minLength: 8)
+                Button("Not now", action: dismiss)
+                    .font(.parley.footnote)
+                    .buttonStyle(.borderless)
+            }
+            headerAction
+                .padding(.top, 6)
+                .padding(.bottom, 10)
+            ForEach(GettingStartedStep.allCases, id: \.self) { step in
+                Rectangle()
+                    .fill(Color(.separator))
+                    .frame(height: 0.5)
+                row(step)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var headerAction: some View {
+        if transcribing {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Transcribing…")
+                    .font(.parley.footnote)
+                    .foregroundStyle(Color(.secondaryLabel))
+            }
+            .accessibilityElement(children: .combine)
+        } else {
+            switch action {
+            case .walkThrough:
+                Button(action: walkThrough) {
+                    Text("Walk through it with the sample recording")
+                        .font(.parley.subheadlineEmphasized)
+                }
+                .buttonStyle(.borderless)
+            case .continueLap:
+                Button(action: continueLap) {
+                    Text("Continue →")
+                        .font(.parley.subheadlineEmphasized)
+                }
+                .buttonStyle(.borderless)
+            case .none:
+                EmptyView()
+            }
+        }
+    }
+
+    private func row(_ step: GettingStartedStep) -> some View {
+        let done = state[step]
+        return HStack(alignment: .center, spacing: 12) {
+            Image(systemName: done ? "checkmark.circle.fill" : "circle")
+                .font(.parley.body)
+                .foregroundStyle(done ? Theme.success : Color(.tertiaryLabel))
+                .accessibilityHidden(true)
+            Text(title(step))
+                .font(.parley.subheadline)
+                .foregroundStyle(done ? Color(.secondaryLabel) : Color(.label))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 10)
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(done ? Text("Done") : Text(verbatim: ""))
+    }
+
+    private func title(_ step: GettingStartedStep) -> LocalizedStringKey {
+        switch step {
+        case .recorded: return "Record your first meeting"
+        case .filed: return "Put it in a folder"
+        case .replayed: return "Replay: tap a line to jump"
+        case .sharedToAI: return "Share it with your AI"
         }
     }
 }
@@ -655,12 +1211,20 @@ struct LibraryView: View {
 /// one stops.
 ///
 /// So all this modifier does is set the gutter and take the system furniture
-/// away. The vertical inset is the gap; the horizontal one lines the row up with
+/// away. The gap is `spacing`, below; the horizontal inset lines the row up with
 /// the folder chips and the navigation title above it.
 private struct RecordingRow: ViewModifier {
+    /// The gap between two rows. It is the list's row spacing and not the
+    /// rows' vertical insets, because a cell's insets are part of the cell: a
+    /// swipe that started in them opened that row's actions, where the gap
+    /// between two recordings is page, and a swipe there switches folder. With
+    /// the gap outside every cell the whitespace is the same and nothing owns
+    /// it. Lists that carry these rows set `.listRowSpacing(Self.spacing)`.
+    static let spacing: CGFloat = 28
+
     func body(content: Content) -> some View {
         content
-            .listRowInsets(EdgeInsets(top: 14, leading: 20, bottom: 14, trailing: 20))
+            .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
             .listRowSeparator(.hidden)
             .listRowBackground(Color.clear)
     }
@@ -839,6 +1403,11 @@ private struct RecordingCard: View {
     /// file someone imported is the unremarkable case.
     private var badge: some View {
         let live = summary.source == "live"
+        if SampleManifest.isSample(id: summary.id) {
+            return Text("SAMPLE")
+                .font(.parley.caption2.weight(.semibold))
+                .foregroundStyle(Color(.secondaryLabel))
+        }
         return Text(live ? "LIVE" : "UPLOAD")
             .font(.parley.caption2.weight(.semibold))
             .foregroundStyle(live ? Theme.recording : Color(.secondaryLabel))
@@ -887,6 +1456,7 @@ private struct RecordingCard: View {
                 }
             }
             .listStyle(.plain)
+            .listRowSpacing(RecordingRow.spacing)
             .scrollContentBackground(.hidden)
             .background(Theme.background)
             .navigationTitle("Library")
@@ -904,6 +1474,7 @@ private struct RecordingCard: View {
                 }
             }
             .listStyle(.plain)
+            .listRowSpacing(RecordingRow.spacing)
             .scrollContentBackground(.hidden)
             .background(Theme.background)
         }
@@ -916,5 +1487,6 @@ private struct RecordingCard: View {
         LibraryView()
             .environmentObject(AppState())
             .environmentObject(AudioDownloadModel())
+            .environmentObject(TabRouter())
     }
 #endif

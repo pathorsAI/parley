@@ -4,7 +4,7 @@
   Traditional Chinese is first-class in Parley, not a translation afterthought:
   a string that exists in only one of the two files is a bug.
 -->
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <string name="app_name">Parley</string>
 
     <!-- Shared actions -->
@@ -22,24 +22,28 @@
     <string name="launch_loading">Loading Parley</string>
 
     <!-- Onboarding: the screen a cold install lands on -->
-    <string name="onboarding_tagline">A pocket recorder for the meetings you have in person — live transcript while you talk, in the cloud by the time you stand up.</string>
-    <string name="onboarding_point_room">Put the phone on the table</string>
-    <string name="onboarding_point_room_detail">It picks up the whole room and keeps the speakers apart.</string>
-    <string name="onboarding_point_live">Live transcription, no API key</string>
-    <string name="onboarding_point_live_detail">Sign in and ride our hosted transcription. The free tier covers everyday use.</string>
-    <string name="onboarding_point_sync">Recordings sync to your account</string>
-    <string name="onboarding_point_sync_detail">Open a meeting you recorded on the phone in the desktop app for the deep analysis.</string>
-    <string name="onboarding_sign_in_methods">Email and password, Google, and Apple all work. Before any recording starts, Parley asks you to confirm everyone in the room has agreed to it.</string>
+    <string name="onboarding_headline">Record it. Hand it to the AI you already use.</string>
+    <string name="onboarding_subline">Parley records in-person meetings, transcribes them live, and keeps them where your Mac and phone can both find them.</string>
+    <!-- The sign-in page's little film (IntroStage): one caption per beat, and what TalkBack reads instead -->
+    <string name="intro_recording_now">Recording now</string>
+    <string name="intro_caption_recording">Parley records both sides of the conversation.</string>
+    <string name="intro_caption_transcript">It turns into text as you go, with who said what.</string>
+    <string name="intro_caption_folder">Then one customer, one folder.</string>
+    <string name="intro_caption_share">And share it with ChatGPT or Claude to analyse.</string>
+    <string name="intro_point_record">Record and transcribe live, even from the lock screen</string>
+    <string name="intro_point_folder">One customer, one folder, synced with your Mac</string>
+    <string name="intro_point_share">Share to ChatGPT or Claude for analysis</string>
+    <string name="onboarding_sign_in_methods">Email and password, Google, and Apple all work.</string>
 
     <!-- Sign in -->
     <string name="sign_in_button">Sign in or create an account</string>
     <string name="sign_in_in_progress">Signing in…</string>
     <string name="sign_in_waiting">Waiting for the browser to hand the session back…</string>
     <string name="sign_in_no_browser">No browser is available to sign in with.</string>
-    <string name="sign_in_failed">Sign-in did not complete (%1$s).</string>
+    <string name="sign_in_didnt_finish">Sign-in didn\'t finish. Please try again.</string>
 
     <!-- Home -->
-    <string name="home_title">Recordings</string>
+    <string name="home_title">Library</string>
     <string name="home_account">Account</string>
     <string name="home_empty_title">No recordings yet</string>
     <string name="home_empty_body">Record a meeting, or import an audio file you already have.</string>
@@ -105,32 +109,49 @@
     <string name="meeting_permission_denied">Microphone permission was denied. Parley can\'t record without it.</string>
     <string name="meeting_permission_blocked">Microphone access is turned off for Parley, and Android won\'t ask again. Turn it on in system settings to record.</string>
     <string name="meeting_permission_settings">Open system settings</string>
-    <string name="meeting_consent_title">Before you start recording</string>
-    <string name="meeting_consent_body">Parley picks up the room through the microphone, sends the audio to your Parley account for live transcription, and syncs the recording and transcript there. Confirm that everyone present has agreed to be recorded.</string>
-    <string name="meeting_consent_confirm">Everyone has agreed</string>
     <string name="meeting_discard">Discard</string>
     <string name="meeting_discard_title">Discard this recording?</string>
     <string name="meeting_discard_body">The audio and transcript are thrown away. Nothing is saved or uploaded.</string>
     <string name="meeting_discard_confirm">Discard</string>
     <string name="meeting_connecting">Connecting…</string>
     <string name="meeting_recording">Recording</string>
-    <string name="meeting_finishing">Finishing the transcript…</string>
+    <string name="meeting_recording_live">Recording · live transcript</string>
+    <string name="meeting_panel_resize">Resize controls</string>
+    <string name="meeting_panel_expand">Expand controls</string>
+    <string name="meeting_panel_collapse">Collapse controls</string>
+    <string name="meeting_finishing">Wrapping up…</string>
     <string name="meeting_uploading">Uploading…</string>
-    <string name="meeting_uploaded">Uploaded</string>
+    <string name="meeting_uploaded">Synced to the cloud</string>
     <string name="meeting_queued">Saved on this device. It uploads as soon as the network is back.</string>
-    <string name="meeting_dropped">That was under two seconds, so nothing was saved.</string>
+    <string name="meeting_dropped">That recording was too short to keep</string>
     <string name="meeting_interrupted">The meeting was cut short, but everything recorded up to that point is saved.</string>
     <string name="meeting_transcript_empty">The transcript appears here as people speak.</string>
-    <string name="meeting_issue_quota">Transcription stopped: the hosted transcription quota is used up. The audio is still being recorded.</string>
-    <string name="meeting_issue_error">Transcription stopped unexpectedly. The audio is still being recorded.</string>
+    <string name="meeting_issue_quota">You\'re out of transcription quota — live transcription stopped. The recording keeps running, and the audio is transcribed in full after it syncs.</string>
+    <string name="meeting_issue_reconnecting">Transcription dropped — reconnecting…</string>
+    <string name="meeting_issue_stopped">Live transcription stopped. The recording keeps running, and the audio is transcribed in full after it syncs.</string>
+    <string name="meeting_issue_signed_out">Live transcription stopped — the recording is still running</string>
+    <string name="meeting_shared_to">Synced, and shared to “%1$s”</string>
+    <string name="meeting_queued_quota">You\'re out of quota. The recording is safe on this phone and will sync once the quota resets.</string>
+    <string name="meeting_sync_failed">Sync failed for now. The recording is safe on this phone and will retry automatically.</string>
+    <string name="meeting_idle_hint">Hit record and put the phone on the table to catch the whole room.</string>
+    <string name="meeting_discard_a11y">Discard recording. Asks you to confirm, then throws the audio and transcript away.</string>
     <string name="meeting_mic_silenced">Another app has taken the microphone — Parley is recording silence until it gives it back.</string>
     <string name="meeting_mic_recovering">Trying to get the microphone back. The recording is still open and picks up where it left off.</string>
     <string name="meeting_mic_lost_taken">Something else is holding the microphone. Everything recorded so far is safe; bring Parley to the front to try again.</string>
     <string name="meeting_mic_lost_broken">The microphone stopped working. Everything recorded so far is safe — stop the meeting to save it.</string>
     <string name="meeting_storage_low">This phone is nearly out of storage. Parley will stop and save the recording before it runs out.</string>
+    <string name="meeting_mic_back">Microphone is back — still recording</string>
+    <string name="meeting_mic_lost_broken_detail">Lost the microphone: %1$s. Everything recorded so far is safe — stop the meeting to save it.</string>
+    <string name="meeting_stopped_mic">Stopped early — lost the microphone</string>
+    <string name="meeting_stopped_mic_permission">Stopped early — microphone access was turned off</string>
+    <string name="meeting_stopped_storage">Stopped early — this phone ran out of storage</string>
+    <string name="meeting_stopped_other">Stopped early — something went wrong</string>
     <string name="meeting_title_format">Meeting %1$s</string>
-    <string name="speaker_label">Speaker %1$d</string>
-    <string name="speaker_unknown">Speaker</string>
+    <string name="speaker_label">Speaker %1$s</string>
+    <string name="speaker_you">You</string>
+    <string name="speaker_you_numbered">You %1$d</string>
+    <string name="speaker_them">Them</string>
+    <string name="speaker_remote_numbered">Remote %1$d</string>
 
     <!-- Failures shared by the meeting and import flows -->
     <string name="failure_not_signed_in">You are signed out. Sign in and try again.</string>
@@ -155,6 +176,12 @@
     <string name="import_failure_no_audio">That file has no audio track.</string>
     <string name="import_failure_unsupported">This device can\'t decode that audio format.</string>
     <string name="import_failure_decode">The file couldn\'t be decoded all the way through.</string>
+    <string name="import_failure_session_expired">Your session expired. Please sign in again.</string>
+    <string name="import_failure_upload_refused">Parley Cloud refused this recording, so it wasn\'t saved. Import the file again to retry.</string>
+    <string name="import_action_sign_in_again">Sign in again</string>
+    <string name="import_phase_saved">Saved</string>
+    <string name="import_transcript_in_background">Transcription stopped partway through. The recording is saved, and the transcript will be completed in the background.</string>
+    <string name="import_queued_quota">You\'re out of quota. The recording is safe on this phone and will sync once the quota resets.</string>
 
     <!-- Recording detail -->
     <string name="detail_title">Recording</string>
@@ -163,9 +190,21 @@
     <string name="detail_no_transcript">This recording has no transcript.</string>
     <string name="detail_findings">Findings</string>
     <string name="detail_action_items">Action items</string>
-    <string name="detail_speakers">%1$d speakers</string>
-    <string name="detail_length">Length %1$s</string>
     <string name="detail_more_actions">More actions</string>
+    <string name="detail_load_failed_title">Couldn\'t load</string>
+    <string name="detail_error_network">Can\'t reach the cloud right now. Check your connection and open the recording again.</string>
+    <string name="detail_error_not_found">This recording is no longer in the cloud.</string>
+    <string name="detail_error_forbidden">You don\'t have access to this recording any more.</string>
+    <string name="detail_face_summary">Summary</string>
+    <string name="summary_highlights">Highlights %1$d</string>
+    <string name="summary_speakers">Speakers</string>
+    <string name="summary_empty">No summary yet.</string>
+    <string name="summary_generate">Generate a summary with AI</string>
+    <string name="summary_done">Done</string>
+    <string name="summary_go_to">Go to %1$s in the transcript</string>
+    <string name="transcript_highlight">Highlight: %1$s</string>
+    <string name="transcript_two_x_zone">Playback speed</string>
+    <string name="transcript_two_x_hint">Hold for 2×</string>
 
     <!-- Copying and sharing a transcript -->
     <string name="transcript_clip_label">Parley transcript</string>
@@ -194,10 +233,19 @@
     <string name="playback_pause">Pause</string>
     <string name="playback_speed">Playback speed</string>
     <string name="playback_scrub">Scrub</string>
+    <string name="playback_scrub_fine">Fine</string>
+    <string name="playback_scrub_finer">Finer</string>
+    <string name="playback_highlight_at">Highlight at %1$s</string>
 
     <!-- Re-transcribing a recording whose live transcript came up short -->
     <string name="retranscribe_action">Transcribe again</string>
-    <string name="retranscribe_queued">Re-transcribing this recording. The new transcript replaces this one when it\'s ready.</string>
+    <string name="retranscribe_already_running">Already re-transcribing this recording.</string>
+    <string name="retranscribe_running">Re-transcribing… this can take a few minutes.</string>
+    <string name="retranscribe_waiting_last_tried">Waiting to re-transcribe. It last tried %1$s, and tries again when you open Parley or bring it back to the front.</string>
+    <string name="retranscribe_waiting_never">Waiting to re-transcribe. Nothing is running it yet — it starts when you open Parley or bring it back to the front.</string>
+    <string name="retranscribe_start_now">Start now</string>
+    <string name="retranscribe_start_now_label">Start re-transcribing now</string>
+    <string name="retranscribe_did_not_finish">Re-transcribing didn\'t finish this time.</string>
     <string name="retranscribe_budget_spent">This recording has been re-transcribed as many times as allowed.</string>
     <string name="retranscribe_remaining">%1$d re-transcriptions left</string>
     <string name="retranscribe_confirm_title">Transcribe this recording again?</string>
@@ -227,6 +275,9 @@
     </plurals>
     <string name="account_audio_none">No audio stored on this phone.</string>
     <string name="account_audio_remove_all">Remove stored audio</string>
+    <string name="account_audio_remove_confirm_title">Remove the audio kept on this phone?</string>
+    <string name="account_audio_remove_confirm_body">The recordings themselves stay in the cloud. You can download the audio again whenever you need it.</string>
+    <string name="account_audio_remove_confirm_action">Remove all</string>
 
     <!-- Appearance -->
     <string name="account_appearance">Appearance</string>
@@ -249,17 +300,187 @@
     <string name="account_language_change">Change</string>
     <string name="account_language_detail">Parley speaks English and Traditional Chinese, and follows your phone\'s language by default. Change it for Parley alone in the system settings.</string>
 
+    <!-- Feedback & diagnostics (shared copy with iOS — spec §6) -->
+    <string name="feedback_section_title">Feedback &amp; diagnostics</string>
+    <string name="feedback_report_problem">Report a problem</string>
+    <string name="feedback_auto_crash">Send crash reports automatically</string>
+    <string name="feedback_auto_crash_footnote">Only the app version, device model, and where it crashed. Never your recordings or transcripts.</string>
+    <string name="feedback_report_title">Report a problem</string>
+    <string name="feedback_report_placeholder">What happened? (optional)</string>
+    <string name="feedback_report_screenshot">Screenshot of this screen</string>
+    <string name="feedback_report_remove_screenshot">Remove screenshot</string>
+    <string name="feedback_report_disclosure">The app version, device, and recent error log are attached. Never your recordings or transcripts.</string>
+    <string name="feedback_report_send">Send</string>
+    <string name="feedback_report_faq">FAQ</string>
+    <string name="feedback_sent">Sent. Thank you.</string>
+    <string name="feedback_send_diagnostics">Send us diagnostics</string>
+    <string name="feedback_dismiss">Dismiss</string>
+    <string name="feedback_empty_title">Nothing was transcribed</string>
+    <plurals name="feedback_empty_body">
+        <item quantity="one">Recorded for %1$d minute, but the transcript is empty.</item>
+        <item quantity="other">Recorded for %1$d minutes, but the transcript is empty.</item>
+    </plurals>
+    <string name="feedback_truncated">The transcript stops at %1$s. The rest wasn\'t transcribed.</string>
+    <string name="feedback_sync_failed">This recording keeps failing to sync.</string>
+    <plurals name="feedback_mic_recovery">
+        <item quantity="one">The microphone was interrupted %1$d time during this recording.</item>
+        <item quantity="other">The microphone was interrupted %1$d times during this recording.</item>
+    </plurals>
+    <string name="feedback_retranscribe_ask">What was wrong last time?</string>
+    <string name="retranscribe_tag_misheard">Misheard words</string>
+    <string name="retranscribe_tag_missing">Missing parts</string>
+    <string name="retranscribe_tag_speakers">Wrong speakers</string>
+    <string name="retranscribe_tag_other">Something else</string>
+    <string name="feedback_delete_offer">Deleted. Send us diagnostics for this recording?</string>
+    <string name="feedback_delete_offer_action">Send</string>
+    <string name="feedback_crash_title">Parley closed unexpectedly last time</string>
+    <string name="feedback_crash_body">Send a crash report? It doesn\'t include your recordings.</string>
+    <string name="feedback_crash_send">Send</string>
+    <string name="feedback_crash_decline">Don\'t send</string>
+    <string name="feedback_crash_always">Send automatically from now on</string>
+    <string name="feedback_screenshot_offer">Report this screen?</string>
+    <string name="feedback_screenshot_offer_action">Report</string>
+
     <!-- About -->
     <string name="account_about_title">About</string>
     <string name="account_version">Version %1$s (%2$d)</string>
-    <string name="account_about_detail">Live coaching and deep analysis live in the desktop app; the phone handles recording, transcribing, and reading back in-person meetings.</string>
+    <string name="account_about_detail">Live coaching and deep analysis live in the desktop app; the phone handles recording, transcribing, and reading back in-person meetings. On the Mac, Claude Code can also read your whole recording library over MCP.</string>
     <string name="link_desktop">Parley for desktop</string>
     <string name="link_privacy_policy">Privacy Policy</string>
-    <string name="link_support">Support &amp; feedback</string>
 
     <!-- Foreground service notification -->
     <string name="notification_channel_name">Meeting recording</string>
     <string name="notification_channel_description">Shows while Parley is recording a meeting.</string>
     <string name="notification_title">Recording a meeting</string>
     <string name="notification_text">Tap to return to Parley.</string>
+
+    <!-- Hand-off to the user's own AI. Word for word the iOS catalogue
+         (ios/App/Parley/Localizable.xcstrings): the same meeting hands off
+         identically from either phone. HandoffStringsParityTest checks it. -->
+    <string name="handoff_preamble">You are my meeting analyst. Below is the full transcript of a meeting. Read all of it first, then answer:</string>
+    <string name="handoff_question_summary">What was this meeting about and what was concluded? Five sentences or fewer.</string>
+    <string name="handoff_question_commitments">What did each side commit to? Include owner and timing.</string>
+    <string name="handoff_question_missed">What did I fail to ask, or should follow up on next time?</string>
+    <string name="handoff_closing">Quote the transcript\'s own words and give the timestamp when you answer.</string>
+    <string name="handoff_meeting">Meeting: %1$s (%2$s)</string>
+    <string name="handoff_context">Context: %1$s</string>
+    <string name="handoff_context_missing">not provided</string>
+    <string name="handoff_speakers">Speakers: %1$s</string>
+    <string name="handoff_transcript_header">--- Transcript ---</string>
+    <string name="handoff_line">%1$s: %2$s</string>
+    <string name="transcript_share_to_ai">Share to AI (with analysis prompt)</string>
+    <string name="transcript_copy_with_prompt">Copy with analysis prompt</string>
+
+    <!-- Getting started -->
+    <string name="getting_started_title">Do one lap, five minutes</string>
+    <string name="getting_started_progress_spoken">%1$d of %2$d done</string>
+    <string name="getting_started_not_now">Not now</string>
+    <string name="getting_started_done">Done</string>
+    <string name="getting_started_recorded">Record your first meeting</string>
+    <string name="getting_started_filed">Put it in a folder</string>
+    <string name="getting_started_replayed">Replay: tap a line to jump</string>
+    <string name="getting_started_shared">Share it with your AI</string>
+    <string name="getting_started_show_again">Show the getting-started list again</string>
+    <string name="getting_started_walk_through">Walk through it with the sample recording</string>
+    <string name="getting_started_continue">Continue →</string>
+    <string name="getting_started_transcribing">Transcribing…</string>
+    <!-- The guided lap's guide bar on the recording page (GuideBar, iOS #450) -->
+    <string name="guide_file_title" tools:ignore="TypographyFractions">1 / 3 · See what Parley did for you</string>
+    <string name="guide_file_body">Every recording gets a name and a suggested folder when it\'s done. You can change the title or pick your own folder — tap Accept or any folder to try it.</string>
+    <string name="guide_show_me">Show me</string>
+    <string name="guide_choose_folder">Choose a folder</string>
+    <string name="guide_filed">Filed. Every recording will get a suggestion like this.</string>
+    <string name="guide_filed_in">Filed in “%1$s”. Every recording will get a suggestion like this.</string>
+    <string name="guide_renamed_filed_in">Renamed and filed in “%1$s”. Every recording will do this from now on.</string>
+    <string name="guide_replay_title" tools:ignore="TypographyFractions">2 / 3 · Replay</string>
+    <string name="guide_replay_body">Tap any line and the audio jumps to that moment. Try it.</string>
+    <string name="guide_open_transcript">Open the transcript</string>
+    <string name="guide_replay_confirmed">That\'s it. Search finds any word you remember.</string>
+    <string name="guide_share_title" tools:ignore="TypographyFractions">3 / 3 · Hand it to your AI</string>
+    <string name="guide_share_body">Share it, paste it, and ask:</string>
+    <string name="guide_share_to_ai">Share to AI</string>
+    <string name="guide_copy_instead">Copy instead</string>
+    <string name="guide_done_named">Named and filed</string>
+    <string name="guide_done_replayed">Replayed</string>
+    <string name="guide_done_handed">Handed to your AI</string>
+    <string name="guide_done_body">That\'s a meeting in Parley: record → named and filed for you → replay → hand it to your AI. Next time it all happens on its own.</string>
+    <string name="guide_start_meeting">Start your first real meeting</string>
+    <string name="guide_mac_footnote">On a Mac, Claude Code can also read your whole recording library directly over MCP.</string>
+    <string name="recording_source_sample">SAMPLE</string>
+    <string name="sample_missing">The sample recording is no longer in the library.</string>
+    <!-- Library scope and folders (see HomeScreen, LibraryFolders) -->
+    <string name="library_scope_personal">Personal</string>
+    <string name="library_scope_choose">Switch between your personal and team recordings</string>
+    <string name="org_role_owner">Owner</string>
+    <string name="org_role_admin">Admin</string>
+    <string name="org_role_member">Member</string>
+    <string name="library_folder_all">All</string>
+    <string name="library_folder_unfiled">Unfiled</string>
+    <string name="library_empty_here">No recordings here yet.</string>
+    <string name="library_folder_meta">Folder</string>
+    <string name="home_error_forbidden_org">You don\'t have access to this organization\'s recordings any more.</string>
+    <!-- Library row actions -->
+    <string name="library_move_to_folder">Move to folder…</string>
+    <string name="library_share_to_org">Share to organization (copy)</string>
+    <string name="library_move_to_org">Move to organization</string>
+    <string name="library_menu_back">Back</string>
+    <string name="library_working">Updating…</string>
+    <!-- Audio on this phone, from the library row -->
+    <string name="library_download">Download</string>
+    <string name="library_remove_download">Remove download</string>
+    <string name="library_download_failed_retry">Download failed · Retry</string>
+    <string name="library_on_phone">On this phone</string>
+    <string name="library_downloading">Downloading</string>
+    <!-- The import that just landed, above the list -->
+    <string name="library_import_notice">Imported “%1$s”</string>
+    <string name="library_import_notice_shared">Imported “%1$s” and shared to “%2$s”</string>
+    <string name="library_action_error_title">That didn\'t go through</string>
+    <string name="library_move_failed">The recording wasn\'t moved. Check your connection and try again.</string>
+    <string name="library_move_forbidden">You don\'t have permission to move recordings in “%1$s”.</string>
+    <string name="library_share_forbidden">You don\'t have permission to share to “%1$s”.</string>
+    <string name="library_share_failed">The recording wasn\'t shared. Check your connection and try again.</string>
+    <string name="library_share_original_kept">A copy is now in “%1$s”, but the original couldn\'t be removed from your personal library. Delete it there when you\'re back online.</string>
+    <string name="home_delete_error_forbidden_org">Only the uploader or an admin can delete this recording.</string>
+    <string name="home_delete_confirm_body_org">This permanently deletes “%1$s” from “%2$s” for everyone in the organization. It cannot be undone.</string>
+    <!-- Folder picker (FolderPickerSheet) -->
+    <string name="folder_picker_title">Move to folder</string>
+    <string name="folder_picker_subtitle">One customer, one folder.</string>
+    <string name="folder_picker_search">Search folders</string>
+    <string name="folder_picker_new">New folder…</string>
+    <string name="folder_picker_create_named">Create “%1$s”</string>
+    <string name="folder_picker_name_hint">Folder name</string>
+    <string name="folder_picker_create">Create</string>
+    <string name="folder_picker_no_match">No folders match.</string>
+    <string name="folder_picker_current">Current folder</string>
+    <string name="folder_picker_create_failed">Couldn\'t create the folder. Check your connection and try again.</string>
+    <string name="folder_picker_suggested">Suggested</string>
+    <string name="folder_picker_all">All folders</string>
+    <!-- Default save location (AccountSheet) -->
+    <string name="account_save_location_title">Default save location</string>
+    <string name="account_save_location_personal_folder">Personal · %1$s</string>
+    <string name="account_save_location_org">Organization</string>
+    <string name="account_save_location_change">Change</string>
+    <string name="account_save_location_footer">Picking an organization still saves the recording to your personal space and shares a copy there — same as the desktop app.</string>
+
+    <!-- Filing suggestion (iOS FilingSuggestionCard) -->
+    <string name="filing_heading">Suggestion</string>
+    <string name="filing_thinking">Suggesting a name and a folder…</string>
+    <string name="filing_was">Was: %1$s</string>
+    <string name="filing_renamed">Renamed</string>
+    <string name="filing_accept">Accept</string>
+    <string name="filing_edit_title">Edit the title</string>
+    <string name="filing_title">Title</string>
+    <string name="filing_new_folder">New folder</string>
+    <string name="filing_existing_folder">Existing folder</string>
+    <string name="filing_choose_another">Choose another…</string>
+    <string name="filing_skip">Skip suggestion</string>
+    <string name="filing_write_failed">That didn\'t save. Try again.</string>
+    <string name="filing_done">Done</string>
+
+    <!-- What's New. The announcement copy itself is not here: it is the
+         repository's announcements/ folder, shared with iOS and the desktop.
+         whats_new_copy_language picks which of its two languages to show, so
+         the sheet speaks whatever language these resources resolved to. -->
+    <string name="whats_new_also">Also</string>
+    <string name="whats_new_copy_language">en</string>
 </resources>

@@ -15,7 +15,6 @@ import { open } from "@tauri-apps/plugin-dialog";
 import type { Settings, TranscriptSegment } from "../types";
 import { useStore } from "../store";
 import type { ReplaySession } from "./types";
-import type { SttProviderInfo } from "../transcription/providers";
 import { STT_BY_ID, sttApiKey, sttBatchUrl } from "../transcription/providers";
 import { normalizeTranscriptText } from "../textNormalize";
 import { languageHintsFromSettings } from "../transcription/languageHints";
@@ -23,6 +22,7 @@ import { vocabularyTerms } from "../dictionary";
 import { log } from "../log";
 import { recordUsage } from "../usage/log";
 import { sttCostUsd } from "../usage/pricing";
+import { translate } from "../../i18n/messages";
 
 /** Coarse progress stages surfaced to the UI while a recording is ingested. */
 export type IngestStage = "decoding" | "uploading" | "transcribing";
@@ -84,16 +84,15 @@ interface RustTranscriptionResult {
 }
 
 /**
- * How to obtain the credential this provider is missing. Hosted Parley has no
- * key field at all — it rides the signed-in cloud session — so the BYOK wording
- * would send the user hunting in Settings for a box that doesn't exist. Shared
- * by the upload gate and {@link transcribeRecording}, which check the same thing
- * at two different moments (before the picker, and again at invoke time).
+ * The message for a provider whose credential is missing. One wording covers
+ * both hosted Parley (which rides the signed-in session, no key field) and the
+ * BYOK providers (a key in Settings) — it names both ways out, so a hosted user
+ * is never sent hunting for a key box that doesn't exist. Shared by the upload
+ * gate and {@link transcribeRecording}, which check the same thing at two
+ * different moments (before the picker, and again at invoke time).
  */
-function missingCredentialMessage(info: SttProviderInfo): string {
-  return info.id === "parley"
-    ? "Sign in to Parley Cloud in Settings to transcribe recordings."
-    : `Add your ${info.label} API key in Settings to transcribe recordings.`;
+function missingCredentialMessage(settings: Settings): string {
+  return translate(settings.language, "ingest.error.noSttKey");
 }
 
 /** Throw (with the actionable message) unless the configured STT provider can
@@ -108,12 +107,12 @@ export function assertUploadTranscribable(settings: Settings): void {
     // Naming a specific replacement would go stale the moment the registry
     // changes (it already did once); every other provider handles uploads today.
     throw new Error(
-      `Uploading a recording isn't supported for ${info.label} yet — switch to another transcription provider in Settings.`,
+      translate(settings.language, "ingest.error.providerNoUpload", { provider: info.label }),
     );
   }
   if (!sttApiKey(settings, provider).trim()) {
     log.warn("ingest: missing stt credential", { provider });
-    throw new Error(missingCredentialMessage(info));
+    throw new Error(missingCredentialMessage(settings));
   }
 }
 
@@ -219,7 +218,7 @@ export async function transcribeRecording(
   const info = STT_BY_ID[provider];
   const apiKey = sttApiKey(settings, provider).trim();
   if (!apiKey) {
-    throw new Error(missingCredentialMessage(info));
+    throw new Error(missingCredentialMessage(settings));
   }
 
   const name = fileNameOf(audioPath);

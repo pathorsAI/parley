@@ -229,9 +229,10 @@ describe("talkTimeRatio", () => {
     expect(talkTimeRatio([fseg("mix", 0, 1000), fseg("mix", 1000, 2000)])).toBeNull();
   });
 
-  it("returns null when only the user was captured, as on Windows", () => {
-    // Windows never captures system audio, so a whole meeting arrives as "me".
-    // Reporting 100% there would slander every Windows user after every call.
+  it("returns null when only the user was captured (no system audio)", () => {
+    // Without system audio (the capture failed, or a Windows build before
+    // WASAPI loopback) a whole meeting arrives as "me". Reporting 100% there
+    // would slander the user after every such call.
     expect(talkTimeRatio([fseg("me", 0, 3000), fseg("me", 4000, 9000)])).toBeNull();
   });
 

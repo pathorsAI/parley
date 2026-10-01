@@ -306,6 +306,24 @@ public actor CloudClient: BatchTranscriptionService {
         }
     }
 
+    // MARK: feedback
+
+    /// `POST /feedback` (spec §3): one report, as `multipart/form-data`.
+    ///
+    /// The session token goes along when there is one, like on every other
+    /// call, and that is the only thing that ties a report to an account. The
+    /// server takes a report without it too — a signed-out user whose sign-in
+    /// is the thing that is broken is exactly who needs to be able to send one
+    /// — so a missing token is not a reason to hold a report back.
+    ///
+    /// Callers go through `FeedbackQueue.drain`, never straight here: see the
+    /// queue for why a report is always queued before it is sent.
+    public func submitFeedback(payload: Data, screenshot: Data?) async throws {
+        let form = MultipartFormData.feedback(payload: payload, screenshot: screenshot)
+        _ = try await request(
+            "feedback", method: "POST", body: form.body(), contentType: form.contentType)
+    }
+
     // MARK: hosted batch transcription
 
     /// Create a job from raw (already compressed) audio; the response is the id.
@@ -377,7 +395,9 @@ public actor CloudClient: BatchTranscriptionService {
             comps.queryItems = query
             if let built = comps.url { url = built }
         }
-        var req = URLRequest(url: url)
+        // Through `ParleyClientIdentity` so the build header is on every call,
+        // buffered or streamed, without any of them having to remember it.
+        var req = ParleyClientIdentity.request(url: url)
         if let timeout { req.timeoutInterval = timeout }
         req.httpMethod = method
         req.httpBody = body

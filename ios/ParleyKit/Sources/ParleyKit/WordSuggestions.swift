@@ -1,0 +1,241 @@
+import Foundation
+
+/// The text rules behind the English pane's suggestion bar: which letters count
+/// as the word being typed, what the user's own dictionary contributes, and how
+/// a lowercase list entry is given the case the user is typing in.
+///
+/// Pure functions over strings, deliberately: the keyboard extension is not
+/// testable — there is no host app, no field, no proxy on a machine running
+/// `swift test` — so everything that could be wrong about this lives here, on
+/// this side of the `textDocumentProxy`, where it has tests.
+///
+/// **Nothing here ever rewrites the user's text.** These functions answer "what
+/// could this become", and the only thing that acts on the answer is a tap. A
+/// keyboard that silently replaces a word it thinks is wrong is worse than one
+/// that suggests nothing, which is why there is no autocorrect anywhere in this
+/// file and no space-commits-the-suggestion rule.
+public enum WordSuggestions {
+    /// The word the user is in the middle of typing: the run of letters and
+    /// apostrophes immediately before the cursor.
+    ///
+    /// `context` is `textDocumentProxy.documentContextBeforeInput`, a clipped
+    /// run of text ending at the cursor. Empty whenever the character before
+    /// the cursor is not part of a word — after a space, after punctuation, at
+    /// the start of a field — which is when the bar turns to `predictions`.
+    ///
+    /// "Letter" is `Character.isLetter`, so it is Unicode's answer rather than
+    /// ASCII's: someone typing `café` on this keyboard is typing one word, and
+    /// clipping it at the `é` would ask the list about `caf`. Both apostrophes
+    /// count, because a field with smart quotes on turns the one the keyboard
+    /// typed into the other.
+    public static func partialWord(before context: String?) -> String {
+        guard let context, !context.isEmpty else { return "" }
+        var start = context.endIndex
+        while start > context.startIndex {
+            let previous = context.index(before: start)
+            guard isWordCharacter(context[previous]) else { break }
+            start = previous
+        }
+        return String(context[start...])
+    }
+
+    /// Whether a character belongs to the word being typed.
+    private static func isWordCharacter(_ character: Character) -> Bool {
+        character.isLetter || character == "'" || character == "\u{2019}"
+    }
+
+    /// The suggestion written in the case the user is typing in.
+    ///
+    /// Two rules and no more, both of them things the user has already said out
+    /// loud with the shift key: an ALL-CAPS partial of two letters or more asks
+    /// for an all-caps word, and a capitalised first letter asks for a
+    /// capitalised word. One uppercase letter alone is not evidence of caps
+    /// lock — it is the far commoner case of a sentence starting — so it takes
+    /// the second rule.
+    ///
+    /// A word that already carries case of its own (a name out of the user's
+    /// lexicon) is left alone by a lowercase partial, which is what makes
+    /// `kub` able to offer `Kubernetes`.
+    ///
+    /// Then one rule of English's own: the pronoun `I` and its contractions are
+    /// capitalised wherever they land, so `iam` offers `I am`.
+    public static func matchingCase(of word: String, like partial: String) -> String {
+        capitalizingPronounI(shiftCase(of: word, like: partial))
+    }
+
+    private static func shiftCase(of word: String, like partial: String) -> String {
+        let letters = partial.filter(\.isLetter)
+        guard let first = letters.first else { return word }
+        if letters.count >= 2, letters.allSatisfy(\.isUppercase) { return word.uppercased() }
+        guard first.isUppercase, let head = word.first else { return word }
+        return head.uppercased() + word.dropFirst()
+    }
+
+    /// Every suggestion on the bar passes through here, and almost none of them
+    /// contains a lowercase `i` at the start of a word — so a text with no `i`
+    /// at all is handed back as it is, before it is split into words and
+    /// joined again to the same string.
+    private static func capitalizingPronounI(_ text: String) -> String {
+        guard text.utf8.contains(UInt8(ascii: "i")) else { return text }
+        return text.split(separator: " ", omittingEmptySubsequences: false).map { word in
+            let folded = word.replacingOccurrences(of: "\u{2019}", with: "'")
+            guard folded == "i" || folded.hasPrefix("i'") else { return String(word) }
+            return "I" + word.dropFirst()
+        }.joined(separator: " ")
+    }
+
+    /// What to offer for a part-typed word: the user's own terms first, then the
+    /// partial read as two words run together (`thankyou` → `thank you`, see
+    /// `split`), then the bundled list, cased to match what they typed. The
+    /// split goes second instead, behind the best completion, when that
+    /// completion is a common word (`usin` offers `using`, then `us in`).
+    ///
+    /// The lexicon comes first because it is the one source that knows something
+    /// the corpus cannot — the names, jargon and product words this particular
+    /// person types — and because there are only ever a handful of them, so they
+    /// cost the bar almost nothing. It may be **empty**, and that is a supported
+    /// state rather than a failure: `LexiconStore` lives in the App Group, which
+    /// a keyboard without Full Access cannot open, and the pane has to keep
+    /// suggesting in exactly that state (App Review 4.4.1 judges it there).
+    ///
+    /// Deduplicated case-insensitively, so a term the user typed in themselves
+    /// does not appear twice because the word list has it too.
+    public static func suggestions(
+        for partial: String,
+        in words: EnglishWords,
+        lexiconTerms: [String] = [],
+        limit: Int = EnglishWords.suggestionLimit
+    ) -> [String] {
+        suggestions(for: partial, in: words, lexicon: LexiconTerms(lexiconTerms), limit: limit)
+    }
+
+    /// The user's terms with their lowercase forms beside them, made once
+    /// when the terms are read rather than on every keystroke.
+    ///
+    /// The bar matches a term by its lowercase form and deduplicates by it, and
+    /// lowercasing every term on every key was the one per-keystroke cost that
+    /// grew with the user's dictionary. The keyboard builds one of these when it
+    /// reads the lexicon — on appearance — and hands it to every lookup.
+    public struct LexiconTerms: Equatable {
+        /// As the user wrote them, which is how they are offered.
+        public let terms: [String]
+        /// `terms[i].lowercased()`, index for index.
+        let lowercased: [String]
+
+        public init(_ terms: [String]) {
+            self.terms = terms
+            lowercased = terms.map { $0.lowercased() }
+        }
+
+        public static let none = LexiconTerms([])
+    }
+
+    /// `suggestions(for:in:lexiconTerms:limit:)` with the lexicon already
+    /// lowercased — the form the keyboard calls on every keystroke.
+    public static func suggestions(
+        for partial: String,
+        in words: EnglishWords,
+        lexicon: LexiconTerms,
+        limit: Int = EnglishWords.suggestionLimit
+    ) -> [String] {
+        guard !partial.isEmpty, limit > 0 else { return [] }
+        // Lowercased once, and the list's form — apostrophes folded too — made
+        // from it rather than from the partial again. The lexicon is matched on
+        // the plain lowercase form, as it always has been.
+        let needle = partial.lowercased()
+        let normalized = EnglishWords.foldingApostrophes(needle)
+
+        var fromList = words.completions(forNormalized: normalized, limit: limit)
+        if let split = split(normalized: normalized, in: words) {
+            let beginsCommonWord =
+                fromList.first.flatMap(words.rank(of:)).map { $0 < commonWordRank } ?? false
+            fromList.insert(split, at: beginsCommonWord ? 1 : 0)
+        }
+
+        var out: [String] = []
+        var seen = Set<String>()
+        for (term, lowercased) in zip(lexicon.terms, lexicon.lowercased)
+        where lowercased.hasPrefix(needle) {
+            guard seen.insert(lowercased).inserted else { continue }
+            out.append(matchingCase(of: term, like: partial))
+            if out.count == limit { return out }
+        }
+        for candidate in fromList {
+            guard seen.insert(candidate.lowercased()).inserted else { continue }
+            out.append(matchingCase(of: candidate, like: partial))
+            if out.count == limit { break }
+        }
+        return out
+    }
+
+    static let commonWordRank = 20_000
+
+    /// Twice the longest list word. `split` tries every cut, and this keeps a
+    /// long run of letters that is not English from costing more per key.
+    private static let longestSplit = 40
+
+    /// The word list has no inflections (`results in`), so a half it lacks can
+    /// still be a known pair; it just loses to a pair whose halves are listed.
+    private static let unlistedRank = 1_000_000
+
+    /// The partial as a known pair from the next-word table with the space the
+    /// user missed, or `nil`.
+    ///
+    /// A partial that is itself a list word is never split: that is what keeps
+    /// `into`, `area`, `maybe` and `cannot` whole. Only a pair the table has
+    /// seen splits, and the table rather than the word list is what proves both
+    /// halves are words, so `unitedstates` becomes `united States`. Two list
+    /// words alone are not enough: that read `iphone` as `I phone` and
+    /// `occured` as `occur ed`. Among known pairs the most common wins, by the
+    /// rarer half's rank, and the right half keeps the table's case.
+    static func split(_ partial: String, in words: EnglishWords) -> String? {
+        split(normalized: EnglishWords.normalized(partial), in: words)
+    }
+
+    /// `split` for a partial already put through `EnglishWords.normalized`.
+    ///
+    /// Every cut is a single dictionary probe
+    /// (`EnglishWords.follower(ofNormalized:lowercased:)`). It used to copy the
+    /// left half's whole follower list and lowercase each entry to compare,
+    /// and this runs on most keystrokes in the middle of a word — every
+    /// partial that is not itself a list word, which is most of them.
+    static func split(normalized whole: String, in words: EnglishWords) -> String? {
+        guard whole.count <= longestSplit, words.rank(ofNormalized: whole) == nil else {
+            return nil
+        }
+        var best: (cost: Int, text: String)?
+        for cut in whole.indices.dropFirst() {
+            let left = String(whole[..<cut])
+            guard
+                let right = words.follower(ofNormalized: left, lowercased: String(whole[cut...]))
+            else { continue }
+            let cost = max(
+                words.rank(ofNormalized: left) ?? unlistedRank,
+                words.rank(of: right) ?? unlistedRank)
+            if cost < best?.cost ?? .max { best = (cost, left + " " + right) }
+        }
+        return best?.text
+    }
+
+    /// What to offer before a letter is typed: the words that most often follow
+    /// the one just finished.
+    ///
+    /// Only right after a word and exactly one space. Two spaces, punctuation,
+    /// a new line or an empty field say the sentence moved on, and guessing
+    /// across that would be guessing about nothing.
+    ///
+    /// The data's own case is kept whatever the previous word's case: `new `
+    /// offers `York`, and `Thank ` and `THANK ` both offer `you`, because an
+    /// all-caps word before a space is as often an acronym (`the US `) as caps
+    /// lock. The pronoun `I` is capitalised by the same rule as everywhere else.
+    public static func predictions(
+        after context: String?,
+        in words: EnglishWords,
+        limit: Int = EnglishWords.suggestionLimit
+    ) -> [String] {
+        guard let context, context.hasSuffix(" ") else { return [] }
+        let previous = partialWord(before: String(context.dropLast()))
+        guard !previous.isEmpty else { return [] }
+        return words.nextWords(after: previous, limit: limit).map(capitalizingPronounI)
+    }
+}

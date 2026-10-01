@@ -142,7 +142,7 @@ export function ShortcutSheet() {
               <div className="columns-1 gap-x-8 sm:columns-2">
                 {groups.map(({ group, rows }) => (
                   <section key={group} className="mb-5 break-inside-avoid">
-                    <h3 className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    <h3 className="mb-1.5 text-[11px] font-semibold text-muted-foreground">
                       {t(GROUP_LABEL_KEYS[group])}
                     </h3>
                     {rows.map(({ def, caps }) => (

@@ -3,18 +3,39 @@ import UIKit
 
 /// The keyboard's palette.
 ///
-/// The extension can't reach the app target's `Theme`, and it must not follow
-/// the *system* appearance either: a keyboard follows the appearance of the
-/// field it is typing into (`UITextDocumentProxy.keyboardAppearance`), which a
-/// dark-themed host app sets to `.dark` even while iOS is in light mode. Every
-/// color here therefore takes the resolved appearance explicitly rather than
-/// reading the trait collection.
+/// The extension can't reach the app target's `Theme`, and every colour here
+/// takes the resolved appearance explicitly rather than reading the trait
+/// collection: `KeyboardViewController.isDark` decides it once — the trait
+/// collection, or a host that asks for `.dark` — and the caps, the ink and the
+/// backdrop are all drawn from that one answer.
 ///
-/// The canvas is deliberately absent: the keyboard paints no background of its
-/// own so the system's `UIInputView` shows through, which is the only way the
-/// colour, the corner treatment and the extent line up with the system
-/// keyboard on every device and in every host app.
+/// The canvas is normally the system's: the keyboard lets its `UIInputView`
+/// show through, which is the only way the colour, the corner treatment and
+/// the extent line up with the system keyboard on every device and in every
+/// host app. It paints `backdrop` only when `isDark` disagrees with the style
+/// the system is painting in — see `KeyboardViewController.needsOwnBackdrop`.
 enum KBTheme {
+    /// The backdrop the keyboard paints when the system's would disagree with
+    /// the caps and ink drawn on it (a host forcing `.dark` on a light phone).
+    ///
+    /// Measured, not remembered: sampled between the keys of the system
+    /// keyboard on the iOS 26.5 simulator, in Reminders, light and dark —
+    /// see the design doc's *Painting the backdrop*.
+    static func backdrop(_ dark: Bool) -> UIColor {
+        dark
+            ? UIColor(red: 0x17 / 255, green: 0x17 / 255, blue: 0x17 / 255, alpha: 1)
+            : UIColor(red: 0xE2 / 255, green: 0xE4 / 255, blue: 0xE8 / 255, alpha: 1)
+    }
+
+    /// The sub-visible fill behind the pane track and the strip that makes
+    /// their empty points take touches (see `KeyboardRootView`). The backdrop's
+    /// own colour at 1%, so it tints nothing: white at 1% lifted the dark
+    /// keyboard from 23 to 25 over exactly the SwiftUI area, a two-level step
+    /// against the home indicator's strip below it.
+    static func hitFill(_ dark: Bool) -> Color {
+        Color(uiColor: backdrop(dark)).opacity(0.01)
+    }
+
     /// Parley's accent, matching the app's design tokens. Used for the accented
     /// return key (Go / Send / Search / Done), the way iOS tints it.
     static let accent = Color(red: 0.04, green: 0.52, blue: 1.0)
@@ -50,20 +71,29 @@ enum KBTheme {
 
     /// Key cap — deliberately lighter than the input view behind it in both
     /// appearances, the way system letter keys read.
+    ///
+    /// The dark value is measured, not remembered: on iOS 26.5 the system
+    /// keyboard draws its caps at sRGB 61/255 over a backdrop of about 24, and
+    /// `Color(white:)` is gamma-encoded, so 0.24 lands on exactly that grey.
     static func key(_ dark: Bool) -> Color {
-        dark ? Color(white: 0.28) : .white
+        dark ? Color(white: 0.24) : .white
     }
 
     static func keyPressed(_ dark: Bool) -> Color {
-        dark ? Color(white: 0.38) : Color(white: 0.85)
+        dark ? Color(white: 0.34) : Color(white: 0.85)
     }
 
     /// The duller cap iOS gives the keys that aren't letters — shift, delete,
     /// `123`, globe, return. Pressing one lightens it *towards* a letter key,
     /// which is the inverse of how a letter key behaves; that inversion is what
     /// makes the two families distinguishable under a finger.
+    ///
+    /// iOS 26's dark keyboard no longer draws the two families differently —
+    /// every cap is the same grey. The split is kept a step apart here anyway,
+    /// because an engaged shift is shown by borrowing the letter cap, and with
+    /// one grey for both it would have no way to look armed.
     static func keyAlt(_ dark: Bool) -> Color {
-        dark ? Color(white: 0.18) : Color(red: 0.68, green: 0.70, blue: 0.74)
+        dark ? Color(white: 0.17) : Color(red: 0.68, green: 0.70, blue: 0.74)
     }
 
     static func keyAltPressed(_ dark: Bool) -> Color {
@@ -107,6 +137,19 @@ enum KBTheme {
 enum KBMetrics {
     /// The Parley wordmark + mode picker above the keys.
     static let strip: CGFloat = 38
+
+    /// How the painted backdrop stays inside the system's keyboard card.
+    ///
+    /// On iOS 26.5 (iPhone 17 Pro) the system draws a card whose continuous
+    /// top corners begin at the top of this keyboard's view and only reach the
+    /// screen edge about 37pt down, with a 2px rim along the top and down the
+    /// sides in light mode. A backdrop 1pt in from the top and both sides, with
+    /// 32pt corners of its own, lies inside that curve everywhere; the sliver of
+    /// card it leaves is the same grey, so nothing shows. A square full-width
+    /// backdrop did show: its corners stuck out of the card's curve and it
+    /// covered the rim.
+    static let backdropInset: CGFloat = 1
+    static let backdropCorner: CGFloat = 32
 
     static let keyHeight: CGFloat = 42
     static let rowSpacing: CGFloat = 11
@@ -161,8 +204,9 @@ enum KBMetrics {
     static let voiceBottom: CGFloat = 11
 
     /// The live-transcript slot. Fixed height, so beginning to speak never
-    /// resizes the keyboard: idle it holds the prompt, listening it holds up to
-    /// three lines of what is being heard.
+    /// resizes the keyboard: idle it holds the prompt, listening it shows the
+    /// newest three lines of what is being heard and scrolls back for the rest
+    /// (`TranscriptScroll`).
     static let textHeight: CGFloat = 74
     static let textToDeck: CGFloat = 12
 

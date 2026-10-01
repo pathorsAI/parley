@@ -42,7 +42,7 @@ export function CopyButton({
   if (iconOnly) {
     return (
       <Button variant="ghost" size="icon" className={className} title={title} disabled={disabled} onClick={onClick}>
-        {copied ? <Check className="size-3 text-emerald-500" /> : <Copy className="size-3" />}
+        {copied ? <Check className="size-3 text-success-foreground" /> : <Copy className="size-3" />}
       </Button>
     );
   }
@@ -50,7 +50,7 @@ export function CopyButton({
     <Button variant="outline" size="sm" className={className} title={title} disabled={disabled} onClick={onClick}>
       {copied ? (
         <>
-          <Check className="size-3.5 text-emerald-500" />
+          <Check className="size-3.5 text-success-foreground" />
           <span>{t("settings.mcp.copied")}</span>
         </>
       ) : (

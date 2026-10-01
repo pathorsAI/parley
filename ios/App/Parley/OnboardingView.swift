@@ -24,12 +24,8 @@ struct OnboardingView: View {
                     Spacer(minLength: 24)
                     header
                     Spacer(minLength: 28)
-                    VStack(alignment: .leading, spacing: 22) {
-                        ForEach(Self.points, id: \.icon) { point in
-                            pointRow(point)
-                        }
-                    }
-                    .frame(maxWidth: 420)
+                    IntroStage()
+                        .frame(maxWidth: 420)
                     Spacer(minLength: 24)
                 }
                 .frame(maxWidth: .infinity)
@@ -61,58 +57,17 @@ struct OnboardingView: View {
             Text(verbatim: "Parley")
                 .font(.parley.wordmark(size: 40))
                 .foregroundStyle(Color(.label))
-            Text("A pocket recorder for the meetings you have in person — live transcript while you talk, in the cloud by the time you stand up.")
+            Text("Record it. Hand it to the AI you already use.")
+                .font(.parley.title3)
+                .foregroundStyle(Color(.label))
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Parley records in-person meetings, transcribes them live, and keeps them where your Mac and phone can both find them.")
                 .font(.parley.subheadline)
                 .foregroundStyle(Color(.secondaryLabel))
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
-    }
-
-    // MARK: what you get
-
-    private struct Point {
-        let icon: String
-        let title: LocalizedStringKey
-        let detail: LocalizedStringKey
-    }
-
-    private static let points: [Point] = [
-        Point(
-            icon: "record.circle",
-            title: "Put the phone on the table",
-            detail: "It picks up the whole room and keeps the speakers apart."),
-        Point(
-            icon: "text.bubble",
-            title: "Live transcription, no API key",
-            detail: "Sign in and ride our hosted transcription. The free tier covers everyday use."),
-        Point(
-            icon: "icloud",
-            title: "Recordings sync to your account",
-            detail: "Open a meeting you recorded on the phone in the desktop app for the deep analysis."),
-    ]
-
-    private func pointRow(_ point: Point) -> some View {
-        HStack(alignment: .top, spacing: 14) {
-            Image(systemName: point.icon)
-                .font(.parley.title3)
-                .frame(width: 28)
-                // Secondary, not blue: these three glyphs mark the list, they
-                // are not happening now and there is nothing to tap. The only
-                // blue on this screen is the button at the bottom.
-                .foregroundStyle(Color(.secondaryLabel))
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(point.title)
-                    .font(.parley.bodyEmphasized)
-                    .foregroundStyle(Color(.label))
-                Text(point.detail)
-                    .font(.parley.footnote)
-                    .foregroundStyle(Color(.secondaryLabel))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: sign in
@@ -152,7 +107,7 @@ struct OnboardingView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            Text("Email and password, Google, and Apple all work. Before any recording starts, Parley asks you to confirm everyone in the room has agreed to it.")
+            Text("Email and password, Google, and Apple all work.")
                 .font(.parley.caption)
                 .foregroundStyle(Color(.secondaryLabel))
                 .multilineTextAlignment(.center)

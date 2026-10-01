@@ -18,8 +18,8 @@ type Filter = "all" | Level;
 const FILTERS: Filter[] = ["all", "error", "warn", "info", "debug"];
 const RANK: Record<Level, number> = { error: 4, warn: 3, info: 2, debug: 1 };
 const LEVEL_CLASS: Record<Level, string> = {
-  error: "text-red-400",
-  warn: "text-amber-400",
+  error: "text-danger-foreground",
+  warn: "text-warning-foreground",
   info: "text-foreground/80",
   debug: "text-muted-foreground",
 };

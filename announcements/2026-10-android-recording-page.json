@@ -1,0 +1,22 @@
+{
+  "id": "2026-10-android-recording-page",
+  "ships": { "ios": null, "android": "1.17", "desktop": null },
+  "audience": "all",
+  "cta": { "android": null },
+  "copy": {
+    "zh-Hant": {
+      "badge": "1.17 更新",
+      "title": "錄音頁改版：先看摘要，再回到那句話",
+      "body": "打開錄音會先看到摘要、重點與待辦，點任何時間就跳到逐字稿的那一句。播放器上下拖曳可以精細調整，也會記住你的播放速度。",
+      "also": "錄音庫可以直接下載音檔；錄音中網路斷掉會顯示「重新連線中」。",
+      "button": "好"
+    },
+    "en": {
+      "badge": "New in 1.17",
+      "title": "A recording page that starts with the summary",
+      "body": "Open a recording to see its brief, highlights and action items first. Tap any time to jump to that line in the transcript. Drag away from the player to scrub finely, and your playback speed is remembered.",
+      "also": "Download audio from the Library, and a dropped connection mid-meeting now says it is reconnecting.",
+      "button": "Got it"
+    }
+  }
+}

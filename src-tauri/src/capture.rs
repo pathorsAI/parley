@@ -240,36 +240,6 @@ pub fn spawn_capture<S: AudioSource>(
 /// `stop_meeting`.
 pub type RecorderBuf = Arc<Mutex<Option<Vec<i16>>>>;
 
-/// Run a transcription session over `rx`, counting the audio streamed so the
-/// frontend can bill it. Emits a `usage://stt` event when the session ends.
-/// When `recorder` is `Some`, every chunk is also appended to it so the meeting
-/// can be saved to history (only the designated session passes a recorder).
-/// `error_event` is the event a failed session raises, payload
-/// `{ source, code, message }`: meetings pass `meeting://error` (the meeting UI
-/// tears down on it), voice typing passes `voicetyping://error` (the host
-/// forwards it to the overlay's error state).
-///
-/// `error_mute`: session tasks outlive `stop_meeting` by up to the flush/abort
-/// grace, and the meeting UI tears down on `meeting://error` unconditionally —
-/// so a failure inside that window (it belongs to a meeting the user already
-/// ended) would kill the NEXT meeting the user just started, or toast a
-/// spurious failure for one that completed fine. `stop_meeting` sets the flag
-/// when it releases its tasks; a muted failure is logged only. Voice typing
-/// passes `None` — its stale-error guards are abort-on-restart plus the
-/// host-side busy/generation checks.
-///
-/// `cutoff`: voice typing sets this on release (see `stop_voice_typing`) to HARD
-/// CUT the audio the instant the key is let go — the counter stops forwarding
-/// (and billing) new chunks and drops its sender, closing the STT input NOW so
-/// only what was said before release is transcribed and flushed. Meetings pass
-/// `None` (they stop by dropping the mic sender via the gate).
-///
-/// `paused`: the meeting's pause switch (see `set_meeting_paused`). While set,
-/// chunks are DROPPED here — not counted (billed), not recorded, not forwarded
-/// to the STT adapter. The socket survives on the adapters' audio-independent
-/// keepalives, and since providers timestamp by received-audio time, the
-/// transcript timeline stays aligned with the pause-compacted recording.
-/// Voice typing passes `None`.
 /// The sample counter interposed between capture and the STT adapter: forwards
 /// every chunk untouched, tees into the recording buffer, and yields the total
 /// sample count once the input closes so the caller can bill the audio actually
@@ -326,6 +296,39 @@ async fn meter_chunks(
     samples
 }
 
+/// Run a transcription session over `rx`, counting the audio streamed so the
+/// frontend can bill it. Emits a `usage://stt` event when the session ends.
+/// When `recorder` is `Some`, every chunk is also appended to it so the meeting
+/// can be saved to history (only the designated session passes a recorder).
+/// `error_event` is the event a failed session raises, payload
+/// `{ source, code, message }`: meetings pass `meeting://error` (the meeting UI
+/// tears down on it), voice typing passes `voicetyping://error` (the host
+/// forwards it to the overlay's error state).
+///
+/// `error_mute`: session tasks outlive `stop_meeting` by up to the flush/abort
+/// grace, and the meeting UI tears down on `meeting://error` unconditionally —
+/// so a failure inside that window (it belongs to a meeting the user already
+/// ended) would kill the NEXT meeting the user just started, or toast a
+/// spurious failure for one that completed fine. `stop_meeting` sets the flag
+/// when it releases its tasks; a muted failure is logged only. Voice typing
+/// passes `None` — its stale-error guards are abort-on-restart plus the
+/// host-side busy/generation checks.
+///
+/// `cutoff`: voice typing sets this on release (see `stop_voice_typing`) to HARD
+/// CUT the audio the instant the key is let go — the counter stops forwarding
+/// (and billing) new chunks and drops its sender, closing the STT input NOW so
+/// only what was said before release is transcribed and flushed. Meetings pass
+/// `None` (they stop by dropping the mic sender via the gate).
+///
+/// `paused`: the meeting's pause switch (see `set_meeting_paused`). While set,
+/// chunks are DROPPED here — not counted (billed), not recorded, not forwarded
+/// to the STT adapter. The socket survives on the adapters' audio-independent
+/// keepalives, and since providers timestamp by received-audio time, the
+/// transcript timeline stays aligned with the pause-compacted recording.
+/// Voice typing passes `None`.
+///
+/// `session`: the voice-typing session id, stamped on every event the task
+/// emits (see `transcription::common::SESSION`). Meetings pass `None`.
 #[allow(clippy::too_many_arguments)]
 pub fn run_metered_session(
     app: &AppHandle,
@@ -338,9 +341,10 @@ pub fn run_metered_session(
     error_mute: Option<Arc<AtomicBool>>,
     cutoff: Option<Arc<AtomicBool>>,
     paused: Option<Arc<AtomicBool>>,
+    session: Option<u64>,
 ) -> tauri::async_runtime::JoinHandle<()> {
     let app = app.clone();
-    tauri::async_runtime::spawn(async move {
+    tauri::async_runtime::spawn(transcription::common::SESSION.scope(session, async move {
         // Interpose a sample counter between capture and the STT adapter: it
         // forwards every chunk untouched, then yields the total once the input
         // closes so we can bill the audio duration actually streamed.
@@ -390,7 +394,12 @@ pub fn run_metered_session(
             } else {
                 let _ = app.emit(
                     error_event,
-                    serde_json::json!({ "source": label, "code": code, "message": msg }),
+                    serde_json::json!({
+                        "source": label,
+                        "code": code,
+                        "message": msg,
+                        "session": session,
+                    }),
                 );
             }
         }
@@ -411,8 +420,11 @@ pub fn run_metered_session(
         // meetings have their own teardown and ignore it. Deliberately NOT
         // reached when the task is aborted (a superseded session must never
         // finalize its successor's overlay).
-        let _ = app.emit("stt://closed", serde_json::json!({ "source": label }));
-    })
+        let _ = app.emit(
+            "stt://closed",
+            serde_json::json!({ "source": label, "session": session }),
+        );
+    }))
 }
 
 #[cfg(test)]

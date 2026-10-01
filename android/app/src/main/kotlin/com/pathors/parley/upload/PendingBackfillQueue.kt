@@ -46,8 +46,10 @@ data class BackfillRequest(
      * top of somebody's speaker names and analysis. See
      * [RecordingMeta.replacingTranscript].
      *
-     * Null for the automatic path, which has nothing to preserve: the recording
-     * was created seconds ago by the upload that queued this.
+     * Null for the automatic path, which re-reads the meta from the cloud
+     * right before it pushes instead: the recording was created seconds before
+     * it was queued, but the run happens minutes or a launch later, and by then
+     * it may have been renamed, moved or filed.
      */
     val existingMeta: JsonObject? = null,
     /**
@@ -56,6 +58,17 @@ data class BackfillRequest(
      * transcript being replaced.
      */
     val existingSummary: RecordingSummary? = null,
+    /**
+     * When a run last started on this request, epoch ms — null when none ever
+     * has, which a freshly queued request and a manifest from an older build
+     * share. Stamped before the work starts, so a run the system killed still
+     * leaves its time behind: it is what lets the recording page say "waiting,
+     * last tried 5 minutes ago" instead of claiming the run is still going
+     * (iOS `BackfillRequest.lastAttemptAt`).
+     */
+    val lastAttemptAtMs: Long? = null,
+    /** How many runs have started on this request. */
+    val attemptCount: Int = 0,
 ) {
     val id: String get() = pending.id
 

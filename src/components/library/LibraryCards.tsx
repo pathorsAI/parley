@@ -83,19 +83,19 @@ export function SyncIcon({ sync, signedIn }: Readonly<{ sync: HistorySyncState; 
   if (sync === "synced")
     return (
       <span className="inline-flex" title={t("history.sync.synced")}>
-        <CloudCheck className="size-3 text-emerald-500/90" />
+        <CloudCheck className="size-3 text-success-foreground" />
       </span>
     );
   if (sync === "stale")
     return (
       <span className="inline-flex" title={t("history.sync.stale")}>
-        <RefreshCw className="size-3 text-amber-500/90" />
+        <RefreshCw className="size-3 text-warning-foreground" />
       </span>
     );
   if (sync === "cloud")
     return (
       <span className="inline-flex" title={t("history.sync.cloudOnly")}>
-        <CloudDownload className="size-3 text-sky-500/90" />
+        <CloudDownload className="size-3 text-info-foreground" />
       </span>
     );
   return (
@@ -173,7 +173,7 @@ function MenuShell({
         onClick={(ev) => ev.stopPropagation()}
         onKeyDown={(ev) => ev.stopPropagation()}
       >
-        <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
+        <div className="px-2 py-1 text-[11px] font-semibold text-muted-foreground">
           {title}
         </div>
         {children}
@@ -355,7 +355,7 @@ export function MoveDialog({
       />
       <div className="relative w-full max-w-sm rounded-lg border bg-popover p-4 shadow-lg">
         <div className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
-          <UsersRound className="size-4 text-sky-500" />
+          <UsersRound className="size-4 text-muted-foreground" />
           {t("history.move.title", { org: orgName })}
         </div>
         <p className="mb-4 text-xs leading-relaxed text-muted-foreground">
@@ -532,7 +532,7 @@ export function LibraryCard({
     <>
       <span
         className={`inline-flex w-fit items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
-          isLive ? "bg-red-500/15 text-red-500" : "bg-sky-500/15 text-sky-500"
+          isLive ? "bg-info text-info-foreground" : "bg-muted text-muted-foreground"
         }`}
       >
         {isLive ? <Mic className="size-2.5" /> : <Upload className="size-2.5" />}
@@ -613,9 +613,9 @@ export function LibraryCard({
   );
   const card = (
     <div
-      className={`group relative flex flex-col gap-2 rounded-lg border bg-card p-3 text-left transition hover:border-foreground/25 hover:shadow-sm ${
-        isCloudOnly ? "border-dashed" : ""
-      }`}
+      // A row in a hairline-separated list, not a boxed card: the list's
+      // dividers do the separating (cloud-only reads as dimmed, below).
+      className="group relative flex flex-col gap-2 px-2 py-3 text-left transition-colors hover:bg-muted/60"
     >
       {!editing && (
         <CardActions
@@ -656,7 +656,7 @@ export function LibraryCard({
       )}
 
       {downloading && (
-        <div className="absolute inset-0 z-20 grid place-items-center rounded-lg bg-background/60 backdrop-blur-sm">
+        <div className="absolute inset-0 z-20 grid place-items-center bg-background/60 backdrop-blur-sm">
           <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
             <Loader2 className="size-3.5 animate-spin" />
             {t("history.sync.downloading")}

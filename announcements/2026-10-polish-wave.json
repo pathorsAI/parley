@@ -1,0 +1,23 @@
+{
+  "id": "2026-10-polish-wave",
+  "ships": { "ios": "1.24", "android": null, "desktop": null },
+  "audience": "keyboard",
+  "hero": "keyboard-wave",
+  "cta": { "ios": null },
+  "copy": {
+    "zh-Hant": {
+      "badge": "1.24 更新",
+      "title": "按下停止後，看得到它在潤飾",
+      "body": "講完按停止，文字會亮起一道波，代表 AI 正在潤飾。不想等的話，再按一次就直接插入原文。",
+      "also": "長段文字超過三行時，可以往上捲回去看。",
+      "button": "好"
+    },
+    "en": {
+      "badge": "New in 1.24",
+      "title": "Watch Parley polish after you stop",
+      "body": "When you tap stop, a wave runs through your words while AI polishes them. Don't want to wait? Tap again to insert the raw text.",
+      "also": "Long dictations now scroll, so you can read back past three lines.",
+      "button": "Got it"
+    }
+  }
+}

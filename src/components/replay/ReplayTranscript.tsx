@@ -2,11 +2,13 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useI18n } from "../../i18n";
-import { speakerBadgeClass } from "../../lib/speakerColors";
 import { modChordCap } from "../../lib/commands/format";
 import { speakerLabel, speakerKey, defaultSpeakerLabel, formatClock, isTrimmed, useStore, type ReplayTrim } from "../../lib/store";
 import { cn } from "@/lib/utils";
 import { useCommandShortcut } from "../../lib/commands/bind";
+import { markGettingStarted, useHint } from "../../lib/onboarding/gettingStarted";
+import { useLapContext } from "../../lib/onboarding/lap";
+import { emitTranscriptSeek } from "../../lib/onboarding/motion";
 import type { TranscriptSegment } from "../../lib/types";
 
 interface ReplayTranscriptProps {
@@ -38,6 +40,9 @@ interface ReplayTranscriptProps {
  * same store action the live SpeakerBar uses, so the rename applies to every line
  * of that speaker and to the analysis context at once.
  */
+/** How long the guide bar's first-line pulse runs. */
+const FIRST_LINE_PULSE_MS = 2000;
+
 export function ReplayTranscript({
   segments,
   speakerNames,
@@ -56,6 +61,42 @@ export function ReplayTranscript({
   const seekNonce = useStore((s) => s.replaySeekNonce);
   // Which speaker key is being edited inline (null = none).
   const [editingKey, setEditingKey] = useState<string | null>(null);
+  // First-visit hint: the transcript is a seek surface, and ⌘F searches it.
+  // Not in the ingest-wizard preview, where neither is the point.
+  const [seekHintVisible, dismissSeekHint] = useHint("replay.seek");
+  // The guide bar teaches the same thing while it's up; saying it twice is noise.
+  const lap = useLapContext();
+  const showSeekHint = seekHintVisible && !preview && !lap.visible;
+
+  // While the guide bar is on its replay step, the first line pulses once, for
+  // about two seconds — "this, click this" — then settles.
+  const pulseDue = !preview && lap.visible && lap.phase === "replayed" && !lap.justCompleted;
+  const [pulsing, setPulsing] = useState(false);
+  const pulsed = useRef(false);
+  useEffect(() => {
+    if (!pulseDue || pulsed.current) return;
+    setPulsing(true);
+    // Spent only once it has run its course (a StrictMode re-mount restarts it).
+    const id = setTimeout(() => {
+      pulsed.current = true;
+      setPulsing(false);
+    }, FIRST_LINE_PULSE_MS);
+    return () => {
+      clearTimeout(id);
+      setPulsing(false);
+    };
+  }, [pulseDue]);
+
+  // A line click is the user's seek — it ticks the checklist (not in the wizard
+  // preview) and retires the hint that taught it.
+  function seekToLine(ms: number) {
+    // Before the seek lands, so the scrubber has its easing on when it moves.
+    if (!preview) emitTranscriptSeek(ms);
+    onSeek(ms);
+    if (preview) return;
+    markGettingStarted("replayed");
+    if (seekHintVisible) dismissSeekHint();
+  }
 
   // Ctrl/⌘F-style find: a floating bar over the transcript. A "match" is a LINE
   // (segment) whose text contains the query — Enter/arrows jump line-to-line and
@@ -190,7 +231,7 @@ export function ReplayTranscript({
             {trimmedQuery && (
               <span
                 className={cn(
-                  "select-none whitespace-nowrap px-1 font-mono text-[10px] tabular-nums",
+                  "select-none whitespace-nowrap px-1 text-[10px] tabular-nums",
                   matchIds.length === 0 ? "text-destructive" : "text-muted-foreground"
                 )}
               >
@@ -242,6 +283,23 @@ export function ReplayTranscript({
         ))}
       <ScrollArea className="h-full">
         <div className="mx-auto flex max-w-3xl flex-col gap-1 px-4 py-4">
+          {showSeekHint && (
+            // pr-10 keeps the × clear of the floating search button.
+            <div className="mb-1 flex items-center gap-2 border-b border-border pb-2 pl-2 pr-10 text-xs text-muted-foreground">
+              <span className="min-w-0 flex-1">
+                {t("replay.seekHint", { shortcut: modChordCap("F") })}
+              </span>
+              <button
+                type="button"
+                aria-label={t("common.dismiss")}
+                title={t("common.dismiss")}
+                onClick={dismissSeekHint}
+                className="grid size-5 shrink-0 place-items-center rounded text-muted-foreground hover:text-foreground"
+              >
+                <X className="size-3.5" />
+              </button>
+            </div>
+          )}
           {rows.map((seg, i) => {
             const masked = !preview && seg.startMs > playheadMs;
             const trimmed = isTrimmed(seg, trim);
@@ -260,20 +318,21 @@ export function ReplayTranscript({
                 className={cn(
                   "group flex w-full cursor-pointer select-text gap-2.5 rounded-md px-2 py-1.5 text-left text-sm leading-6 transition-colors",
                   "hover:bg-muted/60",
-                  active && "bg-primary/10 ring-1 ring-primary/30",
-                  isCurrentMatch && "ring-1 ring-amber-400/70",
+                  active && "bg-primary/10",
+                  isCurrentMatch && "ring-1 ring-warning-border",
+                  pulsing && i === 0 && "ob-soft-pulse bg-primary/10 ring-1 ring-primary/30",
                   masked && "opacity-35",
                   trimmed && "opacity-50"
                 )}
               >
                 <button
                   type="button"
-                  onClick={() => onSeek(seg.startMs)}
-                  className="mt-0.5 w-9 shrink-0 select-none text-right font-mono text-[10px] tabular-nums text-muted-foreground"
+                  onClick={() => seekToLine(seg.startMs)}
+                  className="mt-0.5 w-9 shrink-0 select-none text-right text-[11px] tabular-nums text-muted-foreground"
                 >
                   {formatClock(seg.startMs)}
                 </button>
-                <span className="flex min-w-0 flex-1 items-start">
+                <span className="flex min-w-0 flex-1 flex-col items-start">
                   {showBadge &&
                     (editingKey === key ? (
                       <SpeakerNameInput
@@ -294,19 +353,16 @@ export function ReplayTranscript({
                           e.stopPropagation();
                           setEditingKey(key);
                         }}
-                        className={cn(
-                          "mr-1.5 inline-flex translate-y-[-1px] cursor-text items-center rounded-md px-1.5 py-0.5 align-middle text-[10px] font-medium uppercase tracking-wide ring-1 hover:ring-2",
-                          speakerBadgeClass(seg)
-                        )}
+                        className="cursor-text text-left text-xs font-semibold text-muted-foreground hover:text-foreground"
                       >
                         {speakerLabel(seg, speakerNames)}
                       </button>
                     ))}
                   <button
                     type="button"
-                    onClick={() => onSeek(seg.startMs)}
+                    onClick={() => seekToLine(seg.startMs)}
                     className={cn(
-                      "min-w-0 flex-1 text-left",
+                      "w-full min-w-0 text-left",
                       active ? "text-foreground" : "text-foreground/90",
                       trimmed && "line-through"
                     )}
@@ -325,7 +381,7 @@ export function ReplayTranscript({
 
 /**
  * Wrap every case-insensitive occurrence of `query` in a <mark>. Marks on the
- * current match row are stronger (amber) than on the other matching rows, the
+ * current match row are stronger than on the other matching rows, the
  * same current-vs-rest convention as a browser's find bar.
  */
 function highlightMatches(text: string, query: string, current: boolean): ReactNode {
@@ -342,7 +398,7 @@ function highlightMatches(text: string, query: string, current: boolean): ReactN
         key={at}
         className={cn(
           "rounded-[2px] text-inherit",
-          current ? "bg-amber-400/80 dark:bg-amber-400/50" : "bg-yellow-300/50 dark:bg-yellow-400/25"
+          current ? "bg-warning-border" : "bg-warning"
         )}
       >
         {text.slice(at, from)}
@@ -387,7 +443,7 @@ function SpeakerNameInput({
         else if (e.key === "Escape") onCancel();
       }}
       onBlur={(e) => onCommit(e.currentTarget.value)}
-      className="mr-1.5 inline-flex h-5 w-28 translate-y-[-1px] rounded-md border border-input bg-background px-1.5 align-middle text-[11px] focus:outline-none focus:ring-1 focus:ring-ring"
+      className="mb-0.5 h-5 w-28 rounded-md border border-input bg-background px-1.5 text-[11px] focus:outline-none focus:ring-1 focus:ring-ring"
     />
   );
 }

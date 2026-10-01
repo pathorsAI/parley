@@ -309,7 +309,7 @@ function iconFor(target: QuickTarget): ReactNode {
     case "voice":
       return <Mic className="size-3.5" />;
     case "org":
-      return <UsersRound className="size-3.5 text-sky-500" />;
+      return <UsersRound className="size-3.5" />;
     case "recording":
       return <AudioLines className="size-3.5" />;
   }

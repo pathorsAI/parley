@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { log } from "../lib/log";
 import { Check, Download, Loader2, LogIn, LogOut, Monitor, Moon, PlugZap, Plus, ScrollText, Sun, Trash2 } from "lucide-react";
 import { useStore } from "../lib/store";
+import { resetGettingStarted } from "../lib/onboarding/gettingStarted";
 import { LANGUAGE_OPTIONS, useI18n, type TranslationKey } from "../i18n";
 import { broadcastSettings, SETTINGS_NAVIGATE_EVENT } from "../lib/settingsSync";
 import { signInWithGoogle, signOut, CloudError } from "../lib/cloud/client";
@@ -29,8 +30,10 @@ import { fetchLatestReleaseNotes, markReleaseNotesSeen, type ReleaseNotes } from
 import { useThemePreference } from "../lib/theme";
 import { LevelMeter } from "../components/LevelMeter";
 import { clientLabel, connState, relativeTime, type McpActivityInfo } from "../components/McpStatusChip";
+import { claudeCodeCommand, mcpClientConfigJson, type McpServerInfo } from "../lib/mcp/connect";
 import { ReleaseNotesDialog } from "../components/ReleaseNotesDialog";
 import { UsagePanel } from "./UsagePanel";
+import { CachesPanel } from "./CachesPanel";
 import { STT_PROVIDERS, STT_BY_ID } from "../lib/transcription/providers";
 import { Button } from "@/components/ui/button";
 import { CopyButton } from "@/components/CopyButton";
@@ -55,12 +58,12 @@ import {
 import { missingProviderRequirement } from "../lib/ai/settings";
 import { runConnectionTest, type ConnectionTestResult } from "../lib/ai/connectionTest";
 
-/** Tailwind classes for each provider tag tone (dark + light). */
+/** Tailwind classes for each provider tag tone (status tokens adapt to light/dark). */
 const PROVIDER_TAG_TONES: Record<ProviderTagTone, string> = {
-  smart: "bg-violet-500/15 text-violet-600 dark:text-violet-300",
-  fast: "bg-amber-500/15 text-amber-600 dark:text-amber-300",
-  local: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300",
-  value: "bg-sky-500/15 text-sky-600 dark:text-sky-300",
+  smart: "bg-primary/10 text-primary",
+  fast: "bg-warning text-warning-foreground",
+  local: "bg-success text-success-foreground",
+  value: "bg-info text-info-foreground",
   default: "bg-muted text-muted-foreground",
 };
 import type { AppLanguage, AppTheme, EvalDef, LlmProvider,
@@ -73,12 +76,6 @@ import { PermissionsPanel } from "./PermissionsPanel";
 // The panel ids live in the store as SettingsCategory so other surfaces (e.g.
 // the titlebar 🌐 menu) can deep-link a panel without importing this file.
 type Category = import("../lib/store").SettingsCategory;
-
-interface McpServerInfo {
-  running: boolean;
-  endpoint: string;
-  templates_path: string;
-}
 
 // `cloudOnly` entries (the account/orgs page) are compiled out of the OSS edition,
 // which has no sign-in at all — so they never appear in that build's nav.
@@ -200,6 +197,19 @@ export function SettingsApp() {
     }
   }
   const sttInfo = STT_BY_ID[settings.transcriptionProvider];
+
+  /** Bring the main window forward and close Settings so it isn't hidden behind it. */
+  async function focusMainWindow() {
+    if (!isTauri()) return;
+    try {
+      const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      await (await WebviewWindow.getByLabel("main"))?.setFocus();
+      await getCurrentWindow().close();
+    } catch {
+      /* ignore */
+    }
+  }
 
   function patch(p: Partial<Settings>) {
     updateSettings(p);
@@ -343,7 +353,7 @@ export function SettingsApp() {
             type="button"
             onClick={() => setCat(n.id)}
             className={`cursor-pointer rounded-md px-2.5 py-1.5 text-left text-sm transition-colors ${
-              cat === n.id ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"
+              cat === n.id ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"
             }`}
           >
             {t(n.labelKey)}
@@ -415,7 +425,7 @@ export function SettingsApp() {
                   />
                   <p className="text-[11px] text-muted-foreground">{t("settings.account.defaultSave.desc")}</p>
                   {!settings.syncEnabled && (
-                    <p className="text-[11px] text-amber-500">{t("settings.account.defaultSave.syncOffHint")}</p>
+                    <p className="text-[11px] text-warning-foreground">{t("settings.account.defaultSave.syncOffHint")}</p>
                   )}
                 </div>
               </Field>
@@ -507,27 +517,36 @@ export function SettingsApp() {
               </div>
             </Field>
             <Field label={t("settings.basic.setup")}>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 w-fit text-xs"
-                onClick={async () => {
-                  patch({ onboarded: false, onboardingStep: 0 });
-                  // The onboarding renders on the MAIN window — bring it forward
-                  // and close this Settings window so it isn't hidden behind it.
-                  if (!isTauri()) return;
-                  try {
-                    const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
-                    const { getCurrentWindow } = await import("@tauri-apps/api/window");
-                    await (await WebviewWindow.getByLabel("main"))?.setFocus();
-                    await getCurrentWindow().close();
-                  } catch {
-                    /* ignore */
-                  }
-                }}
-              >
-                {t("settings.basic.rerunSetup")}
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 w-fit text-xs"
+                  onClick={async () => {
+                    patch({ onboarded: false, onboardingStep: 0 });
+                    // The onboarding renders on the MAIN window — bring it forward
+                    // and close this Settings window so it isn't hidden behind it.
+                    await focusMainWindow();
+                  }}
+                >
+                  {t("settings.basic.rerunSetup")}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 w-fit text-xs"
+                  onClick={async () => {
+                    // The checklist lives on the main window's Home — same hand-off.
+                    resetGettingStarted();
+                    await broadcastSettings({ ...useStore.getState().settings }).catch((error) =>
+                      log.warn("settings: broadcast failed", { error: String(error) }),
+                    );
+                    await focusMainWindow();
+                  }}
+                >
+                  {t("settings.basic.showGettingStarted")}
+                </Button>
+              </div>
             </Field>
             <Field label={t("settings.update.title")}>
               {appVersion && (
@@ -694,7 +713,7 @@ export function SettingsApp() {
               </Field>
             )}
             {!sttInfo.diarization && (
-              <p className="max-w-md rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">
+              <p className="max-w-md rounded-md border border-warning-border bg-warning px-3 py-2 text-[11px] leading-relaxed text-warning-foreground">
                 {t("settings.transcription.noDiarizationWarning")}
               </p>
             )}
@@ -949,8 +968,8 @@ export function SettingsApp() {
                   <span
                     className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
                       mcpInfo?.running
-                        ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
-                        : "bg-amber-500/15 text-amber-600 dark:text-amber-300"
+                        ? "bg-success text-success-foreground"
+                        : "bg-warning text-warning-foreground"
                     }`}
                   >
                     {mcpInfo?.running ? t("settings.mcp.running") : t("settings.mcp.starting")}
@@ -980,7 +999,7 @@ export function SettingsApp() {
                 <span
                   className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
                     ["active", "connected"].includes(connState(mcpActivity, Date.now()))
-                      ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
+                      ? "bg-success text-success-foreground"
                       : "bg-muted text-muted-foreground"
                   }`}
                 >
@@ -997,7 +1016,7 @@ export function SettingsApp() {
                   : "—"}
               </div>
               <div className="mt-2 border-t pt-2">
-                <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
+                <div className="mb-1 text-[11px] font-semibold text-muted-foreground">
                   {t("mcp.panel.activity")}
                 </div>
                 {mcpActivity?.recent?.length ? (
@@ -1007,8 +1026,8 @@ export function SettingsApp() {
                         <span
                           className={`w-6 shrink-0 rounded px-1 text-center text-[9.5px] font-semibold ${
                             e.kind === "write"
-                              ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
-                              : "bg-sky-500/15 text-sky-600 dark:text-sky-400"
+                              ? "bg-warning text-warning-foreground"
+                              : "bg-info text-info-foreground"
                           }`}
                         >
                           {t(`mcp.kind.${e.kind}`)}
@@ -1065,15 +1084,13 @@ export function SettingsApp() {
                 <h3 className="text-xs font-semibold tracking-tight">{t("settings.mcp.claudeCodeInstructions")}</h3>
                 <CopyButton
                   className="h-8 gap-1"
-                  value={() =>
-                    `claude mcp add --transport http parley ${mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp"}`
-                  }
+                  value={() => claudeCodeCommand(mcpInfo?.endpoint)}
                   label={t("settings.mcp.copyCommand")}
                 />
               </div>
               <p className="text-[11px] text-muted-foreground">{t("settings.mcp.claudeCodeHelp")}</p>
               <pre className="rounded bg-muted p-2.5 font-mono text-xs text-foreground overflow-x-auto border">
-                {`claude mcp add --transport http parley ${mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp"}`}
+                {claudeCodeCommand(mcpInfo?.endpoint)}
               </pre>
             </div>
 
@@ -1082,33 +1099,13 @@ export function SettingsApp() {
                 <h3 className="text-xs font-semibold tracking-tight">{t("settings.mcp.configInstructions")}</h3>
                 <CopyButton
                   className="h-8 gap-1"
-                  value={() =>
-                    JSON.stringify(
-                      {
-                        mcpServers: {
-                          "parley": {
-                            type: "http",
-                            url: mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp",
-                          },
-                        },
-                      },
-                      null,
-                      2
-                    )
-                  }
+                  value={() => mcpClientConfigJson(mcpInfo?.endpoint)}
                   label={t("settings.mcp.copyConfig")}
                 />
               </div>
               <p className="text-[11px] text-muted-foreground">{t("settings.mcp.configHelp")}</p>
               <pre className="rounded bg-muted p-2.5 font-mono text-xs text-foreground overflow-x-auto border">
-                {`{
-  "mcpServers": {
-    "parley": {
-      "type": "http",
-      "url": "${mcpInfo?.endpoint || "http://127.0.0.1:3011/mcp"}"
-    }
-  }
-}`}
+                {mcpClientConfigJson(mcpInfo?.endpoint)}
               </pre>
             </div>
           </Section>
@@ -1159,6 +1156,12 @@ export function SettingsApp() {
               </Button>
               {logPath && <CopyButton value={logPath} label={t("settings.logs.copyPath")} />}
             </div>
+          </Section>
+        )}
+
+        {cat === "mcp" && (
+          <Section title={t("settings.caches.title")}>
+            <CachesPanel />
           </Section>
         )}
 
@@ -1519,7 +1522,7 @@ function CustomEndpointFields({
           <p className="text-[11px] text-muted-foreground">{t("settings.provider.test.needsConfig")}</p>
         )}
         {outcome?.ok && (
-          <p className="text-[11px] text-emerald-600 dark:text-emerald-400">
+          <p className="text-[11px] text-success-foreground">
             {t("settings.provider.test.ok", {
               model: outcome.model,
               ms: String(outcome.ms),
@@ -1702,7 +1705,7 @@ function DiarizeModelField() {
   return (
     <div className="flex max-w-md flex-col gap-2">
       {present === true ? (
-        <span className="flex items-center gap-1.5 text-sm text-emerald-500">
+        <span className="flex items-center gap-1.5 text-sm text-success-foreground">
           <Check className="size-4" />
           {t("settings.transcription.speakerModelInstalled")}
         </span>
@@ -1730,11 +1733,11 @@ function DiarizeModelField() {
           </div>
           {status === "downloading" && (
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-              <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${pct}%` }} />
+              <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
             </div>
           )}
           {error && (
-            <p className="rounded-md bg-orange-500/10 px-2.5 py-1.5 text-[11px] text-orange-400">
+            <p className="rounded-md bg-danger px-2.5 py-1.5 text-[11px] text-danger-foreground">
               {t("settings.transcription.speakerModelFailed", { error })}
             </p>
           )}

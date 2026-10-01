@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Events surfaced by the relay session.
 public enum SttRelayEvent: Sendable {
@@ -87,6 +88,10 @@ public actor SttRelayClient {
         }
     }
 
+    /// `start()` was called after `finish()` or `cancel()`. The client is one
+    /// session, and that session is over.
+    public struct Spent: Error {}
+
     /// Chunks held between the audio thread and the socket. A tap chunk is
     /// ~85 ms, so this is ~45 s of slack — deep enough to cover a slow
     /// handshake or a stalled radio, shallow enough that a socket that never
@@ -99,6 +104,12 @@ public actor SttRelayClient {
     /// sending the finalize frame anyway. A dead socket must not hold up the
     /// end of a meeting.
     private static let drainTimeout: Duration = .seconds(3)
+    /// How long `finish()` then waits for the finalize frame itself to go out.
+    /// Together with `drainTimeout` this is the longest `finish()` can take,
+    /// which callers that must not hang on a dead socket rely on.
+    private static let finalizeTimeout: Duration = .seconds(1)
+    /// The longest `finish()` can take, whatever the socket is doing.
+    public static let finishBudget: Duration = drainTimeout + finalizeTimeout
 
     /// When to stop believing a socket that has gone quiet. See `RelayLiveness`
     /// for why this is measured on ping/pong rather than on transcript traffic.
@@ -122,6 +133,7 @@ public actor SttRelayClient {
     /// `nonisolated` on purpose: `enqueue(pcm:)` is called from the audio
     /// render thread and must not hop onto the actor to do it.
     private nonisolated let sink: AsyncStream<[Int16]>.Continuation
+    private nonisolated let spent = OSAllocatedUnfairLock(initialState: false)
 
     public init(options: Options, onEvent: @escaping @Sendable (SttRelayEvent) -> Void) {
         self.options = options
@@ -134,9 +146,13 @@ public actor SttRelayClient {
 
     /// Connect, send the config frame, and start the read + keepalive loops.
     public func start() async throws {
+        guard !spent.withLock({ $0 }) else { throw Spent() }
         var comps = URLComponents(url: options.relayURL, resolvingAgainstBaseURL: false)!
         comps.queryItems = [URLQueryItem(name: "feature", value: options.feature)]
-        var req = URLRequest(url: comps.url!)
+        // The build header rides the upgrade request like any other header —
+        // see `ParleyClientIdentity` for why this, and not `URLRequest(url:)`,
+        // is how a request to the cloud is started.
+        var req = ParleyClientIdentity.request(url: comps.url!)
         req.setValue("Bearer \(options.bearerToken)", forHTTPHeaderField: "Authorization")
 
         let task = URLSession.shared.webSocketTask(with: req)
@@ -155,6 +171,7 @@ public actor SttRelayClient {
         let encoder = JSONEncoder()
         let frame = String(data: try encoder.encode(config), encoding: .utf8)!
         try await task.send(.string(frame))
+        guard !spent.withLock({ $0 }) else { throw Spent() }
 
         lastProof = Date()
         startKeepalive()
@@ -173,13 +190,20 @@ public actor SttRelayClient {
     /// relay drain the tail. The socket stays open until the server closes it
     /// (or `finished` arrives).
     public func finish() async {
+        spent.withLock { $0 = true }
         guard let task, !finalizeSent else { return }
         finalizeSent = true
         sink.finish()
         await drainWriter()
         keepaliveTask?.cancel()
         livenessTask?.cancel()
-        try? await task.send(.string(SonioxProtocol.finalizeFrame))
+        // Bounded like the drain, and for the same reason: sends on one socket
+        // go out in order, so behind a writer stuck on a stalled connection
+        // the finalize is stuck too — and the liveness check that would have
+        // declared that socket dead was cancelled on the line above.
+        await Deadline.wait(atMost: Self.finalizeTimeout) {
+            try? await task.send(.string(SonioxProtocol.finalizeFrame))
+        }
         // Deliberately no task.cancel() here — see the type doc.
     }
 
@@ -188,6 +212,7 @@ public actor SttRelayClient {
     /// queue is synchronous, so a caller that abandons this client knows no
     /// further audio can reach it even before the socket has finished dying.
     public nonisolated func cancel() {
+        spent.withLock { $0 = true }
         sink.finish()
         Task { await self.tearDown() }
     }
@@ -206,14 +231,15 @@ public actor SttRelayClient {
 
     /// Wait for the queued audio to reach the wire, but never longer than
     /// `drainTimeout` — the writer is blocked on a socket that may be gone.
+    ///
+    /// Not a task group racing a sleep, which is what this was: a group waits
+    /// for every child before it returns, and awaiting an unstructured task's
+    /// `value` does not stop when it is cancelled — so the timeout lost the
+    /// race it was there to win, and `finish()` waited on a stalled socket for
+    /// as long as the socket stayed stalled. See `Deadline`.
     private func drainWriter() async {
         guard let writerTask else { return }
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask { _ = await writerTask.value }
-            group.addTask { try? await Task.sleep(for: Self.drainTimeout) }
-            await group.next()
-            group.cancelAll()
-        }
+        await Deadline.wait(atMost: Self.drainTimeout) { _ = await writerTask.value }
     }
 
     private func startWriter() {

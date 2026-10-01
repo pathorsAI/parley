@@ -9,10 +9,10 @@
 // as the analysis cache in engine.ts); cleared alongside it by the native
 // "Clear Cache → Analysis" menu action.
 
-import { readJsonCache, writeJsonCache, clearCacheByPrefix } from "../cache";
+import { readJsonCache, writeJsonCache, clearCacheByPrefix, STUDY_CACHE_PREFIX } from "../cache";
 import type { ActionItem, DeliveryAssessment, TimelineEvent } from "../types";
 
-const PREFIX = "parley:study-cache:";
+const PREFIX = STUDY_CACHE_PREFIX;
 const key = (entryId: string) => `${PREFIX}${entryId}`;
 
 /** Everything the pipeline generates for a recording. All fields optional — the

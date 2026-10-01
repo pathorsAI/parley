@@ -1,6 +1,7 @@
 import ParleyKit
 import SwiftUI
 import UIKit
+import os
 
 /// The Parley dictation keyboard.
 ///
@@ -15,6 +16,10 @@ import UIKit
 /// process only shuttles text, which keeps it well under the tight jetsam limit
 /// keyboard extensions run against.
 final class KeyboardViewController: UIInputViewController {
+    /// Where this process says what it did about memory, so a sysdiagnose from
+    /// a keyboard that later died has something to read.
+    private static let log = Logger(subsystem: "com.pathors.parley.ios.keyboard", category: "memory")
+
     private let bridge = KeyboardBridge()
     private var down: DarwinObserver?
     /// The app announcing that the microphone window opened, closed, or ticked.
@@ -28,6 +33,11 @@ final class KeyboardViewController: UIInputViewController {
     /// without opening it. Also the goodbye it writes on its way out. See
     /// `AppPresence`.
     private var presenceNote: DarwinObserver?
+    /// A new microphone level. The fastest note on this channel by an order of
+    /// magnitude — about twelve a second while someone is speaking, none at all
+    /// while nobody is — so its handler is deliberately the cheapest in this
+    /// file: one small file read and two multiplies. See `MicLevelReading`.
+    private var levelNote: DarwinObserver?
 
     /// Watches the session this keyboard is showing for signs that nobody is
     /// serving it any more — see `checkLiveness`. One at a time; re-armed on
@@ -40,6 +50,28 @@ final class KeyboardViewController: UIInputViewController {
     /// answers a stop by publishing `finishing` within milliseconds; a session
     /// still `listening` seconds later is one nobody heard the stop for.
     private var stopRequestedAt: Date?
+    /// When the app's session cap will stop the session on screen, as the app
+    /// last published it (`Downlink.deadline`). What the countdown counts to.
+    private var sessionDeadline: Date?
+    /// Wakes the pane for the countdown's next second — see `updateCountdown`.
+    /// One at a time, tied to the session that armed it.
+    private var countdownTick: Task<Void, Never>?
+    /// The 250 ms wait before a finishing session shows the polish wave — see
+    /// `enterFinishing`. A cancellable task tied to the session that started
+    /// it, never a timer: a finish that ends early, a ✕, or the next session
+    /// cancels it, so a reveal can never land on a pane that has moved on.
+    private var waveReveal: Task<Void, Never>?
+    /// Takes the wave down once its ease-out after `done` has played.
+    private var waveFade: Task<Void, Never>?
+    /// Takes the "Copied" label in the strip, and the wash over the words,
+    /// down again — see `copyDictation`. Replaced on every tap, so a second tap restarts the
+    /// label's time rather than being cut short by the first tap's.
+    private var copiedFade: Task<Void, Never>?
+    /// The session whose copy target the user closed by typing after it — see
+    /// `keyPressed`. The downlink keeps republishing `done`, and every drain
+    /// would otherwise offer the copy again; remembering the id is what makes
+    /// "the user has moved on" stick for the rest of that session.
+    private var copyClosedSession = ""
 
     /// The keyboard's view of the current session. It mints the id, so it owns
     /// the truth about which downlink is "ours"; a downlink for any other
@@ -61,12 +93,36 @@ final class KeyboardViewController: UIInputViewController {
     /// it when the text landed and when the editing is over.
     private let lexicon = KeyboardLexiconWatch()
     private var host: UIHostingController<KeyboardRootView>?
+    /// A canvas behind the SwiftUI root, shown only when the system's would
+    /// disagree with the caps. See `needsOwnBackdrop`.
+    private let backdrop = UIView()
     private var heightConstraint: NSLayoutConstraint?
 
     /// 傳統注音 input for the 注音 pane. Cheap to hold: the dictionary behind it
     /// does not touch its resource until the first syllable is finalized, so a
     /// keyboard that only ever dictates never pays for it.
-    private var zhuyin = ZhuyinComposer(dictionary: .bundled)
+    private var zhuyin = ZhuyinComposer(dictionary: .bundled, phrases: ZhuyinPhrases.bundled)
+    /// The marked text this keyboard has sent and the host has not confirmed,
+    /// and whether this field's host shows marked text at all. A mirror
+    /// because the proxy cannot read marked text back.
+    private var marks = MarkedTextLog()
+    /// The field the keyboard is typing into, so a report from a different one
+    /// can be told apart from a report about this one: hosts on iOS 26.5 leave
+    /// marked text out of the context they report, so the context alone
+    /// cannot say which field it came from.
+    private var currentField: UUID?
+    /// The pending check that the host answered the first marks in a field.
+    private var settleCheck: DispatchWorkItem?
+
+    /// The user's own words, offered ahead of the bundled list on the English
+    /// pane. Read once per appearance rather than per keystroke: it is a file in
+    /// the App Group, there are at most a few hundred of them, and whoever
+    /// edited it in Parley is not typing at that moment. Empty without Full
+    /// Access — the container is not openable then — which is a supported state
+    /// rather than a failure, because the pane has to keep suggesting there.
+    /// Lowercased once here, as it is read, rather than on every keystroke —
+    /// see `WordSuggestions.LexiconTerms`.
+    private var lexiconTerms = WordSuggestions.LexiconTerms.none
 
     /// A keyboard has no intrinsic height — without one it collapses to the
     /// system minimum and the layout looks broken. Every pane is measured to the
@@ -77,30 +133,177 @@ final class KeyboardViewController: UIInputViewController {
         KBMetrics.height(bridge.pane)
     }
 
+    /// Detach the SwiftUI tree from the input view, because UIKit keeps the
+    /// input view alive after this controller is gone.
+    ///
+    /// iOS builds a new controller almost every time the keyboard comes up —
+    /// each field, each app switch — and releases the old one, but on iOS 26.5
+    /// something inside UIKit goes on holding the old `UIInputView` (detached,
+    /// no window, no superview). Everything under it lived on with it: the
+    /// hosting view, its view graph, every key's layers, and through the root
+    /// view's `@ObservedObject` the bridge. Measured on the simulator, that is
+    /// 5–10 MB per appearance with nothing ever given back — 28 MB cold to
+    /// 175 MB after twenty show/hide cycles, where a keyboard extension is
+    /// jetsam-killed somewhere past 50–70 MB on a phone. A kill leaves no crash
+    /// report, which is why "the keyboard disappears sometimes" never came with
+    /// a log. With the hosting view taken out here, the tree and the bridge are
+    /// released with the controller and the footprint stays flat; the empty
+    /// input view that UIKit keeps costs next to nothing. The backdrop goes too,
+    /// for the same reason at a smaller scale.
+    ///
+    /// The last release of a view controller happens on the main thread, but
+    /// `deinit` is not isolated, so the removal is posted to main when it isn't
+    /// already there.
+    deinit {
+        // Our own subviews only: the input view's content views are UIKit's.
+        let ours = [host?.view, backdrop].compactMap { $0 }
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { ours.forEach { $0.removeFromSuperview() } }
+        } else {
+            DispatchQueue.main.async { ours.forEach { $0.removeFromSuperview() } }
+        }
+    }
+
+    /// Swap the stock input view for `KeyboardInputView`, which is the same
+    /// view with key clicks allowed and a window-change hook.
+    ///
+    /// Built after `super.loadView()` so it takes the stock view's style —
+    /// that style is what the system paints the keyboard's backdrop from — and
+    /// its frame and resizing, so nothing about how the system sizes the
+    /// keyboard changes. `inputView` is the controller's view; setting it sets
+    /// both.
+    override func loadView() {
+        super.loadView()
+        let stock = view
+        let style = (stock as? UIInputView)?.inputViewStyle ?? .keyboard
+        let input = KeyboardInputView(frame: stock?.frame ?? .zero, inputViewStyle: style)
+        if let stock {
+            input.autoresizingMask = stock.autoresizingMask
+            input.translatesAutoresizingMaskIntoConstraints =
+                stock.translatesAutoresizingMaskIntoConstraints
+        }
+        input.didMoveToNewWindow = { [weak self] in self?.stopDelayingTouches() }
+        inputView = input
+        Self.touchLog.debug(
+            "input view style \(style.rawValue, privacy: .public), is the view: \(self.view === input, privacy: .public)"
+        )
+    }
+
+    private static let touchLog = Logger(
+        subsystem: "com.pathors.parley.ios.keyboard", category: "touch")
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        stopDelayingTouches()
+    }
+
+    /// Let touches near the screen's edges reach the keys at once.
+    ///
+    /// The system watches the screen's edges for its own gestures — the home
+    /// indicator swipe along the bottom, the back swipe along the left — and its
+    /// recognizers for them sit on the window this keyboard is shown in, with
+    /// `delaysTouchesBegan` on. So a touch that starts near the left or bottom
+    /// edge — `q`, `a`, shift, `123`, the globe, the space bar — is held back
+    /// until the system has decided it is not one of its gestures: the key
+    /// darkens late, its callout flashes late or not at all, and a quick tap can
+    /// arrive as a press and a release in the same instant.
+    ///
+    /// Turning `delaysTouchesBegan` off on those recognizers is the standard
+    /// workaround every custom keyboard uses; the system gestures still work,
+    /// they just no longer hold the touch back while deciding. They are looked
+    /// for on the window and on every view between it and this one, and again
+    /// every time the view lands in a window, because the system hands the
+    /// keyboard a new one when it comes back. On the iOS 26.5 simulator there
+    /// is exactly one: a `_UISystemGestureGateGestureRecognizer` on the
+    /// `_UIHostedWindow`.
+    private func stopDelayingTouches() {
+        var found: [String] = []
+        var node: UIView? = view.superview
+        while let current = node {
+            for recognizer in current.gestureRecognizers ?? [] where recognizer.delaysTouchesBegan {
+                recognizer.delaysTouchesBegan = false
+                found.append(
+                    "\(String(describing: type(of: recognizer)))@\(String(describing: type(of: current)))")
+            }
+            // The chain ends at the window itself.
+            node = current.superview
+        }
+        Self.touchLog.debug(
+            "edge delay off on \(found.count, privacy: .public): \(found.joined(separator: ", "), privacy: .public)"
+        )
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         bridge.controller = self
         bridge.hasFullAccess = hasFullAccess
         bridge.showsGlobe = needsInputModeSwitchKey
+        // Not set: `hasDictationKey`. The system draws its own dictation key
+        // under this keyboard on Face ID phones, and the property's promise to
+        // disable it does not hold on iOS 26.5 — set in the initialisers and
+        // here, the key still opened Apple's dictation. See the design doc's
+        // globe section.
         let typing = TypingKeyboards.enabled().map(KeyboardPane.init)
         bridge.setPanes([.voice] + typing)
         // Without Full Access there is nothing to dictate with, so open on the
         // first pane that still works. App Review 4.4.1 judges the keyboard in
         // exactly this state.
         bridge.setPane(hasFullAccess ? .voice : (typing.first ?? .english), notify: false)
+        // A lookup that finds a table neither loaded nor loading would parse
+        // it right there, on the main thread and on a keystroke. Every path to
+        // a lookup starts a warm first (`warmTables`), so here that can only be
+        // a path someone forgot — and for that one, a blank bar until the warm
+        // lands beats a hitch at the highest footprint a parse reaches.
+        ZhuyinDictionary.bundled.parsesOnLookup = false
+        ZhuyinPhrases.bundled.parsesOnLookup = false
+        EnglishWords.bundled.parsesOnLookup = false
+        // `setPane(notify: false)` deliberately skips `paneDidChange`, so a
+        // keyboard that opens straight onto a typing pane — which is what every
+        // keyboard without Full Access does, onto English or onto 注音 — has to
+        // be warmed here.
+        warmTables()
 
-        // Let the system's own input view supply the background. It is already
-        // the right colour, already rounds its corners the way the host expects
-        // and already covers exactly the area the system keyboard would; a
-        // canvas of our own painted over it was what left a seam against the
-        // row below and a top-left corner that didn't line up.
+        // The system's input view supplies the backdrop, exactly as before
+        // 1.21 — it is already the right colour, already the right shape on
+        // every device and already covers exactly the area the system keyboard
+        // would. `backdrop` is shown only when this keyboard has decided on the
+        // opposite appearance from the one the system is painting: see
+        // `needsOwnBackdrop`. That is the one case where caps and ink would
+        // otherwise land on a backdrop chosen by someone else (#441).
+        //
+        // When it is shown it is a view of its own rather than
+        // `view.backgroundColor`: on iOS 26 the system draws the keyboard as a
+        // card with large rounded top corners, and a full-width rectangle
+        // poked its square corners out of that curve and covered the card's
+        // rim. It is kept inside the card instead — see `KBMetrics.backdropInset`.
         view.backgroundColor = .clear
+        backdrop.backgroundColor = KBTheme.backdrop(isDark)
+        backdrop.isHidden = !needsOwnBackdrop
+        backdrop.isUserInteractionEnabled = false
+        backdrop.layer.cornerRadius = KBMetrics.backdropCorner
+        backdrop.layer.cornerCurve = .continuous
+        backdrop.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        backdrop.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(backdrop)
+        NSLayoutConstraint.activate([
+            // Down to the bottom of the input view, home indicator strip
+            // included; 1pt in at the top and sides (see `KBMetrics`).
+            backdrop.topAnchor.constraint(
+                equalTo: view.topAnchor, constant: KBMetrics.backdropInset),
+            backdrop.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            backdrop.leadingAnchor.constraint(
+                equalTo: view.leadingAnchor, constant: KBMetrics.backdropInset),
+            backdrop.trailingAnchor.constraint(
+                equalTo: view.trailingAnchor, constant: -KBMetrics.backdropInset),
+        ])
         // Self-sizing is what makes the system honour a height constraint at
-        // all. Without it the constraint below is advisory at best, which is
-        // the other half of the same misalignment.
+        // all. Without it the constraint below is advisory at best, and the
+        // keyboard renders at a height nobody asked for.
         inputView?.allowsSelfSizing = true
 
         let root = UIHostingController(rootView: makeRoot())
+        // Clear, so the backdrop's shape is the only one painted: a filled
+        // hosting view would be a second, square-cornered rectangle over it.
         root.view.backgroundColor = .clear
         addChild(root)
         view.addSubview(root.view)
@@ -127,57 +330,116 @@ final class KeyboardViewController: UIInputViewController {
         height.isActive = true
         heightConstraint = height
 
+        // Dark Mode can flip with the keyboard on screen, which neither
+        // `viewWillAppear` nor `textDidChange` hears about — and the trait
+        // collection is the first thing `isDark` reads.
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) {
+            (self: Self, previous: UITraitCollection) in
+            self.styleDidChange(from: previous)
+        }
+
+        armChannelObservers()
+    }
+
+    /// Subscribe to the five notes the app sends, once Full Access allows it.
+    ///
+    /// Called from `viewDidLoad` *and* from every `viewWillAppear`, because
+    /// `hasFullAccess` is not a fact about the installation — it is a fact about
+    /// this process at this moment, which is why `viewWillAppear` already
+    /// re-reads it into the bridge. Arming only in `viewDidLoad` made this file
+    /// contradict itself: the same value was trusted forever in one place and
+    /// distrusted every appearance in the other.
+    ///
+    /// The window where that mattered is not a corner case, it is the main path.
+    /// iOS kills this extension almost every time the user bounces to the app
+    /// (see `drainDownlink`), so the *second* dictation of a session is always
+    /// served by a freshly loaded keyboard whose `viewDidLoad` ran during an app
+    /// switch. A keyboard that read `false` there kept a working-looking voice
+    /// pane — the taps still mint sessions — while hearing no downlink, no
+    /// window, no readiness and no presence, so the transcript only moved on the
+    /// next appearance and ⏹ looked like it did nothing for up to the liveness
+    /// watchdog's ~25 s.
+    ///
+    /// Idempotent on `down`: the five are armed and dropped together, so one of
+    /// them being present means all of them are.
+    private func armChannelObservers() {
+        guard hasFullAccess, down == nil else { return }
         // The app fires this when the transcript grows; we also drain on every
         // appearance in case the keyboard was suspended through the notification.
-        if hasFullAccess {
-            down = DarwinObserver(DictationChannel.downNote) { [weak self] in
-                DispatchQueue.main.async { self?.drainDownlink() }
-            }
-            // The app heartbeats an open window, so this note is also what
-            // ticks the chip's countdown down — the extension runs no timer of
-            // its own for it.
-            windowNote = DarwinObserver(DictationChannel.windowNote) { [weak self] in
-                DispatchQueue.main.async { self?.readWindow() }
-            }
-            // Rare compared to the others — signing in and answering the
-            // microphone prompt happen once — but it is the note that turns a
-            // "set up voice typing" pane into a working one without the user
-            // having to dismiss the keyboard and bring it back.
-            readyNote = DarwinObserver(DictationChannel.readyNote) { [weak self] in
-                DispatchQueue.main.async { self?.readReadiness() }
-            }
-            // Every ten seconds while the app is awake, and once more on its
-            // way out. It is what flips the record button between "speak
-            // here" and "this opens Parley", and what keeps a live session's
-            // watchdog from firing while the user is merely pausing.
-            presenceNote = DarwinObserver(DictationChannel.presenceNote) { [weak self] in
-                DispatchQueue.main.async { self?.readPresence() }
-            }
+        down = DarwinObserver(DictationChannel.downNote) { [weak self] in
+            DispatchQueue.main.async { self?.drainDownlink() }
+        }
+        // The app heartbeats an open window, so this note is also what
+        // ticks the chip's countdown down — the extension runs no timer of
+        // its own for it.
+        windowNote = DarwinObserver(DictationChannel.windowNote) { [weak self] in
+            DispatchQueue.main.async { self?.readWindow() }
+        }
+        // Rare compared to the others — signing in and answering the
+        // microphone prompt happen once — but it is the note that turns a
+        // "set up voice typing" pane into a working one without the user
+        // having to dismiss the keyboard and bring it back.
+        readyNote = DarwinObserver(DictationChannel.readyNote) { [weak self] in
+            DispatchQueue.main.async { self?.readReadiness() }
+        }
+        // Every ten seconds while the app is awake, and once more on its
+        // way out. It is what flips the record button between "speak
+        // here" and "this opens Parley", and what keeps a live session's
+        // watchdog from firing while the user is merely pausing.
+        presenceNote = DarwinObserver(DictationChannel.presenceNote) { [weak self] in
+            DispatchQueue.main.async { self?.readPresence() }
+        }
+        // Twelve a second while somebody is speaking, and nothing at all while
+        // nobody is — the one note here that is a stream rather than an event.
+        // It is what makes the record button swell with the voice instead of
+        // pulsing on a loop that has nothing to do with it.
+        levelNote = DarwinObserver(DictationChannel.levelNote) { [weak self] in
+            DispatchQueue.main.async { self?.readMicLevel() }
         }
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         bridge.hasFullAccess = hasFullAccess
+        // And act on it, rather than only displaying it. See there for why
+        // `viewDidLoad` alone was the wrong place to decide this once.
+        armChannelObservers()
         // Re-read every time: the user can add or remove keyboards while ours
         // is loaded, and that flips whether the system draws the globe for us.
         bridge.showsGlobe = needsInputModeSwitchKey
         refreshPanes()
         // A half-typed syllable belongs to the field it was started in, so it is
-        // dropped rather than committed — the same rule as the transcript tail
-        // below, and for the same reason.
-        zhuyin.clear()
-        publishComposition()
+        // not carried into this one — the same rule as the transcript tail
+        // below, and for the same reason. A reading a host kept as plain text
+        // when the keyboard went away is replaced by its best guess here.
+        returnToField()
+        // The field may be a different one, with a different word half-typed in
+        // front of the cursor, so both the user's terms and the bar are re-read
+        // rather than carried over.
+        lexiconTerms = WordSuggestions.LexiconTerms(LexiconStore.recognitionTerms())
+        refreshSuggestions()
         // The tail belongs to the field it was dictated into. Coming back to a
         // *different* field it would read as text that is already there, so it
         // is dropped unless a session is still running — `drainDownlink` below
-        // puts it straight back when one is.
-        if !bridge.listening { bridge.tail = "" }
+        // puts it straight back when one is. The copy target goes with it, by
+        // the same rule — it is only ever a copy of words on screen — and the
+        // drain re-offers it for exactly the tail it puts back.
+        if !bridge.listening {
+            bridge.tail = ""
+            offerCopy(nil)
+        }
+        // A fresh appearance is a freshly read field: whatever it says now is
+        // current. See `staleHostDark`.
+        staleHostDark = false
         refreshAppearance()
         refreshReturnKey()
         readReadiness()
         readPresence()
         readWindow()
+        // Before the drain, which is what decides whether the pane is live at
+        // all: a keyboard coming back mid-sentence should find the button
+        // already the right size rather than growing into it.
+        readMicLevel()
         drainDownlink()
         // Warm the Taptic Engine while the keyboard is coming up, so the thump
         // lands with the first press on the record button rather than a beat
@@ -189,19 +451,52 @@ final class KeyboardViewController: UIInputViewController {
     /// The keyboard is going away, which is the end of the user's chance to fix
     /// the words in this field — so it is the moment to learn from whatever they
     /// fixed. See `KeyboardLexiconWatch` for what this can and cannot see.
+    ///
+    /// It is also the moment a running dictation becomes invisible. The live
+    /// transcript above the keys goes with the keyboard, the app keeps
+    /// recording, and until now nothing in the user's hand said so — so a
+    /// session that is still live gets the falling two-beat on the way out. Only
+    /// a live one: dismissing the keyboard is an ordinary, constant action, and
+    /// a buzz every time is how a signal turns into noise and gets ignored.
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        // Before the harvest, not after: the pattern is answering a gesture the
+        // user is making right now, and the first beat is the one that has to
+        // land with it. `bridge.listening` is the keyboard's own mirror of
+        // `DictationChannel.Downlink.State.isLive` — `drainDownlink` sets it for
+        // `starting`, `listening`, `reconnecting` and `finishing` and clears it
+        // for every terminal state — so it is the liveness test rather than a
+        // second flag kept beside it. `reconnecting` is deliberately included:
+        // that session's microphone is open and its audio is being held, which
+        // is precisely the thing the user is walking away from.
+        if hasFullAccess, bridge.listening { Haptics.dictationContinuesInBackground() }
         lexicon.harvest(context: textDocumentProxy.documentContextBeforeInput)
+        leaveComposition()
     }
 
-    /// A keyboard follows the appearance of the *field* it is typing into, not
-    /// the system's: a dark-themed host app asks for a dark keyboard even while
-    /// iOS is in light mode. `textInputMode` changes as the user moves between
-    /// fields, so this is re-read whenever the keyboard comes back.
+    /// A field that asks for a dark keyboard gets one — see `isDark`. The field
+    /// changes as the user moves between them, so the question is asked again
+    /// whenever the text does.
     override func textDidChange(_ textInput: UITextInput?) {
         super.textDidChange(textInput)
+        // Only a field that stopped saying `.dark` is known to have been read
+        // again; one still saying it may be the same stale value.
+        if textDocumentProxy.keyboardAppearance != .dark { staleHostDark = false }
+        hostChangedText()
         refreshAppearance()
         refreshReturnKey()
+        // The cursor may have moved somewhere this keyboard did not put it —
+        // a tap in the field, an autofill, the host rewriting its own text — so
+        // the word in front of it is re-read rather than assumed.
+        refreshSuggestions()
+    }
+
+    override func selectionDidChange(_ textInput: UITextInput?) {
+        super.selectionDidChange(textInput)
+        hostChangedText()
+        // The caret moved: whether the next letter starts a sentence is a
+        // question about where it is now.
+        refreshShift()
     }
 
     /// The constraint measures the whole input view, but the content is pinned
@@ -227,6 +522,8 @@ final class KeyboardViewController: UIInputViewController {
         if !bridge.panes.contains(bridge.pane) {
             bridge.setPane(hasFullAccess ? .voice : (typing.first ?? .english), notify: false)
             applyHeight(animated: false)
+            // Not notified, so not warmed by `paneDidChange` either.
+            warmTables()
         }
     }
 
@@ -236,6 +533,80 @@ final class KeyboardViewController: UIInputViewController {
         // it: the user swiped away, they didn't press delete.
         apply(zhuyin.confirm())
         applyHeight(animated: true)
+        warmTables()
+        refreshSuggestions()
+    }
+
+    /// Start loading the tables the current pane types against, off the main
+    /// thread. Called wherever the pane is set — `paneDidChange` for a swipe or
+    /// a tab, and `viewDidLoad` and `refreshPanes`, which set it without
+    /// notifying — because a pane that is showing without its tables warm would
+    /// have its first keystrokes answered from nothing. Cheap to repeat: a warm
+    /// table calls back at once and a warm in flight is joined, not restarted.
+    ///
+    /// Arriving on 注音 starts both its tables, so the ~50–100 ms the phrase
+    /// table costs is spent while the pane is still sliding in rather than on
+    /// the keystroke that finishes the second syllable.
+    ///
+    /// A key that beats a warm is answered from no table at all rather than
+    /// from a second copy parsed on the spot (see `ZhuyinPhrases.warm`), so
+    /// each warm is handed a completion that answers the pending syllables
+    /// again once its table lands. It runs on the main queue in the same
+    /// block that stores the table, and keys arrive on the main queue too,
+    /// so a key is either before the landing — answered empty, then put
+    /// right by `zhuyinTablesLanded` — or after it, answered from the whole
+    /// table. Nothing can fall between the two.
+    ///
+    /// Same bargain on the English pane: reading and sorting 40,000 words is
+    /// milliseconds, and it belongs on the swipe rather than on the first
+    /// letter typed. The bar is empty until it lands, then refreshed.
+    private func warmTables() {
+        switch bridge.pane {
+        case .zhuyin:
+            ZhuyinDictionary.bundled.warm { [weak self] in self?.zhuyinTablesLanded() }
+            ZhuyinPhrases.bundled.warm { [weak self] in self?.zhuyinTablesLanded() }
+        case .english:
+            EnglishWords.bundled.warm { [weak self] in self?.refreshSuggestions() }
+        case .voice:
+            break
+        }
+    }
+
+    /// A 注音 table finished loading: whatever is pending was looked up without
+    /// it, so look it up again and put the answer in the strip. With nothing
+    /// pending this republishes nothing — `publishComposition` only assigns a
+    /// change.
+    private func zhuyinTablesLanded() {
+        zhuyin.refresh()
+        publishComposition()
+    }
+
+    /// iOS is about to start killing processes, and a keyboard extension is
+    /// among the first it kills. Give back the tables the current pane is not
+    /// using — they are by far the largest things this process holds — and say
+    /// so in the log. Preventive: no crash has been traced to memory, but the
+    /// limit is tight enough that this is the cheapest insurance there is.
+    ///
+    /// Only the idle ones. Dropping the table the user is typing against would
+    /// blank the bar on the very next keystroke while a warm read it all again
+    /// — a parse at the moment the system says memory is short, for a table
+    /// that was about to be needed anyway. The 注音
+    /// dictionary is never dropped: it is a few hundred kilobytes, and every
+    /// 注音 keystroke needs it.
+    override func didReceiveMemoryWarning() {
+        super.didReceiveMemoryWarning()
+        var dropped: [String] = []
+        if bridge.pane != .zhuyin {
+            ZhuyinPhrases.bundled.unload()
+            dropped.append("phrases")
+        }
+        if bridge.pane != .english {
+            EnglishWords.bundled.unload()
+            dropped.append("english")
+        }
+        Self.log.notice(
+            "memory warning on the \(self.bridge.pane.rawValue, privacy: .public) pane; dropped: \(dropped.joined(separator: ","), privacy: .public)"
+        )
     }
 
     private func applyHeight(animated: Bool) {
@@ -245,8 +616,74 @@ final class KeyboardViewController: UIInputViewController {
         UIView.animate(withDuration: 0.18) { self.view.superview?.layoutIfNeeded() }
     }
 
+    /// Whether to draw dark — caps, ink and backdrop alike.
+    ///
+    /// The trait collection first, and a host asking for `.dark` as a second
+    /// way in. A host reporting `.light` never overrides a dark trait:
+    ///
+    /// - Most third-party hosts (Claude, LINE) leave `keyboardAppearance` at
+    ///   `.default`, so the trait collection is the only signal there is.
+    /// - A dark-themed app on a light phone asks for `.dark`, and gets it.
+    /// - Apple Notes in Dark Mode reports `.light` while the trait is dark.
+    ///   1.20 believed it and drew white caps and near-black candidates on the
+    ///   system's black backdrop (#441). System apps also keep reporting the
+    ///   old value after a Dark Mode flip until the field is activated again,
+    ///   so a `.light` over a dark trait is more often stale than meant.
+    ///
+    /// Believing the host's `.light` could only ever be right for a light-themed
+    /// app on a dark phone, which draws a light keyboard against a dark screen —
+    /// readable either way now that the backdrop is ours. Believing it wrongly
+    /// is what made the candidates invisible, so it is the case given up.
+    private var isDark: Bool {
+        traitCollection.userInterfaceStyle == .dark
+            || (!staleHostDark && (textDocumentProxy.keyboardAppearance ?? .default) == .dark)
+    }
+
+    /// The host's `.dark` is left over from before the phone went light.
+    ///
+    /// System apps (Reminders, Safari) report `.dark` while the phone is dark
+    /// and keep reporting it after the user flips to light with the keyboard on
+    /// screen — typing does not refresh it, only activating the field again
+    /// does. Believed, it kept the keyboard dark on a light phone with the
+    /// system's own globe-and-dictation strip under it already light: a
+    /// two-tone keyboard. So a `.dark` that was already there when the trait
+    /// went from dark to light is set aside until the field is read again.
+    ///
+    /// The one host this misjudges is a dark-themed app on a phone the user
+    /// flips from dark to light: it gets a light keyboard until the field is
+    /// next activated. Readable, and corrected on the next appearance.
+    private var staleHostDark = false
+
+    private func styleDidChange(from previous: UITraitCollection) {
+        staleHostDark =
+            previous.userInterfaceStyle == .dark
+            && traitCollection.userInterfaceStyle != .dark
+            && textDocumentProxy.keyboardAppearance == .dark
+        refreshAppearance()
+    }
+
+    /// Whether this keyboard has to paint its own backdrop: only when `isDark`
+    /// disagrees with the style the system paints its input view in.
+    ///
+    /// After `isDark`'s rule that can only be one way round — a host forcing
+    /// `.dark` on a light phone — because a dark trait always makes `isDark`
+    /// true. Everywhere else the system's backdrop already agrees with the caps
+    /// and the ink, and is left to show through: it is the right shape on every
+    /// device, which a painted one is only known to be on the devices it was
+    /// measured on.
+    private var needsOwnBackdrop: Bool {
+        isDark != (traitCollection.userInterfaceStyle == .dark)
+    }
+
+    /// Repaint whenever the appearance changes: the SwiftUI root that draws the
+    /// caps and the ink, and the backdrop behind them when the system's would
+    /// disagree. One answer drives all of it.
     private func refreshAppearance() {
-        let dark = textDocumentProxy.keyboardAppearance == .dark
+        let dark = isDark
+        let color = KBTheme.backdrop(dark)
+        if backdrop.backgroundColor != color { backdrop.backgroundColor = color }
+        let hidden = !needsOwnBackdrop
+        if backdrop.isHidden != hidden { backdrop.isHidden = hidden }
         if host?.rootView.dark != dark {
             host?.rootView = makeRoot(dark: dark)
         }
@@ -257,31 +694,36 @@ final class KeyboardViewController: UIInputViewController {
     /// see `KeyboardBridge.newline()`.
     private func refreshReturnKey() {
         let type: UIReturnKeyType? = textDocumentProxy.returnKeyType
-        bridge.returnKeyType = type ?? .default
+        // Only on a change: this runs on every `textDidChange`, and an
+        // `@Published` assignment invalidates the whole keyboard even when the
+        // value is the one it already had.
+        if bridge.returnKeyType != type ?? .default { bridge.returnKeyType = type ?? .default }
     }
 
     private func makeRoot(dark: Bool? = nil) -> KeyboardRootView {
-        KeyboardRootView(
-            bridge: bridge,
-            dark: dark ?? (textDocumentProxy.keyboardAppearance == .dark))
+        KeyboardRootView(bridge: bridge, dark: dark ?? isDark)
     }
 
     // MARK: dictation control (called from SwiftUI)
 
-    /// How long the keyboard waits for the app to acknowledge a start request
-    /// before falling back to opening the app. An awake app publishes the
-    /// `starting` downlink within milliseconds of the Darwin note; a suspended
-    /// or dead app never will, and the only thing that can wake it is the URL.
-    private static let startAckWindow: Duration = .milliseconds(700)
+    /// How often the start handshake re-reads the downlink while it waits.
+    private static let startPoll: Duration = .milliseconds(80)
 
     /// Start a session, preferring the path with no app switch: publish the
     /// request to the App Group (which posts the uplink note) and wait briefly
     /// for the app to acknowledge by publishing our session's downlink. The
     /// app hears the note whenever it is awake — foreground, or lingering in
     /// the background right after a previous dictation — and starts the mic
-    /// there, so the user never leaves the app they're typing in. Only when
-    /// the ack never comes does `completion` hand back the `parley://dictate`
-    /// URL for the visible round trip.
+    /// there, so the user never leaves the app they're typing in.
+    ///
+    /// How long "briefly" is, is `StartHandshake`'s call: `firstAck` (700 ms)
+    /// for any sign of life; up to `microphoneWait` (3 s) once the app has
+    /// said it is opening a microphone for this session; and not a moment
+    /// longer once it has said iOS refused it one (`needsApp`). Only then does
+    /// `completion` hand back the `parley://dictate` URL for the visible round
+    /// trip. The pane is listening from the tap throughout — nothing about it
+    /// changes while the handshake runs, and the watchdog covers a session
+    /// that is never taken up (`checkLiveness`).
     func startDictation(completion: @escaping (URL?) -> Void) {
         guard hasFullAccess else { return }
         // A new session ends the last one's editing window: anything the user
@@ -297,27 +739,52 @@ final class KeyboardViewController: UIInputViewController {
                 hostBundleID: KeyboardHost.bundleID(of: self),
                 stopRequested: false,
                 insertedCount: 0))
+        leaveFinishing(settled: false)
         bridge.listening = true
         bridge.partial = ""
         bridge.tail = ""
         bridge.errorText = nil
+        bridge.noticeText = nil
         bridge.micTaken = false
+        sessionDeadline = nil
+        updateCountdown()
+        // The last dictation's words leave the slot, so they stop being the
+        // thing a tap there copies.
+        offerCopy(nil)
         // The pane went live before the app has said a word; the watchdog is
         // what takes it back if the app never does (see `checkLiveness`).
         checkLiveness()
 
         let target = session
         Task { @MainActor [weak self] in
-            let deadline = ContinuousClock.now + Self.startAckWindow
-            while ContinuousClock.now < deadline {
-                try? await Task.sleep(for: .milliseconds(80))
+            let started = ContinuousClock.now
+            var handshake = StartHandshake()
+            while true {
+                try? await Task.sleep(for: Self.startPoll)
                 guard let self, self.session == target else { return }
-                if DictationChannel.readDownlink()?.session == target {
-                    return  // acked — the app is recording, nobody moved
+                // The user ended it before the app took it up — ✕, or ⏹ with
+                // nothing said. The wait is up to three seconds now, long
+                // enough for that to happen, and opening Parley for a session
+                // the user has already finished with would be the jump for
+                // nothing.
+                guard self.cancelledSession != target, self.stopRequestedAt == nil else { return }
+                if let d = DictationChannel.readDownlink(), d.session == target {
+                    handshake.observe(d)
+                }
+                let elapsed = started.duration(to: .now)
+                let seconds =
+                    Double(elapsed.components.seconds)
+                    + Double(elapsed.components.attoseconds) / 1e18
+                switch handshake.decide(elapsed: seconds) {
+                case .wait:
+                    continue
+                case .acked:
+                    return  // the app is recording, nobody moved
+                case .openApp:
+                    completion(DictationChannel.startURL(session: target))
+                    return
                 }
             }
-            guard let self, self.session == target else { return }
-            completion(DictationChannel.startURL(session: target))
         }
     }
 
@@ -338,7 +805,7 @@ final class KeyboardViewController: UIInputViewController {
 
     /// How long a freshly minted session may go without the app publishing
     /// anything for it before the pane gives up on it. The no-jump path answers
-    /// within `startAckWindow`; the URL path answers once the app has come
+    /// within `StartHandshake.firstAck`; the URL path answers once the app has come
     /// forward and opened the microphone, which is a couple of seconds at
     /// most — and usually kills this keyboard on the way, in which case none of
     /// this runs. It matters on the path where the switch never happens: the
@@ -377,7 +844,11 @@ final class KeyboardViewController: UIInputViewController {
         let now = Date()
         let presence = DictationChannel.readPresence()
         var deadline: Date
-        if let d = DictationChannel.readDownlink(), d.session == session {
+        // `needsApp` counts as not answered yet: it is the app handing the
+        // session to the URL, and it is not live, so it has no presumed death
+        // of its own — without this the pane would wait on it forever if the
+        // URL never landed.
+        if let d = DictationChannel.readDownlink(), d.session == session, d.state != .needsApp {
             // A terminal state has nothing left to watch; `drainDownlink` has
             // already taken the pane out of `listening` for it.
             guard let dead = d.presumedDeadAt(presence: presence) else { return }
@@ -397,7 +868,7 @@ final class KeyboardViewController: UIInputViewController {
             return
         }
         let target = session
-        let wait = deadline.timeIntervalSince(now) + 0.3
+        let wait = Self.livenessWait(until: deadline, from: now)
         liveness = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(wait))
             guard !Task.isCancelled, let self, self.session == target else { return }
@@ -406,6 +877,27 @@ final class KeyboardViewController: UIInputViewController {
             self.drainDownlink()
             self.checkLiveness()
         }
+    }
+
+    /// The longest the watchdog sleeps before it looks again.
+    ///
+    /// Every deadline above is seconds away in any state that can happen: the
+    /// stale periods, `startGrace` and `stopGrace` are all well under a
+    /// minute. But `presumedDeadAt` is built from timestamps in files the app
+    /// wrote, and a clock that jumped or a stamp from nowhere can put it
+    /// arbitrarily far out — and a non-finite or huge number of seconds traps
+    /// in the conversion to `Duration`. Waking early is harmless: the wake
+    /// re-reads everything and sleeps again, so a clamp can only add a check,
+    /// never skip one.
+    private static let longestLivenessWait: TimeInterval = 60
+
+    /// Seconds from `now` until just past `deadline` — the 0.3 s margin so the
+    /// wake lands after the deadline rather than on it — kept finite and
+    /// within `0...longestLivenessWait`.
+    private static func livenessWait(until deadline: Date, from now: Date) -> TimeInterval {
+        let wait = deadline.timeIntervalSince(now) + 0.3
+        guard wait.isFinite else { return longestLivenessWait }
+        return min(max(wait, 0), longestLivenessWait)
     }
 
     /// Nobody is serving the session on screen. End it here, the way ✕ would,
@@ -432,6 +924,133 @@ final class KeyboardViewController: UIInputViewController {
         bridge.ready = DictationChannel.readReadiness()?.canDictate ?? false
     }
 
+    // MARK: the microphone level
+
+    /// How fast the drawn level chases the published one, per reading.
+    ///
+    /// The mailbox arrives at ~12 Hz and a raw sample is not something to draw:
+    /// speech is spiky at that resolution, so the button would twitch between
+    /// consecutive readings of the same word, and a meter that twitches reads
+    /// as broken rather than as responsive. So each reading moves the drawn
+    /// value a fraction of the way towards it — a one-pole filter, two
+    /// multiplies, no history and no buffer.
+    ///
+    /// **Asymmetric on purpose.** The rise is fast (0.6: within ~90 % of a new
+    /// level in three readings, a quarter of a second) because the swell has to
+    /// land *with* the syllable; a slow attack is exactly the lag that makes a
+    /// meter feel disconnected from the voice. The fall is slower (0.25, ~90 %
+    /// in half a second) because the gaps between words are shorter than the
+    /// gaps between sentences: matching them would strobe the button on every
+    /// consonant, and what the eye should see between words is a settle, not a
+    /// collapse. A voice that actually stops still reaches rest well inside a
+    /// second.
+    private static let levelAttack: Float = 0.6
+    private static let levelRelease: Float = 0.25
+    /// The same filter, slower, applied to the already-smoothed level to make
+    /// the outer ring — see `KeyboardBridge.MicMeter.trail`. A lagged copy of a
+    /// signal *is* a wavefront when it is drawn further out, which is how the
+    /// ripple emanates without a repeating animation anywhere in it.
+    private static let trailAttack: Float = 0.25
+    private static let trailRelease: Float = 0.22
+
+    /// Watches for the app going quiet without saying so — see
+    /// `armLevelWatchdog`. At most one, and it ends itself once the meter is at
+    /// rest.
+    private var levelWatchdog: Task<Void, Never>?
+
+    /// Read the published level and move the meter towards it.
+    private func readMicLevel() {
+        guard hasFullAccess else { return }
+        // `current()` rather than the raw field: a reading nobody has refreshed
+        // for `MicLevelReading.staleAfter`, one from a build that did not stamp
+        // it, and a missing file all mean silence rather than "whatever was
+        // last seen".
+        applyMicLevel(DictationChannel.readMicLevel()?.current() ?? 0)
+    }
+
+    private func applyMicLevel(_ target: Float) {
+        let was = bridge.mic
+        let level = Self.chase(
+            was.level, towards: target, up: Self.levelAttack, down: Self.levelRelease)
+        let trail = Self.chase(
+            was.trail, towards: level, up: Self.trailAttack, down: Self.trailRelease)
+        let next = KeyboardBridge.MicMeter(level: level, trail: trail)
+        // Only when it actually moved. Twelve readings a second is twelve
+        // SwiftUI invalidations a second if every one of them publishes, and
+        // the values converge on *exactly* zero (see `chase`), so a keyboard
+        // sitting in silence redraws nothing at all rather than redrawing the
+        // same flat button twelve times.
+        if next != was { bridge.mic = next }
+        armLevelWatchdog()
+    }
+
+    /// One reading's worth of movement towards `target`.
+    ///
+    /// Snapped to zero at the bottom because an exponential approach never
+    /// arrives: without it the meter would idle at a denormal forever, which
+    /// costs nothing to draw but means `applyMicLevel` never stops publishing
+    /// and the watchdog below never stops looping. Silence has to be reachable,
+    /// not approached.
+    private static func chase(_ value: Float, towards target: Float, up: Float, down: Float)
+        -> Float
+    {
+        let next = value + (target - value) * (target > value ? up : down)
+        return next < 0.002 ? 0 : min(1, next)
+    }
+
+    /// Bring the meter to rest when the app stops publishing altogether.
+    ///
+    /// Staleness alone cannot do it. The keyboard only re-reads the mailbox
+    /// when a note arrives, and a process that has been jetsammed, suspended by
+    /// an audio interruption or swiped out of the app switcher posts no notes —
+    /// so the last level published would be the last level drawn, and the
+    /// button would hold a half-swell until the liveness watchdog gave up on
+    /// the session ~25 s later. That is precisely the "frozen mid-swell" this
+    /// mailbox's staleness rule exists to prevent, and something has to *ask*.
+    ///
+    /// Cheap by construction: one task at a time, waking once per
+    /// `staleAfter` (about 1.6 times a second) and only while the meter is off
+    /// its rest, which outside a live session is never. It returns the moment
+    /// the meter reaches zero, so a keyboard on an idle pane runs no timer at
+    /// all — and a keyboard in a live session runs exactly one, against the
+    /// twelve notes a second it is backstopping.
+    private func armLevelWatchdog() {
+        guard levelWatchdog == nil, bridge.mic != .rest else { return }
+        levelWatchdog = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(MicLevelReading.staleAfter))
+                guard !Task.isCancelled, let self else { return }
+                // Re-reading rather than assuming silence: the app may simply
+                // have gone quiet for a beat and stopped writing, in which case
+                // the file still holds a fresh-enough reading and the meter
+                // should keep chasing it. `applyMicLevel` cannot re-arm us — it
+                // finds this task still in place — so there is no recursion
+                // here, only the loop.
+                self.applyMicLevel(DictationChannel.readMicLevel()?.current() ?? 0)
+                guard self.bridge.mic == .rest else { continue }
+                // Clearing the handle only on *this* exit, and not in a
+                // `defer`, because the other way out is a cancel — and a cancel
+                // comes from `restMicLevel`, which has already put the handle
+                // down and may have armed a replacement since. A defer would
+                // have let a dying task erase its successor, leaving two of
+                // these looping with nothing tracking either.
+                self.levelWatchdog = nil
+                return
+            }
+        }
+    }
+
+    /// Put the meter down now, without waiting for it to decay.
+    ///
+    /// For the moments the keyboard itself ends a session: there is no voice to
+    /// settle from, and a button still coasting down from the last word would
+    /// be animating something that is over.
+    private func restMicLevel() {
+        levelWatchdog?.cancel()
+        levelWatchdog = nil
+        if bridge.mic != .rest { bridge.mic = .rest }
+    }
+
     // MARK: the microphone window (called from SwiftUI)
 
     /// Read what the app says about the microphone window.
@@ -451,12 +1070,6 @@ final class KeyboardViewController: UIInputViewController {
         // the headline and on the button, so there is nothing left to decide.
         let window = DictationChannel.readWindow()
         bridge.windowIsOpen = window?.isOpen() ?? false
-        // Rounded up, so "1m" never means "already gone": the number is there
-        // to say roughly how much room is left, and rounding down would let the
-        // chip read 0.
-        bridge.windowMinutesLeft = bridge.windowIsOpen
-            ? max(1, Int(((window?.remaining() ?? 0) / 60).rounded(.up)))
-            : nil
     }
 
     /// The keyboard's half of "end it early". A timestamp rather than a flag,
@@ -469,7 +1082,6 @@ final class KeyboardViewController: UIInputViewController {
         // may be suspended, in which case the window died with it and the chip
         // was already wrong.
         bridge.windowIsOpen = false
-        bridge.windowMinutesLeft = nil
     }
 
     /// Ask the app to stop and flush the tail. The app is running during
@@ -482,12 +1094,103 @@ final class KeyboardViewController: UIInputViewController {
         up.cancelRequested = false
         up.insertedCount = insertedCount
         DictationChannel.writeUplink(up)
-        // The pane keeps its live shape until the app answers: `finishing`
-        // keeps ⏹ and ✕ on screen while the transcript is polished, and a
-        // stop nobody answers is what the watchdog is for. Going quiet here,
-        // as this used to, only meant the next drain put the button back.
+        // The pane stays live — ✕ on screen, the keys resting, the watchdog
+        // armed — because the session is: going quiet here, as this once did,
+        // only meant the next drain put the button back. What changes now,
+        // under the finger and without waiting for the app's `finishing`, is
+        // the button: it stops being a red stop button the moment it has been
+        // pressed. A stop nobody answers is still what the watchdog is for.
         stopRequestedAt = Date()
+        enterFinishing()
+        updateCountdown()
         checkLiveness()
+    }
+
+    /// The record button tapped while the session is finishing: insert the raw
+    /// words now instead of waiting for the AI polish.
+    ///
+    /// Written as a stop *and* a skip, the way ✕ is written as a stop and a
+    /// cancel: an app that predates the skip still reads "end this session",
+    /// which it is already doing. The pane changes nothing here. The words are
+    /// still on their way — the relay may be draining the last of them, which
+    /// the app will not cut short — and `done` is what ends the wave and puts
+    /// them in the field, as it always is.
+    func skipPolishing() {
+        guard !session.isEmpty, bridge.finishing else { return }
+        var up = DictationChannel.readUplink() ?? .init(session: session)
+        up.session = session
+        up.stopRequested = true
+        up.cancelRequested = false
+        up.skipPolishRequested = true
+        up.insertedCount = insertedCount
+        DictationChannel.writeUplink(up)
+    }
+
+    // MARK: finishing
+
+    /// Take the pane into its finishing face: the button leaves the recording
+    /// red for the brand blue, the voice meter goes to rest, and — only if the
+    /// finish is still running `PolishWave.revealDelay` from now — the wave and
+    /// the dots appear. A finish that lands inside that quarter second shows
+    /// no transition at all: blue, then the idle microphone.
+    ///
+    /// Idempotent, because it has two callers that usually both fire: ⏹
+    /// itself, optimistically, and the app's `finishing` a moment later (the
+    /// only caller for a session this keyboard adopted mid-finish).
+    private func enterFinishing() {
+        guard !bridge.finishing else { return }
+        bridge.finishing = true
+        // Nothing is listening any more, so nothing should swell or ripple.
+        // The app stops publishing levels at ⏹ anyway; this is the same
+        // "under the finger, not a decay later" rule `cancelDictation` follows.
+        restMicLevel()
+        waveFade?.cancel()
+        waveFade = nil
+        if bridge.wave != nil { bridge.wave = nil }
+        waveReveal?.cancel()
+        let target = session
+        waveReveal = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: PolishWave.revealDelay)
+            guard !Task.isCancelled, let self, self.session == target, self.bridge.finishing
+            else { return }
+            self.waveReveal = nil
+            // Sized once, from the text as it stands: the pass must not change
+            // length mid-crest if the relay's last words land during it.
+            let shown = (self.bridge.tail + self.bridge.partial).count
+            self.bridge.wave = PolishWave(
+                startedAt: Date(),
+                pass: PolishWave.passDuration(graphemes: min(shown, PolishWave.visibleGraphemes)))
+        }
+    }
+
+    /// Leave the finishing face. `settled` is `done`: the words landed, and the
+    /// wave eases off them over `PolishWave.fadeOut` instead of stopping
+    /// mid-crest. Every other ending — ✕, an error, the microphone taken, the
+    /// next session — takes it down at once, because nothing it was waiting
+    /// for is coming.
+    private func leaveFinishing(settled: Bool) {
+        waveReveal?.cancel()
+        waveReveal = nil
+        if bridge.finishing { bridge.finishing = false }
+        guard let wave = bridge.wave else { return }
+        guard settled else {
+            waveFade?.cancel()
+            waveFade = nil
+            bridge.wave = nil
+            return
+        }
+        // A `done` republished on a later drain finds the wave already ending.
+        guard wave.endedAt == nil else { return }
+        var ending = wave
+        ending.endedAt = Date()
+        bridge.wave = ending
+        waveFade?.cancel()
+        waveFade = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(PolishWave.fadeOut))
+            guard !Task.isCancelled, let self, self.bridge.wave == ending else { return }
+            self.waveFade = nil
+            self.bridge.wave = nil
+        }
     }
 
     /// Ask the app to end the session and throw the words away — the ✕ next to
@@ -514,6 +1217,7 @@ final class KeyboardViewController: UIInputViewController {
         liveness?.cancel()
         liveness = nil
         stopRequestedAt = nil
+        leaveFinishing(settled: false)
         bridge.listening = false
         bridge.reconnecting = false
         bridge.partial = ""
@@ -521,24 +1225,43 @@ final class KeyboardViewController: UIInputViewController {
         // Not an error, so nothing is left on screen saying otherwise — the
         // slot goes back to the idle invitation to speak.
         bridge.errorText = nil
+        bridge.noticeText = nil
         bridge.micTaken = false
+        sessionDeadline = nil
+        updateCountdown()
+        // Nothing is on screen any more, so nothing is there to copy — which
+        // also covers `abandonSession`, whose red copy follows with no words
+        // under it.
+        offerCopy(nil)
+        // The button goes back to its resting size under the finger, with the
+        // rest of the pane. Letting it coast down from the last word would be
+        // the one part of this still animating a session the user just ended.
+        restMicLevel()
     }
 
     /// How old a downlink may be and still get adopted by a keyboard that
-    /// didn't mint its session. Sessions are hard-capped at 120 s (the app's
-    /// `maxSeconds`), and every segment and state change re-stamps the file, so
-    /// anything older is a leftover — a crashed app's frozen `listening` file
-    /// or a long-finished transcript that would land in the wrong field.
+    /// didn't mint its session. Measured from the file's last stamp, not from
+    /// the session's start — every segment and state change re-stamps it, so
+    /// the session cap (ten minutes) does not enter into it — and anything
+    /// older is a leftover: a crashed app's frozen `listening` file or a
+    /// long-finished transcript that would land in the wrong field.
     private static let adoptionWindow: TimeInterval = 150
 
     /// How much settled text the keyboard echoes above the record button.
     ///
     /// Since nothing is inserted until the session is done, this echo is the
     /// only place the words are visible while they are being spoken — but it is
-    /// still a window, not a transcript. Three lines at this size hold rather
-    /// fewer than 140 characters, so the cap is already past what the slot can
-    /// show; raising it would only push more of the newest words out of view.
-    private static let tailLimit = 140
+    /// still a window, not a transcript.
+    ///
+    /// It used to be 140, on the argument that three lines hold fewer
+    /// characters than that and anything more "would only push the newest
+    /// words out of view". That was the bug, stated as a reason: the slot
+    /// truncated at the *end*, so past three lines the words being spoken were
+    /// the ones hidden. The slot now scrolls, pinned to its newest line, so the
+    /// cap is how far back the user can scroll to reread — about twenty lines
+    /// of Chinese or ten of English, under a kilobyte, and still nowhere near
+    /// the transcript store this extension deliberately doesn't keep.
+    private static let tailLimit = 400
 
     /// Read the transcript the app has published, and insert it once the app
     /// says the session is done.
@@ -605,8 +1328,10 @@ final class KeyboardViewController: UIInputViewController {
         }
 
         // A relaunched keyboard restores its position from the uplink it wrote.
+        // Never below zero: the file is only ours by convention, and a
+        // negative mark would slice the transcript from before its start.
         if insertedCount == 0, let up = DictationChannel.readUplink(), up.session == session {
-            insertedCount = up.insertedCount
+            insertedCount = max(0, up.insertedCount)
         }
 
         // One insertion, at the end. `.done` is the only state that has the
@@ -616,9 +1341,16 @@ final class KeyboardViewController: UIInputViewController {
         // The high-water mark is still what makes this safe, because `.done`
         // republishes on every drain and the keyboard drains on every
         // appearance.
+        //
+        // The mark is clamped into the transcript before it slices anything. It
+        // comes from a file, and an index outside `0...count` is a trap, not an
+        // empty string — a keyboard that died delivering words is the one
+        // failure this path cannot afford. Past the end already means "all of
+        // it landed" and inserts nothing, as it always did.
         let committed = Array(d.committed)
-        if d.state == .done, committed.count > insertedCount {
-            textDocumentProxy.insertText(String(committed[insertedCount...]))
+        let landed = min(max(insertedCount, 0), committed.count)
+        if d.state == .done, committed.count > landed {
+            typeOutsideComposition(String(committed[landed...]))
             insertedCount = committed.count
             var up = DictationChannel.readUplink() ?? .init(session: session)
             up.insertedCount = insertedCount
@@ -646,12 +1378,37 @@ final class KeyboardViewController: UIInputViewController {
         // happened to insert: a keyboard that was killed mid-session and came
         // back still shows the sentence in progress.
         bridge.tail = String(d.committed.suffix(Self.tailLimit))
+        // Remembered before the line below throws it away: the `.micTaken`
+        // branch has to be able to tell the microphone *being* taken from the
+        // app republishing a state it is already in, and the flag is the only
+        // record of which. See there.
+        let wasMicTaken = bridge.micTaken
         // Cleared before the switch below sets it again, so every state that is
         // not "the microphone is gone" takes the notice down — a resumed session
         // included, which is the whole point of it being recoverable.
         bridge.micTaken = false
+        // The note on a `done` that did not come from ⏹ — the cap, or a lost
+        // connection — shown after the words land, where an error would be but
+        // not in the error red: the words were delivered. Every other state
+        // takes it down.
+        bridge.noticeText = d.state == .done ? d.notice.map(Self.noticeCopy) : nil
+        // The cap's deadline, for the countdown. Only a live session has one.
+        sessionDeadline = d.state.isLive ? d.deadline : nil
         switch d.state {
-        case .starting, .listening: 
+        case .starting, .listening:
+            bridge.listening = true
+            bridge.reconnecting = false
+            // Still `listening` after ⏹ is the app not having read the stop
+            // yet, not the session carrying on: the finishing face the tap put
+            // up stays, and `stopGrace` decides if the stop went unheard.
+            if stopRequestedAt == nil { leaveFinishing(settled: false) }
+        case .needsApp:
+            // The app could not open the microphone from the background and is
+            // handing the session to the URL, which `startDictation` opens on
+            // reading this. The pane stays exactly as the tap left it —
+            // listening, optimistically — because the same session carries on
+            // in Parley; if the jump never lands, `checkLiveness` treats this
+            // as unanswered and `startGrace` takes the pane back.
             bridge.listening = true
             bridge.reconnecting = false
         case .reconnecting:
@@ -661,9 +1418,14 @@ final class KeyboardViewController: UIInputViewController {
             // between "hold on" and "that didn't work".
             bridge.listening = true
             bridge.reconnecting = true
+            if stopRequestedAt == nil { leaveFinishing(settled: false) }
         case .finishing:
             bridge.listening = true
             bridge.reconnecting = false
+            // Usually already entered by ⏹; this is the path for a session
+            // stopped from somewhere else — adopted after a relaunch, or the
+            // Action Button's.
+            enterFinishing()
             // The transcript is one AI-polish round trip away from landing;
             // warm the engine now so the pattern is not a beat late. Cheap to
             // repeat on the drains that follow.
@@ -672,6 +1434,9 @@ final class KeyboardViewController: UIInputViewController {
             bridge.listening = false
             bridge.reconnecting = false
             bridge.partial = ""
+            // The words are in the field. The wave eases off them rather than
+            // stopping mid-crest; the button is already back to the microphone.
+            leaveFinishing(settled: true)
             // The dictated text is all in the field now, so this is the picture
             // any later edit gets compared against.
             lexicon.noteInserted(context: textDocumentProxy.documentContextBeforeInput)
@@ -684,6 +1449,7 @@ final class KeyboardViewController: UIInputViewController {
             // the one that did *not*: killed between the tap and the answer,
             // relaunched, and reading the ending out of the file. It says the
             // same nothing.
+            leaveFinishing(settled: false)
             bridge.listening = false
             bridge.reconnecting = false
             bridge.partial = ""
@@ -695,23 +1461,228 @@ final class KeyboardViewController: UIInputViewController {
             // kept rather than cleared, and so is the session id: if the app wins
             // the microphone back it publishes `listening` for this same session
             // and the pane comes back with the sentence still in it.
+            leaveFinishing(settled: false)
             bridge.listening = false
             bridge.reconnecting = false
             bridge.partial = ""
             bridge.errorText = nil
             bridge.micTaken = true
+            // The one moment on this pane the user is most likely to keep
+            // talking into nothing, and until now the copy in the slot was the
+            // only thing that said so — copy on a keyboard the user is not
+            // looking at, because they are looking at the field they are
+            // dictating into or at the system dictation key they just pressed.
+            //
+            // Once per transition, not once per drain. The app republishes
+            // `micTaken` on every heartbeat for as long as the microphone is
+            // gone, and `drainDownlink` also runs on every appearance, so
+            // firing on the state rather than on entering it would buzz for
+            // seconds. `wasMicTaken` is that edge — captured above, before the
+            // unconditional clear that precedes this switch.
+            //
+            // Full Access is the guard at the top of this method, the same one
+            // `dictationDelivered` relies on: without it there is no App Group
+            // to read this state from and no haptics to play anyway.
+            if !wasMicTaken { Haptics.micTakenBySystem() }
         case .error:
+            leaveFinishing(settled: false)
             bridge.listening = false
             bridge.reconnecting = false
             bridge.partial = ""
-            bridge.tail = ""
+            // The tail stays, set above from what had settled. It used to be
+            // cleared here, which made an error the one ending that took the
+            // words off the screen as well as out of the field — the failure
+            // is exactly when they exist nowhere else. The slot now shows them
+            // under the error (`KeyboardRootView.failedText`), and a tap copies
+            // them. An error before any word settled has an empty tail and
+            // looks as it always has.
+            //
             // Surface the app's failure where the user actually is. Swallowing
             // it (the old behavior) read as "the mic button does nothing".
             bridge.errorText = d.errorMessage ?? String(localized: "Couldn't start. Try again.")
         }
+        // Whether a tap on the slot copies, derived from the same file the
+        // slot's words came from: the whole of `committed` once the session is
+        // over, and nothing while it is not. See `DictationCopy`.
+        offerCopy(
+            DictationCopy.text(
+                for: d.state, committed: d.committed, hasFullAccess: hasFullAccess))
+        // Nothing that is not live has a level. One line here rather than the
+        // same line in each of the four terminal branches above: whatever took
+        // the pane out of its listening shape, the meter goes with it. Idle
+        // drains cost nothing — `restMicLevel` publishes only if something
+        // moved, and a `done` being republished moves nothing.
+        if !bridge.listening { restMicLevel() }
+        updateCountdown()
         // Every drain is a sign of life or the end of one; either way the
         // watchdog's deadline moved.
         checkLiveness()
+    }
+
+    /// What the pane says for a `done` that ended on its own. The cap's line is
+    /// the desktop's wording, with the minutes read from the constant.
+    private static func noticeCopy(_ ending: DictationEnding) -> String {
+        switch ending {
+        case .limitReached:
+            let minutes = DictationCountdown.limitMinutes()
+            return String(localized: "Single dictation limit reached (\(minutes) min)")
+        case .connectionLost:
+            return String(
+                localized:
+                    "Connection lost — inserted what was transcribed. Tap the mic to continue.")
+        }
+    }
+
+    // MARK: the cap's countdown
+
+    /// Show, or take down, the seconds left before the app's cap stops the
+    /// session on screen, and come back for the next second while it counts.
+    ///
+    /// The number is `DictationCountdown`'s, from the deadline the app
+    /// published — not from when this keyboard thinks the session began, which
+    /// a relaunched keyboard does not know. Only while the pane is listening
+    /// and not finishing: once ⏹ is pressed there is nothing left to warn
+    /// about. Idle drains cost one comparison.
+    private func updateCountdown() {
+        countdownTick?.cancel()
+        countdownTick = nil
+        let deadline = bridge.listening && !bridge.finishing ? sessionDeadline : nil
+        let now = Date()
+        let left = DictationCountdown.secondsLeft(until: deadline, at: now)
+        if bridge.countdown != left { bridge.countdown = left }
+        guard let next = DictationCountdown.nextTick(until: deadline, at: now) else { return }
+        // Clamped like the watchdog's sleep, and for the same reason: the
+        // deadline came out of a file, and a wake that only re-reads the clock
+        // is harmless however early it lands.
+        let wait = min(max(next.timeIntervalSince(now), 0.05), Self.longestLivenessWait)
+        let target = session
+        countdownTick = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(wait))
+            guard !Task.isCancelled, let self, self.session == target else { return }
+            self.updateCountdown()
+        }
+    }
+
+    // MARK: copying the finished dictation
+
+    /// How long "Copied" stands in for the wordmark, and the wash stays on the
+    /// words, after a tap. Long enough to be read at a glance; shorter than the
+    /// 1.5 s the corner label had, because the wash is on the words the user is
+    /// looking at and a highlight that lingers starts to read as a selection
+    /// that is still there.
+    private static let copiedLabelHold: Duration = .milliseconds(1200)
+
+    /// Make `text` what a tap on the slot copies, or make the slot not a copy
+    /// target with `nil`.
+    ///
+    /// Every way the copy target changes comes through here, so the two rules
+    /// that go with it cannot be forgotten at one of the call sites: a session
+    /// the user has typed after stays closed (`copyClosedSession`), and the
+    /// "Copied" label never outlives the target it was about. Assigns only on
+    /// a change — the drain runs on every note and every appearance, and a
+    /// `@Published` assignment redraws the keyboard even when nothing moved.
+    ///
+    /// The first-run hint goes with the target: offered while there is one and
+    /// `CopyHint` still allows it for this session, and gone the moment the
+    /// target is.
+    private func offerCopy(_ text: String?) {
+        let next = session == copyClosedSession ? nil : text
+        if bridge.copyableText != next { bridge.copyableText = next }
+        let hint = next != nil && CopyHint.offers(in: session, copyHint)
+        if bridge.copyHintOffered != hint { bridge.copyHintOffered = hint }
+        guard next == nil else { return }
+        copiedFade?.cancel()
+        copiedFade = nil
+        if bridge.justCopied { bridge.justCopied = false }
+    }
+
+    /// What the keyboard remembers about the first-run copy hint, read once
+    /// per controller — iOS builds a new one on every appearance, so a change
+    /// the app made (the DEBUG harness's reset) is picked up on the next one.
+    /// Only read here and written through `CopyHintLedger`, never on a path
+    /// that runs per keystroke.
+    private lazy var copyHint = CopyHintLedger.shared.read()
+
+    /// The strip drew the hint for the current session (`StripHome`): count
+    /// it. Not counted when the hint was only offered — on a strip too narrow
+    /// for it the offer is skipped, and that session must not use one up.
+    /// `CopyHint.shown` ignores a session already counted, so the hint being
+    /// drawn again after a copy or a new appearance costs nothing.
+    func copyHintShown() {
+        guard bridge.copyHintOffered else { return }
+        let next = CopyHint.shown(in: session, copyHint)
+        guard next != copyHint else { return }
+        copyHint = next
+        CopyHintLedger.shared.write(next)
+        Self.copyHintLog.notice(
+            "copy hint shown: \(next.countedSessions, privacy: .public) of \(CopyHint.sessionLimit, privacy: .public)")
+    }
+
+    /// The hint's count and its retirement, and nothing else — no text, no ids.
+    private static let copyHintLog = Logger(
+        subsystem: "com.pathors.parley.ios.keyboard", category: "copyHint")
+
+    /// The user tapped the transcript slot of a finished dictation: put the
+    /// whole of it on the pasteboard, and say so — a wash over the words and
+    /// "✓ Copied" in place of the strip's wordmark (see `CopyTarget` and
+    /// `StripHome.wordmark`), and for VoiceOver, the same word spoken.
+    ///
+    /// `copyableText` rather than `tail`: the tail is the last `tailLimit`
+    /// characters, and what is wanted on the pasteboard is everything that
+    /// was said. The two are the same text for any dictation short enough to
+    /// see whole.
+    ///
+    /// Behind Full Access twice over — the pasteboard and the haptic both need
+    /// it — though without it `copyableText` is never set to begin with.
+    ///
+    /// The announcement is VoiceOver's whole confirmation: the label is in the
+    /// strip, away from the button VoiceOver is on and hidden from it, and the
+    /// wash is only something to see. Posted on every tap, like the haptic,
+    /// because every tap really did copy.
+    func copyDictation() {
+        guard hasFullAccess, let text = bridge.copyableText else { return }
+        UIPasteboard.general.string = text
+        Haptics.dictationCopied()
+        if UIAccessibility.isVoiceOverRunning {
+            UIAccessibility.post(notification: .announcement, argument: String(localized: "Copied"))
+        }
+        if !bridge.justCopied { bridge.justCopied = true }
+        // One copy is proof the user knows: the hint is retired for good, and
+        // when "Copied" goes the wordmark comes back rather than the hint.
+        if !copyHint.hasCopied {
+            copyHint = CopyHint.copied(copyHint)
+            CopyHintLedger.shared.write(copyHint)
+            Self.copyHintLog.notice(
+                "copy hint retired by a copy after \(self.copyHint.countedSessions, privacy: .public) shown")
+        }
+        if bridge.copyHintOffered { bridge.copyHintOffered = false }
+        // A repeated tap shows the label again if it had gone, and restarts
+        // its time rather than stacking a second fade behind the first.
+        copiedFade?.cancel()
+        copiedFade = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.copiedLabelHold)
+            guard !Task.isCancelled, let self else { return }
+            self.copiedFade = nil
+            self.bridge.justCopied = false
+        }
+    }
+
+    /// A key on this keyboard typed or deleted something after a dictation:
+    /// the user has moved on from those words, so the slot stops being a way
+    /// to copy them.
+    ///
+    /// The key press itself, because nothing better exists. The lexicon watch
+    /// is the other thing here that cares about edits after a dictation, but
+    /// it only looks at the field twice — when the keyboard leaves and when
+    /// the next session starts — and cannot say when the first edit happened.
+    /// The host's `textDidChange` is no help either: it never reports the
+    /// keyboard's own edits, and it does report a tap that merely moves the
+    /// cursor. So the keys call this, and the words stay on screen as they
+    /// always have — only the copy target goes.
+    private func keyPressed() {
+        guard bridge.copyableText != nil else { return }
+        copyClosedSession = session
+        offerCopy(nil)
     }
 
     /// Open the container app from the extension. The classic responder-chain
@@ -734,13 +1705,22 @@ final class KeyboardViewController: UIInputViewController {
     // MARK: 注音 (called from SwiftUI)
 
     /// A bopomofo key.
-    func zhuyinSymbol(_ symbol: Character) { apply(zhuyin.symbol(symbol)) }
+    func zhuyinSymbol(_ symbol: Character) {
+        keyPressed()
+        apply(zhuyin.symbol(symbol))
+    }
 
     /// A tone key: finalize the syllable and show its candidates.
-    func zhuyinTone(_ tone: ZhuyinTone) { apply(zhuyin.tone(tone)) }
+    func zhuyinTone(_ tone: ZhuyinTone) {
+        keyPressed()
+        apply(zhuyin.tone(tone))
+    }
 
     /// The user picked a character out of the candidate bar.
-    func zhuyinPick(_ candidate: String) { apply(zhuyin.pick(candidate)) }
+    func zhuyinPick(_ candidate: String) {
+        keyPressed()
+        apply(zhuyin.pick(candidate))
+    }
 
     /// Do whatever the composer asked for, then republish what it is holding.
     ///
@@ -752,15 +1732,275 @@ final class KeyboardViewController: UIInputViewController {
     ) {
         switch outcome {
         case .handled: break
-        case .insert(let text): textDocumentProxy.insertText(text)
+        case .insert(let text): commit(text)
         case .passThrough: passThrough()
         }
         publishComposition()
     }
 
+    /// `insertText` replaces the marked text. `setMarkedText` + `unmarkText`
+    /// does not survive a `setMarkedText` in the same turn: Reminders applied
+    /// them out of order and dropped the picked candidate. In a field whose
+    /// host ignores marked text there is nothing to replace, and this is the
+    /// plain insert the pane used before marked text.
+    private func commit(_ text: String) {
+        textDocumentProxy.insertText(text)
+        if marks.usesMarkedText { marks.sent("") }
+    }
+
+    /// The reading goes to the host as marked text and the strip gets only the
+    /// candidates — or, in a field whose host ignores marked text, the reading
+    /// goes to the strip's chip and nothing goes to the host. One assignment
+    /// for the strip, and only on a real change: a keystroke is one
+    /// invalidation of the strip, not two.
     private func publishComposition() {
-        if bridge.composition != zhuyin.reading { bridge.composition = zhuyin.reading }
-        if bridge.candidates != zhuyin.candidates { bridge.candidates = zhuyin.candidates }
+        let reading = zhuyin.reading
+        if marks.usesMarkedText, reading != marks.current {
+            if reading.isEmpty {
+                // One call, so there is no order to lose: the proxy drops an
+                // empty insertText, and unmarkText after this is not needed.
+                textDocumentProxy.setMarkedText("", selectedRange: NSRange(location: 0, length: 0))
+            } else {
+                textDocumentProxy.setMarkedText(
+                    reading,
+                    selectedRange: NSRange(location: (reading as NSString).length, length: 0))
+                scheduleSettleCheck()
+            }
+            marks.sent(reading)
+        }
+        let next = KeyboardBridge.ZhuyinStrip(
+            composition: marks.usesMarkedText ? "" : reading, candidates: zhuyin.candidates)
+        if bridge.zhuyin != next { bridge.zhuyin = next }
+        // The candidate grid is about a reading; once the buffer is committed or
+        // cleared there is nothing left in it to choose, and the keys come back.
+        // Here rather than in the view so every way the buffer empties — a pick,
+        // return, space, punctuation, leaving the pane — closes it the same way.
+        if reading.isEmpty, bridge.candidatesExpanded { bridge.candidatesExpanded = false }
+    }
+
+    /// Which field the proxy is on. Read through key-value coding because the
+    /// property is declared non-optional in Swift but is nil while the
+    /// keyboard is between fields, and reading it then traps.
+    ///
+    /// Guarded, because KVC trades that trap for a worse one: a proxy that did
+    /// not answer the key would raise an exception Swift cannot catch, on
+    /// every text and selection change. `nil` — an unknown field — is what
+    /// every caller already handles.
+    private var fieldID: UUID? {
+        GuardedKVC.value(forKey: "documentIdentifier", of: textDocumentProxy as AnyObject) as? UUID
+    }
+
+    /// The host changed its text or selection itself: a tap, a different
+    /// field, a host rewrite. The keyboard's own edits do not arrive here.
+    private func hostChangedText() {
+        let field = fieldID
+        defer { if field != nil { currentField = field } }
+        if let field, let previous = currentField, field != previous {
+            // Another field. Nothing the proxy does now reaches the old one —
+            // on iOS 26.5 an insert here landed in the *new* field — so the
+            // composition is only let go of, and remembered for repair.
+            if !zhuyin.reading.isEmpty { strandComposition() }
+            marks.fieldChanged()
+            zhuyin.clear()
+            publishComposition()
+            repairStrandedReading()
+            return
+        }
+        if zhuyin.reading.isEmpty {
+            // Back in front of a reading the host kept as plain text.
+            repairStrandedReading()
+            return
+        }
+        guard marks.usesMarkedText else { return }
+        let before = textDocumentProxy.documentContextBeforeInput
+        let after = textDocumentProxy.documentContextAfterInput
+        if marks.hostReported(before: before, after: after) == .left { abandonComposition() }
+    }
+
+    /// End the composition without inserting anything; the host keeps what it
+    /// shows. Committing the best guess here would put it wherever the cursor
+    /// has gone.
+    private func abandonComposition() {
+        if marks.usesMarkedText { textDocumentProxy.unmarkText() }
+        marks.reset()
+        zhuyin.clear()
+        publishComposition()
+    }
+
+    /// A while after the first marks in a field, ask whether the host showed
+    /// them. The callbacks cannot say: a host sends none for the keyboard's own
+    /// edits. Only an empty field can answer, and there a host that reports no
+    /// text at all has dropped the mark: the reading moves to the strip.
+    private func scheduleSettleCheck() {
+        guard !marks.confirmed else { return }
+        settleCheck?.cancel()
+        let check = DispatchWorkItem { [weak self] in self?.hostSettled() }
+        settleCheck = check
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: check)
+    }
+
+    private func hostSettled() {
+        let verdict = marks.hostSettled(
+            before: textDocumentProxy.documentContextBeforeInput,
+            after: textDocumentProxy.documentContextAfterInput,
+            hasText: textDocumentProxy.hasText)
+        guard verdict == .ignoresMarkedText else { return }
+        publishComposition()
+    }
+
+    /// The keyboard is going away with a reading pending. The system 注音
+    /// keyboard commits its best guess here; this one tries the same, but in
+    /// Reminders on iOS 26.5 no proxy edit lands this late (nor in
+    /// `textWillChange`, which comes first), and the host keeps the reading as
+    /// typed. So it is also remembered, and `returnToField` repairs it.
+    private func leaveComposition() {
+        settleCheck?.cancel()
+        guard !zhuyin.reading.isEmpty else { return }
+        if marks.usesMarkedText {
+            strandComposition()
+            commit(zhuyin.best)
+        }
+        marks.reset()
+        zhuyin.clear()
+        publishComposition()
+    }
+
+    /// A reading the host may keep as plain text, and its best guess. In
+    /// memory only, and static because UIKit makes a new controller each time
+    /// the keyboard comes up while the extension process lives on. Never
+    /// written to disk: the keyboard holds no typed content beyond the process
+    /// (see `ios/AppStore/privacy-label.md`), so if iOS ends the process
+    /// before the user comes back to the field, the reading is not repaired.
+    private static var stranded: StrandedReading?
+    /// Set with `stranded`, cleared once the keyboard has explicitly removed
+    /// whatever might still be marked.
+    private static var markMayLinger = false
+
+    private func strandComposition() {
+        guard marks.usesMarkedText else { return }
+        Self.stranded = StrandedReading(reading: zhuyin.reading, best: zhuyin.best, at: Date())
+        Self.markMayLinger = true
+    }
+
+    /// If the text before the caret ends with exactly the stranded reading,
+    /// put its best guess in its place.
+    @discardableResult
+    private func repairStrandedReading() -> Bool {
+        guard let stranded = Self.stranded else { return false }
+        guard let repair = stranded.repair(
+            before: textDocumentProxy.documentContextBeforeInput, now: Date())
+        else {
+            if Date().timeIntervalSince(stranded.at) >= StrandedReading.lifetime {
+                Self.stranded = nil
+            }
+            return false
+        }
+        for _ in 0..<repair.delete { textDocumentProxy.deleteBackward() }
+        textDocumentProxy.insertText(repair.insert)
+        Self.stranded = nil
+        return true
+    }
+
+    /// The keyboard is back, possibly in another field: start the field over.
+    /// A stranded reading in front of the caret is repaired. Otherwise, if one
+    /// was stranded, anything still marked is removed explicitly — a reading a
+    /// keyboard switch left underlined — with `setMarkedText("")` followed by
+    /// `unmarkText()`. Only then, and never over a selection: an empty
+    /// `setMarkedText` replaces the selected text when nothing is marked.
+    private func returnToField() {
+        settleCheck?.cancel()
+        zhuyin.clear()
+        marks.fieldChanged()
+        currentField = fieldID
+        if !repairStrandedReading() { removeLingeringMark() }
+        Self.markMayLinger = false
+        publishComposition()
+    }
+
+    /// Remove whatever the keyboard may have left marked, with
+    /// `setMarkedText("")` followed by `unmarkText()`: neither kept raw nor
+    /// finalized as typed. Only after stranding a reading, and never over a
+    /// selection, because an empty `setMarkedText` replaces the selected text
+    /// when nothing is marked.
+    private func removeLingeringMark() {
+        guard Self.markMayLinger, (textDocumentProxy.selectedText ?? "").isEmpty else { return }
+        textDocumentProxy.setMarkedText("", selectedRange: NSRange(location: 0, length: 0))
+        textDocumentProxy.unmarkText()
+        Self.markMayLinger = false
+    }
+
+    /// Text that does not come from the composer ends the composition first,
+    /// so it lands after the reading rather than replacing it.
+    private func typeOutsideComposition(_ text: String) {
+        apply(zhuyin.confirm())
+        textDocumentProxy.insertText(text)
+    }
+
+    // MARK: English word suggestions
+
+    /// Re-read the word in front of the cursor and publish what it could become,
+    /// or, right after a word and a space, what usually follows that word.
+    ///
+    /// Called after every key this keyboard types and from `textDidChange`,
+    /// because the cursor can also move without us — a tap in the field, an
+    /// autofill, the host rewriting its own text — and a bar describing a word
+    /// that is no longer there would replace the wrong letters on a tap.
+    ///
+    /// **Nothing here changes the document.** The bar is a set of offers; only
+    /// `pickSuggestion` acts, and only when tapped.
+    private func refreshSuggestions() {
+        guard bridge.pane == .english else {
+            // Cheaper than computing an answer nothing draws, and it means the
+            // bar can never be showing stale words when the user swipes back.
+            publishSuggestions(partial: "", suggestions: [])
+            return
+        }
+        let context = textDocumentProxy.documentContextBeforeInput
+        // Shift is decided from the same read; see `refreshShift`.
+        refreshShift(context: context)
+        let partial = WordSuggestions.partialWord(before: context)
+        publishSuggestions(
+            partial: partial,
+            suggestions: partial.isEmpty
+                ? WordSuggestions.predictions(after: context, in: EnglishWords.bundled)
+                : WordSuggestions.suggestions(
+                    for: partial, in: EnglishWords.bundled, lexicon: lexiconTerms))
+    }
+
+    /// One assignment, and only on a real change: a keystroke that changed
+    /// nothing should not redraw the strip, and one that did should redraw it
+    /// once.
+    private func publishSuggestions(partial: String, suggestions: [String]) {
+        let next = KeyboardBridge.EnglishStrip(partialWord: partial, suggestions: suggestions)
+        if bridge.english != next { bridge.english = next }
+    }
+
+    /// The user tapped a word: take back the letters they typed and put the
+    /// whole word in, with the space that ends it.
+    ///
+    /// Deleting by `count` — one call per grapheme — because that is what one
+    /// `deleteBackward()` removes for the text this bar can meet. This used to
+    /// count scalars on the belief that the host deletes a scalar at a time;
+    /// measured in a `UITextView` host (iOS 26.5 simulator), one call took all
+    /// of `e` + U+0301 and all of 👍🏽, so a partial with a combining accent
+    /// typed by another keyboard deleted a character *before* the word too.
+    /// The same measurement found one exception: Devanagari `कि` lost only its
+    /// vowel sign, so for such scripts this leaves part of a grapheme behind.
+    /// That is the rarer failure and the gentler one — a stray letter left in
+    /// place rather than the user's text in front of the word eaten — and the
+    /// bundled list is ASCII, so only a lexicon term can reach it.
+    ///
+    /// The suggestion already carries the case the partial asked for, so it is
+    /// inserted as it is shown.
+    func pickSuggestion(_ word: String) {
+        // Empty right after a space, where the bar holds predictions: the tap
+        // then deletes nothing and only inserts.
+        let partial = bridge.english.partialWord
+        keyPressed()
+        apply(zhuyin.confirm())
+        for _ in 0..<partial.count { textDocumentProxy.deleteBackward() }
+        textDocumentProxy.insertText(word + " ")
+        refreshSuggestions()
     }
 
     // MARK: keys (called from SwiftUI)
@@ -769,10 +2009,93 @@ final class KeyboardViewController: UIInputViewController {
     /// bar first, then the syllable slot by slot — and only reaches the field
     /// once there is nothing pending. See `ZhuyinComposer.delete()`.
     func deleteBackward() {
+        keyPressed()
         apply(zhuyin.delete()) { textDocumentProxy.deleteBackward() }
+        refreshSuggestions()
     }
 
-    func insert(_ text: String) { textDocumentProxy.insertText(text) }
+    /// One repeat of a held delete key — see `DeleteRepeat` for the pace and
+    /// when a repeat becomes a word.
+    ///
+    /// A pending 注音 reading is still unwound symbol by symbol, however long
+    /// the key has been held: a word repeat never reaches past it into the
+    /// document, and never takes a whole word out of it. Its candidate bar is
+    /// left alone until the key is let go (`ZhuyinComposer.delete`).
+    ///
+    /// Nothing else is refreshed per repeat: the suggestion bar and shift are
+    /// re-read once, in `deleteRepeatEnded`. At twenty repeats a second each of
+    /// those was a document read and a strip redraw nobody could see.
+    func deleteRepeating(_ unit: DeleteRepeat.Unit) {
+        keyPressed()
+        apply(zhuyin.delete(refreshingCandidates: false)) {
+            let count =
+                unit == .word
+                ? DeleteRepeat.wordLength(before: textDocumentProxy.documentContextBeforeInput)
+                : 1
+            for _ in 0..<count { textDocumentProxy.deleteBackward() }
+        }
+    }
+
+    /// A held delete key was let go: bring back what the repeats skipped.
+    func deleteRepeatEnded() {
+        if !zhuyin.reading.isEmpty {
+            zhuyin.refresh()
+            publishComposition()
+        }
+        refreshSuggestions()
+    }
+
+    // MARK: shift
+
+    /// The shift key went down.
+    func tapShift() {
+        bridge.shift.update { $0.tap(at: Date()) }
+    }
+
+    /// Re-decide shift from the host's autocapitalisation and the text before
+    /// the caret — after every edit and every caret move, which is what both
+    /// spends a one-shot shift and arms it again after `. ` (see `ShiftLatch`).
+    ///
+    /// English pane only: it is the only pane with a shift key, and on the
+    /// others the read of the document would be a round trip to the host for
+    /// nothing. Arriving on the English pane re-reads it (`paneDidChange` →
+    /// `refreshSuggestions`). `context` is passed in where the caller has just
+    /// read it, so a keystroke reads the document once, not twice.
+    private func refreshShift(context: String?? = nil) {
+        guard bridge.pane == .english else { return }
+        let mode = autocapitalization
+        let capitalize =
+            mode == .none
+            ? false
+            : AutoCapitalization.capitalizesNext(
+                after: context ?? textDocumentProxy.documentContextBeforeInput, mode: mode)
+        bridge.shift.update { $0.settle(capitalize: capitalize) }
+    }
+
+    /// The host field's `autocapitalizationType`, in ParleyKit's terms. A field
+    /// that says nothing gets sentences, as it would from the system keyboard.
+    private var autocapitalization: AutoCapitalization.Mode {
+        switch textDocumentProxy.autocapitalizationType ?? .sentences {
+        case .none: return .none
+        case .words: return .words
+        case .allCharacters: return .allCharacters
+        default: return .sentences
+        }
+    }
+
+    /// Type a character from the symbol planes, committing any pending 注音
+    /// composition first. That is what the system keyboard does: punctuation
+    /// after a reading ends the reading rather than landing in front of it, and
+    /// `confirm()` on an empty composer is a `passThrough` that does nothing.
+    ///
+    /// No read of the document here on the 注音 pane: `refreshSuggestions`
+    /// returns before its `documentContextBeforeInput` — a round trip to the
+    /// host — on every pane but English.
+    func insert(_ text: String) {
+        keyPressed()
+        typeOutsideComposition(text)
+        refreshSuggestions()
+    }
 
     /// Return always types a line break. A keyboard extension cannot submit a
     /// form — there is no public way to fire the host's return action — so a
@@ -783,7 +2106,9 @@ final class KeyboardViewController: UIInputViewController {
     /// keyboard does: the first return closes the composition, the next one
     /// breaks the line.
     func insertReturn() {
+        keyPressed()
         apply(zhuyin.confirm()) { textDocumentProxy.insertText("\n") }
+        refreshSuggestions()
     }
 
     /// How close two taps on the space bar have to be to count as the period
@@ -792,19 +2117,31 @@ final class KeyboardViewController: UIInputViewController {
     private var lastSpaceAt = Date.distantPast
 
     /// Space, with iOS's double-tap-for-a-period shortcut. The second tap only
-    /// becomes ". " when it is actually ending a word — after punctuation or at
+    /// becomes ". " — or 「。」 on the 注音 pane — when it is actually ending a
+    /// word — after punctuation or at
     /// the start of a line, two taps are just two spaces, which is what the
     /// system does too.
     ///
     /// On the 注音 pane space is the first tone and then the confirm key, so a
-    /// pending syllable claims it first.
+    /// pending syllable claims it first — and returns before the double-space
+    /// check reads the document, so a space inside a composition costs no round
+    /// trip to the host. `refreshSuggestions` reads it on the English pane
+    /// only.
     func insertSpace() {
+        keyPressed()
+        typeSpace()
+        refreshSuggestions()
+    }
+
+    /// The body of `insertSpace`, split out only so its three exits all pass
+    /// through one `refreshSuggestions` above.
+    private func typeSpace() {
         switch zhuyin.space() {
         case .handled:
             publishComposition()
             return
         case .insert(let text):
-            textDocumentProxy.insertText(text)
+            commit(text)
             publishComposition()
             return
         case .passThrough:
@@ -819,7 +2156,10 @@ final class KeyboardViewController: UIInputViewController {
             previous.isLetter || previous.isNumber
         {
             textDocumentProxy.deleteBackward()
-            textDocumentProxy.insertText(". ")
+            // Chinese ends a sentence with 。 and no space after it — the mark
+            // is full-width and carries its own. See `FullWidthPunctuation`.
+            textDocumentProxy.insertText(
+                bridge.pane == .zhuyin ? FullWidthPunctuation.fullWidth(".") : ". ")
             // Reset rather than re-arm, so a third tap can't chain into "..".
             lastSpaceAt = .distantPast
             return
@@ -858,7 +2198,27 @@ final class KeyboardBridge: ObservableObject {
     weak var controller: KeyboardViewController?
 
     @Published var hasFullAccess = false
+    /// A session is live: the keyboard's mirror of
+    /// `DictationChannel.Downlink.State.isLive`, `finishing` included. Every
+    /// "while a session exists" rule on this pane reads it — the resting keys,
+    /// ✕, the liveness watchdog — and none of them changes when the session
+    /// starts finishing, which is why finishing is a flag of its own beside it
+    /// rather than a replacement for it.
     @Published var listening = false
+    /// The user pressed ⏹ (or the app said `finishing`) and the words are on
+    /// their way to the field: the relay's last utterance draining, then the
+    /// AI polish. Only ever true while `listening` is.
+    ///
+    /// Set the moment ⏹ is pressed rather than when the app answers: the
+    /// button has to stop being a red stop button under the finger, and the
+    /// app's `finishing` is a note round trip away. A stop nobody hears is
+    /// still the watchdog's (`stopGrace`), exactly as before.
+    @Published var finishing = false
+    /// The polish wave, once finishing has lasted long enough to show one —
+    /// see `PolishWave.revealDelay`. `nil` otherwise, and kept for
+    /// `PolishWave.fadeOut` after `done` so the light eases off the words
+    /// rather than being cut mid-crest.
+    @Published var wave: PolishWave?
     /// The app lost the relay socket and is redialling it. Still listening —
     /// this only changes what the caption says, never whether the session is
     /// alive.
@@ -870,7 +2230,7 @@ final class KeyboardBridge: ObservableObject {
     /// It is a short window, not history: the transcript lands in the host's
     /// document in one piece when the session is done, and until then this is
     /// where the words are visible. Capped at `tailLimit` characters, cleared
-    /// with the session — a few hundred bytes, nowhere near the transcript
+    /// with the session — a kilobyte or so, nowhere near the transcript
     /// store the extension deliberately doesn't keep.
     @Published var tail = ""
     /// Whether the system wants *us* to draw a next-keyboard key. False from
@@ -880,6 +2240,15 @@ final class KeyboardBridge: ObservableObject {
     /// The app's failure for the last session (sign-in, mic permission,
     /// connection), shown in the caption slot until the next start.
     @Published var errorText: String?
+    /// A note on a session that was delivered but ended on its own — the cap,
+    /// or a lost connection (`DictationEnding`). Shown where `errorText` would
+    /// be, over the words that were inserted, and not in the error red: the
+    /// session did not fail. Cleared by the next start and by any state but
+    /// `done`.
+    @Published var noticeText: String?
+    /// Whole seconds until the app's cap stops the session, during the last
+    /// `DictationCountdown.warningLead` of it; `nil` the rest of the time.
+    @Published var countdown: Int?
     /// The system took the microphone away from the app — its own dictation,
     /// Siri, a call — and Parley could not get it back.
     ///
@@ -889,6 +2258,58 @@ final class KeyboardBridge: ObservableObject {
     /// and by any other downlink state, including the app publishing `listening`
     /// again for the same session when the microphone comes back.
     @Published var micTaken = false
+
+    /// The whole text of the dictation on screen, while a tap on the slot
+    /// copies it — after `done`, or after an `error` with words settled — and
+    /// `nil` the rest of the time. See `DictationCopy` for when, and
+    /// `KeyboardViewController.offerCopy` for what ends it.
+    ///
+    /// The one place this keyboard holds more than `tail`: a long dictation's
+    /// full text, for as long as it is on screen. In memory only, never
+    /// written anywhere, and dropped with the words — by the next session, a
+    /// ✕, the pane being cleared, or the user typing after it. The same rule
+    /// as the tail's, a few more kilobytes at most.
+    @Published var copyableText: String?
+    /// A tap just copied `copyableText`: the strip shows "✓ Copied" in place of
+    /// the wordmark and the words wear a wash, for `copiedLabelHold`.
+    @Published var justCopied = false
+    /// The strip may say "Tap text to copy" in place of the wordmark: the
+    /// finished dictation is a copy target and `CopyHint` still allows the
+    /// hint for this session. Whether it is actually drawn is the strip's call
+    /// (it needs the room), and the strip reports it back — `copyHintShown`.
+    @Published var copyHintOffered = false
+
+    /// What the record button is doing with the user's voice, smoothed and
+    /// ready to draw. Two `Float`s, published together.
+    ///
+    /// One property rather than two `@Published` fields because they always
+    /// move together and two would invalidate the view twice for one reading —
+    /// twelve times a second, in a process running against a jetsam limit.
+    /// `Equatable` for the other half of the same economy: `applyMicLevel`
+    /// drops a reading that did not move anything, which in silence is every
+    /// reading.
+    struct MicMeter: Equatable {
+        /// How loud it is now, 0…1, already smoothed
+        /// (`KeyboardViewController.chase`). Drives the button's swell.
+        var level: Float
+        /// The same voice a beat ago: `level` put through a slower filter, so
+        /// it is always a little behind. Drives the outer ring, and being
+        /// behind is the whole point — a lagged copy drawn further out is a
+        /// wavefront, which is how the ripple travels outward without a
+        /// repeating animation to carry it.
+        var trail: Float
+
+        /// Nothing is being said, and nothing is being drawn. Both halves have
+        /// to be exactly zero: `level` at rest is a button at its normal size,
+        /// and `trail` at rest is the ripple *gone* rather than merely faint.
+        static let rest = MicMeter(level: 0, trail: 0)
+
+        /// There is a voice to draw. In silence this is false and the pane
+        /// leaves the rings out of the tree entirely.
+        var isAudible: Bool { level > 0 || trail > 0 }
+    }
+
+    @Published var mic = MicMeter.rest
 
     /// Parley is set up far enough for a tap to actually transcribe: an account
     /// on this device, and microphone permission granted. False when the
@@ -903,9 +2324,6 @@ final class KeyboardBridge: ObservableObject {
     /// The microphone window is open: the next tap will be served where the
     /// user already is, with no trip through Parley.
     @Published var windowIsOpen = false
-    /// Roughly how long the open window has left, in whole minutes. Refreshed
-    /// by the app's heartbeat rather than by a timer in this process.
-    @Published var windowMinutesLeft: Int?
     /// The app itself says a tap would be served without opening it: it is in
     /// the foreground (this keyboard is typing into Parley), or it is holding a
     /// running microphone. From its presence heartbeat, so it goes false on its
@@ -927,11 +2345,7 @@ final class KeyboardBridge: ObservableObject {
     /// This tap leaves for Parley rather than recording here: the app is not set
     /// up, or nothing says it could answer where the user is.
     ///
-    /// It is what the record button draws instead of a microphone. A mic glyph
-    /// that cannot open a mic is the whole bug: a backgrounded Parley with no
-    /// microphone open cannot start one (iOS refuses), so the honest promise
-    /// there is "this opens Parley" — and the app declines the no-jump start
-    /// in that state so that the promise is also what happens.
+    /// It is what the record button draws instead of a microphone.
     var opensApp: Bool { hasFullAccess && !staysPut }
 
     /// The track, in order: the voice pane, then the typing keyboards the user
@@ -944,12 +2358,46 @@ final class KeyboardBridge: ObservableObject {
     /// plain assignment.
     @Published private(set) var pane: KeyboardPane = .voice
 
-    /// A 注音 syllable part-way through being typed, shown in the strip. Empty
-    /// when nothing is pending, which is also what puts the wordmark back.
-    @Published var composition = ""
-    /// The characters the composition could be, most frequent first. Only
-    /// non-empty once the syllable has a tone.
-    @Published var candidates: [String] = []
+    /// What the strip shows while 注音 is being typed.
+    ///
+    /// One published value rather than two `@Published` fields, for the reason
+    /// `MicMeter` is: every keystroke changes both, and two would invalidate the
+    /// view twice for one key.
+    struct ZhuyinStrip: Equatable {
+        /// The syllables part-way through being typed, for the strip's chip.
+        /// Empty unless the host ignores marked text: everywhere else the
+        /// reading is marked text in the field and the strip has no copy.
+        var composition: String
+        /// What the front of the composition could be, most likely first.
+        var candidates: [String]
+
+        /// Something to show for 注音. Neither half pending is what puts the
+        /// wordmark back.
+        var isPending: Bool { !composition.isEmpty || !candidates.isEmpty }
+    }
+
+    @Published var zhuyin = ZhuyinStrip(composition: "", candidates: [])
+    /// The candidate grid is open over the 注音 keys. The strip's ⌄ toggles it;
+    /// the controller closes it when the composition empties, which is why it
+    /// lives here rather than in the view.
+    @Published var candidatesExpanded = false
+
+    /// What the strip shows while an English word is being typed. One value
+    /// for the same reason as `ZhuyinStrip`.
+    struct EnglishStrip: Equatable {
+        /// The run of letters before the cursor. Empty whenever the cursor is
+        /// not inside a word, when the suggestions are predictions and a tap
+        /// deletes nothing. Kept beside the suggestions rather than derived
+        /// from them because it is what a tap deletes.
+        var partialWord: String
+        /// What `partialWord` could become, or what could follow the word
+        /// before it, best first, already cased. Empty is what puts the
+        /// wordmark back. Nothing acts on these without a tap — see
+        /// `WordSuggestions`.
+        var suggestions: [String]
+    }
+
+    @Published var english = EnglishStrip(partialWord: "", suggestions: [])
 
     /// What the host field wants the return key to say. It never changes what
     /// the key does.
@@ -977,42 +2425,15 @@ final class KeyboardBridge: ObservableObject {
         setPane(panes[target])
     }
 
-    var returnKeyLabel: LocalizedStringKey {
-        switch returnKeyType {
-        case .go: return "Go"
-        case .send: return "Send"
-        case .search: return "Search"
-        case .done: return "Done"
-        case .next: return "Next"
-        default: return "return"
-        }
-    }
+    /// The return key's word, glyph and tint, as one value a pane can be
+    /// handed without observing the bridge — see `ReturnKeyStyle`.
+    var returnKeyStyle: ReturnKeyStyle { ReturnKeyStyle(type: returnKeyType) }
 
-    /// The same meaning as `returnKeyLabel`, as a glyph.
-    ///
-    /// The voice pane's return is a 44pt disc with no room for "Search", and
-    /// the pane keeps its only colour on the record button — so it says what
-    /// the key does with a symbol instead of a word. The letter pane, which has
-    /// a wide key and follows the system's look, still uses the label.
-    var returnKeyGlyph: String {
-        switch returnKeyType {
-        case .go: return "arrow.right"
-        case .send: return "paperplane.fill"
-        case .search: return "magnifyingglass"
-        case .done: return "checkmark"
-        case .next: return "arrow.right.to.line"
-        default: return "return"
-        }
-    }
+    var returnKeyLabel: LocalizedStringKey { returnKeyStyle.label }
 
-    /// iOS tints the return key when the host has asked for an action rather
-    /// than a line break, so the key reads as the way forward.
-    var returnKeyIsAccented: Bool {
-        switch returnKeyType {
-        case .go, .send, .search, .done: return true
-        default: return false
-        }
-    }
+    /// The same meaning as `returnKeyLabel`, as a glyph. See
+    /// `ReturnKeyStyle.glyph` for why the voice pane wants one.
+    var returnKeyGlyph: String { returnKeyStyle.glyph }
 
     /// Start a session. `completion` fires only when the app has to be opened
     /// (the no-jump Darwin start wasn't acknowledged) with the URL for the
@@ -1026,9 +2447,24 @@ final class KeyboardBridge: ObservableObject {
     /// and find the app.
     func endWindow() { controller?.endMicWindow() }
     func stop() { controller?.stopDictation() }
+    /// Insert the raw words now rather than wait for the AI polish — the
+    /// record button's tap while the session is finishing.
+    func skipPolish() { controller?.skipPolishing() }
     /// End the session and throw the words away — the ✕ beside ⏹.
     func cancel() { controller?.cancelDictation() }
+    /// Put the finished dictation on the pasteboard — a tap on the slot while
+    /// `copyableText` is set.
+    func copyDictation() { controller?.copyDictation() }
+    /// The strip drew the first-run copy hint — see `copyHintOffered`.
+    func copyHintShown() { controller?.copyHintShown() }
     func backspace() { controller?.deleteBackward() }
+    /// A repeat of a held delete key, and the hold ending — see
+    /// `DeleteKey`.
+    func backspaceRepeat(_ unit: DeleteRepeat.Unit) { controller?.deleteRepeating(unit) }
+    func backspaceReleased() { controller?.deleteRepeatEnded() }
+    /// The letter pane's shift. Not `@Published`: see `ShiftModel`.
+    let shift = ShiftModel()
+    func tapShift() { controller?.tapShift() }
     func type(_ text: String) { controller?.insert(text) }
     func space() { controller?.insertSpace() }
     func newline() { controller?.insertReturn() }
@@ -1038,6 +2474,9 @@ final class KeyboardBridge: ObservableObject {
     func zhuyinSymbol(_ symbol: Character) { controller?.zhuyinSymbol(symbol) }
     func zhuyinTone(_ tone: ZhuyinTone) { controller?.zhuyinTone(tone) }
     func pickCandidate(_ candidate: String) { controller?.zhuyinPick(candidate) }
+
+    /// The user tapped a word in the English suggestion bar.
+    func pickSuggestion(_ word: String) { controller?.pickSuggestion(word) }
 }
 
 /// Best-effort resolution of the app the keyboard is typing into, for the app's

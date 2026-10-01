@@ -16,11 +16,12 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::audio::microphone::Microphone;
 use crate::capture::{run_metered_session, spawn_capture, Begin, MicCoordinator, MicTap, MicUser};
 use crate::commands::{read_config_file, write_config_file};
+use crate::transcription::common::VOICE_TYPING_SOURCE;
 use crate::transcription::{SttProvider, TranscribeConfig};
 
 /// Grace for the post-release final flush before a lingering session task is
@@ -34,29 +35,77 @@ const FLUSH_ABORT_GRACE: std::time::Duration = std::time::Duration::from_secs(8)
 /// so it must not race the normal frontend stop.
 const CAP_BACKEND_GRACE: std::time::Duration = std::time::Duration::from_secs(20);
 
-/// Singleton guard for the voice-typing STT session task. [`MicCoordinator`]
-/// already guarantees at most one CAPTURE, but the session task it feeds (the
-/// provider WebSocket) used to be fire-and-forget: after release it lingers to
-/// flush the final tokens, and a server that never closes leaves it parked
-/// forever with an open socket. Each new press then opened ANOTHER socket
-/// while the old session kept emitting into the same `voice-typing-{n}` /
-/// `voice-typing-tail` segment-id namespace — the overlay showed both
-/// sessions' tokens interleaved (transcript "stacking"). This state pins the
-/// one live task so a new start aborts the old socket first and a stop bounds
-/// its flush.
-#[derive(Default)]
+/// The one live voice-typing session task: the next start retires it before
+/// opening a new one, and a stop bounds its flush.
+#[derive(Default, Clone)]
 pub struct VoiceTypingState(Arc<Mutex<VtInner>>);
 
 #[derive(Default)]
 struct VtInner {
-    /// Bumped on every start; stale backstops/starts compare against it so
-    /// they can never abort a NEWER session than the one they belong to.
-    seq: u64,
+    session: u64,
     task: Option<tauri::async_runtime::JoinHandle<()>>,
     /// The current session's audio cutoff. `stop_voice_typing` sets it to hard
     /// cut the stream on release so nothing said after the key is let go is
     /// transcribed (see `run_metered_session`). Replaced each start.
     cutoff: Option<Arc<AtomicBool>>,
+}
+
+/// How long the next start waits for the previous task to finish the poll it
+/// was aborted in. A poll is one frame parse or one emit, so this only cuts a
+/// task stuck in a bug; its stragglers carry the old session id and are dropped.
+const RETIRE_GRACE: std::time::Duration = std::time::Duration::from_millis(300);
+
+impl VoiceTypingState {
+    /// Retire the previous task, then `announce` the next session id and
+    /// return it. tokio's `abort()` lets a poll that is already running
+    /// finish, so the task is awaited: anything it emits precedes the
+    /// announcement.
+    async fn open_session(&self, announce: impl FnOnce(u64)) -> u64 {
+        let (session, previous) = {
+            let mut vt = self.0.lock().unwrap();
+            vt.session += 1;
+            (vt.session, vt.task.take())
+        };
+        if let Some(task) = previous {
+            task.abort();
+            if tokio::time::timeout(RETIRE_GRACE, task).await.is_err() {
+                log::warn!(
+                    "voice-typing: session {} did not stop within {RETIRE_GRACE:?}",
+                    session - 1
+                );
+            }
+        }
+        announce(session);
+        session
+    }
+
+    fn adopt(
+        &self,
+        session: u64,
+        task: tauri::async_runtime::JoinHandle<()>,
+        cutoff: Arc<AtomicBool>,
+    ) {
+        let mut vt = self.0.lock().unwrap();
+        if vt.session == session {
+            vt.task = Some(task);
+            vt.cutoff = Some(cutoff);
+        } else {
+            task.abort();
+        }
+    }
+
+    fn is_current(&self, session: u64) -> bool {
+        self.0.lock().unwrap().session == session
+    }
+
+    fn abort_if_current(&self, session: u64) {
+        let vt = self.0.lock().unwrap();
+        if vt.session == session {
+            if let Some(task) = vt.task.as_ref() {
+                task.abort();
+            }
+        }
+    }
 }
 
 /// Start a mic-only streaming transcription. Idempotent while already running.
@@ -114,23 +163,16 @@ pub async fn start_voice_typing(
         return Err("hosted transcription requires the cloud relay URL".into());
     }
     // A press must always yield a FRESH session. Release any voice-typing mic
-    // claim left by a desynced frontend (no-op when idle), and abort the
-    // previous session task outright — if it is still flushing, its late
-    // tokens would interleave with the new session's in the overlay, and its
-    // socket must close before we open the next one. Aborting a finished task
-    // is a no-op. Trade-off: aborting a mid-flush session also drops its
-    // `usage://stt` emit, undercounting the local cost display for that
-    // session's last seconds — acceptable (relay billing is server-side, and
-    // the alternative is the transcript stacking this fixes).
+    // claim left by a desynced frontend (no-op when idle).
     coord.stop(MicUser::VoiceTyping);
-    let my_seq = {
-        let mut vt = state.0.lock().unwrap();
-        vt.seq += 1;
-        if let Some(task) = vt.task.take() {
-            task.abort();
-        }
-        vt.seq
-    };
+    let session = state
+        .open_session(|session| {
+            let _ = app.emit(
+                "voicetyping://session",
+                serde_json::json!({ "phase": "start", "session": session }),
+            );
+        })
+        .await;
     let Some(rx) = acquire_mic(&coord, &tap, input_device)? else {
         // Unreachable in practice: the host serializes press/release, so no
         // second voice-typing start can land between the stop above and this
@@ -155,7 +197,7 @@ pub async fn start_voice_typing(
         &app,
         provider,
         config,
-        "voice-typing",
+        VOICE_TYPING_SOURCE,
         rx,
         None,
         "voicetyping://error",
@@ -164,27 +206,17 @@ pub async fn start_voice_typing(
         // Dictation is not pausable — and must keep working even while a live
         // meeting (whose mic it taps) is paused.
         None,
+        Some(session),
     );
-    // Pin the session task so the next start (or stop's backstop) can abort
-    // it. If a newer start won the race while we were spawning, ours is the
-    // stale one — kill our own task instead of clobbering the newer handle
-    // (the newer start already stopped our capture and owns the mic claim).
-    let mut vt = state.0.lock().unwrap();
-    if vt.seq == my_seq {
-        vt.task = Some(task);
-        vt.cutoff = Some(cutoff);
-    } else {
-        task.abort();
-    }
-    drop(vt);
+    state.adopt(session, task, cutoff);
+    // The Windows tray's voice-typing item now reads "Stop" (no-op elsewhere).
+    crate::tray::set_voice_typing_active(&app, true);
 
     // Backend safety net for the hosted single-session cap: if the frontend
     // never stops this session (webview hung/crashed), tear the mic down after
-    // the cap + grace so the paid relay stops streaming. Guarded by `seq` so it
-    // can never stop a newer session started in the meantime. No-op if that
-    // session already ended (mic not owned, task already taken).
+    // the cap + grace so the paid relay stops streaming.
     if let Some(secs) = max_duration_secs.filter(|s| *s > 0) {
-        arm_cap_watchdog(&app, state.0.clone(), my_seq, secs);
+        arm_cap_watchdog(&app, state.inner().clone(), session, secs);
     }
     Ok(())
 }
@@ -228,24 +260,18 @@ fn acquire_mic(
 }
 
 /// Force-stop the mic once the hosted per-dictation cap (+ grace) has passed,
-/// unless the session identified by `my_seq` already ended or was superseded.
-fn arm_cap_watchdog(app: &AppHandle, inner: Arc<Mutex<VtInner>>, my_seq: u64, secs: u64) {
+/// unless `session` already ended or was superseded.
+fn arm_cap_watchdog(app: &AppHandle, state: VoiceTypingState, session: u64, secs: u64) {
     let app = app.clone();
     let deadline = std::time::Duration::from_secs(secs) + CAP_BACKEND_GRACE;
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(deadline).await;
-        let still_current = { inner.lock().unwrap().seq == my_seq };
-        if !still_current {
+        if !state.is_current(session) {
             return;
         }
         log::warn!("voice-typing: hosted session exceeded {secs}s cap; backend safety-stop");
         app.state::<MicCoordinator>().stop(MicUser::VoiceTyping);
-        let mut vt = inner.lock().unwrap();
-        if vt.seq == my_seq {
-            if let Some(task) = vt.task.take() {
-                task.abort();
-            }
-        }
+        state.abort_if_current(session);
     });
 }
 
@@ -290,17 +316,19 @@ pub fn write_voice_history(app: AppHandle, content: String) -> Result<(), String
 /// Backstop: a provider/relay that never closes the socket would leave the
 /// session task parked on its read half forever. Mirror `stop_meeting`'s
 /// direct-cancel safety net — abort the task once the flush window has long
-/// passed. Guarded by `seq` so a backstop from THIS session can never abort a
-/// newer one started during the grace.
+/// passed. Guarded by the session id so a backstop from THIS session can never
+/// abort a newer one started during the grace.
 ///
 /// `async` for the same reason as [`start_voice_typing`], with one extra: the
 /// `coord.stop` below joins the capture threads with a bounded grace, and doing
 /// that on the main thread hitched every window on every key release.
 #[tauri::command]
 pub async fn stop_voice_typing(
+    app: AppHandle,
     coord: State<'_, MicCoordinator>,
     state: State<'_, VoiceTypingState>,
 ) -> Result<(), String> {
+    crate::tray::set_voice_typing_active(&app, false);
     // Hard cut FIRST: stop forwarding audio to the STT session immediately so
     // nothing captured after release is transcribed, and its input closes now
     // for a prompt final flush — set before `coord.stop` so forwarding ceases
@@ -309,16 +337,11 @@ pub async fn stop_voice_typing(
         cutoff.store(true, Ordering::SeqCst);
     }
     coord.stop(MicUser::VoiceTyping);
-    let my_seq = state.0.lock().unwrap().seq;
-    let inner = state.0.clone();
+    let session = state.0.lock().unwrap().session;
+    let state = state.inner().clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(FLUSH_ABORT_GRACE).await;
-        let mut vt = inner.lock().unwrap();
-        if vt.seq == my_seq {
-            if let Some(task) = vt.task.take() {
-                task.abort();
-            }
-        }
+        state.abort_if_current(session);
     });
     Ok(())
 }
@@ -389,14 +412,15 @@ pub(crate) fn is_accessibility_trusted() -> bool {
 }
 
 /// Pid of the frontmost app (the one voice typing pastes into), used by
-/// ax_observe to scope its queries to that app. NSWorkspace, not AX — works
-/// even when the target's accessibility tree is still switched off.
+/// ax_observe to scope its queries to that app. On macOS it comes from
+/// NSWorkspace, not AX — works even when the target's accessibility tree is
+/// still switched off.
 ///
-/// macOS-only, like its one caller: correction watching is built on the macOS
-/// AX tree and has no counterpart elsewhere. There used to be an `Option::None`
-/// stub for other platforms, but with nothing off macOS calling it, it was only
-/// a dead-code warning waiting for the Windows CI job to deny warnings.
-#[cfg(target_os = "macos")]
+/// On Windows it is the process owning the foreground window, which the UI
+/// Automation watcher compares against the focused element's process id.
+/// Compiled only where correction watching exists — a stub elsewhere would be a
+/// dead-code warning with nothing to call it.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn frontmost_app_pid() -> Option<i32> {
     imp::frontmost_pid()
 }
@@ -428,6 +452,15 @@ pub fn present_voice_overlay(app: AppHandle) {
         }
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let _ = app;
+}
+
+/// Keep a visible overlay in front of the user as they swipe between Spaces
+/// (macOS Spaces; a no-op elsewhere). Installed once at setup.
+pub fn install_space_observer(app: AppHandle) {
+    #[cfg(target_os = "macos")]
+    imp::install_space_observer(app);
+    #[cfg(not(target_os = "macos"))]
     let _ = app;
 }
 
@@ -621,8 +654,216 @@ mod imp {
             let _: () = msg_send![w, setCollectionBehavior: OVERLAY_COLLECTION_BEHAVIOR];
             let _: () = msg_send![w, setLevel: OVERLAY_WINDOW_LEVEL];
             let _: () = msg_send![w, orderFrontRegardless];
+            // canJoinAllSpaces alone isn't enough over a long-running session:
+            // see spaces::rejoin_all for why the flag and the window server's
+            // actual placement drift apart.
+            spaces::rejoin_all(w);
         }
         log::info!("voice-typing: overlay presented (panel)");
+    }
+
+    /// Re-home the overlay whenever the active Space changes (a trackpad swipe,
+    /// Ctrl+←/→, Mission Control) while it is on screen. The present-time
+    /// rejoin covers every Space that existed when the dictation began; this
+    /// covers the rest, e.g. an app entering full screen mid-dictation, so
+    /// swiping to any Space mid-sentence keeps the overlay in front of the user.
+    pub fn install_space_observer(app: tauri::AppHandle) {
+        use block2::RcBlock;
+        use tauri::Manager;
+        unsafe {
+            let ws: *mut Object = msg_send![class!(NSWorkspace), sharedWorkspace];
+            let nc: *mut Object = msg_send![ws, notificationCenter];
+            let queue: *mut Object = msg_send![class!(NSOperationQueue), mainQueue];
+            let block = RcBlock::<dyn Fn(*mut c_void)>::new(move |_note| {
+                let Some(win) = app.get_webview_window("voice-typing") else {
+                    return;
+                };
+                let Ok(ns) = win.ns_window() else {
+                    return;
+                };
+                let w = ns as *mut Object;
+                let visible: bool = msg_send![w, isVisible];
+                if !visible {
+                    return; // idle — the next present rejoins anyway
+                }
+                spaces::rejoin_all(w);
+                let _: () = msg_send![w, orderFrontRegardless];
+            });
+            let name = CFString::new("NSWorkspaceActiveSpaceDidChangeNotification");
+            let name_obj = name.as_concrete_TypeRef() as *const Object;
+            let nil: *mut Object = std::ptr::null_mut();
+            let _observer: *mut Object = msg_send![nc, addObserverForName: name_obj object: nil queue: queue usingBlock: &*block];
+            // Never removed — the center keeps the observer + block alive for
+            // the app's lifetime; forget our handle so it isn't dropped under it.
+            std::mem::forget(block);
+        }
+    }
+
+    /// Keeping the overlay a member of every Space.
+    ///
+    /// `canJoinAllSpaces` is supposed to make the window server show the
+    /// overlay on every Space. It does when the flag is first applied, but in a
+    /// long-running session the window server's actual placement drifts away
+    /// from it: a Parley that had been up for days had its overlay attached to
+    /// just the desktop Space and the one full-screen Space it was last shown
+    /// on, while the flag still read canJoinAllSpaces. Swiping to any other
+    /// full-screen app then left the overlay behind on Parley's Space. Nothing
+    /// public repairs that in place — re-applying the same collection
+    /// behaviour, clearing and re-setting it, round-tripping it through
+    /// moveToActiveSpace, re-ordering the window or changing its level all
+    /// leave the placement as it is — and recreating the window mid-dictation
+    /// would lose the transcript the overlay has already rendered.
+    ///
+    /// So we reconcile the placement directly: ask the window server which
+    /// Spaces exist and which ones the overlay is on, and add it to the rest.
+    /// These are SkyLight's private CGS calls (the same ones window managers
+    /// use), so they are looked up at runtime with `dlsym` rather than linked:
+    /// if a future macOS drops or renames one, the lookup fails and this
+    /// becomes a no-op, rather than dyld refusing to launch the app over a
+    /// missing symbol.
+    mod spaces {
+        use core_foundation::array::{CFArray, CFArrayRef};
+        use core_foundation::base::{CFType, TCFType};
+        use core_foundation::dictionary::CFDictionary;
+        use core_foundation::number::CFNumber;
+        use core_foundation::string::CFString;
+        use objc::runtime::Object;
+        use objc::{msg_send, sel, sel_impl};
+        use std::collections::BTreeSet;
+        use std::ffi::{c_char, c_void};
+        use std::sync::OnceLock;
+
+        extern "C" {
+            fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+        }
+        /// `RTLD_DEFAULT` on Darwin: search every image already loaded (AppKit
+        /// pulls in SkyLight, which exports the CGS symbols).
+        const RTLD_DEFAULT: *mut c_void = -2isize as *mut c_void;
+        /// kCGSAllSpacesMask — user, full-screen and system Spaces alike.
+        const ALL_SPACES_MASK: i32 = 0x7;
+
+        type MainConnectionFn = unsafe extern "C" fn() -> i32;
+        type CopyManagedDisplaySpacesFn = unsafe extern "C" fn(i32) -> CFArrayRef;
+        type CopySpacesForWindowsFn = unsafe extern "C" fn(i32, i32, CFArrayRef) -> CFArrayRef;
+        type AddWindowsToSpacesFn = unsafe extern "C" fn(i32, CFArrayRef, CFArrayRef);
+
+        struct Api {
+            main_connection: MainConnectionFn,
+            copy_managed_display_spaces: CopyManagedDisplaySpacesFn,
+            copy_spaces_for_windows: CopySpacesForWindowsFn,
+            add_windows_to_spaces: AddWindowsToSpacesFn,
+        }
+
+        fn api() -> Option<&'static Api> {
+            static API: OnceLock<Option<Api>> = OnceLock::new();
+            API.get_or_init(|| unsafe {
+                let sym = |name: &[u8]| dlsym(RTLD_DEFAULT, name.as_ptr() as *const c_char);
+                let main = sym(b"CGSMainConnectionID\0");
+                let managed = sym(b"CGSCopyManagedDisplaySpaces\0");
+                let for_windows = sym(b"CGSCopySpacesForWindows\0");
+                let add = sym(b"CGSAddWindowsToSpaces\0");
+                if [main, managed, for_windows, add].iter().any(|p| p.is_null()) {
+                    log::warn!("voice-typing: CGS Spaces API unavailable; overlay Space repair disabled");
+                    return None;
+                }
+                Some(Api {
+                    main_connection: std::mem::transmute::<*mut c_void, MainConnectionFn>(main),
+                    copy_managed_display_spaces: std::mem::transmute::<
+                        *mut c_void,
+                        CopyManagedDisplaySpacesFn,
+                    >(managed),
+                    copy_spaces_for_windows: std::mem::transmute::<
+                        *mut c_void,
+                        CopySpacesForWindowsFn,
+                    >(for_windows),
+                    add_windows_to_spaces: std::mem::transmute::<*mut c_void, AddWindowsToSpacesFn>(
+                        add,
+                    ),
+                })
+            })
+            .as_ref()
+        }
+
+        /// Items of a CF array we got under the create rule, as owned CFTypes.
+        unsafe fn items(raw: CFArrayRef) -> Vec<CFType> {
+            if raw.is_null() {
+                return Vec::new();
+            }
+            let arr: CFArray<*const c_void> = CFArray::wrap_under_create_rule(raw);
+            arr.iter().map(|p| CFType::wrap_under_get_rule(*p)).collect()
+        }
+
+        /// `dict[key]` for an untyped CF dictionary.
+        fn value(dict: &CFType, key: &CFString) -> Option<CFType> {
+            let dict = dict.downcast::<CFDictionary>()?;
+            let v = dict.find(key.as_CFTypeRef())?;
+            Some(unsafe { CFType::wrap_under_get_rule(*v) })
+        }
+
+        fn as_i64(v: &CFType) -> Option<i64> {
+            v.downcast::<CFNumber>()?.to_i64()
+        }
+
+        /// Every Space the window server manages, across all displays
+        /// (`[{ "Spaces": [{ "ManagedSpaceID": n, … }], … }]`).
+        unsafe fn all_space_ids(api: &Api, cid: i32) -> BTreeSet<i64> {
+            let spaces_key = CFString::from_static_string("Spaces");
+            let id_key = CFString::from_static_string("ManagedSpaceID");
+            let mut ids = BTreeSet::new();
+            for display in items((api.copy_managed_display_spaces)(cid)) {
+                let Some(spaces) = value(&display, &spaces_key) else {
+                    continue;
+                };
+                let Some(spaces) = spaces.downcast::<CFArray>() else {
+                    continue;
+                };
+                for space in spaces.iter() {
+                    let space = CFType::wrap_under_get_rule(*space);
+                    if let Some(id) = value(&space, &id_key).as_ref().and_then(as_i64) {
+                        ids.insert(id);
+                    }
+                }
+            }
+            ids
+        }
+
+        /// Add the window to any Space it's missing from. Cheap when nothing is
+        /// missing (two window-server queries), so it can run on every present.
+        pub unsafe fn rejoin_all(w: *mut Object) {
+            let Some(api) = api() else {
+                return;
+            };
+            let wid: i64 = msg_send![w, windowNumber];
+            if wid <= 0 {
+                return; // no window-server window yet
+            }
+            let cid = (api.main_connection)();
+            let all = all_space_ids(api, cid);
+            if all.is_empty() {
+                return;
+            }
+            let wids = CFArray::from_CFTypes(&[CFNumber::from(wid)]);
+            let on: BTreeSet<i64> = items((api.copy_spaces_for_windows)(
+                cid,
+                ALL_SPACES_MASK,
+                wids.as_concrete_TypeRef(),
+            ))
+            .iter()
+            .filter_map(as_i64)
+            .collect();
+            let missing: Vec<CFNumber> = all.difference(&on).map(|&id| CFNumber::from(id)).collect();
+            if missing.is_empty() {
+                return;
+            }
+            log::info!(
+                "voice-typing: overlay was on {} of {} Spaces; rejoining the other {}",
+                on.len(),
+                all.len(),
+                missing.len()
+            );
+            let missing = CFArray::from_CFTypes(&missing);
+            (api.add_windows_to_spaces)(cid, wids.as_concrete_TypeRef(), missing.as_concrete_TypeRef());
+        }
     }
 
     pub fn dismiss_overlay(ns_window: *mut std::ffi::c_void) {
@@ -870,14 +1111,9 @@ mod imp {
         true
     }
 
-    /// File name of the foreground window's executable, e.g. "notepad.exe".
-    ///
-    /// Windows has no bundle identifier, so this fills the `app_bundle_id` slot
-    /// with the closest stable per-app key that costs no permission. `None`
-    /// when nothing is foreground (a locked desktop, or a switch in flight) or
-    /// when the process can't be opened — for a target at a higher integrity
-    /// level that refusal is the normal answer, not a malfunction.
-    pub fn frontmost_bundle_id() -> Option<String> {
+    /// Process id owning the foreground window. `None` when nothing is
+    /// foreground (a locked desktop, or a switch in flight).
+    fn foreground_pid() -> Option<u32> {
         // SAFETY: reads global window-manager state; returns a null HWND rather
         // than failing when no window is foreground.
         let hwnd = unsafe { GetForegroundWindow() };
@@ -888,9 +1124,24 @@ mod imp {
         // SAFETY: `pid` is a live local and the call writes exactly one u32 to
         // it. We want the process, not the thread id it returns.
         unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid as *mut u32)) };
-        if pid == 0 {
-            return None;
-        }
+        (pid != 0).then_some(pid)
+    }
+
+    /// The foreground process id in the shape UI Automation reports
+    /// (`CurrentProcessId` is an `i32`), for the correction watcher.
+    pub fn frontmost_pid() -> Option<i32> {
+        foreground_pid().and_then(|pid| i32::try_from(pid).ok())
+    }
+
+    /// File name of the foreground window's executable, e.g. "notepad.exe".
+    ///
+    /// Windows has no bundle identifier, so this fills the `app_bundle_id` slot
+    /// with the closest stable per-app key that costs no permission. `None`
+    /// when nothing is foreground (a locked desktop, or a switch in flight) or
+    /// when the process can't be opened — for a target at a higher integrity
+    /// level that refusal is the normal answer, not a malfunction.
+    pub fn frontmost_bundle_id() -> Option<String> {
+        let pid = foreground_pid()?;
         // PROCESS_QUERY_LIMITED_INFORMATION is the weakest right that answers
         // this question, and the only one granted across integrity levels.
         // SAFETY: opens a process by pid; the handle is closed on every path
@@ -1004,5 +1255,96 @@ mod imp {
     }
     pub fn accessibility_trusted(_prompt: bool) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod session_gate_tests {
+    use super::{VoiceTypingState, RETIRE_GRACE};
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+    use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+
+    /// A session task whose every poll blocks for `poll` before it emits, so
+    /// an abort that lands mid-poll cannot stop that emit. Resolves once the
+    /// task is inside its first poll.
+    async fn adopt_blocking_task(
+        state: &VoiceTypingState,
+        session: u64,
+        poll: Duration,
+        events: UnboundedSender<&'static str>,
+    ) {
+        let (entered_tx, mut entered_rx) = unbounded_channel::<()>();
+        let task = tauri::async_runtime::spawn(async move {
+            loop {
+                let _ = entered_tx.send(());
+                std::thread::sleep(poll);
+                let _ = events.send("tail final");
+                tokio::task::yield_now().await;
+            }
+        });
+        state.adopt(session, task, Arc::new(AtomicBool::new(false)));
+        entered_rx.recv().await;
+    }
+
+    async fn open_announced(
+        state: &VoiceTypingState,
+        events: UnboundedSender<&'static str>,
+    ) -> u64 {
+        state
+            .open_session(|_| {
+                let _ = events.send("reset");
+            })
+            .await
+    }
+
+    async fn settled(events: &mut UnboundedReceiver<&'static str>) -> Vec<&'static str> {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let mut seen = Vec::new();
+        while let Ok(e) = events.try_recv() {
+            seen.push(e);
+        }
+        seen
+    }
+
+    #[tokio::test]
+    async fn the_reset_follows_everything_the_previous_task_emits() {
+        let state = VoiceTypingState::default();
+        let (events_tx, mut events) = unbounded_channel();
+        let first = open_announced(&state, events_tx.clone()).await;
+        adopt_blocking_task(&state, first, Duration::from_millis(30), events_tx.clone()).await;
+
+        let second = open_announced(&state, events_tx).await;
+        assert_eq!(second, first + 1);
+        assert_eq!(
+            settled(&mut events).await,
+            vec!["reset", "tail final", "reset"]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_backstop_abort_still_leaves_the_task_for_the_next_start_to_await() {
+        let state = VoiceTypingState::default();
+        let (events_tx, mut events) = unbounded_channel();
+        let first = open_announced(&state, events_tx.clone()).await;
+        adopt_blocking_task(&state, first, Duration::from_millis(30), events_tx.clone()).await;
+        state.abort_if_current(first);
+
+        open_announced(&state, events_tx).await;
+        assert_eq!(settled(&mut events).await, vec!["reset", "tail final", "reset"]);
+    }
+
+    #[tokio::test]
+    async fn a_task_stuck_in_a_poll_does_not_hold_up_the_next_start() {
+        let state = VoiceTypingState::default();
+        let (events_tx, mut events) = unbounded_channel();
+        let first = open_announced(&state, events_tx.clone()).await;
+        adopt_blocking_task(&state, first, RETIRE_GRACE * 5, events_tx.clone()).await;
+
+        let started = Instant::now();
+        open_announced(&state, events_tx).await;
+        assert!(started.elapsed() < RETIRE_GRACE * 3, "took {:?}", started.elapsed());
+        assert_eq!(settled(&mut events).await, vec!["reset", "reset"]);
     }
 }

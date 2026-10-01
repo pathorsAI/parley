@@ -1,5 +1,7 @@
 package com.pathors.parley.cloud
 
+import com.pathors.parley.kit.FilingFolderSuggestion
+import com.pathors.parley.kit.FilingSuggestion
 import com.pathors.parley.kit.TranscriptSegment
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
@@ -9,7 +11,9 @@ import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonEncoder
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.addJsonObject
@@ -158,6 +162,58 @@ data class PushResponse(
     @Serializable(with = EpochMillisSerializer::class) val updatedAt: Double? = null,
 )
 
+/**
+ * A folder, personal or an organization's — iOS `CloudFolder`, desktop
+ * `CloudFolder` (`src/lib/cloud/types.ts`).
+ *
+ * Folders are one level deep and a recording is in at most one of them. A
+ * personal folder has no [orgId]; `GET /folders` can return org folders too on
+ * some backends, which is why the library filters on it rather than trusting
+ * the endpoint.
+ */
+@Serializable
+data class CloudFolder(
+    val id: String,
+    val name: String,
+    val orgId: String? = null,
+    @Serializable(with = EpochMillisSerializer::class) val createdAt: Double? = null,
+    @Serializable(with = EpochMillisSerializer::class) val updatedAt: Double? = null,
+)
+
+/** `GET /folders` and `GET /orgs/{orgId}/folders` → `{ folders: [...] }`. */
+@Serializable
+data class FoldersResponse(
+    val folders: List<CloudFolder> = emptyList(),
+)
+
+/** `POST /folders` → `{ folder }`, when the server sends the row back at all. */
+@Serializable
+data class FolderEnvelope(
+    val folder: CloudFolder,
+)
+
+/**
+ * An organization the signed-in account belongs to, with the account's own
+ * [role] in it. `role` is only present from the cloud's `GET /orgs/mine` —
+ * better-auth's own organization list drops it, which is why every client uses
+ * the former. Mirrors iOS `CloudOrg`.
+ */
+@Serializable
+data class CloudOrg(
+    val id: String,
+    val name: String,
+    val slug: String? = null,
+    /** [OrgRole.OWNER], [OrgRole.ADMIN] or [OrgRole.MEMBER]; null reads as member. */
+    val role: String? = null,
+)
+
+/** The membership roles better-auth's organization plugin hands out. */
+object OrgRole {
+    const val OWNER = "owner"
+    const val ADMIN = "admin"
+    const val MEMBER = "member"
+}
+
 /** `POST /stt/batch` → `{ id }`, the hosted transcription job to poll. */
 @Serializable
 data class BatchJobCreated(
@@ -223,7 +279,7 @@ data class TranscriptSegmentDto(
 class RecordingMeta(val raw: JsonObject) {
 
     val id: String get() = raw.stringOrNull("id").orEmpty()
-    val title: String get() = raw.stringOrNull("title").orEmpty()
+    val title: String get() = raw.stringOrNull(TITLE).orEmpty()
     val source: String get() = raw.stringOrNull("source") ?: "live"
     val createdAt: Double get() = raw.numberOrNull("createdAt") ?: 0.0
     val durationMs: Double get() = raw.numberOrNull("durationMs") ?: 0.0
@@ -280,11 +336,45 @@ class RecordingMeta(val raw: JsonObject) {
     /** How many action items a desktop analysis has attached. */
     val actionItemsCount: Int get() = (raw["actionItems"] as? JsonArray)?.size ?: 0
 
-    /** A copy with a different `folderId`, every other field preserved verbatim. */
+    /**
+     * The analysis's short read of the meeting (`HistoryEntry.brief`), as the
+     * markdown-lite the desktop saves it in (see `BriefMarkup`). Empty when
+     * there is none.
+     */
+    val brief: String get() = raw.stringOrNull("brief").orEmpty().trim()
+
+    /**
+     * A copy with one action item ticked or unticked, every other field — of
+     * that item and of the entry — preserved verbatim. An item is matched by its
+     * `id`, or by `action-{index}` when it has none, the same fallback the
+     * screen reads it with. iOS `setActionItem`.
+     */
+    fun withActionItem(id: String, done: Boolean): RecordingMeta {
+        val items = raw["actionItems"] as? JsonArray ?: return this
+        val ticked = JsonArray(
+            items.mapIndexed { index, element ->
+                val obj = element as? JsonObject ?: return@mapIndexed element
+                if ((obj.stringOrNull("id") ?: "action-$index") != id) return@mapIndexed element
+                JsonObject(obj + ("done" to JsonPrimitive(done)))
+            },
+        )
+        return RecordingMeta(JsonObject(raw + ("actionItems" to ticked)))
+    }
+
+    /**
+     * A copy with a different `folderId`, every other field preserved verbatim.
+     *
+     * Moving to the personal root writes an explicit `"folderId": null` rather
+     * than dropping the key — the statement iOS (`RecordingMeta.folderId`'s
+     * setter) and the desktop (`buildSummary`) both make. An absent key is what
+     * a fresh upload with no folder says; a re-push that is *un*filing a
+     * recording has to say so out loud, or a server that merges would keep the
+     * old folder.
+     */
     fun withFolderId(folderId: String?): RecordingMeta = RecordingMeta(
         buildJsonObject {
             raw.forEach { (key, value) -> if (key != "folderId") put(key, value) }
-            if (folderId != null) put("folderId", JsonPrimitive(folderId))
+            put("folderId", if (folderId != null) JsonPrimitive(folderId) else JsonNull)
         }
     )
 
@@ -323,9 +413,77 @@ class RecordingMeta(val raw: JsonObject) {
         }
     )
 
+    /**
+     * Whether a filing pass (the AI title + folder suggestion) has already been
+     * spent on this recording, on any device. The desktop reads it to decide
+     * whether to run its own pass; iOS and Android write it on every answer,
+     * Skip included, so a recording dealt with on the phone is not asked about
+     * again on the Mac. Absent means the pass has not run.
+     */
+    val filingSuggested: Boolean get() = raw.booleanOrNull(FILING_SUGGESTED) ?: false
+
+    /** A copy with a different `title`, every other field preserved verbatim. */
+    fun withTitle(title: String): RecordingMeta = replacing(TITLE, JsonPrimitive(title))
+
+    /**
+     * A copy with `filingSuggested: true`, every other field preserved verbatim.
+     * There is no way to clear it: once a pass has been answered it stays
+     * answered.
+     */
+    fun withFilingSuggested(): RecordingMeta = replacing(FILING_SUGGESTED, JsonPrimitive(true))
+
+    /**
+     * The filing suggestion still waiting on the user (`HistoryEntry.filingSuggestion`),
+     * or null — iOS `RecordingMeta.filingSuggestion`. The desktop clears it to
+     * `null` once it is accepted or dismissed (the suggestion is a prompt, not a
+     * property of the recording), so non-null here means "pending". A folder
+     * without a name is dropped; a suggestion with neither a title nor a folder
+     * is none.
+     */
+    val filingSuggestion: FilingSuggestion?
+        get() {
+            val obj = raw[FILING_SUGGESTION] as? JsonObject ?: return null
+            val folders = (obj["folders"] as? JsonArray).orEmpty().mapNotNull { element ->
+                val folder = element as? JsonObject ?: return@mapNotNull null
+                val name = folder.stringOrNull("name")?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+                FilingFolderSuggestion(
+                    folderId = folder.stringOrNull("folderId"),
+                    name = name,
+                    reason = folder.stringOrNull("reason").orEmpty(),
+                )
+            }
+            val title = obj.stringOrNull(TITLE).orEmpty()
+            if (title.isEmpty() && folders.isEmpty()) return null
+            return FilingSuggestion(title = title, folders = folders)
+        }
+
+    /**
+     * A copy that says the filing offer has been answered, whichever way:
+     * `filingSuggested: true` (the desktop's "a pass has been spent here") and
+     * `filingSuggestion: null` (the desktop reads a non-null one as still
+     * waiting, and would offer it again on the Mac). What every filing write
+     * from the phone carries — iOS `FilingSuggestionModel.write`.
+     */
+    fun withFilingAnswered(): RecordingMeta = RecordingMeta(
+        JsonObject(
+            LinkedHashMap(raw).apply {
+                put(FILING_SUGGESTED, JsonPrimitive(true))
+                put(FILING_SUGGESTION, JsonNull)
+            },
+        ),
+    )
+
+    /** One key set (in place, when it already exists), the rest untouched. */
+    private fun replacing(key: String, value: JsonElement): RecordingMeta =
+        RecordingMeta(JsonObject(LinkedHashMap(raw).apply { put(key, value) }))
+
     override fun toString(): String = raw.toString()
 
     companion object {
+        private const val TITLE = "title"
+        private const val FILING_SUGGESTED = "filingSuggested"
+        private const val FILING_SUGGESTION = "filingSuggestion"
+
         /**
          * The `segments` array as every Parley client writes it.
          *

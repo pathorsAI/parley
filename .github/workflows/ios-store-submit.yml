@@ -48,6 +48,18 @@ on:
         options:
           - AFTER_APPROVAL
           - MANUAL
+      # Deliberately absent from the invocation above: this is the exception,
+      # not the shape of a normal release. App Store Connect allows one version
+      # in an editable state at a time, so when a previous version was prepared
+      # and never submitted, creating this one fails with a 409 that blames the
+      # app relationship. Renaming the waiting version is the one field a human
+      # would change in the web form, and the API key lives only here, so this
+      # input is the only way to change it without opening a browser.
+      rename_editable_version:
+        description: "No such version yet? Rename the one already waiting in Connect instead of creating a new one — for when a previous version was prepared but never submitted"
+        required: false
+        default: false
+        type: boolean
 
 # Nothing is written to the repository; the deliverable goes to App Store
 # Connect.
@@ -77,11 +89,16 @@ jobs:
           BUILD: ${{ inputs.build }}
           RELEASE_TYPE: ${{ inputs.release_type }}
           DRY_RUN: ${{ inputs.dry_run }}
+          RENAME_EDITABLE_VERSION: ${{ inputs.rename_editable_version }}
         run: |
-          echo "version      : $VERSION"
-          echo "build        : $BUILD"
-          echo "release type : $RELEASE_TYPE"
-          echo "dry run      : $DRY_RUN"
+          echo "version       : $VERSION"
+          echo "build         : $BUILD"
+          echo "release type  : $RELEASE_TYPE"
+          echo "rename pending: $RENAME_EDITABLE_VERSION"
+          echo "dry run       : $DRY_RUN"
+          if [ "$RENAME_EDITABLE_VERSION" = "true" ]; then
+            echo "::notice::If $VERSION does not exist in App Store Connect, the version already waiting there will be renamed to $VERSION rather than a new one being created."
+          fi
           if [ "$DRY_RUN" = "true" ]; then
             echo "::notice::Dry run: the listing and the build attachment will be written to App Store Connect, but $VERSION will NOT be submitted to App Review."
           else
@@ -122,6 +139,7 @@ jobs:
           BUILD: ${{ inputs.build }}
           RELEASE_TYPE: ${{ inputs.release_type }}
           DRY_RUN: ${{ inputs.dry_run }}
+          RENAME_EDITABLE_VERSION: ${{ inputs.rename_editable_version }}
         run: |
           # Inputs are passed through the environment and quoted here rather than
           # interpolated into the script line, so a version string can never
@@ -129,6 +147,9 @@ jobs:
           flags=()
           if [ "$DRY_RUN" = "true" ]; then
             flags+=(--dry-run)
+          fi
+          if [ "$RENAME_EDITABLE_VERSION" = "true" ]; then
+            flags+=(--rename-editable-version)
           fi
           "$RUNNER_TEMP/ascvenv/bin/python" .github/scripts/asc_submit.py \
             --version "$VERSION" \

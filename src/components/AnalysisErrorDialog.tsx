@@ -137,7 +137,7 @@ export function AnalysisErrorDialog() {
       />
       <div className="relative flex w-full max-w-md flex-col rounded-xl border bg-background shadow-xl">
         <div className="flex items-center gap-2 border-b px-4 py-3">
-          <AlertTriangle className="size-4 text-orange-500" />
+          <AlertTriangle className="size-4 text-destructive" />
           <span className="text-sm font-semibold">{L.title}</span>
           <button type="button" className="ml-auto text-muted-foreground hover:text-foreground" onClick={dismiss}>
             <X className="size-4" />

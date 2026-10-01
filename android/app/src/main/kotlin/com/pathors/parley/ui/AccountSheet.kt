@@ -8,29 +8,39 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.annotation.StringRes
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
-import androidx.compose.foundation.layout.only
-import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -43,15 +53,29 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.pathors.parley.BuildConfig
 import com.pathors.parley.R
 import com.pathors.parley.auth.CustomTabsLauncher
+import com.pathors.parley.cloud.CloudOrg
+import com.pathors.parley.cloud.CloudUser
 import com.pathors.parley.cloud.HostedQuota
+import com.pathors.parley.feedback.FeedbackSettings
+import com.pathors.parley.library.SaveDestination
 import com.pathors.parley.playback.AudioStorageSection
 import com.pathors.parley.ui.theme.ParleyTextStyles
 import com.pathors.parley.ui.theme.ThemePreference
@@ -95,9 +119,15 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AccountSheet(viewModel: HomeViewModel, onDismiss: () -> Unit) {
+fun AccountSheet(
+    viewModel: HomeViewModel,
+    onDismiss: () -> Unit,
+    /** "Show the getting-started list again". The library resets it, closes this, and shows it. */
+    onShowGettingStarted: () -> Unit,
+) {
     val account by viewModel.account.collectAsState()
     val library by viewModel.state.collectAsState()
+    val destination by viewModel.saveDestination.collectAsState()
     // Fully expanded, never half: there is more here than a half-height sheet can
     // show, and a settings pane that opens mid-scroll reads as broken.
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -123,9 +153,16 @@ fun AccountSheet(viewModel: HomeViewModel, onDismiss: () -> Unit) {
                 style = MaterialTheme.typography.titleLarge,
             )
 
-            AccountIdentity(account)
+            AccountIdentity(account, orgs = library.orgs, onRefresh = viewModel::loadAccount)
 
             account.quota?.let { quota -> UsageSection(quota) }
+
+            SaveLocationSection(
+                destination = destination,
+                orgs = library.orgs,
+                targets = account.saveTargets,
+                onSelect = viewModel::setSaveDestination,
+            )
 
             SyncSection(
                 pending = library.pending.size,
@@ -139,7 +176,9 @@ fun AccountSheet(viewModel: HomeViewModel, onDismiss: () -> Unit) {
 
             LanguageSection()
 
-            AboutSection()
+            FeedbackSection(onReport = onDismiss)
+
+            AboutSection(onShowGettingStarted)
 
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
 
@@ -216,10 +255,26 @@ private fun appearanceLabel(preference: ThemePreference): Int = when (preference
 }
 
 /**
- * Who is signed in and which plan they are on — or why neither is known yet.
+ * Who is signed in, which organizations they belong to and in what role, and
+ * which plan they are on — or why none of that is known yet.
+ *
+ * iOS Settings › Account: an initial on a tinted disc, the name over the email,
+ * then one row per organization with the role at the end. The organizations are
+ * the library's own `GET /orgs/mine` list (the scope switcher's), so the two
+ * can never disagree.
+ *
+ * When `GET /me` did not come back — offline, or the server is not answering —
+ * the session is kept (see `AuthManager.isSignedIn`), so this says so and offers
+ * Refresh rather than anything that implies the account is gone. Sign out stays
+ * at the foot of the sheet, as on iOS.
  */
 @Composable
-private fun AccountIdentity(account: HomeViewModel.AccountState) {
+private fun AccountIdentity(
+    account: HomeViewModel.AccountState,
+    orgs: List<CloudOrg>,
+    onRefresh: () -> Unit,
+) {
+    val user = account.user
     when {
         account.loading -> Text(
             text = stringResource(R.string.account_loading),
@@ -227,16 +282,51 @@ private fun AccountIdentity(account: HomeViewModel.AccountState) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        account.failed -> Text(
-            text = stringResource(R.string.account_load_failed),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.error,
-        )
+        account.failed -> Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = stringResource(R.string.account_load_failed),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onRefresh) {
+                Text(stringResource(R.string.action_refresh))
+            }
+        }
+
+        // Not asked yet: the frame before the sheet's first load starts.
+        user == null -> Unit
 
         else -> {
-            account.user?.let { user ->
-                Text(text = user.email, style = MaterialTheme.typography.bodyLarge)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                AccountAvatar(user)
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = user.displayName,
+                        style = ParleyTextStyles.bodyEmphasized,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = user.email,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
+            orgs.forEach { org -> OrgMembershipRow(org) }
             account.quota?.plan?.takeIf { it.isNotEmpty() }?.let { plan ->
                 Text(
                     text = stringResource(R.string.account_plan, plan),
@@ -245,6 +335,63 @@ private fun AccountIdentity(account: HomeViewModel.AccountState) {
                 )
             }
         }
+    }
+}
+
+/** The name when the account has one, the email otherwise — iOS `user.name ?? user.email`. */
+private val CloudUser.displayName: String
+    get() = name?.takeIf { it.isNotBlank() } ?: email
+
+/**
+ * The initial on a quiet fill — a list's way of standing an avatar in for a
+ * photo. Decorative: the name next to it says the same thing to TalkBack.
+ */
+@Composable
+private fun AccountAvatar(user: CloudUser) {
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = user.displayName.take(1).uppercase(),
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.clearAndSetSemantics { },
+        )
+    }
+}
+
+/** One organization and this account's role in it. */
+@Composable
+private fun OrgMembershipRow(org: CloudOrg) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = LibraryIcons.Group,
+            contentDescription = null,
+            modifier = Modifier.size(20.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = org.name,
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = stringResource(orgRoleLabel(org.role)),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -344,6 +491,145 @@ private fun QuotaBar(label: String, used: Double, limit: Double?, unit: String) 
                 trackColor = MaterialTheme.colorScheme.surfaceVariant,
             )
         }
+    }
+}
+
+/**
+ * "Default save location": where a recording made or imported on this phone
+ * goes — the personal library or one of its folders, or an organization or one
+ * of its folders. The iOS Settings picker, the same four shapes, with its
+ * footer, because the organization case needs explaining: it still saves to the
+ * personal library and shares a copy (see [SaveDestination]).
+ *
+ * Between usage and sync, where iOS has it: it is the first thing about *where
+ * recordings go*, and sync is the second.
+ *
+ * A menu anchored to a Change button rather than a list of radio rows: an
+ * account with twenty customers has twenty-odd options, and a sheet that grew
+ * by twenty rows to show one setting would bury everything below it.
+ */
+@Composable
+private fun SaveLocationSection(
+    destination: SaveDestination,
+    orgs: List<CloudOrg>,
+    targets: HomeViewModel.SaveTargets,
+    onSelect: (SaveDestination) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    val personal = stringResource(R.string.library_scope_personal)
+
+    SectionHeader(R.string.account_save_location_title)
+
+    Box {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = saveDestinationLabel(destination, orgs, targets),
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = { open = true }) {
+                Text(stringResource(R.string.account_save_location_change))
+            }
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            fun pick(choice: SaveDestination) {
+                open = false
+                onSelect(choice)
+            }
+            SaveLocationItem(personal, LibraryIcons.Folder, destination == SaveDestination.PERSONAL_ROOT) {
+                pick(SaveDestination.PERSONAL_ROOT)
+            }
+            targets.personalFolders.forEach { folder ->
+                val choice = SaveDestination(folderId = folder.id)
+                SaveLocationItem(
+                    title = stringResource(R.string.account_save_location_personal_folder, folder.name),
+                    icon = LibraryIcons.Folder,
+                    selected = destination == choice,
+                    indented = true,
+                ) { pick(choice) }
+            }
+            orgs.forEach { org ->
+                val root = SaveDestination(orgId = org.id)
+                SaveLocationItem(org.name, LibraryIcons.Group, destination == root) { pick(root) }
+                targets.orgFolders[org.id].orEmpty().forEach { folder ->
+                    val choice = SaveDestination(orgId = org.id, folderId = folder.id)
+                    SaveLocationItem(
+                        // Verbatim, as on iOS: two names and a separator, nothing
+                        // for a translator to say.
+                        title = "${org.name} · ${folder.name}",
+                        icon = LibraryIcons.Folder,
+                        selected = destination == choice,
+                        indented = true,
+                    ) { pick(choice) }
+                }
+            }
+        }
+    }
+
+    Text(
+        text = stringResource(R.string.account_save_location_footer),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+@Composable
+private fun SaveLocationItem(
+    title: String,
+    icon: ImageVector,
+    selected: Boolean,
+    indented: Boolean = false,
+    onClick: () -> Unit,
+) {
+    DropdownMenuItem(
+        text = { Text(title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+        leadingIcon = {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier
+                    .padding(start = if (indented) 16.dp else 0.dp)
+                    .size(20.dp),
+            )
+        },
+        trailingIcon = {
+            if (selected) {
+                Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            }
+        },
+        onClick = onClick,
+        modifier = Modifier.semantics { this.selected = selected },
+    )
+}
+
+/**
+ * The setting as a line of text. A folder or an organization that is not in
+ * the loaded lists — still loading, or deleted elsewhere — degrades to its
+ * parent's name rather than to an id, the same fallback iOS's
+ * `SaveDestination.label` makes.
+ */
+@Composable
+private fun saveDestinationLabel(
+    destination: SaveDestination,
+    orgs: List<CloudOrg>,
+    targets: HomeViewModel.SaveTargets,
+): String {
+    val orgId = destination.orgId
+    if (orgId != null) {
+        val orgName = orgs.firstOrNull { it.id == orgId }?.name
+            ?: stringResource(R.string.account_save_location_org)
+        val folder = targets.orgFolders[orgId].orEmpty().firstOrNull { it.id == destination.folderId }
+        return if (folder != null) "$orgName · ${folder.name}" else orgName
+    }
+    val folder = targets.personalFolders.firstOrNull { it.id == destination.folderId }
+    return if (folder != null) {
+        stringResource(R.string.account_save_location_personal_folder, folder.name)
+    } else {
+        stringResource(R.string.library_scope_personal)
     }
 }
 
@@ -456,7 +742,67 @@ private fun openLanguageSettings(context: Context) {
 }
 
 /**
- * Version, and the three addresses the app is obliged to be reachable at.
+ * "Feedback & diagnostics": the way to tell us something is wrong, and the one
+ * switch over what the app sends without being asked.
+ *
+ * "Report a problem" replaced the old "Support & feedback" web link. The link
+ * sent somebody off to a page to write an email — and nobody did: 1.13 broke
+ * transcription for almost every new Android user for ten days without one
+ * report. The sheet it opens now attaches the version, the device and the
+ * recent errors on its own, and keeps the FAQ link at its foot for questions
+ * that are not problems.
+ *
+ * The switch is on by default (spec §6) and the footnote says, in one line,
+ * exactly what a crash report contains — which is the whole of what makes a
+ * default-on report acceptable.
+ */
+@Composable
+private fun FeedbackSection(
+    /**
+     * Closes this sheet as the report sheet opens: stacked, the report's
+     * "Sent" would land behind a full-height account sheet where nobody sees
+     * it, and the person is done here anyway.
+     */
+    onReport: () -> Unit,
+) {
+    val feedback = rememberContainer().feedback
+    val autoSend by feedback.autoSendCrashes.collectAsState(initial = FeedbackSettings.DEFAULT_AUTO_SEND_CRASHES)
+
+    SectionHeader(R.string.feedback_section_title)
+
+    LinkButton(R.string.feedback_report_problem) {
+        feedback.openReport()
+        onReport()
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .toggleable(
+                value = autoSend,
+                role = Role.Switch,
+                onValueChange = feedback::setAutoSendCrashes,
+            ),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = stringResource(R.string.feedback_auto_crash),
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+        )
+        Switch(checked = autoSend, onCheckedChange = null)
+    }
+
+    Text(
+        text = stringResource(R.string.feedback_auto_crash_footnote),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+/**
+ * Version, and the two addresses the app is obliged to be reachable at.
  *
  * The privacy policy is the reason this section exists at all: Play rejects an
  * app that does not link to one from inside itself, and Android had no link
@@ -465,8 +811,9 @@ private fun openLanguageSettings(context: Context) {
  * because that is what identifies an artifact on Play.
  */
 @Composable
-private fun AboutSection() {
+private fun AboutSection(onShowGettingStarted: () -> Unit) {
     val context = LocalContext.current
+    val haptics = LocalHapticFeedback.current
 
     SectionHeader(R.string.account_about_title)
 
@@ -483,7 +830,15 @@ private fun AboutSection() {
     LinkButton(R.string.link_privacy_policy) {
         CustomTabsLauncher.launch(context, ParleyLinks.PRIVACY)
     }
-    LinkButton(R.string.link_support) { CustomTabsLauncher.launch(context, ParleyLinks.SUPPORT) }
+    // Brings the library's checklist back, unticked — for someone who closed it
+    // with "Not now" and wants the lap after all. Resetting alone was the iOS
+    // bug: the list lives behind this sheet, so the tap changed nothing anyone
+    // could see. It ends where its result is — the library, scrolled to the
+    // list — with the confirming buzz iOS gives it.
+    LinkButton(R.string.getting_started_show_again) {
+        haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+        onShowGettingStarted()
+    }
 
     Text(
         text = stringResource(R.string.account_about_detail),
