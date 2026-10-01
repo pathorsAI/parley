@@ -25,6 +25,7 @@ import {
   type HistoryCardItem,
 } from "../../lib/cloud/sync";
 import { buildOwnershipIndex, inFolderNode, inNode, nodeKey } from "../../lib/library/scope";
+import { newestFirst } from "../../lib/library/timeline";
 import { log } from "../../lib/log";
 import { markGettingStarted } from "../../lib/onboarding/gettingStarted";
 import { isTauri } from "../../lib/tauriEvents";
@@ -273,7 +274,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   const liveFolderIds = new Set(scopeFolders.map((f) => f.id));
   const index = buildOwnershipIndex(tree.personalFolders);
   const searchQuery = query.trim().toLowerCase();
-  const visible = (entries ?? []).filter((e) => {
+  const visible = newestFirst(entries ?? []).filter((e) => {
     // A search spans the whole scope regardless of the selected node.
     if (searchQuery) {
       return (
