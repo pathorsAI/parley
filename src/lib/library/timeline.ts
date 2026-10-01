@@ -82,6 +82,16 @@ export function bucketKey(bucket: TimelineBucket): string {
 }
 
 /**
+ * A copy of `entries`, newest first. Every list of recordings reads top-down
+ * from the latest — the folder grid as much as the timeline — and neither may
+ * trust the order the list arrives in: the merged history appends cloud-only
+ * recordings after the local ones, and the org list comes back unsorted.
+ */
+export function newestFirst<T extends DatedRecording>(entries: readonly T[]): T[] {
+  return [...entries].sort((a, b) => b.createdAt - a.createdAt);
+}
+
+/**
  * Group recordings into the timeline, newest first — both the groups and the
  * items inside them.
  *
@@ -95,7 +105,7 @@ export function groupByDate<T extends DatedRecording>(
 ): TimelineGroup<T>[] {
   const groups: TimelineGroup<T>[] = [];
   const byKey = new Map<string, TimelineGroup<T>>();
-  for (const entry of [...entries].sort((a, b) => b.createdAt - a.createdAt)) {
+  for (const entry of newestFirst(entries)) {
     const bucket = bucketFor(entry.createdAt, now);
     const key = bucketKey(bucket);
     let group = byKey.get(key);
