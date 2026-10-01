@@ -78,6 +78,12 @@ final class KeyboardViewController: UIInputViewController {
     /// session is a leftover from a previous dictation and is ignored.
     private var session = ""
     private var insertedCount = 0
+    /// Whether an `insertText` from this controller can reach the user's field
+    /// right now: the keyboard is on screen and its host is the active app.
+    /// Set in `viewWillAppear` and on the host becoming active, cleared in
+    /// `viewWillDisappear` and on the host resigning — see `drainDownlink` for
+    /// why the transcript waits for it.
+    private var canDeliver = false
     /// A session the user threw away with ✕.
     ///
     /// The app answers a cancel by publishing `cancelled`, which inserts
@@ -338,6 +344,15 @@ final class KeyboardViewController: UIInputViewController {
             self.styleDidChange(from: previous)
         }
 
+        // Selector-based, so they are dropped with the controller. See
+        // `hostWillResignActive`.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(hostWillResignActive),
+            name: .NSExtensionHostWillResignActive, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(hostDidBecomeActive),
+            name: .NSExtensionHostDidBecomeActive, object: nil)
+
         armChannelObservers()
     }
 
@@ -440,6 +455,9 @@ final class KeyboardViewController: UIInputViewController {
         // all: a keyboard coming back mid-sentence should find the button
         // already the right size rather than growing into it.
         readMicLevel()
+        // On screen again, so a transcript that finished while the keyboard was
+        // away is typed by the drain below rather than left waiting.
+        canDeliver = true
         drainDownlink()
         // Warm the Taptic Engine while the keyboard is coming up, so the thump
         // lands with the first press on the record button rather than a beat
@@ -472,6 +490,21 @@ final class KeyboardViewController: UIInputViewController {
         if hasFullAccess, bridge.listening { Haptics.dictationContinuesInBackground() }
         lexicon.harvest(context: textDocumentProxy.documentContextBeforeInput)
         leaveComposition()
+        canDeliver = false
+    }
+
+    /// The host app leaving the foreground — most often because the mic tap
+    /// jumped to Parley — does not always take the keyboard's view down with
+    /// it, so it closes delivery too. Coming back reopens it and drains, for a
+    /// keyboard that is shown again without a fresh `viewWillAppear`.
+    @objc private func hostWillResignActive() {
+        canDeliver = false
+    }
+
+    @objc private func hostDidBecomeActive() {
+        guard viewIfLoaded?.window != nil else { return }
+        canDeliver = true
+        drainDownlink()
     }
 
     /// A field that asks for a dark keyboard gets one — see `isDark`. The field
@@ -1347,9 +1380,18 @@ final class KeyboardViewController: UIInputViewController {
         // empty string — a keyboard that died delivering words is the one
         // failure this path cannot afford. Past the end already means "all of
         // it landed" and inserts nothing, as it always did.
+        //
+        // And only while `canDeliver`. The mark is written the moment
+        // `insertText` returns, and the proxy says nothing about whether the
+        // words arrived — so a `done` drained while the keyboard was away
+        // (stopped from Parley, the Live Activity or the lock screen while the
+        // host sat in the background) was typed into nowhere and then marked
+        // as landed, and the keyboard that came back only offered the copy.
+        // Waiting leaves the mark untouched; the drain in `viewWillAppear` or
+        // `hostDidBecomeActive` types it once the field can take it.
         let committed = Array(d.committed)
         let landed = min(max(insertedCount, 0), committed.count)
-        if d.state == .done, committed.count > landed {
+        if d.state == .done, committed.count > landed, canDeliver {
             typeOutsideComposition(String(committed[landed...]))
             insertedCount = committed.count
             var up = DictationChannel.readUplink() ?? .init(session: session)
