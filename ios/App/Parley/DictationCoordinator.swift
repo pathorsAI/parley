@@ -154,6 +154,11 @@ final class DictationCoordinator: ObservableObject {
     /// How long the model's reply was, accepted or not (see
     /// `TranscriptPolisher.Result.replyLength`). Only ever logged.
     private var polishReplyLength: Int?
+    /// What "insert without polishing" would have typed, published beside
+    /// `done` when — and only when — the polish changed the words. The
+    /// keyboard's 「↩︎ 換回原文」 chip swaps it in (`Downlink.raw`). Set in
+    /// `settle`, cleared with the rest of the polish state in `launch`.
+    private var deliveredRaw: String?
     /// The backstop that settles a session still `finishing` at
     /// `finishingBudget` after ⏹ — see `finishingOverdue`.
     private var finishingDeadline: Task<Void, Never>?
@@ -441,6 +446,7 @@ final class DictationCoordinator: ObservableObject {
         polishRaw = nil
         polishStartedAt = nil
         polishReplyLength = nil
+        deliveredRaw = nil
         finishingDeadline?.cancel()
         finishingDeadline = nil
         reconnectTask?.cancel()
@@ -1612,6 +1618,12 @@ final class DictationCoordinator: ObservableObject {
         // user made by hand, and a model that undid one of them has to lose to
         // the person who typed it.
         applyLexicon()
+        // The raw words through the same dictionary, so reverting swaps the
+        // polish out without undoing the user's own corrections. Only for a
+        // polish that changed something: every other ending already delivered
+        // the raw words, and the chip would offer to swap text for itself.
+        let original = polishRaw.map(lexiconApplied)
+        deliveredRaw = outcome == .polished && original != committed ? original : nil
         publish()
         logSettled(outcome: outcome, rawCount: rawCount)
         // After the lexicon and after the publish: what is kept is exactly the
@@ -1621,8 +1633,7 @@ final class DictationCoordinator: ObservableObject {
         // without polishing" would have typed — not a transcript with the
         // user's own corrections undone. For any ending but a polish the two
         // come out identical and the entry drops the copy.
-        recordHistory(
-            polish: outcome, rawText: polishRaw.map(lexiconApplied), ending: endingNotice)
+        recordHistory(polish: outcome, rawText: original, ending: endingNotice)
         active = false
         // No haptic here, deliberately. `done` is not delivery — it is this
         // process saying the text is *ready* — and the transcript is only ever
@@ -2271,15 +2282,16 @@ final class DictationCoordinator: ObservableObject {
     /// Mirror the live state into the downlink the keyboard reads.
     ///
     /// The cap's deadline only on a live state — it is a claim about when this
-    /// session *will* stop — and the ending note only on `done`, the one state
-    /// it annotates.
+    /// session *will* stop — and the ending note and the raw words only on
+    /// `done`, the one state they annotate.
     private func publish() {
         DictationChannel.writeDownlink(
             .init(
                 session: session, committed: committed, partial: partial,
                 state: state, errorMessage: errorMessage,
                 deadline: state.isLive ? capDeadline : nil,
-                notice: state == .done ? endingNotice : nil))
+                notice: state == .done ? endingNotice : nil,
+                raw: state == .done ? deliveredRaw : nil))
         publishMicActivity()
     }
 
