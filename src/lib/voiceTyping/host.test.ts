@@ -96,7 +96,8 @@ const backend = {
   session: 0,
   pasteApp: "com.apple.Notes" as string | null,
   /** What `insert_text` says about the paste: false when Rust left the text
-   *  on the clipboard (no Accessibility, UIPI). */
+   *  on the clipboard (no Accessibility, UIPI, Windows' hidden tray window
+   *  in front). */
   pasted: true,
   /** When set, `stop_voice_typing` waits for this before resolving. */
   stopGate: null as Promise<void> | null,
@@ -428,8 +429,8 @@ describe("voice-typing host", () => {
     expect(phases().filter((p) => p !== "start")).toEqual(["done"]);
   });
 
-  /** Rust decides (Accessibility, UIPI); the host only reports it, and does
-   *  not watch a field nothing was pasted into. */
+  /** Rust decides (Accessibility, UIPI, the hidden tray window); the host
+   *  only reports it, and does not watch a field nothing was pasted into. */
   it("reports an insert Rust could not paste as clipboard-only", async () => {
     backend.pasted = false;
     await key(true);
@@ -442,9 +443,12 @@ describe("voice-typing host", () => {
     expect(mocks.append).toHaveBeenCalledWith("貼到哪裡了", "com.apple.Notes");
   });
 
-  /** Regression: a paste into Parley's own Ask box was reported as
-   *  clipboard-only, so the overlay said to press ⌘V for text that was
-   *  already in the field, and a user who did got it twice. */
+  /** A paste into Parley's own Ask box was once reported as clipboard-only,
+   *  so the overlay said to press ⌘V for text that was already in the field,
+   *  and a user who did got it twice. The decision lives in Rust now
+   *  (`paste_block` in voice_typing/clipboard.rs, whose tests guard it); this
+   *  only documents that the host does not downgrade an insert on Parley's
+   *  bundle id, which is where the guard first lived. */
   it("a dictation into one of Parley's own fields is inserted like any other", async () => {
     backend.pasteApp = "com.pathors.parley";
     await key(true);

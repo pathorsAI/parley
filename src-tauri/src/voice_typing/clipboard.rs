@@ -17,9 +17,10 @@
 //! the dictation stays on the clipboard as it always used to.
 //!
 //! When no paste can be posted (macOS without Accessibility, Windows refusing
-//! the injection) the clipboard IS the delivery: the text goes there as an
-//! ordinary copy and stays, and the overlay names the paste key. Explicit copies (the overlay's Copy, Esc's Undo) are never
-//! restored over.
+//! the injection) or none would land (Windows' hidden tray window in front,
+//! see [`paste_block`]) the clipboard IS the delivery: the text goes there as
+//! an ordinary copy and stays, and the overlay names the paste key. Explicit
+//! copies (the overlay's Copy, Esc's Undo) are never restored over.
 //!
 //! Split like ax_observe: the bookkeeping here is platform-neutral and tested
 //! against a fake clipboard; `macos` and `windows` only read and write the
@@ -118,9 +119,12 @@ pub(super) trait Pasteboard {
 }
 
 /// What a snapshot has spent so far, against SNAPSHOT_TIME_BUDGET and
-/// SNAPSHOT_BYTE_BUDGET. The time is checked before each read: nothing can
-/// interrupt a read that blocks, so the budget stops the reads that would
-/// start after it, and a read already paid for is kept.
+/// SNAPSHOT_BYTE_BUDGET. The time is checked before each read, because a read
+/// that is already running cannot be interrupted: one slow read (an app
+/// rendering a picture, an iPhone's copy fetched over the air) still holds up
+/// the paste for as long as it takes. Once a read has run past the budget,
+/// the next one fails the whole snapshot — what was read so far is dropped
+/// too — so only a slow read that happens to be the last one is kept.
 #[cfg(any(target_os = "macos", target_os = "windows", test))]
 struct SnapshotBudget {
     started: Instant,
@@ -235,11 +239,44 @@ impl<S> RestoreLedger<S> {
 
 /// Why an insert posted no paste and left the text on the clipboard instead,
 /// known before the paste (Windows' UIPI refusal only shows in the paste
-/// itself: the `paste` callback's `false`).
+/// itself: the `paste` callback's `false`). See [`paste_block`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Blocked {
     /// macOS: a synthetic ⌘V needs Accessibility, and it is not granted.
     Accessibility,
+    /// Windows: the foreground window is Parley's own hidden one, so a Ctrl+V
+    /// would land nowhere — while still counting as sent, so the clipboard
+    /// would be put back over the only copy of the dictation.
+    NoTarget,
+}
+
+/// The window a paste would go to, as far as deciding whether to post it
+/// needs to know (each platform's `imp::foreground`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct Foreground {
+    /// It is one of Parley's own.
+    pub own: bool,
+    /// It is not on screen. Only ever true for a window of ours on Windows:
+    /// tray-icon makes its hidden message window the foreground window to
+    /// open the tray menu, and it stays there after the menu closes, so a
+    /// dictation stopped from the tray settles with it in front.
+    pub hidden: bool,
+}
+
+/// Whether to hold an insert's paste back, decided before it is posted.
+///
+/// Parley's own window in front is NOT a reason: the overlay never activates
+/// Parley, so that is the user dictating into one of its fields (the Ask box,
+/// a meeting's context, Settings), and the paste lands there like anywhere
+/// else. Holding it back told them to paste by hand a text that was already
+/// in the field, and doing so inserted it twice. A hidden window of ours is
+/// another matter: nothing there takes a paste, and only the clipboard can
+/// carry the text to where the user goes next.
+pub(super) fn paste_block(accessibility_trusted: bool, foreground: Foreground) -> Option<Blocked> {
+    if !accessibility_trusted {
+        return Some(Blocked::Accessibility);
+    }
+    (foreground.own && foreground.hidden).then_some(Blocked::NoTarget)
 }
 
 /// What an insert did.
@@ -337,7 +374,7 @@ fn save<P: Pasteboard>(pb: &mut P) -> Option<P::Snapshot> {
             // Still paste: the dictation matters more than the clipboard,
             // which then keeps the dictation, as it always used to — still
             // marked transient, so clipboard histories skip it, and the next
-            // dictation saves it and gives it back like any other copy.
+            // dictation saves it and gives it back still marked so.
             log::warn!("voice-typing: could not save the clipboard; it keeps the dictation: {e}");
             None
         }
@@ -520,8 +557,8 @@ const EXCLUDE_FROM_MONITORS: &str = "ExcludeClipboardContentFromMonitorProcessin
 /// Our own registered format, published with every transient write next to
 /// EXCLUDE_FROM_MONITORS so the next snapshot can tell a dictation Parley
 /// left behind (a restore that failed, a clipboard too slow to save) from a
-/// password manager's secret: it is saved and given back like any text, not
-/// cleared as a secret.
+/// password manager's secret: it is saved and given back still marked
+/// transient, not cleared as a secret.
 #[cfg(any(target_os = "windows", test))]
 const PARLEY_TRANSIENT: &str = "ParleyTransientDictation";
 
@@ -576,8 +613,12 @@ enum SnapshotPlan {
     /// copy to the password manager's timed clear; the dictation's restore
     /// clears the clipboard instead.
     Concealed,
-    /// Read these formats, in this order.
-    Read(Vec<u32>),
+    /// Read `formats`, in this order. `transient`: the clipboard holds a
+    /// dictation Parley left behind, which goes back up with the markers it
+    /// came with (none of them is a saved format), so the restore does not
+    /// hand it to the clipboard history, the cloud clipboard and clipboard
+    /// managers one dictation late.
+    Read { formats: Vec<u32>, transient: bool },
 }
 
 /// Plan a snapshot from the formats the clipboard lists (in its order, each
@@ -608,7 +649,10 @@ fn plan_snapshot<'a>(listed: impl IntoIterator<Item = (u32, Option<&'a str>)>) -
     if excluded && !ours {
         SnapshotPlan::Concealed
     } else {
-        SnapshotPlan::Read(read)
+        SnapshotPlan::Read {
+            formats: read,
+            transient: ours,
+        }
     }
 }
 
@@ -638,14 +682,26 @@ fn is_concealed<'a>(mut types: impl Iterator<Item = &'a str>) -> bool {
 ///   pre-UTI flavours (Office's OLE ones), which only that app reads.
 /// - File-promise bookkeeping: reading it asks the owner to write the file
 ///   out, and once restored it would promise a file nobody delivers.
-/// - A PDF or TIFF picture of something the item also carries as PNG: the
-///   same picture, and the two an owner renders most expensively.
+/// - A PDF or TIFF picture of something the item also carries as PNG or as
+///   plain text, the two an owner renders most expensively. Next to a PNG it
+///   is the same picture again. Next to text it is a picture OF the text — an
+///   Excel or Numbers range, a selection in a document — which its owner
+///   renders on the spot, for seconds on a big range, and which would
+///   otherwise eat the whole SNAPSHOT_TIME_BUDGET in one uninterruptible
+///   read. The trade-off: such a copy comes back as text and rich text, and
+///   no longer pastes as a picture into an app that only takes pictures. HTML
+///   or RTF alone does not count as text here: a browser's image copy is a
+///   TIFF with an HTML `<img>` tag beside it, and the TIFF is the picture.
+///   Nor does this help when HTML or an app's native format is the slow read.
 #[cfg(any(target_os = "macos", test))]
 fn is_saved_type(ty: &str, item: &[&str]) -> bool {
     let alias = ty.starts_with("dyn.") || ty.contains(' ') || !ty.contains('.');
     let promise = ty.starts_with("com.apple.pasteboard.promised-")
         || ty == "com.apple.NSFilePromiseItemMetaData";
-    let picture = matches!(ty, "com.adobe.pdf" | "public.tiff") && item.contains(&"public.png");
+    let picture = matches!(ty, "com.adobe.pdf" | "public.tiff")
+        && item
+            .iter()
+            .any(|t| matches!(*t, "public.png" | "public.utf8-plain-text"));
     !(alias || promise || picture)
 }
 
@@ -688,10 +744,11 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::{
-        copy, insert, is_concealed, is_saved_format, is_saved_type, plan_snapshot, restore_due,
-        Blocked, Inserted, Pasteboard, RestoreLedger, RestoreOutcome, SnapshotBudget, SnapshotPlan,
-        CF_DIB, CF_DIBV5, CF_HDROP, CF_LOCALE, CF_TEXT, CF_UNICODETEXT, EXCLUDE_FROM_MONITORS,
-        PARLEY_TRANSIENT, SNAPSHOT_BYTE_BUDGET, SNAPSHOT_TIME_BUDGET,
+        copy, insert, is_concealed, is_saved_format, is_saved_type, paste_block, plan_snapshot,
+        restore_due, Blocked, Foreground, Inserted, Pasteboard, RestoreLedger, RestoreOutcome,
+        SnapshotBudget, SnapshotPlan, CF_DIB, CF_DIBV5, CF_HDROP, CF_LOCALE, CF_TEXT,
+        CF_UNICODETEXT, EXCLUDE_FROM_MONITORS, PARLEY_TRANSIENT, SNAPSHOT_BYTE_BUDGET,
+        SNAPSHOT_TIME_BUDGET,
     };
 
     /// A clipboard holding one string, with a change mark that moves on every
@@ -1008,28 +1065,72 @@ mod tests {
 
     #[test]
     fn a_blocked_insert_posts_nothing_and_leaves_a_plain_copy() {
-        let mut ledger = RestoreLedger::default();
-        let mut board = Board::holding("old");
-        // A restore pending from an earlier dictation…
-        let earlier = insert(&mut ledger, &mut board, "earlier", None, || true).unwrap();
+        for why in [Blocked::Accessibility, Blocked::NoTarget] {
+            let mut ledger = RestoreLedger::default();
+            let mut board = Board::holding("old");
+            // A restore pending from an earlier dictation…
+            let earlier = insert(&mut ledger, &mut board, "earlier", None, || true).unwrap();
 
-        let done = insert(
-            &mut ledger,
-            &mut board,
-            "dictated",
-            Some(Blocked::Accessibility),
-            || panic!("no paste may be posted"),
-        )
-        .unwrap();
-        assert_eq!(done, not_pasted());
-        assert_eq!(board.text, "dictated");
-        assert!(!board.transient);
-        // …must not take the delivery off the clipboard.
+            let done = insert(&mut ledger, &mut board, "dictated", Some(why), || {
+                panic!("no paste may be posted")
+            })
+            .unwrap();
+            assert_eq!(done, not_pasted(), "{why:?}");
+            assert_eq!(board.text, "dictated");
+            assert!(!board.transient);
+            // …must not take the delivery off the clipboard.
+            assert_eq!(
+                restore_due(&mut ledger, &mut board, earlier.restore.unwrap()),
+                RestoreOutcome::Superseded
+            );
+            assert_eq!(board.text, "dictated");
+            assert!(ledger.pending.is_none());
+        }
+    }
+
+    #[test]
+    fn parleys_own_window_in_front_is_pasted_into_unless_it_is_hidden() {
+        let own = Foreground {
+            own: true,
+            hidden: false,
+        };
+        let tray = Foreground {
+            own: true,
+            hidden: true,
+        };
+        let elsewhere = Foreground::default();
+        // The user dictating into the Ask box or Settings: held back, the
+        // overlay would say to paste by hand a text already in the field, and
+        // doing so would insert it twice.
+        assert_eq!(paste_block(true, own), None);
+        assert_eq!(paste_block(true, elsewhere), None);
+        // Another app's hidden window is not ours to judge.
         assert_eq!(
-            restore_due(&mut ledger, &mut board, earlier.restore.unwrap()),
-            RestoreOutcome::Superseded
+            paste_block(
+                true,
+                Foreground {
+                    own: false,
+                    hidden: true
+                }
+            ),
+            None
         );
-        assert_eq!(board.text, "dictated");
+        // Windows' tray menu leaves its hidden window in front: a Ctrl+V
+        // there lands nowhere, so the text stays on the clipboard.
+        assert_eq!(paste_block(true, tray), Some(Blocked::NoTarget));
+        for foreground in [own, tray, elsewhere] {
+            assert_eq!(paste_block(false, foreground), Some(Blocked::Accessibility));
+        }
+    }
+
+    #[test]
+    fn the_reasons_to_hold_a_paste_back_are_these_two() {
+        // No wildcard: a new reason fails to compile here, next to the test
+        // above. "Parley is in front" used to be one, and must not come back.
+        let known = |why: Blocked| match why {
+            Blocked::Accessibility | Blocked::NoTarget => true,
+        };
+        assert!(known(Blocked::Accessibility) && known(Blocked::NoTarget));
     }
 
     #[test]
@@ -1162,14 +1263,10 @@ mod tests {
         ];
         assert_eq!(
             plan_snapshot(listed),
-            SnapshotPlan::Read(vec![
-                0xC103,
-                CF_UNICODETEXT,
-                CF_DIB,
-                0xC104,
-                CF_TEXT,
-                CF_LOCALE
-            ])
+            SnapshotPlan::Read {
+                formats: vec![0xC103, CF_UNICODETEXT, CF_DIB, 0xC104, CF_TEXT, CF_LOCALE],
+                transient: false,
+            }
         );
     }
 
@@ -1182,7 +1279,10 @@ mod tests {
         assert_eq!(plan_snapshot(secret), SnapshotPlan::Concealed);
 
         // What a restore that failed leaves behind: our transient write, with
-        // the same exclusion marker plus our own.
+        // the same exclusion marker plus our own. It is saved, and goes back
+        // marked transient again: given back as an ordinary copy, it would
+        // reach Win+V history, the cloud clipboard and clipboard managers
+        // one dictation late.
         let leftover = [
             (CF_UNICODETEXT, None),
             (0xC202, Some(PARLEY_TRANSIENT)),
@@ -1190,10 +1290,19 @@ mod tests {
             (0xC203, Some("CanIncludeInClipboardHistory")),
             (0xC204, Some("CanUploadToCloudClipboard")),
         ];
-        assert_eq!(
-            plan_snapshot(leftover),
-            SnapshotPlan::Read(vec![CF_UNICODETEXT])
-        );
+        let expected = SnapshotPlan::Read {
+            formats: vec![CF_UNICODETEXT],
+            transient: true,
+        };
+        assert_eq!(plan_snapshot(leftover), expected);
+        // Whatever order the clipboard lists them in.
+        let markers_first = [
+            (0xC201, Some(EXCLUDE_FROM_MONITORS)),
+            (0xC203, Some("CanIncludeInClipboardHistory")),
+            (0xC202, Some(PARLEY_TRANSIENT)),
+            (CF_UNICODETEXT, None),
+        ];
+        assert_eq!(plan_snapshot(markers_first), expected);
     }
 
     #[test]
@@ -1213,20 +1322,36 @@ mod tests {
         assert!(is_saved_type("public.png", &image));
         assert!(is_saved_type("public.html", &image));
         assert!(!is_saved_type("public.tiff", &image));
-        // Without a PNG, the TIFF or PDF is the picture, and is kept.
-        let range = [
-            "public.utf8-plain-text",
-            "public.rtf",
-            "com.adobe.pdf",
-            "public.tiff",
-        ];
-        for ty in range {
-            assert!(is_saved_type(ty, &range), "{ty}");
-        }
         assert!(!is_saved_type(
             "com.adobe.pdf",
             &["com.adobe.pdf", "public.png"]
         ));
+        // An Excel or Numbers range: the picture of the cells is skipped,
+        // the cells' text and rich text are saved.
+        let range = [
+            "public.utf8-plain-text",
+            "public.html",
+            "public.rtf",
+            "com.adobe.pdf",
+            "public.tiff",
+        ];
+        for ty in ["com.adobe.pdf", "public.tiff"] {
+            assert!(!is_saved_type(ty, &range), "{ty}");
+        }
+        for ty in ["public.utf8-plain-text", "public.html", "public.rtf"] {
+            assert!(is_saved_type(ty, &range), "{ty}");
+        }
+        // Without a PNG or text, the TIFF or PDF is the picture, and is kept
+        // — also next to a browser's HTML `<img>` tag or rich text.
+        for item in [
+            &["com.adobe.pdf", "public.tiff"][..],
+            &["public.tiff", "public.html"][..],
+            &["com.adobe.pdf", "public.rtf"][..],
+        ] {
+            for &ty in item {
+                assert!(is_saved_type(ty, item), "{ty} in {item:?}");
+            }
+        }
 
         for ty in [
             "dyn.ah62d4rv4gu8yc6durvwwaznwmuuha2pxsvw0e55bsmwca7d3sbwu",

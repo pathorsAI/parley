@@ -51,9 +51,17 @@ const TRANSIENT_MARKERS: [&str; 4] = [
     "CanUploadToCloudClipboard",
 ];
 
-/// The formats a snapshot saved, each with its memory block's bytes, in the
-/// order the clipboard listed them.
-pub type Snapshot = Vec<(u32, Vec<u8>)>;
+/// What a snapshot saved.
+#[derive(Default)]
+pub struct Snapshot {
+    /// The formats read, each with its memory block's bytes, in the order
+    /// the clipboard listed them.
+    formats: Vec<(u32, Vec<u8>)>,
+    /// It is a dictation Parley left on the clipboard (a restore that failed,
+    /// a clipboard too slow to save): it goes back up with TRANSIENT_MARKERS,
+    /// as the write that put it there did, and stays out of the history.
+    transient: bool,
+}
 
 pub struct SystemPasteboard;
 
@@ -70,15 +78,16 @@ impl Pasteboard for SystemPasteboard {
         // Planned from the formats' ids and names, before a single byte is
         // read: a password manager's secret is not ours to hold.
         let listed = listed_formats();
-        let formats = match plan_snapshot(listed.iter().map(|(f, name)| (*f, name.as_deref()))) {
-            SnapshotPlan::Concealed => {
-                log::info!(
-                    "voice-typing: the clipboard is marked private; it is cleared, not restored"
-                );
-                return Ok(Vec::new());
-            }
-            SnapshotPlan::Read(formats) => formats,
-        };
+        let (formats, transient) =
+            match plan_snapshot(listed.iter().map(|(f, name)| (*f, name.as_deref()))) {
+                SnapshotPlan::Concealed => {
+                    log::info!(
+                        "voice-typing: the clipboard is marked private; it is cleared, not restored"
+                    );
+                    return Ok(Snapshot::default());
+                }
+                SnapshotPlan::Read { formats, transient } => (formats, transient),
+            };
         let mut budget = SnapshotBudget::start();
         let mut saved = Vec::with_capacity(formats.len());
         for format in formats {
@@ -89,30 +98,17 @@ impl Pasteboard for SystemPasteboard {
                 saved.push((format, bytes));
             }
         }
-        Ok(saved)
+        Ok(Snapshot {
+            formats: saved,
+            transient,
+        })
     }
 
     fn write_transient(&mut self, text: &str) -> Result<(), String> {
         let _open = Open::new()?;
         empty()?;
         publish(CF_UNICODETEXT, &utf16_bytes(text))?;
-        // Best effort: the paste works without them, they only keep the
-        // dictation out of the history.
-        let no = 0u32.to_ne_bytes();
-        for marker in TRANSIENT_MARKERS {
-            let set = match registered(marker) {
-                0 => Err("the format could not be registered".to_string()),
-                format => publish(format, &no),
-            };
-            if let Err(e) = set {
-                log::warn!("voice-typing: clipboard marker {marker} not set: {e}");
-                if marker == PARLEY_TRANSIENT {
-                    // Without ours, the exclusion would make the dictation
-                    // look like a password to the next snapshot.
-                    break;
-                }
-            }
-        }
+        publish_markers();
         Ok(())
     }
 
@@ -141,10 +137,13 @@ impl Pasteboard for SystemPasteboard {
         }
         empty()?;
         // One format that will not go back must not cost the others.
-        for (format, bytes) in snapshot {
+        for (format, bytes) in &snapshot.formats {
             if let Err(e) = publish(*format, bytes) {
                 log::warn!("voice-typing: clipboard format {format:#x} not restored: {e}");
             }
+        }
+        if snapshot.transient {
+            publish_markers();
         }
         Ok(true)
     }
@@ -203,6 +202,27 @@ fn utf16_bytes(text: &str) -> Vec<u8> {
         .chain(once(0))
         .flat_map(u16::to_ne_bytes)
         .collect()
+}
+
+/// Put TRANSIENT_MARKERS up next to a dictation on the open clipboard, each
+/// with a DWORD 0. Best effort: the paste works without them, they only keep
+/// the dictation out of the history — but ours goes first, and when it does
+/// not go up the exclusion does not either: without ours, it would make the
+/// dictation look like a password to the next snapshot.
+fn publish_markers() {
+    let no = 0u32.to_ne_bytes();
+    for marker in TRANSIENT_MARKERS {
+        let set = match registered(marker) {
+            0 => Err("the format could not be registered".to_string()),
+            format => publish(format, &no),
+        };
+        if let Err(e) = set {
+            log::warn!("voice-typing: clipboard marker {marker} not set: {e}");
+            if marker == PARLEY_TRANSIENT {
+                break;
+            }
+        }
+    }
 }
 
 /// The id of a registered clipboard format (the same name gives the same id

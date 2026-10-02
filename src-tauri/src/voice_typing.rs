@@ -29,7 +29,7 @@ use crate::transcription::{SttProvider, TranscribeConfig};
 
 mod clipboard;
 pub use self::clipboard::ClipboardState;
-use self::clipboard::{Blocked, SystemPasteboard};
+use self::clipboard::SystemPasteboard;
 
 /// Grace for the post-release final flush, counted from the cut, before a
 /// lingering session task is force-aborted (mirrors `stop_meeting`'s backstop).
@@ -497,7 +497,8 @@ pub struct PasteResult {
     /// False when no paste chord was posted and the text was left on the
     /// clipboard for the user to paste: on macOS because Accessibility isn't
     /// granted, on Windows because UIPI refused the injection (the target
-    /// window belongs to an elevated process).
+    /// window belongs to an elevated process) or because the foreground
+    /// window is Parley's own hidden tray window, where a paste lands nowhere.
     pasted: bool,
     /// Identifier of the app that was frontmost at paste time, sampled BEFORE
     /// the paste chord so it names the app that actually received the text.
@@ -525,7 +526,10 @@ pub struct PasteResult {
 /// never activates Parley, so that is the user dictating into one of its own
 /// fields (the Ask box, a meeting's context, Settings), and the paste lands
 /// there. Holding it back on the clipboard told them to paste by hand a text
-/// that was already in the field — doing so inserted it twice.
+/// that was already in the field — doing so inserted it twice. The one
+/// exception is a Parley window that is not on screen: on Windows the tray
+/// menu leaves its hidden window in front, so a dictation stopped from the
+/// tray stays on the clipboard (`clipboard::paste_block`).
 ///
 /// Synchronous on macOS, so Tauri runs it on the main thread, where AppKit
 /// wants the pasteboard. On Windows it runs on a blocking worker instead:
@@ -553,7 +557,7 @@ fn insert_now(app: &AppHandle, text: &str) -> Result<PasteResult, String> {
     // paste that opens a sheet, an app that activates on input), so reading
     // it afterward could name the wrong app.
     let app_bundle_id = imp::frontmost_bundle_id();
-    let blocked = (!imp::accessibility_trusted(false)).then_some(Blocked::Accessibility);
+    let blocked = clipboard::paste_block(imp::accessibility_trusted(false), imp::foreground());
     let state = app.state::<ClipboardState>();
     let done = clipboard::insert(
         &mut state.lock(),
@@ -919,6 +923,7 @@ fn hit_tick(app: &AppHandle, generation: u64) {
 
 #[cfg(target_os = "macos")]
 mod imp {
+    use super::clipboard::Foreground;
     use core_foundation::base::TCFType;
     use core_foundation::string::CFString;
     use objc::runtime::{Class, Object};
@@ -1010,6 +1015,17 @@ mod imp {
             let pid: i32 = msg_send![app, processIdentifier];
             (pid > 0).then_some(pid)
         }
+    }
+
+    /// Whether Parley itself is the frontmost app. macOS answers per app, not
+    /// per window, and has nothing like Windows' hidden tray window for the
+    /// paste to land on: Parley has no menu-bar icon, and the overlay never
+    /// activates it. So Parley in front means the user brought up one of its
+    /// windows, and the paste goes there.
+    pub fn foreground() -> Foreground {
+        let own = frontmost_pid()
+            .is_some_and(|pid| u32::try_from(pid).is_ok_and(|pid| pid == std::process::id()));
+        Foreground { own, hidden: false }
     }
 
     pub fn paste_to_frontmost() -> bool {
@@ -1407,6 +1423,7 @@ mod imp {
 
 #[cfg(target_os = "windows")]
 mod imp {
+    use super::clipboard::Foreground;
     use windows::core::PWSTR;
     use windows::Win32::Foundation::{CloseHandle, HWND, POINT, RECT};
     use windows::Win32::System::Threading::{
@@ -1507,9 +1524,9 @@ mod imp {
         true
     }
 
-    /// Process id owning the foreground window. `None` when nothing is
-    /// foreground (a locked desktop, or a switch in flight).
-    fn foreground_pid() -> Option<u32> {
+    /// The foreground window and the process id owning it. `None` when
+    /// nothing is foreground (a locked desktop, or a switch in flight).
+    fn foreground_window() -> Option<(HWND, u32)> {
         // SAFETY: reads global window-manager state; returns a null HWND rather
         // than failing when no window is foreground.
         let hwnd = unsafe { GetForegroundWindow() };
@@ -1520,7 +1537,35 @@ mod imp {
         // SAFETY: `pid` is a live local and the call writes exactly one u32 to
         // it. We want the process, not the thread id it returns.
         unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid as *mut u32)) };
-        (pid != 0).then_some(pid)
+        (pid != 0).then_some((hwnd, pid))
+    }
+
+    /// Process id owning the foreground window.
+    fn foreground_pid() -> Option<u32> {
+        foreground_window().map(|(_, pid)| pid)
+    }
+
+    /// Whether the foreground window is one of Parley's own, and whether it
+    /// is on screen.
+    ///
+    /// The tray is why the second half matters. tray-icon opens its menu by
+    /// making its own message window the foreground window (TrackPopupMenu
+    /// needs that to close the menu when the user clicks away), and nothing
+    /// hands the foreground back when the menu closes. That window is never
+    /// shown. So a dictation stopped from the tray settles with an invisible
+    /// Parley window in front, where a Ctrl+V lands nowhere — and SendInput
+    /// still reports it sent. Parley's visible windows (the Ask box,
+    /// Settings) are pasted into like any other app's.
+    pub fn foreground() -> Foreground {
+        let Some((hwnd, pid)) = foreground_window() else {
+            return Foreground::default();
+        };
+        let own = pid == std::process::id();
+        // SAFETY: reads one window's visibility; a window destroyed since
+        // `GetForegroundWindow` answers false, which reads as hidden — and
+        // nothing would take the paste there either.
+        let hidden = own && !unsafe { IsWindowVisible(hwnd) }.as_bool();
+        Foreground { own, hidden }
     }
 
     /// The foreground process id in the shape UI Automation reports
@@ -1710,8 +1755,13 @@ mod imp {
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 mod imp {
+    use super::clipboard::Foreground;
+
     pub fn paste_to_frontmost() -> bool {
         false
+    }
+    pub fn foreground() -> Foreground {
+        Foreground::default()
     }
     pub fn frontmost_bundle_id() -> Option<String> {
         None

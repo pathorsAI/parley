@@ -230,8 +230,9 @@ export async function hideOverlay(): Promise<void> {
  *
  * - `empty`: nothing was said, so nothing was inserted.
  * - `clipboard-only`: no paste went out — the synthetic paste was refused (no
- *   Accessibility on macOS, UIPI on Windows) — so the text was left on the
- *   clipboard; the overlay names the paste key.
+ *   Accessibility on macOS, UIPI on Windows) or would have landed nowhere
+ *   (Windows' hidden tray window in front after a tray Stop) — so the text
+ *   was left on the clipboard; the overlay names the paste key.
  * - `ok-unpolished`: inserted, but as dictated, because the polish pass was
  *   attempted and did not come back (timed out, or the request failed).
  * - `ok`: inserted — polished, or with no polish to expect.

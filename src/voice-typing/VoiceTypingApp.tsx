@@ -560,7 +560,8 @@ export const VoiceTypingApp = () => {
           into the field and the clipboard is the user's again — with a Copy
           for a paste that landed nowhere (no field had focus). When no paste
           went out (no Accessibility on macOS, UIPI refusing an elevated
-          window on Windows) it turns warning and names the paste key: the
+          window on Windows, or Parley's hidden tray window in front after a
+          tray Stop) it turns warning and names the paste key: the
           text is on the clipboard — otherwise the user sees nothing appear
           where they were typing and assumes the dictation was lost. A
           dictation whose polish did not come back

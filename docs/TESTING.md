@@ -162,14 +162,21 @@ part of the next section:
   on, so the second takes a moment: ⌘X a word in the document right after
   the first appears): ⌘V afterwards pastes the cut word, not your original
   clipboard.
-- **A slow or huge clipboard does not hold up the paste.** Copy a large
-  range of cells in Excel, or let a photo copied on an iPhone reach the Mac
-  through Universal Clipboard, then dictate: the text appears without a
-  visible delay and the overlay does not freeze. `parley.log` shows either
-  `clipboard restored`, or `could not save the clipboard; it keeps the
-  dictation: too slow or too large to save (… ms, … bytes in … formats
-  read)` — then ⌘V pastes the dictation, as it did before Parley saved the
-  clipboard.
+- **A slow or huge clipboard does not hold up the paste for long.** Copy a
+  large range of cells in Excel or Numbers, or let a photo copied on an
+  iPhone reach the Mac through Universal Clipboard, then dictate. A read
+  that is already running cannot be interrupted, so the paste waits at most
+  for the first slow format the copying app renders or fetches (the first
+  Universal Clipboard transfer from the iPhone, say); after that the
+  snapshot stops. A cell range is saved as its text, HTML and rich text,
+  not as a picture of the cells, so it should not make the paste wait
+  noticeably; ⌘V afterwards pastes the cells into a spreadsheet or a
+  document, but no longer as a picture into an app that only takes
+  pictures.
+  `parley.log` shows either `clipboard restored`, or `could not save the
+  clipboard; it keeps the dictation: too slow or too large to save (… ms, …
+  bytes in … formats read)` — then ⌘V pastes the dictation, as it did
+  before Parley saved the clipboard.
 - **No paste, so the clipboard is the delivery.** Revoke Accessibility and
   dictate: the overlay turns warning and says to press ⌘V; the text is on the
   clipboard and stays there.
@@ -217,9 +224,13 @@ involved:
 - **Tray voice typing.** Start voice typing opens the overlay and the item
   turns into Stop voice typing; the second click ends the dictation. Where it
   goes depends on which window is in front when the dictation ends — after a
-  tray click that is often not your document. When it is Parley itself, the
-  text goes into whichever of its fields has focus — or nowhere, and the
-  overlay's Copy puts it on the clipboard.
+  tray click that is often not your document: the tray menu leaves Parley's
+  own hidden tray window in front. Then the text is left on the clipboard
+  (no restore follows) and the overlay says to press Ctrl+V; click into
+  Notepad and Ctrl+V pastes it. Click into Notepad before the dictation
+  settles instead and it is pasted there. When a visible Parley window is in
+  front (the Ask box, Settings), the text goes into whichever of its fields
+  has focus.
 - **Dictating with the window hidden** (`src/lib/voiceTyping/settle.ts`). The
   dictation host runs in the main window, and WebView2 throttles a hidden
   page's timers harder after five minutes. Hide Parley to the tray for longer
@@ -267,7 +278,8 @@ involved:
   With a dictation still on the clipboard (`could not save the clipboard` or
   `clipboard restore failed; the clipboard keeps the dictation` in the log),
   dictate again: afterwards Ctrl+V pastes that earlier dictation, not
-  nothing.
+  nothing — and with Win+V history on, the earlier dictation still does not
+  appear in the history after the second dictation's restore.
 - **UIPI clipboard-only fallback.** Dictating into a window running as
   administrator (e.g. an elevated terminal) cannot paste — Windows blocks
   input injection into higher-integrity processes. The overlay should say the

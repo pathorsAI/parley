@@ -804,13 +804,15 @@ async function deliver(d: Delivery): Promise<void> {
       });
       appBundleId = r.appBundleId;
       pasted = r.pasted;
-      // Two refusals, one outcome: on macOS the Accessibility grant is
+      // Three refusals, one outcome: on macOS the Accessibility grant is
       // missing or stale; on Windows UIPI blocks injection into a window
       // running at a higher integrity level (anything launched as
-      // administrator). Neither is recoverable from here and both leave the
-      // text on the clipboard, so the overlay stops claiming an insert and
-      // names the paste key instead. Rust's log says which it was. Parley
-      // itself in front is not one of them: the overlay never activates
+      // administrator), or the foreground window is Parley's own hidden tray
+      // window, which the tray menu leaves in front and where a paste lands
+      // nowhere. None is recoverable from here and all leave the text on the
+      // clipboard, so the overlay stops claiming an insert and names the
+      // paste key instead. Rust's log says which it was. One of Parley's own
+      // windows in front is not one of them: the overlay never activates
       // Parley, so that is the user dictating into the Ask box, a meeting's
       // context or Settings, and the paste lands there like anywhere else.
       if (!pasted) {
