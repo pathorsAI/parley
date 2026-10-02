@@ -35,6 +35,23 @@
         }
       }
     },
+    "Cancel": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancel"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "取消"
+          }
+        }
+      }
+    },
     "Candidates": {
       "extractionState": "manual",
       "localizations": {
@@ -233,6 +250,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "捨棄這次語音輸入"
+          }
+        }
+      }
+    },
+    "Don't suggest this": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Don't suggest this"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不要再建議"
           }
         }
       }
@@ -437,6 +471,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "切換鍵盤"
+          }
+        }
+      }
+    },
+    "Next-phrase suggestions": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Next-phrase suggestions"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "聯想詞"
           }
         }
       }

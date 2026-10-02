@@ -110,7 +110,8 @@ struct KeyboardRootView: View {
                 if showsCandidateGrid {
                     CandidateGrid(
                         candidates: bridge.zhuyin.candidates, dark: dark,
-                        pick: bridge.pickCandidate, backspace: bridge.backspace)
+                        pick: bridge.pickCandidate, hold: bridge.holdCandidate,
+                        backspace: bridge.backspace)
                 }
             }
             .clipped()
@@ -238,7 +239,9 @@ struct KeyboardRootView: View {
     /// it takes the 1.20 chip at the left of the row again.
     private var modeStrip: some View {
         HStack(spacing: 0) {
-            if bridge.zhuyin.isPending {
+            if let candidate = bridge.forgetPrompt {
+                forgetPrompt(candidate)
+            } else if bridge.zhuyin.isPending {
                 // Only a host that ignores marked text gets the chip: anywhere
                 // else the reading is already underlined in the field.
                 if !bridge.zhuyin.composition.isEmpty { compositionChip }
@@ -250,6 +253,8 @@ struct KeyboardRootView: View {
                     candidateBar
                 }
                 if showsExpandKey { expandKey }
+            } else if showsAssociations {
+                associationBar
             } else if showsSuggestions {
                 suggestionBar
             } else {
@@ -351,12 +356,78 @@ struct KeyboardRootView: View {
     /// nothing between reads as one long string: 會出好處會場 is three words,
     /// and at 2pt spacing nobody could tell. The system keyboard leaves about a
     /// character's width between candidates for the same reason.
+    ///
+    /// Holding a candidate the keyboard learned asks whether to stop suggesting
+    /// it (`forgetPrompt`); holding any other does nothing.
     private var candidateBar: some View {
         StripBar(
             items: bridge.zhuyin.candidates, dark: dark, fontSize: 22,
-            label: Text("Candidates"), action: bridge.pickCandidate
+            label: Text("Candidates"), action: bridge.pickCandidate,
+            hold: bridge.holdCandidate
         )
         .equatable()
+    }
+
+    // MARK: 注音 associated phrases
+
+    /// After a pick that leaves nothing pending, the strip offers what usually
+    /// comes next (聯想詞) — on the 注音 pane only, and until any other key.
+    private var showsAssociations: Bool {
+        bridge.pane == .zhuyin && !bridge.zhuyin.associations.isEmpty
+    }
+
+    /// The same bar as the candidates, and for the same reason the same size:
+    /// these are one- and two-character Chinese words too. No ⌄ — the lookup
+    /// returns at most `ZhuyinAssociations.limit`, which the bar draws whole —
+    /// and no hold, because nothing here was learned.
+    private var associationBar: some View {
+        StripBar(
+            items: bridge.zhuyin.associations, dark: dark, fontSize: 22,
+            label: Text("Next-phrase suggestions"), action: bridge.pickAssociation
+        )
+        .equatable()
+    }
+
+    // MARK: forgetting a learned candidate
+
+    /// "Don't suggest this", in place of the strip, for the candidate the user
+    /// held. In the strip rather than a context menu because a keyboard
+    /// extension's view cannot present one reliably, and in the strip rather
+    /// than over the keys because the strip is where the candidate was.
+    ///
+    /// The candidate on the left so the user sees what is about to be
+    /// forgotten; the action and ✕ on the right. Any key also dismisses it.
+    private func forgetPrompt(_ candidate: String) -> some View {
+        HStack(spacing: 10) {
+            Text(verbatim: candidate)
+                .font(.system(size: 22))
+                .foregroundStyle(KBTheme.ink(dark))
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 8)
+            Button(action: { bridge.forgetCandidate(candidate) }) {
+                Text("Don't suggest this")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(KBTheme.recording)
+                    .lineLimit(1)
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: KBMetrics.strip - 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(KBTheme.control(dark)))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            Button(action: bridge.dismissForgetPrompt) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(KBTheme.ink(dark))
+                    .frame(width: 32, height: KBMetrics.strip - 4)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text("Cancel"))
+        }
     }
 
     /// The grid replaces the 注音 keys only while there is a reading to choose
@@ -867,6 +938,14 @@ private struct StripBar: View, Equatable {
     /// labels, so this names the container.
     var label: Text
     var action: (String) -> Void
+    /// A long press on an item, for the bars that have something to say about
+    /// one (the 注音 candidates: forget a learned one). `nil` is a bar where
+    /// holding is just a slow tap.
+    var hold: ((String) -> Void)? = nil
+
+    /// How long a press is before it is a hold — the system's own
+    /// context-menu delay.
+    static let holdDuration: Double = 0.5
 
     /// The items the bar draws, which is all it compares.
     private var drawn: ArraySlice<String> { items.prefix(Self.drawnLimit) }
@@ -891,6 +970,13 @@ private struct StripBar: View, Equatable {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    // Simultaneous, so the scroll and the tap keep working; the
+                    // controller swallows the tap the hold's lift becomes. Masked
+                    // off entirely on a bar with nothing to do on a hold.
+                    .simultaneousGesture(
+                        LongPressGesture(minimumDuration: Self.holdDuration)
+                            .onEnded { _ in hold?(item) },
+                        including: hold == nil ? .subviews : .all)
                 }
             }
         }

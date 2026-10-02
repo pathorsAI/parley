@@ -101,7 +101,13 @@ final class KeyboardViewController: UIInputViewController {
     /// 傳統注音 input for the 注音 pane. Cheap to hold: the dictionary behind it
     /// does not touch its resource until the first syllable is finalized, so a
     /// keyboard that only ever dictates never pays for it.
-    private var zhuyin = ZhuyinComposer(dictionary: .bundled, phrases: ZhuyinPhrases.bundled)
+    ///
+    /// It learns from the candidates the user picks (`ZhuyinMemory.keyboard`,
+    /// shared by every controller this process makes, like the tables) and
+    /// offers what usually comes next after a pick (`ZhuyinAssociations`).
+    private var zhuyin = ZhuyinComposer(
+        dictionary: .bundled, phrases: ZhuyinPhrases.bundled, memory: .keyboard,
+        associations: .bundled)
     /// The marked text this keyboard has sent and the host has not confirmed,
     /// and whether this field's host shows marked text at all. A mirror
     /// because the proxy cannot read marked text back.
@@ -256,7 +262,12 @@ final class KeyboardViewController: UIInputViewController {
         // lands beats a hitch at the highest footprint a parse reaches.
         ZhuyinDictionary.bundled.parsesOnLookup = false
         ZhuyinPhrases.bundled.parsesOnLookup = false
+        ZhuyinAssociations.bundled.parsesOnLookup = false
         EnglishWords.bundled.parsesOnLookup = false
+        // What the 注音 pane learns is written to the App Group only with Full
+        // Access — without it there is no App Group to write to — and kept for
+        // the life of this process otherwise.
+        ZhuyinMemory.keyboard.persists = hasFullAccess
         // `setPane(notify: false)` deliberately skips `paneDidChange`, so a
         // keyboard that opens straight onto a typing pane — which is what every
         // keyboard without Full Access does, onto English or onto 注音 — has to
@@ -401,6 +412,10 @@ final class KeyboardViewController: UIInputViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         bridge.hasFullAccess = hasFullAccess
+        // Full Access can change while the process lives, and Settings may have
+        // reset the 注音 learning since the keyboard was last up.
+        ZhuyinMemory.keyboard.persists = hasFullAccess
+        ZhuyinMemory.keyboard.honourReset()
         // And act on it, rather than only displaying it. See there for why
         // `viewDidLoad` alone was the wrong place to decide this once.
         armChannelObservers()
@@ -472,6 +487,10 @@ final class KeyboardViewController: UIInputViewController {
         if hasFullAccess, bridge.listening { Haptics.dictationContinuesInBackground() }
         lexicon.harvest(context: textDocumentProxy.documentContextBeforeInput)
         leaveComposition()
+        // A pick a moment ago may still be waiting on its debounce, and this
+        // may be the last chance the process gets. The write itself is off
+        // the main thread.
+        ZhuyinMemory.keyboard.flush()
     }
 
     /// A field that asks for a dark keyboard gets one — see `isDark`. The field
@@ -565,6 +584,11 @@ final class KeyboardViewController: UIInputViewController {
         case .zhuyin:
             ZhuyinDictionary.bundled.warm { [weak self] in self?.zhuyinTablesLanded() }
             ZhuyinPhrases.bundled.warm { [weak self] in self?.zhuyinTablesLanded() }
+            // The memory changes what the bar puts first, so its landing
+            // re-answers the pending syllables like a table's. The associations
+            // are only asked after a pick, so nothing waits on them.
+            ZhuyinMemory.keyboard.warm { [weak self] in self?.zhuyinTablesLanded() }
+            ZhuyinAssociations.bundled.warm()
         case .english:
             EnglishWords.bundled.warm { [weak self] in self?.refreshSuggestions() }
         case .voice:
@@ -599,6 +623,12 @@ final class KeyboardViewController: UIInputViewController {
         if bridge.pane != .zhuyin {
             ZhuyinPhrases.bundled.unload()
             dropped.append("phrases")
+        }
+        // Only asked after a pick, so it is idle unless its suggestions are on
+        // screen this moment; the next pick warms it again.
+        if bridge.pane != .zhuyin || bridge.zhuyin.associations.isEmpty {
+            ZhuyinAssociations.bundled.unload()
+            dropped.append("associations")
         }
         if bridge.pane != .english {
             EnglishWords.bundled.unload()
@@ -1680,6 +1710,8 @@ final class KeyboardViewController: UIInputViewController {
     /// cursor. So the keys call this, and the words stay on screen as they
     /// always have — only the copy target goes.
     private func keyPressed() {
+        // Any key is an answer to the "Don't suggest this" prompt: not now.
+        if bridge.forgetPrompt != nil { bridge.forgetPrompt = nil }
         guard bridge.copyableText != nil else { return }
         copyClosedSession = session
         offerCopy(nil)
@@ -1717,9 +1749,44 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     /// The user picked a character out of the candidate bar.
+    ///
+    /// Not while the "Don't suggest this" prompt is up: the finger that held
+    /// a candidate to open it lifts on that candidate, and the lift is a tap to
+    /// SwiftUI. Swallowing it is what keeps a long press from also committing.
     func zhuyinPick(_ candidate: String) {
+        guard bridge.forgetPrompt == nil else { return }
         keyPressed()
         apply(zhuyin.pick(candidate))
+    }
+
+    /// The user tapped an associated phrase (聯想詞): it lands, and the strip
+    /// offers what follows it in turn.
+    func zhuyinPickAssociation(_ continuation: String) {
+        guard bridge.forgetPrompt == nil else { return }
+        keyPressed()
+        apply(zhuyin.pickAssociation(continuation))
+    }
+
+    /// A candidate was held. If the keyboard learned it — and only then, so
+    /// the prompt never offers to forget what was never learned — ask whether
+    /// to stop suggesting it.
+    func zhuyinHoldCandidate(_ candidate: String) {
+        guard ZhuyinMemory.keyboard.produces(candidate) else { return }
+        bridge.forgetPrompt = candidate
+    }
+
+    /// "Don't suggest this": every lesson that produces the candidate goes, and
+    /// the bar is answered again without them. Nothing else is demoted.
+    func zhuyinForget(_ candidate: String) {
+        ZhuyinMemory.keyboard.forget(candidate)
+        bridge.forgetPrompt = nil
+        zhuyin.refresh()
+        publishComposition()
+    }
+
+    /// The prompt's ✕.
+    func dismissForgetPrompt() {
+        bridge.forgetPrompt = nil
     }
 
     /// Do whatever the composer asked for, then republish what it is holding.
@@ -1769,7 +1836,8 @@ final class KeyboardViewController: UIInputViewController {
             marks.sent(reading)
         }
         let next = KeyboardBridge.ZhuyinStrip(
-            composition: marks.usesMarkedText ? "" : reading, candidates: zhuyin.candidates)
+            composition: marks.usesMarkedText ? "" : reading, candidates: zhuyin.candidates,
+            associations: zhuyin.associations)
         if bridge.zhuyin != next { bridge.zhuyin = next }
         // The candidate grid is about a reading; once the buffer is committed or
         // cleared there is nothing left in it to choose, and the keys come back.
@@ -1802,6 +1870,8 @@ final class KeyboardViewController: UIInputViewController {
             if !zhuyin.reading.isEmpty { strandComposition() }
             marks.fieldChanged()
             zhuyin.clear()
+            // The words before the caret were the other field's.
+            zhuyin.resetContext()
             publishComposition()
             repairStrandedReading()
             return
@@ -1824,6 +1894,7 @@ final class KeyboardViewController: UIInputViewController {
         if marks.usesMarkedText { textDocumentProxy.unmarkText() }
         marks.reset()
         zhuyin.clear()
+        zhuyin.resetContext()
         publishComposition()
     }
 
@@ -1862,6 +1933,7 @@ final class KeyboardViewController: UIInputViewController {
         }
         marks.reset()
         zhuyin.clear()
+        zhuyin.resetContext()
         publishComposition()
     }
 
@@ -1910,6 +1982,7 @@ final class KeyboardViewController: UIInputViewController {
     private func returnToField() {
         settleCheck?.cancel()
         zhuyin.clear()
+        zhuyin.resetContext()
         marks.fieldChanged()
         currentField = fieldID
         if !repairStrandedReading() { removeLingeringMark() }
@@ -1931,9 +2004,14 @@ final class KeyboardViewController: UIInputViewController {
 
     /// Text that does not come from the composer ends the composition first,
     /// so it lands after the reading rather than replacing it.
+    ///
+    /// The text stands between whatever was committed before it and whatever
+    /// comes next, so the composer's `context` starts over after it — a word
+    /// after 「，」 is not learned against the words before the comma.
     private func typeOutsideComposition(_ text: String) {
         apply(zhuyin.confirm())
         textDocumentProxy.insertText(text)
+        zhuyin.resetContext()
     }
 
     // MARK: English word suggestions
@@ -1998,6 +2076,7 @@ final class KeyboardViewController: UIInputViewController {
         let partial = bridge.english.partialWord
         keyPressed()
         apply(zhuyin.confirm())
+        zhuyin.resetContext()
         for _ in 0..<partial.count { textDocumentProxy.deleteBackward() }
         textDocumentProxy.insertText(word + " ")
         refreshSuggestions()
@@ -2370,6 +2449,9 @@ final class KeyboardBridge: ObservableObject {
         var composition: String
         /// What the front of the composition could be, most likely first.
         var candidates: [String]
+        /// What usually follows the candidate just picked (聯想詞), shown while
+        /// nothing is pending. Empty the moment any other key lands.
+        var associations: [String] = []
 
         /// Something to show for 注音. Neither half pending is what puts the
         /// wordmark back.
@@ -2377,6 +2459,10 @@ final class KeyboardBridge: ObservableObject {
     }
 
     @Published var zhuyin = ZhuyinStrip(composition: "", candidates: [])
+    /// The candidate a long press asked to forget, while the strip asks
+    /// "Don't suggest this?". Only ever a candidate the keyboard learned — see
+    /// `KeyboardViewController.zhuyinHoldCandidate`.
+    @Published var forgetPrompt: String?
     /// The candidate grid is open over the 注音 keys. The strip's ⌄ toggles it;
     /// the controller closes it when the composition empties, which is why it
     /// lives here rather than in the view.
@@ -2474,6 +2560,12 @@ final class KeyboardBridge: ObservableObject {
     func zhuyinSymbol(_ symbol: Character) { controller?.zhuyinSymbol(symbol) }
     func zhuyinTone(_ tone: ZhuyinTone) { controller?.zhuyinTone(tone) }
     func pickCandidate(_ candidate: String) { controller?.zhuyinPick(candidate) }
+    func pickAssociation(_ continuation: String) {
+        controller?.zhuyinPickAssociation(continuation)
+    }
+    func holdCandidate(_ candidate: String) { controller?.zhuyinHoldCandidate(candidate) }
+    func forgetCandidate(_ candidate: String) { controller?.zhuyinForget(candidate) }
+    func dismissForgetPrompt() { controller?.dismissForgetPrompt() }
 
     /// The user tapped a word in the English suggestion bar.
     func pickSuggestion(_ word: String) { controller?.pickSuggestion(word) }
