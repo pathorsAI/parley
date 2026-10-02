@@ -114,6 +114,10 @@ export const VoiceTypingApp = () => {
   // Set when the transcript reached the clipboard but the auto-paste did not
   // land, so the confirmation can name the key the user has to press instead.
   const [pasteBlocked, setPasteBlocked] = useState(false);
+  // Set when the text went out as dictated because the polish pass was tried
+  // and did not come back (timed out or failed) — the confirmation says so
+  // instead of letting the user wonder why "polishing" changed nothing.
+  const [unpolished, setUnpolished] = useState(false);
   // Drives the graceful fade-out of the whole overlay after the copied
   // confirmation has dwelled — reset whenever a new session starts.
   const [fading, setFading] = useState(false);
@@ -163,6 +167,7 @@ export const VoiceTypingApp = () => {
     setLimited(false);
     setFading(false);
     setPasteBlocked(false);
+    setUnpolished(false);
     setSuggest(null);
     setSuggestAdded(false);
   };
@@ -238,6 +243,9 @@ export const VoiceTypingApp = () => {
           // The confirmation has to change, or the user watches "Copied" go by
           // while nothing appears where they were typing.
           setPasteBlocked(message === "clipboard-only");
+          // "ok-unpolished" = pasted, but raw: the polish pass timed out or
+          // failed. Never set together with "clipboard-only" (see doneMessage).
+          setUnpolished(message === "ok-unpolished");
           setPhase("done");
         } else if (p === "error") {
           resetPresentation();
@@ -299,6 +307,15 @@ export const VoiceTypingApp = () => {
   const errorKey = (error && ERROR_KEYS[error]) || "voiceTyping.error";
   const bubble = error ? t(errorKey) : text;
 
+  // The "done" confirmation's wording. A refused paste outranks everything: it
+  // is the one note that asks the user to do something.
+  let doneNote = t("voiceTyping.copied");
+  if (pasteBlocked) {
+    doneNote = t("voiceTyping.pasteBlocked", { paste: modChordCap("V") });
+  } else if (unpolished) {
+    doneNote = t("voiceTyping.copiedUnpolished");
+  }
+
   let phaseIcon = <Mic className="size-2.5" />;
   if (phase === "polishing") {
     phaseIcon = <Sparkles className="size-2.5 animate-pulse" />;
@@ -357,7 +374,9 @@ export const VoiceTypingApp = () => {
           auto-paste was refused as well (no Accessibility on macOS, UIPI
           refusing an elevated window on Windows) it turns warning and names the
           paste key — otherwise the user reads "Copied", sees nothing appear
-          where they were typing, and assumes the dictation was lost. */}
+          where they were typing, and assumes the dictation was lost. A
+          dictation whose polish did not come back still reads as a success
+          (it was delivered), but says it went out as dictated. */}
       {phase === "done" && !error && text && (
         <div
           className={`flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-medium shadow-md ${
@@ -367,9 +386,7 @@ export const VoiceTypingApp = () => {
           }`}
         >
           {!pasteBlocked && <Check className="size-2.5" strokeWidth={3} />}
-          {pasteBlocked
-            ? t("voiceTyping.pasteBlocked", { paste: modChordCap("V") })
-            : t("voiceTyping.copied")}
+          {doneNote}
         </div>
       )}
 

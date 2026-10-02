@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bottomCenterPhysical, monitorContaining, type MonitorGeometry } from "./overlay";
+import { bottomCenterPhysical, doneMessage, monitorContaining, type MonitorGeometry } from "./overlay";
 
 // Mirrors the module's own constants (the overlay is 460x180 logical px and
 // clears the Dock by 64).
@@ -133,5 +133,40 @@ describe("monitorContaining", () => {
   it("returns null when the point is off every display", () => {
     expect(monitorContaining([laptop, external], 9999, 9999)).toBeNull();
     expect(monitorContaining([], 0, 0)).toBeNull();
+  });
+});
+
+/**
+ * The closing note of a dictation. Only a polish that was attempted and broke
+ * (timed out, failed) gets "copied as dictated"; one that never ran or was
+ * refused by the guard is not news, and a refused paste outranks everything.
+ */
+describe("doneMessage", () => {
+  it("says nothing was copied when nothing was said", () => {
+    expect(doneMessage({ text: "", pasted: true, outcome: "off" })).toBe("empty");
+    expect(doneMessage({ text: "", pasted: false, outcome: "failed" })).toBe("empty");
+  });
+
+  it("names the paste key when the paste was refused, whatever polish did", () => {
+    for (const outcome of ["polished", "failed", "timedOut", "off"] as const) {
+      expect(doneMessage({ text: "hi", pasted: false, outcome })).toBe("clipboard-only");
+    }
+  });
+
+  it("flags a polish that timed out or failed", () => {
+    expect(doneMessage({ text: "hi", pasted: true, outcome: "timedOut" })).toBe("ok-unpolished");
+    expect(doneMessage({ text: "hi", pasted: true, outcome: "failed" })).toBe("ok-unpolished");
+  });
+
+  it("stays quiet when polish worked, never ran, or was refused by the guard", () => {
+    for (const outcome of [
+      "polished",
+      "off",
+      "tooShort",
+      "rejectedLength",
+      "rejectedScript",
+    ] as const) {
+      expect(doneMessage({ text: "hi", pasted: true, outcome })).toBe("ok");
+    }
   });
 });

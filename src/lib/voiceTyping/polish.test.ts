@@ -9,6 +9,7 @@ import {
   canPolish,
   containsSimplifiedChinese,
   polishSystemPrompt,
+  polishVerdict,
   shouldPolish,
 } from "./polish";
 import type { Settings } from "../types";
@@ -144,6 +145,39 @@ describe("acceptPolish", () => {
    *  first place gets their own script back untouched. */
   it("leaves Simplified input alone", () => {
     expect(acceptPolish("我觉得这个时候应该要说清楚", "我觉得这个时候应该要说清楚。")).toBe(true);
+  });
+});
+
+/** The same guard as acceptPolish, but saying which test failed — the reason
+ *  the "polish rejected" log line carries. */
+describe("polishVerdict", () => {
+  const raw = "所以我覺得這個東西呢就是那個我們應該要先做完再說";
+
+  it("passes a plausible rewrite", () => {
+    expect(polishVerdict(raw, "所以我覺得這個東西，我們應該要先做完再說。")).toBe("polished");
+  });
+
+  it("names a length-band failure, including an empty answer", () => {
+    expect(polishVerdict("a".repeat(100), "a".repeat(29))).toBe("rejectedLength");
+    expect(polishVerdict("a".repeat(100), "a".repeat(201))).toBe("rejectedLength");
+    expect(polishVerdict(raw, "   ")).toBe("rejectedLength");
+  });
+
+  it("names Simplified drift", () => {
+    expect(polishVerdict("我覺得這個時候應該要說清楚", "我觉得这个时候应该要说清楚")).toBe(
+      "rejectedScript",
+    );
+  });
+
+  it("agrees with acceptPolish", () => {
+    for (const [r, p] of [
+      [raw, "所以我覺得這個東西，我們應該要先做完再說。"],
+      ["a".repeat(100), "a".repeat(29)],
+      ["我覺得這個時候應該要說清楚", "我觉得这个时候应该要说清楚"],
+      ["我觉得这个时候应该要说清楚", "我觉得这个时候应该要说清楚。"],
+    ] as const) {
+      expect(acceptPolish(r, p)).toBe(polishVerdict(r, p) === "polished");
+    }
   });
 });
 

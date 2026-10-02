@@ -1,4 +1,4 @@
-import { APICallError, NoObjectGeneratedError } from "ai";
+import { AISDKError, APICallError, NoObjectGeneratedError, RetryError } from "ai";
 import { log } from "../log";
 
 /**
@@ -94,9 +94,10 @@ function parseJson(s: unknown): Record<string, unknown> | undefined {
 /**
  * Diagnostic fields pulled from an AI SDK error — privacy-safe: status codes,
  * provider error codes, finishReason, token COUNTS, and output LENGTHS only
- * (never content). These are what actually explain a failure, e.g.
- * `finishReason "length"` + a near-empty output ⇒ a reasoning model burned its
- * whole budget on hidden reasoning (Groq → `json_validate_failed`,
+ * (never content), plus the capped message of an error that is not the SDK's
+ * own — a transport failure, our own sign-in guard. These explain a failure,
+ * e.g. `finishReason "length"` + a near-empty output ⇒ a reasoning model burned
+ * its whole budget on hidden reasoning (Groq → `json_validate_failed`,
  * `failed_generation: ""`).
  */
 function aiErrorMeta(err: unknown): Record<string, unknown> {
@@ -104,18 +105,40 @@ function aiErrorMeta(err: unknown): Record<string, unknown> {
   if (!err || typeof err !== "object") return out;
   out.error = (err as { name?: string }).name;
 
-  if (APICallError.isInstance(err)) {
-    out.status = err.statusCode;
-    out.retryable = err.isRetryable;
-    const perr = parseJson(err.responseBody)?.error as Record<string, unknown> | undefined;
+  // Once the SDK has retried a 429/5xx and given up, what it throws is a
+  // RetryError, and the status that explains the failure sits on the last
+  // attempt — logged as-is, every exhausted retry read `error=AI_RetryError`
+  // and nothing else. Unwrap it and report the attempt count beside it.
+  let inner: unknown = err;
+  if (RetryError.isInstance(err)) {
+    inner = err.lastError;
+    out.attempts = err.errors.length;
+    out.lastError = (inner as { name?: string } | null | undefined)?.name;
+  }
+
+  if (APICallError.isInstance(inner)) {
+    out.status = inner.statusCode;
+    out.retryable = inner.isRetryable;
+    const perr = parseJson(inner.responseBody)?.error as Record<string, unknown> | undefined;
     if (perr?.code) out.code = perr.code;
     if (typeof perr?.failed_generation === "string") out.failedGenLen = perr.failed_generation.length;
   }
-  if (NoObjectGeneratedError.isInstance(err)) {
-    out.finishReason = err.finishReason;
-    out.inputTokens = err.usage?.inputTokens;
-    out.outputTokens = err.usage?.outputTokens;
-    if (typeof err.text === "string") out.textLen = err.text.length;
+  if (NoObjectGeneratedError.isInstance(inner)) {
+    out.finishReason = inner.finishReason;
+    out.inputTokens = inner.usage?.inputTokens;
+    out.outputTokens = inner.usage?.outputTokens;
+    if (typeof inner.text === "string") out.textLen = inner.text.length;
+  }
+
+  // A transport failure carries no status, and its name alone says nothing:
+  // `error=TypeError` is WebKit's "Load failed" (a refused CORS preflight, no
+  // network), Chromium's "Failed to fetch", or our own "sign-in required", and
+  // which one it was is the whole diagnosis. Only for errors that are NOT the
+  // SDK's own: a JSONParseError or TypeValidationError message embeds the
+  // model's output, and a RetryError's quotes the provider's reply, and none of
+  // that may reach a release log (see log.ts).
+  if (inner instanceof Error && !AISDKError.isInstance(inner) && inner.message.trim()) {
+    out.message = inner.message.replace(/\s+/g, " ").trim().slice(0, 160);
   }
   return out;
 }

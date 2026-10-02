@@ -5,6 +5,7 @@
 
 import { isTauri } from "../tauriEvents";
 import { log } from "../log";
+import type { PolishOutcome } from "./polish";
 
 const LABEL = "voice-typing";
 const WIDTH = 460;
@@ -196,4 +197,39 @@ export async function hideOverlay(): Promise<void> {
   await invoke("dismiss_voice_overlay").catch((error) =>
     log.warn("voice-typing: dismiss overlay failed", { error: String(error) }),
   );
+}
+
+/**
+ * The `message` of the host's `{ phase: "done" }` event — what the overlay's
+ * closing confirmation says about a finished dictation:
+ *
+ * - `empty`: nothing was said, so nothing was copied.
+ * - `clipboard-only`: copied, but the synthetic paste was refused (no
+ *   Accessibility on macOS, UIPI on Windows); the overlay names the paste key.
+ * - `ok-unpolished`: pasted, but as dictated, because the polish pass was
+ *   attempted and did not come back (timed out, or the request failed).
+ * - `ok`: pasted — polished, or with no polish to expect.
+ */
+export type DoneMessage = "empty" | "clipboard-only" | "ok-unpolished" | "ok";
+
+/**
+ * Pick the {@link DoneMessage} for one finalized dictation.
+ *
+ * Only a polish that was tried and broke gets a note. When it never ran (off,
+ * too short) the user is not waiting on it; when the answer was refused by the
+ * guard, the raw text is the guard working as designed. But a timeout or a
+ * failed request means the "polishing…" beat the user just sat through
+ * produced nothing — and pasting the raw text under a plain "Copied" is what
+ * kept a CORS failure that broke every hosted polish on the Mac out of sight.
+ * A refused paste outranks all of it: that note tells the user to act.
+ */
+export function doneMessage(d: {
+  text: string;
+  pasted: boolean;
+  outcome: PolishOutcome;
+}): DoneMessage {
+  if (!d.text) return "empty";
+  if (!d.pasted) return "clipboard-only";
+  if (d.outcome === "timedOut" || d.outcome === "failed") return "ok-unpolished";
+  return "ok";
 }

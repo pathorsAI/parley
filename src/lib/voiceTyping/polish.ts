@@ -26,6 +26,32 @@ import type { Settings } from "../types";
  * provider's, and `accept` is deliberately suspicious of what comes back.
  */
 
+/**
+ * Why one dictation was or was not polished. Every value iOS also has is
+ * spelled as its `PolishOutcome` raw value, so a log line (and, later, a
+ * history entry) reads the same on both platforms; `cancelled` is the desktop's
+ * own, and the iOS-only `skipped` / `overdue` have no desktop path. Only
+ * `polished` replaces the raw transcript; every other value leaves the caller
+ * with the text as dictated.
+ *
+ * - `tooShort`, `off`: never attempted (below {@link MIN_POLISH_CHARS}, or the
+ *   setting is off / the realtime lane cannot run).
+ * - `timedOut`: no answer inside {@link POLISH_TIMEOUT_MS}.
+ * - `rejectedLength`, `rejectedScript`: an answer came back and
+ *   {@link polishVerdict} refused it.
+ * - `failed`: the request itself failed (transport, HTTP status, sign-in).
+ * - `cancelled`: the caller's own signal aborted it; not a failure.
+ */
+export type PolishOutcome =
+  | "polished"
+  | "tooShort"
+  | "off"
+  | "timedOut"
+  | "rejectedLength"
+  | "rejectedScript"
+  | "failed"
+  | "cancelled";
+
 /** Below this the round trip costs more — in latency, and in the risk of the
  *  model "helping" — than the tidy-up is worth. A single short phrase has no
  *  filler to remove and no paragraphs to break, and it is exactly the case
@@ -119,14 +145,20 @@ export function polishSystemPrompt(protectedTerms: string[]): string {
 }
 
 /**
- * Whether `polished` is a plausible rewrite of `raw`. The model is not trusted
- * to have followed the prompt: this is the last gate before text the user did
- * not say replaces text they did.
+ * Whether `polished` is a plausible rewrite of `raw`, and if not, which test it
+ * failed. The model is not trusted to have followed the prompt: this is the last
+ * gate before text the user did not say replaces text they did. The reason only
+ * travels as far as the log line — to the caller every rejection means "paste
+ * the raw text".
  */
-export function acceptPolish(raw: string, polished: string): boolean {
+export function polishVerdict(
+  raw: string,
+  polished: string,
+): "polished" | "rejectedLength" | "rejectedScript" {
   const trimmedRaw = raw.trim();
   const trimmed = polished.trim();
-  if (!trimmed || !trimmedRaw) return false;
+  // An empty answer is the far end of the length band.
+  if (!trimmed || !trimmedRaw) return "rejectedLength";
 
   // A rewrite moves the length in both directions — filler and repetition come
   // out, list markers and line breaks go in — but it moves it, it does not
@@ -136,14 +168,21 @@ export function acceptPolish(raw: string, polished: string): boolean {
   // hands the model a free hand: "rewrite" drifting into "condense" is the
   // failure mode this feature has to keep out of people's documents.
   const ratio = trimmed.length / trimmedRaw.length;
-  if (ratio < 0.3 || ratio > 2) return false;
+  if (ratio < 0.3 || ratio > 2) return "rejectedLength";
 
   // Simplified drift is the one failure that looks like success. Only a NEWLY
   // introduced simplified character counts — someone who dictated simplified
   // text in the first place gets their own script back untouched.
-  if (!containsSimplifiedChinese(trimmedRaw) && containsSimplifiedChinese(trimmed)) return false;
+  if (!containsSimplifiedChinese(trimmedRaw) && containsSimplifiedChinese(trimmed)) {
+    return "rejectedScript";
+  }
 
-  return true;
+  return "polished";
+}
+
+/** {@link polishVerdict} as a yes/no: is `polished` safe to paste over `raw`? */
+export function acceptPolish(raw: string, polished: string): boolean {
+  return polishVerdict(raw, polished) === "polished";
 }
 
 /**
@@ -178,20 +217,43 @@ export function canPolish(settings: Settings): boolean {
 }
 
 /**
- * Send `raw` to be cleaned up. Resolves to the polished text, or to `null` for
- * every other outcome — not configured, too short, timed out, transport error,
- * or an answer that failed {@link acceptPolish}. The caller pastes the raw
- * transcript on `null`, so there is exactly one thing to handle.
+ * Send `raw` to be cleaned up, and say how it went. `text` is the polished text
+ * when `outcome` is `"polished"` and `null` for every other outcome — the caller
+ * pastes the raw transcript on `null`, so there is still exactly one thing to
+ * handle; `outcome` is there for the user-facing note and the log.
+ *
+ * `signal` lets the caller abandon the round trip (the user cancelled the
+ * dictation). That resolves to `"cancelled"` and is not logged as a failure.
  */
-export async function polishTranscript(opts: {
+export async function polishTranscriptOutcome(opts: {
   raw: string;
   settings: Settings;
   protectedTerms?: string[];
-}): Promise<string | null> {
-  const { raw, settings, protectedTerms = [] } = opts;
-  if (!canPolish(settings) || !shouldPolish(raw)) return null;
+  signal?: AbortSignal;
+}): Promise<{ text: string | null; outcome: PolishOutcome }> {
+  const { raw, settings, protectedTerms = [], signal } = opts;
+  if (!canPolish(settings)) return { text: null, outcome: "off" };
+  if (!shouldPolish(raw)) return { text: null, outcome: "tooShort" };
+  if (signal?.aborted) return { text: null, outcome: "cancelled" };
 
+  const rawChars = raw.trim().length;
   const startedAt = performance.now();
+  // A hand-rolled timeout rather than `AbortSignal.timeout` (Safari 16) joined
+  // to the caller's signal with `AbortSignal.any` (Safari 17.4): the app still
+  // runs on macOS releases whose WebKit has neither, and a missing one throws a
+  // TypeError before any request goes out — the same symptom as the CORS
+  // failure, with a different cure. It is also what vitest's fake timers can
+  // drive; `AbortSignal.timeout` ignores them. `timedOut` tells our own abort
+  // apart from the caller's.
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, POLISH_TIMEOUT_MS);
+  const onCancel = () => controller.abort();
+  signal?.addEventListener("abort", onCancel, { once: true });
+
   try {
     const { text } = await generateText({
       model: getModel(settings, "realtime"),
@@ -200,27 +262,65 @@ export async function polishTranscript(opts: {
       prompt: raw,
       temperature: 0.2,
       maxOutputTokens: 2048,
-      abortSignal: AbortSignal.timeout(POLISH_TIMEOUT_MS),
+      // No retries. The SDK's first backoff is two seconds — half the budget —
+      // so a single 429/5xx would sleep, retry, and be cut off by the timeout,
+      // and the log would show a TimeoutError in place of the status that
+      // explains it. One attempt, then the raw text.
+      maxRetries: 0,
+      abortSignal: controller.signal,
     });
     const polished = text.trim();
     const ms = Math.round(performance.now() - startedAt);
-    if (!acceptPolish(raw, polished)) {
+    const verdict = polishVerdict(raw, polished);
+    if (verdict !== "polished") {
       // Not an error — the guard doing its job. Logged at info because a run of
       // these means the prompt or the lane's model is wrong, and that is only
       // ever visible here.
       log.info("voice-typing: polish rejected, keeping raw", {
         ms,
-        rawChars: raw.trim().length,
+        rawChars,
         polishedChars: polished.length,
+        outcome: verdict,
       });
-      return null;
+      return { text: null, outcome: verdict };
     }
-    log.info("voice-typing: polished", { ms, rawChars: raw.trim().length, chars: polished.length });
-    return polished;
+    log.info("voice-typing: polished", { ms, rawChars, chars: polished.length });
+    return { text: polished, outcome: "polished" };
   } catch (error) {
+    const ms = Math.round(performance.now() - startedAt);
+    // The user walked away from this dictation; nothing failed.
+    if (signal?.aborted && !timedOut) {
+      log.info("voice-typing: polish cancelled", { ms });
+      return { text: null, outcome: "cancelled" };
+    }
     // Includes the timeout. Everything here means the same thing to the caller,
-    // so it is logged for us and swallowed for them.
-    logAiError("voice-typing.polish", { rawChars: raw.trim().length }, error);
-    return null;
+    // so it is logged for us and swallowed for them. `ms` is what tells an
+    // instant transport refusal from the budget running out; the provider and
+    // model name the lane it ran on (neither is personal data).
+    const outcome: PolishOutcome = timedOut ? "timedOut" : "failed";
+    const provider = settings.llmProviders.realtime;
+    logAiError(
+      "voice-typing.polish",
+      { rawChars, ms, provider, model: settings.models[provider]?.realtime, outcome },
+      error,
+    );
+    return { text: null, outcome };
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onCancel);
   }
+}
+
+/**
+ * {@link polishTranscriptOutcome} without the outcome: the polished text, or
+ * `null` for every other result — not configured, too short, timed out,
+ * transport error, or an answer that failed {@link acceptPolish}.
+ */
+export async function polishTranscript(opts: {
+  raw: string;
+  settings: Settings;
+  protectedTerms?: string[];
+  signal?: AbortSignal;
+}): Promise<string | null> {
+  return (await polishTranscriptOutcome(opts)).text;
 }

@@ -10,11 +10,17 @@ vi.mock("@ai-sdk/anthropic", () => ({
 vi.mock("@ai-sdk/openai-compatible", () => ({
   createOpenAICompatible: vi.fn(() => ({ chatModel: () => ({ id: "oai-model" }) })),
 }));
-vi.mock("../cloud/client", () => ({ cloudToken: () => null, CLOUD_URL: "https://example.test" }));
+// Signed out unless a test signs in: the hosted branch reads the token per call.
+const cloud = vi.hoisted(() => ({ token: null as string | null }));
+vi.mock("../cloud/client", () => ({
+  cloudToken: () => cloud.token,
+  CLOUD_URL: "https://example.test",
+}));
 
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { getModel } from "./provider";
+import { webviewFetch } from "./webviewFetch";
 
 /**
  * Regression guard for the failure the pre-flight coach surfaced as
@@ -60,6 +66,48 @@ describe("getModel credential handling", () => {
 });
 
 /**
+ * Every client goes out through `webviewFetch`, which drops the SDK's own
+ * `user-agent`. WebKit (macOS) puts that header in the CORS preflight, and an
+ * endpoint with a fixed allow-list — Parley Cloud's — refuses it, so a factory
+ * built without it fails every call on the Mac and on no other platform.
+ */
+describe("getModel fetch", () => {
+  beforeEach(() => {
+    anthropicMock.mockClear();
+    oaiMock.mockClear();
+    cloud.token = null;
+  });
+
+  it("builds Anthropic with the webview fetch", () => {
+    getModel(settingsFor("anthropic", "anthropicApiKey", "sk-ant-abc"), "deep");
+    expect(anthropicMock.mock.calls[0][0]).toMatchObject({ fetch: webviewFetch });
+  });
+
+  it("builds an openai-compatible provider with the webview fetch", () => {
+    getModel(settingsFor("groq", "groqApiKey", "gsk_abc"), "realtime");
+    expect(oaiMock.mock.calls[0][0]).toMatchObject({ fetch: webviewFetch });
+  });
+
+  it("builds the hosted provider with the cloud URL, session token and webview fetch", () => {
+    cloud.token = "session-token";
+    getModel(settingsFor("parley", "parleyApiKey", ""), "realtime");
+    expect(oaiMock).toHaveBeenCalledTimes(1);
+    expect(oaiMock.mock.calls[0][0]).toMatchObject({
+      name: "parley",
+      baseURL: "https://example.test/v1",
+      apiKey: "session-token",
+      fetch: webviewFetch,
+    });
+  });
+
+  it("refuses to build the hosted provider while signed out", () => {
+    const signedOut = settingsFor("parley", "parleyApiKey", "");
+    expect(() => getModel(signedOut, "realtime")).toThrow(/sign in/i);
+    expect(oaiMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
  * The "custom" provider is the only one whose endpoint the registry does not
  * know: it comes from Settings. Two things must hold — the URL is used as typed
  * (minus trailing slashes; no `/v1` invented for the user), and a blank one is
@@ -97,6 +145,13 @@ describe("getModel with a user-supplied base URL", () => {
   it("never sends json_schema to an unknown gateway", () => {
     getModel(customSettings("http://localhost:8000/v1"), "deep");
     expect(oaiMock.mock.calls[0][0]).toMatchObject({ supportsStructuredOutputs: false });
+  });
+
+  /** A self-hosted gateway is exactly the kind of endpoint with a fixed CORS
+   *  allow-list that a script-set User-Agent breaks. */
+  it("goes out through the webview fetch", () => {
+    getModel(customSettings("http://localhost:8000/v1"), "deep");
+    expect(oaiMock.mock.calls[0][0]).toMatchObject({ fetch: webviewFetch });
   });
 
   it("refuses to build a model when the base URL is blank", () => {

@@ -18,10 +18,10 @@ import { sttApiKey, sttRelayUrl } from "../transcription/providers";
 import { languageHintsFromSettings } from "../transcription/languageHints";
 import { HOSTED_VOICE_TYPING_MAX_SECONDS } from "../limits";
 import { log } from "../log";
-import { showOverlay, hideOverlay, prewarmOverlay } from "./overlay";
+import { showOverlay, hideOverlay, prewarmOverlay, doneMessage } from "./overlay";
 import { SessionOwner, type SessionEvent, type TextReport } from "./transcript";
 import { appendVoiceEntry } from "./history";
-import { canPolish, polishTranscript, shouldPolish } from "./polish";
+import { canPolish, polishTranscriptOutcome, shouldPolish, type PolishOutcome } from "./polish";
 import {
   addEntry,
   isIgnoredTwice,
@@ -487,24 +487,33 @@ function waitForSettle() {
  *
  * This is the last moment the text is still ours: ⌘V into somebody else's app
  * is one-way — no undo, no re-selection — so polishing after the paste would
- * mean typing over a window we do not own. Total by construction: it returns
+ * mean typing over a window we do not own. Total by construction: `text` is
  * the text to paste, which is the polished version when everything went right
  * and the raw transcript in every other case, so `finalize` has nothing to
- * handle. See `polish.ts`.
+ * handle. `outcome` says which, for the overlay's note. `signal` abandons the
+ * round trip (resolving to `"cancelled"` with the raw text). See `polish.ts`.
  */
-async function polishForPaste(raw: string, myGen: number): Promise<string> {
+async function polishForPaste(
+  raw: string,
+  myGen: number,
+  signal?: AbortSignal,
+): Promise<{ text: string; outcome: PolishOutcome }> {
   const settings = useStore.getState().settings;
-  if (!canPolish(settings) || !shouldPolish(raw)) return raw;
+  // Checked here as well as in polish.ts so the overlay is never told
+  // "polishing" for a pass that is not going to run.
+  if (!canPolish(settings)) return { text: raw, outcome: "off" };
+  if (!shouldPolish(raw)) return { text: raw, outcome: "tooShort" };
   // Only claim the overlay while it is still ours to claim; a press during the
   // round trip owns it from here (the gen check in `finalize` is the same guard
   // for the "done" tail).
   if (gen === myGen) await emit("voicetyping://session", { phase: "polishing" });
-  const polished = await polishTranscript({
+  const { text, outcome } = await polishTranscriptOutcome({
     raw,
     settings,
     protectedTerms: vocabularyTerms(),
+    signal,
   });
-  return polished ?? raw;
+  return { text: text ?? raw, outcome };
 }
 
 async function finalize() {
@@ -517,8 +526,9 @@ async function finalize() {
    *  round trip threw, because then we don't know what reached the clipboard
    *  and must not tell the user to paste something that isn't there. */
   let pasted = true;
+  let outcome: PolishOutcome = "off";
   if (raw) {
-    text = await polishForPaste(raw, myGen);
+    ({ text, outcome } = await polishForPaste(raw, myGen));
     let appBundleId: string | null = null;
     try {
       await invoke("copy_to_clipboard", { text });
@@ -561,9 +571,10 @@ async function finalize() {
   // "done" or hide it. The text above was still delivered (it predates the
   // new session).
   if (gen !== myGen) return;
-  let done = "empty";
-  if (text) done = pasted ? "ok" : "clipboard-only";
-  await emit("voicetyping://session", { phase: "done", message: done });
+  await emit("voicetyping://session", {
+    phase: "done",
+    message: doneMessage({ text, pasted, outcome }),
+  });
   scheduleHide();
 }
 
