@@ -4,6 +4,7 @@ import {
   DEFAULT_GETTING_STARTED,
   PERSIST_VERSION,
   migratePersistedState,
+  migrateVoiceTypingPolishStyle,
   mergePersistedState,
   useStore,
 } from "./store";
@@ -100,5 +101,51 @@ describe("mergePersistedState backfill", () => {
     const merged = mergePersistedState(undefined, current());
     expect(merged.settings.gettingStarted).toEqual(DEFAULT_GETTING_STARTED);
     expect(merged.settings.hintsSeen).toEqual([]);
+  });
+});
+
+// The on/off "AI polish" switch became a three-way style. Nobody's polish may
+// change behind their back: off stays off, on becomes exactly what "on" did.
+describe("voice typing polish style migration", () => {
+  it("maps the old switch: off → off, on → tidy", () => {
+    expect(migrateVoiceTypingPolishStyle({ voiceTypingPolish: false })).toBe("off");
+    expect(migrateVoiceTypingPolishStyle({ voiceTypingPolish: true })).toBe("tidy");
+  });
+
+  it("defaults a never-set switch to tidy", () => {
+    expect(migrateVoiceTypingPolishStyle({})).toBe("tidy");
+  });
+
+  it("keeps a chosen style over a stale switch", () => {
+    expect(
+      migrateVoiceTypingPolishStyle({ voiceTypingPolishStyle: "concise", voiceTypingPolish: false }),
+    ).toBe("concise");
+    expect(
+      migrateVoiceTypingPolishStyle({ voiceTypingPolishStyle: "off", voiceTypingPolish: true }),
+    ).toBe("off");
+  });
+
+  it("falls back to the switch for a style it does not know", () => {
+    expect(migrateVoiceTypingPolishStyle({ voiceTypingPolishStyle: "shouty" })).toBe("tidy");
+    expect(
+      migrateVoiceTypingPolishStyle({ voiceTypingPolishStyle: "shouty", voiceTypingPolish: false }),
+    ).toBe("off");
+  });
+
+  it("migrates on rehydrate and drops the retired key", () => {
+    const off = mergePersistedState(
+      { settings: { voiceTypingPolish: false } as Partial<Settings> },
+      current(),
+    );
+    expect(off.settings.voiceTypingPolishStyle).toBe("off");
+    expect("voiceTypingPolish" in off.settings).toBe(false);
+
+    const on = mergePersistedState(
+      { settings: { voiceTypingPolish: true } as Partial<Settings> },
+      current(),
+    );
+    expect(on.settings.voiceTypingPolishStyle).toBe("tidy");
+
+    expect(mergePersistedState(undefined, current()).settings.voiceTypingPolishStyle).toBe("tidy");
   });
 });

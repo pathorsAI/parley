@@ -1,17 +1,23 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
+  CONCISE_MODEL_ALIAS,
+  CONCISE_SYSTEM_PROMPT,
+  MAX_POLISH_RATIO,
   MAX_PROTECTED_TERMS,
   MIN_POLISH_CHARS,
   POLISH_SYSTEM_PROMPT,
   acceptPolish,
   canPolish,
   containsSimplifiedChinese,
+  minPolishRatio,
+  polishModelOverride,
   polishSystemPrompt,
   shouldPolish,
 } from "./polish";
-import type { Settings } from "../types";
+import type { LlmProvider, Settings, VoiceTypingPolishStyle } from "../types";
 
 vi.mock("../ai/settings", () => ({
   hasProviderKey: vi.fn(() => hasKey),
@@ -168,11 +174,12 @@ describe("containsSimplifiedChinese", () => {
 });
 
 describe("canPolish", () => {
-  const settings = (polish: boolean) => ({ voiceTypingPolish: polish }) as Settings;
+  const settings = (style: VoiceTypingPolishStyle) =>
+    ({ voiceTypingPolishStyle: style }) as Settings;
 
-  it("is off when the user turned it off", () => {
+  it("is off when the user chose no polish", () => {
     hasKey = true;
-    expect(canPolish(settings(false))).toBe(false);
+    expect(canPolish(settings("off"))).toBe(false);
   });
 
   /** A setting that is on but cannot run is what the settings screen's amber
@@ -180,11 +187,109 @@ describe("canPolish", () => {
    *  shows a polishing state that cannot happen. */
   it("is off when the realtime lane has no usable provider", () => {
     hasKey = false;
-    expect(canPolish(settings(true))).toBe(false);
+    expect(canPolish(settings("tidy"))).toBe(false);
+    expect(canPolish(settings("concise"))).toBe(false);
   });
 
-  it("is on when both halves are in place", () => {
+  it("is on for either polishing style when both halves are in place", () => {
     hasKey = true;
-    expect(canPolish(settings(true))).toBe(true);
+    expect(canPolish(settings("tidy"))).toBe(true);
+    expect(canPolish(settings("concise"))).toBe(true);
+  });
+});
+
+describe("concise style", () => {
+  const raw = "嗯".repeat(100);
+
+  /** Concise is asked to cut, so it may come back much shorter than tidy may:
+   *  down to 0.15× rather than 0.3×. The ceiling does not move. */
+  it("accepts a reply shorter than tidy would", () => {
+    expect(acceptPolish(raw, "好".repeat(20), "tidy")).toBe(false);
+    expect(acceptPolish(raw, "好".repeat(20), "concise")).toBe(true);
+  });
+
+  it("holds the 0.15×–2.0× band, both ends inclusive", () => {
+    expect(acceptPolish(raw, "好".repeat(15), "concise")).toBe(true);
+    expect(acceptPolish(raw, "好".repeat(14), "concise")).toBe(false);
+    expect(acceptPolish(raw, "好".repeat(200), "concise")).toBe(true);
+    expect(acceptPolish(raw, "好".repeat(201), "concise")).toBe(false);
+    expect(acceptPolish(raw, "  ", "concise")).toBe(false);
+  });
+
+  it("leaves tidy's band where it was", () => {
+    expect(minPolishRatio("tidy")).toBe(0.3);
+    expect(minPolishRatio("concise")).toBe(0.15);
+    expect(MAX_POLISH_RATIO).toBe(2);
+    // The default style is tidy, so existing callers keep the old guard.
+    expect(acceptPolish(raw, "好".repeat(29))).toBe(false);
+    expect(acceptPolish(raw, "好".repeat(30))).toBe(true);
+  });
+
+  it("still rejects Traditional input that came back Simplified", () => {
+    expect(
+      acceptPolish("我覺得這個時候應該要說清楚，明天再確認", "我觉得这个时候应该要说清楚", "concise"),
+    ).toBe(false);
+  });
+
+  it("carries the dictionary the same way tidy does", () => {
+    expect(polishSystemPrompt([], "concise")).toBe(CONCISE_SYSTEM_PROMPT);
+    expect(polishSystemPrompt(["Parley", "派斯科技"], "concise")).toBe(
+      `${CONCISE_SYSTEM_PROMPT}\nPreserve these user-dictionary terms exactly as written: Parley、派斯科技`,
+    );
+    const terms = Array.from({ length: MAX_PROTECTED_TERMS + 10 }, (_, i) => `term${i}`);
+    expect(polishSystemPrompt(terms, "concise")).not.toContain(`term${MAX_PROTECTED_TERMS}`);
+  });
+
+  /** On Parley Cloud concise asks for its own alias (the worker maps it to the
+   *  larger model); anywhere else it runs on the lane's own model, and tidy
+   *  never overrides anything. */
+  it("asks Parley Cloud for the concise alias and leaves other providers alone", () => {
+    const settings = (realtime: LlmProvider) =>
+      ({ llmProviders: { realtime, deep: realtime } }) as Settings;
+    expect(CONCISE_MODEL_ALIAS).toBe("parley-concise");
+    expect(polishModelOverride(settings("parley"), "concise")).toBe("parley-concise");
+    expect(polishModelOverride(settings("parley"), "tidy")).toBeUndefined();
+    expect(polishModelOverride(settings("groq"), "concise")).toBeUndefined();
+    expect(polishModelOverride(settings("anthropic"), "concise")).toBeUndefined();
+  });
+});
+
+/**
+ * Both prompts are pinned by SHA-256, and iOS's `TranscriptPolisherTests`
+ * pins the same two hashes. Changing a prompt means changing it on both
+ * platforms and updating the hash on both sides — an edit on one side alone
+ * fails CI on that side.
+ */
+describe("prompt parity with iOS", () => {
+  const sha256 = (s: string) => createHash("sha256").update(s, "utf8").digest("hex");
+
+  it("pins the tidy prompt", () => {
+    expect(sha256(POLISH_SYSTEM_PROMPT)).toBe(
+      "ee2cec9aa0736c6725e83b738989c99a81f7ed901dc4e9b8b9e17c1ae6bb02b5",
+    );
+  });
+
+  it("pins the concise prompt", () => {
+    expect(sha256(CONCISE_SYSTEM_PROMPT)).toBe(
+      "9546fed2dfa5029253c6f30f5b6a51a2f27c161e68e1270fb08c55cf11909f35",
+    );
+  });
+
+  /** Verbatim too, while both live in this monorepo: the hash says THAT they
+   *  drifted, the diff says where. */
+  it("is word-for-word the concise prompt iOS sends", () => {
+    const swift = readFileSync(
+      path.resolve(__dirname, "../../../ios/ParleyKit/Sources/ParleyKit/TranscriptPolisher.swift"),
+      "utf8",
+    );
+    const literal = swift
+      .split('static let conciseSystemPrompt = """\n')[1]
+      ?.split('\n        """')[0];
+    expect(literal, "the Swift prompt literal moved — update this test").toBeTruthy();
+    const dedented = literal
+      .split("\n")
+      .map((line) => (line.startsWith(" ".repeat(8)) ? line.slice(8) : line))
+      .join("\n");
+    expect(dedented).toBe(CONCISE_SYSTEM_PROMPT);
   });
 });
