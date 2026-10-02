@@ -636,6 +636,24 @@
         }
       }
     },
+    "Slide to move the cursor": {
+      "comment": "The space bar's hint while it is held as a trackpad: sliding the finger moves the text cursor.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Slide to move the cursor"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "左右滑動移動游標"
+          }
+        }
+      }
+    },
     "Space": {
       "extractionState": "manual",
       "localizations": {
