@@ -69,9 +69,15 @@ struct KeyboardRootView: View {
                 // `contentShape` cannot fix that from inside SwiftUI; a fill
                 // below the eye's threshold can.
                 .background(KBTheme.hitFill(dark))
+                // A held space bar steering the caret (`SpaceKey`) owns its
+                // finger: the same sideways drag is not a swipe, here or on
+                // release. The bar only becomes a trackpad within 10pt of
+                // where it was pressed, well inside the 24pt this needs, so
+                // the track can never already be moving when it does.
                 .simultaneousGesture(
                     DragGesture(minimumDistance: 24)
                         .updating($drag) { value, state, _ in
+                            guard !bridge.spaceCursor.holdsTouch else { return }
                             state = rubberBanded(value.translation.width, width: width)
                         }
                         // The track is about to show a neighbour, so it had
@@ -80,10 +86,13 @@ struct KeyboardRootView: View {
                         // animated, so the neighbour is simply drawn where the
                         // finger has put it. By the time the release animates
                         // a step, it has been there for many frames.
-                        .onChanged { _ in revealNeighbours() }
+                        .onChanged { _ in
+                            if !bridge.spaceCursor.holdsTouch { revealNeighbours() }
+                        }
                         .onEnded { value in
                             let dx = value.translation.width
-                            guard abs(dx) > KBMetrics.swipeThreshold,
+                            guard !bridge.spaceCursor.holdsTouch,
+                                abs(dx) > KBMetrics.swipeThreshold,
                                 abs(dx) > abs(value.translation.height) * 1.5
                             else { return }
                             bridge.stepPane(by: dx < 0 ? 1 : -1)
