@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { UnlistenFn } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { Copy, Mic, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { useI18n } from "../i18n";
@@ -10,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import {
   clearVoiceEntries,
   deleteVoiceEntry,
+  listenForVoiceHistoryChanged,
   listVoiceEntries,
   updateVoiceEntryText,
   type VoiceEntry,
@@ -33,14 +35,63 @@ export function VoiceTypingHistory({ locale }: Readonly<{ locale: string }>) {
   /** The correction an edit just revealed, offered on the row that produced it. */
   const [learn, setLearn] = useState<{ entryId: string; from: string; to: string } | null>(null);
 
+  // Re-reads can overlap (a broadcast and this component's own post-edit
+  // refresh both fire for one change), so only the newest read may land: an
+  // older one resolving last must not put a stale list back.
+  const listSeq = useRef(0);
+  // A refresh never clobbers an edit in progress. It only replaces `entries`
+  // (plus dropping state that points at a row that no longer exists); it never
+  // touches `draft` or `query`. The edit <Input> is controlled by `draft`,
+  // seeded once in startEdit, not by `e.text`. Rows are keyed by the stable
+  // `e.id`, so a new dictation prepending a row inserts a sibling and React
+  // keeps the edited row mounted — focus and caret survive. And the onBlur
+  // closure is rebuilt every render with the fresh `e`, so commitEdit still
+  // diffs against the stored text. No "pause while editing" flag is needed.
   const refresh = useCallback(() => {
+    const seq = ++listSeq.current;
     listVoiceEntries()
-      .then(setEntries)
+      .then((list) => {
+        if (seq !== listSeq.current) return;
+        setEntries(list);
+        // The row being edited (or offering "learn") is gone — deleted, or
+        // cleared — so drop the state that would otherwise dangle.
+        setEditingId((id) => (id && !list.some((e) => e.id === id) ? null : id));
+        setLearn((l) => (l && !list.some((e) => e.id === l.entryId) ? null : l));
+      })
       .catch((error) =>
         log.warn("voice typing history: list failed", { error: String(error) }),
       );
   }, []);
   useEffect(refresh, [refresh]);
+
+  // The list used to read the file only when it mounted, so a dictation made
+  // while it was on screen stayed invisible until the user switched library
+  // nodes and back. The history module now broadcasts every write; re-read on
+  // each one. listen() resolves on a later tick, so a cleanup that runs first
+  // (StrictMode's double mount) must still unlisten the late arrival.
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: UnlistenFn | null = null;
+    listenForVoiceHistoryChanged(() => refresh())
+      .then((un) => {
+        if (cancelled) {
+          un();
+          return;
+        }
+        unlisten = un;
+        // Close the gap between the mount read above and the listener going
+        // live: an append that landed in those few ms has no event left to
+        // deliver. Reading ~100 JSONL lines again is cheap.
+        refresh();
+      })
+      .catch((error) =>
+        log.warn("voice typing history: listen failed", { error: String(error) }),
+      );
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [refresh]);
 
   const fmt = useMemo(
     () => new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }),
@@ -76,6 +127,9 @@ export function VoiceTypingHistory({ locale }: Readonly<{ locale: string }>) {
     setEditingId(null);
     if (!next || next === e.text) return;
     await updateVoiceEntryText(e.id, next);
+    // The change broadcast re-reads as well; these direct refreshes (here, in
+    // remove and in clearAll) cover a broadcast that never arrives, and the
+    // sequence guard in refresh makes the duplicate read harmless.
     refresh();
     // Both the "already declined this" check and the add that may follow need
     // the real dictionary, not this window's pre-hydration blank.
