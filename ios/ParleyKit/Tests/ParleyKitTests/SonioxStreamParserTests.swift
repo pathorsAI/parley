@@ -111,6 +111,33 @@ final class SonioxStreamParserTests: XCTestCase {
         XCTAssertEqual([UInt8](data), [0x02, 0x01, 0xFE, 0xFF])
     }
 
+    func testConfigFrameOmitsContextWithoutVocabulary() throws {
+        // Byte-for-byte the frame from before the field existed.
+        let config = SonioxProtocol.Config(
+            model: "stt-rt-v5", context: SonioxProtocol.context(for: ["  ", ""]))
+        let json = String(data: try JSONEncoder().encode(config), encoding: .utf8)!
+        XCTAssertFalse(json.contains("context"))
+    }
+
+    func testConfigFrameCarriesTheVocabularyAsContextTerms() throws {
+        let config = SonioxProtocol.Config(
+            model: "stt-rt-v5", context: SonioxProtocol.context(for: [" Pathors ", "派斯", "Pathors"]))
+        let data = try JSONEncoder().encode(config)
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let context = object?["context"] as? [String: Any]
+        XCTAssertEqual(context?["terms"] as? [String], ["Pathors", "派斯"])
+    }
+
+    func testTheVocabularyIsCleanedAndCappedLikeTheDesktops() {
+        XCTAssertEqual(
+            SonioxProtocol.cleanVocabulary([" a ", "", "b", "a", "\n"]), ["a", "b"])
+        let many = (0..<(SonioxProtocol.vocabularyLimit + 20)).map { "t\($0)" }
+        let cleaned = SonioxProtocol.cleanVocabulary(many)
+        XCTAssertEqual(cleaned.count, SonioxProtocol.vocabularyLimit)
+        XCTAssertEqual(cleaned.first, "t0", "the front of the list is the priority")
+        XCTAssertNil(SonioxProtocol.context(for: []))
+    }
+
     func testConfigFrameOmitsApiKeyInRelayMode() throws {
         let config = SonioxProtocol.Config(apiKey: nil, model: "stt-rt-v5", languageHints: ["zh", "en"])
         let json = String(data: try JSONEncoder().encode(config), encoding: .utf8)!

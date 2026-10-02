@@ -58,6 +58,22 @@ final class DictationHistory: ObservableObject {
         }
     #endif
 
+    /// "Fix this word" on an entry: teach the dictionary the pair, already
+    /// confirmed, and rewrite the entry with it. Returns whether the pair was
+    /// stored — the sheet only offers pairs the dictionary accepts, so `false`
+    /// is a file that could not be written (no App Group), in which case the
+    /// entry is left alone too rather than showing a fix that was not learned.
+    @discardableResult
+    func correct(_ id: UUID?, original: String, replacement: String) -> Bool {
+        guard LexiconStore.recordConfirmed(original: original, replacement: replacement) else {
+            return false
+        }
+        if let id {
+            entries = store.correct(id: id, original: original, replacement: replacement)
+        }
+        return true
+    }
+
     func delete(_ id: UUID) {
         entries = store.remove(id: id)
     }

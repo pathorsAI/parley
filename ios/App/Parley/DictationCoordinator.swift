@@ -705,10 +705,16 @@ final class DictationCoordinator: ObservableObject {
     /// id, `SegmentBuilder` files the tail under `"\(source)-tail"` whatever the
     /// prefix, and nothing outside this object reads the shape of a dictation
     /// segment id — so the format is this file's to choose.
+    ///
+    /// The personal dictionary rides in the config frame as Soniox's
+    /// `context.terms` (see `SonioxProtocol.Config`), read per leg so a word
+    /// learned or added since the last session is already in it. One small
+    /// file read on the way to the socket, not on any audio path.
     private func makeRelay(token: String, leg: Int, timeOffsetMs: UInt64) -> SttRelayClient {
         SttRelayClient(
             options: .init(
-                bearerToken: token, feature: "voice_typing",
+                bearerToken: token, vocabulary: LexiconStore.recognitionTerms(),
+                feature: "voice_typing",
                 idPrefix: "mix@\(leg)",
                 timeOffsetMs: timeOffsetMs)
         ) { [weak self] event in
