@@ -17,7 +17,12 @@ import {
   type VoiceEntry,
 } from "../lib/voiceTyping/history";
 import { detectCorrection } from "../lib/dictionary/diffCorrection";
-import { addEntry, isIgnoredTwice, whenDictionaryReady } from "../lib/dictionary";
+import {
+  addEntry,
+  isIgnoredTwice,
+  recognitionTerms,
+  whenDictionaryReady,
+} from "../lib/dictionary";
 
 /**
  * Past voice-typing dictations: search, copy, delete one, clear all — and fix
@@ -134,7 +139,12 @@ export function VoiceTypingHistory({ locale }: Readonly<{ locale: string }>) {
     // Both the "already declined this" check and the add that may follow need
     // the real dictionary, not this window's pre-hydration blank.
     await whenDictionaryReady();
-    const hit = detectCorrection(e.text, next, e.text);
+    const hit = detectCorrection(
+      e.text,
+      next,
+      e.text,
+      recognitionTerms(useStore.getState().settings),
+    );
     if (hit && !isIgnoredTwice(hit.from, hit.to)) setLearn({ entryId: e.id, ...hit });
   }
 

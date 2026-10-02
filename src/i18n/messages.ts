@@ -652,7 +652,7 @@ export const zhTW = {
   "settings.basic.rolePlaceholder": "例如：產品經理、創辦人",
   "settings.basic.company": "公司 / 團隊（選填）",
   "settings.basic.companyPlaceholder": "例如：東蜂科技",
-  "settings.basic.profileHelp": "讓 AI 知道「你」是誰，分人時更能認出你的發言。",
+  "settings.basic.profileHelp": "讓 AI 知道「你」是誰：分人時更能認出你的發言；語音輸入也會把你的名字和公司名稱當作辨識提示，送給語音辨識服務。",
   "settings.basic.background": "背景脈絡（選填）",
   "settings.basic.backgroundPlaceholder": "例如：我們是賣 B2B SaaS 的，這場是跟潛在客戶談年約；我方目標是縮短導入期、守住單價。",
   "settings.basic.backgroundHelp": "讓 AI 分清楚哪一方是「我們」、這場在談什麼。單場脈絡可在會議側邊欄補充。",
@@ -748,7 +748,7 @@ export const zhTW = {
   "settings.dictionary.empty": "還沒有任何詞。加入常被聽錯的名字、產品名或術語，之後的語音輸入與會議轉錄都會照著寫。",
   "settings.dictionary.limitNote": "詞條超過 {limit} 筆，只有最新的 {limit} 筆會用來輔助辨識；替換規則則全部都會生效。",
   "settings.dictionary.privacy":
-    "隱私：詞庫只存在這台電腦上，不會上傳。語音輸入貼上後，Parley 會觀察那一個欄位 60 秒（macOS 透過「輔助使用」、Windows 透過 UI Automation 讀取），看你有沒有把字改掉；前後比對在本機完成後隨即丟棄，不會存檔、也不會上傳。不開放讀取內容的欄位（例如部分 Electron app）不會被觀察，也就不會從那裡學習。",
+    "隱私：詞庫存在這台電腦上；辨識時，詞條會當作拼寫提示一併送給語音辨識服務，開啟潤飾時也會一併送給 AI。語音輸入貼上後，Parley 會觀察那一個欄位 60 秒（macOS 透過「輔助使用」、Windows 透過 UI Automation 讀取），看你有沒有把字改掉；前後比對在本機完成後隨即丟棄，不會存檔、也不會上傳。不開放讀取內容的欄位（例如部分 Electron app）不會被觀察，也就不會從那裡學習。",
   "settings.evaluations.title": "評估模板",
   "settings.evaluations.templateHelp": "評估模板（套用後會取代目前啟用的清單）",
   "settings.evaluations.templateMeta": "{type} · {count} 項",
@@ -1862,7 +1862,8 @@ export const en = {
   "settings.basic.rolePlaceholder": "e.g. Product Manager, Founder",
   "settings.basic.company": "Company / team (optional)",
   "settings.basic.companyPlaceholder": "e.g. Acme Inc.",
-  "settings.basic.profileHelp": "Helps the AI know who \"you\" are and recognize your lines when speakers are diarized.",
+  "settings.basic.profileHelp":
+    "Helps the AI know who \"you\" are: it recognizes your lines when speakers are diarized, and voice typing sends your name and company to the speech recognizer as spelling hints.",
   "settings.basic.background": "Background context (optional)",
   "settings.basic.backgroundPlaceholder": "e.g. We sell B2B SaaS; this call is an annual-contract negotiation with a prospect. Our goals: shorten onboarding, hold our price.",
   "settings.basic.backgroundHelp": "Tells the AI which side is \"us\" and what the deal is. Per-meeting context goes in the sidebar.",
@@ -1961,7 +1962,7 @@ export const en = {
   "settings.dictionary.limitNote":
     "Past {limit} entries only the newest {limit} bias recognition; every replacement still applies.",
   "settings.dictionary.privacy":
-    "Privacy: the dictionary stays on this machine and is never uploaded. After voice typing pastes, Parley watches the field it just pasted into — only that field, only for 60 seconds, read through Accessibility on macOS and UI Automation on Windows — to notice a word you fixed; that before/after comparison runs here and is discarded, never stored, never uploaded. Fields an app doesn't expose (some Electron apps, for example) are not watched, so no correction is learned there.",
+    "Privacy: the dictionary is stored on this machine; its terms are sent along as spelling hints to the speech recognizer, and to the AI when polish is on. After voice typing pastes, Parley watches the field it just pasted into — only that field, only for 60 seconds, read through Accessibility on macOS and UI Automation on Windows — to notice a word you fixed; that before/after comparison runs here and is discarded, never stored, never uploaded. Fields an app doesn't expose (some Electron apps, for example) are not watched, so no correction is learned there.",
   "settings.evaluations.title": "Evaluations",
   "settings.evaluations.templateHelp": "Templates (applying one replaces the active list)",
   "settings.evaluations.templateMeta": "{type} · {count} items",

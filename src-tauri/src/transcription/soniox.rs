@@ -256,11 +256,15 @@ pub async fn run_session(
     write
         .send(Message::Text(serde_json::to_string(&wire_config(&config))?))
         .await?;
-    eprintln!(
-        "[soniox:{source}] connected, model={}, diarization={}, vocabulary={}",
+    // To parley.log (an `eprintln!` never got there), so a "my name is ignored"
+    // report can be checked against what actually went on the wire: the COUNT
+    // of terms sent after cleaning, never the terms themselves (user data).
+    log::info!(
+        "[soniox:{source}] connected, model={}, diarization={}, relay={}, vocabulary={}",
         config.model,
         config.diarization,
-        config.vocabulary.len()
+        config.relay_endpoint.is_some(),
+        clean_vocabulary(&config.vocabulary).len()
     );
 
     let meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT);
@@ -272,4 +276,48 @@ pub async fn run_session(
         read_transcripts(app, source, read),
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn config(relay: Option<&str>, vocabulary: &[&str]) -> TranscribeConfig {
+        TranscribeConfig {
+            api_key: "sk-test".to_string(),
+            model: "stt-rt-v3".to_string(),
+            language_hints: vec!["zh".to_string(), "en".to_string()],
+            diarization: false,
+            vocabulary: vocabulary.iter().map(|t| t.to_string()).collect(),
+            relay_endpoint: relay.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn relay_frame_carries_cleaned_terms_and_no_key() {
+        let cfg = config(Some("wss://example/stt"), &[" 名字 ", "Parley", "Parley"]);
+        let frame = serde_json::to_value(wire_config(&cfg)).unwrap();
+        // The relay injects the key server-side; it must never ride in the frame.
+        assert!(frame.get("api_key").is_none());
+        assert_eq!(frame["context"]["terms"], json!(["名字", "Parley"]));
+    }
+
+    #[test]
+    fn byok_frame_carries_the_key() {
+        let cfg = config(None, &["Parley"]);
+        let frame = serde_json::to_value(wire_config(&cfg)).unwrap();
+        assert_eq!(frame["api_key"], json!("sk-test"));
+        assert_eq!(frame["context"]["terms"], json!(["Parley"]));
+    }
+
+    #[test]
+    fn empty_vocabulary_omits_context() {
+        let cfg = config(Some("wss://example/stt"), &["  ", ""]);
+        let frame = serde_json::to_value(wire_config(&cfg)).unwrap();
+        assert!(frame.get("context").is_none());
+        let cfg = config(None, &[]);
+        let frame = serde_json::to_value(wire_config(&cfg)).unwrap();
+        assert!(frame.get("context").is_none());
+    }
 }

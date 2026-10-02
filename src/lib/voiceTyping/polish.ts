@@ -131,17 +131,41 @@ export function shouldPolish(raw: string): boolean {
 }
 
 /**
+ * The line that names the speaker's own name and organisation (Settings ›
+ * Basic). Unlike the dictionary line it asks for a repair, not just
+ * preservation: a name is the word the recogniser is most likely to hear as a
+ * same-sounding ordinary word, and the context that tells the two apart is
+ * exactly what this pass has. It is also told not to plant the name where it
+ * was not said — the rewrite must never add content.
+ *
+ * Desktop-only: iOS has no profile name, so there is nothing to mirror, and the
+ * verbatim parity test covers {@link POLISH_SYSTEM_PROMPT} alone.
+ */
+export const SPEAKER_TERMS_LINE =
+  "The speaker's own name and organisation, spelled exactly as they write them. Where the transcript has a word that sounds the same as one of these and the context shows it refers to the speaker or their organisation, the recogniser misheard it: write this spelling. Never add these words where they were not said: ";
+
+/**
  * The system message for one request: the standing prompt, plus a line naming
- * the user's own vocabulary when there is any. Empty in, unchanged out.
+ * the user's own vocabulary when there is any, plus a line naming the speaker
+ * when the profile has a name or company. Empty in, unchanged out.
  *
  * Those terms are words the user has already corrected by hand — a cleanup pass
  * that "fixes" a name they spelled out themselves is exactly the kind of help
- * nobody asked for.
+ * nobody asked for. A term on both lists is named once, on the speaker line,
+ * which says more about it. The dictionary line stays word for word what iOS
+ * sends.
  */
-export function polishSystemPrompt(protectedTerms: string[]): string {
-  const kept = protectedTerms.filter((t) => t.trim()).slice(0, MAX_PROTECTED_TERMS);
-  if (!kept.length) return POLISH_SYSTEM_PROMPT;
-  return `${POLISH_SYSTEM_PROMPT}\nPreserve these user-dictionary terms exactly as written: ${kept.join("、")}`;
+export function polishSystemPrompt(protectedTerms: string[], speakerTerms: string[] = []): string {
+  const speaker = [...new Set(speakerTerms.map((t) => t.trim()).filter(Boolean))];
+  const kept = protectedTerms
+    .filter((t) => t.trim() && !speaker.includes(t.trim()))
+    .slice(0, MAX_PROTECTED_TERMS);
+  let prompt = POLISH_SYSTEM_PROMPT;
+  if (kept.length) {
+    prompt += `\nPreserve these user-dictionary terms exactly as written: ${kept.join("、")}`;
+  }
+  if (speaker.length) prompt += `\n${SPEAKER_TERMS_LINE}${speaker.join("、")}`;
+  return prompt;
 }
 
 /**
@@ -229,9 +253,11 @@ export async function polishTranscriptOutcome(opts: {
   raw: string;
   settings: Settings;
   protectedTerms?: string[];
+  /** The speaker's own name and company (`profileTerms`). */
+  speakerTerms?: string[];
   signal?: AbortSignal;
 }): Promise<{ text: string | null; outcome: PolishOutcome }> {
-  const { raw, settings, protectedTerms = [], signal } = opts;
+  const { raw, settings, protectedTerms = [], speakerTerms = [], signal } = opts;
   if (!canPolish(settings)) return { text: null, outcome: "off" };
   if (!shouldPolish(raw)) return { text: null, outcome: "tooShort" };
   if (signal?.aborted) return { text: null, outcome: "cancelled" };
@@ -258,7 +284,7 @@ export async function polishTranscriptOutcome(opts: {
     const { text } = await generateText({
       model: getModel(settings, "realtime"),
       providerOptions: getProviderOptions(settings, "realtime"),
-      system: polishSystemPrompt(protectedTerms),
+      system: polishSystemPrompt(protectedTerms, speakerTerms),
       prompt: raw,
       temperature: 0.2,
       maxOutputTokens: 2048,
@@ -320,6 +346,7 @@ export async function polishTranscript(opts: {
   raw: string;
   settings: Settings;
   protectedTerms?: string[];
+  speakerTerms?: string[];
   signal?: AbortSignal;
 }): Promise<string | null> {
   return (await polishTranscriptOutcome(opts)).text;

@@ -5,6 +5,7 @@ import {
   MAX_PROTECTED_TERMS,
   MIN_POLISH_CHARS,
   POLISH_SYSTEM_PROMPT,
+  SPEAKER_TERMS_LINE,
   acceptPolish,
   canPolish,
   containsSimplifiedChinese,
@@ -57,6 +58,34 @@ describe("polishSystemPrompt", () => {
     expect(prompt).toContain("term0");
     expect(prompt).toContain(`term${MAX_PROTECTED_TERMS - 1}`);
     expect(prompt).not.toContain(`term${MAX_PROTECTED_TERMS}`);
+  });
+
+  it("is unchanged for a user with no dictionary and no profile", () => {
+    expect(polishSystemPrompt([], [])).toBe(POLISH_SYSTEM_PROMPT);
+    expect(polishSystemPrompt([], ["  "])).toBe(POLISH_SYSTEM_PROMPT);
+  });
+
+  /** The speaker's name is the word most likely to come back as a
+   *  same-sounding ordinary word; this line is what lets the model repair it. */
+  it("names the speaker only when the profile has terms", () => {
+    expect(polishSystemPrompt(["Parley"])).not.toContain(SPEAKER_TERMS_LINE);
+    const prompt = polishSystemPrompt([], [" 王小明 ", "東蜂科技"]);
+    expect(prompt.startsWith(POLISH_SYSTEM_PROMPT)).toBe(true);
+    expect(prompt).toContain(`${SPEAKER_TERMS_LINE}王小明、東蜂科技`);
+    expect(prompt).not.toContain("Preserve these user-dictionary terms");
+  });
+
+  it("lists a term on both lists only on the speaker line", () => {
+    const prompt = polishSystemPrompt(["Parley", "王小明"], ["王小明"]);
+    expect(prompt).toContain("Preserve these user-dictionary terms exactly as written: Parley\n");
+    expect(prompt.endsWith(`${SPEAKER_TERMS_LINE}王小明`)).toBe(true);
+    expect(prompt.split("王小明")).toHaveLength(2);
+  });
+
+  it("keeps the dictionary cap for terms that are not the speaker's", () => {
+    const terms = ["王小明", ...Array.from({ length: MAX_PROTECTED_TERMS }, (_, i) => `term${i}`)];
+    const prompt = polishSystemPrompt(terms, ["王小明"]);
+    expect(prompt).toContain(`term${MAX_PROTECTED_TERMS - 1}`);
   });
 });
 

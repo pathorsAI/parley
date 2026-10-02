@@ -24,7 +24,10 @@ import { appendVoiceEntry } from "./history";
 import { canPolish, polishTranscriptOutcome, shouldPolish, type PolishOutcome } from "./polish";
 import {
   addEntry,
+  applyReplacements,
   isIgnoredTwice,
+  profileTerms,
+  recognitionTerms,
   recordIgnore,
   removeEntry,
   removeVariant,
@@ -324,6 +327,12 @@ async function onTrayToggle() {
 }
 
 async function startSession() {
+  // The recognition bias below is read synchronously from the dictionary
+  // cache, which is empty until this window's boot read lands — a press in the
+  // first moments after launch would otherwise go out without it. Resolved for
+  // the rest of the app's life, so this costs a microtask. Ahead of every state
+  // change, so nothing here is half-done while it waits.
+  await whenDictionaryReady();
   // A new dictation supersedes anything still pending from the last one: the
   // overlay is about to be reused for this session, and a stale ⌥↩ must not
   // silently learn a correction the user has moved on from.
@@ -376,9 +385,10 @@ async function startSession() {
     provider,
     apiKey,
     languageHints: languageHintsFromSettings(settings),
-    // The user's phrase dictionary, as recognition bias: the terms they've
-    // taught us are exactly the ones the model keeps getting wrong.
-    vocabulary: vocabularyTerms(),
+    // Recognition bias: the user's own name and company (Settings › Basic),
+    // then the phrase dictionary — the terms they've taught us are exactly the
+    // ones the model keeps getting wrong.
+    vocabulary: recognitionTerms(settings),
     inputDevice: settings.inputDevice ?? null,
     relayUrl: sttRelayUrl(provider, "voice_typing"),
     maxDurationSecs: hosted ? HOSTED_VOICE_TYPING_MAX_SECONDS : null,
@@ -511,9 +521,15 @@ async function polishForPaste(
     raw,
     settings,
     protectedTerms: vocabularyTerms(),
+    speakerTerms: profileTerms(settings),
     signal,
   });
-  return { text: text ?? raw, outcome };
+  // The raw text was already rewritten by the overlay; the polished text never
+  // was, and a model can turn a dictionary term back into a misheard variant
+  // that the prompt's "preserve" line does not catch. Run the same
+  // deterministic pass over it (idempotent, so a term that is already right
+  // stays right). Unpolished text goes out exactly as the overlay showed it.
+  return { text: text === null ? raw : applyReplacements(text), outcome };
 }
 
 async function finalize() {
@@ -660,7 +676,14 @@ async function onCorrectionCandidate(p: CorrectionCandidatePayload): Promise<voi
   // The ignore counter (and the write that may follow) only mean something once
   // this window has read the dictionary file.
   await whenDictionaryReady();
-  const hit = detectCorrection(p.baseline, p.current, p.insertedText);
+  // Anchored to the user's known terms, so a one-character fix inside a name
+  // is learned as the whole name (see detectCorrection).
+  const hit = detectCorrection(
+    p.baseline,
+    p.current,
+    p.insertedText,
+    recognitionTerms(useStore.getState().settings),
+  );
   if (!hit) {
     log.info("voice-typing: correction candidate rejected by diff", {
       baselineChars: p.baseline.length,
