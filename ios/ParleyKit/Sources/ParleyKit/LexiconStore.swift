@@ -279,8 +279,9 @@ public struct Lexicon: Codable, Sendable, Equatable {
 
     /// Oldest-updated first, which is the closest thing to "least useful" that
     /// costs nothing to track: a pair the user keeps re-confirming keeps its
-    /// stamp fresh.
-    private mutating func evict() {
+    /// stamp fresh. Internal rather than private for `DictionarySync`, which
+    /// writes many rows at once and is held to the same caps.
+    mutating func evict() {
         if pairs.count > Lexicon.maxPairs {
             pairs.sort { $0.updatedAt > $1.updatedAt }
             pairs.removeLast(pairs.count - Lexicon.maxPairs)
@@ -496,7 +497,14 @@ public enum LexiconStore {
     public static func save(_ lexicon: Lexicon) {
         guard let url = url, let data = try? encoder.encode(lexicon) else { return }
         try? data.write(to: url, options: .atomic)
+        didSave?()
     }
+
+    /// Called after every write made by THIS process. The app sets it to
+    /// schedule a cloud sync after a dictionary edit (`DictionarySync`); the
+    /// keyboard leaves it nil — it never networks, and what it learns is picked
+    /// up by the app on its next sync. Set once at launch, before any write.
+    nonisolated(unsafe) public static var didSave: (() -> Void)?
 
     /// Read, change, write. Not atomic across processes, and deliberately not
     /// defended against: the two writers are a keyboard learning a word and a

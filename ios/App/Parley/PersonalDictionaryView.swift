@@ -10,6 +10,10 @@ import SwiftUI
 /// correction outright ("Add correction", the same sheet as "Fix this word" in
 /// the dictation history), a term, or taking either away.
 ///
+/// Signed in, the dictionary also syncs with the account (`DictionarySyncModel`)
+/// — the user's terms and confirmed corrections, never the system's words — and
+/// a line at the top says when it last did.
+///
 /// The last section is the one thing here that is not the user's to edit: the
 /// names and phrases the keyboard reads from Contacts and Text Replacement
 /// (`Lexicon.systemTerms`). It is shown so nothing biasing recognition is
@@ -25,9 +29,18 @@ struct PersonalDictionaryView: View {
     @State private var newTerm = ""
     @State private var showClearConfirmation = false
     @State private var correction: LexiconCorrectionDraft?
+    @ObservedObject private var sync = DictionarySyncModel.shared
 
     var body: some View {
         Form {
+            if sync.active, sync.status != .idle {
+                // An empty section: only its footer shows, as a quiet line
+                // above the lists rather than a row that looks tappable.
+                Section {
+                } footer: {
+                    DictionarySyncStatusLine(status: sync.status)
+                }
+            }
             correctionsSection
             termsSection
             systemSection
@@ -42,6 +55,8 @@ struct PersonalDictionaryView: View {
         .environment(\.defaultMinListRowHeight, 48)
         .navigationTitle("Personal dictionary")
         .onAppear { lexicon = LexiconStore.load() }
+        // A sync may have just rewritten the file — re-read it.
+        .onChange(of: sync.revision) { lexicon = LexiconStore.load() }
         .sheet(item: $correction) { draft in
             LexiconCorrectionSheet(heard: draft.heard) { original, replacement in
                 LexiconStore.recordConfirmed(original: original, replacement: replacement)
@@ -53,11 +68,12 @@ struct PersonalDictionaryView: View {
             titleVisibility: .visible
         ) {
             Button("Clear everything", role: .destructive) {
+                DictionarySyncModel.shared.noteCleared()
                 LexiconStore.removeAll()
                 lexicon = LexiconStore.load()
             }
         } message: {
-            Text("Parley forgets every correction it has learned and every term you added. It starts learning again from your next dictation.")
+            Text("Parley forgets every correction it has learned and every term you added — here and, while you're signed in, on your other devices. It starts learning again from your next dictation.")
         }
     }
 
@@ -198,5 +214,45 @@ struct PersonalDictionaryView: View {
             LexiconStore.removeTerm(listed[index].text)
         }
         lexicon = LexiconStore.load()
+    }
+}
+
+/// 「已同步 · 剛剛」 — when the dictionary last synced with the account, or that
+/// it could not. Re-rendered every half minute so "just now" ages honestly.
+struct DictionarySyncStatusLine: View {
+    let status: DictionarySyncModel.Status
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            label(now: context.date)
+                .font(.parley.caption)
+                .foregroundStyle(isFailure ? Theme.warning : Color(.secondaryLabel))
+        }
+    }
+
+    private var isFailure: Bool {
+        if case .failed = status { return true }
+        return false
+    }
+
+    private func label(now: Date) -> Text {
+        switch status {
+        case .idle, .syncing:
+            return Text("Syncing…")
+        case .synced(let at):
+            return Text("Synced · \(Self.ago(at, now: now))")
+        case .failed(let last):
+            guard let last else { return Text("Couldn't sync. Parley will try again on its own.") }
+            return Text("Couldn't sync. Parley will try again on its own. Last synced \(Self.ago(last, now: now)).")
+        }
+    }
+
+    static func ago(_ date: Date, now: Date) -> String {
+        let minutes = Int(max(0, now.timeIntervalSince(date)) / 60)
+        if minutes < 1 { return String(localized: "just now") }
+        if minutes < 60 { return String(localized: "\(minutes) min ago") }
+        let hours = minutes / 60
+        if hours < 24 { return String(localized: "\(hours) hr ago") }
+        return String(localized: "\(hours / 24) d ago")
     }
 }

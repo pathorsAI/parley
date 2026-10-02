@@ -19,6 +19,57 @@
         }
       }
     },
+    "%lld d ago" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld d ago"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 天前"
+          }
+        }
+      }
+    },
+    "%lld hr ago" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld hr ago"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 小時前"
+          }
+        }
+      }
+    },
+    "%lld min ago" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld min ago"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 分鐘前"
+          }
+        }
+      }
+    },
     "%lld of %lld" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1205,6 +1256,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "沒能開始"
+          }
+        }
+      }
+    },
+    "Couldn't sync. Parley will try again on its own." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't sync. Parley will try again on its own."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暫時無法同步，Parley 稍後會自動再試。"
+          }
+        }
+      }
+    },
+    "Couldn't sync. Parley will try again on its own. Last synced %@." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't sync. Parley will try again on its own. Last synced %@."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暫時無法同步，Parley 稍後會自動再試。上次同步：%@。"
           }
         }
       }
@@ -3832,19 +3917,19 @@
         }
       }
     },
-    "Parley forgets every correction it has learned and every term you added. It starts learning again from your next dictation." : {
+    "Parley forgets every correction it has learned and every term you added — here and, while you're signed in, on your other devices. It starts learning again from your next dictation." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Parley forgets every correction it has learned and every term you added. It starts learning again from your next dictation."
+            "value" : "Parley forgets every correction it has learned and every term you added — here and, while you're signed in, on your other devices. It starts learning again from your next dictation."
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Parley 會忘掉學到的每一項更正，以及你加入的每一個詞，並從下一次聽寫重新開始學。"
+            "value" : "Parley 會忘掉學到的每一項更正，以及你加入的每一個詞；登入時，你其他裝置上的也會一併清除。之後從下一次聽寫重新開始學。"
           }
         }
       }
@@ -5977,6 +6062,23 @@
         }
       }
     },
+    "Synced · %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Synced · %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已同步 · %@"
+          }
+        }
+      }
+    },
     "Synced, and shared to “%@”" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5990,6 +6092,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已同步，並分享到「%@」"
+          }
+        }
+      }
+    },
+    "Syncing…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Syncing…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "同步中…"
           }
         }
       }
@@ -7399,6 +7518,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "小時"
+          }
+        }
+      }
+    },
+    "just now" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "just now"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "剛剛"
           }
         }
       }

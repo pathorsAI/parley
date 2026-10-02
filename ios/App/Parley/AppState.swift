@@ -160,6 +160,9 @@ final class AppState: NSObject, ObservableObject {
         do {
             user = try await cloud.me()
             if user == nil { clearStoredToken() }
+            // Launch with a live session: bring the dictionary up to date. Not
+            // awaited — it must never hold up the uploads below.
+            DictionarySyncModel.shared.accountChanged(cloud: cloud, userId: user?.id)
             await loadAccountExtras()
             await syncPendingUploads()
         } catch let err as CloudError where err.isAuthExpired {
@@ -240,6 +243,7 @@ final class AppState: NSObject, ObservableObject {
         }
         // Reports queued while signed out go now, and go as this account.
         FeedbackCenter.shared.signedIn()
+        DictionarySyncModel.shared.accountChanged(cloud: cloud, userId: user?.id)
         await loadAccountExtras()
         await syncPendingUploads()
     }
@@ -311,6 +315,7 @@ final class AppState: NSObject, ObservableObject {
     private func clearLocalSession() {
         clearStoredToken()
         user = nil
+        DictionarySyncModel.shared.accountChanged(cloud: cloud, userId: nil)
         quota = nil
         orgs = []
     }

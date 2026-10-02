@@ -27,6 +27,9 @@ struct ParleyApp: App {
         // As early as the app has: MetricKit hands the previous run's crash to
         // a subscriber as soon as it is added. See `FeedbackCenter.start`.
         FeedbackCenter.shared.start()
+        // Before anything in this process can write the lexicon, so every
+        // edit made here schedules a dictionary sync.
+        DictionarySyncModel.shared.start()
     }
 
     var body: some Scene {
@@ -88,6 +91,9 @@ struct ParleyApp: App {
                     // the next attempt different.
                     MicActivityController.shared.appBecameActive()
                     Task { await app.refreshFeatureFlags() }
+                    // Throttled inside. Also how corrections the keyboard
+                    // learned in its own process reach the account.
+                    DictionarySyncModel.shared.foregrounded()
                     // The line that turns "dead until force-quit" into
                     // "recovers by itself". `UIBackgroundModes` here is `audio`
                     // only, so a re-transcription — minutes of work on an hour
