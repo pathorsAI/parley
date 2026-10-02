@@ -15,7 +15,10 @@
 // to the list and answers 410 to a push of one; either way the id is flagged
 // `cloudGone` and never pushed again — otherwise a recording deleted on the phone
 // but still on this desktop would be re-uploaded, audio and all, on every sweep.
-// The local copy is kept: it is the user's data. An older server reports neither,
+// What happens to the local copy depends on whether it was ever synced from here:
+// a recording this device knew as synced follows the cloud and is deleted locally
+// too (see cloudDeletionsToFollow); one that never was stays, because local is the
+// truth for anything the cloud never had. An older server reports no tombstones,
 // which leaves today's behaviour in place.
 
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
@@ -34,6 +37,7 @@ import {
   type SyncMeta,
 } from "./syncState";
 import { isSampleEntry } from "../onboarding/sample";
+import { useStore } from "../store";
 import type { HistoryEntry, HistoryEntrySummary } from "../history/types";
 import type { CloudRecordingSummary } from "./types";
 
@@ -139,7 +143,7 @@ function reconcileCloudGone(
   if (gone.length) {
     markCloudGone(gone);
     for (const id of gone) goneLogged.add(id);
-    log.info("cloud: stopped syncing recordings deleted in the cloud (local copies kept)", {
+    log.info("cloud: stopped syncing recordings deleted in the cloud", {
       count: gone.length,
       ids: gone,
     });
@@ -167,6 +171,78 @@ export function entriesToPush<T extends { id: string }>(
     if (meta?.cloudGone && !inCloud) return false;
     return !inCloud || meta?.dirty === true;
   });
+}
+
+/**
+ * Local recordings to delete because the cloud deleted them: tombstoned there AND
+ * known to this device as synced (it holds a cloud version for the id, so the
+ * copy here was a mirror of the cloud one, not a local original). Never the
+ * sample, and never the recording open on screen — that one waits for a later
+ * pass, after the user has moved on.
+ */
+export function cloudDeletionsToFollow<T extends { id: string }>(
+  local: readonly T[],
+  tombstones: ReadonlySet<string>,
+  syncIndex: Readonly<Record<string, SyncMeta>>,
+  openId: string | null,
+): string[] {
+  return local
+    .filter(
+      (e) =>
+        tombstones.has(e.id) &&
+        !isSampleEntry(e) &&
+        e.id !== openId &&
+        syncIndex[e.id]?.cloudUpdatedAt !== undefined,
+    )
+    .map((e) => e.id);
+}
+
+/**
+ * A deletion pass this large is more likely a server fault than a user who
+ * deleted most of their library on another device — and a local delete can't be
+ * undone. Above this share of the synced local entries (and past a handful), the
+ * pass is refused and logged instead; the entries stay flagged and unpushed.
+ */
+const MAX_FOLLOW_SHARE = 0.5;
+const FOLLOW_ALWAYS_OK = 5;
+
+/**
+ * Apply {@link cloudDeletionsToFollow}: delete those local copies and return the
+ * local list without them. Best-effort per entry — a failed delete just leaves
+ * that entry for the next pass.
+ */
+async function followCloudDeletions<T extends { id: string }>(
+  local: T[],
+  tombstones: ReadonlySet<string>,
+  syncIndex: Readonly<Record<string, SyncMeta>>,
+): Promise<T[]> {
+  if (!tombstones.size) return local;
+  const ids = cloudDeletionsToFollow(local, tombstones, syncIndex, useStore.getState().loadedHistoryId);
+  if (!ids.length) return local;
+  const synced = local.filter((e) => syncIndex[e.id]?.cloudUpdatedAt !== undefined).length;
+  if (ids.length > FOLLOW_ALWAYS_OK && ids.length > synced * MAX_FOLLOW_SHARE) {
+    log.warn("cloud: refusing to delete most of the synced library on a tombstone list", {
+      wouldDelete: ids.length,
+      synced,
+    });
+    return local;
+  }
+  const deleted = new Set<string>();
+  for (const id of ids) {
+    try {
+      await deleteHistoryEntry(id);
+      deleted.add(id);
+    } catch (e) {
+      log.warn("cloud: local delete after cloud delete failed", { id, error: String(e) });
+    }
+  }
+  if (deleted.size) {
+    log.info("cloud: deleted local copies of recordings deleted in the cloud", {
+      count: deleted.size,
+      ids: [...deleted],
+    });
+  }
+  return local.filter((e) => !deleted.has(e.id));
 }
 
 /** What one push did: uploaded, did nothing (signed out / sample), or found the
@@ -303,7 +379,7 @@ export async function deleteCloudRecording(id: string): Promise<void> {
  * card "local") when signed out or the cloud list fails, so the grid always renders.
  */
 export async function listMergedHistory(): Promise<HistoryCardItem[]> {
-  const local = await listHistory();
+  let local = await listHistory();
   // Sync off (or signed out / OSS edition) → show local only, every card "local".
   if (!syncEnabled()) return local.map((e) => ({ ...e, sync: "local" as const }));
 
@@ -315,6 +391,7 @@ export async function listMergedHistory(): Promise<HistoryCardItem[]> {
     return local.map((e) => ({ ...e, sync: "local" as const }));
   }
   const cloud = library.recordings;
+  local = await followCloudDeletions(local, new Set(library.tombstones), readSyncIndex());
 
   const cloudById = new Map(cloud.map((c) => [c.id, c]));
   const localIds = new Set(local.map((e) => e.id));
@@ -381,7 +458,9 @@ let sweepInFlight: Promise<number> | null = null;
  * Background: push every local entry the cloud is MISSING, plus any whose local
  * content changed but never got a confirmed push (dirty — e.g. an inline push
  * failed offline), minus anything tombstoned in the cloud (see entriesToPush).
- * Returns how many were pushed so the caller can refresh the grid. Bails on the
+ * Local copies of recordings deleted in the cloud are deleted first (see
+ * followCloudDeletions). Returns how many entries changed (pushed or deleted)
+ * so the caller can refresh the grid. Bails on the
  * first auth failure rather than retrying every entry. Concurrent calls share one
  * run.
  */
@@ -403,14 +482,17 @@ async function runSweep(): Promise<number> {
     log.warn("cloud: sweep skipped (list failed)", { error: String(e) });
     return 0;
   }
-  const local = await listHistory();
+  const tombstoneSet = new Set(library.tombstones);
+  const listed = await listHistory();
+  const local = await followCloudDeletions(listed, tombstoneSet, readSyncIndex());
+  const removed = listed.length - local.length;
   const cloudIds = new Set(library.recordings.map((c) => c.id));
   // Decided up front from one snapshot (see readSyncIndex). An entry marked dirty
   // while the sweep runs is caught by the next one, like any other late change.
   const snapshot = readSyncIndex();
   const localIds = new Set(local.map((e) => e.id));
   const syncIndex = reconcileCloudGone(localIds, library, snapshot) ? readSyncIndex() : snapshot;
-  const toPush = entriesToPush(local, cloudIds, new Set(library.tombstones), syncIndex);
+  const toPush = entriesToPush(local, cloudIds, tombstoneSet, syncIndex);
   let pushed = 0;
   let gone = 0;
   for (const e of toPush) {
@@ -428,7 +510,9 @@ async function runSweep(): Promise<number> {
   }
   if (pushed) log.info("cloud: pushed unsynced entries", { pushed });
   if (gone) log.info("cloud: sweep found recordings deleted in the cloud", { gone });
-  return pushed;
+  // The caller refreshes the grid on a non-zero answer, and a deleted card is as
+  // much a change as a pushed one.
+  return pushed + removed;
 }
 
 // ── Org-shared recordings ─────────────────────────────────────────────────────

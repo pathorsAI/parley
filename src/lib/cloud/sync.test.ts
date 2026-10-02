@@ -33,6 +33,8 @@ vi.mock("../history/history", () => ({
   listHistory: vi.fn(async () => localEntries),
   deleteHistoryEntry: vi.fn(async () => {}),
 }));
+let openId: string | null = null;
+vi.mock("../store", () => ({ useStore: { getState: () => ({ loadedHistoryId: openId }) } }));
 vi.mock("../onboarding/sample", () => ({
   isSampleEntry: (e: { id: string }) => e.id.startsWith("sample-"),
 }));
@@ -102,7 +104,8 @@ const local = (id: string) => ({ id, createdAt: 1, title: id });
 const pushesOf = (id: string) => calls.filter((c) => c.endsWith(`/recordings/${id}`) || c.includes(`/recordings/${id}/audio`));
 
 const sync = await import("./sync");
-const { markCloudGone, markDirty, readSyncIndex } = await import("./syncState");
+const { markCloudGone, markDirty, readSyncIndex, setSyncedMany } = await import("./syncState");
+const history = await import("../history/history");
 
 beforeEach(() => {
   backing.clear();
@@ -113,6 +116,8 @@ beforeEach(() => {
   goneOnServer = new Set();
   calls = [];
   listGate = Promise.resolve();
+  openId = null;
+  vi.mocked(history.deleteHistoryEntry).mockClear();
 });
 
 describe("entriesToPush", () => {
@@ -267,5 +272,70 @@ describe("explicit actions on a gone recording", () => {
   it("our own cloud delete flags the id, so a leftover local copy is never re-pushed", async () => {
     await sync.deleteCloudRecording("a");
     expect(readSyncIndex().a).toEqual({ cloudGone: true });
+  });
+});
+
+describe("following cloud deletions", () => {
+  it("picks tombstoned entries this device knew as synced; never-synced ones stay local", () => {
+    const ids = sync.cloudDeletionsToFollow(
+      ["synced", "localOnly", "open", "sample-x", "live"].map(local),
+      new Set(["synced", "localOnly", "open", "sample-x"]),
+      {
+        synced: { cloudUpdatedAt: 5 },
+        open: { cloudUpdatedAt: 5 },
+        "sample-x": { cloudUpdatedAt: 5 },
+        live: { cloudUpdatedAt: 5 },
+      },
+      "open",
+    );
+    expect(ids).toEqual(["synced"]);
+  });
+
+  it("the sweep deletes a synced copy the cloud deleted, keeps a never-synced one, and asks for a refresh", async () => {
+    localEntries = [local("synced"), local("localOnly"), local("a"), local("b"), local("c")];
+    setSyncedMany([["synced", 5], ["a", 5], ["b", 5], ["c", 5]]);
+    cloudRows = [{ id: "a", updatedAt: 5 }, { id: "b", updatedAt: 5 }, { id: "c", updatedAt: 5 }];
+    tombstones = ["synced", "localOnly"];
+    expect(await sync.pushUnsyncedToCloud()).toBe(1);
+    expect(history.deleteHistoryEntry).toHaveBeenCalledTimes(1);
+    expect(history.deleteHistoryEntry).toHaveBeenCalledWith("synced");
+    // Never synced from here: kept, flagged, and not pushed (the server refuses it).
+    expect(readSyncIndex().localOnly).toEqual({ cloudGone: true });
+    expect(pushesOf("localOnly")).toEqual([]);
+  });
+
+  it("the recording open on screen waits for a later pass", async () => {
+    localEntries = [local("open"), local("x"), local("y")];
+    setSyncedMany([["open", 5], ["x", 5], ["y", 5]]);
+    cloudRows = [{ id: "x", updatedAt: 5 }, { id: "y", updatedAt: 5 }];
+    tombstones = ["open"];
+    openId = "open";
+    await sync.pushUnsyncedToCloud();
+    expect(history.deleteHistoryEntry).not.toHaveBeenCalled();
+    openId = null;
+    await sync.pushUnsyncedToCloud();
+    expect(history.deleteHistoryEntry).toHaveBeenCalledWith("open");
+  });
+
+  it("refuses a pass that would delete most of the synced library", async () => {
+    const ids = Array.from({ length: 8 }, (_, i) => `r${i}`);
+    localEntries = ids.map(local);
+    setSyncedMany(ids.map((id) => [id, 5] as const));
+    tombstones = ids.slice(0, 6);
+    cloudRows = ids.slice(6).map((id) => ({ id, updatedAt: 5 }));
+    await sync.pushUnsyncedToCloud();
+    expect(history.deleteHistoryEntry).not.toHaveBeenCalled();
+    // Still never re-uploaded.
+    for (const id of ids.slice(0, 6)) expect(pushesOf(id)).toEqual([]);
+  });
+
+  it("the library listing drops the deleted card", async () => {
+    localEntries = [local("gone"), local("ok"), local("ok2")];
+    setSyncedMany([["gone", 5], ["ok", 7], ["ok2", 7]]);
+    cloudRows = [{ id: "ok", updatedAt: 7 }, { id: "ok2", updatedAt: 7 }];
+    tombstones = ["gone"];
+    const cards = await sync.listMergedHistory();
+    expect(cards.map((c) => c.id).sort()).toEqual(["ok", "ok2"]);
+    expect(readSyncIndex().gone).toBeUndefined();
   });
 });
