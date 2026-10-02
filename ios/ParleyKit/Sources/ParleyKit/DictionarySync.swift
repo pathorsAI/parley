@@ -19,11 +19,18 @@ import Foundation
 // keyboard read from Contacts and Text Replacement are the system's, not the
 // user's, and contacts do not leave the phone.
 //
-// Changes are found by diffing that projection against a snapshot of what this
-// phone and the cloud last agreed on (`DictionarySyncState.synced`), so an edit
-// made by the keyboard in its own process is picked up by the app the same way
-// as one made on the dictionary screen. A phrase in the snapshot but no longer
-// projected goes up as a tombstone, timestamped when it was first noticed.
+// Changes are found by diffing that projection against a snapshot of the
+// cloud's state and of how much of it this phone held
+// (`DictionarySyncState.synced`), so an edit made by the keyboard in its own
+// process is picked up by the app the same way as one made on the dictionary
+// screen.
+//
+// The one rule that keeps a phone from costing the account data: it only ever
+// removes what it held and the user removed. The phone cannot always hold a
+// whole phrase — the lexicon's caps, or a variant it refuses as a correction —
+// so every push carries the variants it never held unchanged, a phrase it never
+// held is never pushed or deleted, and a phrase the user removed here is a
+// tombstone only if the phone held all of it.
 //
 // Everything here is Foundation-only and free of I/O except `run`, which takes
 // its network (`DictionarySyncTransport`) and its files (`DictionarySyncStorage`)
@@ -104,17 +111,46 @@ public protocol DictionarySyncTransport: Sendable {
 
 /// What sync remembers between runs, per account.
 public struct DictionarySyncState: Codable, Equatable, Sendable {
-    /// What this phone and the cloud last agreed a phrase looks like. The
-    /// variants are the ones the phone holds, plus any the cloud has that the
-    /// phone cannot hold as a correction (see `DictionarySync.representable`) —
-    /// kept so an edit here never deletes them from the other devices.
+    /// The cloud's state of a phrase as of the last sync, and how much of it
+    /// this phone holds.
+    ///
+    /// The phone cannot always hold all of a phrase: a variant may be one it
+    /// refuses as a correction (a single CJK character), or the lexicon's caps
+    /// (200 terms, 500 pairs) may have evicted part or all of it. The rule that
+    /// keeps that from costing the account data: **the phone only ever removes
+    /// what it held and the user removed.** So the snapshot keeps the FULL
+    /// variant list the cloud has, and separately what the phone held of it;
+    /// every push carries the variants it never held unchanged, and a phrase it
+    /// never held is never pushed or tombstoned.
     public struct Synced: Codable, Equatable, Sendable {
         public var id: String
+        /// Every variant the cloud has for the phrase.
         public var variants: [String]
+        /// The subset of `variants` this phone held as confirmed corrections.
+        public var held: [String]
+        /// Whether this phone held the phrase at all (a term or a correction).
+        public var heldPhrase: Bool
+        /// The cloud's `source`, sent back on a deletion.
+        public var source: String
 
-        public init(id: String, variants: [String]) {
+        public init(
+            id: String, variants: [String], held: [String]? = nil, heldPhrase: Bool = true,
+            source: String = "manual"
+        ) {
             self.id = id
             self.variants = variants
+            self.held = held ?? variants
+            self.heldPhrase = heldPhrase
+            self.source = source
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            variants = (try? c.decodeIfPresent([String].self, forKey: .variants)) ?? []
+            held = (try? c.decodeIfPresent([String].self, forKey: .held)) ?? variants
+            heldPhrase = (try? c.decodeIfPresent(Bool.self, forKey: .heldPhrase)) ?? true
+            source = (try? c.decodeIfPresent(String.self, forKey: .source)) ?? "manual"
         }
     }
 
@@ -232,11 +268,11 @@ public enum DictionarySync {
         return "+" + p.variants.joined(separator: "\u{1F}")
     }
 
-    /// The fingerprint a phrase has when the phone matches the snapshot.
+    /// The fingerprint a phrase has locally when nothing changed here since the
+    /// last sync: absent if the phone did not hold it, else what it held.
     static func syncedFingerprint(_ state: DictionarySyncState, _ phrase: String) -> String {
-        guard let s = state.synced[phrase] else { return "-" }
-        return "+" + s.variants.filter { representable($0, for: phrase) }.sorted()
-            .joined(separator: "\u{1F}")
+        guard let s = state.synced[phrase], s.heldPhrase else { return "-" }
+        return "+" + s.held.sorted().joined(separator: "\u{1F}")
     }
 
     // MARK: outgoing
@@ -246,25 +282,36 @@ public enum DictionarySync {
         /// phrase → fingerprint of the local state the entry was built from.
         public var sentFrom: [String: String]
         public var pendingDeletes: [String: Int64]
+        /// Phrases the user removed here that still carry variants this phone
+        /// never held: they go up live with only those, and the phone lets go
+        /// of them rather than writing them back.
+        public var released: Set<String>
         /// The empty-dictionary guard set the snapshot aside.
         public var reset: Bool
     }
 
-    /// What has to go up: one entry per phrase that is new or changed here, one
-    /// tombstone per phrase deleted here.
+    /// What has to go up: one entry per phrase that is new or changed here, and
+    /// one per phrase the user removed here.
+    ///
+    /// Every entry is built by the rule on `DictionarySyncState.Synced`: the
+    /// variants held here as they are now, plus every variant the cloud has that
+    /// the phone never held. A removed phrase is a tombstone only when the phone
+    /// held all of it; otherwise it goes up live with just the variants the
+    /// phone never held, so a deletion here cannot reach past what the user saw.
+    /// A phrase the phone never held is skipped entirely.
     ///
     /// Guard: a dictionary that is suddenly EMPTY while the snapshot remembers
-    /// `resetGuardMin` or more phrases is a lost or restored-without-it file far
-    /// more often than a deliberate wipe, and pushing it as tombstones would
-    /// empty the desktop too. Unless the user chose "Clear the dictionary"
+    /// `resetGuardMin` or more phrases held here is a lost or restored-without-it
+    /// file far more often than a deliberate wipe, and pushing it as deletions
+    /// would empty the desktop too. Unless the user chose "Clear the dictionary"
     /// (`clearedAt`), the snapshot is set aside and the merge brings the entries
     /// back.
     public static func outgoing(
         _ projection: [String: Projected], state: DictionarySyncState, now: Int64,
         newId: () -> String = { UUID().uuidString.lowercased() }
     ) -> Outgoing {
-        let reset =
-            projection.isEmpty && state.synced.count >= resetGuardMin && state.clearedAt == nil
+        let heldCount = state.synced.values.filter(\.heldPhrase).count
+        let reset = projection.isEmpty && heldCount >= resetGuardMin && state.clearedAt == nil
         var entries: [CloudDictionaryEntry] = []
         var sentFrom: [String: String] = [:]
 
@@ -273,31 +320,56 @@ public enum DictionarySync {
             let fp = fingerprint(p)
             if fp == syncedFingerprint(state, phrase) || state.parked[phrase] == fp { continue }
             let synced = state.synced[phrase]
-            // What the cloud has that the phone cannot hold stays on the entry.
-            let kept = (synced?.variants ?? []).filter {
-                !representable($0, for: phrase) && !p.variants.contains($0)
-            }
             entries.append(
                 CloudDictionaryEntry(
-                    id: synced?.id ?? newId(), phrase: phrase, variants: p.variants + kept,
+                    id: synced?.id ?? newId(), phrase: phrase,
+                    variants: merged(local: p.variants, synced: synced),
                     source: p.source, updatedAt: p.updatedAt))
             sentFrom[phrase] = fp
         }
 
         var pendingDeletes: [String: Int64] = [:]
+        var released: Set<String> = []
         if !reset {
             for phrase in state.synced.keys.sorted() where projection[phrase] == nil {
+                let synced = state.synced[phrase]!
+                guard synced.heldPhrase else { continue }
                 let at = state.pendingDeletes[phrase] ?? state.clearedAt ?? now
                 pendingDeletes[phrase] = at
-                entries.append(
-                    CloudDictionaryEntry(
-                        id: state.synced[phrase]!.id, phrase: phrase, variants: [],
-                        source: "manual", updatedAt: at, deletedAt: at))
+                let unheld = merged(local: [], synced: synced)
+                if unheld.isEmpty {
+                    entries.append(
+                        CloudDictionaryEntry(
+                            id: synced.id, phrase: phrase, variants: [], source: synced.source,
+                            updatedAt: at, deletedAt: at))
+                } else {
+                    entries.append(
+                        CloudDictionaryEntry(
+                            id: synced.id, phrase: phrase, variants: unheld, source: synced.source,
+                            updatedAt: at))
+                    released.insert(phrase)
+                }
                 sentFrom[phrase] = "-"
             }
         }
         return Outgoing(
-            entries: entries, sentFrom: sentFrom, pendingDeletes: pendingDeletes, reset: reset)
+            entries: entries, sentFrom: sentFrom, pendingDeletes: pendingDeletes,
+            released: released, reset: reset)
+    }
+
+    /// The variants to send for a phrase: what is held here now, then every
+    /// variant the cloud had that the phone never held — in the cloud's order.
+    /// The only variants that can drop out are ones the phone held and no
+    /// longer does, which is exactly what the user removed.
+    static func merged(local: [String], synced: DictionarySyncState.Synced?) -> [String] {
+        var out = local
+        if let synced {
+            let held = Set(synced.held)
+            for v in synced.variants where !held.contains(v) && !out.contains(v) {
+                out.append(v)
+            }
+        }
+        return out
     }
 
     // MARK: applying
@@ -348,6 +420,14 @@ public enum DictionarySync {
         for row in exchange.pulled {
             if outgoing.sentFrom[row.phrase] != nil { continue }
             if current(row.phrase) != syncedFingerprint(next, row.phrase) { continue }
+            // Nothing new: an echo of what is already agreed (our own push, or
+            // the overlap window). Re-applying it would bring back a phrase the
+            // phone let go of, or re-run caps that already evicted it.
+            if let known = next.synced[row.phrase], row.deletedAt == nil, known.id == row.id,
+                Set(known.variants) == Set(row.variants)
+            {
+                continue
+            }
             rows[row.phrase] = row
         }
         for row in exchange.pushed where outgoing.sentFrom[row.phrase] == current(row.phrase) {
@@ -374,25 +454,28 @@ public enum DictionarySync {
                 lex.pairs.removeAll {
                     $0.replacement == phrase && $0.count >= Lexicon.autoApplyThreshold
                 }
-            } else {
+            } else if !outgoing.released.contains(phrase) {
+                // A released phrase is one the user removed here; what is left
+                // of it in the cloud is not written back.
                 write(row, into: &lex)
             }
         }
         // Caps, as every other write to the lexicon is held to them.
         lex.evict()
 
-        // The snapshot records what the phone actually ended up holding (plus
-        // what it cannot hold), so a row the caps evicted is never mistaken for
-        // a deletion made here.
+        // The snapshot keeps the cloud's whole row, and records what the phone
+        // actually ended up holding of it — so neither a refused variant nor
+        // one the caps evicted can ever be read as a deletion made here.
         let after = project(lex)
         for (phrase, row) in rows {
-            guard row.deletedAt == nil, let held = after[phrase] else {
+            guard row.deletedAt == nil else {
                 next.synced[phrase] = nil
                 continue
             }
-            let unheld = row.variants.filter { !representable($0, for: phrase) }
+            let held = after[phrase]?.variants.filter { row.variants.contains($0) } ?? []
             next.synced[phrase] = DictionarySyncState.Synced(
-                id: row.id, variants: held.variants + unheld.filter { !held.variants.contains($0) })
+                id: row.id, variants: row.variants, held: held, heldPhrase: after[phrase] != nil,
+                source: row.source)
         }
         return (lex == lexicon ? nil : lex, next)
     }
