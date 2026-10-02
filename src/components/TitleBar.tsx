@@ -2,8 +2,32 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Check, ChevronDown, Eraser, FileAudio, History, Loader2, LogOut, Mic, Minus, Pause, Pencil, Play, Settings, Square, X } from "lucide-react";
+import {
+  AudioLines,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Eraser,
+  FileAudio,
+  Folder as FolderIcon,
+  FolderClosed,
+  History,
+  Loader2,
+  Mic,
+  Minus,
+  Pause,
+  Pencil,
+  Play,
+  Settings,
+  Square,
+  UsersRound,
+  X,
+} from "lucide-react";
 import { useStore, meetingElapsedMs, type AppMode } from "../lib/store";
+import { listLocalFolders, listenForFoldersUpdated, type Folder } from "../lib/history/folders";
+import { breadcrumbParents, type CrumbIcon, type ParentCrumb } from "../lib/library/breadcrumb";
+import { leaveRecordingTo } from "../lib/nav/navigate";
+import { CLOUD_ENABLED } from "../lib/flags";
 import type { Settings as AppSettings } from "../lib/types";
 import { log } from "../lib/log";
 import { sttApiKey } from "../lib/transcription/providers";
@@ -173,15 +197,130 @@ function TrafficLights({
 }
 
 /**
- * The loaded recording's name at the leading edge of the titlebar, doubling as
- * an inline rename affordance (hover → pencil → input; Enter/blur commits,
- * Escape cancels — the same interaction as the History card). Rename persists to
- * disk + cloud + the History window via renameHistoryEntry, then updates the
- * header immediately via renameReplay. Only offered for recordings saved in the
- * local library; an unsaved upload or a read-only org recording (loadedHistoryId
+ * The personal folder registry, kept live while the breadcrumb is on screen: a
+ * rename in the sidebar (this window) or in another window broadcasts the
+ * folders-updated event, and a cloud mirror-down lands on window focus.
+ */
+function usePersonalFolders(): Folder[] {
+  const [folders, setFolders] = useState<Folder[]>(() => listLocalFolders());
+  useEffect(() => {
+    const refresh = () => setFolders(listLocalFolders());
+    const un = listenForFoldersUpdated(refresh);
+    window.addEventListener("focus", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      un.then((fn) => fn()).catch(() => {});
+    };
+  }, []);
+  return folders;
+}
+
+/** One org's folders, fetched only when a crumb needs one of their names. The
+ *  cloud module is imported dynamically so the OSS bundle never reaches it. */
+function useOrgFolders(orgId: string | null): { id: string; name: string }[] | null {
+  const [state, setState] = useState<{ orgId: string; folders: { id: string; name: string }[] } | null>(
+    null
+  );
+  useEffect(() => {
+    if (!orgId || !CLOUD_ENABLED) return;
+    let active = true;
+    import("../lib/cloud/folders")
+      .then((m) => m.listOrgFolders(orgId))
+      .then((folders) => {
+        if (active) setState({ orgId, folders });
+      })
+      .catch((e) => log.warn("titlebar: org folders failed", { orgId, error: String(e) }));
+    return () => {
+      active = false;
+    };
+  }, [orgId]);
+  return state?.orgId === orgId ? state.folders : null;
+}
+
+/** The same icon the sidebar row for that node wears. */
+function CrumbGlyph({ icon }: Readonly<{ icon: CrumbIcon }>) {
+  const cls = "size-3.5 shrink-0";
+  switch (icon) {
+    case "folder":
+      return <FolderIcon className={cls} />;
+    case "unassigned":
+      return <FolderClosed className={cls} />;
+    case "all":
+      return <AudioLines className={cls} />;
+    case "org":
+      return <UsersRound className={cls} />;
+  }
+}
+
+function crumbLabel(crumb: ParentCrumb, t: TFn): string {
+  if (crumb.name !== null) return crumb.name;
+  return crumb.icon === "unassigned" ? t("library.unassigned") : t("library.all");
+}
+
+/**
+ * Where the open recording lives, then its name: `和運租車 › 第二次報價`. The
+ * parent crumb IS the way out — it closes the recording and opens that node of
+ * the tree (through the nav stack, so ⌘[ comes back). It replaced a loud
+ * 關閉這場錄音 button at the other end of the titlebar.
+ */
+function RecordingBreadcrumb({ t }: Readonly<{ t: TFn }>) {
+  const loadedHistoryId = useStore((s) => s.loadedHistoryId);
+  const replayReadOnly = useStore((s) => s.replayReadOnly);
+  const replayFolderId = useStore((s) => s.replayFolderId);
+  const librarySelection = useStore((s) => s.librarySelection);
+  const personalFolders = usePersonalFolders();
+  const orgFolders = useOrgFolders(
+    replayReadOnly && librarySelection.kind === "org" && librarySelection.folderId
+      ? librarySelection.id
+      : null
+  );
+  const parents = breadcrumbParents({
+    loadedHistoryId,
+    replayReadOnly,
+    replayFolderId,
+    librarySelection,
+    personalFolders,
+    orgFolders,
+  });
+
+  return (
+    <nav aria-label={t("replay.breadcrumb")} className="min-w-0">
+      <ol className="flex min-w-0 items-center gap-0.5 text-xs">
+        {parents.map((crumb) => {
+          const label = crumbLabel(crumb, t);
+          return (
+            <li key={`${crumb.icon}:${label}`} className="flex min-w-0 shrink items-center gap-0.5">
+              <button
+                type="button"
+                title={t("replay.breadcrumb.open", { name: label })}
+                onClick={() => void leaveRecordingTo(crumb.selection)}
+                className="flex min-w-0 items-center gap-1 rounded px-1.5 py-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+                <CrumbGlyph icon={crumb.icon} />
+                <span className="max-w-28 truncate">{label}</span>
+              </button>
+              <ChevronRight aria-hidden className="size-3 shrink-0 text-muted-foreground/60" />
+            </li>
+          );
+        })}
+        <li aria-current="page" className="flex min-w-0 items-center pl-1">
+          <RecordingName t={t} />
+        </li>
+      </ol>
+    </nav>
+  );
+}
+
+/**
+ * The breadcrumb's last crumb: the loaded recording's name, doubling as an
+ * inline rename affordance (hover → pencil → input; Enter/blur commits, Escape
+ * cancels — the same interaction as the History card). Rename persists to disk
+ * + cloud + the History window via renameHistoryEntry, then updates the header
+ * immediately via renameReplay. Only offered for recordings saved in the local
+ * library; an unsaved upload or a read-only org recording (loadedHistoryId
  * null) renders the name read-only.
  */
-function ReplayTitle({ t }: Readonly<{ t: TFn }>) {
+function RecordingName({ t }: Readonly<{ t: TFn }>) {
   const replayName = useStore((s) => s.replay?.name ?? "");
   const loadedHistoryId = useStore((s) => s.loadedHistoryId);
   const renameReplay = useStore((s) => s.renameReplay);
@@ -247,7 +386,9 @@ function ReplayTitle({ t }: Readonly<{ t: TFn }>) {
   return (
     <span className="group/rename flex min-w-0 items-center gap-1.5 text-xs text-foreground">
       <FileAudio className="size-3.5 shrink-0 text-muted-foreground" />
-      <span className="max-w-44 truncate">{replayName}</span>
+      <span className="max-w-48 truncate" title={replayName}>
+        {replayName}
+      </span>
       {loadedHistoryId && (
         <button
           type="button"
@@ -435,8 +576,9 @@ function RecorderCluster({
 }
 
 /**
- * The trailing action for the current tense — exactly one of: leave this mode,
- * drive the running recorder, wait out the post-stop save, or start.
+ * The trailing action for the current tense — exactly one of: drive the running
+ * recorder, wait out the post-stop save, or start. Study has none: leaving a
+ * recording is the breadcrumb's parent crumb at the leading edge.
  */
 function PrimaryAction({
   mode,
@@ -445,7 +587,6 @@ function PrimaryAction({
   finalizing,
   busy,
   hasPrepDraft,
-  onExitReplay,
   onTogglePause,
   onEnd,
   onRequestCancel,
@@ -459,7 +600,6 @@ function PrimaryAction({
   finalizing: boolean;
   busy: boolean;
   hasPrepDraft: boolean;
-  onExitReplay: () => void;
   onTogglePause: () => void;
   onEnd: () => void;
   onRequestCancel: () => void;
@@ -467,16 +607,10 @@ function PrimaryAction({
   onResetPrep: () => void;
   t: TFn;
 }>) {
-  if (mode === "study") {
-    return (
-      <Button size="sm" variant="outline" onClick={onExitReplay} className="h-8">
-        <LogOut className="size-3.5" />
-        {t("replay.exit")}
-      </Button>
-    );
-  }
-  // "library" has no exit button: the tree beside it is
-  // always on screen, so leaving is picking somewhere else (#195).
+  // Neither "study" nor "library" has an exit button. The library's tree is
+  // always on screen, so leaving is picking somewhere else (#195); a recording
+  // is left through its breadcrumb, whose parent crumb names where you land.
+  if (mode === "study") return null;
   if (meetingActive) {
     return (
       <RecorderCluster
@@ -641,7 +775,6 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const setStudyTab = useStore((s) => s.setStudyTab);
   const [elapsed, setElapsed] = useState("00:00");
   const appMode = useStore((s) => s.appMode);
-  const exitReplay = useStore((s) => s.exitReplay);
   const openLibrary = useStore((s) => s.openLibrary);
   const showReplay = useStore((s) => s.showReplay);
   const replayName = useStore((s) => s.replay?.name ?? null);
@@ -754,7 +887,7 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   // preventDefault and a silent return.
   //
   // Start mirrors the Start button's own liveness EXACTLY — including the study
-  // screen, where PrimaryAction offers "exit replay" instead. Reviewing an old
+  // screen, where PrimaryAction offers no Start at all. Reviewing an old
   // recording and hitting ⌘R would otherwise start a live meeting on top of it,
   // and the one thing a shortcut must never do is an action the screen isn't
   // offering. ⌘R is the most reflexively-pressed chord on the platform
@@ -830,9 +963,11 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
             recording in progress is state you must not miss. The study tense needs no counterpart — the
             page tabs in the center already say which tense you are in,
             and a "書房" chip in front of every meeting name only pushed the name
-            it was labelling out of view. Filing likewise has ONE home, the
-            report page's link bar; a second "還沒歸檔" here just nagged. */}
-        {studyMode && <ReplayTitle t={t} />}
+            it was labelling out of view. The breadcrumb's parent crumb names
+            where the recording lives (還沒歸檔 included) because it is the way
+            OUT, not a filing prompt — filing still has ONE home, the report
+            page's link bar. */}
+        {studyMode && <RecordingBreadcrumb t={t} />}
         {/* A loaded recording stays reachable while you look at something else.
             Navigating the tree away from it used to leave nothing on screen
             pointing back — the only route out was 離開, which discards it. */}
@@ -900,10 +1035,6 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           finalizing={isFinalizingMeeting}
           busy={toggleBusy}
           hasPrepDraft={hasPrepDraft}
-          onExitReplay={() => {
-            exitReplay();
-            setStudyTab("report");
-          }}
           onTogglePause={togglePause}
           onEnd={() => void end()}
           onRequestCancel={() => setConfirmCancel(true)}
