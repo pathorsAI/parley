@@ -217,6 +217,7 @@ const DEFAULT_SETTINGS: Settings = {
   voiceTypingShortcut: DEFAULT_VOICE_TYPING_SHORTCUT,
   voiceTypingMode: "hold",
   voiceTypingPolish: true,
+  voiceTypingPolishStyle: "proofread",
   evaluations: defaultEvalDefs(tDefault),
   evalTemplates: buildPresetEvalTemplates(tDefault),
   todoTemplates: buildPresetTodoTemplates(tDefault),

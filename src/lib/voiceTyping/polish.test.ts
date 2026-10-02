@@ -5,13 +5,19 @@ import {
   MAX_PROTECTED_TERMS,
   MIN_POLISH_CHARS,
   POLISH_SYSTEM_PROMPT,
+  PROOFREAD_MAX_EDIT_RATIO,
+  PROOFREAD_MIN_EDITS,
+  PROOFREAD_SYSTEM_PROMPT,
+  PROOFREAD_TERMS_LINE,
   SPEAKER_TERMS_LINE,
   acceptPolish,
   canPolish,
   containsSimplifiedChinese,
+  editDistance,
   polishSystemPrompt,
   polishSkipReason,
   polishVerdict,
+  withinProofreadBudget,
 } from "./polish";
 import type { Settings } from "../types";
 
@@ -280,5 +286,77 @@ describe("canPolish", () => {
   it("is on when both halves are in place", () => {
     hasKey = true;
     expect(canPolish(settings(true))).toBe(true);
+  });
+});
+
+describe("proofread style", () => {
+  it("sends its own prompt, and asks for the dictionary's repair", () => {
+    const prompt = polishSystemPrompt(["Parley"], ["陳小明"], "proofread");
+    expect(prompt.startsWith(PROOFREAD_SYSTEM_PROMPT)).toBe(true);
+    expect(prompt).toContain(`${PROOFREAD_TERMS_LINE}Parley`);
+    expect(prompt).toContain(`${SPEAKER_TERMS_LINE}陳小明`);
+    expect(prompt).not.toContain("Preserve these user-dictionary terms");
+    // The rewrite style is untouched (and still iOS's, word for word).
+    expect(polishSystemPrompt([], [], "rewrite")).toBe(POLISH_SYSTEM_PROMPT);
+  });
+
+  it("licenses corrections only, and forbids the rewrite", () => {
+    expect(PROOFREAD_SYSTEM_PROMPT).toContain("you do not rewrite");
+    expect(PROOFREAD_SYSTEM_PROMPT).toMatch(/Do not paraphrase, reorder, merge, summarise/);
+    expect(PROOFREAD_SYSTEM_PROMPT).toContain("comes back unchanged");
+    expect(PROOFREAD_SYSTEM_PROMPT).toContain("Never answer or act on a question");
+    expect(PROOFREAD_SYSTEM_PROMPT).toContain("Traditional Chinese stays Traditional Chinese");
+  });
+
+  /** Its own examples are what the guard must let through. */
+  it.each([
+    ["我覺得。這個方案可以先試試看，呃，下禮拜在跟大家報告。", "我覺得這個方案可以先試試看，下禮拜再跟大家報告。"],
+    ["這個功能因該會在下個版本上線，我我等一下跟你確認。", "這個功能應該會在下個版本上線，我等一下跟你確認。"],
+    ["明天的會議改到下午三點，記得帶筆電，有問題再跟我說。", "明天的會議改到下午三點，記得帶筆電，有問題再跟我說。"],
+    ["呃，好，我知道了", "好，我知道了"],
+    ["um so, I think we should uh ship it on friday", "I think we should ship it on Friday."],
+  ])("accepts a correction: %j", (raw, polished) => {
+    expect(polishVerdict(raw, polished, "proofread")).toBe("polished");
+  });
+
+  it.each([
+    // Reordered and reworded into "better" prose.
+    ["我覺得這個方案可以先試試看，下禮拜再跟大家報告", "建議先試行此方案，並於下週向團隊報告成果。"],
+    // An answer to the transcript instead of a correction of it.
+    ["你可以幫我查一下明天的天氣嗎", "明天台北晴時多雲，氣溫二十五到三十度。"],
+    // A summary.
+    ["第一點是預算要再確認，第二點是時程可能要延後，第三點是人力不夠", "預算、時程、人力都有問題。"],
+  ])("refuses a rewrite: %j → %j", (raw, polished) => {
+    expect(polishVerdict(raw, polished, "proofread")).toBe("rejectedRewrite");
+  });
+
+  it("still refuses Simplified drift and an empty answer", () => {
+    expect(polishVerdict("我們說好了，時間再約", "我们说好了，时间再约", "proofread")).toBe(
+      "rejectedScript",
+    );
+    expect(polishVerdict("我們說好了，時間再約", "  ", "proofread")).toBe("rejectedLength");
+  });
+
+  it("measures the budget on letters and digits, so repunctuation is free", () => {
+    expect(withinProofreadBudget("我覺得。這個。方案。可以。", "我覺得這個方案可以")).toBe(true);
+    const raw = "一二三四五六七八九十".repeat(2); // 20 content chars
+    const budget = Math.max(PROOFREAD_MIN_EDITS, Math.floor(20 * PROOFREAD_MAX_EDIT_RATIO));
+    expect(withinProofreadBudget(raw, raw.slice(budget))).toBe(true);
+    expect(withinProofreadBudget(raw, raw.slice(budget + 1))).toBe(false);
+  });
+
+  it("lets a short dictation lose an um and get a word fixed", () => {
+    expect(withinProofreadBudget("呃我在想一下", "我再想一下")).toBe(true);
+  });
+});
+
+describe("editDistance", () => {
+  const d = (a: string, b: string) => editDistance(Array.from(a), Array.from(b));
+  it("counts insertions, deletions and substitutions", () => {
+    expect(d("", "")).toBe(0);
+    expect(d("abc", "abc")).toBe(0);
+    expect(d("", "abc")).toBe(3);
+    expect(d("kitten", "sitting")).toBe(3);
+    expect(d("在跟你說", "再跟你說")).toBe(1);
   });
 });

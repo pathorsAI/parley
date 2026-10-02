@@ -235,14 +235,32 @@ describe("polish against Parley Cloud from a WebKit webview", () => {
 
   it("names the guard's reason when it refuses the answer", async () => {
     webkitFetch(async () => completion("Sure!"));
-    await expect(polishTranscriptOutcome({ raw: RAW, settings })).resolves.toEqual({
+    const rewrite = { ...settings, voiceTypingPolishStyle: "rewrite" } as Settings;
+    await expect(polishTranscriptOutcome({ raw: RAW, settings: rewrite })).resolves.toEqual({
       text: null,
       outcome: "rejectedLength",
     });
     expect(log.info).toHaveBeenCalledWith(
       "voice-typing: polish rejected, keeping raw",
-      expect.objectContaining({ outcome: "rejectedLength" }),
+      expect.objectContaining({ outcome: "rejectedLength", style: "rewrite" }),
     );
     expect(log.warn).not.toHaveBeenCalled();
+  });
+
+  /** Settings saved before the style existed proofread, and a proofread that
+   *  rewrote the sentence is refused. */
+  it("proofreads by default, and refuses an answer that rewrote the dictation", async () => {
+    const fetchSpy = webkitFetch(async () => completion("Sure! Shipping on Friday works."));
+    await expect(polishTranscriptOutcome({ raw: RAW, settings })).resolves.toEqual({
+      text: null,
+      outcome: "rejectedRewrite",
+    });
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.messages[0].content).toContain("You proofread raw voice-dictation transcripts.");
+    expect(body.temperature).toBe(0);
+    expect(log.info).toHaveBeenCalledWith(
+      "voice-typing: polish rejected, keeping raw",
+      expect.objectContaining({ outcome: "rejectedRewrite", style: "proofread" }),
+    );
   });
 });

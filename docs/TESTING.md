@@ -138,6 +138,31 @@ the overlay:
     after the press, or as `escape cancel Escape not registered` if the bare
     Esc itself was refused.
 
+## Voice typing: timing and polish, against the real relay
+
+The settle rule (`src/lib/voiceTyping/settle.ts`) and the polish gate
+(`polishSkipReason` in `src/lib/voiceTyping/polish.ts`) are unit-tested; the
+hosted relay's connect time and the model's answers are not. With the hosted
+("parley") provider, on a Mac or Windows:
+
+- **A short tap still pastes.** In toggle mode tap, say one word, and tap again
+  within a second; in hold mode, the same with a quick hold. The word is
+  pasted, even when `parley.log` shows `connected in` longer than the hold:
+  `voice-typing: settled` has `reason` `closed`, and its `connectMs` is above
+  the hold time. Nothing in the log says `ended empty`.
+- **The last words survive a release on them.** Dictate two or three sentences
+  and stop on the last syllable: every word is pasted, and the settle `reason`
+  is `closed`, never `quiet`.
+- **A one-breath sentence goes straight in.** Dictate 「我等一下就過去找你」 with
+  polish on: no "Polishing…", no trailing 。, and the `inserted` line logs
+  `polish` `singleClause`. Dictate two clauses (「好，我等一下過去」): polish runs.
+- **Proofread keeps your words.** With Polish style on Proofread, dictate a
+  sentence with an 「呃」 in it and a pause in the middle: the 「呃」 and the
+  pause's 。 are gone, and every other word is as you said it, in the same
+  order. Switch to Rewrite and the same dictation comes back as written prose,
+  as before. A rejected proofread logs `outcome` `rejectedRewrite` and pastes
+  the dictation as said.
+
 ## Voice typing and the clipboard: what only a person can check
 
 A dictation reaches the field through the clipboard and then gives the

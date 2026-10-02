@@ -276,6 +276,13 @@ export type VoiceTypingShortcut =
  *  - `toggle`: tap once to start, tap again to finish + paste (release ignored). */
 export type VoiceTypingMode = "hold" | "toggle";
 
+/** What the voice-typing polish pass may do to a dictation:
+ *  - `proofread`: fix misheard words and pause-made punctuation, drop "um"s;
+ *    the speaker's wording and order stay as said (default).
+ *  - `rewrite`: turn speech into written prose — reorder, merge, lay out
+ *    lists (iOS's polish, word for word). */
+export type VoicePolishStyle = "proofread" | "rewrite";
+
 /** Model ids for one provider: a low-latency realtime model, a stronger deep one. */
 export interface ProviderModels {
   realtime: string;
@@ -358,6 +365,8 @@ export interface Settings {
    *  setting rather than a given. Off unless the realtime lane has a usable
    *  provider, whatever this says. Default on. */
   voiceTypingPolish: boolean;
+  /** How far that pass may go (see {@link VoicePolishStyle}). */
+  voiceTypingPolishStyle: VoicePolishStyle;
   /** The active evaluation set used in meetings (the runtime copy lives in the store). */
   evaluations: EvalDef[];
   /** Library of evaluation templates (built-in + custom) you can apply. */
