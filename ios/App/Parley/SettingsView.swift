@@ -48,6 +48,7 @@ struct SettingsView: View {
     @State private var showClearClipboardConfirmation = false
     /// Pushes 常用資訊 when the keyboard's 📋 panel links to it.
     @State private var showSavedInfo = false
+    @State private var showResetZhuyinConfirmation = false
     @State private var personalFolders: [CloudFolder] = []
     @State private var orgFolders: [String: [CloudFolder]] = [:]
     @State private var showDeleteConfirmation = false
@@ -731,6 +732,28 @@ struct SettingsView: View {
                     // move says so before the tap; an alert afterwards would be
                     // the same rule delivered as a telling-off.
                     .disabled(enabled == [keyboard])
+            }
+            // Here rather than beside the personal dictionary's clear, which
+            // sits behind the account gate: the 注音 pane learns with no account
+            // and no Full Access, so its reset has to be reachable without
+            // them too. Always shown — the app cannot see whether a keyboard
+            // without Full Access learned anything, and a reset of nothing is
+            // harmless.
+            Button("Reset Zhuyin learning", role: .destructive) {
+                showResetZhuyinConfirmation = true
+            }
+            .confirmationDialog(
+                "Reset Zhuyin learning?", isPresented: $showResetZhuyinConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Reset", role: .destructive) {
+                    // Deletes the file and bumps the App Group counter, so a
+                    // keyboard holding the old memory drops it instead of
+                    // writing it back.
+                    ZhuyinMemory.requestReset()
+                }
+            } message: {
+                Text("The Bopomofo keyboard forgets every word it learned from the candidates you picked, and suggests in its original order again.")
             }
         } header: {
             sectionHeader("Keyboards")
