@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { toast } from "sonner";
 import { setEntryFolder } from "../lib/history/history";
+import { isCloudGoneError } from "../lib/cloud/sync";
 import { useStore } from "../lib/store";
 import { useI18n } from "../i18n";
 import { log } from "../lib/log";
@@ -62,7 +63,11 @@ export function useRefile(): (
         })
         .catch((e) => {
           log.error("refile: org handoff failed", { id, orgId, error: String(e) });
-          toast.error(t("history.move.failed", { error: e instanceof Error ? e.message : String(e) }));
+          toast.error(
+            isCloudGoneError(e)
+              ? t("history.move.cloudGone")
+              : t("history.move.failed", { error: e instanceof Error ? e.message : String(e) })
+          );
         });
     },
     [loadedHistoryId, setLoadedHistoryId, t]

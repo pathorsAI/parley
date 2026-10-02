@@ -17,6 +17,7 @@ import {
   deleteCloudRecording,
   deleteOrgRecording,
   downloadCloudEntry,
+  isCloudGoneError,
   listMergedHistory,
   listOrgRecordings,
   moveRecordingToOrg,
@@ -425,7 +426,11 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
         tree.reloadSummaries();
       } catch (e) {
         log.error("library: org handoff failed", { id: p.item.id, error: String(e) });
-        toast.error(t("history.move.failed", { error: errText(e) }));
+        toast.error(
+          isCloudGoneError(e)
+            ? t("history.move.cloudGone")
+            : t("history.move.failed", { error: errText(e) })
+        );
       } finally {
         setSharingId(null);
       }
