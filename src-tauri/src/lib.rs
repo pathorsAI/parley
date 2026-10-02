@@ -17,10 +17,7 @@ mod tray;
 mod usage;
 mod voice_typing;
 
-use tauri::{Emitter, Manager};
-use tauri_plugin_global_shortcut::ShortcutState;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut};
+use tauri::Manager;
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
 use capture::{MicCoordinator, MicTap};
@@ -28,41 +25,11 @@ use commands::MeetingState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let shortcut_builder = tauri_plugin_global_shortcut::Builder::new();
-    // Boot default until the frontend applies the saved selection (see
-    // hotkey::set_voice_typing_shortcut, called from the voice-typing host).
-    // The two shipping platforms deliberately take a DIFFERENT key. Alt+Space
-    // is the conventional dictation trigger on macOS, but on Windows it is the
-    // native window system menu (the Move/Size/Close popup every window has),
-    // and claiming it globally would swallow that menu for the whole session.
-    // Windows therefore boots on Ctrl+Alt+Space, which is also what the
-    // frontend defaults the saved setting to, so applying the setting
-    // re-registers the same combo rather than moving the user's shortcut out
-    // from under them. Nowhere else registers anything: voice typing has no
-    // implementation to drive there (see voice_typing.rs).
-    #[cfg(target_os = "macos")]
-    let shortcut_builder = shortcut_builder
-        .with_shortcut(Shortcut::new(Some(Modifiers::ALT), Code::Space))
-        .expect("register dictation shortcut");
-    #[cfg(target_os = "windows")]
-    let shortcut_builder = shortcut_builder
-        .with_shortcut(Shortcut::new(
-            Some(Modifiers::CONTROL | Modifiers::ALT),
-            Code::Space,
-        ))
-        .expect("register dictation shortcut");
-    let shortcut_plugin = shortcut_builder
-        .with_handler(|app, _shortcut, event| {
-            // Exactly one voice-typing trigger is ever registered (the picker
-            // unregisters everything before applying a change), so any firing
-            // shortcut is the push-to-talk key — including user-recorded combos.
-            let down = match event.state {
-                ShortcutState::Pressed => true,
-                ShortcutState::Released => false,
-            };
-            let _ = app.emit("voicetyping://ptt", serde_json::json!({ "down": down }));
-        })
-        .build();
+    // No shortcut and no plugin-wide handler here: every shortcut carries its
+    // own handler. The push-to-talk combo is registered in setup below
+    // (hotkey::register_boot_trigger), and a plugin-wide handler would fire for
+    // every other shortcut too — see hotkey::on_ptt.
+    let shortcut_plugin = tauri_plugin_global_shortcut::Builder::new().build();
 
     // Launch at login (Settings › Basic, see autostart.rs). The login item
     // starts the app with `--autostart`, which setup reads to keep the main
@@ -145,6 +112,9 @@ pub fn run() {
         .on_menu_event(|app, event| menu::on_event(app, event.id().as_ref()))
         .setup(|app| {
             app.manage(mcp::start(app.handle().clone()));
+            // The boot-default push-to-talk combo, live until the frontend
+            // applies the saved selection. A failure is logged, not fatal.
+            hotkey::register_boot_trigger(app.handle());
             // Start the global fn-key push-to-talk listener (no-op until the
             // user grants Input Monitoring).
             hotkey::init(app.handle().clone());

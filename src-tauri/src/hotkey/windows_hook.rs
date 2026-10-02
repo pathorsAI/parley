@@ -19,7 +19,7 @@
 //!   right Ctrl / right Alt keep working as modifiers in every app.
 //! - **The dispatcher thread** drains that channel and does the slow part:
 //!   logging, the `voicetyping://ptt` event (the same event the combo path in
-//!   lib.rs emits, so the dictation session cannot tell the two apart), and
+//!   hotkey.rs emits, so the dictation session cannot tell the two apart), and
 //!   the menu-mask keystroke for right Alt described at
 //!   [`mask_menu_activation`].
 //!
@@ -431,7 +431,7 @@ fn deliver(app: &AppHandle, action: Action, trigger: Trigger) {
     if down && trigger == Trigger::RightAlt {
         mask_menu_activation();
     }
-    let _ = app.emit("voicetyping://ptt", serde_json::json!({ "down": down }));
+    let _ = app.emit(super::PTT_EVENT, serde_json::json!({ "down": down }));
 }
 
 /// An unassigned virtual-key code (0xE8), the same "menu mask" key

@@ -38,8 +38,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use serde::Serialize;
-use tauri::AppHandle;
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
+use tauri::{AppHandle, Emitter};
+use tauri_plugin_global_shortcut::{
+    Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutEvent, ShortcutState,
+};
 
 /// Key transitions → push-to-talk start/stop for a held modifier. Only the
 /// Windows hook drives it, but it is compiled into every test build so its
@@ -66,10 +68,11 @@ fn alt_space() -> Shortcut {
 /// setting at startup — until then [`status`] reports [`BOOT_DEFAULT_ID`].
 static CURRENT: Mutex<Option<String>> = Mutex::new(None);
 
-/// The trigger lib.rs registers at boot, and therefore what [`status`] must
-/// report before the frontend applies the saved selection. It differs per
-/// platform because Alt+Space is the native window system menu on Windows —
-/// see the registration in lib.rs for why we don't claim it there.
+/// The trigger [`register_boot_trigger`] registers at launch, and therefore
+/// what [`status`] must report before the frontend applies the saved
+/// selection. It differs per platform because Alt+Space is the native window
+/// system menu on Windows — see [`register_boot_trigger`] for why we don't
+/// claim it there.
 #[cfg(target_os = "macos")]
 const BOOT_DEFAULT_ID: &str = "alt-space";
 #[cfg(target_os = "windows")]
@@ -80,12 +83,70 @@ const BOOT_DEFAULT_ID: &str = "combo:control+alt+Space";
 const BOOT_DEFAULT_ID: &str = "alt-space";
 
 /// Whether the active combo actually registered with the OS (a combo can fail
-/// if another app owns it). Starts true because lib.rs registers
-/// [`BOOT_DEFAULT_ID`] at boot on both shipping platforms. On a platform where
+/// if another app owns it). [`register_boot_trigger`] stores the boot
+/// registration's real result on both shipping platforms. On a platform where
 /// it registers nothing this reads optimistically until the frontend applies
 /// the saved selection — which is also the first moment a trigger could exist
 /// there at all, so nobody is misled about a live one.
 static COMBO_OK: AtomicBool = AtomicBool::new(true);
+
+/// What every push-to-talk trigger emits: the combo handler below, the macOS
+/// HID tap and the Windows keyboard hook alike, so the dictation host cannot
+/// tell them apart.
+pub(crate) const PTT_EVENT: &str = "voicetyping://ptt";
+
+/// Push-to-talk for a key-combo trigger: key down starts, key up ends.
+///
+/// Attached to the one trigger shortcut (`on_shortcut`), never installed as the
+/// plugin-wide `Builder::with_handler`. The plugin calls a plugin-wide handler
+/// for EVERY shortcut it has registered, including the ones host.ts registers
+/// from JS — the dictionary suggestion's ⌥↩ — so each of those used to start a
+/// dictation too. The plugin also runs handlers while it holds its
+/// shortcut-map lock, and registering takes that lock: never (un)register a
+/// shortcut from inside a handler.
+fn on_ptt(app: &AppHandle, _sc: &Shortcut, ev: ShortcutEvent) {
+    let down = ev.state == ShortcutState::Pressed;
+    let _ = app.emit(PTT_EVENT, serde_json::json!({ "down": down }));
+}
+
+/// Register `sc` as the push-to-talk combo. A failure — another app owns the
+/// combo — is logged (`what` names the attempt) and answered false; it is
+/// never fatal.
+fn register_trigger(app: &AppHandle, sc: Shortcut, what: &str) -> bool {
+    app.global_shortcut()
+        .on_shortcut(sc, on_ptt)
+        .map_err(|e| log::warn!("voice-typing: {what} {sc} failed: {e}"))
+        .is_ok()
+}
+
+/// Register the boot default until the frontend applies the saved selection
+/// (see [`set_voice_typing_shortcut`], called from the voice-typing host).
+///
+/// The two shipping platforms deliberately take a DIFFERENT key. Alt+Space is
+/// the conventional dictation trigger on macOS, but on Windows it is the native
+/// window system menu (the Move/Size/Close popup every window has), and
+/// claiming it globally would swallow that menu for the whole session. Windows
+/// therefore boots on Ctrl+Alt+Space, which is also what the frontend defaults
+/// the saved setting to, so applying the setting re-registers the same combo
+/// rather than moving the user's shortcut out from under them. Nowhere else
+/// registers anything: voice typing has no implementation to drive there (see
+/// voice_typing.rs).
+///
+/// Called from the app's setup rather than handed to the plugin's builder:
+/// there, a boot combo the OS refused (on Windows, one another app already
+/// owns) failed the plugin's own setup, which failed the app build and
+/// panicked at launch. Here it is a logged warning and a "not active" trigger
+/// in Settings.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub fn register_boot_trigger(app: &AppHandle) {
+    let ok =
+        parse_combo(BOOT_DEFAULT_ID).is_some_and(|sc| register_trigger(app, sc, "boot register"));
+    COMBO_OK.store(ok, Ordering::SeqCst);
+}
+
+/// Nothing to register off macOS and Windows (see the shipping variant).
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub fn register_boot_trigger(_app: &AppHandle) {}
 
 /// Parse a picker id into a plugin `Shortcut`. `alt-space` is the legacy id for
 /// Option+Space; `combo:<expr>` carries a recorded combo whose tokens follow the
@@ -159,10 +220,7 @@ pub fn set_voice_typing_shortcut(app: AppHandle, shortcut: String) -> HotkeyStat
         // A key combo drives push-to-talk; park the HID tap (matches nothing).
         imp::set_shortcut("alt-space");
         let ok = match parse_combo(&shortcut) {
-            Some(sc) => gs
-                .register(sc)
-                .map_err(|e| log::warn!("voice-typing: register {shortcut:?} failed: {e}"))
-                .is_ok(),
+            Some(sc) => register_trigger(&app, sc, "register"),
             None => {
                 log::warn!("voice-typing: unparsable shortcut {shortcut:?}");
                 false
@@ -303,15 +361,8 @@ fn reassert(app: &AppHandle) {
         // (permission granted after launch).
         imp::ensure_started(app.clone(), false);
     } else {
-        let gs = app.global_shortcut();
-        let _ = gs.unregister_all();
-        let ok = match parse_combo(&id) {
-            Some(sc) => gs
-                .register(sc)
-                .map_err(|e| log::warn!("voice-typing: wake re-register {id:?} failed: {e}"))
-                .is_ok(),
-            None => false,
-        };
+        let _ = app.global_shortcut().unregister_all();
+        let ok = parse_combo(&id).is_some_and(|sc| register_trigger(app, sc, "wake re-register"));
         COMBO_OK.store(ok, Ordering::SeqCst);
     }
 }
@@ -512,7 +563,7 @@ mod imp {
                         shortcut_id(),
                         if now { "down" } else { "up" }
                     );
-                    let _ = app.emit("voicetyping://ptt", serde_json::json!({ "down": now }));
+                    let _ = app.emit(super::PTT_EVENT, serde_json::json!({ "down": now }));
                 }
                 // Swallow the key so the OS / frontmost app doesn't also react
                 // (e.g. fn's "Press 🌐 to" emoji / dictation / input-source) —
@@ -684,4 +735,16 @@ mod imp {
         false
     }
     pub fn install_wake_observer(_app: AppHandle) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The boot trigger is registered from this id at launch; an id that no
+    /// longer parses would leave a fresh install with no trigger at all.
+    #[test]
+    fn the_boot_default_parses_to_a_combo() {
+        assert!(parse_combo(BOOT_DEFAULT_ID).is_some());
+    }
 }

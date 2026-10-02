@@ -97,6 +97,11 @@ the overlay:
   bubble catches clicks again, and the buttons still respond. Repeat on a 1×
   external display next to a Retina laptop, and over a full-screen app's
   Space.
+- **⌥↩ on a suggestion only accepts it** (`on_ptt` in
+  `src-tauri/src/hotkey.rs`). In hold mode, accept a dictionary suggestion
+  with ⌥↩ (Alt+Enter on Windows): the bubble turns into "Added · Undo" and no
+  dictation starts. The push-to-talk key still works afterwards, after a
+  shortcut change in Settings, and after sleep and wake.
 
 ## Windows: what only a Windows machine can check
 
