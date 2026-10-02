@@ -37,6 +37,13 @@ export function ReplaySpeakerTags({ segments, names, label }: Readonly<ReplaySpe
   const setSpeakerName = useStore((s) => s.setSpeakerName);
   const whoAmI = useWhoAmIHint();
   const [voiceOpen, setVoiceOpen] = useState(false);
+  // A just-saved live meeting is still having its speakers corrected from the
+  // audio in the background (history.saveLiveToHistory). A manual pass now
+  // would race that one onto the same lines, so it waits — with the reason
+  // on the button rather than a silent dead control.
+  const correcting = useStore(
+    (s) => s.replay?.id != null && s.postSaveDiarizingId === s.replay.id
+  );
 
   // Distinct speakers in first-appearance order.
   const speakers = useMemo<SpeakerEntry[]>(() => {
@@ -73,17 +80,24 @@ export function ReplaySpeakerTags({ segments, names, label }: Readonly<ReplaySpe
         </div>
       ))}
       {/* STT diarization is often wrong — cluster by the actual VOICE instead. */}
-      <Button
-        variant="outline"
-        size="sm"
-        className="ml-auto h-7 gap-1.5 px-2 text-[11px]"
-        onClick={() => setVoiceOpen(true)}
-        title={t("speakers.voiceTitle")}
+      {/* The wrapper carries the tooltip: a disabled <button> fires no pointer
+          events, so its own title would never show the reason. */}
+      <span
+        className="ml-auto"
+        title={correcting ? t("speakers.voiceBusyPostSave") : t("speakers.voiceTitle")}
       >
-        <AudioLines className="size-3" />
-        {t("speakers.voiceButton")}
-      </Button>
-      {voiceOpen && <VoiceDiarizeDialog onClose={() => setVoiceOpen(false)} />}
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-7 gap-1.5 px-2 text-[11px]"
+          onClick={() => setVoiceOpen(true)}
+          disabled={correcting}
+        >
+          <AudioLines className="size-3" />
+          {t("speakers.voiceButton")}
+        </Button>
+      </span>
+      {voiceOpen && !correcting && <VoiceDiarizeDialog onClose={() => setVoiceOpen(false)} />}
       {whoAmI.visible && (
         <OnboardingHint text={t("speakers.hintWhoAmI")} onDismiss={whoAmI.dismiss} className="basis-full" />
       )}

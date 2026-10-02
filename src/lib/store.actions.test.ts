@@ -259,6 +259,21 @@ describe("loadHistory", () => {
       .loadHistory(histEntry({ id: "hist-6", findings: [makeFinding("f1")] }), session);
     expect(useStore.getState().actionItemsStatus).toBe("idle");
   });
+
+  it("the post-save speaker-correction gate survives leaving and reopening the recording", () => {
+    // saveLiveToHistory raises it before the report opens; the background pass
+    // drops it. Nothing in between — exit, reopen, another recording — may.
+    useStore.setState({ postSaveDiarizingId: "hist-9" });
+    const session = replaySession([seg({ id: "s1", text: "hi" })], { id: "hist-9" });
+    useStore.getState().loadHistory(histEntry({ id: "hist-9" }), session);
+    expect(useStore.getState().postSaveDiarizingId).toBe("hist-9");
+    useStore.getState().exitReplay();
+    expect(useStore.getState().postSaveDiarizingId).toBe("hist-9");
+    useStore
+      .getState()
+      .loadHistory(histEntry({ id: "other" }), replaySession([seg()], { id: "other" }));
+    expect(useStore.getState().postSaveDiarizingId).toBe("hist-9");
+  });
 });
 
 describe("restoredStudyStatuses", () => {

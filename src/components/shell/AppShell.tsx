@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { useDefaultLayout } from "react-resizable-panels";
 import {
   ResizablePanelGroup,
@@ -15,7 +15,13 @@ import { useLibraryTree } from "./useLibraryTree";
 import { useI18n } from "../../i18n";
 import { useNavShortcuts } from "../../lib/nav/useNavShortcuts";
 import { useCommandScope } from "../../lib/commands/bind";
-import { useSidebarCollapsed } from "../../lib/shell/sidebar";
+import {
+  finalizingHold,
+  resetSidebarPeek,
+  shellTreeVisible,
+  useSidebarCollapsed,
+  useSidebarPeek,
+} from "../../lib/shell/sidebar";
 import { useStore, isMeetingActive, type AppMode } from "../../lib/store";
 
 const LibraryScreen = lazy(() =>
@@ -28,13 +34,21 @@ const LibraryScreen = lazy(() =>
  * because there the screen belongs to something else — the live coach owns the
  * window. ⌘B takes it because the user asked for the room back. Everything else
  * — live idle, a loaded recording, the library — keeps the tree on screen, so
- * nothing is a mode you have to exit. (Settings is not a route here: it opens as
+ * nothing is a mode you have to exit.
+ *
+ * One bridge between the two: after End, while the recording is still being
+ * written, the cockpit stays up and so does the focus — the tree returns with
+ * the report, not before it, so the window re-lays out once instead of flashing
+ * a four-column frame in between (see finalizingHold in lib/shell/sidebar.ts;
+ * ⌘B can still peek at the tree during a long save). (Settings is not a route here: it opens as
  * its own OS window, see lib/nav/settings.ts.)
  */
 export function AppShell() {
   const appMode = useStore((s) => s.appMode);
   const meetingActive = useStore((s) => isMeetingActive(s.meetingStatus));
+  const finalizing = useStore((s) => s.isFinalizingMeeting);
   const collapsed = useSidebarCollapsed();
+  const peek = useSidebarPeek();
   const tree = useLibraryTree();
 
   // Above the focused branch on purpose, both of them: the main window's keys
@@ -46,7 +60,17 @@ export function AppShell() {
   useCommandScope("main");
   useNavShortcuts();
 
-  const focused = meetingActive;
+  const shellFacts = { meetingActive, finalizing, liveRoute: appMode === "live", collapsed, peek };
+  const hold = finalizingHold(shellFacts);
+  const treeVisible = shellTreeVisible(shellFacts);
+
+  // A peek belongs to one save. Dropping it whenever no hold is in force (the
+  // report opened, the save failed, the user navigated off the cockpit) means
+  // the next End starts hidden again — and the saved ⌘B preference was never
+  // touched, so it simply takes over from here.
+  useEffect(() => {
+    if (!hold) resetSidebarPeek();
+  }, [hold]);
 
   const saved = useDefaultLayout({
     id: "parley:shell",
@@ -58,7 +82,7 @@ export function AppShell() {
   // nothing: a collapsed-to-32px tree is a target you have to aim at to dismiss,
   // and leaving the group unmounted leaves the saved split (`parley:shell`)
   // exactly as the user dragged it, so re-expanding returns the width they had.
-  if (focused || collapsed) {
+  if (!treeVisible) {
     return (
       <>
         <div className="flex min-h-0 flex-1 flex-col bg-background">
@@ -66,9 +90,11 @@ export function AppShell() {
         </div>
         {/* ⌘K outlives a collapsed tree, and matters more there: with no rows
             left to aim at, naming the place is the only way to reach it. It
-            stays absent while a meeting is focused — see below. */}
-        {!focused && <CommandPalette tree={tree} />}
-        {/* Not gated on `focused`, unlike ⌘K: a question already asked has to
+            stays absent only while a meeting is RUNNING — see below. The
+            finalizing hold keeps it: the meeting is over, and a long save must
+            not lock the user onto the cockpit. */}
+        {!meetingActive && <CommandPalette tree={tree} />}
+        {/* Not gated on the meeting, unlike ⌘K: a question already asked has to
             stay answerable, or the caller awaiting it never hears back. */}
         <FolderDeleteConfirm tree={tree} />
       </>
@@ -96,7 +122,7 @@ export function AppShell() {
         </ResizablePanel>
       </ResizablePanelGroup>
       {/* ⌘K (#332): the other way to reach a node — by name instead of by aim.
-          Deliberately absent from a FOCUSED meeting above, where the live coach
+          Deliberately absent from a RUNNING meeting above, where the live coach
           owns the window; a merely collapsed tree still gets it. */}
       <CommandPalette tree={tree} />
       <FolderDeleteConfirm tree={tree} />

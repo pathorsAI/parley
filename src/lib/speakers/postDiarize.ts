@@ -77,6 +77,21 @@ export function remapToPriorSpeakers(
   return map;
 }
 
+/** The diarized-mix lines the re-diarization works on. */
+function mixLines(segments: TranscriptSegment[]): TranscriptSegment[] {
+  return segments.filter((s) => s.source === "mix" && s.isFinal && s.text.trim());
+}
+
+/**
+ * Whether {@link rediarizeSegments} can do anything for these segments: a
+ * diarized-live (mix) meeting with at least two spoken lines. Lets the caller
+ * skip raising the "correcting speakers" gate for a pass that would return
+ * null without touching the audio (every mic-only meeting, say).
+ */
+export function qualifiesForRediarization(segments: TranscriptSegment[]): boolean {
+  return mixLines(segments).length >= 2;
+}
+
 /**
  * Re-derive speakers for a finished live meeting's segments from its recording.
  *
@@ -97,9 +112,7 @@ export async function rediarizeSegments(
   segments: TranscriptSegment[],
   audioPath: string,
 ): Promise<{ segments: TranscriptSegment[]; changed: number } | null> {
-  const mix = segments
-    .filter((s) => s.source === "mix" && s.isFinal && s.text.trim())
-    .sort((a, b) => a.startMs - b.startMs);
+  const mix = mixLines(segments).sort((a, b) => a.startMs - b.startMs);
   // One line can't drift; nothing to re-cluster.
   if (mix.length < 2) return null;
 

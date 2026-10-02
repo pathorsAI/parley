@@ -23,7 +23,7 @@ import { deleteLocalFolder, emitFoldersUpdated, listLocalFolders } from "./folde
 import { deleteCloudFolder } from "../cloud/folders";
 import { planFolderDedupe } from "../library/scope";
 import type { OrgHandoffMode } from "../library/destination";
-import { rediarizeSegments } from "../speakers/postDiarize";
+import { qualifiesForRediarization, rediarizeSegments } from "../speakers/postDiarize";
 import { translate } from "../../i18n/messages";
 import { markGettingStarted } from "../onboarding/gettingStarted";
 import type { ReplaySession } from "../replay/types";
@@ -358,24 +358,112 @@ export async function saveLiveToHistory(audioTempPath: string, durationMs: numbe
     ...snapshotAnalysis(),
     speechRateHz,
   };
-  await persist(entry, audioTempPath, /* compress */ false);
-  // With the recording now on disk, fix the provider's drifted speaker labels
-  // from the audio BEFORE the org copy is made, so a shared copy isn't stale.
-  // Best-effort: any failure keeps the provider labels.
-  await applyPostSaveDiarization(entry).catch((e) =>
-    log.warn("history: post-save re-diarization failed", { id: entry.id, error: String(e) }),
-  );
-  await applyDefaultOrgShare(entry.id, save);
-  // 會後 60 秒: a meeting's natural ending is its debrief — slide straight into
-  // the study tense (landing on the report), unless the user already started
-  // another meeting or opened a different recording in the meantime.
-  const now = useStore.getState();
-  if (!isMeetingActive(now.meetingStatus) && now.appMode === "live") {
-    now.setStudyTab("report");
-    await loadHistoryEntry(entry.id).catch((e) =>
-      log.warn("history: auto-open after stop failed", { id: entry.id, error: String(e) }),
-    );
+  try {
+    await persist(entry, audioTempPath, /* compress */ false);
+  } catch (e) {
+    // Nothing landed, so there is nothing to open or correct — just release the
+    // titlebar spinner (the caller also clears it; doing it here keeps this
+    // function honest on its own) and let the caller log the failure.
+    clearFinalizing();
+    throw e;
   }
+
+  // A per-meeting MOVE to an org drops the personal original once the copy is
+  // in, so there is no personal report to open — the copy must carry the
+  // corrected speakers, though, so that one path still finishes the whole
+  // chain before the spinner clears (as every save did before the report
+  // started opening early).
+  if (save.autoShare?.mode === "move") {
+    try {
+      await correctSpeakersThenShare(entry, save);
+    } finally {
+      clearFinalizing();
+    }
+    return;
+  }
+
+  // 會後 60 秒: a meeting's natural ending is its debrief — slide straight into
+  // the study tense (landing on the report) the moment the recording is on
+  // disk, unless the user already started another meeting or opened something
+  // else meanwhile. The speaker correction and the org copy below can take
+  // minutes on a long meeting; nothing about them needs the user to wait.
+  //
+  // The correction gate goes up BEFORE the report opens, so the study pipeline
+  // never sees an un-gated tick for this entry and never dispatches a deep pass
+  // on the provider's labels (filing still runs — it reads only the text).
+  const correcting = qualifiesForRediarization(entry.segments);
+  if (correcting) useStore.setState({ postSaveDiarizingId: entry.id });
+  try {
+    const now = useStore.getState();
+    if (!isMeetingActive(now.meetingStatus) && now.appMode === "live") {
+      now.setStudyTab("report");
+      await loadHistoryEntry(entry.id).catch((e) =>
+        log.warn("history: auto-open after stop failed", { id: entry.id, error: String(e) }),
+      );
+    }
+  } finally {
+    // The report is up (or was skipped, or failed to open): the save the user
+    // was waiting on is done, whatever the background passes do next.
+    clearFinalizing();
+  }
+
+  // Background: correct the speakers from the audio, THEN make the org copy —
+  // in that order, so a shared copy carries the corrected labels.
+  void correctSpeakersThenShare(entry, save).catch((e) =>
+    log.error("history: post-save background work failed", { id: entry.id, error: String(e) }),
+  );
+}
+
+function clearFinalizing(): void {
+  useStore.getState().setFinalizingMeeting(false);
+}
+
+/** After a live save's first write: voice re-diarization (best-effort), then
+ *  the default org share. Holds the study pipeline's deep stages for this entry
+ *  (store.postSaveDiarizingId) for exactly as long as the correction runs. */
+async function correctSpeakersThenShare(entry: HistoryEntry, save: MeetingSaveTarget): Promise<void> {
+  if (qualifiesForRediarization(entry.segments)) await correctSpeakers(entry);
+  await applyDefaultOrgShare(entry.id, save);
+}
+
+async function correctSpeakers(entry: HistoryEntry): Promise<void> {
+  useStore.setState({ postSaveDiarizingId: entry.id });
+  try {
+    await applyPostSaveDiarization(entry);
+  } catch (e) {
+    // Best-effort: any failure keeps the provider labels, and the pipeline
+    // proceeds on them the moment the gate below drops.
+    log.warn("history: post-save re-diarization failed", { id: entry.id, error: String(e) });
+  } finally {
+    // Only drop OUR gate — a newer meeting's save may already have raised its own.
+    if (useStore.getState().postSaveDiarizingId === entry.id) {
+      useStore.setState({ postSaveDiarizingId: null });
+    }
+  }
+}
+
+/**
+ * Fold re-diarized speaker numbers onto a segment list, by segment id. Only the
+ * `speaker` field moves: text the user may have edited, and every other field,
+ * stay as they are in `current`. Speaker NAMES are not touched at all — they
+ * live in a separate map keyed by source + speaker number, and the correction
+ * keeps the provider's numbering (postDiarize.remapToPriorSpeakers), so a name
+ * typed against "speaker 2" while the pass ran still belongs to speaker 2.
+ * Returns `current` itself when nothing changes. Pure + exported for testing.
+ */
+export function applyCorrectedSpeakers(
+  current: TranscriptSegment[],
+  corrected: TranscriptSegment[],
+): TranscriptSegment[] {
+  const bySegId = new Map(corrected.map((s) => [s.id, s.speaker]));
+  let changed = false;
+  const next = current.map((s) => {
+    const sp = bySegId.get(s.id);
+    if (sp === undefined || sp === s.speaker) return s;
+    changed = true;
+    return { ...s, speaker: sp };
+  });
+  return changed ? next : current;
 }
 
 /**
@@ -385,6 +473,12 @@ export async function saveLiveToHistory(audioTempPath: string, durationMs: numbe
  * that once the full recording exists, remapping the new clusters onto the
  * provider's numbering so names assigned during the meeting stay attached (see
  * postDiarize.ts). No-op for mic-only meetings and when nothing changes.
+ *
+ * Runs in the BACKGROUND, after the report has opened — so by the time it
+ * lands, the user may have renamed the recording, accepted a filing suggestion
+ * or typed speaker names. The disk write is therefore a read-modify-write of
+ * the CURRENT meta inside the per-entry write chain (only `segments` changes),
+ * and the store keeps its own speaker names.
  */
 async function applyPostSaveDiarization(entry: HistoryEntry): Promise<void> {
   const { audioPath } = await invoke<HistoryReadResult>("read_history_entry", { id: entry.id });
@@ -392,34 +486,36 @@ async function applyPostSaveDiarization(entry: HistoryEntry): Promise<void> {
   const result = await rediarizeSegments(entry.segments, audioPath);
   if (!result) return;
 
-  const updated: HistoryEntry = { ...entry, segments: result.segments };
-  await invoke("save_history_entry", {
-    id: entry.id,
-    summaryJson: JSON.stringify(buildSummary(updated)),
-    metaJson: JSON.stringify(updated),
-    audioSourcePath: null, // leave the recording untouched
-    compress: false,
+  await withEntryWrite(entry.id, async () => {
+    const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id: entry.id });
+    const updated: HistoryEntry = { ...meta, segments: applyCorrectedSpeakers(meta.segments, result.segments) };
+    await invoke("save_history_entry", {
+      id: entry.id,
+      summaryJson: JSON.stringify(buildSummary(updated)),
+      metaJson: JSON.stringify(updated),
+      audioSourcePath: null, // leave the recording untouched
+      compress: false,
+    });
   });
   await emitHistoryUpdated(entry.id);
-  pushToCloud(entry.id); // refresh the cloud copy with the corrected labels
+  pushToCloud(entry.id).catch((e) =>
+    log.warn("history: cloud push failed", { id: entry.id, error: String(e) }),
+  ); // refresh the cloud copy with the corrected labels
 
-  // The finished meeting is usually still on screen — retag those lines too.
-  // Live segment ids REPEAT across sessions ("mix-0", "mix-1", …), so an id
-  // match alone could hit a different meeting's lines. Only touch the store
-  // when it provably still shows THIS meeting: the just-ended live session
-  // (same start timestamp) or this very entry re-opened from history.
+  // The finished meeting is usually on screen as its report by now — retag
+  // those lines too. Live segment ids REPEAT across sessions ("mix-0",
+  // "mix-1", …), so an id match alone could hit a different meeting's lines.
+  // Only touch the store when it provably still shows THIS meeting: this very
+  // entry (auto-opened, or re-opened from history), or the just-ended live
+  // session if the auto-open was skipped (same start timestamp).
   const st = useStore.getState();
   const showsThisMeeting =
     st.loadedHistoryId === entry.id ||
     (st.appMode === "live" && st.loadedHistoryId === null && st.meetingStartedAt === entry.createdAt);
   if (showsThisMeeting) {
-    const bySegId = new Map(result.segments.map((s) => [s.id, s.speaker]));
-    useStore.setState({
-      segments: st.segments.map((s) => {
-        const sp = bySegId.get(s.id);
-        return sp === undefined || sp === s.speaker ? s : { ...s, speaker: sp };
-      }),
-    });
+    const segments = applyCorrectedSpeakers(st.segments, result.segments);
+    // `speakerNames` deliberately untouched — see applyCorrectedSpeakers.
+    if (segments !== st.segments) useStore.setState({ segments });
     toast.message(translate(st.settings.language, "speakers.postRefined"));
   }
   log.info("history: post-save re-diarization applied", { id: entry.id, changed: result.changed });
@@ -1138,11 +1234,13 @@ export async function loadOrgEntry(orgId: string, id: string): Promise<void> {
 // broadcast that a saved entry CHANGED, which several surfaces still listen to.
 
 /** Main-window listener: auto-save the meeting once Rust finishes encoding it,
- *  and release the titlebar "finalizing" state when the save settles — or when
- *  Rust reports the recording was discarded (so the spinner can't hang forever). */
+ *  and release the titlebar "finalizing" state. saveLiveToHistory clears it
+ *  itself the moment the report opens (its speaker correction and org share
+ *  carry on in the background); the `finally` here is the backstop for every
+ *  path that throws or returns before that — and Rust reporting the recording
+ *  was discarded clears it too, so the spinner can't hang forever. */
 export async function listenForRecordingSaved(): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
-  const clearFinalizing = () => useStore.getState().setFinalizingMeeting(false);
   const unlistenSaved = await listen<{ path: string; durationMs: number }>(RECORDING_SAVED_EVENT, (e) => {
     saveLiveToHistory(e.payload.path, e.payload.durationMs)
       .catch((err) => log.error("history: live save failed", { error: String(err) }))
