@@ -18,11 +18,22 @@
 //   node scripts/gen-zhuyin-dict.mjs
 //
 // Output format, one row per line, sorted by key:
-//   <reading>\t<candidates>     a reading *with* its tone mark
-//   ~<reading>\t<candidates>    the same reading with no tone at all
+//   <reading>\t<candidates>\t<score>     a reading *with* its tone mark
+//   ~<reading>\t<candidates>\t<score>    the same reading with no tone at all
 // where `candidates` is the characters concatenated with no separator, most
 // frequent first. Every character in the source is exactly one Unicode scalar,
 // so the reader splits on scalars rather than parsing — see `ZhuyinDictionary`.
+//
+// `score` is the log10 probability of the row's **first** character, on
+// McBopomofo's scale (`log10Probability` in `zhuyin-data.mjs`) and against the
+// same normaliser as the phrase table's third column. It is what the lattice
+// in `ZhuyinComposer.best` spends for spelling a syllable as one character, so
+// that a phrase is taken only when it is likelier than the characters that
+// would otherwise spell it. Only the first character's: the lattice's
+// character node is a syllable's top candidate, and the rest of the row is
+// the bar's, which is ordered by position. The count is the character's whole
+// corpus count, whichever reading it was read with — `phrase.occ` counts
+// characters, not readings — which is also what orders the row.
 //
 // The `~` rows are what the pane shows while a syllable is still being typed:
 // the native 注音 keyboard segments a run of toneless symbols and offers
@@ -36,7 +47,10 @@ import { writeFile } from "node:fs/promises";
 import {
   TONES,
   compare,
+  corpusNorm,
   downloadData,
+  formatScore,
+  log10Probability,
   parseOccurrences,
   provenance,
   resourcePath,
@@ -51,10 +65,13 @@ async function main() {
   const { commit, texts } = await downloadData(FILES, "zhuyin-");
   const [base, occ] = texts;
 
-  // Only the single-character rows are of any use here — v1 commits one
-  // syllable at a time.
+  // Every row for the normaliser, which has to be the phrase table's for the
+  // two tables' scores to be comparable; only the single-character rows for
+  // the ordering and the scores themselves.
+  const norm = corpusNorm(parseOccurrences(occ));
   const frequency = parseOccurrences(occ, (phrase) => [...phrase].length === 1);
   const readings = parseBase(base);
+  const scoreOf = (char) => formatScore(log10Probability(frequency.get(char) ?? 0, 1, norm));
 
   // Frequency first, then the order McBopomofo lists them in, which is their
   // editors' own rough commonness ranking — a stable tiebreak matters more than
@@ -67,7 +84,9 @@ async function main() {
         (frequency.get(b.char) ?? 0) - (frequency.get(a.char) ?? 0) ||
         a.rank - b.rank
     );
-    lines.push(`${reading}\t${entries.map((e) => e.char).join("")}`);
+    lines.push(
+      `${reading}\t${entries.map((e) => e.char).join("")}\t${scoreOf(entries[0].char)}`
+    );
   }
 
   // Toneless rows, after the toned ones so the first half of the file stays a
@@ -90,11 +109,12 @@ async function main() {
         (frequency.get(bChar) ?? 0) - (frequency.get(aChar) ?? 0) ||
         aRank - bRank
     );
-    lines.push(`~${key}\t${chars.map(([char]) => char).join("")}`);
+    lines.push(`~${key}\t${chars.map(([char]) => char).join("")}\t${scoreOf(chars[0][0])}`);
   }
 
   const header = [
-    "# 注音 single-character candidates, most frequent first.",
+    "# 注音 single-character candidates, most frequent first, then the first",
+    "#   candidate's log10 probability (what the lattice spends on the syllable).",
     "# A `~` key is the toneless lookup for that reading — every character across",
     "#   its five tones, deduped — because the first tone is written with no mark",
     "#   and so cannot also stand for \"tone not typed yet\".",

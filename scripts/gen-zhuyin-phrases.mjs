@@ -19,11 +19,16 @@
 //   node scripts/gen-zhuyin-phrases.mjs
 //
 // Output format, one row per line:
-//   <phrase>\t<syllable> <syllable> …     tone marks written, first tone bare
-// sorted by SCORE descending, ties broken by McBopomofo's own file order.
-// **The loader relies on that**: `ZhuyinPhrases` keeps each row's position and
-// offers matches in file order, which is therefore rank order, so the table
-// carries no scores of its own.
+//   <phrase>\t<syllable> <syllable> …\t<log10 probability>
+// tone marks written, first tone bare, sorted by SCORE descending, ties broken
+// by McBopomofo's own file order. **The loader relies on that order**:
+// `ZhuyinPhrases` keeps each row's position and offers matches in file order,
+// which is therefore rank order, so the bar never sorts by the third column.
+//
+// The third column is for the lattice (`ZhuyinComposer.best`), which has to
+// weigh a phrase against the characters that could spell it — a question rank
+// cannot answer, because rank only compares phrases with each other. It is the
+// same SCORE, moved onto McBopomofo's scale: see `logProbability`.
 //
 // The score is not the raw count, because the corpus is written news and this
 // keyboard types messages. Two corrections, both in `score()`:
@@ -54,9 +59,13 @@
 //     is too old for, which is exactly what prediction is for.
 
 import { writeFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
 
 import {
+  corpusNorm,
   downloadData,
+  formatScore,
+  log10Probability,
   parseOccurrences,
   provenance,
   resourcePath,
@@ -96,12 +105,49 @@ const OUT = resourcePath("zhuyin-phrases.txt");
 
 async function main() {
   const { commit, texts } = await downloadData(FILES, "zhuyin-phrases-");
-  const [mappings, occ] = texts;
+  const { rows, kept } = scoredRows(texts);
 
-  // Every row of `phrase.occ` is wanted here, single characters included: the
-  // phrase rows rank a phrase against its rivals, and the character rows are
-  // the second half of `score`. One-character *rows* are never written to the
-  // resource — that is the dictionary's job — but their counts are read.
+  const header = [
+    "# 注音 phrase candidates — the table that lets the pane predict from the",
+    "#   first symbol of each syllable: ㄋㄏ already offers 你好.",
+    "# One row per (phrase, reading) pair:",
+    String.raw`#   <phrase>\t<syllables, space separated>\t<log10 probability>.`,
+    "# Ordered by score, most likely first — the bar keeps file order; the third",
+    "#   column only weighs a phrase against the characters that would spell it.",
+    ...provenance({
+      script: "gen-zhuyin-phrases.mjs",
+      commit,
+      sources: [
+        "#   Source/Data/BPMFMappings.txt + Source/Data/phrase.occ. MIT (McBopomofo),",
+        "#   and BSD (libtabe) for the readings BPMFMappings.txt was simplified from.",
+      ],
+    }),
+  ];
+  const lines = kept.map(
+    (row) => `${row.phrase}\t${row.reading}\t${formatScore(row.logProbability)}`
+  );
+  await writeFile(OUT, `${[...header, ...lines].join("\n")}\n`, "utf8");
+
+  const bytes = Buffer.byteLength([...header, ...lines].join("\n"), "utf8");
+  const zero = kept.filter((row) => row.count === 0).length;
+  console.log(
+    `${OUT}\n  ${lines.length} rows (${
+      lines.length - zero
+    } with count >= ${MIN_OCCURRENCES}, ${zero} two-character with no count), ${
+      (bytes / 1024 / 1024).toFixed(2)
+    } MiB, of ${rows.length} candidate rows upstream`
+  );
+}
+
+/// Parse, score and filter the two upstream files, in resource order. Shared
+/// with `gen-zhuyin-associations.mjs`, whose next-phrase table has to rank
+/// phrases exactly the way this one does.
+///
+/// Every row of `phrase.occ` is wanted here, single characters included: the
+/// phrase rows rank a phrase against its rivals, and the character rows are
+/// the second half of `score`. One-character *rows* are never written to the
+/// resource — that is the dictionary's job — but their counts are read.
+export function scoredRows([mappings, occ]) {
   const frequency = parseOccurrences(occ);
   const rows = parseMappings(mappings);
   for (const row of rows) {
@@ -115,33 +161,58 @@ async function main() {
   // the output reproducible. The zero-count rows fall to the end on their own.
   kept.sort((a, b) => b.score - a.score || a.rank - b.rank);
 
-  const header = [
-    "# 注音 phrase candidates — the table that lets the pane predict from the",
-    "#   first symbol of each syllable: ㄋㄏ already offers 你好.",
-    String.raw`# One row per (phrase, reading) pair: <phrase>\t<syllables, space separated>.`,
-    "# Ordered by corpus frequency, most frequent first — the reader keeps file",
-    "#   order and has no counts of its own.",
-    ...provenance({
-      script: "gen-zhuyin-phrases.mjs",
-      commit,
-      sources: [
-        "#   Source/Data/BPMFMappings.txt + Source/Data/phrase.occ. MIT (McBopomofo),",
-        "#   and BSD (libtabe) for the readings BPMFMappings.txt was simplified from.",
-      ],
-    }),
-  ];
-  const lines = kept.map((row) => `${row.phrase}\t${row.reading}`);
-  await writeFile(OUT, `${[...header, ...lines].join("\n")}\n`, "utf8");
+  const norm = corpusNorm(frequency);
+  const pivot = characterPivot(kept, frequency);
+  for (const row of kept) row.logProbability = logProbability(row, pivot, norm);
+  return { rows, kept, frequency, norm };
+}
 
-  const bytes = Buffer.byteLength([...header, ...lines].join("\n"), "utf8");
-  const zero = kept.filter((row) => row.count === 0).length;
-  console.log(
-    `${OUT}\n  ${lines.length} rows (${
-      lines.length - zero
-    } with count >= ${MIN_OCCURRENCES}, ${zero} two-character with no count), ${
-      (bytes / 1024 / 1024).toFixed(2)
-    } MiB, of ${rows.length} candidate rows upstream`
-  );
+/// SCORE moved onto McBopomofo's log10 scale, so a phrase can be weighed
+/// against the single characters that would spell it (their scores come from
+/// `gen-zhuyin-dict.mjs`, against the same `norm`).
+///
+/// SCORE is `ln(count + 1) + characters`, where `characters` is the mean
+/// `ln(charCount + 1)` of the phrase's characters. Read backwards, that is the
+/// log of a pseudo-count, `(count + 1) * e^characters` — the phrase's own count
+/// scaled up or down by how ordinary its characters are. `pivot` is the
+/// `characters` of a typical phrase, so dividing by `e^pivot` leaves a phrase of
+/// typical characters with its own count, and moves the rest by the very amount
+/// SCORE already moved them. Then McBopomofo's `log10(2.7^(len-1) * count /
+/// norm)` (`log10Probability`).
+///
+/// Monotone in SCORE for a given length, which is the property that matters:
+/// among phrases of one length — all the lattice ever compares for one span —
+/// the highest-scoring is the first in file order, so the walk and the bar can
+/// never disagree about which phrase answers a span. A zero-count row keeps its
+/// place too: its pseudo-count is `e^(characters - pivot)`, about McBopomofo's
+/// own one half for typical characters.
+function logProbability(row, pivot, norm) {
+  const pseudo = Math.exp(row.score - pivot);
+  return log10Probability(pseudo, row.length, norm);
+}
+
+/// The median `characters` term over the rows the corpus actually counted —
+/// what a typical phrase's characters are worth. The median rather than the
+/// mean so the conversational floor and the handful of enormous counts cannot
+/// pull it.
+function characterPivot(kept, frequency) {
+  const terms = kept
+    .filter((row) => row.count > 0)
+    .map((row) => characterTerm(row.phrase, frequency))
+    .sort((a, b) => a - b);
+  return terms[Math.floor(terms.length / 2)] ?? 0;
+}
+
+/// The mean `ln(charCount + 1)` of a phrase's characters — the second half of
+/// `score`.
+function characterTerm(phrase, frequency) {
+  let total = 0;
+  let length = 0;
+  for (const character of phrase) {
+    total += Math.log((frequency.get(character) ?? 0) + 1);
+    length += 1;
+  }
+  return total / length;
 }
 
 /// A phrase listed with several readings shares one count: the corpus counted
@@ -168,11 +239,7 @@ function keep(row) {
 /// character term is what lifts a plain phrase like 我是 above a rarer compound
 /// with the same reading.
 function score(row, frequency) {
-  let characters = 0;
-  for (const character of row.phrase) {
-    characters += Math.log((frequency.get(character) ?? 0) + 1);
-  }
-  return Math.log(row.count + 1) + characters / row.length;
+  return Math.log(row.count + 1) + characterTerm(row.phrase, frequency);
 }
 
 /// `BPMFMappings.txt` is `<phrase> <syllable> <syllable> …`, one reading per
@@ -213,4 +280,6 @@ function parseRow(line) {
   return { phrase, reading: syllables.join(" "), length: characters.length };
 }
 
-await main();
+// Run only when executed, not when `gen-zhuyin-associations.mjs` imports
+// `scoredRows` from here.
+if (import.meta.url === pathToFileURL(process.argv[1]).href) await main();

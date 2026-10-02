@@ -47,9 +47,10 @@ still needs no extra data type, and the reason is worth being able to state:
 
 - The keyboard never opens a network connection. It writes a session handle into
   the App Group and opens the containing app; the app records and transcribes.
-- It does not read the document context, retain what the user types, or keep any
-  typing history — including dictation history, which only the app keeps (see
-  below). Its only writes to the text field are the finished transcript,
+- It does not read the document context or keep any typing history —
+  including dictation history, which only the app keeps (see below). The one
+  thing it retains from typing is the 注音 pane's record of picked candidates,
+  on the device only (see *注音 learning does not add a row*). Its only writes to the text field are the finished transcript,
   a space, a newline, and backspace.
 - The dictation audio and its transcript are already covered above under
   **User Content → Audio Data** and **Other User Content**: same account, same
@@ -114,3 +115,26 @@ network returns, or after sign-in. Deleting the app deletes them.
 with Apple’s `CA92.1` reason. It intentionally does not duplicate the App
 Store privacy label: the manifest reports required-reason APIs, while the
 App Privacy questionnaire reports the data practices above.
+
+## 注音 learning does not add a row
+
+Since the 注音 pane learns from the candidates the user picks (see the design
+doc's *Learning from picks*), the keyboard keeps a small record of typed
+content: for each lesson, the two words committed before a word, its 注音
+reading, the word the keyboard offered and the word the user picked instead. It
+adds no collected data type, because none of it is collected:
+
+- It is stored **on the device only**: `zhuyin-memory.json` in the App Group
+  container, so that Settings › Keyboards › Reset Zhuyin learning can clear
+  it. It is never sent anywhere — the keyboard opens no network connection.
+- It is written only with Full Access, which is what gives the keyboard the App
+  Group at all; without it the record lives in the keyboard's process and is
+  gone when the process ends.
+- It is bounded and ages out: at most 500 entries, each forgotten after a few
+  weeks unused.
+
+The section above — *The keyboard extension does not add a row* — said the
+keyboard does not retain what the user types. That is now true of everything
+but this record, and the sentence there is qualified to point here. If the
+record is ever synced or uploaded, it becomes **User Content → Other User
+Content** and this section has to go.
