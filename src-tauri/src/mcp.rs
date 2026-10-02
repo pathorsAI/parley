@@ -22,6 +22,10 @@ const MAX_PORT: u16 = 3020;
 /// Emitted after enqueuing a session command so the frontend applies it now
 /// instead of on its next (possibly suspended) poll tick.
 const SESSION_COMMANDS_EVENT: &str = "session://commands";
+/// Emitted after a dictionary tool rewrites `dictionary.json`, so every window
+/// re-reads the file now (and the main window schedules a cloud sync) instead
+/// of waiting for its next focus. Same name the frontend broadcasts itself.
+const DICTIONARY_UPDATED_EVENT: &str = "dictionary://updated";
 const PROTOCOL_VERSION: &str = "2025-06-18";
 
 /// Attached to every response that carries Parley's own analysis output
@@ -1172,10 +1176,21 @@ async fn call_tool(state: &HttpState, params: Value) -> anyhow::Result<Value> {
             required_str(&args, "id")?
         )?),
         "list_dictionary_phrases" => list_dictionary_phrases(&state.dictionary_path)?,
-        "add_dictionary_phrase" => add_dictionary_phrase(&state.dictionary_path, args)?,
-        "update_dictionary_phrase" => update_dictionary_phrase(&state.dictionary_path, args)?,
+        "add_dictionary_phrase" => {
+            let added = add_dictionary_phrase(&state.dictionary_path, args)?;
+            let _ = state.app.emit(DICTIONARY_UPDATED_EVENT, ());
+            added
+        }
+        "update_dictionary_phrase" => {
+            let updated = update_dictionary_phrase(&state.dictionary_path, args)?;
+            let _ = state.app.emit(DICTIONARY_UPDATED_EVENT, ());
+            updated
+        }
         "delete_dictionary_phrase" => {
-            delete_dictionary_phrase(&state.dictionary_path, required_str(&args, "id")?)?
+            let deleted =
+                delete_dictionary_phrase(&state.dictionary_path, required_str(&args, "id")?)?;
+            let _ = state.app.emit(DICTIONARY_UPDATED_EVENT, ());
+            deleted
         }
         "get_app_context" => {
             let s = read_session(&state.session_path);
@@ -2279,6 +2294,10 @@ fn delete_todo_template(path: &PathBuf, id: &str) -> anyhow::Result<Value> {
 // than a typed struct: anything we don't know about — the `ignored[]` array,
 // fields a newer app version added, extra keys on an individual entry — rides
 // through a read/modify/write untouched instead of being silently dropped.
+//
+// The one field these tools do maintain beyond the tool arguments is an entry's
+// `updatedAt` (epoch ms of its last content change): cloud dictionary sync is
+// last-write-wins on it, so an agent's edit must carry the time it was made.
 
 /// A dictionary document with nothing in it. Written keys match the frontend's
 /// schema so a file we create from scratch looks like one the app wrote.
@@ -2357,11 +2376,13 @@ fn add_dictionary_phrase(path: &PathBuf, args: Value) -> anyhow::Result<Value> {
     if phrase.is_empty() {
         anyhow::bail!("phrase must not be empty");
     }
+    let now = now_ms();
     let entry = json!({
         "id": new_id(),
         "phrase": phrase,
         "variants": clean_variants(input.variants.unwrap_or_default()),
-        "createdAt": now_ms(),
+        "createdAt": now,
+        "updatedAt": now,
         // Stamped so the app can tell an agent-added phrase from one the user
         // typed in Settings or accepted from a correction.
         "source": "mcp",
@@ -2406,6 +2427,7 @@ fn update_dictionary_phrase(path: &PathBuf, args: Value) -> anyhow::Result<Value
     if let Some(variants) = input.variants {
         entry["variants"] = json!(clean_variants(variants));
     }
+    entry["updatedAt"] = json!(now_ms());
     let updated = entry.clone();
     doc["entries"] = Value::Array(entries);
     write_dictionary_doc(path, &doc)?;
@@ -2533,6 +2555,7 @@ mod tests {
         .unwrap();
         assert_eq!(added["phrase"], json!("Cerana"));
         assert_eq!(added["source"], json!("mcp"));
+        assert_eq!(added["updatedAt"], added["createdAt"]);
         // Blank dropped, duplicate collapsed.
         assert_eq!(added["variants"], json!(["色瑞納"]));
 
@@ -2552,6 +2575,8 @@ mod tests {
         assert_eq!(updated["variants"], json!(["派勒"]));
         assert_eq!(updated["futureField"], json!("keep me"));
         assert_eq!(updated["createdAt"], json!(1756000000000u64));
+        // ...and stamps the change time cloud sync orders edits by.
+        assert!(updated["updatedAt"].as_u64().unwrap() > 1756000000000u64);
 
         // Deleting reports whether it actually removed something.
         let gone = delete_dictionary_phrase(&path, "e1").unwrap();
