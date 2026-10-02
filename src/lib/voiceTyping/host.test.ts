@@ -93,7 +93,7 @@ const backend = {
   session: 0,
   pasteApp: "com.apple.Notes" as string | null,
   /** What `insert_text` says about the paste: false when Rust left the text
-   *  on the clipboard (no Accessibility, UIPI, Parley itself in front). */
+   *  on the clipboard (no Accessibility, UIPI). */
   pasted: true,
   /** When set, `stop_voice_typing` waits for this before resolving. */
   stopGate: null as Promise<void> | null,
@@ -194,6 +194,9 @@ function settledReasons(): string[] {
 }
 
 let cleanup: () => void = () => {};
+/** The commands the host invoked while it booted; cleared from the mock
+ *  afterwards, so every test reads only what its own presses caused. */
+let bootCalls: unknown[][] = [];
 
 beforeEach(async () => {
   vi.useFakeTimers();
@@ -223,6 +226,8 @@ beforeEach(async () => {
   const host = await import("./host");
   cleanup = host.initVoiceTyping();
   await tick();
+  bootCalls = [...mocks.invoke.mock.calls];
+  mocks.invoke.mockClear();
 });
 
 afterEach(() => {
@@ -393,11 +398,10 @@ describe("voice-typing host", () => {
     expect(phases().filter((p) => p !== "start")).toEqual(["done"]);
   });
 
-  /** Rust decides (Accessibility, UIPI, Parley itself in front); the host
-   *  only reports it, and does not watch a field nothing was pasted into. */
+  /** Rust decides (Accessibility, UIPI); the host only reports it, and does
+   *  not watch a field nothing was pasted into. */
   it("reports an insert Rust could not paste as clipboard-only", async () => {
     backend.pasted = false;
-    backend.pasteApp = "com.pathors.parley";
     await key(true);
     await key(false);
     finish(1, "0", "貼到哪裡了");
@@ -405,7 +409,22 @@ describe("voice-typing host", () => {
     expect(inserted()).toEqual(["貼到哪裡了"]);
     expect(dones()).toEqual([{ message: "clipboard-only", text: "貼到哪裡了" }]);
     expect(calls("observe_pasted_field")).toEqual([]);
-    expect(mocks.append).toHaveBeenCalledWith("貼到哪裡了", "com.pathors.parley");
+    expect(mocks.append).toHaveBeenCalledWith("貼到哪裡了", "com.apple.Notes");
+  });
+
+  /** Regression: a paste into Parley's own Ask box was reported as
+   *  clipboard-only, so the overlay said to press ⌘V for text that was
+   *  already in the field, and a user who did got it twice. */
+  it("a dictation into one of Parley's own fields is inserted like any other", async () => {
+    backend.pasteApp = "com.pathors.parley";
+    await key(true);
+    await key(false);
+    finish(1, "0", "幫我整理待辦事項");
+    await tick();
+    expect(inserted()).toEqual(["幫我整理待辦事項"]);
+    expect(dones()).toEqual([{ message: "ok", text: "幫我整理待辦事項" }]);
+    expect(calls("observe_pasted_field")).toEqual([{ insertedText: "幫我整理待辦事項" }]);
+    expect(mocks.append).toHaveBeenCalledWith("幫我整理待辦事項", "com.pathors.parley");
   });
 
   it("watches the field a pasted dictation landed in", async () => {
@@ -416,19 +435,33 @@ describe("voice-typing host", () => {
     expect(calls("observe_pasted_field")).toEqual([{ insertedText: "看得到嗎" }]);
   });
 
-  it("toggle mode: a tap while the last dictation settles does not cut it again", async () => {
+  /** Regression: the tap was swallowed while the last dictation waited for
+   *  the recognizer's answer (1–6 s), so the next sentence was never
+   *  recorded — and the tap after it, meant as a stop, started a recording. */
+  it("toggle mode: a tap while the last dictation settles starts the next one", async () => {
     mocks.settings.voiceTypingMode = "toggle";
     await key(true);
     await key(false);
     await key(true); // stop
     await key(false);
-    await key(true); // during the settle window
+    segment(1, "0", "切換模式", true);
+    await tick(1000);
+    await key(true); // during the settle window: the next sentence
     await key(false);
-    expect(calls("start_voice_typing")).toHaveLength(1);
+    expect(calls("start_voice_typing")).toHaveLength(2);
     expect(calls("stop_voice_typing")).toHaveLength(1);
-    finish(1, "0", "切換模式");
-    await tick();
+    expect(settledReasons()).toEqual(["restart"]);
     expect(inserted()).toEqual(["切換模式"]);
+
+    // …and the tap after that stops it, as the user meant.
+    segment(2, "0", "下一句", true);
+    await key(true);
+    await key(false);
+    expect(calls("start_voice_typing")).toHaveLength(2);
+    expect(calls("stop_voice_typing")).toEqual([{ tail: true }, { tail: true }]);
+    finish(2, "0", "下一句話");
+    await tick();
+    expect(inserted()).toEqual(["切換模式", "下一句話"]);
   });
 });
 
@@ -774,8 +807,48 @@ describe("voice-typing host: Esc cancels, Undo copies", () => {
 
   it("an idle Esc does nothing", async () => {
     await escape();
-    expect(mocks.invoke.mock.calls.map((c) => c[0])).toEqual(["set_voice_typing_shortcut"]);
+    expect(mocks.invoke).not.toHaveBeenCalled();
     expect(phases()).toEqual([]);
+  });
+
+  /** Regression: Rust keeps Esc armed across a webview reload or a rebuilt
+   *  main window, and the new host's shortcut call registered it again for a
+   *  dictation it knew nothing about — Esc then did nothing in any app. */
+  it("a fresh host hands Esc back before it applies the shortcut", async () => {
+    const boot = bootCalls.map((c) => c[0]);
+    expect(boot.indexOf("set_voice_typing_cancel_armed")).toBeLessThan(
+      boot.indexOf("set_voice_typing_shortcut"),
+    );
+    expect(bootCalls.filter((c) => c[0] === "set_voice_typing_cancel_armed")).toEqual([
+      ["set_voice_typing_cancel_armed", { armed: false }],
+    ]);
+  });
+
+  /** Regression: the Esc marked the dictation cancelled the moment it
+   *  arrived, so the stop tap queued AHEAD of it (behind a slow mic open)
+   *  read "cancelled" and started a fresh recording instead of stopping. */
+  it("toggle mode: a stop tap queued before an Esc still stops, and the Esc cancels", async () => {
+    mocks.settings.voiceTypingMode = "toggle";
+    let opened = () => {};
+    backend.startGate = new Promise<void>((resolve) => {
+      opened = resolve;
+    });
+    await key(true); // the mic is still opening…
+    await key(false);
+    fire("voicetyping://ptt", { down: true }); // …the stop tap queues behind it,
+    fire("voicetyping://cancel", { fromTrigger: false }); // then the Esc
+    opened();
+    await tick();
+    expect(calls("start_voice_typing")).toHaveLength(1);
+    expect(calls("stop_voice_typing")).toEqual([{ tail: false }]);
+    expect(last(phases())).toBe("cancelled");
+    expect(phases()).not.toContain("stop");
+
+    await undo();
+    finish(1, "0", "停下來再取消");
+    await tick();
+    expect(copied()).toEqual(["停下來再取消"]);
+    expect(inserted()).toEqual([]);
   });
 
   it("the hosted cap does not override a cancel", async () => {

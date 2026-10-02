@@ -189,6 +189,15 @@ let lastAdd: AddResult | null = null;
 /** Wire up the host. Returns a cleanup function. No-op outside Tauri. */
 export function initVoiceTyping(): () => void {
   if (!isTauri()) return () => {};
+  // A fresh host has nothing to cancel, but Rust keeps the Esc arming across
+  // a page that started over without running the old cleanup: macOS reloads
+  // a terminated WebContent process, lib.rs rebuilds a destroyed main window,
+  // a dev full reload. The shortcut call below would even register Esc again
+  // for a dictation this host knows nothing about, and every Esc in every app
+  // would be swallowed until the next dictation's delivery. Hand it back now;
+  // the order against that call does not matter (either way the last word is
+  // "disarmed"), and Rust ignores the repeat on a normal launch.
+  armCancel(false);
   // Runs on macOS AND Windows. The whole dictation path — global shortcut,
   // overlay, STT, polish, clipboard, synthetic paste — is wired on both.
   //
@@ -388,11 +397,20 @@ async function onPtt(isDown: boolean) {
     }
     if (!toggleArmed) return; // key-repeat while held — ignore
     toggleArmed = false;
-    // A tap while the last dictation is still settling lands in endSession
-    // and is a no-op there — it was already ended. Unless Esc cancelled it:
-    // then it is only settling for a possible Undo, and the tap starts a
-    // fresh dictation (startSession settles the cancelled one on the way).
-    if (busy && !cancels.isCancelled(gen)) {
+    // Stop only a dictation that is still recording, as the tray does. A tap
+    // while the last one settles (the recognizer's final answer takes 1–3 s,
+    // up to the 6 s cap) starts the next dictation, as a re-press does in
+    // hold mode: startSession delivers the settling one with reason
+    // "restart", or holds it for its Undo when Esc cancelled it. Swallowing
+    // that tap left the user talking into nothing, and their next tap, meant
+    // as a stop, started a recording.
+    //
+    // `down`, not the cancel ledger: `down` only changes on this chain, while
+    // an Esc marks the ledger the moment it arrives. A stop tap queued behind
+    // a slow mic open, with the Esc after it, must still be a stop (endSession
+    // leaves the cut to the cancel queued behind it), not a fresh dictation
+    // that throws the cancelled one away.
+    if (busy && down) {
       down = false; // mirror the hold-mode release (the tray reads `down`)
       await endSession();
     } else {
@@ -540,8 +558,9 @@ async function startSession() {
 }
 
 async function endSession() {
-  // Once per dictation: a toggle-mode tap while it settles must not restart
-  // the wait (or cut a second time). A cancelled one is applyCancel's to cut,
+  // Once per dictation: every trigger clears `down` when it ends one, so a
+  // second end should not get here, but if one does it must not restart the
+  // wait (or cut a second time). A cancelled one is applyCancel's to cut,
   // with no tail and no "finalizing" spinner over its Undo.
   if (!busy || releasedAt > 0 || cancels.isCancelled(gen)) return;
   const myGen = gen;
@@ -776,14 +795,15 @@ async function deliver(d: Delivery): Promise<void> {
       });
       appBundleId = r.appBundleId;
       pasted = r.pasted;
-      // Three refusals, one outcome: on macOS the Accessibility grant is
+      // Two refusals, one outcome: on macOS the Accessibility grant is
       // missing or stale; on Windows UIPI blocks injection into a window
       // running at a higher integrity level (anything launched as
-      // administrator); and anywhere, Parley itself was frontmost, where the
-      // paste would have gone to one of Parley's own windows rather than the
-      // app being dictated into. None is recoverable from here and all leave
-      // the text on the clipboard, so the overlay stops claiming an insert
-      // and names the paste key instead. Rust's log says which it was.
+      // administrator). Neither is recoverable from here and both leave the
+      // text on the clipboard, so the overlay stops claiming an insert and
+      // names the paste key instead. Rust's log says which it was. Parley
+      // itself in front is not one of them: the overlay never activates
+      // Parley, so that is the user dictating into the Ask box, a meeting's
+      // context or Settings, and the paste lands there like anywhere else.
       if (!pasted) {
         log.warn("voice-typing: not pasted; text left on the clipboard", { appBundleId });
       }

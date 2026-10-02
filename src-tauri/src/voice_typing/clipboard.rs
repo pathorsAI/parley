@@ -13,10 +13,9 @@
 //! contents back — unless anything else has written to the clipboard since,
 //! in which case that newer content is the user's and is left alone.
 //!
-//! When no paste can be posted (macOS without Accessibility, Parley itself in
-//! front, Windows refusing the injection) the clipboard IS the delivery: the
-//! text goes there as an ordinary copy and stays, and the overlay names the
-//! paste key. Explicit copies (the overlay's Copy, Esc's Undo) are never
+//! When no paste can be posted (macOS without Accessibility, Windows refusing
+//! the injection) the clipboard IS the delivery: the text goes there as an
+//! ordinary copy and stays, and the overlay names the paste key. Explicit copies (the overlay's Copy, Esc's Undo) are never
 //! restored over.
 //!
 //! Split like ax_observe: the bookkeeping here is platform-neutral and tested
@@ -139,17 +138,13 @@ impl<S> RestoreLedger<S> {
     }
 }
 
-/// Why an insert posted no paste and left the text on the clipboard instead.
+/// Why an insert posted no paste and left the text on the clipboard instead,
+/// known before the paste (Windows' UIPI refusal only shows in the paste
+/// itself: the `paste` callback's `false`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Blocked {
     /// macOS: a synthetic ⌘V needs Accessibility, and it is not granted.
     Accessibility,
-    /// Parley itself is the frontmost app, so a paste would go to one of its
-    /// own windows rather than the app the user is dictating into. Decided
-    /// before the paste, not after: a paste followed by a restore would take
-    /// the text back off the clipboard, which is where the user is about to
-    /// be told to find it.
-    Parley,
 }
 
 /// What an insert did.
@@ -595,26 +590,28 @@ mod tests {
 
     #[test]
     fn a_blocked_insert_posts_nothing_and_leaves_a_plain_copy() {
-        for why in [Blocked::Accessibility, Blocked::Parley] {
-            let mut ledger = RestoreLedger::default();
-            let mut board = Board::holding("old");
-            // A restore pending from an earlier dictation…
-            let earlier = insert(&mut ledger, &mut board, "earlier", None, || true).unwrap();
+        let mut ledger = RestoreLedger::default();
+        let mut board = Board::holding("old");
+        // A restore pending from an earlier dictation…
+        let earlier = insert(&mut ledger, &mut board, "earlier", None, || true).unwrap();
 
-            let done = insert(&mut ledger, &mut board, "dictated", Some(why), || {
-                panic!("no paste may be posted")
-            })
-            .unwrap();
-            assert_eq!(done, not_pasted());
-            assert_eq!(board.text, "dictated");
-            assert!(!board.transient);
-            // …must not take the delivery off the clipboard.
-            assert_eq!(
-                restore_due(&mut ledger, &mut board, earlier.restore.unwrap()),
-                RestoreOutcome::Superseded
-            );
-            assert_eq!(board.text, "dictated");
-        }
+        let done = insert(
+            &mut ledger,
+            &mut board,
+            "dictated",
+            Some(Blocked::Accessibility),
+            || panic!("no paste may be posted"),
+        )
+        .unwrap();
+        assert_eq!(done, not_pasted());
+        assert_eq!(board.text, "dictated");
+        assert!(!board.transient);
+        // …must not take the delivery off the clipboard.
+        assert_eq!(
+            restore_due(&mut ledger, &mut board, earlier.restore.unwrap()),
+            RestoreOutcome::Superseded
+        );
+        assert_eq!(board.text, "dictated");
     }
 
     #[test]

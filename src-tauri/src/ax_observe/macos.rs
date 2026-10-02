@@ -213,6 +213,19 @@ pub fn observe(app: AppHandle, inserted_text: String) -> bool {
         return false;
     };
 
+    // Parley's own fields (the Ask box, a meeting's context, Settings) are
+    // pasted into like any other app's. But this command runs on the main
+    // thread, and the main thread is also where Parley answers AX queries
+    // about its own elements: asking from here would wait on itself until the
+    // AX messaging timeout, with every window frozen. Arm from a thread of its
+    // own; its first look comes a beat later, after the ⌘V has landed.
+    if u32::try_from(target_pid).is_ok_and(|pid| pid == std::process::id()) {
+        std::thread::spawn(move || {
+            arm_with_retries(app, target_pid, inserted_text, generation, false)
+        });
+        return true;
+    }
+
     // Quick path: the tree is already on (native apps, previously-nudged
     // Electron apps).
     if let Some((element, baseline)) = unsafe { snapshot(target_pid) } {
@@ -237,14 +250,26 @@ pub fn observe(app: AppHandle, inserted_text: String) -> bool {
     // it on and retry off-thread; the paste just happened, so a few hundred ms
     // of arming delay loses nothing.
     log::info!("ax_observe: no focused element yet — nudging accessibility on pid {target_pid}");
-    std::thread::spawn(move || arm_after_nudge(app, target_pid, inserted_text, generation));
+    std::thread::spawn(move || arm_with_retries(app, target_pid, inserted_text, generation, true));
     true
 }
 
-/// Switch the target's accessibility tree on, wait for a focused element to
-/// appear, and observe it. Switches the tree back off if nothing ever armed.
-fn arm_after_nudge(app: AppHandle, target_pid: i32, inserted_text: String, generation: u64) {
-    let nudged = unsafe { set_manual_accessibility(target_pid, true) };
+/// Off the main thread: wait for a focused element to appear, and observe it.
+/// With `nudge`, first switch the target's accessibility tree on (Electron),
+/// and back off if nothing ever armed.
+fn arm_with_retries(
+    app: AppHandle,
+    target_pid: i32,
+    inserted_text: String,
+    generation: u64,
+    nudge: bool,
+) {
+    let nudged = nudge && unsafe { set_manual_accessibility(target_pid, true) };
+    let how = if nudge {
+        "after nudge"
+    } else {
+        "off the main thread"
+    };
     for _ in 0..ARM_RETRY_TRIES {
         std::thread::sleep(ARM_RETRY_INTERVAL);
         if !watch::is_current(generation) {
@@ -254,7 +279,7 @@ fn arm_after_nudge(app: AppHandle, target_pid: i32, inserted_text: String, gener
             continue;
         };
         log::info!(
-            "ax_observe: armed after nudge (baseline {} chars, target pid {})",
+            "ax_observe: armed {how} (baseline {} chars, target pid {})",
             baseline.chars().count(),
             target_pid
         );
@@ -269,7 +294,7 @@ fn arm_after_nudge(app: AppHandle, target_pid: i32, inserted_text: String, gener
         poll(armed, nudged);
         return;
     }
-    log::info!("ax_observe: not armed (no focused element after nudge)");
+    log::info!("ax_observe: not armed (no focused element {how})");
     if nudged && watch::is_current(generation) {
         unsafe { set_manual_accessibility(target_pid, false) };
     }

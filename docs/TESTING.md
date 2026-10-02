@@ -116,6 +116,13 @@ the overlay:
   - A new press during those 5 s starts a fresh dictation.
   - Esc with no dictation running still reaches the app in front, and so
     does Esc right after a dictation has pasted.
+  - Esc still reaches the app in front after the main window's page started
+    over mid-dictation: in a dev build (`bun tauri dev`) in toggle mode, tap
+    to start a dictation, reload the main window (right-click › Reload), then
+    press Esc in another app.
+  - Toggle mode, two sentences back to back: tap, speak, tap to stop, and tap
+    again right away while the first one is still finishing. The first
+    sentence is pasted and the second one records; the next tap stops it.
   - If ⌥Esc, fn+Esc or another held-key Esc never fires, `parley.log` names
     the chord that did not register (`escape cancel … not registered`).
 
@@ -140,10 +147,15 @@ part of the next section:
   says `clipboard changed after the paste; left as it is`.
 - **Back to back.** Two quick dictations in a row, then ⌘V: your original
   clipboard, not the first dictation.
-- **No paste, so the clipboard is the delivery.** Revoke Accessibility (or
-  click Parley's main window so it is in front) and dictate: the overlay
-  turns warning and says to press ⌘V; the text is on the clipboard and stays
-  there.
+- **No paste, so the clipboard is the delivery.** Revoke Accessibility and
+  dictate: the overlay turns warning and says to press ⌘V; the text is on the
+  clipboard and stays there.
+- **Dictating into Parley itself.** Click into the Ask box, then a Settings
+  field, and dictate: the text appears there, the overlay says "Inserted"
+  (not "press ⌘V"), ⌘V afterwards pastes what you had copied before, and
+  Parley does not freeze for a few seconds after the paste. With nothing
+  focused in Parley's window, nothing is inserted and the overlay's Copy
+  still works.
 - **Clipboard managers do not keep it.** With Maccy, Raycast or Paste
   running, dictate: the dictation does not appear in their history.
 - **Nowhere to paste.** Dictate with no text field focused (click the
@@ -183,7 +195,8 @@ involved:
   turns into Stop voice typing; the second click ends the dictation. Where it
   goes depends on which window is in front when the dictation ends — after a
   tray click that is often not your document. When it is Parley itself, the
-  text is left on the clipboard and the overlay says to press Ctrl+V.
+  text goes into whichever of its fields has focus — or nowhere, and the
+  overlay's Copy puts it on the clipboard.
 - **Dictating with the window hidden** (`src/lib/voiceTyping/settle.ts`). The
   dictation host runs in the main window, and WebView2 throttles a hidden
   page's timers harder after five minutes. Hide Parley to the tray for longer

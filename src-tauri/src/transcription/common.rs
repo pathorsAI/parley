@@ -206,11 +206,15 @@ pub async fn connect_with_headers(
 }
 
 /// After a normal stop, how long the read half may take to answer the closing
-/// handshake before the session ends anyway. Just inside the 8 s abort
-/// backstops (`voice_typing::FLUSH_ABORT_GRACE`, `teardown_meeting`), so a
-/// provider or relay that neither closes nor acknowledges the finalize ends in
-/// a normal return — `usage://stt` billed, `stt://closed` fired — rather than
-/// in a silent abort that skips both.
+/// handshake before the session ends anyway, counted from the drain (the
+/// forward half sent its last audio). Just inside the 8 s abort backstops
+/// (`voice_typing::FLUSH_ABORT_GRACE`, `teardown_meeting`), which count from
+/// the cut instead: when the socket is connected by then, the drain follows
+/// the cut at once, and a provider or relay that neither closes nor
+/// acknowledges the finalize ends in a normal return (`stt://closed` fired)
+/// rather than an abort. A connect that finishes more than about a second
+/// after the cut pushes the drain, and this grace, past the abort; the usage
+/// report survives that (capture.rs, `UsageReport`), the close does not.
 pub const DRAIN_READ_GRACE: Duration = Duration::from_secs(7);
 
 /// Drive a realtime session's two halves to completion and classify the

@@ -33,11 +33,14 @@ use self::clipboard::{Blocked, SystemPasteboard};
 
 /// Grace for the post-release final flush, counted from the cut, before a
 /// lingering session task is force-aborted (mirrors `stop_meeting`'s backstop).
-/// It only cuts genuine zombies: the host stops waiting CLOSE_WAIT_MAX_MS
-/// (6 s) after the release, and a healthy session that is merely never told
-/// the stream is over ends itself first, DRAIN_READ_GRACE (7 s) after its
-/// input drains — which, unlike this abort, still bills the audio and fires
-/// `stt://closed`.
+/// The host stops waiting CLOSE_WAIT_MAX_MS (6 s) after the release, so by
+/// then nothing is waiting on the task. A session that is merely never told
+/// the stream is over ends itself DRAIN_READ_GRACE (7 s) after its input
+/// drains — but the drain cannot come before the socket has connected, so
+/// that ending beats this abort only when the connect finished within about
+/// a second of the cut. A short tap over a slow relay connect is aborted
+/// instead: its usage is still reported (capture.rs, `UsageReport`), and its
+/// `stt://closed` never comes, which the host's own cap already covers.
 const FLUSH_ABORT_GRACE: Duration = Duration::from_secs(8);
 
 /// Audio kept after key-up before the hard cut. People let go during the last
@@ -419,11 +422,12 @@ pub fn write_voice_history(app: AppHandle, content: String) -> Result<(), String
 /// so it cannot stop the new one.
 ///
 /// Backstop: a provider/relay that never ends the stream would leave the
-/// session task parked on its read half. DRAIN_READ_GRACE ends a healthy one
-/// first; for anything else mirror `stop_meeting`'s direct-cancel safety net
-/// and abort the task once the flush window has long passed. Guarded by the
-/// session id so a backstop from THIS session can never abort a newer one
-/// started during the grace.
+/// session task parked on its read half. DRAIN_READ_GRACE ends one that
+/// connected promptly first (see FLUSH_ABORT_GRACE for when it does not); for
+/// anything else mirror `stop_meeting`'s direct-cancel safety net and abort
+/// the task once the flush window has long passed. Guarded by the session id
+/// so a backstop from THIS session can never abort a newer one started during
+/// the grace.
 ///
 /// `async` for the same reason as [`start_voice_typing`], and the capture stop
 /// runs on the blocking pool: it joins the capture threads with a bounded
@@ -476,8 +480,7 @@ pub struct PasteResult {
     /// False when no paste chord was posted and the text was left on the
     /// clipboard for the user to paste: on macOS because Accessibility isn't
     /// granted, on Windows because UIPI refused the injection (the target
-    /// window belongs to an elevated process), and anywhere when Parley
-    /// itself was frontmost.
+    /// window belongs to an elevated process).
     pasted: bool,
     /// Identifier of the app that was frontmost at paste time, sampled BEFORE
     /// the paste chord so it names the app that actually received the text.
@@ -499,9 +502,13 @@ pub struct PasteResult {
 /// about to observe.
 ///
 /// Posts nothing, and leaves the text on the clipboard to paste by hand, when
-/// macOS has not granted Accessibility, when Windows refuses the injection,
-/// or when Parley itself is in front, where the paste would go to one of
-/// Parley's own windows rather than the app the user is dictating into.
+/// macOS has not granted Accessibility or Windows refuses the injection.
+///
+/// Parley itself in front is pasted into like any other app. The overlay
+/// never activates Parley, so that is the user dictating into one of its own
+/// fields (the Ask box, a meeting's context, Settings), and the paste lands
+/// there. Holding it back on the clipboard told them to paste by hand a text
+/// that was already in the field — doing so inserted it twice.
 #[tauri::command]
 pub fn insert_text(
     app: AppHandle,
@@ -512,13 +519,7 @@ pub fn insert_text(
     // paste that opens a sheet, an app that activates on input), so reading
     // it afterward could name the wrong app.
     let app_bundle_id = imp::frontmost_bundle_id();
-    let blocked = if parley_is_frontmost() {
-        Some(Blocked::Parley)
-    } else if !imp::accessibility_trusted(false) {
-        Some(Blocked::Accessibility)
-    } else {
-        None
-    };
+    let blocked = (!imp::accessibility_trusted(false)).then_some(Blocked::Accessibility);
     let done = clipboard::insert(
         &mut state.lock(),
         &mut SystemPasteboard,
@@ -533,14 +534,6 @@ pub fn insert_text(
         pasted: done.pasted,
         app_bundle_id,
     })
-}
-
-/// Whether the frontmost app is this process. By process id rather than
-/// bundle id, which an unbundled dev build does not have.
-fn parley_is_frontmost() -> bool {
-    imp::frontmost_pid()
-        .and_then(|pid| u32::try_from(pid).ok())
-        .is_some_and(|pid| pid == std::process::id())
 }
 
 /// Whether the app is trusted for Accessibility (needed for auto-paste).
@@ -1644,9 +1637,6 @@ mod imp {
         false
     }
     pub fn frontmost_bundle_id() -> Option<String> {
-        None
-    }
-    pub fn frontmost_pid() -> Option<i32> {
         None
     }
     pub fn accessibility_trusted(_prompt: bool) -> bool {

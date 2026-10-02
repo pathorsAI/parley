@@ -16,7 +16,7 @@
 //! and joins the threads with a bounded grace so a stuck CoreAudio teardown
 //! can't hang the stop command itself.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -258,19 +258,21 @@ pub fn spawn_capture<S: AudioSource>(
 pub type RecorderBuf = Arc<Mutex<Option<Vec<i16>>>>;
 
 /// The sample counter interposed between capture and the STT adapter: forwards
-/// every chunk untouched, tees into the recording buffer, and yields the total
-/// sample count once the input closes so the caller can bill the audio actually
-/// streamed. See [`run_metered_session`] for what `recorder` / `cutoff` /
-/// `paused` mean; split out as a free async fn so the cutoff policy below is
-/// testable without an `AppHandle`.
+/// every chunk untouched, tees into the recording buffer, and counts the
+/// samples it forwards into `streamed` as it goes — live, so the session's
+/// [`UsageReport`] can bill what was streamed even when the session task is
+/// aborted before this returns. Returns the total once the input closes. See
+/// [`run_metered_session`] for what `recorder` / `cutoff` / `paused` mean;
+/// split out as a free async fn so the cutoff policy below is testable without
+/// an `AppHandle`.
 async fn meter_chunks(
     mut rx: UnboundedReceiver<Vec<i16>>,
     count_tx: UnboundedSender<Vec<i16>>,
     recorder: Option<RecorderBuf>,
     cutoff: Option<Arc<AtomicBool>>,
     paused: Option<Arc<AtomicBool>>,
+    streamed: Arc<AtomicU64>,
 ) -> u64 {
-    let mut samples: u64 = 0;
     // Chunks still queued when the cutoff fired. `None` until then; `Some(n)`
     // means "forward n more, they predate the release", and `Some(0)` ends it.
     let mut backlog: Option<usize> = None;
@@ -291,7 +293,7 @@ async fn meter_chunks(
         if paused.as_ref().is_some_and(|p| p.load(Ordering::SeqCst)) {
             continue;
         }
-        samples += chunk.len() as u64;
+        streamed.fetch_add(chunk.len() as u64, Ordering::SeqCst);
         // Tee into the recording buffer (kept while the meeting is armed).
         if let Some(rec) = &recorder {
             if let Some(buf) = rec.lock().unwrap().as_mut() {
@@ -310,7 +312,43 @@ async fn meter_chunks(
             None => {}
         }
     }
-    samples
+    streamed.load(Ordering::SeqCst)
+}
+
+/// Sends a session's `usage://stt` exactly once, however the session ends:
+/// from [`UsageReport::send`] on the normal path, or from `Drop` when the
+/// session task is aborted first. Both abort backstops (`stop_voice_typing`'s
+/// FLUSH_ABORT_GRACE, `teardown_meeting`'s) count from the cut, while a
+/// session's own DRAIN_READ_GRACE counts from the drain, which cannot come
+/// before its socket has connected: a short dictation over a slow relay
+/// connect that never answers the finalize is aborted before it ends itself,
+/// and used to take its usage line with it. `stt://closed` stays off the
+/// abort path on purpose (see [`run_metered_session`]).
+struct UsageReport<F: FnOnce(u64)> {
+    streamed: Arc<AtomicU64>,
+    report: Option<F>,
+}
+
+impl<F: FnOnce(u64)> UsageReport<F> {
+    fn new(streamed: Arc<AtomicU64>, report: F) -> Self {
+        Self {
+            streamed,
+            report: Some(report),
+        }
+    }
+
+    /// Report the samples streamed so far; a no-op after the first call.
+    fn send(&mut self) {
+        if let Some(report) = self.report.take() {
+            report(self.streamed.load(Ordering::SeqCst));
+        }
+    }
+}
+
+impl<F: FnOnce(u64)> Drop for UsageReport<F> {
+    fn drop(&mut self) {
+        self.send();
+    }
 }
 
 /// Run a transcription session over `rx`, counting the audio streamed so the
@@ -365,11 +403,28 @@ pub fn run_metered_session(
     let app = app.clone();
     tauri::async_runtime::spawn(transcription::common::SESSION.scope(session, async move {
         // Interpose a sample counter between capture and the STT adapter: it
-        // forwards every chunk untouched, then yields the total once the input
-        // closes so we can bill the audio duration actually streamed.
+        // forwards every chunk untouched and counts it, so we can bill the
+        // audio duration actually streamed — also when this task is aborted
+        // (the report goes out as it is dropped; see UsageReport).
+        let streamed = Arc::new(AtomicU64::new(0));
+        let mut usage = UsageReport::new(streamed.clone(), {
+            let app = app.clone();
+            move |samples: u64| {
+                let seconds = samples as f64 / crate::audio::TARGET_SAMPLE_RATE as f64;
+                let _ = app.emit(
+                    "usage://stt",
+                    serde_json::json!({
+                        "provider": provider.id(),
+                        "source": label,
+                        "seconds": seconds,
+                    }),
+                );
+            }
+        });
         let (count_tx, count_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
-        let counter =
-            tauri::async_runtime::spawn(meter_chunks(rx, count_tx, recorder, cutoff, paused));
+        let counter = tauri::async_runtime::spawn(meter_chunks(
+            rx, count_tx, recorder, cutoff, paused, streamed,
+        ));
 
         // Hosted mode and BYOK fail for different reasons and need different
         // guidance, so classify against the mode (captured before `config` is
@@ -423,16 +478,9 @@ pub fn run_metered_session(
             }
         }
 
-        let samples = counter.await.unwrap_or(0);
-        let seconds = samples as f64 / crate::audio::TARGET_SAMPLE_RATE as f64;
-        let _ = app.emit(
-            "usage://stt",
-            serde_json::json!({
-                "provider": provider.id(),
-                "source": label,
-                "seconds": seconds,
-            }),
-        );
+        // The count is final once the meter has returned.
+        let _ = counter.await;
+        usage.send();
         // The session is over and every token it will ever produce has been
         // emitted: the provider answered the closing finalize (Soniox's
         // `<fin>`), closed the socket, or failed — or, after a normal stop,
@@ -440,7 +488,8 @@ pub fn run_metered_session(
         // voice-typing host delivers on this signal; meetings have their own
         // teardown and ignore it. Deliberately NOT reached when the task is
         // aborted (a superseded session must never finalize its successor's
-        // overlay), so the host still caps its own wait.
+        // overlay), so the host still caps its own wait — unlike the usage
+        // report above, which `usage` still sends as the task is dropped.
         let _ = app.emit(
             "stt://closed",
             serde_json::json!({ "source": label, "session": session }),
@@ -551,9 +600,9 @@ mod coordinator_tests {
 
 #[cfg(test)]
 mod meter_tests {
-    use super::meter_chunks;
-    use std::sync::atomic::AtomicBool;
-    use std::sync::Arc;
+    use super::{meter_chunks, UsageReport};
+    use std::sync::atomic::{AtomicBool, AtomicU64};
+    use std::sync::{Arc, Mutex};
 
     /// Feed `chunks` (one i16 each, so a chunk's value identifies it), with the
     /// cutoff already armed as `cutoff` says, and collect what reaches the STT
@@ -566,7 +615,7 @@ mod meter_tests {
             tx.send(vec![*c]).unwrap();
         }
         drop(tx); // capture ended: the meter runs to the end of the queue
-        let samples = meter_chunks(rx, out_tx, None, cutoff, None).await;
+        let samples = meter_chunks(rx, out_tx, None, cutoff, None, Arc::default()).await;
         let mut got = Vec::new();
         while let Ok(chunk) = out_rx.try_recv() {
             got.push(chunk[0]);
@@ -603,7 +652,7 @@ mod meter_tests {
         tx.send(vec![1]).unwrap();
         tx.send(vec![2]).unwrap();
         let cutoff = Arc::new(AtomicBool::new(true)); // key released, 2 chunks queued
-        let samples = meter_chunks(rx, out_tx, None, Some(cutoff), None).await;
+        let samples = meter_chunks(rx, out_tx, None, Some(cutoff), None, Arc::default()).await;
         // It returned rather than parking on a still-open capture side, and the
         // input is closed — post-release audio the mic emits while its thread
         // winds down has nowhere to go.
@@ -624,8 +673,49 @@ mod meter_tests {
         tx.send(vec![1]).unwrap();
         tx.send(vec![2]).unwrap();
         drop(tx);
-        let samples = meter_chunks(rx, out_tx, None, None, Some(paused)).await;
+        let samples = meter_chunks(rx, out_tx, None, None, Some(paused), Arc::default()).await;
         assert!(out_rx.try_recv().is_err());
         assert_eq!(samples, 0);
+    }
+
+    #[test]
+    fn the_usage_report_goes_out_once() {
+        let reported = Arc::new(Mutex::new(Vec::new()));
+        let sink = reported.clone();
+        let mut usage = UsageReport::new(Arc::new(AtomicU64::new(480)), move |n| {
+            sink.lock().unwrap().push(n)
+        });
+        usage.send();
+        usage.send();
+        drop(usage);
+        assert_eq!(*reported.lock().unwrap(), vec![480]);
+    }
+
+    /// The regression: an abort backstop can fire before the session ends
+    /// itself (a slow relay connect pushes its drain grace past the abort),
+    /// and the aborted task used to take its usage line with it. What the
+    /// meter streamed is still reported, once, as the task drops.
+    #[tokio::test]
+    async fn an_aborted_session_still_reports_what_it_streamed() {
+        let streamed = Arc::new(AtomicU64::new(0));
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+        let (out_tx, _out_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+        tx.send(vec![0; 160]).unwrap();
+        tx.send(vec![0; 160]).unwrap();
+        drop(tx);
+        meter_chunks(rx, out_tx, None, None, None, streamed.clone()).await;
+
+        let reported = Arc::new(Mutex::new(Vec::new()));
+        let sink = reported.clone();
+        let mut usage = UsageReport::new(streamed, move |n| sink.lock().unwrap().push(n));
+        let session = tokio::spawn(async move {
+            // A read half that never answers the finalize.
+            std::future::pending::<()>().await;
+            usage.send();
+        });
+        tokio::task::yield_now().await;
+        session.abort();
+        assert!(session.await.unwrap_err().is_cancelled());
+        assert_eq!(*reported.lock().unwrap(), vec![320]);
     }
 }

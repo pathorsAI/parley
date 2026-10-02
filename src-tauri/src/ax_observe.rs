@@ -37,10 +37,10 @@ use self::windows as imp;
 
 /// Start watching the field voice typing just pasted `inserted_text` into.
 ///
-/// Returns whether an observation was (or, on Windows and for a
-/// not-yet-accessible Electron app on macOS, is being) armed: `false` when the
-/// platform accessibility layer is unavailable (macOS: Accessibility not
-/// granted) or there is no app to watch. Returning `true` promises only that
+/// Returns whether an observation was (or, on Windows, and on macOS for a
+/// not-yet-accessible Electron app or one of Parley's own fields, is being)
+/// armed: `false` when the platform accessibility layer is unavailable
+/// (macOS: Accessibility not granted) or there is no app to watch. Returning `true` promises only that
 /// we are watching — most observations legitimately end with no event,
 /// because most dictations are not corrected, and a field that turns out to be
 /// unreadable ends one quietly.
