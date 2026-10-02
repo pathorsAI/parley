@@ -63,7 +63,7 @@ describe("SessionTranscript", () => {
     t.reset(2);
     release();
     expect(await inFlight).toBeNull();
-    expect(await t.report(identity)).toEqual({ text: "", session: 2 });
+    expect(await t.report(identity)).toEqual({ text: "", session: 2, sttText: "" });
   });
 
   it("orders committed runs by id and appends the tail, converted", async () => {
@@ -98,6 +98,21 @@ describe("SessionTranscript", () => {
     t.reset(1);
     t.accept(final("voice-typing-0", "好的。", 1));
     expect(await text(t)).toBe("好的");
+  });
+
+  /** Softening can take a dictation one unit under polish's length gate (a
+   *  bare phrase's 。, the space after a full-width mark); the gate reads the
+   *  text as the recognizer gave it. */
+  it("reports the unsoftened text for the polish gate", async () => {
+    const t = new SessionTranscript();
+    t.reset(1);
+    t.accept(final("voice-typing-0", "好的。", 1));
+    t.accept(final("voice-typing-1", " 我知道。", 1));
+    expect(await t.report(identity)).toEqual({
+      text: "好的，我知道。",
+      session: 1,
+      sttText: "好的。 我知道。",
+    });
   });
 
   /** The host's settle rule waits while a tentative run is pending: words the
@@ -139,7 +154,7 @@ describe("SessionTranscript", () => {
     next.reset(2);
     next.accept(final("voice-typing-0", "下一句", 2));
     release();
-    expect(await inFlight).toEqual({ text: "上一句", session: 1 });
+    expect(await inFlight).toEqual({ text: "上一句", session: 1, sttText: "上一句" });
     expect(await text(next)).toBe("下一句");
   });
 

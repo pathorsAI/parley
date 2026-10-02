@@ -136,11 +136,32 @@ function aiErrorMeta(err: unknown): Record<string, unknown> {
   // which one it was is the whole diagnosis. Only for errors that are NOT the
   // SDK's own: a JSONParseError or TypeValidationError message embeds the
   // model's output, and a RetryError's quotes the provider's reply, and none of
-  // that may reach a release log (see log.ts).
-  if (inner instanceof Error && !AISDKError.isInstance(inner) && inner.message.trim()) {
-    out.message = inner.message.replace(/\s+/g, " ").trim().slice(0, 160);
+  // that may reach a release log (see log.ts). Not every transport message is
+  // content-free either: Chromium refuses a URL with credentials in it and
+  // quotes the whole URL, password included, so those go before the cap does
+  // (capping first could cut the URL inside its password and hide the `@`).
+  if (inner instanceof Error && !AISDKError.isInstance(inner)) {
+    const message = stripUrlCredentials(inner.message).replace(/\s+/g, " ").trim();
+    if (message) out.message = message.slice(0, 160);
   }
   return out;
+}
+
+/**
+ * `https://alice:s3cr3t@gw.example.com/v1` → `https://gw.example.com/v1`, for
+ * every URL in `text`. A custom provider's base URL may carry basic-auth
+ * credentials, and WebView2's fetch TypeError for it reads "Request cannot be
+ * constructed from a URL that includes credentials: <the URL>". The host stays:
+ * which server refused is the diagnosis. The authority runs to the first `/`,
+ * `?`, `#` or whitespace, and its LAST `@` ends the userinfo (as in the URL
+ * parser), so an unencoded `@` in a password goes too. One pass, no
+ * backtracking: the text is an error message that can quote user input.
+ */
+export function stripUrlCredentials(text: string): string {
+  return text.replace(/:\/\/[^\s/?#]*/g, (authority) => {
+    const at = authority.lastIndexOf("@");
+    return at < 0 ? authority : `://${authority.slice(at + 1)}`;
+  });
 }
 
 /** The raw model output from a failed structured call (the provider's

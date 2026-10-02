@@ -33,10 +33,13 @@
 export const SOFT_SENTENCE_CHARS = 32;
 
 /** A whole dictation this short with no other punctuation is a phrase (a reply, a
- *  name, a search term), and its trailing 。 is dropped. Kept below polish.ts's
- *  MIN_POLISH_CHARS (8) on purpose: polish never sees a phrase this short, so
- *  this pass is the only one that will. Not imported, to keep the AI SDK out of
- *  the overlay bundle. Set to 0 to keep the 。 on every phrase. */
+ *  name, a search term), and its trailing 。 is dropped. Content characters, so a
+ *  7-character phrase with its 。 is 8 UTF-16 units: right AT polish.ts's
+ *  MIN_POLISH_CHARS (8), not below it. Dropping that 。 (or the space after a
+ *  full-width mark) must not also switch polish off, so the host measures the
+ *  gate on the text before this pass (`TranscriptText.sttText`), and polish runs
+ *  on exactly what it ran on before. Not imported, to keep the AI SDK out of the
+ *  overlay bundle. Set to 0 to keep the 。 on every phrase. */
 export const BARE_PHRASE_MAX_CHARS = 7;
 
 const HAN = /\p{Script=Han}/u;

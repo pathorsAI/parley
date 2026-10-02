@@ -27,6 +27,12 @@ export type SessionEvent =
 export interface TranscriptText {
   text: string;
   session: number;
+  /** The same text before softenPausePeriods. Only for polish's length gate
+   *  (`shouldPolish`): softening drops a bare phrase's trailing 。 and the
+   *  space after a full-width mark, which can take an 8-unit dictation under
+   *  MIN_POLISH_CHARS, and polish must run on what was said, not on what the
+   *  floor under it tidied away. Never shown, pasted or saved. */
+  sttText: string;
 }
 
 /** Converts one raw run for display (Simplified → Traditional, dictionary). */
@@ -117,7 +123,8 @@ export class SessionTranscript {
     // meetings and replay, which keep the STT's punctuation as it came. The
     // host and the overlay both report through here, so what the overlay shows
     // and what the host copies, polishes, pastes and saves stay the same text.
-    return { text: softenPausePeriods((finals + interim).trim()), session };
+    const joined = (finals + interim).trim();
+    return { text: softenPausePeriods(joined), session, sttText: joined };
   }
 }
 

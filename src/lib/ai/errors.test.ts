@@ -6,7 +6,7 @@ vi.mock("../log", () => ({
 }));
 
 import { log } from "../log";
-import { logAiError } from "./errors";
+import { logAiError, stripUrlCredentials } from "./errors";
 
 /** The fields of the one WARN line `logAiError` wrote. */
 function warned(): Record<string, unknown> {
@@ -34,12 +34,50 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+describe("stripUrlCredentials", () => {
+  it("keeps the scheme, host and path, and drops the userinfo", () => {
+    expect(stripUrlCredentials("at https://alice:s3cr3t@gw.example.test:8443/v1?x=1 now")).toBe(
+      "at https://gw.example.test:8443/v1?x=1 now",
+    );
+    expect(stripUrlCredentials("http://token@localhost:8000")).toBe("http://localhost:8000");
+  });
+
+  /** The URL parser ends the userinfo at the authority's last `@`. */
+  it("drops a password with an unencoded @ whole", () => {
+    expect(stripUrlCredentials("https://alice:p@ss@gw.example.test/v1")).toBe(
+      "https://gw.example.test/v1",
+    );
+  });
+
+  it("strips every URL, and leaves an @ outside the authority alone", () => {
+    expect(
+      stripUrlCredentials("a://u:p@one.test/x@y and b://two.test/me@there, mail me@example.test"),
+    ).toBe("a://one.test/x@y and b://two.test/me@there, mail me@example.test");
+  });
+});
+
 describe("logAiError", () => {
   /** WebKit's refused CORS preflight. The name alone ("TypeError") is what the
    *  field log used to say, and it says nothing. */
   it("keeps the message of a transport failure", () => {
     logAiError("scope", { rawChars: 12 }, new TypeError("Load failed"));
     expect(warned()).toMatchObject({ rawChars: 12, error: "TypeError", message: "Load failed" });
+  });
+
+  /** WebView2 refuses a custom base URL with basic-auth credentials in it, and
+   *  its TypeError quotes the URL whole. The password must not reach the log;
+   *  the host is what explains the failure. */
+  it("strips credentials from a URL in the message, before capping it", () => {
+    logAiError(
+      "scope",
+      {},
+      new TypeError(
+        "Failed to execute 'fetch' on 'Window': Request cannot be constructed from a URL that includes credentials: https://alice:s3cr3t@gw.example.test/v1/chat/completions",
+      ),
+    );
+    expect(everythingLogged()).not.toContain("s3cr3t");
+    expect(everythingLogged()).not.toContain("alice");
+    expect(warned().message).toContain("https://gw.example.test/v1/chat/comp");
   });
 
   it("collapses whitespace and caps a long message", () => {

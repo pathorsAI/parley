@@ -256,10 +256,14 @@ export async function polishTranscriptOutcome(opts: {
   /** The speaker's own name and company (`profileTerms`). */
   speakerTerms?: string[];
   signal?: AbortSignal;
+  /** What {@link shouldPolish} measures when it is not `raw`: the dictation
+   *  before softenPausePeriods (`TranscriptText.sttText`), which may be a
+   *  mark or a space longer. `raw` is still what gets polished. */
+  gateText?: string;
 }): Promise<{ text: string | null; outcome: PolishOutcome }> {
-  const { raw, settings, protectedTerms = [], speakerTerms = [], signal } = opts;
+  const { raw, settings, protectedTerms = [], speakerTerms = [], signal, gateText = raw } = opts;
   if (!canPolish(settings)) return { text: null, outcome: "off" };
-  if (!shouldPolish(raw)) return { text: null, outcome: "tooShort" };
+  if (!shouldPolish(gateText)) return { text: null, outcome: "tooShort" };
   if (signal?.aborted) return { text: null, outcome: "cancelled" };
 
   const rawChars = raw.trim().length;

@@ -92,9 +92,10 @@ the overlay:
   the first time the overlay appears.
 - **Transparent parts pass clicks through** (macOS; `start_hit_poller`). With
   a chat app's composer at the bottom centre of the screen, start a dictation
-  and click the composer beside or above the pill: the caret lands there and
-  the menu bar stays on the chat app. Moving onto the pill or a suggestion
-  bubble catches clicks again, and the buttons still respond. Repeat on a 1×
+  and click the composer beside the pill, or above the transcript bubble once
+  words show: the caret lands there and the menu bar stays on the chat app.
+  Moving onto the pill, the transcript bubble or a suggestion bubble catches
+  clicks again, and the buttons still respond. Repeat on a 1×
   external display next to a Retina laptop, and over a full-screen app's
   Space.
 - **⌥↩ on a suggestion only accepts it** (`on_ptt` in
@@ -109,8 +110,9 @@ the overlay:
   nothing is pasted, and releasing the key does nothing. Also in toggle mode
   (tap, speak, Esc), and during "Polishing…". Then:
   - Undo within 5 s: the text is on the clipboard, a history entry appears,
-    nothing is pasted, and the target app keeps focus. Undo while the
-    spinner still shows works too. So does Undo at the last moment, just
+    nothing is pasted, and the target app keeps focus. Undo clicked before
+    the text has settled turns the pill into the spinner until it does, then
+    copies it the same way. Undo at the last moment works too, just
     before the pill starts to fade (about 4 s): with polish on, "Polishing…"
     and then "Copied to clipboard" show in full rather than the overlay
     fading out with no answer.
@@ -129,8 +131,12 @@ the overlay:
   - Toggle mode, two sentences back to back: tap, speak, tap to stop, and tap
     again right away while the first one is still finishing. The first
     sentence is pasted and the second one records; the next tap stops it.
-  - If ⌥Esc, fn+Esc or another held-key Esc never fires, `parley.log` names
-    the chord that did not register (`escape cancel … not registered`).
+  - If ⌥Esc or another held-key Esc never fires, `parley.log` names the
+    chord that did not register (`escape cancel … not registered`). fn adds
+    no chord of its own (`cancel_shortcuts_for` registers only the bare Esc
+    for it), so a dead fn+Esc shows up as no `escape cancel (shortcut)` line
+    after the press, or as `escape cancel Escape not registered` if the bare
+    Esc itself was refused.
 
 ## Voice typing and the clipboard: what only a person can check
 
@@ -215,10 +221,10 @@ involved:
   Windows `imp` of `src-tauri/src/voice_typing.rs`). It is off on Windows:
   the toggle needs WS_EX_LAYERED, which can blank a WebView2 window, so the
   transparent area around the pill still eats clicks. Whoever implements the
-  toggle walks this at 100 % and 150 % scaling: clicks beside or above the
-  pill reach the app behind; the overlay never shows in Alt+Tab or the
-  taskbar; it never turns black or invisible after the cursor moves on and off
-  the pill; and Ctrl+V still lands in the target app.
+  toggle walks this at 100 % and 150 % scaling: clicks beside the pill, or
+  above the transcript bubble, reach the app behind; the overlay never shows
+  in Alt+Tab or the taskbar; it never turns black or invisible after the
+  cursor moves on and off the pill; and Ctrl+V still lands in the target app.
 - **Esc cancel under a held key** (`windows_hook.rs`, `modifier_ptt.rs`). Hold
   right Ctrl, speak, press Esc: the dictation cancels, the Start menu does not
   open, and nothing is pasted; the next hold dictates normally. The same with

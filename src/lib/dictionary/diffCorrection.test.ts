@@ -181,10 +181,18 @@ describe("detectCorrection on CJK terms", () => {
     expect(detectCorrection(inserted, fixed, inserted)).toBeNull();
   });
 
+  /** The right answer here is a learnable pair, so wrongly taking either
+   *  anchor changes it: 王小明 would widen it to 王小明 → 王小明 (null), 說拍
+   *  to 說派 → 說拍. A same-length fix with only a far-away anchor could not
+   *  tell: both sides of any widening slice the same shared text. */
   it("ignores an anchor that does not cover the edit", () => {
-    const inserted = "王小明說派斯的進度很好";
-    const fixed = "王小明說派思的進度很好";
-    expect(detectCorrection(inserted, fixed, inserted, ["王小明"])).toBeNull();
+    const inserted = "王小明說派斯科技很好";
+    const fixed = "王小明說拍思科技很好";
+    // 王小明 sits outside the edit; 說拍 overlaps only its first character.
+    expect(detectCorrection(inserted, fixed, inserted, ["王小明", "說拍"])).toEqual({
+      from: "派斯",
+      to: "拍思",
+    });
   });
 
   it("does not turn a deletion next to a term into a fix of that term", () => {

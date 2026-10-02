@@ -658,7 +658,7 @@ export const zhTW = {
   "settings.basic.rolePlaceholder": "例如：產品經理、創辦人",
   "settings.basic.company": "公司 / 團隊（選填）",
   "settings.basic.companyPlaceholder": "例如：東蜂科技",
-  "settings.basic.profileHelp": "讓 AI 知道「你」是誰：分人時更能認出你的發言；語音輸入也會把你的名字和公司名稱當作辨識提示，送給語音辨識服務。",
+  "settings.basic.profileHelp": "讓 AI 知道「你」是誰：分人時更能認出你的發言；語音輸入、會議與匯入錄音的轉錄，也會把你的名字和公司名稱當作辨識提示，送給語音辨識服務。",
   "settings.basic.background": "背景脈絡（選填）",
   "settings.basic.backgroundPlaceholder": "例如：我們是賣 B2B SaaS 的，這場是跟潛在客戶談年約；我方目標是縮短導入期、守住單價。",
   "settings.basic.backgroundHelp": "讓 AI 分清楚哪一方是「我們」、這場在談什麼。單場脈絡可在會議側邊欄補充。",
@@ -1883,7 +1883,7 @@ export const en = {
   "settings.basic.company": "Company / team (optional)",
   "settings.basic.companyPlaceholder": "e.g. Acme Inc.",
   "settings.basic.profileHelp":
-    "Helps the AI know who \"you\" are: it recognizes your lines when speakers are diarized, and voice typing sends your name and company to the speech recognizer as spelling hints.",
+    "Helps the AI know who \"you\" are: it recognizes your lines when speakers are diarized, and your name and company are sent to the speech recognizer as spelling hints for voice typing, meetings and imported recordings.",
   "settings.basic.background": "Background context (optional)",
   "settings.basic.backgroundPlaceholder": "e.g. We sell B2B SaaS; this call is an annual-contract negotiation with a prospect. Our goals: shorten onboarding, hold our price.",
   "settings.basic.backgroundHelp": "Tells the AI which side is \"us\" and what the deal is. Per-meeting context goes in the sidebar.",

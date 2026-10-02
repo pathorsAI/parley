@@ -20,8 +20,23 @@ describe("CancelLedger", () => {
     const l = new CancelLedger();
     l.cancel(1);
     l.settle(1, "好了", true);
-    expect(l.undo()).toEqual({ kind: "now", gen: 1, text: "好了", polished: true });
+    expect(l.undo()).toEqual({
+      kind: "now",
+      gen: 1,
+      text: "好了",
+      polished: true,
+      gateText: "好了",
+    });
     expect(l.undo()).toEqual({ kind: "none" });
+  });
+
+  /** The polish gate measures the transcript before softening; Undo must
+   *  hand back that measure, not re-measure the softened text. */
+  it("hands back the polish gate's text with the held text", () => {
+    const l = new CancelLedger();
+    l.cancel(1);
+    l.settle(1, "我們明天見個面", false, "我們明天見個面。");
+    expect(l.undo()).toMatchObject({ kind: "now", text: "我們明天見個面", gateText: "我們明天見個面。" });
   });
 
   it("drops it when the offer runs out, and a late settle still never delivers", () => {

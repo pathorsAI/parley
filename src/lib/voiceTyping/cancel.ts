@@ -42,7 +42,7 @@ export type HoldVerdict = "hold" | "recover" | "discard";
 export type UndoResult =
   | { kind: "none" }
   | { kind: "wait"; gen: number }
-  | { kind: "now"; gen: number; text: string; polished: boolean };
+  | { kind: "now"; gen: number; text: string; polished: boolean; gateText: string };
 
 /** How many cancelled generations are remembered. A delivery is at most a few
  *  dictations behind the newest one, so this only bounds memory. */
@@ -55,6 +55,9 @@ interface Offer {
   text: string;
   /** `text` already went through the polish pass (whatever its outcome). */
   polished: boolean;
+  /** What polish's length gate measures for `text` while `polished` is
+   *  false: the transcript before its pause-made marks were softened. */
+  gateText: string;
 }
 
 /**
@@ -77,7 +80,7 @@ export class CancelLedger {
     if (this.cancelled.has(gen)) return false;
     this.cancelled.add(gen);
     if (this.cancelled.size > REMEMBERED) this.cancelled.delete(Math.min(...this.cancelled));
-    this.offer = { gen, settled: false, text: "", polished: false };
+    this.offer = { gen, settled: false, text: "", polished: false, gateText: "" };
     return true;
   }
 
@@ -97,12 +100,13 @@ export class CancelLedger {
    * for it (deliver it to the clipboard now), "hold" while its offer is open,
    * "discard" when it is no longer on offer.
    */
-  settle(gen: number, text: string, polished: boolean): HoldVerdict {
+  settle(gen: number, text: string, polished: boolean, gateText = text): HoldVerdict {
     if (this.recovering.delete(gen)) return "recover";
     const o = this.offer;
     if (!o || o.gen !== gen) return "discard";
     o.text = text;
     o.polished = polished;
+    o.gateText = gateText;
     o.settled = true;
     return "hold";
   }
@@ -116,7 +120,7 @@ export class CancelLedger {
       this.recovering.add(o.gen);
       return { kind: "wait", gen: o.gen };
     }
-    return { kind: "now", gen: o.gen, text: o.text, polished: o.polished };
+    return { kind: "now", gen: o.gen, text: o.text, polished: o.polished, gateText: o.gateText };
   }
 
   /** The Undo offer ran out. The generation whose text is now dropped, or

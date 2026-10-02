@@ -702,19 +702,22 @@ function enqueueDelivery(d: Delivery): Promise<void> {
  * handle. `outcome` says which, for the overlay's note. `signal` abandons the
  * round trip (resolving to `"cancelled"` with the raw text). See `polish.ts`.
  * `recovering` is an Undo bringing a cancelled dictation back, which may say
- * "polishing" over the cancelled pill; nothing else may.
+ * "polishing" over the cancelled pill; nothing else may. `gateText` is what the
+ * length gate measures: the transcript before its pause-made marks were
+ * softened (`TranscriptText.sttText`), so the softening never decides whether
+ * a dictation is polished.
  */
 async function polishForPaste(
   raw: string,
   myGen: number,
-  opts: { signal?: AbortSignal; recovering?: boolean } = {},
+  opts: { signal?: AbortSignal; recovering?: boolean; gateText?: string } = {},
 ): Promise<{ text: string; outcome: PolishOutcome }> {
-  const { signal, recovering = false } = opts;
+  const { signal, recovering = false, gateText = raw } = opts;
   const settings = useStore.getState().settings;
   // Checked here as well as in polish.ts so the overlay is never told
   // "polishing" for a pass that is not going to run.
   if (!canPolish(settings)) return { text: raw, outcome: "off" };
-  if (!shouldPolish(raw)) return { text: raw, outcome: "tooShort" };
+  if (!shouldPolish(gateText)) return { text: raw, outcome: "tooShort" };
   // Only claim the overlay while it is still ours to claim; a press during the
   // round trip owns it from here (the gen check in `deliver` is the same guard
   // for the "done" tail). A cancelled dictation's overlay is its Undo, which
@@ -728,6 +731,7 @@ async function polishForPaste(
     protectedTerms: vocabularyTerms(),
     speakerTerms: profileTerms(settings),
     signal,
+    gateText,
   });
   // The raw text already went through the dictionary (normalizeTranscriptText
   // in the transcript's report); the polished text never did, and a model can
@@ -744,7 +748,11 @@ async function deliver(d: Delivery): Promise<void> {
   // Settled dictations only exist after a press, which already waited for
   // this — but the report below reads the dictionary cache, so say so here.
   await whenDictionaryReady();
-  const raw = ((await d.t.report(normalizeTranscriptText))?.text ?? "").trim();
+  const report = await d.t.report(normalizeTranscriptText);
+  const raw = (report?.text ?? "").trim();
+  // The polish gate measures the text before softening: dropping a short
+  // phrase's 。 must not also drop it below MIN_POLISH_CHARS (punctuation.ts).
+  const gateText = report?.sttText ?? raw;
   // Never the text itself (user data): how and when it settled, and how much.
   const timing = { reason: d.reason, waitMs: d.waitMs, closed: d.closed };
   if (raw) {
@@ -754,7 +762,7 @@ async function deliver(d: Delivery): Promise<void> {
   }
   // Esc came first (while it recorded or settled, or while an earlier
   // delivery held this one up): hold the text for Undo, deliver nothing.
-  if (cancels.isCancelled(d.myGen)) return holdCancelled(d.myGen, raw, false);
+  if (cancels.isCancelled(d.myGen)) return holdCancelled(d.myGen, raw, false, gateText);
   let text = raw;
   /** Did the paste go out? Stays true when the insert threw, because then we
    *  don't know what reached the clipboard and must not tell the user to
@@ -767,14 +775,14 @@ async function deliver(d: Delivery): Promise<void> {
     const ctl = new AbortController();
     polishing = { gen: d.myGen, ctl };
     try {
-      ({ text, outcome } = await polishForPaste(raw, d.myGen, { signal: ctl.signal }));
+      ({ text, outcome } = await polishForPaste(raw, d.myGen, { signal: ctl.signal, gateText }));
     } finally {
       if (polishing?.ctl === ctl) polishing = null;
     }
     // A polish that ran to its end (whatever came of it) is not redone on
     // Undo; one the Esc abandoned is.
     if (cancels.isCancelled(d.myGen)) {
-      return holdCancelled(d.myGen, text, outcome !== "cancelled");
+      return holdCancelled(d.myGen, text, outcome !== "cancelled", gateText);
     }
   }
   // The point of no return: from here the text goes into the field, so Esc
@@ -929,12 +937,18 @@ async function applyCancel(g: number): Promise<void> {
 }
 
 /** A cancelled dictation's delivery reached its text: keep it on offer,
- *  recover it now (Undo was asked before it settled), or drop it. */
-async function holdCancelled(g: number, text: string, polished: boolean): Promise<void> {
-  const verdict = cancels.settle(g, text, polished);
+ *  recover it now (Undo was asked before it settled), or drop it. `gateText`
+ *  travels with it for the recovery's polish gate (see polishForPaste). */
+async function holdCancelled(
+  g: number,
+  text: string,
+  polished: boolean,
+  gateText: string,
+): Promise<void> {
+  const verdict = cancels.settle(g, text, polished, gateText);
   log.info("voice-typing: cancelled dictation held", { chars: text.length, verdict });
   if (verdict === "recover") {
-    await deliverRecovered(g, text, polished);
+    await deliverRecovered(g, text, polished, gateText);
   } else if (verdict === "hold" && gen === g) {
     // Put the Undo back on screen in case a "polishing" sent just before the
     // Esc reached the overlay after the "cancelled" that followed it.
@@ -954,14 +968,19 @@ async function onUndoCancel(): Promise<void> {
     if (gen === r.gen) await emit("voicetyping://session", { phase: "stop" });
     return;
   }
-  await enqueueRecovery(r.gen, r.text, r.polished);
+  await enqueueRecovery(r.gen, r.text, r.polished, r.gateText);
 }
 
 /** Queue a recovery behind every earlier delivery, so the clipboard ends on
  *  the most recent text. */
-function enqueueRecovery(g: number, text: string, polished: boolean): Promise<void> {
+function enqueueRecovery(
+  g: number,
+  text: string,
+  polished: boolean,
+  gateText: string,
+): Promise<void> {
   deliveryChain = deliveryChain
-    .then(() => deliverRecovered(g, text, polished))
+    .then(() => deliverRecovered(g, text, polished, gateText))
     .catch((error) => log.error("voice-typing: recovery failed", { error: String(error) }));
   return deliveryChain;
 }
@@ -975,11 +994,16 @@ function enqueueRecovery(g: number, text: string, polished: boolean): Promise<vo
  * `deliveryChain`. An explicit copy, so Rust calls off any clipboard restore
  * still pending from an earlier insert: the recovered text stays.
  */
-async function deliverRecovered(g: number, text: string, polished: boolean): Promise<void> {
+async function deliverRecovered(
+  g: number,
+  text: string,
+  polished: boolean,
+  gateText: string,
+): Promise<void> {
   let out = text;
   let outcome: PolishOutcome = "off";
   if (text && !polished) {
-    ({ text: out, outcome } = await polishForPaste(text, g, { recovering: true }));
+    ({ text: out, outcome } = await polishForPaste(text, g, { recovering: true, gateText }));
   }
   if (out) {
     try {
