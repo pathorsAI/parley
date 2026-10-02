@@ -13,7 +13,7 @@ import type { LlmWorkload, Settings } from "../types";
  * and an empty `failed_generation`. Give them a generous cap so the JSON still
  * fits after reasoning; non-reasoning models keep the provider default (undefined).
  */
-function maxOutputTokensFor(settings: Settings, workload: LlmWorkload): number | undefined {
+export function maxOutputTokensFor(settings: Settings, workload: LlmWorkload): number | undefined {
   const provider = settings.llmProviders[workload];
   return isReasoningModel(settings.models[provider][workload]) ? 32_000 : undefined;
 }
