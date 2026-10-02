@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  artifactDisplay,
   chainQueued,
   deriveStudyPipeline,
   evaluateStages,
@@ -186,6 +187,25 @@ describe("deriveStudyPipeline (what the chip + sections say)", () => {
     // there, so the sections offer "Regenerate" rather than a missing-key hint.
     expect(p.hasDeepKey).toBe(true);
     expect(p.hasTranscript).toBe(true);
+  });
+
+  it("a section's own display (artifactDisplay) is exactly what the chip shows for it", () => {
+    // The report sections pick skeleton vs empty message off artifactDisplay;
+    // the chip counts off deriveStudyPipeline. One must never say "queued"
+    // while the other says "idle".
+    const cases = [
+      facts(),
+      facts({ analysisStatus: "running" }),
+      facts({ analysisStatus: "done", actionItemsStatus: "running" }),
+      facts({ analysisStatus: "error" }),
+      facts({ autoAnalyze: false }),
+      facts({ hasDeepKey: false }),
+      facts({ analysisStatus: "done", actionItemsStatus: "done", briefStatus: "done", deliveryStatus: "done" }),
+    ];
+    for (const f of cases) {
+      const p = deriveStudyPipeline(f);
+      for (const a of p.artifacts) expect(artifactDisplay(f, a.key)).toBe(a.display);
+    }
   });
 
   it("the chip still counts FOUR artifacts — filing is a stage, not one of them", () => {

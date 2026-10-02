@@ -1,8 +1,10 @@
-import { Loader2 } from "lucide-react";
+import { Clock, Loader2 } from "lucide-react";
 import { useStore, formatClock } from "../../lib/store";
+import { useStudyArtifactDisplay } from "../../lib/analysis/studyPipeline";
 import { missingProviderRequirement, providerGateKey } from "../../lib/ai/settings";
 import { useI18n } from "../../i18n";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import type { Severity } from "../../lib/types";
 
@@ -37,27 +39,28 @@ export function ActionItemsPanel({
   const gate = useStore((s) =>
     providerGateKey(missingProviderRequirement(s.settings, "deep"), "actionItems.noKey")
   );
+  // "queued" = still idle, but the findings pass it waits on is coming — the
+  // empty message would be a lie until that pass settles.
+  const display = useStudyArtifactDisplay("actions");
   const running = status === "running";
+  const pending = running || display === "queued";
 
   const body = (
-    <div className={`flex flex-col ${embedded ? "" : "px-3 py-3"}`}>
+    // `relative` anchors the status hint below, which hangs off the bottom edge
+    // so it never adds or removes height as the list fills in.
+    <div className={`relative flex flex-col ${embedded ? "" : "px-3 pb-8 pt-3"}`}>
           {/* A missing key only matters while there is nothing to show — a
               saved (or prewritten) checklist reads fine without one. */}
           {gate && items.length === 0 && (
             <p className="px-1 pt-4 text-center text-xs text-muted-foreground">{t(gate)}</p>
           )}
-          {/* Centered spinner only until the first item streams in; after that the
-              items render live and a slim footer hint shows it's still going. */}
-          {!gate && running && items.length === 0 && (
-            <p className="flex items-center justify-center gap-1.5 px-1 pt-4 text-center text-xs text-muted-foreground">
-              <Loader2 className="size-3.5 animate-spin" />
-              {t("actionItems.generating")}
-            </p>
-          )}
+          {/* Rows in the checklist's own shape until the first item streams in;
+              after that the items render live. */}
+          {!gate && pending && items.length === 0 && <ActionItemSkeletonRows />}
           {!gate && status === "error" && (
             <p className="px-1 text-xs text-destructive">{t("actionItems.failed", { error: error ?? "—" })}</p>
           )}
-          {!gate && status !== "error" && items.length === 0 && !running && (
+          {!gate && status !== "error" && items.length === 0 && !pending && (
             <p className="px-1 pt-4 text-center text-xs text-muted-foreground">{t("actionItems.empty")}</p>
           )}
 
@@ -96,11 +99,18 @@ export function ActionItemsPanel({
             );
           })}
 
-      {/* Still streaming, but rows are already showing. */}
-      {!gate && running && items.length > 0 && (
-        <p className="flex items-center gap-1.5 px-1 pt-1 text-[11px] text-muted-foreground">
-          <Loader2 className="size-3 animate-spin" />
-          {t("actionItems.generating")}
+      {/* Queued / still streaming. Absolutely placed in the gap under the list
+          (the report's section spacing, or the scroller's bottom padding), so it
+          comes and goes without moving anything. */}
+      {!gate && pending && (
+        <p
+          role="status"
+          className={`absolute flex items-center gap-1.5 text-[11px] text-muted-foreground ${
+            embedded ? "left-1 top-full pt-1" : "bottom-2 left-4"
+          }`}
+        >
+          {running ? <Loader2 className="size-3 animate-spin" /> : <Clock className="size-3" />}
+          {running ? t("actionItems.generating") : t("actionItems.queued")}
         </p>
       )}
     </div>
@@ -110,6 +120,26 @@ export function ActionItemsPanel({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ScrollArea className="min-h-0 flex-1">{body}</ScrollArea>
+    </div>
+  );
+}
+
+/** Placeholder rows matching a real item — checkbox, a line of text, the small
+ *  timestamp chip under it — with the same padding and dividers. */
+function ActionItemSkeletonRows() {
+  return (
+    <div aria-hidden="true">
+      {["w-4/5", "w-3/5", "w-2/3"].map((w) => (
+        <div key={w} className="border-b border-border px-1 py-2.5 last:border-b-0">
+          <div className="flex items-start gap-2">
+            <Skeleton className="mt-0.5 size-3.5 shrink-0 rounded-sm" />
+            <span className="min-w-0 flex-1">
+              <Skeleton className={`my-px h-3.5 ${w}`} />
+              <Skeleton className="mt-1.5 h-3.5 w-12 rounded-full" />
+            </span>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

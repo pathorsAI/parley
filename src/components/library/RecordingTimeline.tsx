@@ -12,6 +12,7 @@ import {
   Volume2,
 } from "lucide-react";
 import { useI18n } from "../../i18n";
+import { Skeleton } from "@/components/ui/skeleton";
 import { groupByDate, type TimelineBucket } from "../../lib/library/timeline";
 import { CardActions, formatDuration, SyncIcon } from "./LibraryCards";
 import type { HistoryCardItem } from "../../lib/cloud/sync";
@@ -318,6 +319,35 @@ function TimelineRow({
           onMove={onMove}
         />
       )}
+    </div>
+  );
+}
+
+/** The timeline while it loads: one date band of rows in {@link TimelineRow}'s
+ *  shape — lead time, source icon, title, stats — so the real bands land in
+ *  place. `label` is announced, not shown. */
+export function RecordingTimelineSkeleton({ label }: Readonly<{ label: string }>) {
+  return (
+    <div className="flex flex-col" aria-busy="true">
+      <span className="sr-only" role="status">
+        {label}
+      </span>
+      <div className="flex h-[28.5px] items-center" aria-hidden="true">
+        <Skeleton className="h-3 w-12" />
+      </div>
+      {["w-2/5", "w-1/2", "w-1/3", "w-3/5", "w-2/5 sm:w-1/4", "w-1/2 sm:w-2/5"].map((w) => (
+        <div
+          key={w}
+          className="flex h-9 items-center gap-2.5 border-b border-border px-2 last:border-b-0"
+          aria-hidden="true"
+        >
+          <Skeleton className="h-3 w-11 shrink-0" />
+          <Skeleton className="size-3 shrink-0 rounded-full" />
+          <Skeleton className={`h-3.5 ${w}`} />
+          <span className="min-w-0 flex-1" />
+          <Skeleton className="h-3 w-20 shrink-0" />
+        </div>
+      ))}
     </div>
   );
 }

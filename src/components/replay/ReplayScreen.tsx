@@ -9,7 +9,8 @@ import { useI18n } from "../../i18n";
 import { useStore, hasSpokenSegment } from "../../lib/store";
 import { isTauri } from "../../lib/tauriEvents";
 import { findActiveTemplate } from "../../lib/evaluations/presets";
-import { analysisSignature } from "../../lib/analysis/lens";
+import { analysisSignature, hasSides, lensOf } from "../../lib/analysis/lens";
+import { useStudyArtifactDisplay } from "../../lib/analysis/studyPipeline";
 import { TranscriptCopyMenu } from "../TranscriptCopyMenu";
 import { AnalysisTimeline } from "../analysis/AnalysisTimeline";
 import { FindingsPanel } from "../analysis/FindingsPanel";
@@ -83,6 +84,7 @@ export function ReplayScreen() {
   const evaluations = useStore((s) => s.settings.evaluations);
   const analyzedEvalSig = useStore((s) => s.analyzedEvalSig);
   const meetingKind = useStore((s) => s.meetingKind);
+  const findingsDisplay = useStudyArtifactDisplay("findings");
 
   // Persist the dragged column proportions (transcript / findings) to
   // localStorage so they survive reloads. v2 id: the old key stored a 3-column
@@ -178,6 +180,8 @@ export function ReplayScreen() {
         onSelect={(e) => selectAndSeek(e, player.seek)}
         templateName={activeTemplate ? activeTemplate.name : t("timeline.templateCustom")}
         stale={templateStale}
+        pending={findings.length === 0 && (findingsDisplay === "running" || findingsDisplay === "queued")}
+        expectSides={hasSides(lensOf(meetingKind))}
       />
 
       <ResizablePanelGroup

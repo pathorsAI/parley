@@ -327,23 +327,34 @@ function displayStatus(status: AsyncTaskStatus, queued: boolean): StudyArtifactD
   return status;
 }
 
+const ARTIFACT_STATUS = {
+  findings: "analysisStatus",
+  actions: "actionItemsStatus",
+  brief: "briefStatus",
+  delivery: "deliveryStatus",
+} as const satisfies Record<StudyArtifactKey, keyof StudyPipelineFacts>;
+
+const ARTIFACT_ORDER: readonly StudyArtifactKey[] = ["findings", "actions", "brief", "delivery"];
+
+/** One artifact's display state. The chip (deriveStudyPipeline) and the report
+ *  sections (useStudyArtifactDisplay) both go through here, so a section's
+ *  skeleton and the chip's "queued" can't disagree. */
+export function artifactDisplay(f: StudyPipelineFacts, key: StudyArtifactKey): StudyArtifactDisplay {
+  const status = f[ARTIFACT_STATUS[key]];
+  if (key === "findings") {
+    // "queued" is a promise that the scheduler WILL dispatch. With auto-analysis
+    // off nothing is coming, so every untouched artifact reads idle rather than
+    // queuing forever against a pipeline that will never run.
+    return displayStatus(status, f.autoAnalyze && f.hasDeepKey && f.hasTranscript);
+  }
+  return displayStatus(status, chainQueued(f));
+}
+
 export function deriveStudyPipeline(f: StudyPipelineFacts): StudyPipelineState {
-  // "queued" is a promise that the scheduler WILL dispatch. With auto-analysis
-  // off nothing is coming, so every untouched artifact reads idle rather than
-  // queuing forever against a pipeline that will never run.
-  const can = f.autoAnalyze && f.hasDeepKey && f.hasTranscript;
-
-  const findings = displayStatus(f.analysisStatus, can);
-
-  const chained = (status: AsyncTaskStatus): StudyArtifactDisplay =>
-    displayStatus(status, chainQueued(f));
-
-  const artifacts: StudyArtifactState[] = [
-    { key: "findings", display: findings },
-    { key: "actions", display: chained(f.actionItemsStatus) },
-    { key: "brief", display: chained(f.briefStatus) },
-    { key: "delivery", display: chained(f.deliveryStatus) },
-  ];
+  const artifacts: StudyArtifactState[] = ARTIFACT_ORDER.map((key) => ({
+    key,
+    display: artifactDisplay(f, key),
+  }));
 
   return {
     artifacts,
@@ -364,8 +375,20 @@ export function useStudyPipeline(): StudyPipelineState {
   return useMemo(() => deriveStudyPipeline(facts), [facts]);
 }
 
+/** One report section's display state, as a primitive — so a section only
+ *  re-renders when ITS state changes, never on unrelated pipeline transitions.
+ *  Only an idle status needs the full facts (to tell queued from idle); every
+ *  other status is its own answer, which keeps the selector cheap. Mount it in
+ *  study-only components: outside the study tense "queued" means nothing. */
+export function useStudyArtifactDisplay(key: StudyArtifactKey): StudyArtifactDisplay {
+  return useStore((s) => {
+    const status = s[ARTIFACT_STATUS[key]];
+    return status === "idle" ? artifactDisplay(factsOf(s), key) : status;
+  });
+}
+
 /** BriefSection subscribes to just this boolean so unrelated pipeline
  *  transitions never re-render the (potentially large) brief markdown. */
 export function useBriefQueued(): boolean {
-  return useStore((s) => s.briefStatus === "idle" && chainQueued(factsOf(s)));
+  return useStudyArtifactDisplay("brief") === "queued";
 }
