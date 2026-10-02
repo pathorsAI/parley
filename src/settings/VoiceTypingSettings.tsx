@@ -8,6 +8,7 @@ import { isTauri } from "../lib/tauriEvents";
 import { broadcastSettings } from "../lib/settingsSync";
 import { log } from "../lib/log";
 import { hasProviderKey } from "../lib/ai/settings";
+import { CANCEL_UNDO_MS } from "../lib/voiceTyping/cancel";
 import { isModifierId, modifierIdsFor, shortcutCaps } from "../lib/voiceTyping/caps";
 import { loneModifierRelease, MODIFIER_CODES } from "../lib/voiceTyping/recorder";
 import type { VoiceTypingMode, VoiceTypingShortcut } from "../lib/types";
@@ -479,6 +480,9 @@ export const VoiceTypingSettings = () => {
               ? "settings.voiceTyping.mode.toggleHint"
               : "settings.voiceTyping.mode.holdHint",
           )}
+        </p>
+        <p className="text-[11px] text-muted-foreground">
+          {t("settings.voiceTyping.cancelHint", { seconds: CANCEL_UNDO_MS / 1000 })}
         </p>
       </div>
 

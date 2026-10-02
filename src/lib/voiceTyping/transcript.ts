@@ -14,11 +14,12 @@ export interface Segment {
  *  task is gone and names the new session; the other phases come from the host.
  *  `done` carries the verdict (a `DoneMessage`, see overlay.ts) and the text
  *  that was delivered, so the overlay ends on exactly what was pasted — the
- *  polished text included — rather than on its own copy of the transcript. */
+ *  polished text included — rather than on its own copy of the transcript.
+ *  `cancelled` is an Esc: the overlay offers Undo (see cancel.ts). */
 export type SessionEvent =
   | { phase: "start"; session: number }
   | { phase: "done"; message?: string; text?: string }
-  | { phase: "stop" | "polishing" | "error" | "limit"; message?: string };
+  | { phase: "stop" | "polishing" | "error" | "limit" | "cancelled"; message?: string };
 
 /** One dictation's text as `report()` renders it: what the overlay shows while
  *  it runs and what the host delivers once it settles — the two windows fold

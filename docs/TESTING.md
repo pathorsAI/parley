@@ -102,6 +102,22 @@ the overlay:
   with ⌥↩ (Alt+Enter on Windows): the bubble turns into "Added · Undo" and no
   dictation starts. The push-to-talk key still works afterwards, after a
   shortcut change in Settings, and after sleep and wake.
+- **Esc cancels a dictation** (`src/lib/voiceTyping/cancel.ts`,
+  `cancel_shortcuts_for` in `src-tauri/src/hotkey.rs`). Hold each trigger and
+  press Esc while still holding it: a recorded combo such as F13, fn, ⌥Space,
+  right ⌘ and right ⌥. The overlay turns to "Transcription cancelled · Undo",
+  nothing is pasted, and releasing the key does nothing. Also in toggle mode
+  (tap, speak, Esc), and during "Polishing…". Then:
+  - Undo within 5 s: the text is on the clipboard, a history entry appears,
+    nothing is pasted, and the target app keeps focus. Undo while the
+    spinner still shows works too.
+  - No Undo: the overlay fades and hides at about 5 s, with no history
+    entry.
+  - A new press during those 5 s starts a fresh dictation.
+  - Esc with no dictation running still reaches the app in front, and so
+    does Esc right after a dictation has pasted.
+  - If ⌥Esc, fn+Esc or another held-key Esc never fires, `parley.log` names
+    the chord that did not register (`escape cancel … not registered`).
 
 ## Windows: what only a Windows machine can check
 
@@ -146,6 +162,12 @@ involved:
   pill reach the app behind; the overlay never shows in Alt+Tab or the
   taskbar; it never turns black or invisible after the cursor moves on and off
   the pill; and Ctrl+V still lands in the target app.
+- **Esc cancel under a held key** (`windows_hook.rs`, `modifier_ptt.rs`). Hold
+  right Ctrl, speak, press Esc: the dictation cancels, the Start menu does not
+  open, and nothing is pasted; the next hold dictates normally. The same with
+  right Alt (and AltGr on a German or French layout — no menu bar is left
+  armed in Notepad), with Ctrl+Alt+Space held, and with an elevated window in
+  front.
 - **Clipboard paste** (`paste_to_frontmost` in `src-tauri/src/voice_typing.rs`).
   Dictating into Notepad, a browser text field and an Office app pastes the
   text at the caret, and the held Ctrl+Alt of the shortcut does not turn the

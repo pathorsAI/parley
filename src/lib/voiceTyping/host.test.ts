@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => {
     handlers: new Map<string, Set<Handler>>(),
     emitted: [] as { name: string; payload: unknown }[],
     invoke: vi.fn(),
+    hide: vi.fn(async () => {}),
+    append: vi.fn<(text: string, appBundleId: string | null) => Promise<void>>(async () => {}),
     log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     settings: {} as Record<string, unknown>,
     polish: {
@@ -61,10 +63,12 @@ vi.mock("../zhConvert", () => ({ preloadZhConverter: () => {} }));
 vi.mock("./overlay", async (importActual) => ({
   ...(await importActual<typeof import("./overlay")>()),
   showOverlay: async () => {},
-  hideOverlay: async () => {},
+  hideOverlay: () => mocks.hide(),
   prewarmOverlay: async () => {},
 }));
-vi.mock("./history", () => ({ appendVoiceEntry: vi.fn(async () => {}) }));
+vi.mock("./history", () => ({
+  appendVoiceEntry: (text: string, appBundleId: string | null) => mocks.append(text, appBundleId),
+}));
 vi.mock("./polish", () => ({
   canPolish: () => mocks.polish.on,
   shouldPolish: () => true,
@@ -90,12 +94,21 @@ const backend = {
   pasteApp: "com.apple.Notes" as string | null,
   /** When set, `stop_voice_typing` waits for this before resolving. */
   stopGate: null as Promise<void> | null,
+  /** When set, `start_voice_typing` waits for this, then fails with it. */
+  startFailure: null as { gate: Promise<void>; error: string } | null,
+  /** When set, `start_voice_typing` waits for this, then succeeds. */
+  startGate: null as Promise<void> | null,
 };
 
 function routeInvoke(): void {
   mocks.invoke.mockImplementation(async (cmd: string) => {
     switch (cmd) {
       case "start_voice_typing":
+        if (backend.startFailure) {
+          await backend.startFailure.gate;
+          throw new Error(backend.startFailure.error);
+        }
+        if (backend.startGate) await backend.startGate;
         backend.session += 1;
         // Rust announces the session before the command returns.
         fire("voicetyping://session", { phase: "start", session: backend.session });
@@ -179,6 +192,8 @@ beforeEach(async () => {
   mocks.emitted.length = 0;
   mocks.invoke.mockReset();
   for (const fn of Object.values(mocks.log)) fn.mockReset();
+  mocks.hide.mockClear();
+  mocks.append.mockClear();
   mocks.polish.on = false;
   mocks.polish.run.mockReset();
   mocks.settings = {
@@ -191,6 +206,8 @@ beforeEach(async () => {
   backend.session = 0;
   backend.pasteApp = "com.apple.Notes";
   backend.stopGate = null;
+  backend.startFailure = null;
+  backend.startGate = null;
   routeInvoke();
   vi.resetModules();
   const host = await import("./host");
@@ -388,5 +405,358 @@ describe("voice-typing host", () => {
     finish(1, "0", "切換模式");
     await tick();
     expect(copied()).toEqual(["切換模式"]);
+  });
+});
+
+async function escape(fromTrigger = false): Promise<void> {
+  fire("voicetyping://cancel", { fromTrigger });
+  await tick();
+}
+
+async function undo(): Promise<void> {
+  fire("voicetyping://cancel-action", { action: "undo" });
+  await tick();
+}
+
+function last<T>(xs: T[]): T | undefined {
+  return xs[xs.length - 1];
+}
+
+/** Every arm/disarm the host asked Rust for, in order. */
+function armed(): boolean[] {
+  return calls("set_voice_typing_cancel_armed").map((a) => (a as { armed: boolean }).armed);
+}
+
+/** A polish round trip of `ms` that gives up the moment its signal aborts. */
+function slowPolish(ms: number) {
+  return (opts: { raw: string; signal?: AbortSignal }) =>
+    new Promise((resolve) => {
+      const timer = setTimeout(() => resolve({ text: `${opts.raw}。`, outcome: "polished" }), ms);
+      opts.signal?.addEventListener("abort", () => {
+        clearTimeout(timer);
+        resolve({ text: null, outcome: "cancelled" });
+      });
+    });
+}
+
+describe("voice-typing host: Esc cancels, Undo copies", () => {
+  it("cancels a held dictation: the mic stops at once, nothing is delivered, the key-up is a no-op", async () => {
+    await key(true);
+    expect(armed()).toEqual([true]);
+    segment(1, "0", "不要了", true);
+    await escape();
+    expect(calls("stop_voice_typing")).toEqual([{ tail: false }]);
+    expect(phases()).toContain("cancelled");
+    expect(armed()).toEqual([true, false]);
+
+    await key(false);
+    expect(calls("stop_voice_typing")).toHaveLength(1);
+    finish(1, "0", "不要了");
+    await tick(4999);
+    expect(copied()).toEqual([]);
+    expect(calls("paste_to_frontmost")).toEqual([]);
+    expect(mocks.append).not.toHaveBeenCalled();
+    expect(dones()).toEqual([]);
+    // No "finalizing" spinner over the Undo.
+    expect(phases()).not.toContain("stop");
+    expect(mocks.hide).not.toHaveBeenCalled();
+
+    // The offer runs out: the overlay goes, and nothing was saved.
+    await tick(1);
+    expect(mocks.hide).toHaveBeenCalledTimes(1);
+    expect(mocks.append).not.toHaveBeenCalled();
+  });
+
+  it("Undo before the text settles copies it once it does, and never pastes", async () => {
+    await key(true);
+    segment(1, "0", "先取消", true);
+    await escape();
+    await undo();
+    expect(last(phases())).toBe("stop");
+
+    finish(1, "0", "先取消再復原");
+    await tick();
+    expect(copied()).toEqual(["先取消再復原"]);
+    expect(calls("paste_to_frontmost")).toEqual([]);
+    expect(calls("observe_pasted_field")).toEqual([]);
+    expect(mocks.append).toHaveBeenCalledWith("先取消再復原", null);
+    expect(dones()).toEqual([{ message: "recovered", text: "先取消再復原" }]);
+
+    // The offer's clock stopped at the Undo: only the done's own hide follows.
+    await tick(6000);
+    expect(mocks.hide).toHaveBeenCalledTimes(1);
+  });
+
+  it("Undo after the text settled copies it at once, and a second Undo does nothing", async () => {
+    await key(true);
+    await escape();
+    finish(1, "0", "已經好了");
+    await tick();
+    expect(copied()).toEqual([]);
+
+    await undo();
+    expect(copied()).toEqual(["已經好了"]);
+    await undo();
+    expect(copied()).toEqual(["已經好了"]);
+    expect(mocks.append).toHaveBeenCalledTimes(1);
+  });
+
+  it("Undo on a cancel that heard nothing says there is nothing to recover", async () => {
+    await key(true);
+    await escape();
+    finish(1, "0", "");
+    await tick();
+    await undo();
+    expect(copied()).toEqual([]);
+    expect(dones()).toEqual([{ message: "nothing", text: "" }]);
+  });
+
+  it("a server close racing the Esc still stops the mic, and a failure keeps the Undo", async () => {
+    await key(true);
+    segment(1, "0", "說完了", true);
+    fire("voicetyping://cancel", { fromTrigger: false });
+    fire("voicetyping://error", { code: "connect", session: 1 });
+    fire("stt://closed", { source: "voice-typing", session: 1 });
+    await tick();
+    expect(calls("stop_voice_typing")).toEqual([{ tail: false }]);
+    expect(phases()).not.toContain("error");
+    expect(last(phases())).toBe("cancelled");
+
+    await undo();
+    expect(copied()).toEqual(["說完了"]);
+  });
+
+  it("Esc during the polish abandons it and pastes nothing; Undo polishes it again", async () => {
+    mocks.polish.on = true;
+    mocks.polish.run.mockImplementation(slowPolish(2000));
+    await key(true);
+    segment(1, "0", "潤飾到一半", true);
+    await key(false);
+    finish(1, "0", "潤飾到一半取消");
+    await tick(500);
+    expect(last(phases())).toBe("polishing");
+
+    await escape();
+    const first = mocks.polish.run.mock.calls[0][0] as { signal?: AbortSignal };
+    expect(first.signal?.aborted).toBe(true);
+    expect(last(phases())).toBe("cancelled");
+    await tick(3000);
+    expect(copied()).toEqual([]);
+    expect(calls("paste_to_frontmost")).toEqual([]);
+    expect(mocks.log.warn).not.toHaveBeenCalledWith(
+      expect.stringContaining("polish"),
+      expect.anything(),
+    );
+
+    await undo();
+    expect(last(phases())).toBe("polishing");
+    await tick(2000);
+    expect(copied()).toEqual(["潤飾到一半取消。"]);
+    expect(calls("paste_to_frontmost")).toEqual([]);
+    expect(dones()).toEqual([{ message: "recovered", text: "潤飾到一半取消。" }]);
+  });
+
+  it("a polish that came back despite the Esc is not run again on Undo", async () => {
+    mocks.polish.on = true;
+    // The answer was already on its way: the abort does not stop it.
+    mocks.polish.run.mockImplementation(
+      (opts: { raw: string }) =>
+        new Promise((resolve) =>
+          setTimeout(() => resolve({ text: `${opts.raw}。`, outcome: "polished" }), 1000),
+        ),
+    );
+    await key(true);
+    await key(false);
+    finish(1, "0", "已經潤飾好的一句話");
+    await tick(500);
+    await escape();
+    await tick(1000);
+    expect(copied()).toEqual([]);
+    await undo();
+    expect(copied()).toEqual(["已經潤飾好的一句話。"]);
+    expect(mocks.polish.run).toHaveBeenCalledTimes(1);
+  });
+
+  it("an Esc racing a re-press cancels the old dictation, not the new one's key-up", async () => {
+    await key(true);
+    segment(1, "0", "第一句", true);
+    await key(false); // settling
+    // The press is queued; the Esc lands before it runs.
+    fire("voicetyping://ptt", { down: true });
+    fire("voicetyping://cancel", { fromTrigger: false });
+    await tick();
+    expect(calls("start_voice_typing")).toHaveLength(2);
+
+    segment(2, "0", "第二句", true);
+    await key(false);
+    expect(calls("stop_voice_typing")).toEqual([{ tail: true }, { tail: true }]);
+    finish(2, "0", "第二句話");
+    await tick();
+    expect(copied()).toEqual(["第二句話"]);
+  });
+
+  it("a delivery reaching the clipboard never disarms Esc for the dictation after it", async () => {
+    mocks.polish.on = true;
+    mocks.polish.run.mockImplementation(slowPolish(2000));
+    await key(true);
+    await key(false);
+    finish(1, "0", "第一句話");
+    await tick(100);
+    expect(last(phases())).toBe("polishing");
+
+    await key(true); // the next dictation, while the first one polishes
+    await tick(2000);
+    expect(copied()).toEqual(["第一句話。"]);
+    expect(armed()).toEqual([true, true]);
+
+    // …and Esc still cancels the new one.
+    await escape();
+    expect(last(phases())).toBe("cancelled");
+    expect(calls("stop_voice_typing")).toEqual([{ tail: true }, { tail: false }]);
+  });
+
+  it("disarms Esc once the text is committed to the clipboard", async () => {
+    await key(true);
+    await key(false);
+    finish(1, "0", "照常貼上");
+    await tick();
+    expect(copied()).toEqual(["照常貼上"]);
+    expect(armed()).toEqual([true, false]);
+  });
+
+  it("a new press drops a cancelled dictation still on offer and starts fresh", async () => {
+    await key(true);
+    segment(1, "0", "舊的", true);
+    await escape();
+    await key(false);
+    await key(true); // during the offer, before the first one settled
+    expect(calls("start_voice_typing")).toHaveLength(2);
+    expect(mocks.log.info).toHaveBeenCalledWith("voice-typing: cancelled dictation discarded", {
+      reason: "new press",
+    });
+
+    await undo(); // a stale click: nothing is on offer any more
+    finish(1, "0", "舊的");
+    segment(2, "0", "新的", true);
+    await key(false);
+    finish(2, "0", "新的");
+    await tick(6000);
+    expect(copied()).toEqual(["新的"]);
+    expect(mocks.append).toHaveBeenCalledTimes(1);
+  });
+
+  it("a new press still recovers a cancel whose Undo was already asked", async () => {
+    await key(true);
+    segment(1, "0", "要回來的", true);
+    await escape();
+    await undo(); // before it settled
+    await key(false);
+    await key(true); // the restart settles it on the spot
+    expect(copied()).toEqual(["要回來的"]);
+    expect(calls("paste_to_frontmost")).toEqual([]);
+  });
+
+  it("toggle mode: a tap after Esc starts a fresh dictation at once", async () => {
+    mocks.settings.voiceTypingMode = "toggle";
+    await key(true);
+    await key(false);
+    await escape();
+    await key(true); // the cancelled one has not settled yet
+    await key(false);
+    expect(calls("start_voice_typing")).toHaveLength(2);
+    expect(mocks.log.info).toHaveBeenCalledWith("voice-typing: cancelled dictation discarded", {
+      reason: "new press",
+    });
+  });
+
+  it("an Esc the Windows hook swallowed under the held trigger settles its silent release", async () => {
+    await key(true);
+    await escape(true);
+    expect(phases()).toContain("cancelled");
+    // The hook never reports this hold's release; the next press still works.
+    await key(true);
+    expect(calls("start_voice_typing")).toHaveLength(2);
+  });
+
+  it("toggle mode: the hook's Esc under the held stop tap re-arms the next tap", async () => {
+    mocks.settings.voiceTypingMode = "toggle";
+    await key(true);
+    await key(false);
+    await key(true); // the stop tap, still held…
+    await escape(true); // …when Esc cancels it; its release is never reported
+    finish(1, "0", "切換取消");
+    await tick();
+    expect(copied()).toEqual([]);
+    await key(true);
+    expect(calls("start_voice_typing")).toHaveLength(2);
+  });
+
+  it("the hook's Esc with nothing to cancel is the plain stop it used to be", async () => {
+    let failStart = () => {};
+    backend.startFailure = {
+      gate: new Promise<void>((resolve) => {
+        failStart = resolve;
+      }),
+      error: "mic busy",
+    };
+    await key(true);
+    failStart();
+    await tick();
+    expect(phases()).toContain("error");
+    // The hold is still down as far as the host knows, and the hook silenced
+    // its release: the Esc must count as that release.
+    backend.startFailure = null;
+    await escape(true);
+    await key(true);
+    expect(calls("start_voice_typing")).toHaveLength(2);
+  });
+
+  it("an Esc during a start that fails leaves the error, not an Undo", async () => {
+    let failStart = () => {};
+    backend.startFailure = {
+      gate: new Promise<void>((resolve) => {
+        failStart = resolve;
+      }),
+      error: "mic busy",
+    };
+    fire("voicetyping://ptt", { down: true });
+    await tick();
+    await escape();
+    failStart();
+    await tick();
+    expect(phases()).toContain("error");
+    expect(phases()).not.toContain("cancelled");
+    expect(last(armed())).toBe(false);
+  });
+
+  it("an Esc while the mic is still opening cuts it once it has", async () => {
+    let opened = () => {};
+    backend.startGate = new Promise<void>((resolve) => {
+      opened = resolve;
+    });
+    fire("voicetyping://ptt", { down: true });
+    await tick();
+    await escape();
+    expect(calls("stop_voice_typing")).toEqual([]);
+    opened();
+    await tick();
+    expect(calls("stop_voice_typing")).toEqual([{ tail: false }]);
+    expect(phases()).toContain("cancelled");
+    await key(false);
+    expect(calls("stop_voice_typing")).toHaveLength(1);
+  });
+
+  it("an idle Esc does nothing", async () => {
+    await escape();
+    expect(mocks.invoke.mock.calls.map((c) => c[0])).toEqual(["set_voice_typing_shortcut"]);
+    expect(phases()).toEqual([]);
+  });
+
+  it("the hosted cap does not override a cancel", async () => {
+    await key(true);
+    await escape();
+    await tick(600_000);
+    expect(phases()).not.toContain("limit");
+    expect(calls("stop_voice_typing")).toEqual([{ tail: false }]);
   });
 });

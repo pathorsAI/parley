@@ -14,14 +14,16 @@
 //!   session and must return within a few milliseconds — Windows silently
 //!   removes a hook that keeps exceeding `LowLevelHooksTimeout`. It therefore
 //!   only feeds the transition to the pure [`ModifierPtt`] state machine and
-//!   pushes the resulting start/stop onto a channel. It never logs, never
-//!   touches Tauri and never swallows a key (`CallNextHookEx` always runs), so
+//!   pushes the resulting start/stop/cancel onto a channel. It never logs and
+//!   never touches Tauri, and it swallows exactly one kind of key: the Esc
+//!   that cancels an armed, held dictation (so a right-Ctrl hold does not
+//!   also open Start). Everything else goes on through `CallNextHookEx`, so
 //!   right Ctrl / right Alt keep working as modifiers in every app.
 //! - **The dispatcher thread** drains that channel and does the slow part:
 //!   logging, the `voicetyping://ptt` event (the same event the combo path in
-//!   hotkey.rs emits, so the dictation session cannot tell the two apart), and
-//!   the menu-mask keystroke for right Alt described at
-//!   [`mask_menu_activation`].
+//!   hotkey.rs emits, so the dictation session cannot tell the two apart) or
+//!   the `voicetyping://cancel` one, and the menu-mask keystroke for right Alt
+//!   described at [`mask_menu_activation`].
 //!
 //! The hook is installed only while a modifier trigger is selected. With a key
 //! combo selected (the default) nothing in Parley sees ordinary typing — the
@@ -361,23 +363,28 @@ fn on_resume() {
 
 /// The hook callback. Keep it this small: see the module doc.
 unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    if code == HC_ACTION as i32 {
-        // SAFETY: for HC_ACTION, `lparam` points at a KBDLLHOOKSTRUCT that is
-        // valid for the duration of this call.
-        observe(unsafe { &*(lparam.0 as *const KBDLLHOOKSTRUCT) });
+    // SAFETY: for HC_ACTION, `lparam` points at a KBDLLHOOKSTRUCT that is
+    // valid for the duration of this call.
+    if code == HC_ACTION as i32 && observe(unsafe { &*(lparam.0 as *const KBDLLHOOKSTRUCT) }) {
+        // The Esc that cancelled: nobody else sees it, so Ctrl+Esc does not
+        // open Start and the app in front does not get an Esc it never asked
+        // for. Its key-up still goes through, which nothing acts on.
+        return LRESULT(1);
     }
-    // SAFETY: forwarding the arguments we were given; never swallow a key.
+    // SAFETY: forwarding the arguments we were given.
     unsafe { CallNextHookEx(None, code, wparam, lparam) }
 }
 
-fn observe(info: &KBDLLHOOKSTRUCT) {
+/// Feed one key to the state machine and pass its verdict on. True when the
+/// key must be swallowed (the Esc that cancels).
+fn observe(info: &KBDLLHOOKSTRUCT) -> bool {
     // Synthesized input is not the user's hand on the key: our own Ctrl+V
     // paste, and anything another tool injects, must never drive dictation.
     if info.flags.0 & LLKHF_INJECTED.0 != 0 {
-        return;
+        return false;
     }
     let Some(trigger) = current_trigger() else {
-        return;
+        return false;
     };
     let ev = KeyEvent {
         vk: info.vkCode,
@@ -387,11 +394,14 @@ fn observe(info: &KBDLLHOOKSTRUCT) {
     let action = MACHINE.with(|m| {
         let mut m = m.borrow_mut();
         m.set_trigger(Some(trigger));
+        m.set_cancel_armed(super::CANCEL_ARMED.load(Ordering::SeqCst));
         m.on_key(ev, key_is_down)
     });
-    if let Some(action) = action {
-        send(action, trigger);
-    }
+    let Some(action) = action else {
+        return false;
+    };
+    send(action, trigger);
+    action == Action::Cancel
 }
 
 fn key_is_down(vk: u32) -> bool {
@@ -422,6 +432,17 @@ fn spawn_dispatcher(app: AppHandle) -> Sender<(Action, Trigger)> {
 }
 
 fn deliver(app: &AppHandle, action: Action, trigger: Trigger) {
+    if action == Action::Cancel {
+        // `fromTrigger`: the swallowed Esc turned the hold into a chord, so
+        // this trigger's release will never be reported — the frontend
+        // settles it. No menu mask: the Start already sent one for right Alt.
+        log::info!("voice-typing: {} + Esc → cancel", trigger.id());
+        let _ = app.emit(
+            super::CANCEL_EVENT,
+            serde_json::json!({ "fromTrigger": true }),
+        );
+        return;
+    }
     let down = action == Action::Start;
     log::info!(
         "voice-typing: {} {}",

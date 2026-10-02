@@ -218,6 +218,7 @@ pub fn run() {
             hotkey::input_monitoring_status,
             hotkey::request_input_monitoring,
             hotkey::set_voice_typing_shortcut,
+            hotkey::set_voice_typing_cancel_armed,
             hotkey::voice_typing_hotkey_status,
             replay::transcribe_file,
             replay::measure_audio_speech_rate,

@@ -234,8 +234,20 @@ export async function hideOverlay(): Promise<void> {
  * - `ok-unpolished`: pasted, but as dictated, because the polish pass was
  *   attempted and did not come back (timed out, or the request failed).
  * - `ok`: pasted — polished, or with no polish to expect.
+ *
+ * Two more come only from an Undo of an Esc-cancelled dictation (host.ts,
+ * deliverRecovered), never from {@link doneMessage}:
+ *
+ * - `recovered`: copied to the clipboard (Undo never pastes).
+ * - `nothing`: the cancelled dictation had no text to bring back.
  */
-export type DoneMessage = "empty" | "clipboard-only" | "ok-unpolished" | "ok";
+export type DoneMessage =
+  | "empty"
+  | "clipboard-only"
+  | "ok-unpolished"
+  | "ok"
+  | "recovered"
+  | "nothing";
 
 /**
  * Pick the {@link DoneMessage} for one finalized dictation.

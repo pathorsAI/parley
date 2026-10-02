@@ -10,6 +10,11 @@
 //! overlay had last reported over an IPC hop — a hop that could lag the final
 //! tokens, or never come from a suspended overlay. The overlay is told what was
 //! delivered on `done` and ends on exactly that.
+//!
+//! Esc cancels the dictation on screen until its text is committed to the
+//! clipboard: the mic stops as on a release, the text still settles, and the
+//! host holds it instead of delivering it, for an Undo that copies it to the
+//! clipboard. The rules are in cancel.ts; the orderings are here.
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, emit, type UnlistenFn } from "@tauri-apps/api/event";
@@ -29,6 +34,14 @@ import { SessionOwner, SessionTranscript, type Segment, type SessionEvent } from
 import { settleVerdict, type SettleReason } from "./settle";
 import { appendVoiceEntry } from "./history";
 import { canPolish, polishTranscriptOutcome, shouldPolish, type PolishOutcome } from "./polish";
+import {
+  CANCEL_ACTION_EVENT,
+  CANCEL_EVENT,
+  CANCEL_UNDO_MS,
+  CancelLedger,
+  type CancelActionPayload,
+  type CancelPayload,
+} from "./cancel";
 import {
   addEntry,
   applyReplacements,
@@ -124,6 +137,29 @@ let hideTimer: ReturnType<typeof setTimeout> | undefined;
  *  starts to auto-finalize it (the free plan caps a single dictation). Cleared
  *  whenever the session ends by any other path. */
 let capTimer: ReturnType<typeof setTimeout> | undefined;
+/** Serialize press/release handling: a quick tap used to run endSession's
+ *  `stop_voice_typing` while startSession's invoke was still in flight, so
+ *  the stop reached Rust FIRST and no-op'd — leaving a live, ownerless
+ *  backend session (mic claimed, socket open) behind. Chaining guarantees
+ *  start has resolved before its matching stop is issued. Esc's cancel runs
+ *  on it too, so it lands between a press and its release, never inside. */
+let pttChain: Promise<void> = Promise.resolve();
+
+// ── Esc cancels, Undo copies (see cancel.ts) ────────────────────────────────
+/** The generation Esc cancels right now; null when nothing is cancellable.
+ *  Bound to a generation rather than a flag: dictation N can still be
+ *  polishing while N+1 records, and N reaching the clipboard must not disarm
+ *  Esc for N+1 — nor may an Esc meant for N touch N+1's key state. */
+let cancellable: number | null = null;
+/** The mic is open for `gen` (from the start until a release, the cap or an
+ *  Esc cuts it). An Esc cuts it like a release, whatever else has happened —
+ *  a server close can settle the dictation while the mic is still open. */
+let capturing = false;
+const cancels = new CancelLedger();
+/** Closes the Undo offer CANCEL_UNDO_MS after the Esc. */
+let cancelTimer: ReturnType<typeof setTimeout> | undefined;
+/** The polish round trip in flight, so an Esc can abandon it. */
+let polishing: { gen: number; ctl: AbortController } | null = null;
 
 // ── Correction → dictionary suggestion ──────────────────────────────────────
 /** Listener for the one correction candidate the current observation may
@@ -169,35 +205,29 @@ export function initVoiceTyping(): () => void {
       else unsubs.push(u);
     }).catch((error) => log.warn("voice-typing: listener setup failed", { error: String(error) }));
   };
-  // Serialize press/release handling: a quick tap used to run endSession's
-  // `stop_voice_typing` while startSession's invoke was still in flight, so
-  // the stop reached Rust FIRST and no-op'd — leaving a live, ownerless
-  // backend session (mic claimed, socket open) behind. Chaining guarantees
-  // start has resolved before its matching stop is issued.
-  let pttChain: Promise<void> = Promise.resolve();
   track(
     listen<{ down: boolean }>("voicetyping://ptt", (e) => {
       const isDown = e.payload.down;
-      pttChain = pttChain
-        .then(() => onPtt(isDown))
-        .catch((error) =>
-          log.error("voice-typing: push-to-talk handler failed", {
-            isDown,
-            error: String(error),
-          }),
-        );
+      onPttChain("push-to-talk handler", () => onPtt(isDown), { isDown });
     }),
   );
   // The Windows tray's "Start/Stop voice typing" item (see src-tauri/src/tray.rs).
   // Queued on the same chain as the hotkey, and served by the same session
   // start/end code — only the trigger differs.
+  track(listen(TRAY_VOICE_TOGGLE_EVENT, () => onPttChain("tray toggle", onTrayToggle)));
+  // Esc while a dictation is cancellable. Rust only holds the Esc shortcut
+  // while the host arms it (see armCancel), so an Esc at any other time still
+  // reaches the app in front.
   track(
-    listen(TRAY_VOICE_TOGGLE_EVENT, () => {
-      pttChain = pttChain
-        .then(onTrayToggle)
-        .catch((error) =>
-          log.error("voice-typing: tray toggle failed", { error: String(error) }),
-        );
+    listen<CancelPayload>(CANCEL_EVENT, (e) => onEscape(e.payload?.fromTrigger === true)),
+  );
+  // The overlay's Undo.
+  track(
+    listen<CancelActionPayload>(CANCEL_ACTION_EVENT, (e) => {
+      if (e.payload.action !== "undo") return;
+      onUndoCancel().catch((error) =>
+        log.error("voice-typing: cancel undo failed", { error: String(error) }),
+      );
     }),
   );
   // The host's own copy of the transcript (see the header). Only while the
@@ -232,9 +262,13 @@ export function initVoiceTyping(): () => void {
       if (!busy || !owner.owns(e.payload)) return;
       failed = true;
       log.warn("voice-typing: session failed", { code: e.payload.code });
-      emit("voicetyping://session", { phase: "error", message: e.payload.code }).catch((error) =>
-        log.warn("voice-typing: error event emit failed", { error: String(error) }),
-      );
+      // A cancelled dictation keeps its Undo on screen: the failure only means
+      // the text it holds is final.
+      if (!cancels.isCancelled(gen)) {
+        emit("voicetyping://session", { phase: "error", message: e.payload.code }).catch(
+          (error) => log.warn("voice-typing: error event emit failed", { error: String(error) }),
+        );
+      }
       if (releasedAt > 0) waitForSettle();
     }),
   );
@@ -303,10 +337,24 @@ export function initVoiceTyping(): () => void {
   return () => {
     cancelled = true;
     clearTimeout(capTimer);
+    clearTimeout(cancelTimer);
+    armCancel(false);
     cancelSuggestion();
     stopObserving();
     unsubs.forEach((u) => u());
   };
+}
+
+/** Run `task` behind every press, release and cancel queued before it (see
+ *  `pttChain`); `what` and `ctx` name it in the log if it throws. */
+function onPttChain(
+  what: string,
+  task: () => Promise<void>,
+  ctx: Record<string, unknown> = {},
+): void {
+  pttChain = pttChain
+    .then(task)
+    .catch((error) => log.error(`voice-typing: ${what} failed`, { ...ctx, error: String(error) }));
 }
 
 async function onPtt(isDown: boolean) {
@@ -322,8 +370,10 @@ async function onPtt(isDown: boolean) {
     if (!toggleArmed) return; // key-repeat while held — ignore
     toggleArmed = false;
     // A tap while the last dictation is still settling lands in endSession
-    // and is a no-op there — it was already ended.
-    if (busy) {
+    // and is a no-op there — it was already ended. Unless Esc cancelled it:
+    // then it is only settling for a possible Undo, and the tap starts a
+    // fresh dictation (startSession settles the cancelled one on the way).
+    if (busy && !cancels.isCancelled(gen)) {
       down = false; // mirror the hold-mode release (the tray reads `down`)
       await endSession();
     } else {
@@ -393,9 +443,14 @@ async function startSession() {
     scheduleHide();
     return;
   }
+  // A new dictation replaces a cancelled one still offering Undo (its text is
+  // dropped; one whose Undo was already clicked is still recovered).
+  dropCancel();
   busy = true;
   failed = false;
   gen += 1;
+  cancellable = gen;
+  capturing = false;
   owner.begin();
   transcript = new SessionTranscript();
   pressedAt = pressed;
@@ -430,11 +485,16 @@ async function startSession() {
     relayUrl: sttRelayUrl(provider, "voice_typing"),
     maxDurationSecs: hosted ? HOSTED_VOICE_TYPING_MAX_SECONDS : null,
   });
+  // Esc cancels from here on — claimed right behind the mic, never before it.
+  armCancel(true);
   const shown = showOverlay().catch((error) =>
     log.warn("voice-typing: overlay show failed", { error: String(error) }),
   );
   try {
     await starting;
+    // Even when an Esc already landed: its cancel is queued behind this, and
+    // cuts the capture once this returns.
+    capturing = true;
     log.info("voice-typing: session started", { provider, startMs: Date.now() - pressed });
     if (hosted) {
       capTimer = setTimeout(() => {
@@ -446,6 +506,11 @@ async function startSession() {
   } catch (e) {
     log.error("voice-typing: start failed", { error: String(e) });
     busy = false;
+    // No dictation, nothing to cancel: an Esc already pressed for it must not
+    // cover the error below with an Undo (applyCancel finds it forgotten).
+    cancellable = null;
+    cancels.forget(gen);
+    armCancel(false);
     // The overlay is this failure's only surface, so let it finish coming up
     // before the error is announced — it raced the start, and a message sent
     // to a window that never appeared is a silent dead session.
@@ -457,8 +522,9 @@ async function startSession() {
 
 async function endSession() {
   // Once per dictation: a toggle-mode tap while it settles must not restart
-  // the wait (or cut a second time).
-  if (!busy || releasedAt > 0) return;
+  // the wait (or cut a second time). A cancelled one is applyCancel's to cut,
+  // with no tail and no "finalizing" spinner over its Undo.
+  if (!busy || releasedAt > 0 || cancels.isCancelled(gen)) return;
   const myGen = gen;
   clearTimeout(capTimer);
   releasedAt = Date.now();
@@ -466,8 +532,9 @@ async function endSession() {
   // Rust keeps a short tail of audio, then cuts the capture, which tells the
   // STT adapter to finalize; the final tokens arrive over the next moments.
   await stopCapture({ tail: true });
-  // The close (or a failure) may have settled it while the stop was in flight.
-  if (!busy || gen !== myGen) return;
+  // The close (or a failure) may have settled it while the stop was in flight,
+  // or an Esc cancelled it (its applyCancel, queued behind this, settles it).
+  if (!busy || gen !== myGen || cancels.isCancelled(myGen)) return;
   // A failed session already shows its error, and a closed one is about to
   // be delivered: neither gets the "finalizing" spinner.
   if (!failed && closedAt === 0) await emit("voicetyping://session", { phase: "stop" });
@@ -480,14 +547,14 @@ async function endSession() {
  *  the overlay the limit ended it, then settle as usual (the transcript
  *  captured so far is still copied/pasted). */
 async function onCapReached() {
-  if (!busy || releasedAt > 0) return;
+  if (!busy || releasedAt > 0 || cancels.isCancelled(gen)) return;
   const myGen = gen;
   clearTimeout(capTimer);
   log.info("voice-typing: hosted single-session cap reached; finalizing");
   down = false;
   releasedAt = Date.now();
   await stopCapture({ tail: false });
-  if (!busy || gen !== myGen) return;
+  if (!busy || gen !== myGen || cancels.isCancelled(myGen)) return;
   if (!failed) {
     await emit("voicetyping://session", { phase: "limit" }).catch((error) =>
       log.warn("voice-typing: limit event emit failed", { error: String(error) }),
@@ -504,6 +571,7 @@ async function onCapReached() {
  * dictation. Resolves as soon as Rust has scheduled the cut.
  */
 async function stopCapture(opts: { tail: boolean }): Promise<void> {
+  capturing = false;
   try {
     await invoke("stop_voice_typing", { tail: opts.tail });
   } catch (e) {
@@ -594,12 +662,15 @@ function enqueueDelivery(d: Delivery): Promise<void> {
  * and the raw transcript in every other case, so `deliver` has nothing to
  * handle. `outcome` says which, for the overlay's note. `signal` abandons the
  * round trip (resolving to `"cancelled"` with the raw text). See `polish.ts`.
+ * `recovering` is an Undo bringing a cancelled dictation back, which may say
+ * "polishing" over the cancelled pill; nothing else may.
  */
 async function polishForPaste(
   raw: string,
   myGen: number,
-  signal?: AbortSignal,
+  opts: { signal?: AbortSignal; recovering?: boolean } = {},
 ): Promise<{ text: string; outcome: PolishOutcome }> {
+  const { signal, recovering = false } = opts;
   const settings = useStore.getState().settings;
   // Checked here as well as in polish.ts so the overlay is never told
   // "polishing" for a pass that is not going to run.
@@ -607,8 +678,11 @@ async function polishForPaste(
   if (!shouldPolish(raw)) return { text: raw, outcome: "tooShort" };
   // Only claim the overlay while it is still ours to claim; a press during the
   // round trip owns it from here (the gen check in `deliver` is the same guard
-  // for the "done" tail).
-  if (gen === myGen) await emit("voicetyping://session", { phase: "polishing" });
+  // for the "done" tail). A cancelled dictation's overlay is its Undo, which
+  // only that Undo bringing it back may replace.
+  if (gen === myGen && (recovering || !cancels.isCancelled(myGen))) {
+    await emit("voicetyping://session", { phase: "polishing" });
+  }
   const { text, outcome } = await polishTranscriptOutcome({
     raw,
     settings,
@@ -639,6 +713,9 @@ async function deliver(d: Delivery): Promise<void> {
   } else {
     log.warn("voice-typing: dictation ended empty", { ...timing, segments: d.segments });
   }
+  // Esc came first (while it recorded or settled, or while an earlier
+  // delivery held this one up): hold the text for Undo, deliver nothing.
+  if (cancels.isCancelled(d.myGen)) return holdCancelled(d.myGen, raw, false);
   let text = raw;
   /** Did the synthetic paste actually land? Stays true when the copy/paste
    *  round trip threw, because then we don't know what reached the clipboard
@@ -646,7 +723,29 @@ async function deliver(d: Delivery): Promise<void> {
   let pasted = true;
   let outcome: PolishOutcome = "off";
   if (raw) {
-    ({ text, outcome } = await polishForPaste(raw, d.myGen));
+    // Esc during the round trip abandons it (outcome "cancelled", not a
+    // failure) — the user is no longer waiting on this text.
+    const ctl = new AbortController();
+    polishing = { gen: d.myGen, ctl };
+    try {
+      ({ text, outcome } = await polishForPaste(raw, d.myGen, { signal: ctl.signal }));
+    } finally {
+      if (polishing?.ctl === ctl) polishing = null;
+    }
+    // A polish that ran to its end (whatever came of it) is not redone on
+    // Undo; one the Esc abandoned is.
+    if (cancels.isCancelled(d.myGen)) {
+      return holdCancelled(d.myGen, text, outcome !== "cancelled");
+    }
+  }
+  // The point of no return: from here the text goes to the clipboard and the
+  // field, so Esc goes back to the app in front. Only this dictation's
+  // arming — a newer press may own Esc already.
+  if (cancellable === d.myGen) {
+    cancellable = null;
+    armCancel(false);
+  }
+  if (raw) {
     let appBundleId: string | null = null;
     try {
       await invoke("copy_to_clipboard", { text });
@@ -707,6 +806,177 @@ function scheduleHide() {
       log.warn("voice-typing: scheduled hide failed", { error: String(error) }),
     );
   }, HIDE_DELAY_MS);
+}
+
+// ── Esc and Undo ────────────────────────────────────────────────────────────
+
+/** Claim Esc for the cancel, or hand it back to the app in front. Never
+ *  awaited — arming must not hold up a press — and Rust ignores a repeat of
+ *  the current state, so no mirror of it is kept here. */
+function armCancel(armed: boolean): void {
+  invoke("set_voice_typing_cancel_armed", { armed }).catch((error) =>
+    log.warn("voice-typing: escape cancel arming failed", { armed, error: String(error) }),
+  );
+}
+
+/**
+ * Mark the cancellable dictation cancelled and hand Esc back. Only marks — so
+ * it is safe synchronously, ahead of anything queued: what the cancel does to
+ * the session runs on the chain (applyCancel), where it cannot interleave
+ * with a press or a release. Its polish, if one is in flight, is abandoned
+ * here, not when the chain gets to it. The generation, or null when nothing
+ * was cancellable.
+ */
+function markCancel(fromTrigger: boolean): number | null {
+  const g = cancellable;
+  if (g === null || !cancels.cancel(g)) return null;
+  cancellable = null;
+  armCancel(false);
+  if (polishing?.gen === g) polishing.ctl.abort();
+  // Where it was: still recording, released but not settled, or already
+  // in its delivery (neither).
+  log.info("voice-typing: cancelled (Escape)", {
+    capturing: g === gen && capturing,
+    busy: g === gen && busy,
+    fromTrigger,
+  });
+  return g;
+}
+
+/** Esc from Rust: the global shortcut, or the Windows keyboard hook under the
+ *  held trigger (`fromTrigger`, see CancelPayload). */
+function onEscape(fromTrigger: boolean): void {
+  const marked = markCancel(fromTrigger);
+  onPttChain(
+    "escape cancel",
+    async () => {
+      // Nothing was cancellable when the key came, but a press queued ahead
+      // of it may have armed a dictation since (the Esc raced its arming).
+      const g = marked ?? markCancel(fromTrigger);
+      if (g !== null) await applyCancel(g);
+      // The hook swallowed this Esc under the held trigger, which turns the
+      // hold into a chord whose release Rust never reports. Settle that
+      // key-up here: a no-op after a cancel in hold mode (down is already
+      // false), the re-arm in toggle mode, and — when there was nothing to
+      // cancel — the plain stop that key used to be.
+      if (fromTrigger) await onPtt(false);
+    },
+    { fromTrigger },
+  );
+}
+
+/** What an Esc does to its dictation. On the chain, so the press that started
+ *  it (or its release) has finished first. */
+async function applyCancel(g: number): Promise<void> {
+  // A newer press owns the session and the overlay — it already withdrew g's
+  // offer, and g's delivery will drop the text — or g's start failed.
+  if (gen !== g || !cancels.isCancelled(g)) return;
+  // Hold mode: the trigger's key-up is now a no-op. Toggle mode and the
+  // tray: the next press starts a fresh dictation.
+  down = false;
+  clearTimeout(hideTimer);
+  clearTimeout(cancelTimer);
+  cancelTimer = setTimeout(expireCancel, CANCEL_UNDO_MS);
+  await emit("voicetyping://session", { phase: "cancelled" });
+  if (capturing) {
+    // A release with no tail, whether or not the dictation has settled
+    // meanwhile (a server close can do that with the mic still open). The
+    // recognizer still answers what it heard: that is what Undo brings back.
+    clearTimeout(capTimer);
+    releasedAt = Date.now();
+    await stopCapture({ tail: false });
+  }
+  // Still open: it settles like any released dictation, and its delivery
+  // holds the text (as does one already under way).
+  if (busy) waitForSettle();
+}
+
+/** A cancelled dictation's delivery reached its text: keep it on offer,
+ *  recover it now (Undo was asked before it settled), or drop it. */
+async function holdCancelled(g: number, text: string, polished: boolean): Promise<void> {
+  const verdict = cancels.settle(g, text, polished);
+  log.info("voice-typing: cancelled dictation held", { chars: text.length, verdict });
+  if (verdict === "recover") {
+    await deliverRecovered(g, text, polished);
+  } else if (verdict === "hold" && gen === g) {
+    // Put the Undo back on screen in case a "polishing" sent just before the
+    // Esc reached the overlay after the "cancelled" that followed it.
+    await emit("voicetyping://session", { phase: "cancelled" });
+  }
+}
+
+/** The overlay's Undo: the cancelled dictation goes to the clipboard — now if
+ *  it has settled, otherwise the moment it does (see holdCancelled). */
+async function onUndoCancel(): Promise<void> {
+  const r = cancels.undo();
+  if (r.kind === "none") return;
+  clearTimeout(cancelTimer);
+  log.info("voice-typing: cancel undone", { settled: r.kind === "now" });
+  if (r.kind === "wait") {
+    // The "finalizing" spinner until it settles.
+    if (gen === r.gen) await emit("voicetyping://session", { phase: "stop" });
+    return;
+  }
+  await enqueueRecovery(r.gen, r.text, r.polished);
+}
+
+/** Queue a recovery behind every earlier delivery, so the clipboard ends on
+ *  the most recent text. */
+function enqueueRecovery(g: number, text: string, polished: boolean): Promise<void> {
+  deliveryChain = deliveryChain
+    .then(() => deliverRecovered(g, text, polished))
+    .catch((error) => log.error("voice-typing: recovery failed", { error: String(error) }));
+  return deliveryChain;
+}
+
+/**
+ * Undo's delivery: the clipboard and the history, never a paste — seconds
+ * have passed, the caret may have moved, and the click that asked for it
+ * landed on the overlay. Polished first unless the polish pass already ran to
+ * its end, so it reads as it would have. Runs on `deliveryChain`.
+ */
+async function deliverRecovered(g: number, text: string, polished: boolean): Promise<void> {
+  const out =
+    text && !polished ? (await polishForPaste(text, g, { recovering: true })).text : text;
+  if (out) {
+    try {
+      await invoke("copy_to_clipboard", { text: out });
+    } catch (e) {
+      log.error("voice-typing: recovered copy failed", { error: String(e) });
+    }
+    appendVoiceEntry(out, null).catch((error) =>
+      log.warn("voice-typing: append history failed", { error: String(error) }),
+    );
+    log.info("voice-typing: recovered to clipboard", { chars: out.length });
+  }
+  if (gen !== g) return;
+  await emit("voicetyping://session", {
+    phase: "done",
+    message: out ? "recovered" : "nothing",
+    text: out,
+  });
+  scheduleHide();
+}
+
+/** The Undo offer ran out: drop the text (never saved) and take the overlay
+ *  down, unless a newer dictation owns it. */
+function expireCancel(): void {
+  const g = cancels.expire();
+  if (g === null) return;
+  log.info("voice-typing: cancelled dictation discarded", { reason: "undo window closed" });
+  if (gen === g) {
+    hideOverlay().catch((error) =>
+      log.warn("voice-typing: cancel hide failed", { error: String(error) }),
+    );
+  }
+}
+
+/** A new press withdraws the Undo offer (see startSession). */
+function dropCancel(): void {
+  clearTimeout(cancelTimer);
+  if (cancels.supersede()) {
+    log.info("voice-typing: cancelled dictation discarded", { reason: "new press" });
+  }
 }
 
 // ── Learn from an in-place correction ───────────────────────────────────────

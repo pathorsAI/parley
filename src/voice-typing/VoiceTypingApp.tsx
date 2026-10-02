@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, emit } from "@tauri-apps/api/event";
-import { Check, Loader2, Mic, Sparkles } from "lucide-react";
+import { Check, Loader2, Mic, Sparkles, X } from "lucide-react";
 import { preloadZhConverter } from "../lib/zhConvert";
 import { normalizeTranscriptText } from "../lib/textNormalize";
 import { useI18n, type TranslationKey } from "../i18n";
@@ -12,6 +12,11 @@ import { isTauri } from "../lib/platform";
 import { sameHitRects, toHitRects, type HitRect } from "../lib/voiceTyping/hitRegions";
 import { SessionTranscript, type Segment, type SessionEvent } from "../lib/voiceTyping/transcript";
 import type { DoneMessage } from "../lib/voiceTyping/overlay";
+import {
+  CANCEL_ACTION_EVENT,
+  CANCEL_UNDO_MS,
+  type CancelActionPayload,
+} from "../lib/voiceTyping/cancel";
 import {
   SUGGEST_ACTION_EVENT,
   SUGGEST_EVENT,
@@ -57,18 +62,30 @@ const ERROR_KEYS: Record<string, TranslationKey> = {
 };
 
 /** listening = recording; finalizing = waiting for the STT's answer to the
- *  release; done = delivered (or nothing was heard — see `verdict`). */
+ *  release; cancelled = Esc called it off, and Undo is on offer until the host
+ *  takes the overlay down (see cancel.ts); done = delivered (or nothing was
+ *  heard — see `verdict`). */
 /** `polishing` is a second, longer wait after `finalizing`: the transcript has
  *  settled and is being cleaned up by the model before it is pasted. It gets
  *  its own phase rather than reusing `finalizing` because it is the only part
  *  of the pipeline the user waits a noticeable beat for, and a spinner that
  *  does not say why reads as a hang. */
-type Phase = "listening" | "finalizing" | "polishing" | "done";
+type Phase = "listening" | "finalizing" | "polishing" | "cancelled" | "done";
 
 /** Report a bubble button back to the host, which owns every decision. */
 function suggestAct(action: SuggestActionPayload["action"]): void {
   emit(SUGGEST_ACTION_EVENT, { action } satisfies SuggestActionPayload).catch((error) =>
     log.warn("voice typing overlay: suggest action emit failed", {
+      action,
+      error: String(error),
+    }),
+  );
+}
+
+/** Report the cancelled pill's Undo to the host, which owns every decision. */
+function cancelAct(action: CancelActionPayload["action"]): void {
+  emit(CANCEL_ACTION_EVENT, { action } satisfies CancelActionPayload).catch((error) =>
+    log.warn("voice typing overlay: cancel action emit failed", {
       action,
       error: String(error),
     }),
@@ -105,11 +122,13 @@ function instantWaveform(level: number): number[] {
   });
 }
 
-/** The verdicts that mean the text reached the clipboard (see doneMessage). */
+/** The verdicts that mean the text reached the clipboard (see doneMessage) —
+ *  an Undo's recovered text included. */
 const COPIED_VERDICTS: ReadonlySet<string> = new Set([
   "ok",
   "ok-unpolished",
   "clipboard-only",
+  "recovered",
 ] satisfies DoneMessage[]);
 
 /**
@@ -332,7 +351,18 @@ export const VoiceTypingApp = () => {
           return;
         }
         const { phase: p, message } = ev;
-        if (p === "stop") {
+        if (p === "cancelled") {
+          // The host re-sends it in case a "polishing" overtook it; a repeat
+          // must not restart the Undo pill's fade clock.
+          if (phaseRef.current === "cancelled") return;
+          // Undo stays reachable even over a session that had failed.
+          setError(null);
+          setFading(false);
+          enterPhase("cancelled");
+        } else if (p === "stop") {
+          // Also an Undo clicked before the text settled, possibly as the
+          // cancelled pill had started to fade.
+          setFading(false);
           enterPhase("finalizing");
         } else if (p === "polishing") {
           enterPhase("polishing");
@@ -398,6 +428,15 @@ export const VoiceTypingApp = () => {
     return () => clearTimeout(id);
   }, [phase, error, suggest]);
 
+  // A cancelled dictation is not "done": its Undo stays fully visible for
+  // (almost) the whole offer, then fades just before the host takes the
+  // overlay down at CANCEL_UNDO_MS.
+  useEffect(() => {
+    if (phase !== "cancelled") return;
+    const id = setTimeout(() => setFading(true), CANCEL_UNDO_MS - FADE_MS - 300);
+    return () => clearTimeout(id);
+  }, [phase]);
+
   const errorKey = (error && ERROR_KEYS[error]) || "voiceTyping.error";
   const bubble = error ? t(errorKey) : text;
 
@@ -415,12 +454,20 @@ export const VoiceTypingApp = () => {
     phaseIcon = <Sparkles className="size-2.5 animate-pulse" />;
   } else if (phase === "finalizing") {
     phaseIcon = <Loader2 className="size-2.5 animate-spin" />;
+  } else if (phase === "cancelled") {
+    phaseIcon = <X className="size-2.5" strokeWidth={3} />;
   } else if (phase === "done") {
     phaseIcon = <Check className="size-2.5" strokeWidth={3} />;
   }
   let indicatorTone = "bg-primary text-primary-foreground";
+  let barTone = "bg-primary";
   if (phase === "listening") {
     indicatorTone = "bg-recording text-white";
+    barTone = "bg-recording";
+  } else if (phase === "cancelled") {
+    // Neutral: nothing is happening and nothing went wrong.
+    indicatorTone = "bg-background/25 text-background";
+    barTone = "bg-background/40";
   } else if (phase === "done") {
     indicatorTone = "bg-success text-success-foreground";
   }
@@ -432,8 +479,9 @@ export const VoiceTypingApp = () => {
       style={{ opacity: fading ? 0 : 1, transition: `opacity ${FADE_MS}ms ease-in` }}
     >
       {/* Hosted single-dictation cap note: shown above the transcript, which is
-          still delivered. Warning tone to read as a limit, not an error. */}
-      {limited && !error && (
+          still delivered (unless Esc cancels it — then the Undo is the news).
+          Warning tone to read as a limit, not an error. */}
+      {limited && !error && phase !== "cancelled" && (
         <div
           data-overlay-hit
           className="rounded-full border border-warning-border bg-warning px-3 py-1 text-center text-[12px] font-medium text-warning-foreground shadow-md"
@@ -449,7 +497,7 @@ export const VoiceTypingApp = () => {
           data-overlay-hit
           className={`flex max-h-[84px] max-w-[420px] flex-col justify-end overflow-hidden rounded-[14px] px-3.5 py-1.5 text-center text-[14px] font-medium leading-snug shadow-md ${
             error ? "bg-destructive text-white" : "bg-foreground text-background"
-          }`}
+          } ${phase === "cancelled" ? "opacity-50" : ""}`}
         >
           {/* Bottom-anchored + clipped: the newest words stay visible while a
               long dictation scrolls older lines off the top, so the preview
@@ -468,6 +516,36 @@ export const VoiceTypingApp = () => {
         >
           <Sparkles className="size-2.5 animate-pulse" />
           {t("voiceTyping.polishing")}
+        </div>
+      )}
+
+      {/* Esc called the dictation off: nothing was pasted, and Undo copies it
+          to the clipboard instead. One row, so it never crowds the window.
+          The panel is non-activating, so Undo acts on pointer-down rather
+          than assuming a focused window's click; the host owns every
+          decision. It stops catching clicks as it fades — the offer is
+          closing, and a click then would silently do nothing. */}
+      {phase === "cancelled" && (
+        <div
+          data-overlay-hit
+          className={`flex items-center gap-1.5 rounded-full bg-foreground px-2.5 py-0.5 text-[11px] font-medium text-background shadow-md ${
+            fading ? "pointer-events-none" : ""
+          }`}
+        >
+          <X className="size-2.5" strokeWidth={3} />
+          {t("voiceTyping.cancelled")}
+          <span className="opacity-60">·</span>
+          <button
+            type="button"
+            tabIndex={-1}
+            onPointerDown={(e) => {
+              e.preventDefault();
+              cancelAct("undo");
+            }}
+            className="underline underline-offset-2"
+          >
+            {t("voiceTyping.cancelled.undo")}
+          </button>
         </div>
       )}
 
@@ -502,6 +580,16 @@ export const VoiceTypingApp = () => {
           className="rounded-full bg-foreground px-2.5 py-0.5 text-[11px] font-medium text-background shadow-md"
         >
           {t("voiceTyping.empty")}
+        </div>
+      )}
+
+      {/* Undo on a cancelled dictation that had no text to bring back. */}
+      {phase === "done" && !error && !suggest && verdict === "nothing" && (
+        <div
+          data-overlay-hit
+          className="rounded-full bg-foreground px-2.5 py-0.5 text-[11px] font-medium text-background shadow-md"
+        >
+          {t("voiceTyping.cancelled.nothing")}
         </div>
       )}
 
@@ -577,7 +665,7 @@ export const VoiceTypingApp = () => {
           {bars.map((b, i) => (
             <span
               key={barKeys.current[i]}
-              className={`w-[2px] rounded-full ${phase === "listening" ? "bg-recording" : "bg-primary"}`}
+              className={`w-[2px] rounded-full ${barTone}`}
               style={{ height: `${Math.max(2, Math.round(b * BAR_MAX_PX))}px` }}
             />
           ))}
