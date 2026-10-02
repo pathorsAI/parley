@@ -4,6 +4,7 @@ import { hasProviderKey } from "../ai/settings";
 import { logAiError } from "../ai/errors";
 import { log } from "../log";
 import type { Settings } from "../types";
+import { isSingleClause } from "./punctuation";
 
 /**
  * The rewrite pass that runs after a dictation settles and before the text is
@@ -34,8 +35,10 @@ import type { Settings } from "../types";
  * `polished` replaces the raw transcript; every other value leaves the caller
  * with the text as dictated.
  *
- * - `tooShort`, `off`: never attempted (below {@link MIN_POLISH_CHARS}, or the
- *   setting is off / the realtime lane cannot run).
+ * - `tooShort`, `singleClause`, `off`: never attempted (below
+ *   {@link MIN_POLISH_CHARS}; a single clause, see {@link polishSkipReason}; or
+ *   the setting is off / the realtime lane cannot run). `singleClause` is the
+ *   desktop's own.
  * - `timedOut`: no answer inside {@link POLISH_TIMEOUT_MS}.
  * - `rejectedLength`, `rejectedScript`: an answer came back and
  *   {@link polishVerdict} refused it.
@@ -45,6 +48,7 @@ import type { Settings } from "../types";
 export type PolishOutcome =
   | "polished"
   | "tooShort"
+  | "singleClause"
   | "off"
   | "timedOut"
   | "rejectedLength"
@@ -125,9 +129,26 @@ Never:
 
 Output ONLY the rewritten text: no preamble, no explanation, no code fences.`;
 
-/** Long enough to be worth a round trip. */
-export function shouldPolish(raw: string): boolean {
-  return raw.trim().length >= MIN_POLISH_CHARS;
+/**
+ * Why a dictation is not worth a round trip, or `null` when it is. `text` is
+ * what would be polished; `gateText` is what the length gate measures (the
+ * text before softenPausePeriods, `TranscriptText.sttText`, which may be a mark
+ * or a space longer — see the host).
+ *
+ * - `tooShort`: under {@link MIN_POLISH_CHARS}.
+ * - `singleClause`: one clause, no comma (punctuation.ts, `isSingleClause`) —
+ *   "我等一下就過去", "收到我馬上處理". There is nothing in it to restructure, and
+ *   the round trip (one to four seconds) was the slowest part of exactly the
+ *   dictations that should feel instant. Its trailing 。 is already gone
+ *   (softenPausePeriods), and the dictionary's replacements still ran on it.
+ */
+export function polishSkipReason(
+  text: string,
+  gateText: string = text,
+): "tooShort" | "singleClause" | null {
+  if (gateText.trim().length < MIN_POLISH_CHARS) return "tooShort";
+  if (isSingleClause(text)) return "singleClause";
+  return null;
 }
 
 /**
@@ -256,14 +277,16 @@ export async function polishTranscriptOutcome(opts: {
   /** The speaker's own name and company (`profileTerms`). */
   speakerTerms?: string[];
   signal?: AbortSignal;
-  /** What {@link shouldPolish} measures when it is not `raw`: the dictation
-   *  before softenPausePeriods (`TranscriptText.sttText`), which may be a
-   *  mark or a space longer. `raw` is still what gets polished. */
+  /** What {@link polishSkipReason}'s length gate measures when it is not
+   *  `raw`: the dictation before softenPausePeriods (`TranscriptText.sttText`),
+   *  which may be a mark or a space longer. `raw` is still what gets
+   *  polished. */
   gateText?: string;
 }): Promise<{ text: string | null; outcome: PolishOutcome }> {
   const { raw, settings, protectedTerms = [], speakerTerms = [], signal, gateText = raw } = opts;
   if (!canPolish(settings)) return { text: null, outcome: "off" };
-  if (!shouldPolish(gateText)) return { text: null, outcome: "tooShort" };
+  const skip = polishSkipReason(raw, gateText);
+  if (skip) return { text: null, outcome: skip };
   if (signal?.aborted) return { text: null, outcome: "cancelled" };
 
   const rawChars = raw.trim().length;

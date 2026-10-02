@@ -18,9 +18,10 @@ const mocks = vi.hoisted(() => {
     polish: {
       on: false,
       run: vi.fn(),
-      /** The length gate; every text passes unless a test installs the real
-       *  one (most tests dictate a few characters with polish on). */
-      gate: null as ((text: string) => boolean) | null,
+      /** The skip gate (`polishSkipReason`); every text passes unless a test
+       *  installs the real one (most tests dictate a few characters, as one
+       *  clause, with polish on). */
+      gate: null as ((text: string, gateText?: string) => string | null) | null,
     },
   };
 });
@@ -74,7 +75,8 @@ vi.mock("./history", () => ({
 }));
 vi.mock("./polish", () => ({
   canPolish: () => mocks.polish.on,
-  shouldPolish: (text: string) => mocks.polish.gate?.(text) ?? true,
+  polishSkipReason: (text: string, gateText?: string) =>
+    mocks.polish.gate ? mocks.polish.gate(text, gateText) : null,
   polishTranscriptOutcome: (opts: { raw: string }) => mocks.polish.run(opts),
 }));
 vi.mock("../dictionary", () => ({
@@ -415,17 +417,16 @@ describe("voice-typing host", () => {
     expect(dones()).toEqual([{ message: "ok", text: "第二句話。" }]);
   });
 
-  /** Regression: softening drops a 7-character phrase's 。 (8 units → 7) and
-   *  the space after a full-width mark, which took these under the real
-   *  MIN_POLISH_CHARS gate, so polish — and its speaker-name repair — stopped
-   *  running on them. The gate measures the text as the recognizer gave it;
-   *  the softened text is still what is polished and pasted. */
+  /** Regression: softening drops the space after a full-width mark, which
+   *  took this under the real MIN_POLISH_CHARS gate, so polish — and its
+   *  speaker-name repair — stopped running on it. The gate measures the text
+   *  as the recognizer gave it; the softened text is still what is polished
+   *  and pasted. */
   it.each([
-    { finals: ["我們明天見個面。"], softened: "我們明天見個面", stt: "我們明天見個面。" },
     { finals: ["好的。", " 我知道。"], softened: "好的，我知道。", stt: "好的。 我知道。" },
   ])("polishes $stt although softening takes it under the length gate", async (c) => {
-    mocks.polish.gate = (await vi.importActual<typeof import("./polish")>("./polish")).shouldPolish;
-    expect(mocks.polish.gate(c.softened)).toBe(false);
+    mocks.polish.gate = (await vi.importActual<typeof import("./polish")>("./polish")).polishSkipReason;
+    expect(mocks.polish.gate(c.softened)).not.toBeNull();
     mocks.polish.on = true;
     mocks.polish.run.mockImplementation(async (opts: { raw: string }) => ({
       text: `${opts.raw}！`,
@@ -439,6 +440,24 @@ describe("voice-typing host", () => {
     expect(mocks.polish.run).toHaveBeenCalledTimes(1);
     expect(mocks.polish.run.mock.calls[0][0]).toMatchObject({ raw: c.softened, gateText: c.stt });
     expect(inserted()).toEqual([`${c.softened}！`]);
+  });
+
+  /** A one-breath sentence goes out at once: no polish round trip, and no
+   *  trailing 。 (punctuation.ts drops it at any length now). */
+  it("pastes a single clause without polishing it, and without its 。", async () => {
+    mocks.polish.gate = (await vi.importActual<typeof import("./polish")>("./polish")).polishSkipReason;
+    mocks.polish.on = true;
+    await key(true);
+    await key(false);
+    finish(1, "0", "我們明天下午三點在公司見面。");
+    await tick();
+    expect(mocks.polish.run).not.toHaveBeenCalled();
+    expect(phases()).not.toContain("polishing");
+    expect(inserted()).toEqual(["我們明天下午三點在公司見面"]);
+    expect(mocks.log.info).toHaveBeenCalledWith(
+      "voice-typing: inserted",
+      expect.objectContaining({ polish: "singleClause" }),
+    );
   });
 
   it("ignores the previous session's late close and segments after a re-press", async () => {
@@ -767,7 +786,7 @@ describe("voice-typing host: Esc cancels, Undo copies", () => {
   });
 
   it("an Undo measures the polish gate on the cancelled dictation's unsoftened text", async () => {
-    mocks.polish.gate = (await vi.importActual<typeof import("./polish")>("./polish")).shouldPolish;
+    mocks.polish.gate = (await vi.importActual<typeof import("./polish")>("./polish")).polishSkipReason;
     mocks.polish.on = true;
     mocks.polish.run.mockImplementation(async (opts: { raw: string }) => ({
       text: `${opts.raw}！`,
@@ -775,17 +794,18 @@ describe("voice-typing host: Esc cancels, Undo copies", () => {
     }));
     await key(true);
     await escape(); // before it settles: its delivery holds the text unpolished
-    finish(1, "0", "我們明天見個面。");
+    segment(1, "0", "好的。", true);
+    finish(1, "1", " 明天見。");
     await tick();
     expect(mocks.polish.run).not.toHaveBeenCalled();
 
     await undo();
     expect(mocks.polish.run).toHaveBeenCalledTimes(1);
     expect(mocks.polish.run.mock.calls[0][0]).toMatchObject({
-      raw: "我們明天見個面",
-      gateText: "我們明天見個面。",
+      raw: "好的，明天見。",
+      gateText: "好的。 明天見。",
     });
-    expect(copied()).toEqual(["我們明天見個面！"]);
+    expect(copied()).toEqual(["好的，明天見。！"]);
   });
 
   it("an Esc racing a re-press cancels the old dictation, not the new one's key-up", async () => {

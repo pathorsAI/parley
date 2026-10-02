@@ -23,7 +23,7 @@ const settings = {
   parleyApiKey: "",
 } as unknown as Settings;
 
-const RAW = "um so I think we should uh ship it on friday";
+const RAW = "um so, I think we should uh ship it on friday";
 const POLISHED = "I think we should ship it on Friday.";
 
 /** Parley Cloud's Access-Control-Allow-Headers, verbatim (lower-cased). */
@@ -211,18 +211,26 @@ describe("polish against Parley Cloud from a WebKit webview", () => {
   /** The host passes the dictation before softenPausePeriods as `gateText`:
    *  the dropped 。 must not decide that a 7-character phrase is too short. */
   it("measures the length gate on gateText, and polishes raw", async () => {
-    const fetchSpy = webkitFetch(async () => completion("我們明天見個面吧"));
+    const fetchSpy = webkitFetch(async () => completion("好的，明天見吧"));
     await expect(
-      polishTranscriptOutcome({ raw: "我們明天見個面", gateText: "我們明天見個面。", settings }),
-    ).resolves.toEqual({ text: "我們明天見個面吧", outcome: "polished" });
+      polishTranscriptOutcome({ raw: "好的，明天見。", gateText: "好的。 明天見。", settings }),
+    ).resolves.toEqual({ text: "好的，明天見吧", outcome: "polished" });
     const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
-    expect(body.messages.at(-1).content).toBe("我們明天見個面");
+    expect(body.messages.at(-1).content).toBe("好的，明天見。");
     // Without it, the softened text alone is under the gate.
-    await expect(polishTranscriptOutcome({ raw: "我們明天見個面", settings })).resolves.toEqual({
+    await expect(polishTranscriptOutcome({ raw: "好的，明天見。", settings })).resolves.toEqual({
       text: null,
       outcome: "tooShort",
     });
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("never sends a single clause", async () => {
+    const fetchSpy = webkitFetch(async () => completion("unused"));
+    await expect(
+      polishTranscriptOutcome({ raw: "我們明天下午三點見個面", settings }),
+    ).resolves.toEqual({ text: null, outcome: "singleClause" });
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("names the guard's reason when it refuses the answer", async () => {

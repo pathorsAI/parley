@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BARE_PHRASE_MAX_CHARS, SOFT_SENTENCE_CHARS, softenPausePeriods } from "./punctuation";
+import { SOFT_SENTENCE_CHARS, isSingleClause, softenPausePeriods } from "./punctuation";
 
 /** Ten content characters, so sentence budgets can be counted by eye. */
 const A10 = "一二三四五六七八九十";
@@ -12,7 +12,7 @@ const CASES: [string, string, string][] = [
   ["我覺得。 這個方案可以。", "我覺得，這個方案可以。", "a pause stop between CJK clauses becomes ，; stray space dropped; final 。 kept"],
   ["好的。", "好的", "a bare short phrase drops its trailing 。"],
   ["好的？", "好的？", "？ is always kept"],
-  ["我們明天下午三點在公司開會。", "我們明天下午三點在公司開會。", "over the bare-phrase limit, so the final 。 stays"],
+  ["我們明天下午三點在公司開會。", "我們明天下午三點在公司開會", "one clause of any length drops its 。"],
   ["你要來嗎？ 我在門口。", "你要來嗎？我在門口。", "？ kept, the space after it dropped"],
   [`${A31}。 然後我們繼續。`, `${A31}，然後我們繼續。`, "run 31 is under the budget: softened"],
   [`${A32}。 然後我們繼續。`, `${A32}。然後我們繼續。`, "run reached the budget: a real sentence end"],
@@ -48,7 +48,6 @@ function words(s: string): string {
 describe("softenPausePeriods", () => {
   it("uses the tuned budgets", () => {
     expect(SOFT_SENTENCE_CHARS).toBe(32);
-    expect(BARE_PHRASE_MAX_CHARS).toBe(7);
   });
 
   it.each(CASES)("%j → %j (%s)", (input, expected) => {
@@ -80,5 +79,31 @@ describe("softenPausePeriods", () => {
       if (partial.length > 0 && MARKS.has(partial[partial.length - 1])) partial.pop();
       expect(full.startsWith(partial.join(""))).toBe(true);
     }
+  });
+});
+
+describe("isSingleClause", () => {
+  it.each([
+    ["我等一下就過去", true],
+    ["我等一下就過去。", true],
+    ["  這樣可以嗎？ ", true],
+    ["I'll be there in five minutes.", true],
+    ["好的，我知道", false],
+    ["好的。我知道", false],
+    ["蘋果、香蕉", false],
+    ["第一行\n第二行", false],
+    ["等等...", false],
+    ["v2.0 上線", false],
+    ["。", false],
+    ["", false],
+  ])("%j → %s", (text, expected) => {
+    expect(isSingleClause(text)).toBe(expected);
+  });
+
+  /** Softening turns a pause-made 。 into ，, never into nothing: a dictation
+   *  of several breaths is never mistaken for one clause. */
+  it("never calls a softened multi-breath dictation one clause", () => {
+    expect(isSingleClause(softenPausePeriods("我覺得。這個方案。可以。"))).toBe(false);
+    expect(isSingleClause(softenPausePeriods("我覺得這個方案可以。"))).toBe(true);
   });
 });

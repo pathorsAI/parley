@@ -28,10 +28,10 @@ export interface TranscriptText {
   text: string;
   session: number;
   /** The same text before softenPausePeriods. Only for polish's length gate
-   *  (`shouldPolish`): softening drops a bare phrase's trailing 。 and the
-   *  space after a full-width mark, which can take an 8-unit dictation under
-   *  MIN_POLISH_CHARS, and polish must run on what was said, not on what the
-   *  floor under it tidied away. Never shown, pasted or saved. */
+   *  (`polishSkipReason`): softening drops the space after a full-width mark,
+   *  which can take an 8-unit dictation under MIN_POLISH_CHARS, and polish
+   *  must run on what was said, not on what the floor under it tidied away.
+   *  Never shown, pasted or saved. */
   sttText: string;
 }
 

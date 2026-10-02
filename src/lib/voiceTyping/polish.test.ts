@@ -10,8 +10,8 @@ import {
   canPolish,
   containsSimplifiedChinese,
   polishSystemPrompt,
+  polishSkipReason,
   polishVerdict,
-  shouldPolish,
 } from "./polish";
 import type { Settings } from "../types";
 
@@ -20,21 +20,52 @@ vi.mock("../ai/settings", () => ({
 }));
 let hasKey = true;
 
-describe("shouldPolish", () => {
+describe("polishSkipReason", () => {
   it("skips text too short to have anything to clean", () => {
-    expect(shouldPolish("好")).toBe(false);
-    expect(shouldPolish("ok thanks")).toBe(true);
+    expect(polishSkipReason("好")).toBe("tooShort");
+    expect(polishSkipReason("ok, thanks a lot")).toBeNull();
   });
 
   /** The pause is the cost, and a user notices it most on the shortest
    *  utterances — which are also the ones with no filler to remove. */
   it("measures the trimmed length", () => {
-    expect(shouldPolish(`   ${"a".repeat(MIN_POLISH_CHARS - 1)}   `)).toBe(false);
-    expect(shouldPolish(`   ${"a".repeat(MIN_POLISH_CHARS)}   `)).toBe(true);
+    const short = `   ${"a".repeat(MIN_POLISH_CHARS - 4)}, b   `;
+    const long = `   ${"a".repeat(MIN_POLISH_CHARS - 3)}, b   `;
+    expect(polishSkipReason(short)).toBe("tooShort");
+    expect(polishSkipReason(long)).toBeNull();
   });
 
   it("treats whitespace-only as nothing to do", () => {
-    expect(shouldPolish("   \n  ")).toBe(false);
+    expect(polishSkipReason("   \n  ")).toBe("tooShort");
+  });
+
+  /** A quick one-breath sentence has nothing to restructure, and the round
+   *  trip was the slowest part of it. Its 。 is already gone by now. */
+  it.each([
+    "我等一下就過去找你",
+    "我們明天下午三點在公司開會",
+    "這個問題我晚點再回覆你好嗎？",
+    "Sounds good to me thanks",
+    "I'll be there in five minutes.",
+  ])("skips a single clause: %j", (text) => {
+    expect(polishSkipReason(text)).toBe("singleClause");
+  });
+
+  it.each([
+    "我覺得，這個方案可以",
+    "好的。我知道了謝謝",
+    "第一點是預算、第二點是時程",
+    "OK, sounds good to me",
+    "這個版本 v2.0 先上線",
+  ])("polishes anything with a mark inside: %j", (text) => {
+    expect(polishSkipReason(text)).toBeNull();
+  });
+
+  /** The length gate reads the text as the recognizer gave it; the clause
+   *  test reads the softened text that is polished and pasted. */
+  it("measures length on gateText and the clause on text", () => {
+    expect(polishSkipReason("好的，我知道。", "好的。 我知道。")).toBeNull();
+    expect(polishSkipReason("好，知道", "好， 知道")).toBe("tooShort");
   });
 });
 

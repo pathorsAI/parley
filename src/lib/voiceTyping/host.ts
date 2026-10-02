@@ -44,7 +44,12 @@ import {
 import { SessionOwner, SessionTranscript, type Segment, type SessionEvent } from "./transcript";
 import { settleVerdict, type SettleReason } from "./settle";
 import { appendVoiceEntry } from "./history";
-import { canPolish, polishTranscriptOutcome, shouldPolish, type PolishOutcome } from "./polish";
+import {
+  canPolish,
+  polishSkipReason,
+  polishTranscriptOutcome,
+  type PolishOutcome,
+} from "./polish";
 import {
   CANCEL_ACTION_EVENT,
   CANCEL_EVENT,
@@ -743,7 +748,8 @@ async function polishForPaste(
   // Checked here as well as in polish.ts so the overlay is never told
   // "polishing" for a pass that is not going to run.
   if (!canPolish(settings)) return { text: raw, outcome: "off" };
-  if (!shouldPolish(gateText)) return { text: raw, outcome: "tooShort" };
+  const skip = polishSkipReason(raw, gateText);
+  if (skip) return { text: raw, outcome: skip };
   // Only claim the overlay while it is still ours to claim; a press during the
   // round trip owns it from here (the gen check in `deliver` is the same guard
   // for the "done" tail). A cancelled dictation's overlay is its Undo, which
@@ -776,8 +782,9 @@ async function deliver(d: Delivery): Promise<void> {
   await whenDictionaryReady();
   const report = await d.t.report(normalizeTranscriptText);
   const raw = (report?.text ?? "").trim();
-  // The polish gate measures the text before softening: dropping a short
-  // phrase's 。 must not also drop it below MIN_POLISH_CHARS (punctuation.ts).
+  // The polish length gate measures the text before softening: dropping the
+  // space after a full-width mark must not also drop it below
+  // MIN_POLISH_CHARS (punctuation.ts).
   const gateText = report?.sttText ?? raw;
   // Never the text itself (user data): how and when it settled, and how much.
   const timing = { reason: d.reason, waitMs: d.waitMs, connectMs: d.connectMs, closed: d.closed };
@@ -844,7 +851,12 @@ async function deliver(d: Delivery): Promise<void> {
       if (!pasted) {
         log.warn("voice-typing: not pasted; text left on the clipboard", { appBundleId });
       }
-      log.info("voice-typing: inserted", { chars: text.length, pasted, appBundleId });
+      log.info("voice-typing: inserted", {
+        chars: text.length,
+        pasted,
+        appBundleId,
+        polish: outcome,
+      });
       // Only a text that actually landed somewhere can be corrected in place.
       if (pasted) {
         observePastedField(text, d.myGen).catch((error) =>
