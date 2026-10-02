@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { RefreshCw, Sparkles } from "lucide-react";
 import { formatClock } from "../../lib/store";
 import { cn } from "@/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
 import type { TimelineEvent } from "../../lib/types";
 import { useI18n } from "../../i18n";
 import { useEvalNames } from "./useAnalysis";
@@ -151,6 +152,13 @@ interface AnalysisTimelineProps {
   /** True when the eval set changed since these findings were computed — prompts
    *  the user to re-analyze (via the player's Analyze menu). */
   stale?: boolean;
+  /** The first findings are still coming (queued or running, none yet). The
+   *  band then reserves the space the loaded band will take — the lanes it
+   *  expects plus the legend row — so it doesn't grow under the player. */
+  pending?: boolean;
+  /** Whether the coming findings will carry me/them sides (the lens decides —
+   *  see hasSides), i.e. whether to reserve one lane or two while pending. */
+  expectSides?: boolean;
 }
 
 /**
@@ -170,6 +178,8 @@ export function AnalysisTimeline({
   onReanalyze,
   templateName,
   stale,
+  pending = false,
+  expectSides = false,
 }: Readonly<AnalysisTimelineProps>) {
   const { t } = useI18n();
   // The hovered dot AND where it is on screen: the hover card is portaled out
@@ -249,7 +259,8 @@ export function AnalysisTimeline({
       </div>
 
       <div className="flex flex-col gap-1">
-        {!sided && (
+        {pending && <PendingLanes labels={expectSides ? [t("timeline.laneThem"), t("timeline.laneMe")] : [t("timeline.laneAll")]} />}
+        {!pending && !sided && (
           <Lane
             label={t("timeline.laneAll")}
             events={findings}
@@ -264,7 +275,7 @@ export function AnalysisTimeline({
             tooltipBelow
           />
         )}
-        {sided && (
+        {!pending && sided && (
           <>
         <Lane
           label={t("timeline.laneThem")}
@@ -297,6 +308,15 @@ export function AnalysisTimeline({
         )}
       </div>
 
+      {/* The legend's row, held while the first findings are on their way. */}
+      {pending && (
+        <div className="mt-1.5 flex h-[13.5px] items-center gap-3 pl-[4.5rem]" aria-hidden="true">
+          {["w-10", "w-8", "w-9", "w-12"].map((w) => (
+            <Skeleton key={w} className={`h-2 ${w}`} />
+          ))}
+        </div>
+      )}
+
       {/* Legend: what the dot colours (severity) and the ring (AI-extra) mean. */}
       {findings.length > 0 && (
         <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 pl-[4.5rem] text-[9px] text-muted-foreground">
@@ -324,6 +344,21 @@ export function AnalysisTimeline({
         <div className="mt-1 text-[10px] text-muted-foreground/70">{t("timeline.empty")}</div>
       )}
     </div>
+  );
+}
+
+/** Lane-shaped placeholders: the same label column and h-5 band as {@link Lane},
+ *  the band itself pulsing in place of dots. */
+function PendingLanes({ labels }: Readonly<{ labels: string[] }>) {
+  return (
+    <>
+      {labels.map((label) => (
+        <div key={label} className="flex items-center gap-2" aria-hidden="true">
+          <span className="w-16 shrink-0 truncate text-right text-[10px] text-muted-foreground">{label}</span>
+          <Skeleton className="h-5 min-w-0 flex-1 rounded" />
+        </div>
+      ))}
+    </>
   );
 }
 

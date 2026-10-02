@@ -1,6 +1,8 @@
 import { useMemo, type ReactNode } from "react";
-import { Loader2 } from "lucide-react";
+import { Clock, Loader2 } from "lucide-react";
 import { useStore } from "../../lib/store";
+import { useStudyArtifactDisplay } from "../../lib/analysis/studyPipeline";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useProsody } from "../../lib/analysis/useDelivery";
 import { syllablesPerMin, talkTimeRatio } from "../../lib/analysis/delivery";
 import { countFillerSounds } from "../../lib/analysis/fillerWords";
@@ -208,7 +210,7 @@ function StatTile({
   value,
   sub,
   watch,
-}: Readonly<{ label: string; value: string; sub?: string; watch?: boolean }>) {
+}: Readonly<{ label: string; value: ReactNode; sub?: string; watch?: boolean }>) {
   return (
     <div className="rounded-lg border bg-muted/20 px-3 py-2">
       <div className="text-[11px] font-semibold text-muted-foreground">
@@ -313,11 +315,38 @@ function paceTileSub(
   return undefined;
 }
 
-/** The tone tile's value: the verdict once assessed, an ellipsis while the pass
- *  is still running, a dash when there is nothing to say. */
-function toneTileValue(t: TFn, assessment: DeliveryAssessment | null, running: boolean): string {
+/** The tone tile's value: the verdict once assessed, a placeholder bar the
+ *  height of the value line while the pass is queued or running, a dash when
+ *  there is nothing to say. */
+function toneTileValue(t: TFn, assessment: DeliveryAssessment | null, pending: boolean): ReactNode {
   if (assessment) return t(TONE_KEY[assessment.tone]);
-  return running ? "…" : "—";
+  return pending ? <Skeleton className="my-1 h-4 w-12" /> : "—";
+}
+
+/** The LLM read's placeholder, in the loaded readout's shape: tone row, the
+ *  advisory line, fillers row, then a two-line summary. Same text sizes and
+ *  gaps, so the box keeps its height when the assessment lands. */
+function DeliveryReadoutSkeleton({ caption }: Readonly<{ caption: ReactNode }>) {
+  return (
+    <>
+      <div className="flex h-4 items-center justify-between gap-2" aria-hidden="true">
+        <Skeleton className="h-3 w-10" />
+        <Skeleton className="h-3 w-14" />
+      </div>
+      {/* The advisory line's slot carries the status, so the wait is named. */}
+      <output className="-mt-0.5 flex items-center gap-1 text-[10px] text-muted-foreground/70">
+        {caption}
+      </output>
+      <div className="flex h-4 items-center justify-between gap-2" aria-hidden="true">
+        <Skeleton className="h-3 w-12" />
+        <Skeleton className="h-3 w-20" />
+      </div>
+      <div className="mt-0.5 flex flex-col gap-1.5" aria-hidden="true">
+        <Skeleton className="h-3 w-full" />
+        <Skeleton className="h-3 w-2/3" />
+      </div>
+    </>
+  );
 }
 
 /** Sharp and above warrants a warning tile. */
@@ -346,6 +375,11 @@ function DeliveryScorecard({
 }>) {
   const measuredBand = measuredRate ? paceBand(measuredRate) : null;
   const ratioBand = stats.ratio ? talkBand(stats.ratio.me) : null;
+  // Queued (waiting on the findings pass) or running, with nothing to show yet:
+  // the LLM-backed slots hold placeholders instead of collapsing to one line.
+  const display = useStudyArtifactDisplay("delivery");
+  const queued = display === "queued";
+  const pending = !assessment && (running || queued);
   return (
     <div className="flex flex-col gap-3">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -371,7 +405,7 @@ function DeliveryScorecard({
         />
         <StatTile
           label={t("delivery.card.tone")}
-          value={toneTileValue(t, assessment, running)}
+          value={toneTileValue(t, assessment, pending)}
           sub={assessment?.toneEvidence ? `“${assessment.toneEvidence}”` : undefined}
           watch={toneNeedsWatch(assessment)}
         />
@@ -389,7 +423,25 @@ function DeliveryScorecard({
           )}
         </div>
         <div className="flex flex-col gap-1.5 text-[11px]">
-          <DeliveryReadout mode={mode} status={status} running={running} assessment={assessment} t={t} />
+          {pending ? (
+            <DeliveryReadoutSkeleton
+              caption={
+                running ? (
+                  <>
+                    <Loader2 className="size-2.5 animate-spin" />
+                    {t("delivery.card.analyzing")}
+                  </>
+                ) : (
+                  <>
+                    <Clock className="size-2.5" />
+                    {t("delivery.card.queued")}
+                  </>
+                )
+              }
+            />
+          ) : (
+            <DeliveryReadout mode={mode} status={status} running={running} assessment={assessment} t={t} />
+          )}
         </div>
       </div>
     </div>

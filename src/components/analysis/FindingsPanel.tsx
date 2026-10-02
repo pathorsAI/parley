@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Loader2, Sparkles } from "lucide-react";
 import { useStore } from "../../lib/store";
 import { runAnalysis } from "../../lib/analysis/engine";
@@ -8,9 +9,11 @@ import { log } from "../../lib/log";
 import { FindingRow } from "./FindingRow";
 import { openSolution, selectAndSeek } from "./useAnalysis";
 import { DeliveryPanel } from "../delivery/DeliveryPanel";
+import { useStudyArtifactDisplay } from "../../lib/analysis/studyPipeline";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
 import { MeetingKindPicker } from "../MeetingKindPicker";
 
 /**
@@ -42,6 +45,31 @@ export function FindingsPanel({
   const setAutoAnalyze = useStore((s) => s.setAutoAnalyze);
   const setAutoAnalyzeSec = useStore((s) => s.setAutoAnalyzeSec);
   const running = analysisStatus === "running";
+
+  let list: ReactNode;
+  if (mode === "replay" && findings.length === 0) {
+    // Replay's one analysis pass: placeholder rows while it is coming, the
+    // empty message only once it has run.
+    list = <ReplayFindingsPending />;
+  } else if (findings.length === 0 && !running) {
+    list = <p className="px-1 pt-6 text-center text-xs text-muted-foreground">{t("analysis.emptyLive")}</p>;
+  } else {
+    list = (
+      // Rows are hairline-separated list items, not boxed cards — bleed the
+      // list to the pane edges so the row hover/selection spans full width.
+      <ul className="-mx-3 flex flex-col">
+        {findings.map((f) => (
+          <FindingRow
+            key={f.id}
+            event={f}
+            selected={selectedId === f.id}
+            onSelect={(e) => selectAndSeek(e, onSeek)}
+            onOpenSolution={(e) => openSolution(e, onSeek)}
+          />
+        ))}
+      </ul>
+    );
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -103,27 +131,54 @@ export function FindingsPanel({
               report page owns the post-call delivery scorecard). */}
           {mode === "live" && <DeliveryPanel mode="live" />}
 
-          {findings.length === 0 && analysisStatus !== "running" ? (
-            <p className="px-1 pt-6 text-center text-xs text-muted-foreground">
-              {mode === "live" ? t("analysis.emptyLive") : t("timeline.empty")}
-            </p>
-          ) : (
-            // Rows are hairline-separated list items, not boxed cards — bleed the
-            // list to the pane edges so the row hover/selection spans full width.
-            <ul className="-mx-3 flex flex-col">
-              {findings.map((f) => (
-                <FindingRow
-                  key={f.id}
-                  event={f}
-                  selected={selectedId === f.id}
-                  onSelect={(e) => selectAndSeek(e, onSeek)}
-                  onOpenSolution={(e) => openSolution(e, onSeek)}
-                />
-              ))}
-            </ul>
-          )}
+          {list}
         </div>
       </ScrollArea>
     </div>
+  );
+}
+
+/** Replay with no findings yet. A child component so the pipeline subscription
+ *  only exists in the study tense — the live pane never mounts it. */
+function ReplayFindingsPending() {
+  const { t } = useI18n();
+  const display = useStudyArtifactDisplay("findings");
+  if (display !== "running" && display !== "queued") {
+    return <p className="px-1 pt-6 text-center text-xs text-muted-foreground">{t("timeline.empty")}</p>;
+  }
+  return (
+    <ul className="-mx-3 flex flex-col" aria-busy="true">
+      <li className="sr-only">
+        <output>
+        {display === "running" ? t("timeline.analyzing") : t("studyGen.status.queued")}
+      </output>
+      </li>
+      {["w-2/5", "w-1/2", "w-1/3", "w-3/5"].map((w) => (
+        <FindingRowSkeleton key={w} titleWidth={w} />
+      ))}
+    </ul>
+  );
+}
+
+/** A FindingRow-shaped placeholder: severity dot, time + title line, a two-line
+ *  detail, and the "how to reply" link — same padding and divider. */
+function FindingRowSkeleton({ titleWidth }: Readonly<{ titleWidth: string }>) {
+  return (
+    <li className="border-b border-border px-4 py-3 last:border-b-0" aria-hidden="true">
+      <div className="flex items-start gap-2">
+        <Skeleton className="mt-1.5 size-[7px] shrink-0 rounded-full" />
+        <div className="min-w-0 flex-1">
+          <div className="flex h-5 items-center gap-1.5">
+            <Skeleton className="h-3 w-8" />
+            <Skeleton className={`h-3.5 ${titleWidth}`} />
+          </div>
+          <div className="mt-0.5 flex flex-col gap-1.5 py-1">
+            <Skeleton className="h-3 w-full" />
+            <Skeleton className="h-3 w-4/5" />
+          </div>
+        </div>
+      </div>
+      <Skeleton className="mt-2 mb-0.5 ml-[15px] h-3 w-16" />
+    </li>
   );
 }

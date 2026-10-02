@@ -31,9 +31,9 @@ import { log } from "../../lib/log";
 import { markGettingStarted } from "../../lib/onboarding/gettingStarted";
 import { isTauri } from "../../lib/tauriEvents";
 import { VoiceTypingHistory } from "../../history/VoiceTypingHistory";
-import { LibraryCard, MoveDialog } from "./LibraryCards";
+import { LibraryCard, LibraryCardsSkeleton, MoveDialog } from "./LibraryCards";
 import { ConfirmDialog } from "../shell/ConfirmDialog";
-import { RecordingTimeline } from "./RecordingTimeline";
+import { RecordingTimeline, RecordingTimelineSkeleton } from "./RecordingTimeline";
 import { useRenderWindow } from "./useRenderWindow";
 import type { LibraryTree } from "../shell/useLibraryTree";
 import { filingChoices, type Folder as LocalFolder } from "../../lib/history/folders";
@@ -462,11 +462,12 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
 
   let body;
   if (entries === null) {
-    body = (
-      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-        <Loader2 className="mr-2 size-4 animate-spin" />
-        {t("history.loading")}
-      </div>
+    // Rows in the list's own shape, from the top, so the list lands in place
+    // instead of replacing a spinner centred in the pane.
+    body = isAll ? (
+      <RecordingTimelineSkeleton label={t("history.loading")} />
+    ) : (
+      <LibraryCardsSkeleton label={t("history.loading")} />
     );
   } else if (visible.length === 0) {
     body = (
