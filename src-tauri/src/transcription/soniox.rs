@@ -9,8 +9,9 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::common::{
-    clean_vocabulary, connect_with_headers, drive_session, ensure_crypto_provider, LevelMeter,
-    SegmentBuilder, TranscribeConfig, LEVEL_EVENT, TRANSCRIPT_EVENT,
+    clean_vocabulary, connect_with_headers, drive_session, emit_connected, ensure_crypto_provider,
+    with_connect_timeout, LevelMeter, SegmentBuilder, TranscribeConfig, LEVEL_EVENT,
+    TRANSCRIPT_EVENT,
 };
 use super::ws::{self, Next, OnClose, Pump, Ws, WsRead, WsWrite};
 use crate::audio::resample::pcm_to_le_bytes;
@@ -99,9 +100,12 @@ struct SonioxResponse {
 async fn open_socket(config: &TranscribeConfig) -> Result<Ws> {
     let Some(relay_url) = &config.relay_endpoint else {
         ensure_crypto_provider();
-        let (ws, _) = tokio_tungstenite::connect_async(SONIOX_WS_URL)
-            .await
-            .map_err(|e| anyhow!("connect failed: {e}"))?;
+        let (ws, _) = with_connect_timeout(async {
+            tokio_tungstenite::connect_async(SONIOX_WS_URL)
+                .await
+                .map_err(|e| anyhow!("connect failed: {e}"))
+        })
+        .await?;
         return Ok(ws);
     };
     connect_with_headers(
@@ -288,6 +292,10 @@ pub async fn run_session(
         config.relay_endpoint.is_some(),
         clean_vocabulary(&config.vocabulary).len()
     );
+
+    // Soniox answers the closing finalize with `<fin>` (both modes), which
+    // ends the stream; see `ends_stream`.
+    emit_connected(&app, source, true);
 
     let meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT);
     let is_relay = config.relay_endpoint.is_some();

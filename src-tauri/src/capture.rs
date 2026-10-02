@@ -320,9 +320,9 @@ async fn meter_chunks(
 /// session task is aborted first. Both abort backstops (`stop_voice_typing`'s
 /// FLUSH_ABORT_GRACE, `teardown_meeting`'s) count from the cut, while a
 /// session's own DRAIN_READ_GRACE counts from the drain, which cannot come
-/// before its socket has connected: a short dictation over a slow relay
-/// connect that never answers the finalize is aborted before it ends itself,
-/// and used to take its usage line with it. `stt://closed` stays off the
+/// before its socket has connected: a meeting stream over a slow connect that
+/// never answers the finalize, or any session stuck past its own bounds, is
+/// aborted before it ends itself, and used to take its usage line with it. `stt://closed` stays off the
 /// abort path on purpose (see [`run_metered_session`]).
 struct UsageReport<F: FnOnce(u64)> {
     streamed: Arc<AtomicU64>,

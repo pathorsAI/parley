@@ -105,7 +105,20 @@ const backend = {
   startFailure: null as { gate: Promise<void>; error: string } | null,
   /** When set, `start_voice_typing` waits for this, then succeeds. */
   startGate: null as Promise<void> | null,
+  /** Whether the session's socket opens as it starts (`stt://connected`);
+   *  false leaves it to the test, for a relay slower than the release. */
+  connectOnStart: true,
+  /** What that `stt://connected` says about the finalize's answer. */
+  acksFinalize: false,
 };
+
+function connect(session: number): void {
+  fire("stt://connected", {
+    source: "voice-typing",
+    session,
+    acksFinalize: backend.acksFinalize,
+  });
+}
 
 function routeInvoke(): void {
   mocks.invoke.mockImplementation(async (cmd: string) => {
@@ -119,6 +132,7 @@ function routeInvoke(): void {
         backend.session += 1;
         // Rust announces the session before the command returns.
         fire("voicetyping://session", { phase: "start", session: backend.session });
+        if (backend.connectOnStart) connect(backend.session);
         return undefined;
       case "stop_voice_typing":
         if (backend.stopGate) await backend.stopGate;
@@ -226,6 +240,8 @@ beforeEach(async () => {
   backend.stopGate = null;
   backend.startFailure = null;
   backend.startGate = null;
+  backend.connectOnStart = true;
+  backend.acksFinalize = false;
   routeInvoke();
   vi.resetModules();
   const host = await import("./host");
@@ -259,6 +275,64 @@ describe("voice-typing host", () => {
     // The insert is the delivery: nothing is copied to the clipboard to stay.
     expect(copied()).toEqual([]);
     expect(dones()).toEqual([{ message: "ok", text: "好" }]);
+    expect(settledReasons()).toEqual(["closed"]);
+  });
+
+  /** Regression from the field: the hosted relay took 1.9–6.5 s to accept
+   *  the connection, a short tap was released before that, and the dictation
+   *  was given up as quiet (1.5 s) or timed out (6 s) before the recognizer
+   *  had even received the audio. */
+  it("waits for a relay that connects after the release, then for its answer", async () => {
+    backend.connectOnStart = false;
+    backend.acksFinalize = true;
+    await key(true);
+    await tick(100);
+    await key(false);
+
+    await tick(6300);
+    expect(inserted()).toEqual([]);
+    expect(dones()).toEqual([]);
+
+    connect(1);
+    segment(1, "tail", "好", false);
+    await tick(1500);
+    expect(inserted()).toEqual([]);
+
+    finish(1, "0", "好啊");
+    await tick();
+    expect(inserted()).toEqual(["好啊"]);
+    expect(settledReasons()).toEqual(["closed"]);
+    expect(mocks.log.info).toHaveBeenCalledWith(
+      "voice-typing: settled",
+      expect.objectContaining({ reason: "closed", connectMs: expect.any(Number) }),
+    );
+  });
+
+  it("a connect that never comes is given up on its own cap, with nothing to paste", async () => {
+    backend.connectOnStart = false;
+    await key(true);
+    await key(false);
+    await tick(17_999);
+    expect(dones()).toEqual([]);
+    await tick(1);
+    expect(dones()).toEqual([{ message: "empty", text: "" }]);
+    expect(settledReasons()).toEqual(["timeout"]);
+  });
+
+  /** Regression: on the hosted relay the quiet rule pasted a long dictation
+   *  1.5 s after the release, before the `<fin>` that carried its last words. */
+  it("waits for the finalize's answer, not for quiet, when the provider gives one", async () => {
+    backend.acksFinalize = true;
+    await key(true);
+    segment(1, "0", "今天先這樣", true);
+    await key(false);
+    segment(1, "tail", "", false);
+    await tick(3000);
+    expect(inserted()).toEqual([]);
+
+    finish(1, "1", "吧");
+    await tick();
+    expect(inserted()).toEqual(["今天先這樣吧"]);
     expect(settledReasons()).toEqual(["closed"]);
   });
 

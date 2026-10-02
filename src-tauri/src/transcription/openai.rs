@@ -15,8 +15,8 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::common::{
-    clean_vocabulary, connect_with_headers, drive_session, LevelMeter, SegmentBuilder,
-    TranscribeConfig, LEVEL_EVENT, TRANSCRIPT_EVENT,
+    clean_vocabulary, connect_with_headers, drive_session, emit_connected, LevelMeter,
+    SegmentBuilder, TranscribeConfig, LEVEL_EVENT, TRANSCRIPT_EVENT,
 };
 use super::ws::{self, Next, OnClose, Pump, WsRead, WsWrite};
 use crate::audio::resample::pcm_to_le_bytes;
@@ -170,6 +170,7 @@ pub async fn run_session(
     write.send(Message::Text(setup.to_string())).await?;
     eprintln!("[openai:{source}] connected, model={model} (diarization unsupported → speaker 0)");
 
+    emit_connected(&app, source, false);
     let meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT);
 
     drive_session(

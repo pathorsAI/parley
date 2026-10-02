@@ -118,6 +118,10 @@ let pressedAt = 0;
 let releasedAt = 0;
 /** When `stt://closed` arrived for the current session (0 = not yet). */
 let closedAt = 0;
+/** When the current session's socket opened (`stt://connected`, 0 = not yet),
+ *  and whether its provider answers the closing finalize (settle.ts). */
+let connectedAt = 0;
+let acksFinalize = false;
 /** When the current session's last segment arrived (0 = none yet), and how
  *  many it has sent — the settle rule and the "ended empty" log need both. */
 let lastSegmentAt = 0;
@@ -310,6 +314,20 @@ export function initVoiceTyping(): () => void {
   // really ended mid-hold (a meeting tapped for its mic stopped) has nothing
   // more to say at the release. A previous session's close after a fast
   // re-press carries that session's id and `owner` drops it.
+  // The socket is open: the audio buffered since the press is on its way, so
+  // the wait for the final answer can start counting (settle.ts). A short tap
+  // is often released before this — the hosted relay takes seconds to accept.
+  track(
+    listen<{ source: string; session: number | null; acksFinalize?: boolean }>(
+      "stt://connected",
+      (e) => {
+        if (!busy || !owner.owns(e.payload)) return;
+        connectedAt = Date.now();
+        acksFinalize = e.payload.acksFinalize === true;
+        if (releasedAt > 0) waitForSettle();
+      },
+    ),
+  );
   track(
     listen<{ source: string; session: number | null }>("stt://closed", (e) => {
       if (!busy || !owner.owns(e.payload)) return;
@@ -494,6 +512,8 @@ async function startSession() {
   pressedAt = pressed;
   releasedAt = 0;
   closedAt = 0;
+  connectedAt = 0;
+  acksFinalize = false;
   lastSegmentAt = 0;
   segmentCount = 0;
   clearTimeout(settleTimer);
@@ -631,6 +651,8 @@ function waitForSettle() {
   const v = settleVerdict({
     now: Date.now(),
     releasedAt,
+    connectedAt,
+    acksFinalize,
     closedAt,
     failed,
     lastSegmentAt,
@@ -655,6 +677,9 @@ interface Delivery {
   t: SessionTranscript;
   /** Release → settle, for the log (null if it was never released). */
   waitMs: number | null;
+  /** Press → socket open, for the log (null if it never connected). A value
+   *  above the hold time means the release beat the connect. */
+  connectMs: number | null;
   closed: boolean;
   segments: number;
 }
@@ -672,6 +697,7 @@ function settleNow(reason: Delivery["reason"]): Delivery | null {
     myGen: gen,
     t: transcript,
     waitMs: releasedAt > 0 ? Date.now() - releasedAt : null,
+    connectMs: connectedAt > 0 ? connectedAt - pressedAt : null,
     closed: closedAt > 0,
     segments: segmentCount,
   };
@@ -754,7 +780,7 @@ async function deliver(d: Delivery): Promise<void> {
   // phrase's 。 must not also drop it below MIN_POLISH_CHARS (punctuation.ts).
   const gateText = report?.sttText ?? raw;
   // Never the text itself (user data): how and when it settled, and how much.
-  const timing = { reason: d.reason, waitMs: d.waitMs, closed: d.closed };
+  const timing = { reason: d.reason, waitMs: d.waitMs, connectMs: d.connectMs, closed: d.closed };
   if (raw) {
     log.info("voice-typing: settled", { ...timing, chars: raw.length });
   } else {

@@ -56,6 +56,53 @@ pub fn session_for(source: &str) -> Option<u64> {
     session
 }
 
+/// Emitted once per session when its socket is open and the opening config has
+/// gone out: audio captured since the press (buffered while the handshake ran)
+/// is on its way to the recognizer from here, so nothing can come back before
+/// it. The voice-typing host times its wait for the final answer from the later
+/// of this and the release — the hosted relay takes two seconds or more to
+/// accept a connection, and a short dictation is often released before that.
+/// `acksFinalize`: the provider answers the closing finalize with an explicit
+/// end of stream (Soniox's `<fin>`), so the host waits for that close rather
+/// than guessing from silence.
+pub const CONNECTED_EVENT: &str = "stt://connected";
+
+/// Say the session's socket is open (see [`CONNECTED_EVENT`]).
+pub fn emit_connected(app: &AppHandle, source: &str, acks_finalize: bool) {
+    let _ = app.emit(
+        CONNECTED_EVENT,
+        serde_json::json!({
+            "source": source,
+            "session": session_for(source),
+            "acksFinalize": acks_finalize,
+        }),
+    );
+}
+
+/// The longest a provider's WebSocket handshake may take before the session
+/// fails. The hosted relay usually accepts in about two seconds and has been
+/// seen at six and a half; a connect still pending at fifteen is not coming,
+/// and without a bound it parked the session (and the dictation the user is
+/// waiting on) until the OS gave up on the TCP connection.
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// `connect` bounded by [`CONNECT_TIMEOUT`].
+pub async fn with_connect_timeout<T>(
+    connect: impl std::future::Future<Output = Result<T>>,
+) -> Result<T> {
+    connect_within(CONNECT_TIMEOUT, connect).await
+}
+
+/// [`with_connect_timeout`] with the bound as a parameter, for tests.
+async fn connect_within<T>(
+    limit: Duration,
+    connect: impl std::future::Future<Output = Result<T>>,
+) -> Result<T> {
+    tokio::time::timeout(limit, connect)
+        .await
+        .map_err(|_| anyhow!("connect failed: no answer within {}s", limit.as_secs()))?
+}
+
 /// rustls 0.23 requires a process-wide default CryptoProvider before any TLS
 /// handshake; installing it lazily (once) avoids a panic in the ws task.
 pub fn ensure_crypto_provider() {
@@ -191,30 +238,34 @@ pub async fn connect_with_headers(
         let val = HeaderValue::from_str(v).map_err(|e| anyhow!("bad header value: {e}"))?;
         req.headers_mut().insert(name, val);
     }
-    let (ws, _) = tokio_tungstenite::connect_async(req)
-        .await
-        .map_err(|e| match &e {
-            // Preserve the HTTP status from a refused upgrade (e.g. the hosted
-            // relay's 402 quota / 401 expired-session) so the caller can surface
-            // an actionable message instead of an opaque "connect failed".
-            tokio_tungstenite::tungstenite::Error::Http(resp) => {
-                anyhow!("connect failed: HTTP {}", resp.status().as_u16())
-            }
-            _ => anyhow!("connect failed: {e}"),
-        })?;
+    let (ws, _) = with_connect_timeout(async {
+        tokio_tungstenite::connect_async(req)
+            .await
+            .map_err(|e| match &e {
+                // Preserve the HTTP status from a refused upgrade (e.g. the hosted
+                // relay's 402 quota / 401 expired-session) so the caller can surface
+                // an actionable message instead of an opaque "connect failed".
+                tokio_tungstenite::tungstenite::Error::Http(resp) => {
+                    anyhow!("connect failed: HTTP {}", resp.status().as_u16())
+                }
+                _ => anyhow!("connect failed: {e}"),
+            })
+    })
+    .await?;
     Ok(ws)
 }
 
 /// After a normal stop, how long the read half may take to answer the closing
 /// handshake before the session ends anyway, counted from the drain (the
-/// forward half sent its last audio). Just inside the 8 s abort backstops
-/// (`voice_typing::FLUSH_ABORT_GRACE`, `teardown_meeting`), which count from
-/// the cut instead: when the socket is connected by then, the drain follows
-/// the cut at once, and a provider or relay that neither closes nor
-/// acknowledges the finalize ends in a normal return (`stt://closed` fired)
-/// rather than an abort. A connect that finishes more than about a second
-/// after the cut pushes the drain, and this grace, past the abort; the usage
-/// report survives that (capture.rs, `UsageReport`), the close does not.
+/// forward half sent its last audio). The abort backstops count from the cut
+/// instead. `voice_typing::FLUSH_ABORT_GRACE` is built from this grace and
+/// [`CONNECT_TIMEOUT`], so a dictation always ends here, in a normal return
+/// (`stt://closed` fired), however late its socket connected. Meetings'
+/// `teardown_meeting` still aborts 8 s after the cut: when the socket is
+/// connected by then, the drain follows the cut at once and this grace ends
+/// the session first; a connect that finishes more than about a second after
+/// the cut pushes the drain, and this grace, past that abort — the usage
+/// report survives it (capture.rs, `UsageReport`), the close does not.
 pub const DRAIN_READ_GRACE: Duration = Duration::from_secs(7);
 
 /// Drive a realtime session's two halves to completion and classify the
@@ -473,6 +524,24 @@ impl SegmentBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A connect that never answers fails the session (so the host shows an
+    /// error and stops waiting) instead of parking it until the OS gives up.
+    #[tokio::test]
+    async fn a_connect_that_never_answers_times_out() {
+        let limit = Duration::from_millis(20);
+        let started = std::time::Instant::now();
+        let r: Result<()> = connect_within(limit, std::future::pending()).await;
+        assert!(r.unwrap_err().to_string().starts_with("connect failed"));
+        assert!(started.elapsed() >= limit);
+    }
+
+    #[tokio::test]
+    async fn a_connect_error_passes_through_the_timeout() {
+        let r: Result<()> =
+            with_connect_timeout(async { Err(anyhow!("connect failed: HTTP 402")) }).await;
+        assert_eq!(r.unwrap_err().to_string(), "connect failed: HTTP 402");
+    }
 
     #[test]
     fn clean_vocabulary_trims_drops_empties_and_dedupes_in_order() {

@@ -33,15 +33,19 @@ use self::clipboard::SystemPasteboard;
 
 /// Grace for the post-release final flush, counted from the cut, before a
 /// lingering session task is force-aborted (mirrors `stop_meeting`'s backstop).
-/// The host stops waiting CLOSE_WAIT_MAX_MS (6 s) after the release, so by
-/// then nothing is waiting on the task. A session that is merely never told
-/// the stream is over ends itself DRAIN_READ_GRACE (7 s) after its input
-/// drains — but the drain cannot come before the socket has connected, so
-/// that ending beats this abort only when the connect finished within about
-/// a second of the cut. A short tap over a slow relay connect is aborted
-/// instead: its usage is still reported (capture.rs, `UsageReport`), and its
-/// `stt://closed` never comes, which the host's own cap already covers.
-const FLUSH_ABORT_GRACE: Duration = Duration::from_secs(8);
+/// It must not beat the session's own ending: the drain (the last audio sent,
+/// then the finalize) cannot come before the socket has connected, which
+/// CONNECT_TIMEOUT bounds from the start — so never later than the cut — and
+/// the session then ends itself DRAIN_READ_GRACE after the drain at the
+/// latest, `stt://closed` included. A short tap over a slow relay connect
+/// (seen at 6.5 s) used to be aborted here, 8 s after the cut, with its
+/// finalize still in flight: no `stt://closed`, and nothing pasted. This only
+/// catches a task that is stuck past every one of its own bounds.
+const FLUSH_ABORT_GRACE: Duration = Duration::from_secs(
+    crate::transcription::common::CONNECT_TIMEOUT.as_secs()
+        + crate::transcription::common::DRAIN_READ_GRACE.as_secs()
+        + 1,
+);
 
 /// Audio kept after key-up before the hard cut. People let go during the last
 /// syllable's decay, and the recognizer needs a little trailing context to
@@ -422,10 +426,10 @@ pub fn write_voice_history(app: AppHandle, content: String) -> Result<(), String
 /// so it cannot stop the new one.
 ///
 /// Backstop: a provider/relay that never ends the stream would leave the
-/// session task parked on its read half. DRAIN_READ_GRACE ends one that
-/// connected promptly first (see FLUSH_ABORT_GRACE for when it does not); for
-/// anything else mirror `stop_meeting`'s direct-cancel safety net and abort
-/// the task once the flush window has long passed. Guarded by the session id
+/// session task parked on its read half. CONNECT_TIMEOUT and DRAIN_READ_GRACE
+/// end it first (see FLUSH_ABORT_GRACE); for anything else mirror
+/// `stop_meeting`'s direct-cancel safety net and abort the task once the flush
+/// window has long passed. Guarded by the session id
 /// so a backstop from THIS session can never abort a newer one started during
 /// the grace.
 ///
@@ -1781,6 +1785,22 @@ mod imp {
     pub fn set_pass_through(_handle: OverlayHandle, _pass: bool) {}
     pub fn is_pass_through(_handle: OverlayHandle) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod flush_abort_tests {
+    use super::{FLUSH_ABORT_GRACE, RELEASE_TAIL};
+    use crate::transcription::common::{CONNECT_TIMEOUT, DRAIN_READ_GRACE};
+
+    /// The abort must only catch a task stuck past its own bounds: a short tap
+    /// whose socket connects at the last moment still drains, waits out its
+    /// read grace and fires `stt://closed` before this lands.
+    #[test]
+    fn the_abort_waits_out_a_late_connect_and_its_read_grace() {
+        assert!(FLUSH_ABORT_GRACE > CONNECT_TIMEOUT + DRAIN_READ_GRACE);
+        // Counted from the cut, which comes RELEASE_TAIL after the release.
+        assert!(RELEASE_TAIL < FLUSH_ABORT_GRACE);
     }
 }
 
