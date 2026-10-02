@@ -90,6 +90,8 @@ export const zhTW = {
   "studyGen.chip.failed": "{count} 項失敗",
   "studyGen.chip.idle": "尚未分析",
   "studyGen.chip.noKey": "缺 AI 金鑰",
+  "studyGen.chip.diarizing": "校正語者中…",
+  "studyGen.diarizingHint": "正在依錄音聲紋校正說話者，完成後才開始分析，避免分析到錯誤的說話者。",
   "studyGen.panel.title": "本場錄音的分析",
   "studyGen.language": "輸出語言",
   "studyGen.status.queued": "排隊中",
@@ -931,6 +933,7 @@ export const zhTW = {
   "speakers.voiceFound": "辨識出 {speakers} 位說話者，幫他們命名：",
   "speakers.voiceDone": "完成",
   "speakers.postRefined": "已依錄音聲紋重新校正說話者",
+  "speakers.voiceBusyPostSave": "正在自動依聲紋校正說話者，完成後即可再手動辨識",
   "speakers.hintWhoAmI": "哪一位是你？把那一欄改成你的名字，AI 才知道哪邊是我方。",
 
   "replay.upload": "上傳錄音",
@@ -1293,6 +1296,8 @@ export const en = {
   "studyGen.chip.failed": "{count} failed",
   "studyGen.chip.idle": "Not analyzed",
   "studyGen.chip.noKey": "No AI key",
+  "studyGen.chip.diarizing": "Correcting speakers…",
+  "studyGen.diarizingHint": "Correcting speakers from the recording's voices. Analysis starts once that finishes, so it never reads the wrong speakers.",
   "studyGen.panel.title": "This recording's analyses",
   "studyGen.language": "Output language",
   "studyGen.status.queued": "Queued",
@@ -2140,6 +2145,7 @@ export const en = {
   "speakers.voiceFound": "Found {speakers} speakers — name them:",
   "speakers.voiceDone": "Done",
   "speakers.postRefined": "Speaker labels refined from the recording",
+  "speakers.voiceBusyPostSave": "Speakers are being corrected from the recording — try again once that finishes",
   "speakers.hintWhoAmI": "Which one is you? Rename that column to your name so the AI knows which side is yours.",
 
   "replay.upload": "Upload recording",

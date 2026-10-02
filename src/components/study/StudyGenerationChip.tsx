@@ -67,6 +67,10 @@ export function StudyGenerationChip() {
   if (!pipeline.hasTranscript) return null;
 
   const anyRunning = pipeline.artifacts.some((a) => a.display === "running");
+  // Regenerating while the speakers are being corrected would analyse the very
+  // labels that are about to change — the pipeline holds those stages anyway,
+  // so the controls say so instead of queueing a click that looks ignored.
+  const regenLocked = !pipeline.hasDeepKey || anyRunning || pipeline.diarizing;
 
   function confirmRegenAll() {
     setConfirming(false);
@@ -103,6 +107,12 @@ export function StudyGenerationChip() {
               </span>
             </div>
 
+            {pipeline.diarizing && (
+              <p className="border-b px-3 py-2 text-[11px] text-muted-foreground">
+                {t("studyGen.diarizingHint")}
+              </p>
+            )}
+
             {pipeline.artifacts.map((a) => (
               <ArtifactRow
                 key={a.key}
@@ -111,14 +121,14 @@ export function StudyGenerationChip() {
                 t={t}
                 // One pass at a time: regenerating anything while another output
                 // streams would race the chained pipeline (and double-spend).
-                disabled={!pipeline.hasDeepKey || anyRunning}
+                disabled={regenLocked}
                 onRegen={() => regenerateArtifact(a.key)}
               />
             ))}
 
             <div className="flex items-center justify-between gap-2 border-t px-3 py-2">
               <DropdownMenu.Item
-                disabled={!pipeline.hasDeepKey || anyRunning}
+                disabled={regenLocked}
                 onSelect={() => setConfirming(true)}
                 className={cn(
                   "flex cursor-pointer items-center gap-1.5 rounded px-2 py-1 text-xs font-medium outline-none",
@@ -189,6 +199,7 @@ function chipClass(p: Pipeline): string {
 
 function chipTitle(p: Pipeline, t: TFn): string {
   if (!p.hasDeepKey) return t("analyze.noKey");
+  if (p.diarizing) return t("studyGen.diarizingHint");
   return t("studyGen.panel.title");
 }
 
@@ -198,6 +209,16 @@ function ChipContent({ pipeline: p, t }: Readonly<{ pipeline: Pipeline; t: TFn }
       <>
         <KeyRound className="size-3" />
         {t("studyGen.chip.noKey")}
+      </>
+    );
+  }
+  // Before the queued count: while the speakers are being corrected nothing is
+  // generating yet, and "Analyzing 0/4" would read as a stuck pipeline.
+  if (p.diarizing) {
+    return (
+      <>
+        <Loader2 className="size-3 animate-spin" />
+        {t("studyGen.chip.diarizing")}
       </>
     );
   }

@@ -560,6 +560,13 @@ interface ParleyState {
    *  stale pin can never re-enable the pipeline for a recording nobody asked
    *  about — no reset path has to remember it. */
   studyManualForId: string | null;
+  /** The saved entry whose post-save voice re-diarization is still running
+   *  (history.saveLiveToHistory opens the report BEFORE that pass finishes).
+   *  While it matches the loaded recording, the study pipeline holds every
+   *  deep-lane stage so no model reads the provider's drifted speaker labels
+   *  and then has to re-run. Deliberately NOT in CLEARED_STUDY_SLICE: leaving
+   *  the recording and coming back mid-pass must find the gate still shut. */
+  postSaveDiarizingId: string | null;
   setFindings: (events: TimelineEvent[]) => void;
   /** Which study-tense page is open while a recording is loaded: the merged
    *  meeting report (read the outcome) or the replay workbench (check the
@@ -676,9 +683,12 @@ interface ParleyState {
   toggleActionItem: (id: string) => void;
 
   meetingStatus: MeetingStatus;
-  /** True from "End meeting" until the recording is saved and its report loaded
-   *  (or Rust reports it was discarded). Backs the titlebar "saving…" state so
-   *  the multi-second save → re-diarize → share → load window doesn't look hung. */
+  /** True from "End meeting" until the recording's first file write lands and
+   *  its report opens (or Rust reports it was discarded, or the save fails).
+   *  Backs the titlebar "saving…" state so the multi-second encode → persist
+   *  window doesn't look hung, and keeps the shell's focused layout up until the
+   *  report replaces the cockpit. Speaker re-diarization and the org share run
+   *  AFTER it clears — see postSaveDiarizingId. */
   isFinalizingMeeting: boolean;
   setFinalizingMeeting: (v: boolean) => void;
   meetingStartedAt: number | null;
@@ -884,6 +894,7 @@ export const useStore = create<ParleyState>()(
       analyzedEvalSig: "",
       meetingKind: null,
       studyManualForId: null,
+      postSaveDiarizingId: null,
       selectedFindingId: null,
       solutionFindingId: null,
       findingSolutions: {},

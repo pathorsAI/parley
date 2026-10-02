@@ -6,7 +6,14 @@ vi.mock("../log", () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import { buildSummary, mergeAnalysisSnapshot, mergeStageOutputs, type AnalysisSnapshot } from "./history";
+import {
+  applyCorrectedSpeakers,
+  buildSummary,
+  mergeAnalysisSnapshot,
+  mergeStageOutputs,
+  type AnalysisSnapshot,
+} from "./history";
+import { speakerKey } from "../store";
 import type { HistoryEntry } from "./types";
 import type { DeliveryAssessment } from "../types";
 import { seg } from "../test/fixtures";
@@ -200,5 +207,44 @@ describe("mergeAnalysisSnapshot (the completed-pipeline overwrite)", () => {
   it("keeps a recorded brief failure unless a brief is now present", () => {
     expect(mergeAnalysisSnapshot(entry({ briefFailed: true }), snap()).briefFailed).toBe(true);
     expect(mergeAnalysisSnapshot(entry({ briefFailed: true }), snap({ brief: "b" })).briefFailed).toBe(false);
+  });
+});
+
+describe("applyCorrectedSpeakers (folding the background speaker correction in)", () => {
+  const before = [
+    seg({ id: "mix-0", source: "mix", speaker: 1, text: "hi", startMs: 0 }),
+    seg({ id: "mix-1", source: "mix", speaker: 1, text: "edited by hand", startMs: 1000 }),
+    seg({ id: "mix-2", source: "mix", speaker: 2, text: "yo", startMs: 2000 }),
+  ];
+
+  it("moves only the speaker number, by segment id, keeping the current text", () => {
+    // The correction ran on the transcript as SAVED; the user has since edited a line.
+    const corrected = [
+      seg({ id: "mix-0", source: "mix", speaker: 1, text: "hi" }),
+      seg({ id: "mix-1", source: "mix", speaker: 2, text: "original text" }),
+      seg({ id: "mix-2", source: "mix", speaker: 2, text: "yo" }),
+    ];
+    const out = applyCorrectedSpeakers(before, corrected);
+    expect(out.map((s) => s.speaker)).toEqual([1, 2, 2]);
+    expect(out[1].text).toBe("edited by hand");
+    // Untouched lines keep their identity (cheap re-render).
+    expect(out[0]).toBe(before[0]);
+  });
+
+  it("names typed during the pass still resolve: the numbering is the provider's, the names map is untouched", () => {
+    // Typed in the report while the correction ran, against the provider labels.
+    const speakerNames = { "mix-1": "Alice", "mix-2": "Bob" };
+    const corrected = before.map((s) => (s.id === "mix-1" ? { ...s, speaker: 2 } : s));
+    const out = applyCorrectedSpeakers(before, corrected);
+    const names = out.map((s) => speakerNames[speakerKey(s) as keyof typeof speakerNames]);
+    // The mislabelled line now reads as Bob; nobody lost a name.
+    expect(names).toEqual(["Alice", "Bob", "Bob"]);
+  });
+
+  it("leaves lines the correction didn't cover alone, and returns the same list when nothing moves", () => {
+    const extra = [...before, seg({ id: "me-0", source: "me", speaker: 1, text: "mine" })];
+    expect(applyCorrectedSpeakers(extra, before)).toBe(extra);
+    const moved = applyCorrectedSpeakers(extra, [seg({ id: "mix-0", source: "mix", speaker: 3 })]);
+    expect(moved.map((s) => s.speaker)).toEqual([3, 1, 2, 1]);
   });
 });

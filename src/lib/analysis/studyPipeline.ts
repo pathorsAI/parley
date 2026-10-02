@@ -62,6 +62,14 @@ export interface StudyPipelineFacts {
    *  speaker naming, the first analysis at Confirm) — the whole DAG defers
    *  while it's open so no pass spends on an unconfirmed transcript. */
   wizardOpen: boolean;
+  /** The loaded recording is a just-saved live meeting whose voice
+   *  re-diarization is still running (store.postSaveDiarizingId). Its speaker
+   *  labels are about to change, so the deep-lane stages — which read who said
+   *  what — wait for the corrected transcript instead of analysing the
+   *  provider's drifted labels and then re-running. Filing reads only the text,
+   *  so it is not held. The artifacts still read "queued" meanwhile: a run IS
+   *  coming, it is only waiting for its input. */
+  diarizing: boolean;
   hasDeepKey: boolean;
   /** The cheap lane. Only the filing pass rides it, which is why it can run for a
    *  user who has no deep-lane key at all. */
@@ -91,6 +99,7 @@ export function factsOf(s: StoreState): StudyPipelineFacts {
   return {
     inReplay: s.appMode === "study" && s.replay != null,
     wizardOpen: s.ingestWizardOpen,
+    diarizing: replayId != null && s.postSaveDiarizingId === replayId,
     hasDeepKey: hasProviderKey(s.settings, "deep"),
     hasRealtimeKey: hasProviderKey(s.settings, "realtime"),
     readOnly: s.replayReadOnly,
@@ -133,6 +142,11 @@ export function evaluateStages(f: StudyPipelineFacts): StudyStageKey[] {
   if (!f.readOnly && f.hasRealtimeKey && f.filingStatus === "idle") out.push("filing");
 
   if (!f.hasDeepKey) return out;
+  // Speaker correction still running: every deep stage reads speaker labels
+  // (findings attribute lines, the brief names people), so they all wait for
+  // the corrected transcript. Clearing the flag is a WATCHED change, so the
+  // pipeline dispatches the moment it does — once, on the corrected labels.
+  if (f.diarizing) return out;
   const analysisDone = f.analysisStatus === "done";
   if (f.analysisStatus === "idle") out.push("findings");
   if (analysisDone && f.actionItemsStatus === "idle") out.push("actions");
@@ -200,6 +214,9 @@ export function regenerateArtifact(key: StudyStageKey): void {
 export async function reanalyzeAll(): Promise<void> {
   const startedFor = useStore.getState().replay?.id ?? null;
   if (!startedFor) return;
+  // This one calls the findings runner directly instead of going through the
+  // scheduler, so it has to honour the speaker-correction hold itself.
+  if (factsOf(useStore.getState()).diarizing) return;
   // Pin BEFORE the pass: with auto-analysis off, the downstream invalidation
   // below would otherwise never be picked up by the scheduler.
   useStore.setState({ studyManualForId: startedFor });
@@ -232,6 +249,7 @@ const WATCHED = [
   "loadedHistoryId",
   "replayReadOnly",
   "studyManualForId",
+  "postSaveDiarizingId",
 ] as const satisfies readonly (keyof StoreState)[];
 
 function dispatchReady(state: StoreState): void {
@@ -304,6 +322,9 @@ export interface StudyPipelineState {
   active: boolean;
   hasDeepKey: boolean;
   hasTranscript: boolean;
+  /** Speaker correction is running for this recording (see the fact). The chip
+   *  says so instead of a queued count, and manual regeneration waits. */
+  diarizing: boolean;
 }
 
 /** Queue rule shared by every stage chained off the findings pass (actions /
@@ -367,6 +388,7 @@ export function deriveStudyPipeline(f: StudyPipelineFacts): StudyPipelineState {
     active: artifacts.some((a) => a.display === "queued" || a.display === "running"),
     hasDeepKey: f.hasDeepKey,
     hasTranscript: f.hasTranscript,
+    diarizing: f.diarizing,
   };
 }
 

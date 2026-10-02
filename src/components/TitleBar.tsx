@@ -846,10 +846,13 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
       stopMeeting();
       if (useRealPipeline) {
         // The real save runs async off the `recording-saved` event and takes
-        // seconds (encode → persist → re-diarize → org share → load report).
-        // Flag "finalizing" now so the button shows a spinner for that whole
-        // window instead of reading as hung. Cleared when the save finishes or
-        // Rust reports the recording was discarded (see listenForRecordingSaved).
+        // seconds (encode → persist → open the report). Flag "finalizing" now
+        // so the button shows a spinner for that window instead of reading as
+        // hung (it also keeps the shell's focused layout up until the report
+        // replaces the cockpit). Cleared the moment the report opens — speaker
+        // correction and the org share continue in the background — or when
+        // the save fails or Rust reports the recording was discarded (see
+        // saveLiveToHistory / listenForRecordingSaved).
         setFinalizingMeeting(true);
         try {
           await invoke("stop_meeting");
