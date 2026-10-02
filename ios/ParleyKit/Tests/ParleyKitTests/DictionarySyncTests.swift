@@ -5,8 +5,8 @@ import XCTest
 /// Personal-dictionary sync: the projection, the diff, the merge back into the
 /// lexicon, and a full run against a fake cloud. Mirrors the desktop's
 /// `src/lib/cloud/dictionarySync.test.ts` case for case where the two share a
-/// rule, plus what only the phone has (unconfirmed pairs, system terms,
-/// variants it cannot hold, the explicit clear).
+/// rule, plus what only the phone has (unconfirmed pairs, variants it cannot
+/// hold, the explicit clear).
 final class DictionarySyncTests: XCTestCase {
     private let now: Int64 = 1_790_000_000_000
     private var t0: Date { DictionarySync.date(now - 10_000) }
@@ -41,15 +41,14 @@ final class DictionarySyncTests: XCTestCase {
 
     // MARK: projection
 
-    func testProjectsTermsAndConfirmedPairsButNotGuessesOrSystemTerms() {
+    func testProjectsTermsAndConfirmedPairsButNotGuesses() {
         let lexicon = Lexicon(
             pairs: [
                 confirmed("怕理", "Parley"),
                 confirmed("帕力", "Parley", at: t0.addingTimeInterval(5)),
                 LexiconPair(original: "色瑞", replacement: "Cerana", count: 1, updatedAt: t0),
             ],
-            terms: [LexiconTerm(text: "Parley", updatedAt: t0), LexiconTerm(text: "Pathors", updatedAt: t0)],
-            systemTerms: ["Andy Chen", "Parley"])
+            terms: [LexiconTerm(text: "Parley", updatedAt: t0), LexiconTerm(text: "Pathors", updatedAt: t0)])
         let p = DictionarySync.project(lexicon)
         XCTAssertEqual(Set(p.keys), ["Parley", "Pathors"])
         XCTAssertEqual(p["Parley"]?.variants, ["帕力", "怕理"].sorted())
@@ -117,14 +116,107 @@ final class DictionarySyncTests: XCTestCase {
     func testVariantsThePhoneCannotHoldAreNeitherDeletedNorDiffed() {
         // "派" → "派對" is a single CJK character: the desktop can keep it, the
         // phone cannot store it as a correction.
-        let s = state(["派對": .init(id: "s1", variants: ["派", "排隊"])])
+        let s = state(["派對": .init(id: "s1", variants: ["派", "排隊"], held: ["排隊"])])
         let held = Lexicon(pairs: [confirmed("排隊", "派對")])
         XCTAssertTrue(
             DictionarySync.outgoing(DictionarySync.project(held), state: s, now: now).entries.isEmpty)
+    }
 
-        let edited = Lexicon(pairs: [confirmed("排隊", "派對"), confirmed("拍對", "派對")])
+    // MARK: the phone only removes what it held
+
+    /// Apply `rows` to `lexicon` from a fresh snapshot, as a first pull would.
+    private func pulled(_ rows: [CloudDictionaryEntry], into lexicon: Lexicon = Lexicon())
+        -> (lexicon: Lexicon, state: DictionarySyncState)
+    {
+        let start = DictionarySyncState(userId: "u1")
+        let r = DictionarySync.apply(
+            lexicon, state: start,
+            outgoing: DictionarySync.outgoing(DictionarySync.project(lexicon), state: start, now: now),
+            exchange: .init(pulled: rows, pushed: []))
+        return (r.lexicon ?? lexicon, r.state)
+    }
+
+    func testAPhraseWithMoreVariantsThanThePhoneHoldsKeepsThemAllThroughAnEdit() {
+        let all = (0..<(Lexicon.maxPairs + 100)).map { "v\($0)" }
+        let (lex, s) = pulled([row(variants: all, source: "learned")])
+        XCTAssertEqual(lex.pairs.count, Lexicon.maxPairs)
+        let held = Set(s.synced["Parley"]!.held)
+        XCTAssertEqual(held.count, Lexicon.maxPairs)
+        XCTAssertEqual(s.synced["Parley"]!.variants, all)
+        // Holding only part of it is not a change.
+        XCTAssertTrue(DictionarySync.outgoing(DictionarySync.project(lex), state: s, now: now).entries.isEmpty)
+
+        // The user removes one correction they held and adds one of their own.
+        let removed = lex.pairs[0].original
+        var edited = lex
+        edited.pairs.removeFirst()
+        edited.pairs.append(confirmed("mine", "Parley"))
         let out = DictionarySync.outgoing(DictionarySync.project(edited), state: s, now: now)
-        XCTAssertEqual(out.entries.map(\.variants), [["拍對", "排隊", "派"]])
+        XCTAssertEqual(out.entries.count, 1)
+        let sent = Set(out.entries[0].variants)
+        XCTAssertEqual(sent, Set(all).subtracting([removed]).union(["mine"]))
+        XCTAssertEqual(out.entries[0].id, "s1")
+    }
+
+    func testAPhraseBeyondTheTermCapIsNeverTombstoned() {
+        let rows = (0...Lexicon.maxTerms).map {
+            row("t\($0)", id: "s\($0)", variants: [], updatedAt: now - 10_000 + Int64($0))
+        }
+        let (lex, s) = pulled(rows)
+        XCTAssertEqual(lex.terms.count, Lexicon.maxTerms)
+        let evicted = Set(s.synced.keys).subtracting(lex.terms.map(\.text))
+        XCTAssertEqual(evicted, ["t0"])
+        XCTAssertEqual(s.synced["t0"]?.heldPhrase, false)
+        XCTAssertTrue(DictionarySync.outgoing(DictionarySync.project(lex), state: s, now: now).entries.isEmpty)
+
+        // Deleting a term the phone did hold sends that, and only that.
+        var edited = lex
+        edited.terms.removeAll { $0.text == "t5" }
+        let out = DictionarySync.outgoing(DictionarySync.project(edited), state: s, now: now)
+        XCTAssertEqual(out.entries.map(\.phrase), ["t5"])
+        XCTAssertNotNil(out.entries[0].deletedAt)
+    }
+
+    func testARefusedSingleCharacterVariantSurvivesPhoneEdits() {
+        let (lex, s) = pulled([row("派對", variants: ["派", "排隊"], source: "learned")])
+        XCTAssertEqual(lex.pairs.map(\.original), ["排隊"])
+        XCTAssertEqual(s.synced["派對"]?.held, ["排隊"])
+
+        // Adding a correction keeps the one the phone cannot hold.
+        var added = lex
+        added.pairs.append(confirmed("拍對", "派對"))
+        let addOut = DictionarySync.outgoing(DictionarySync.project(added), state: s, now: now)
+        XCTAssertEqual(addOut.entries.map(\.variants), [["拍對", "排隊", "派"]])
+
+        // Removing everything the phone held does not delete what it never held:
+        // the phrase goes up live with just that, and the phone lets go of it.
+        var removed = lex
+        removed.pairs = []
+        let out = DictionarySync.outgoing(DictionarySync.project(removed), state: s, now: now)
+        XCTAssertEqual(out.entries.count, 1)
+        XCTAssertNil(out.entries[0].deletedAt)
+        XCTAssertEqual(out.entries[0].variants, ["派"])
+        XCTAssertEqual(out.released, ["派對"])
+        let answered = row("派對", variants: ["派"], source: "learned", updatedAt: now)
+        let after = DictionarySync.apply(
+            removed, state: s, outgoing: out, exchange: .init(pulled: [], pushed: [answered]))
+        XCTAssertNil(after.lexicon, "a released phrase is not written back")
+        XCTAssertEqual(after.state.synced["派對"]?.heldPhrase, false)
+        // Its echo on the next pull does not bring it back either, and nothing
+        // is left to send.
+        let next = DictionarySync.outgoing([:], state: after.state, now: now)
+        XCTAssertTrue(next.entries.isEmpty)
+        let echo = DictionarySync.apply(
+            removed, state: after.state, outgoing: next, exchange: .init(pulled: [answered], pushed: []))
+        XCTAssertNil(echo.lexicon)
+    }
+
+    func testAPhraseHeldWholeIsTombstonedWhenRemoved() {
+        let (lex, s) = pulled([row(variants: ["怕理"], source: "learned")])
+        XCTAssertEqual(lex.pairs.count, 1)
+        let out = DictionarySync.outgoing([:], state: s, now: now)
+        XCTAssertEqual(out.entries.map(\.deletedAt), [now])
+        XCTAssertTrue(out.released.isEmpty)
     }
 
     func testDoesNotOfferAFormTheCloudRefusedForGood() {
@@ -164,8 +256,7 @@ final class DictionarySyncTests: XCTestCase {
         ])
         let lexicon = Lexicon(
             pairs: [confirmed("怕理", "Parley")],
-            terms: [LexiconTerm(text: "Parley", updatedAt: t0), LexiconTerm(text: "Gone", updatedAt: t0)],
-            systemTerms: ["Andy"])
+            terms: [LexiconTerm(text: "Parley", updatedAt: t0), LexiconTerm(text: "Gone", updatedAt: t0)])
         let out = DictionarySync.outgoing(DictionarySync.project(lexicon), state: s, now: now)
         let result = DictionarySync.apply(
             lexicon, state: s, outgoing: out,
@@ -181,8 +272,9 @@ final class DictionarySyncTests: XCTestCase {
         XCTAssertEqual(
             Set(lex.pairs.map { "\($0.original)→\($0.replacement)×\($0.count)" }),
             ["怕理→Parley×\(threshold)", "帕力→Parley×\(threshold)", "怕ddors→Pathors×\(threshold)"])
-        XCTAssertEqual(lex.systemTerms, ["Andy"])
-        XCTAssertEqual(result.state.synced["Parley"], .init(id: "s1", variants: ["帕力", "怕理"]))
+        XCTAssertEqual(
+            result.state.synced["Parley"],
+            .init(id: "s1", variants: ["怕理", "帕力"], held: ["帕力", "怕理"]))
         XCTAssertEqual(result.state.synced["Cerana"], .init(id: "s3", variants: []))
         XCTAssertNil(result.state.synced["Gone"])
         // Applying leaves nothing to send back.
@@ -255,7 +347,8 @@ final class DictionarySyncTests: XCTestCase {
             exchange: .init(pulled: [row("派對", variants: ["派"], source: "learned")], pushed: []))
         XCTAssertEqual(result.lexicon?.terms.map(\.text), ["派對"])
         XCTAssertEqual(result.lexicon?.pairs, [])
-        XCTAssertEqual(result.state.synced["派對"], .init(id: "s1", variants: ["派"]))
+        XCTAssertEqual(
+            result.state.synced["派對"], .init(id: "s1", variants: ["派"], held: [], source: "learned"))
         let again = DictionarySync.outgoing(
             DictionarySync.project(result.lexicon!), state: result.state, now: now)
         XCTAssertTrue(again.entries.isEmpty)

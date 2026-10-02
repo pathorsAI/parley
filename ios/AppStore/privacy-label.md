@@ -90,9 +90,7 @@ Exactly what goes up, and what never does:
 - **Sent:** the terms the user typed into the dictionary screen, and corrections
   that are confirmed — seen twice, or entered by hand. Each as the right spelling
   plus the misheard forms that get rewritten into it.
-- **Never sent:** corrections still being learned (seen once), and the names
-  and phrases the keyboard reads from Contacts and Text Replacement
-  (`Lexicon.systemTerms`) — contacts do not leave the phone.
+- **Never sent:** corrections still being learned (seen once).
 - Only the app syncs. The keyboard extension still opens no network connection;
   what it learns goes up on the app's next sync.
 - Logs carry counts, never words. Deleting the account deletes the server copy.
