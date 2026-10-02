@@ -770,6 +770,12 @@ mod imp {
                 object_setClass(w, class!(NSPanel) as *const Class);
                 let style: usize = msg_send![w, styleMask];
                 let _: () = msg_send![w, setStyleMask: style | NONACTIVATING_PANEL];
+                // Only take key status when a view genuinely needs it — none
+                // here does, and the panel is borderless, so it never asks.
+                let _: () = msg_send![w, setBecomesKeyOnlyIfNeeded: true];
+                // Once per window: a recreated overlay starts as a TaoWindow
+                // again and comes back through this branch.
+                prevent_activation(w);
                 let _: () = msg_send![w, setFloatingPanel: true];
                 let _: () = msg_send![w, setHidesOnDeactivate: false];
             }
@@ -782,6 +788,33 @@ mod imp {
             spaces::rejoin_all(w);
         }
         log::info!("voice-typing: overlay presented (panel)");
+    }
+
+    /// `-setStyleMask:` never propagates NSWindowStyleMaskNonactivatingPanel to
+    /// the activation flag AppKit sets only in NSPanel's own init (Wine's
+    /// cocoa_window.m documents the same bug), so a mouse-down on this converted
+    /// panel activated Parley: the menu bar switched, the main window came
+    /// forward, and the ⌘V that followed the release landed in Parley instead
+    /// of the field the user was dictating into. `_setPreventsActivation:` is
+    /// the private funnel the native init uses. It is idempotent and later
+    /// style-mask changes do not reset it. Guarded like the CGS calls in
+    /// `spaces`: a future macOS without it logs a warning instead of crashing.
+    /// The read-back puts the outcome in parley.log, so a report of "clicking
+    /// the overlay brings Parley up" can be checked against it.
+    unsafe fn prevent_activation(w: *mut Object) {
+        let responds: bool = msg_send![w, respondsToSelector: sel!(_setPreventsActivation:)];
+        if !responds {
+            log::warn!(
+                "voice-typing: _setPreventsActivation: unavailable; overlay clicks may activate Parley"
+            );
+            return;
+        }
+        let _: () = msg_send![w, _setPreventsActivation: true];
+        let can_read: bool = msg_send![w, respondsToSelector: sel!(_preventsActivation)];
+        if can_read {
+            let on: bool = msg_send![w, _preventsActivation];
+            log::info!("voice-typing: overlay panel preventsActivation={on}");
+        }
     }
 
     /// Re-home the overlay whenever the active Space changes (a trackpad swipe,
@@ -1324,6 +1357,17 @@ mod imp {
     ///     other windows. Tauri's `alwaysOnTop` is deliberately NOT used for
     ///     this: its implementation activates the window, which is the one
     ///     thing we are avoiding.
+    ///
+    /// Never call one of tao's window-flag setters on this window at runtime —
+    /// `setFocusable`, `setAlwaysOnTop`, `setResizable`, `setIgnoreCursorEvents`
+    /// and the like. The window is created hidden and shown natively here, so
+    /// tao's own VISIBLE flag stays false, and any setter whose change is not
+    /// empty runs tao's `apply_diff`: that calls `ShowWindow(SW_HIDE)` (the
+    /// overlay vanishes mid-dictation) and rewrites GWL_EXSTYLE wholesale from
+    /// tao's flags, which model neither WS_EX_TOOLWINDOW nor, for a window
+    /// created focusable, WS_EX_NOACTIVATE. Creation-time options are fine —
+    /// overlay.ts sets `focusable: false`, so tao applies WS_EX_NOACTIVATE
+    /// from the start and keeps it through its own style recomputes.
     pub fn present_overlay(hwnd: HWND) {
         // SAFETY: `hwnd` is the live overlay window and these commands run on
         // the thread that owns it (Tauri dispatches synchronous commands on the

@@ -8,8 +8,6 @@ export const LANGUAGE_OPTIONS: { value: AppLanguage; label: string; nativeLabel:
 ];
 
 export const zhTW = {
-  "app.name": "Parley",
-
   "onboarding.title": "歡迎使用 Parley",
   "onboarding.skip": "略過",
   "onboarding.back": "上一步",
@@ -1222,8 +1220,6 @@ export const zhTW = {
 } as const satisfies Dict;
 
 export const en = {
-  "app.name": "Parley",
-
   "onboarding.title": "Welcome to Parley",
   "onboarding.skip": "Skip",
   "onboarding.back": "Back",

@@ -9,6 +9,16 @@ import type { PolishOutcome } from "./polish";
 
 const LABEL = "voice-typing";
 const WIDTH = 460;
+/**
+ * The overlay's content is a bottom-anchored stack (VoiceTypingApp), and this
+ * is its budget. With 16 px of bottom padding and 8 px gaps, the common states
+ * fit: done with a full three-line transcript is 16 + 36 pill + 22.5 note +
+ * 84 transcript + 2 × 8 = 174.5 px, polishing 172.5 px, a two-line dictionary
+ * suggestion about 138 px. Only the rare hosted-cap note overflows; the
+ * transcript bubble (overflow-hidden) then gives up about a line — it is
+ * still pasted whole. There used to be a "Parley" wordmark under the pill;
+ * its 30 px squeezed every done state, so it went.
+ */
 const HEIGHT = 180;
 /** Gap above the bottom of the WORK AREA (sits low, just clearing the Dock). */
 const BOTTOM_MARGIN = 64;
@@ -47,6 +57,19 @@ async function ensureOverlay(): Promise<void> {
       resizable: false,
       // Don't steal focus from the app the user is typing into.
       focus: false,
+      // Windows: WS_EX_NOACTIVATE from creation, which tao then keeps through
+      // its own style rewrites. macOS: it only shapes the TaoWindow, and
+      // present_voice_overlay swaps that class for NSPanel anyway. NEVER call
+      // setFocusable (or any other window-flag setter) on this window at
+      // runtime: after the swap tao would read an ivar NSPanel does not have,
+      // and on Windows the setter hides the window and strips its ex-styles
+      // (see imp::present_overlay in voice_typing.rs).
+      focusable: false,
+      // The panel never activates Parley (voice_typing.rs, prevent_activation),
+      // so every click on it is a first mouse in a non-key window of an
+      // inactive app — and WKWebView drops those unless it accepts first
+      // mouse. Without this the suggestion buttons stop receiving pointerdown.
+      acceptFirstMouse: true,
       visible: false,
     });
     await new Promise<void>((resolve) => {

@@ -76,6 +76,21 @@ Config lives in [`vitest.config.ts`](../vitest.config.ts) — `environment: "nod
 (the store + pure functions need no DOM); switch a file to `jsdom` only if a test
 genuinely needs the DOM.
 
+## Voice-typing overlay: what only a person can check
+
+The overlay's window behaviour is native (`present_voice_overlay` in
+`src-tauri/src/voice_typing.rs`), so no unit test reaches it. Walk these on a
+Mac, and on Windows as part of the next section, before a release that touches
+the overlay:
+
+- **Clicking the overlay never activates Parley.** Click the overlay pill and
+  the suggestion buttons mid-dictation: the menu bar stays on the target app,
+  the main window does not come forward (whether it is open behind other apps
+  or closed to the Dock), and the release still pastes into the original
+  field. The suggestion's Add, Ignore and Undo still respond to the first
+  click. On macOS, `parley.log` shows `overlay panel preventsActivation=true`
+  the first time the overlay appears.
+
 ## Windows: what only a Windows machine can check
 
 CI builds and lints the Windows target (`cargo clippy --target
@@ -108,6 +123,9 @@ involved:
   page's timers harder after five minutes. Hide Parley to the tray for longer
   than that, then dictate a single word with a short tap: it still pastes, and
   `parley.log` shows `voice-typing: settled` with `reason` `closed`.
+- **Voice-typing overlay clicks.** The overlay checks in the section above:
+  clicking the pill or a suggestion button mid-dictation leaves the target app
+  in front, and the release still pastes into the original field.
 - **Clipboard paste** (`paste_to_frontmost` in `src-tauri/src/voice_typing.rs`).
   Dictating into Notepad, a browser text field and an Office app pastes the
   text at the caret, and the held Ctrl+Alt of the shortcut does not turn the

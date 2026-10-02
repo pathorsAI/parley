@@ -496,12 +496,6 @@ export const VoiceTypingApp = () => {
           ))}
         </div>
       </div>
-
-      {/* Layer 3 — brand wordmark (no logo). White with a shadow so it reads on
-          any background behind the transparent overlay. */}
-      <span className="text-[15px] font-semibold tracking-wide text-white/90 [text-shadow:0_1px_3px_rgba(0,0,0,0.6)]">
-        {t("app.name")}
-      </span>
     </div>
   );
 };
