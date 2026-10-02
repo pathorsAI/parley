@@ -102,8 +102,8 @@ struct KeyboardRootView: View {
                 // the keyboard has no background to cover it with. Hit-testing
                 // goes with it, so the track can't be swiped or typed on
                 // underneath the grid.
-                .opacity(showsCandidateGrid ? 0 : 1)
-                .allowsHitTesting(!showsCandidateGrid)
+                .opacity(coversKeys ? 0 : 1)
+                .allowsHitTesting(!coversKeys)
             }
             // A pane set without the tabs or the swipe — the controller
             // sending the keyboard elsewhere because a pane was switched off,
@@ -120,6 +120,11 @@ struct KeyboardRootView: View {
                     CandidateGrid(
                         candidates: bridge.zhuyin.candidates, dark: dark,
                         pick: bridge.pickCandidate, backspace: bridge.backspace)
+                } else if let panel = bridge.clipboardPanel {
+                    // Built when the panel opens and gone when it closes:
+                    // nothing of the clipboard is in the view tree otherwise.
+                    ClipboardPanel(bridge: bridge, content: panel, dark: dark)
+                        .equatable()
                 }
             }
             .clipped()
@@ -180,6 +185,9 @@ struct KeyboardRootView: View {
     /// the next turn of the main queue — one frame later, and only the first
     /// time; after that every pane on the way exists and the tap moves at once.
     private func select(_ pane: KeyboardPane) {
+        // A tab is a way back to the keys, including the current pane's own
+        // tab while the 📋 panel is over them.
+        if bridge.clipboardPanel != nil { bridge.closeClipboard() }
         guard reveal(from: bridge.pane, to: pane) else { return bridge.setPane(pane) }
         DispatchQueue.main.async { bridge.setPane(pane) }
     }
@@ -265,9 +273,16 @@ struct KeyboardRootView: View {
                 StripHome(
                     bridge: bridge, dark: dark, panes: bridge.panes, pane: bridge.pane,
                     showsWindowChip: showsWindowChip, justCopied: bridge.justCopied,
-                    offersCopyHint: bridge.copyHintOffered, select: select
+                    offersCopyHint: bridge.copyHintOffered,
+                    chip: bridge.hasFullAccess ? bridge.stripChip : nil,
+                    showsClipboardButton: bridge.hasFullAccess,
+                    clipboardOpen: bridge.clipboardPanel != nil, select: select
                 )
                 .equatable()
+                // The strip coming back to rest — a 注音 reading or an English
+                // word let go of it — is the second moment the pasteboard's
+                // counter is looked at. Not per keystroke: only on the switch.
+                .onAppear { bridge.stripAtRest() }
             }
         }
         .frame(height: KBMetrics.strip)
@@ -375,6 +390,12 @@ struct KeyboardRootView: View {
         bridge.candidatesExpanded && bridge.pane == .zhuyin && bridge.zhuyin.isPending
     }
 
+    /// Something is over the key area — the candidate grid or the 📋 panel —
+    /// and the track underneath is hidden and untouchable.
+    private var coversKeys: Bool {
+        showsCandidateGrid || bridge.clipboardPanel != nil
+    }
+
     /// Only with something to show, or with the grid already open so it can be
     /// closed again.
     private var showsExpandKey: Bool {
@@ -478,6 +499,14 @@ private struct StripHome: View, Equatable {
     /// The first-run hint may take the wordmark's place — see
     /// `KeyboardBridge.copyHintOffered` and `wordmark`.
     var offersCopyHint: Bool
+    /// The transient chip that takes the wordmark's place — revert, paste, or
+    /// the field's 常用資訊 (`KeyboardClipboard`). `nil` without Full Access.
+    var chip: KeyboardBridge.StripChip?
+    /// The 📋 button at the trailing end. Full Access only: without it there
+    /// is no history and no pasteboard to open a panel onto.
+    var showsClipboardButton: Bool
+    /// The panel is open, so the button is drawn selected.
+    var clipboardOpen: Bool
     /// A tab tap. The root view's `select`, not `bridge.setPane`, because the
     /// root is what knows which panes are built: a tab that slides across an
     /// unbuilt one has to build it first (see `KeyboardRootView.paneSlot`).
@@ -503,13 +532,27 @@ private struct StripHome: View, Equatable {
     static func == (a: Self, b: Self) -> Bool {
         a.dark == b.dark && a.panes == b.panes && a.pane == b.pane
             && a.showsWindowChip == b.showsWindowChip && a.justCopied == b.justCopied
-            && a.offersCopyHint == b.offersCopyHint
+            && a.offersCopyHint == b.offersCopyHint && a.chip == b.chip
+            && a.showsClipboardButton == b.showsClipboardButton
+            && a.clipboardOpen == b.clipboardOpen
     }
 
     var body: some View {
         HStack(spacing: 0) {
-            wordmark
-            Spacer(minLength: Self.leadingGap)
+            if let chip, !justCopied {
+                // The chip takes the wordmark's place *and* the run after it:
+                // a frame that wants all the width is laid out last, so the
+                // tabs, the mic chip and 📋 keep their natural widths and the
+                // chip's text truncates into what is left. "✓ Copied" still
+                // wins for its moment — it confirms a tap the user just made.
+                chipSlot(chip)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.trailing, Self.leadingGap)
+                    .transition(.opacity)
+            } else {
+                wordmark
+                Spacer(minLength: Self.leadingGap)
+            }
             if showsWindowChip {
                 windowChip
                     .onGeometryChange(for: CGFloat.self, of: leadingEdge) { chipLeading = $0 }
@@ -517,8 +560,88 @@ private struct StripHome: View, Equatable {
             }
             paneTabs
                 .onGeometryChange(for: CGFloat.self, of: leadingEdge) { tabsLeading = $0 }
+            if showsClipboardButton { clipboardButton }
         }
+        .animation(.easeOut(duration: 0.18), value: chip)
         .coordinateSpace(.named(Self.stripSpace))
+    }
+
+    // MARK: the transient chip slot
+
+    @ViewBuilder
+    private func chipSlot(_ chip: KeyboardBridge.StripChip) -> some View {
+        switch chip {
+        case .revert:
+            chipButton(
+                symbol: "arrow.uturn.backward", label: Text("Use original"),
+                action: bridge.useOriginal
+            )
+            .accessibilityHint(Text("Replaces the polished text with what you said."))
+        case .paste(let label):
+            chipButton(
+                symbol: "doc.on.clipboard", label: Self.pasteText(label),
+                action: bridge.pasteFromPasteboard)
+        case .fields(let chips):
+            HStack(spacing: 6) {
+                ForEach(chips) { field in
+                    chipButton(
+                        symbol: field.kind.symbolName, label: Text(verbatim: field.text),
+                        action: { bridge.insertFieldSnippet(field.id) }
+                    )
+                    .accessibilityLabel(
+                        field.kind.isSensitive
+                            ? Text(verbatim: field.kind.displayName)
+                            : Text(verbatim: "\(field.kind.displayName), \(field.text)"))
+                }
+            }
+        }
+    }
+
+    private static func pasteText(_ label: PasteChipLabel) -> Text {
+        switch label {
+        case .url: return Text("Paste link")
+        case .text: return Text("Paste text")
+        case .preview(let snippet): return Text("Paste \(snippet)")
+        }
+    }
+
+    /// A capsule in the control wash, the mic chip's shape: an icon and a
+    /// line of text that truncates rather than pushing anything over.
+    private func chipButton(symbol: String, label: Text, action: @escaping () -> Void)
+        -> some View
+    {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: symbol)
+                    .font(.system(size: 10, weight: .semibold))
+                label
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .foregroundStyle(KBTheme.ink(dark))
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(KBTheme.control(dark)))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// 📋 at the trailing end: opens the clipboard history and 常用資訊 over
+    /// the keys, and closes them again.
+    private var clipboardButton: some View {
+        Button(action: bridge.toggleClipboard) {
+            Image(systemName: clipboardOpen ? "list.clipboard.fill" : "list.clipboard")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(clipboardOpen ? KBTheme.accent : KBTheme.ink(dark))
+                .frame(width: 30, height: KBMetrics.strip - 4)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.leading, 4)
+        .accessibilityLabel(Text("Clipboard and saved info"))
+        .accessibilityAddTraits(clipboardOpen ? [.isSelected] : [])
     }
 
     private func leadingEdge(_ proxy: GeometryProxy) -> CGFloat {

@@ -128,6 +128,30 @@ public enum DictationChannel {
         /// Never a reason not to insert: a `done` with a notice inserts exactly
         /// like one without.
         public var notice: DictationEnding?
+        /// What "insert without polishing" would have typed — the raw
+        /// transcript with the personal dictionary applied — carried beside a
+        /// `done` **only when the polish changed it**. `nil` on every other
+        /// state, on a `done` whose text was not polished, and in every file
+        /// written before the field existed.
+        ///
+        /// It is what the keyboard's 「↩︎ 換回原文」 chip swaps back in: the
+        /// polish is a rewrite the user did not see happen, and the one moment
+        /// it can be undone without retyping is right after it landed, while
+        /// the cursor is still at its end. The keyboard used to receive only
+        /// the final text, so the words the user actually said existed nowhere
+        /// it could reach. Optional and absent by default, so a keyboard from
+        /// before this field and an app from before it both read the other's
+        /// files exactly as they did.
+        public var raw: String?
+
+        /// The raw words worth offering in place of `committed`: present, on a
+        /// `done`, and actually different. The app only publishes `raw` under
+        /// those conditions; the keyboard checks again rather than trusting a
+        /// file.
+        public var revertibleRaw: String? {
+            guard state == .done, let raw, !raw.isEmpty, raw != committed else { return nil }
+            return raw
+        }
 
         /// `CaseIterable` so the wire-format test iterates the states rather
         /// than listing them: a state that decodes to something the other
@@ -249,7 +273,7 @@ public enum DictationChannel {
             session: String, committed: String = "", partial: String = "",
             state: State = .starting, errorMessage: String? = nil,
             updatedAt: Date? = nil, openingMicrophone: Bool? = nil,
-            deadline: Date? = nil, notice: DictationEnding? = nil
+            deadline: Date? = nil, notice: DictationEnding? = nil, raw: String? = nil
         ) {
             self.session = session
             self.committed = committed
@@ -260,11 +284,12 @@ public enum DictationChannel {
             self.openingMicrophone = openingMicrophone
             self.deadline = deadline
             self.notice = notice
+            self.raw = raw
         }
 
         private enum CodingKeys: String, CodingKey {
             case session, committed, partial, state, errorMessage, updatedAt
-            case openingMicrophone, deadline, notice
+            case openingMicrophone, deadline, notice, raw
         }
 
         /// Hand-written so the three fields added for continuity decode
@@ -284,6 +309,7 @@ public enum DictationChannel {
             openingMicrophone = (try? c.decodeIfPresent(Bool.self, forKey: .openingMicrophone)) ?? nil
             deadline = (try? c.decodeIfPresent(Date.self, forKey: .deadline)) ?? nil
             notice = (try? c.decodeIfPresent(DictationEnding.self, forKey: .notice)) ?? nil
+            raw = (try? c.decodeIfPresent(String.self, forKey: .raw)) ?? nil
         }
     }
 

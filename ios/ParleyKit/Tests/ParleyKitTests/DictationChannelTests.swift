@@ -56,6 +56,54 @@ final class DictationChannelTests: XCTestCase {
         }
     }
 
+    // MARK: the raw words beside a polished `done`
+
+    func testDownlinkCarriesTheRawWordsBesideAPolishedDone() throws {
+        // The keyboard's 「↩︎ 換回原文」 chip needs what the user actually said,
+        // and the downlink used to carry only the polished text.
+        let back = try roundTrip(
+            DictationChannel.Downlink(
+                session: "s", committed: "Hello, world.", state: .done, raw: "hello world"))
+        XCTAssertEqual(back.raw, "hello world")
+        XCTAssertEqual(back.revertibleRaw, "hello world")
+        XCTAssertEqual(back.committed, "Hello, world.")
+    }
+
+    func testRawIsLeftOutWhenThereIsNone() throws {
+        // Absent rather than `null` or an empty string: an older keyboard reads
+        // the file exactly as it did, and an older app's file has no key at all.
+        let data = try JSONEncoder().encode(
+            DictationChannel.Downlink(session: "s", committed: "hi", state: .done))
+        let json = try XCTUnwrap(String(data: data, encoding: .utf8))
+        XCTAssertFalse(json.contains("\"raw\""))
+        XCTAssertNil(try roundTrip(DictationChannel.Downlink(session: "s", state: .done)).raw)
+    }
+
+    func testAFileFromBeforeRawStillDecodes() throws {
+        let json = Data(#"{"session":"s","committed":"hi","partial":"","state":"done"}"#.utf8)
+        let value = try JSONDecoder().decode(DictationChannel.Downlink.self, from: json)
+        XCTAssertNil(value.raw)
+        XCTAssertNil(value.revertibleRaw)
+        XCTAssertEqual(value.committed, "hi")
+    }
+
+    func testRawIsOnlyRevertibleOnADoneThatItDiffersFrom() {
+        // The keyboard checks again rather than trusting the file: the chip
+        // must never offer to swap text for the same text, or for nothing, or
+        // on a session that has not landed.
+        XCTAssertNil(
+            DictationChannel.Downlink(session: "s", committed: "same", state: .done, raw: "same")
+                .revertibleRaw)
+        XCTAssertNil(
+            DictationChannel.Downlink(session: "s", committed: "x", state: .done, raw: "")
+                .revertibleRaw)
+        for state in DictationChannel.Downlink.State.allCases where state != .done {
+            XCTAssertNil(
+                DictationChannel.Downlink(session: "s", committed: "x", state: state, raw: "y")
+                    .revertibleRaw, "\(state)")
+        }
+    }
+
     func testCancelledIsItsOwnEnding() throws {
         // The keyboard inserts on `done` and only on `done`. If a discarded
         // session ever encoded as anything the other side reads as `done`, the

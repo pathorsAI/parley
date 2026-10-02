@@ -57,6 +57,9 @@ enum TranscriptClipboard {
 
     static func write(_ text: String) {
         UIPasteboard.general.string = text
+        // Parley's own copy: the keyboard's paste chip is for text copied in
+        // other apps, and must not offer this one back.
+        AppClipboard.noteOwnWrite()
     }
 }
 
