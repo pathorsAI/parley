@@ -1062,6 +1062,23 @@ export async function loadHistoryEntry(id: string): Promise<void> {
 }
 
 /**
+ * Fold a read-only entry's locally cached study outputs over its fetched meta,
+ * filling only what the shared copy lacks (its own saved outputs win).
+ */
+function foldStudyCache(meta: HistoryEntry, cached: ReturnType<typeof readStudyCache>): void {
+  if (!cached) return;
+  if (!meta.findings.length && cached.findings?.length) meta.findings = cached.findings;
+  if (!meta.actionItems.length && cached.actionItems?.length) meta.actionItems = cached.actionItems;
+  // The VIEWER's own completed pass also counts as analyzed — a clean-empty
+  // result must restore as done here too, or every open re-spends it.
+  if (cached.analyzed) meta.analyzed = true;
+  meta.brief = meta.brief || cached.brief || null;
+  if (!meta.brief && cached.briefFailed) meta.briefFailed = true;
+  meta.deliveryAssessment = meta.deliveryAssessment ?? cached.deliveryAssessment ?? null;
+  meta.meetingKind = meta.meetingKind ?? cached.meetingKind ?? null;
+}
+
+/**
  * Load an ORG (cloud-shared) recording into replay WITHOUT persisting it to the
  * local history dir — org recordings must never pollute the personal list. The
  * full entry (transcript + analysis) comes over HTTP; the audio is streamed to a
@@ -1079,18 +1096,7 @@ export async function loadOrgEntry(orgId: string, id: string): Promise<void> {
   // "done" and the pipeline doesn't re-spend a generation. The shared entry's
   // own saved GENERATED outputs win — the cache only fills what the org copy
   // lacks.
-  const cached = readStudyCache(id);
-  if (cached) {
-    if (!meta.findings.length && cached.findings?.length) meta.findings = cached.findings;
-    if (!meta.actionItems.length && cached.actionItems?.length) meta.actionItems = cached.actionItems;
-    // The VIEWER's own completed pass also counts as analyzed — a clean-empty
-    // result must restore as done here too, or every open re-spends it.
-    if (cached.analyzed) meta.analyzed = true;
-    meta.brief = meta.brief || cached.brief || null;
-    if (!meta.brief && cached.briefFailed) meta.briefFailed = true;
-    meta.deliveryAssessment = meta.deliveryAssessment ?? cached.deliveryAssessment ?? null;
-    meta.meetingKind = meta.meetingKind ?? cached.meetingKind ?? null;
-  }
+  foldStudyCache(meta, readStudyCache(id));
   let audioPath = "";
   const t = cloudToken();
   if (meta.audio && t) {

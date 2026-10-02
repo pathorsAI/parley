@@ -129,7 +129,7 @@ export async function generatePostMeetingReport(opts: {
         model,
         finishReason,
         ...usageFields(usage),
-        error: streamError ? String(streamError) : undefined,
+        error: describeStreamError(streamError),
       });
       const res = await generateText(call);
       recordUsage(settings, res.usage);
@@ -154,4 +154,15 @@ export async function generatePostMeetingReport(opts: {
   }
   log.info("ai.report: ok", { chars: full.length });
   return full;
+}
+
+/** A stream error for the log line: its message when it is an Error, else JSON. */
+function describeStreamError(error: unknown): string | undefined {
+  if (error == null) return undefined;
+  if (error instanceof Error) return error.message;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return "unserializable stream error";
+  }
 }
