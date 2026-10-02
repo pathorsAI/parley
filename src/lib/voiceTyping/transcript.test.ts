@@ -75,6 +75,31 @@ describe("SessionTranscript", () => {
     expect(await text(t, async (raw) => raw.toUpperCase())).toBe("FIRST SECOND THIRD");
   });
 
+  /** Soniox commits one final per endpoint, each closed with its own 。 and
+   *  the next opening with a space; only the join sees that seam. */
+  it("softens a pause-made full stop on the seam between two finals", async () => {
+    const t = new SessionTranscript();
+    t.reset(1);
+    t.accept(final("voice-typing-0", "我覺得。", 1));
+    t.accept(final("voice-typing-1", " 這樣可以。", 1));
+    expect(await text(t)).toBe("我覺得，這樣可以。");
+  });
+
+  it("softens against the live tail", async () => {
+    const t = new SessionTranscript();
+    t.reset(1);
+    t.accept(final("voice-typing-0", "我覺得。", 1));
+    t.accept(tail(" 這樣", 1));
+    expect(await text(t)).toBe("我覺得，這樣");
+  });
+
+  it("a single short final drops its trailing full stop", async () => {
+    const t = new SessionTranscript();
+    t.reset(1);
+    t.accept(final("voice-typing-0", "好的。", 1));
+    expect(await text(t)).toBe("好的");
+  });
+
   it("ignores a meeting's segments", async () => {
     const t = new SessionTranscript();
     t.reset(1);

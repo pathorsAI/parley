@@ -1,3 +1,5 @@
+import { softenPausePeriods } from "./punctuation";
+
 /** A `transcript://segment` payload as the overlay sees it. */
 export interface Segment {
   id: string;
@@ -71,9 +73,10 @@ export class SessionTranscript {
     return true;
   }
 
-  /** The display text, every committed run converted, then the tail. Null when
-   *  a reset landed while the conversion was in flight: the text is a previous
-   *  dictation's and must not be shown or reported for this one. */
+  /** The display text, every committed run converted, then the tail, with
+   *  pause-made full stops softened. Null when a reset landed while the
+   *  conversion was in flight: the text is a previous dictation's and must not
+   *  be shown or reported for this one. */
   async report(normalize: Normalize): Promise<TextReport | null> {
     const session = this.session;
     if (session === null) return null;
@@ -92,7 +95,14 @@ export class SessionTranscript {
     }
     const interim = this.interim ? await normalize(this.interim) : "";
     if (this.session !== session) return null;
-    return { text: (finals + interim).trim(), session };
+    // Most pause-made 。 sit on the seam between two finals (Soniox commits one
+    // per endpoint, each closed with its own 。, the next often opening with a
+    // space), and only this join can see a seam. It must not move into
+    // normalizeTranscriptText: that runs per segment, and it is shared with
+    // meetings and replay, which keep the STT's punctuation as it came. The
+    // softened text is what the overlay shows and the host copies, polishes,
+    // pastes and saves, so all of them stay the same text.
+    return { text: softenPausePeriods((finals + interim).trim()), session };
   }
 }
 
