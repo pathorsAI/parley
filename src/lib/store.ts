@@ -20,6 +20,7 @@ import type {
   TimelineEvent,
   TodoItem,
   TranscriptSegment,
+  VoiceTypingPolishStyle,
 } from "./types";
 import type { ReplaySession } from "./replay/types";
 import type { CloudAuth } from "./cloud/types";
@@ -162,6 +163,29 @@ export function migrateVoiceTypingShortcut(
   return MAC_ONLY_SHORTCUTS.has(saved) ? DEFAULT_VOICE_TYPING_SHORTCUT : saved;
 }
 
+const POLISH_STYLES: readonly VoiceTypingPolishStyle[] = ["off", "tidy", "concise"];
+
+/**
+ * The polish style a persisted settings blob amounts to.
+ *
+ * The on/off `voiceTypingPolish` switch became a three-way style. A recognised
+ * `voiceTypingPolishStyle` wins; without one the old switch decides — off stays
+ * off, and on (or never set, which defaulted to on) becomes `tidy`, which is
+ * exactly what "on" used to do. Mirrors iOS's `PolishStyle.resolve`.
+ *
+ * Exported for tests.
+ */
+export function migrateVoiceTypingPolishStyle(saved: {
+  voiceTypingPolishStyle?: unknown;
+  voiceTypingPolish?: unknown;
+}): VoiceTypingPolishStyle {
+  const style = saved.voiceTypingPolishStyle;
+  if (typeof style === "string" && (POLISH_STYLES as readonly string[]).includes(style)) {
+    return style as VoiceTypingPolishStyle;
+  }
+  return saved.voiceTypingPolish === false ? "off" : "tidy";
+}
+
 /** Every one-time hint id. Existing users are migrated with all of them seen. */
 export const ALL_HINT_IDS: readonly HintId[] = [
   "report.filing",
@@ -216,7 +240,7 @@ const DEFAULT_SETTINGS: Settings = {
   voiceTypingEnabled: true,
   voiceTypingShortcut: DEFAULT_VOICE_TYPING_SHORTCUT,
   voiceTypingMode: "hold",
-  voiceTypingPolish: true,
+  voiceTypingPolishStyle: "tidy",
   evaluations: defaultEvalDefs(tDefault),
   evalTemplates: buildPresetEvalTemplates(tDefault),
   todoTemplates: buildPresetTodoTemplates(tDefault),
@@ -800,7 +824,12 @@ interface ParleyState {
  * persisted state (runs after {@link migratePersistedState}). Exported for tests.
  */
 export function mergePersistedState(persisted: unknown, current: ParleyState): ParleyState {
-  const p = (persisted as { settings?: Partial<Settings> } | undefined)?.settings ?? {};
+  const persistedSettings =
+    (persisted as { settings?: Partial<Settings> & { voiceTypingPolish?: unknown } } | undefined)
+      ?.settings ?? {};
+  // The retired on/off polish switch is read once, below, and not carried
+  // forward into the live settings.
+  const { voiceTypingPolish: legacyPolish, ...p } = persistedSettings;
   // Template shapes changed over time; fall back to defaults if the
   // persisted value is an old shape (e.g. todoTemplates used to be string[]).
   const validTodoTpls =
@@ -842,6 +871,11 @@ export function mergePersistedState(persisted: unknown, current: ParleyState): P
       // persisted state is stale default, not intent — see
       // migrateVoiceTypingShortcut.
       voiceTypingShortcut: migrateVoiceTypingShortcut(p.voiceTypingShortcut),
+      // The on/off switch became a style: off → off, on → tidy.
+      voiceTypingPolishStyle: migrateVoiceTypingPolishStyle({
+        voiceTypingPolishStyle: p.voiceTypingPolishStyle,
+        voiceTypingPolish: legacyPolish,
+      }),
       llmProviders,
       // Per-provider models, legacy {ask,eval} roles already remapped;
       // providers missing from persisted state keep their defaults.

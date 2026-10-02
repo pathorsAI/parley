@@ -24,6 +24,9 @@ struct ParleyApp: App {
         // announcement seen on its first launch, and it can only tell a fresh
         // install from an update before this launch could have signed in.
         _ = AnnouncementStore.shared
+        // Before Settings can bind its picker: the old "Polish with AI" switch
+        // becomes a style (off → off, on → tidy), written once under the new key.
+        PolishStyle.migrateLegacySetting()
         // As early as the app has: MetricKit hands the previous run's crash to
         // a subscriber as soon as it is added. See `FeedbackCenter.start`.
         FeedbackCenter.shared.start()

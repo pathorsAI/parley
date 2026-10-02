@@ -20,10 +20,13 @@ struct SettingsView: View {
     /// to the App Group's defaults, which is where the extension looks for them
     /// on every appearance — there is no live binding across a process boundary.
     @State private var enabled = TypingKeyboards.enabled()
-    /// The cleanup pass after dictation. Bound here, read raw by the
-    /// coordinator: both sides are `UserDefaults.standard`, and the coordinator
-    /// has to be able to answer this in the background with no view alive.
-    @AppStorage(DictationCoordinator.polishKey) private var polishEnabled = true
+    /// The cleanup pass after dictation: off, tidy or concise. Bound here,
+    /// read raw by the coordinator: both sides are `UserDefaults.standard`, and
+    /// the coordinator has to be able to answer this in the background with no
+    /// view alive. The old on/off switch is folded into this key at launch
+    /// (`PolishStyle.migrateLegacySetting`), so the default here is only ever
+    /// what someone who never touched either setting sees.
+    @AppStorage(DictationCoordinator.polishKey) private var polishStyle = PolishStyle.default
     /// Whether a recording made here keeps its audio after uploading. Read raw
     /// out of the same defaults by `MeetingUploader`, which has no view alive
     /// when it has to decide — see `LocalAudioStore.keepsAudioOnPhone`, which is
@@ -599,8 +602,12 @@ struct SettingsView: View {
             // text and run in this order: the model tidies what was said, then
             // the dictionary has the last word over what it did.
             VStack(alignment: .leading, spacing: 4) {
-                Toggle("Polish with AI", isOn: $polishEnabled)
-                Text("After dictation ends, AI rewrites what you said into written text before it is inserted: filler and misheard words out, punctuation and clause order fixed, a spoken \"first, second, third\" laid out as a list. Nothing is added or summarised away, and the original language is preserved.")
+                Picker("Polish with AI", selection: $polishStyle) {
+                    ForEach(PolishStyle.allCases, id: \.self) { style in
+                        Text(Self.polishStyleLabel(style)).tag(style)
+                    }
+                }
+                Text(Self.polishStyleCaption(polishStyle))
                     .font(.parley.caption)
                     .foregroundStyle(Color(.secondaryLabel))
                     .fixedSize(horizontal: false, vertical: true)
@@ -618,6 +625,29 @@ struct SettingsView: View {
             sectionHeader("Voice keyboard")
         } footer: {
             sectionFooter("Fix a word right after dictating it and Parley learns how you say it. What it has learned is in the personal dictionary, where you can also add names it should get right.")
+        }
+    }
+
+    /// The picker's name for each polish style.
+    static func polishStyleLabel(_ style: PolishStyle) -> LocalizedStringKey {
+        switch style {
+        case .off: "Polish style: off"
+        case .tidy: "Polish style: tidy"
+        case .concise: "Polish style: concise"
+        }
+    }
+
+    /// One line under the picker saying what the chosen style does to the
+    /// words — the difference between tidy and concise is the whole choice,
+    /// so it is spelled out for the one that is selected.
+    static func polishStyleCaption(_ style: PolishStyle) -> LocalizedStringKey {
+        switch style {
+        case .off:
+            "Dictation is inserted exactly as it was transcribed."
+        case .tidy:
+            "Removes filler, fixes slips of the tongue and lays the text out, keeping every sentence you said."
+        case .concise:
+            "Also cuts verbal tics and pleasantries, leaving the shortest sentences that still mean the same thing."
         }
     }
 

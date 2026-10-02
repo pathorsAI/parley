@@ -20,7 +20,7 @@ import { HOSTED_VOICE_TYPING_MAX_SECONDS } from "../limits";
 import { log } from "../log";
 import { showOverlay, hideOverlay, prewarmOverlay } from "./overlay";
 import { SessionOwner, type SessionEvent, type TextReport } from "./transcript";
-import { appendVoiceEntry } from "./history";
+import { appendVoiceEntry, type PolishedStyle } from "./history";
 import { canPolish, polishTranscript, shouldPolish } from "./polish";
 import {
   addEntry,
@@ -492,9 +492,15 @@ function waitForSettle() {
  * and the raw transcript in every other case, so `finalize` has nothing to
  * handle. See `polish.ts`.
  */
-async function polishForPaste(raw: string, myGen: number): Promise<string> {
+async function polishForPaste(
+  raw: string,
+  myGen: number,
+): Promise<{ text: string; polishStyle?: PolishedStyle }> {
   const settings = useStore.getState().settings;
-  if (!canPolish(settings) || !shouldPolish(raw)) return raw;
+  if (!canPolish(settings) || !shouldPolish(raw)) return { text: raw };
+  // Read once, before the round trip: the history records the style that
+  // produced the text even if the setting changes while the request is out.
+  const style = settings.voiceTypingPolishStyle;
   // Only claim the overlay while it is still ours to claim; a press during the
   // round trip owns it from here (the gen check in `finalize` is the same guard
   // for the "done" tail).
@@ -504,7 +510,8 @@ async function polishForPaste(raw: string, myGen: number): Promise<string> {
     settings,
     protectedTerms: vocabularyTerms(),
   });
-  return polished ?? raw;
+  if (polished === null || style === "off") return { text: raw };
+  return { text: polished, polishStyle: style };
 }
 
 async function finalize() {
@@ -513,12 +520,14 @@ async function finalize() {
   clearTimeout(capTimer);
   const raw = latestText.trim();
   let text = raw;
+  /** The style that produced `text`, when it is the polish. */
+  let polishStyle: PolishedStyle | undefined;
   /** Did the synthetic paste actually land? Stays true when the copy/paste
    *  round trip threw, because then we don't know what reached the clipboard
    *  and must not tell the user to paste something that isn't there. */
   let pasted = true;
   if (raw) {
-    text = await polishForPaste(raw, myGen);
+    ({ text, polishStyle } = await polishForPaste(raw, myGen));
     let appBundleId: string | null = null;
     try {
       await invoke("copy_to_clipboard", { text });
@@ -552,7 +561,7 @@ async function finalize() {
     } catch (e) {
       log.error("voice-typing: copy/paste failed", { error: String(e) });
     }
-    appendVoiceEntry(text, appBundleId).catch((error) =>
+    appendVoiceEntry(text, appBundleId, polishStyle).catch((error) =>
       log.warn("voice-typing: append history failed", { error: String(error) }),
     );
   }
