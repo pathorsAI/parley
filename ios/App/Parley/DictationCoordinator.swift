@@ -147,6 +147,11 @@ final class DictationCoordinator: ObservableObject {
     /// stores what "insert without polishing" would have produced next to the
     /// polished text, and for the settle log's character count.
     private var polishRaw: String?
+    /// The style the polish in flight was sent with — `nil` when no polish was
+    /// started. Read once at ⏹ rather than at settle, so the history records
+    /// the style that actually produced the text even if the setting changed
+    /// while the request was out.
+    private var polishStyleSent: PolishStyle?
     /// When the polish request went out, for the latency the settle log
     /// reports. Measured to the settle rather than to the reply, so a skip or
     /// the deadline cutting the wait short reports how long the user waited.
@@ -258,23 +263,23 @@ final class DictationCoordinator: ObservableObject {
     /// answer in the background, long after any view is gone.
     nonisolated static let windowLengthKey = "micWindowLength"
 
-    /// Where the "Polish with AI" switch lives. Read straight out of
-    /// `UserDefaults` for the same reason `windowLengthKey` is: a session can
-    /// end with the app in the background and no view alive to have bound it.
-    nonisolated static let polishKey = "dictationPolishEnabled"
+    /// Where the "Polish with AI" style lives (`PolishStyle`). Read straight
+    /// out of `UserDefaults` for the same reason `windowLengthKey` is: a
+    /// session can end with the app in the background and no view alive to
+    /// have bound it.
+    nonisolated static let polishKey = PolishStyle.storageKey
 
     var windowLength: MicWindowLength {
         MicWindowLength(
             rawValue: UserDefaults.standard.string(forKey: Self.windowLengthKey) ?? "") ?? .off
     }
 
-    /// On unless the user turned it off. "Never touched" is not "off": the
-    /// pass is what makes dictated text read like writing instead of like
-    /// speech, and its every failure mode is "keep the raw words" — so the
-    /// absent key defaults to true rather than to the `bool(forKey:)` false.
-    var polishEnabled: Bool {
-        guard UserDefaults.standard.object(forKey: Self.polishKey) != nil else { return true }
-        return UserDefaults.standard.bool(forKey: Self.polishKey)
+    /// Tidy unless the user chose otherwise. "Never touched" is not "off":
+    /// the pass is what makes dictated text read like writing instead of like
+    /// speech, and its every failure mode is "keep the raw words". Someone who
+    /// turned the old on/off switch off is still off (`PolishStyle.current`).
+    var polishStyle: PolishStyle {
+        PolishStyle.current(in: .standard)
     }
 
     /// The coordinator's own cloud client. `AppState`'s is not reachable from
@@ -439,6 +444,7 @@ final class DictationCoordinator: ObservableObject {
         polishTask?.cancel()
         polishTask = nil
         polishRaw = nil
+        polishStyleSent = nil
         polishStartedAt = nil
         polishReplyLength = nil
         finishingDeadline?.cancel()
@@ -1508,8 +1514,9 @@ final class DictationCoordinator: ObservableObject {
         // The dictionary rides along so the model cannot "fix" the corrections
         // the user made by hand; `applyLexicon` then has the last word anyway.
         let terms = LexiconStore.recognitionTerms()
+        let style = polishStyle
         var polish: @Sendable () async -> TranscriptPolisher.Result = {
-            await Self.polished(raw: raw, cloud: client, terms: terms)
+            await Self.polished(raw: raw, cloud: client, terms: terms, style: style)
         }
         #if DEBUG
             if let hold = ScreenshotDemo.finishingHold {
@@ -1517,6 +1524,7 @@ final class DictationCoordinator: ObservableObject {
             }
         #endif
         polishRaw = raw
+        polishStyleSent = style
         polishStartedAt = .now
         polishTask = Task {
             let result = await polish()
@@ -1583,7 +1591,7 @@ final class DictationCoordinator: ObservableObject {
             // (`ScreenshotDemo.finishingHold`), which never touches the network.
             if ScreenshotDemo.isActive { return ScreenshotDemo.finishingHold != nil ? nil : .off }
         #endif
-        guard polishEnabled else { return .off }
+        guard polishStyle.polishes else { return .off }
         // The keyboard only reaches a signed-in app, but a session can have
         // expired mid-dictation. No token, no request; the raw words stand.
         guard KeychainStore.get(AppState.tokenKey) != nil else { return .off }
@@ -1622,7 +1630,8 @@ final class DictationCoordinator: ObservableObject {
         // user's own corrections undone. For any ending but a polish the two
         // come out identical and the entry drops the copy.
         recordHistory(
-            polish: outcome, rawText: polishRaw.map(lexiconApplied), ending: endingNotice)
+            polish: outcome, polishStyle: polishStyleSent,
+            rawText: polishRaw.map(lexiconApplied), ending: endingNotice)
         active = false
         // No haptic here, deliberately. `done` is not delivery — it is this
         // process saying the text is *ready* — and the transcript is only ever
@@ -1665,12 +1674,12 @@ final class DictationCoordinator: ObservableObject {
     /// is the main actor, and holding it for six seconds to be polite about
     /// punctuation would be a strange trade.
     private nonisolated static func polished(
-        raw: String, cloud: CloudClient, terms: [String]
+        raw: String, cloud: CloudClient, terms: [String], style: PolishStyle
     ) async -> TranscriptPolisher.Result {
         await withTaskGroup(of: TranscriptPolisher.Result.self) { group in
             group.addTask {
                 await TranscriptPolisher.polishOutcome(
-                    raw: raw, cloud: cloud, protectedTerms: terms)
+                    raw: raw, cloud: cloud, protectedTerms: terms, style: style)
             }
             group.addTask {
                 // Cut short (and so returning early) only when the group is
@@ -1776,14 +1785,16 @@ final class DictationCoordinator: ObservableObject {
     /// the two endings that deliver without the user's ⏹, and the history
     /// keeps which it was (`DictationEnding`).
     private func recordHistory(
-        polish: PolishOutcome? = nil, rawText: String? = nil, ending: DictationEnding? = nil
+        polish: PolishOutcome? = nil, polishStyle: PolishStyle? = nil, rawText: String? = nil,
+        ending: DictationEnding? = nil
     ) {
         guard !historyRecorded, let startedAt = sessionStartedAt else { return }
         guard !committed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         historyRecorded = true
         DictationHistory.shared.record(
             text: committed, startedAt: startedAt, source: sessionSource,
-            hostBundleID: sessionHost, rawText: rawText, polish: polish, ending: ending)
+            hostBundleID: sessionHost, rawText: rawText, polish: polish,
+            polishStyle: polishStyle, ending: ending)
     }
 
     // MARK: the microphone window

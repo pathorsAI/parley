@@ -34,6 +34,12 @@ public struct DictationHistoryEntry: Codable, Identifiable, Equatable, Sendable 
     /// session that never reached the polish decision (an `error`, a `micTaken`,
     /// one superseded while finishing) and for every entry written before 1.25.
     public var polish: PolishOutcome?
+    /// Which polish style the session asked for (`PolishStyle`), recorded
+    /// whenever a polish request was actually sent — so for a `.polished`
+    /// entry it is the style that produced `text`. `nil` when nothing was sent
+    /// and for every entry written before the style choice existed, which were
+    /// all tidy.
+    public var polishStyle: PolishStyle?
     /// The session ended on its own rather than on the user's ⏹ — the cap, or
     /// a connection that did not come back — and was delivered anyway. `nil`
     /// for every ordinary ending and every entry written before the field
@@ -43,7 +49,8 @@ public struct DictationHistoryEntry: Codable, Identifiable, Equatable, Sendable 
     public init(
         id: UUID = UUID(), text: String, startedAt: Date, durationMs: Int,
         source: Source, hostBundleID: String? = nil, rawText: String? = nil,
-        polish: PolishOutcome? = nil, ending: DictationEnding? = nil
+        polish: PolishOutcome? = nil, polishStyle: PolishStyle? = nil,
+        ending: DictationEnding? = nil
     ) {
         self.id = id
         self.text = text
@@ -55,15 +62,17 @@ public struct DictationHistoryEntry: Codable, Identifiable, Equatable, Sendable 
         // differs" holds for every entry the store ever sees.
         self.rawText = rawText == text ? nil : rawText
         self.polish = polish
+        self.polishStyle = polishStyle
         self.ending = ending
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, text, startedAt, durationMs, source, hostBundleID, rawText, polish, ending
+        case id, text, startedAt, durationMs, source, hostBundleID, rawText, polish, polishStyle
+        case ending
     }
 
-    /// Hand-written for one reason: `polish` (and `ending`, for the same
-    /// reason) is decoded leniently. The two new
+    /// Hand-written for one reason: `polish` (and `polishStyle` and `ending`,
+    /// for the same reason) is decoded leniently. The two new
     /// fields are optional, so a pre-1.25 file (which has neither) decodes
     /// with the synthesised behaviour too — but a `polish` value this build
     /// does not recognise, written by a later one and read back after a
@@ -80,6 +89,7 @@ public struct DictationHistoryEntry: Codable, Identifiable, Equatable, Sendable 
         hostBundleID = try c.decodeIfPresent(String.self, forKey: .hostBundleID)
         rawText = try c.decodeIfPresent(String.self, forKey: .rawText)
         polish = (try? c.decodeIfPresent(PolishOutcome.self, forKey: .polish)) ?? nil
+        polishStyle = (try? c.decodeIfPresent(PolishStyle.self, forKey: .polishStyle)) ?? nil
         ending = (try? c.decodeIfPresent(DictationEnding.self, forKey: .ending)) ?? nil
     }
 }

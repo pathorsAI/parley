@@ -41,11 +41,18 @@ export function getModel(
      * {@link generateObjectResilient}.
      */
     forceJsonObject?: boolean;
+    /**
+     * Use this model id instead of the lane's configured one, on the lane's
+     * provider. For a caller that needs a specific hosted alias for one request
+     * (voice typing's concise polish → `parley-concise`); `undefined` keeps the
+     * lane's model.
+     */
+    modelId?: string;
   }
 ): LanguageModel {
   const provider = settings.llmProviders[workload];
   const info = PROVIDER_BY_ID[provider];
-  const modelId = settings.models[provider][workload];
+  const modelId = opts?.modelId ?? settings.models[provider][workload];
   // TRIM. A key pasted from a browser or a password manager routinely carries a
   // leading/trailing space or newline. `hasProviderKey` trims before deciding
   // the key "exists", so every pre-flight gate said yes and the request then

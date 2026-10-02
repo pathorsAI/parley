@@ -326,6 +326,8 @@
         /// The Voice typing history for `voicehistory`: one entry per polish
         /// outcome, newest first in the order below, and a last one with no
         /// outcome at all — what every entry written before 1.25 looks like.
+        /// The second is polished with the concise style, so both polished
+        /// labels can be seen.
         /// Two carry an ending as well (`DictationEnding`): one stopped by the
         /// cap, and one delivered after its connection was lost, which never
         /// reached the polish and so has no polish label.
@@ -334,7 +336,7 @@
             func entry(
                 _ minutesAgo: Double, _ en: String, _ zh: String, _ outcome: PolishOutcome?,
                 raw: (String, String)? = nil, host: String? = nil,
-                ending: DictationEnding? = nil
+                style: PolishStyle? = nil, ending: DictationEnding? = nil
             ) -> DictationHistoryEntry {
                 DictationHistoryEntry(
                     text: t(en, zh), startedAt: now.addingTimeInterval(-minutesAgo * 60),
@@ -342,7 +344,7 @@
                         ? Int(MicActivityPolicy.dictationLimit * 1000)
                         : 3_000 + t(en, zh).count * 180,
                     source: .keyboard, hostBundleID: host, rawText: raw.map { t($0.0, $0.1) },
-                    polish: outcome, ending: ending)
+                    polish: outcome, polishStyle: style, ending: ending)
             }
             return [
                 entry(
@@ -358,7 +360,7 @@
                 entry(
                     5, "and that is the whole plan for the offsite, the rest we can decide on the day",
                     "以上就是外訓的整個規劃，其他的我們當天再決定", .polished,
-                    host: "com.apple.mobilenotes", ending: .limitReached),
+                    host: "com.apple.mobilenotes", style: .concise, ending: .limitReached),
                 entry(
                     7, "the numbers for last quarter are in the shared folder under",
                     "上一季的數字在共用資料夾的", nil, host: "com.apple.MobileSMS",

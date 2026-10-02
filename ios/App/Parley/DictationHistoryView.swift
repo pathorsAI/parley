@@ -143,7 +143,7 @@ struct DictationHistoryList: View {
                     Text("Original")
                         .foregroundStyle(Color(.secondaryLabel))
                 } else {
-                    Text(verbatim: DictationHistory.polishLabel(outcome))
+                    Text(verbatim: DictationHistory.polishLabel(outcome, style: entry.polishStyle))
                         .foregroundStyle(outcome.isPolished ? Theme.primary : Color(.secondaryLabel))
                 }
             }
