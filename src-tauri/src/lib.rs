@@ -137,6 +137,9 @@ pub fn run() {
         // Singleton guard for the voice-typing session task (abort-on-restart
         // + bounded post-release flush) — see voice_typing::VoiceTypingState.
         .manage(voice_typing::VoiceTypingState::default())
+        // Where the voice-typing overlay draws, and the poller that makes the
+        // rest of its window click-through — see voice_typing::OverlayHitState.
+        .manage(voice_typing::OverlayHitState::default())
         // Native menu-bar "Diagnostics" submenu (View Logs + Clear Cache).
         .menu(menu::build)
         .on_menu_event(|app, event| menu::on_event(app, event.id().as_ref()))
@@ -239,6 +242,7 @@ pub fn run() {
             voice_typing::accessibility_status,
             voice_typing::present_voice_overlay,
             voice_typing::dismiss_voice_overlay,
+            voice_typing::set_voice_overlay_hit_rects,
             ax_observe::observe_pasted_field,
             hotkey::ensure_fn_listener,
             hotkey::input_monitoring_status,

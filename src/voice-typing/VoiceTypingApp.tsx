@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { listen, emit } from "@tauri-apps/api/event";
 import { Check, Loader2, Mic, Sparkles } from "lucide-react";
 import { preloadZhConverter } from "../lib/zhConvert";
@@ -7,6 +8,8 @@ import { useI18n, type TranslationKey } from "../i18n";
 import { useThemePreference } from "../lib/theme";
 import { formatChordLabel, modChordCap } from "../lib/commands/format";
 import { log } from "../lib/log";
+import { isTauri } from "../lib/platform";
+import { sameHitRects, toHitRects, type HitRect } from "../lib/voiceTyping/hitRegions";
 import { SessionTranscript, type Segment, type SessionEvent } from "../lib/voiceTyping/transcript";
 import type { DoneMessage } from "../lib/voiceTyping/overlay";
 import {
@@ -67,6 +70,20 @@ function suggestAct(action: SuggestActionPayload["action"]): void {
   emit(SUGGEST_ACTION_EVENT, { action } satisfies SuggestActionPayload).catch((error) =>
     log.warn("voice typing overlay: suggest action emit failed", {
       action,
+      error: String(error),
+    }),
+  );
+}
+
+/** Tell the native side which parts of this window catch clicks (see
+ *  hitRegions.ts); everywhere else passes them through to the app behind.
+ *  Outside Tauri (`bun run dev` in a browser) there is no window to make
+ *  click-through, so nothing is sent. */
+function sendHitRects(rects: HitRect[]): void {
+  if (!isTauri()) return;
+  invoke("set_voice_overlay_hit_rects", { rects }).catch((error) =>
+    log.warn("voice typing overlay: hit rects report failed", {
+      count: rects.length,
       error: String(error),
     }),
   );
@@ -145,6 +162,55 @@ export const VoiceTypingApp = () => {
   const phaseRef = useRef<Phase>("listening");
   // Stable per-position keys for the waveform bars (values shift, positions don't).
   const barKeys = useRef(Array.from({ length: BAR_COUNT }, (_, i) => `bar-${i}`));
+
+  // Every block marked `data-overlay-hit` under the root is reported to the
+  // native side as a part of this window that catches clicks; the rest of it
+  // lets them through. So anything visible the user might click, or click
+  // beside, carries the attribute.
+  const rootRef = useRef<HTMLDivElement>(null);
+  // The last report, so an unchanged layout costs no IPC — the waveform alone
+  // re-renders this window many times a second.
+  const reportedHits = useRef<HitRect[] | null>(null);
+  const reportHits = useRef(() => {});
+  reportHits.current = () => {
+    const root = rootRef.current;
+    if (!root) return;
+    // Fading out: nothing on screen is worth catching a click for.
+    const boxes = fading
+      ? []
+      : Array.from(root.querySelectorAll("[data-overlay-hit]"), (el) =>
+          el.getBoundingClientRect(),
+        );
+    const rects = toHitRects(boxes, {
+      width: globalThis.innerWidth,
+      height: globalThis.innerHeight,
+    });
+    if (reportedHits.current && sameHitRects(reportedHits.current, rects)) return;
+    reportedHits.current = rects;
+    sendHitRects(rects);
+  };
+
+  // After every render (no deps): a render is what moves a block — the
+  // transcript grows, a note comes or goes. A layout effect, so the report
+  // goes out before the frame that shows the change is painted.
+  useLayoutEffect(() => {
+    reportHits.current();
+  });
+
+  // …and after what moves blocks without a render: a window resize, and the
+  // web font arriving (it changes every line's width).
+  useEffect(() => {
+    const report = () => reportHits.current();
+    let live = true;
+    globalThis.addEventListener("resize", report);
+    void document.fonts.ready.then(() => {
+      if (live) report();
+    });
+    return () => {
+      live = false;
+      globalThis.removeEventListener("resize", report);
+    };
+  }, []);
 
   // This window must be see-through; the shared stylesheet paints an opaque
   // app background, so strip it for the overlay only.
@@ -361,13 +427,17 @@ export const VoiceTypingApp = () => {
 
   return (
     <div
+      ref={rootRef}
       className="flex h-screen w-screen select-none flex-col items-center justify-end gap-2 pb-4"
       style={{ opacity: fading ? 0 : 1, transition: `opacity ${FADE_MS}ms ease-in` }}
     >
       {/* Hosted single-dictation cap note: shown above the transcript, which is
           still delivered. Warning tone to read as a limit, not an error. */}
       {limited && !error && (
-        <div className="rounded-full border border-warning-border bg-warning px-3 py-1 text-center text-[12px] font-medium text-warning-foreground shadow-md">
+        <div
+          data-overlay-hit
+          className="rounded-full border border-warning-border bg-warning px-3 py-1 text-center text-[12px] font-medium text-warning-foreground shadow-md"
+        >
           {t("voiceTyping.limit")}
         </div>
       )}
@@ -376,6 +446,7 @@ export const VoiceTypingApp = () => {
           text) for high contrast against whatever's behind the overlay. */}
       {bubble && (
         <div
+          data-overlay-hit
           className={`flex max-h-[84px] max-w-[420px] flex-col justify-end overflow-hidden rounded-[14px] px-3.5 py-1.5 text-center text-[14px] font-medium leading-snug shadow-md ${
             error ? "bg-destructive text-white" : "bg-foreground text-background"
           }`}
@@ -391,7 +462,10 @@ export const VoiceTypingApp = () => {
           for, so it says what it is waiting on rather than spinning silently.
           Primary: processing is what is happening now. */}
       {phase === "polishing" && !error && (
-        <div className="flex items-center gap-1 rounded-full bg-primary px-2.5 py-0.5 text-[11px] font-medium text-primary-foreground shadow-md">
+        <div
+          data-overlay-hit
+          className="flex items-center gap-1 rounded-full bg-primary px-2.5 py-0.5 text-[11px] font-medium text-primary-foreground shadow-md"
+        >
           <Sparkles className="size-2.5 animate-pulse" />
           {t("voiceTyping.polishing")}
         </div>
@@ -408,6 +482,7 @@ export const VoiceTypingApp = () => {
           dictated. */}
       {phase === "done" && !error && COPIED_VERDICTS.has(verdict ?? "") && (
         <div
+          data-overlay-hit
           className={`flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-medium shadow-md ${
             pasteBlocked
               ? "border-warning-border bg-warning text-warning-foreground"
@@ -422,7 +497,10 @@ export const VoiceTypingApp = () => {
       {/* Nothing was heard, so nothing was copied: say so plainly, instead of
           an empty pill that leaves the user guessing. Neutral, not an error. */}
       {phase === "done" && !error && !suggest && verdict === "empty" && (
-        <div className="rounded-full bg-foreground px-2.5 py-0.5 text-[11px] font-medium text-background shadow-md">
+        <div
+          data-overlay-hit
+          className="rounded-full bg-foreground px-2.5 py-0.5 text-[11px] font-medium text-background shadow-md"
+        >
           {t("voiceTyping.empty")}
         </div>
       )}
@@ -433,7 +511,10 @@ export const VoiceTypingApp = () => {
           decision (write, undo, ignore, the timers) belongs to the host — this
           only reports which button was hit. */}
       {suggest && !suggestAdded && (
-        <div className="flex max-w-[420px] flex-col items-center gap-1.5 rounded-[14px] bg-foreground px-3.5 py-2 text-background shadow-md">
+        <div
+          data-overlay-hit
+          className="flex max-w-[420px] flex-col items-center gap-1.5 rounded-[14px] bg-foreground px-3.5 py-2 text-background shadow-md"
+        >
           <span className="text-center text-[13px] font-medium leading-snug">
             {t("dict.suggest.question", { from: suggest.from, to: suggest.to })}
           </span>
@@ -463,7 +544,10 @@ export const VoiceTypingApp = () => {
 
       {/* Accepted: confirm it landed, and keep an undo within reach for a beat. */}
       {suggest && suggestAdded && (
-        <div className="flex items-center gap-1.5 rounded-full border border-success-border bg-success px-2.5 py-0.5 text-[11px] font-medium text-success-foreground shadow-md">
+        <div
+          data-overlay-hit
+          className="flex items-center gap-1.5 rounded-full border border-success-border bg-success px-2.5 py-0.5 text-[11px] font-medium text-success-foreground shadow-md"
+        >
           <Check className="size-2.5" strokeWidth={3} />
           {t("dict.suggest.added")}
           <span className="opacity-60">·</span>
@@ -480,7 +564,10 @@ export const VoiceTypingApp = () => {
       {/* Layer 2 — audio waver pill: same inverted bg as the transcript, with a
           small state indicator. Recording red while dictation is live, primary
           while finalizing/polishing, success once done. */}
-      <div className="flex items-center gap-2 rounded-full bg-foreground px-3 py-1.5 shadow-md">
+      <div
+        data-overlay-hit
+        className="flex items-center gap-2 rounded-full bg-foreground px-3 py-1.5 shadow-md"
+      >
         <div
           className={`grid size-4 place-items-center rounded-full transition-colors ${indicatorTone}`}
         >

@@ -13,7 +13,7 @@
 // The `objc` 0.2 macros emit `cfg(cargo-clippy)` checks newer compilers warn on.
 #![allow(unexpected_cfgs)]
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -533,6 +533,25 @@ pub(crate) fn frontmost_app_pid() -> Option<i32> {
     imp::frontmost_pid()
 }
 
+/// The overlay window's label (overlay.ts creates it).
+const OVERLAY_LABEL: &str = "voice-typing";
+
+/// The overlay's native window: the NSWindow on macOS, the HWND on Windows.
+#[cfg(target_os = "macos")]
+fn overlay_handle(app: &AppHandle) -> Option<imp::OverlayHandle> {
+    app.get_webview_window(OVERLAY_LABEL)?.ns_window().ok()
+}
+
+#[cfg(target_os = "windows")]
+fn overlay_handle(app: &AppHandle) -> Option<imp::OverlayHandle> {
+    app.get_webview_window(OVERLAY_LABEL)?.hwnd().ok()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn overlay_handle(_app: &AppHandle) -> Option<imp::OverlayHandle> {
+    None
+}
+
 /// Show the overlay above ALL apps without activating Parley or stealing focus.
 /// Driving visibility natively avoids Tauri's `show()`, which can bring Parley
 /// to the front — and the front is exactly where it must not go, because the
@@ -540,27 +559,22 @@ pub(crate) fn frontmost_app_pid() -> Option<i32> {
 /// there. macOS gets `orderFrontRegardless` + a floating level + all-spaces /
 /// full-screen collection behaviour; Windows gets a non-activating topmost
 /// `SetWindowPos` (see each platform's `imp::present_overlay`).
+///
+/// Where click-through is live (`imp::CLICK_THROUGH`, macOS today), the window
+/// comes up click-through and stays that way except while the cursor is over
+/// one of the blocks the overlay draws (see `start_hit_poller`): its
+/// transparent 460×180 rectangle sits right where chat composers are, and it
+/// used to swallow every click there for the length of a dictation.
 #[tauri::command]
 pub fn present_voice_overlay(app: AppHandle) {
-    #[cfg(target_os = "macos")]
-    {
-        use tauri::Manager;
-        if let Some(win) = app.get_webview_window("voice-typing") {
-            if let Ok(ns) = win.ns_window() {
-                imp::present_overlay(ns);
-            }
-        }
-    }
-    #[cfg(target_os = "windows")]
-    {
-        if let Some(win) = app.get_webview_window("voice-typing") {
-            if let Ok(hwnd) = win.hwnd() {
-                imp::present_overlay(hwnd);
-            }
-        }
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    let _ = app;
+    let Some(handle) = overlay_handle(&app) else {
+        return;
+    };
+    // Before the window is on screen, so it never catches a click it should
+    // not have; the poller's first tick turns capture back on under the pill.
+    imp::set_pass_through(handle, true);
+    imp::present_overlay(handle);
+    start_hit_poller(&app);
 }
 
 /// Keep a visible overlay in front of the user as they swipe between Spaces
@@ -576,25 +590,215 @@ pub fn install_space_observer(app: AppHandle) {
 /// counterpart to `present_voice_overlay`.
 #[tauri::command]
 pub fn dismiss_voice_overlay(app: AppHandle) {
-    #[cfg(target_os = "macos")]
-    {
-        use tauri::Manager;
-        if let Some(win) = app.get_webview_window("voice-typing") {
-            if let Ok(ns) = win.ns_window() {
-                imp::dismiss_overlay(ns);
+    // Stop the poller first. This runs on the main thread, as every tick does,
+    // so a tick already queued sees the new generation and leaves the window
+    // alone instead of turning capture back on behind the hide.
+    app.state::<OverlayHitState>().poller.stop();
+    let Some(handle) = overlay_handle(&app) else {
+        return;
+    };
+    imp::set_pass_through(handle, true);
+    imp::dismiss_overlay(handle);
+}
+
+// ── Click-through ───────────────────────────────────────────────────────────
+//
+// The overlay is a transparent 460×180 window, but what it draws — the pill,
+// the transcript, a suggestion bubble — covers a fraction of that. Transparent
+// webview pixels are not click-through at the window-server level, so the rest
+// of the rectangle was a dead zone over whatever sat behind it (and on macOS,
+// before the panel stopped activating Parley, a click there brought Parley
+// forward). The webview reports where its blocks are; while the overlay is up
+// a poller compares the cursor with them and makes the window ignore the mouse
+// everywhere else. It fails open: with no report, the whole window is
+// click-through. macOS only for now; Windows keeps the dead zone until its
+// toggle is checked on hardware (see the Windows `imp::CLICK_THROUGH`).
+
+/// One block of the overlay that catches clicks, as fractions (0..1) of the
+/// overlay's viewport with the origin at its top-left — what `toHitRects`
+/// (src/lib/voiceTyping/hitRegions.ts) reports. Fractions keep both sides out
+/// of unit conversions: the webview measures CSS px under any page zoom, the
+/// native side Cocoa points or physical px, and only a ratio means the same
+/// thing to both — whatever the display's scale factor.
+#[derive(serde::Deserialize, Clone, Copy, Debug, PartialEq)]
+pub struct HitRect {
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+}
+
+impl HitRect {
+    fn is_finite(&self) -> bool {
+        self.x.is_finite() && self.y.is_finite() && self.w.is_finite() && self.h.is_finite()
+    }
+}
+
+/// Well past the handful of blocks the overlay ever shows at once; a bound so
+/// a runaway report cannot lengthen every poll tick.
+const MAX_HIT_RECTS: usize = 16;
+
+/// How often the cursor is checked while the overlay is up. A flip is at most
+/// this late, which is shorter than any deliberate move-and-click; each tick is
+/// a few microseconds on the main thread.
+const OVERLAY_HIT_POLL: Duration = Duration::from_millis(33);
+
+/// Which hit poller is the live one. Every present begins a new generation and
+/// a dismiss ends the current one, so an older poller — and any tick it has
+/// already queued on the main thread — can tell it is stale.
+#[derive(Default)]
+struct HitPoller(AtomicU64);
+
+impl HitPoller {
+    fn begin(&self) -> u64 {
+        self.0.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    fn is_current(&self, generation: u64) -> bool {
+        self.0.load(Ordering::SeqCst) == generation
+    }
+
+    fn stop(&self) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+/// The overlay's reported hit rects and the poller that applies them.
+#[derive(Default)]
+pub struct OverlayHitState {
+    rects: Mutex<Vec<HitRect>>,
+    poller: HitPoller,
+    /// A tick is queued on the main thread and has not run yet. The poller
+    /// skips a tick rather than stack a second one behind a busy main thread.
+    tick_pending: AtomicBool,
+}
+
+/// Whether the overlay-relative point `(fx, fy)` falls on a reported block.
+/// Half-open on every edge, like `hitAt` in hitRegions.ts. Anything off the
+/// window — or not a number — is not a hit, so the window passes the click on.
+fn over_hit_rect(rects: &[HitRect], fx: f64, fy: f64) -> bool {
+    if !(0.0..1.0).contains(&fx) || !(0.0..1.0).contains(&fy) {
+        return false;
+    }
+    rects
+        .iter()
+        .any(|r| fx >= r.x && fx < r.x + r.w && fy >= r.y && fy < r.y + r.h)
+}
+
+/// The cursor as a fraction of the window, from Cocoa's global coordinates:
+/// points (no scale factor, so a mixed-DPI desktop is fine) with the origin at
+/// the BOTTOM-left, hence the flip into the overlay's top-left fractions.
+#[cfg(any(target_os = "macos", test))]
+fn fraction_bottom_left(
+    mouse: (f64, f64),
+    origin: (f64, f64),
+    size: (f64, f64),
+) -> Option<(f64, f64)> {
+    let (w, h) = size;
+    if w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0 {
+        Some(((mouse.0 - origin.0) / w, (origin.1 + h - mouse.1) / h))
+    } else {
+        None
+    }
+}
+
+/// The cursor as a fraction of the window, from Win32's screen coordinates:
+/// physical px with the origin at the top-left.
+#[cfg(any(target_os = "windows", test))]
+fn fraction_top_left(
+    cursor: (f64, f64),
+    origin: (f64, f64),
+    size: (f64, f64),
+) -> Option<(f64, f64)> {
+    let (w, h) = size;
+    if w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0 {
+        Some(((cursor.0 - origin.0) / w, (cursor.1 - origin.1) / h))
+    } else {
+        None
+    }
+}
+
+/// What a report keeps: finite rects only, at most MAX_HIT_RECTS of them.
+fn sanitize_hit_rects(rects: Vec<HitRect>) -> Vec<HitRect> {
+    rects
+        .into_iter()
+        .filter(HitRect::is_finite)
+        .take(MAX_HIT_RECTS)
+        .collect()
+}
+
+/// The overlay reports where its visible blocks are, whenever that changes.
+/// Async so it runs off the main thread: the transcript bubble grows with every
+/// few words, and a synchronous command would queue each report there. The
+/// rects are kept across a dismiss — the webview owns them, and it has already
+/// reported none by the time a done confirmation fades out.
+#[tauri::command]
+pub async fn set_voice_overlay_hit_rects(
+    state: State<'_, OverlayHitState>,
+    rects: Vec<HitRect>,
+) -> Result<(), String> {
+    *state.rects.lock().unwrap() = sanitize_hit_rects(rects);
+    Ok(())
+}
+
+/// Poll the cursor against the hit rects until the overlay is dismissed or
+/// presented again, turning the window's mouse capture on over a block and off
+/// everywhere else. Natively, rather than from the webview with Tauri's
+/// `setIgnoreCursorEvents`: the cursor position the webview can get is scaled
+/// by the PRIMARY display's factor (off by 2× on a Retina laptop next to a 1×
+/// screen), and on Windows tao's setter rewrites the window's styles and hides
+/// it (see the Windows `imp::present_overlay`).
+fn start_hit_poller(app: &AppHandle) {
+    if !imp::CLICK_THROUGH {
+        return;
+    }
+    let generation = app.state::<OverlayHitState>().poller.begin();
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut tick = tokio::time::interval(OVERLAY_HIT_POLL);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tick.tick().await;
+            let state = app.state::<OverlayHitState>();
+            if !state.poller.is_current(generation) {
+                break;
+            }
+            if state.tick_pending.swap(true, Ordering::SeqCst) {
+                continue;
+            }
+            let main = app.clone();
+            if app
+                .run_on_main_thread(move || hit_tick(&main, generation))
+                .is_err()
+            {
+                // The event loop is gone; nothing left to poll for.
+                state.tick_pending.store(false, Ordering::SeqCst);
+                break;
             }
         }
+    });
+}
+
+/// One poll, on the main thread (where AppKit wants the window touched).
+fn hit_tick(app: &AppHandle, generation: u64) {
+    let state = app.state::<OverlayHitState>();
+    state.tick_pending.store(false, Ordering::SeqCst);
+    // Queued before a dismiss, or before the next present's poller took over:
+    // the window is no longer this tick's to change.
+    if !state.poller.is_current(generation) {
+        return;
     }
-    #[cfg(target_os = "windows")]
-    {
-        if let Some(win) = app.get_webview_window("voice-typing") {
-            if let Ok(hwnd) = win.hwnd() {
-                imp::dismiss_overlay(hwnd);
-            }
-        }
+    let Some(handle) = overlay_handle(app) else {
+        return;
+    };
+    let over = imp::cursor_fraction(handle)
+        .is_some_and(|(fx, fy)| over_hit_rect(&state.rects.lock().unwrap(), fx, fy));
+    // Against the window's real state, not a remembered one: anything that
+    // rewrites it behind our back would leave a cached flag saying
+    // "click-through" over a window that is catching clicks.
+    if imp::is_pass_through(handle) == over {
+        imp::set_pass_through(handle, !over);
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    let _ = app;
 }
 
 #[cfg(target_os = "macos")]
@@ -1029,6 +1233,68 @@ mod imp {
         }
     }
 
+    /// The overlay's NSWindow, as `WebviewWindow::ns_window` hands it out.
+    pub type OverlayHandle = *mut c_void;
+
+    /// Click-through is live here (see `set_pass_through`).
+    pub const CLICK_THROUGH: bool = true;
+
+    // Foundation's geometry structs, for the two getters below that return
+    // them by value. CGFloat is f64 on every 64-bit Mac, and the build is
+    // arm64-only, where objc_msgSend returns these in registers.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct NSPoint {
+        x: f64,
+        y: f64,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct NSSize {
+        width: f64,
+        height: f64,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct NSRect {
+        origin: NSPoint,
+        size: NSSize,
+    }
+
+    /// Where the cursor is, as a fraction of the overlay window; None while the
+    /// window is not on screen. `+[NSEvent mouseLocation]` and `-frame` are
+    /// both global Cocoa points, so no scale factor enters into it — unlike
+    /// tao's cursor position, which a mixed-DPI desktop throws off.
+    pub fn cursor_fraction(ns_window: OverlayHandle) -> Option<(f64, f64)> {
+        unsafe {
+            let w = ns_window as *mut Object;
+            let visible: bool = msg_send![w, isVisible];
+            if !visible {
+                return None;
+            }
+            let mouse: NSPoint = msg_send![class!(NSEvent), mouseLocation];
+            let frame: NSRect = msg_send![w, frame];
+            super::fraction_bottom_left(
+                (mouse.x, mouse.y),
+                (frame.origin.x, frame.origin.y),
+                (frame.size.width, frame.size.height),
+            )
+        }
+    }
+
+    /// `pass` = let clicks through to whatever is behind the overlay.
+    pub fn set_pass_through(ns_window: OverlayHandle, pass: bool) {
+        unsafe {
+            let _: () = msg_send![ns_window as *mut Object, setIgnoresMouseEvents: pass];
+        }
+    }
+
+    pub fn is_pass_through(ns_window: OverlayHandle) -> bool {
+        unsafe { msg_send![ns_window as *mut Object, ignoresMouseEvents] }
+    }
+
     pub fn accessibility_trusted(prompt: bool) -> bool {
         unsafe {
             if !prompt {
@@ -1049,7 +1315,7 @@ mod imp {
 #[cfg(target_os = "windows")]
 mod imp {
     use windows::core::PWSTR;
-    use windows::Win32::Foundation::{CloseHandle, GlobalFree, HANDLE, HWND};
+    use windows::Win32::Foundation::{CloseHandle, GlobalFree, HANDLE, HWND, POINT, RECT};
     use windows::Win32::System::DataExchange::{
         CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
     };
@@ -1064,9 +1330,10 @@ mod imp {
         VK_SHIFT,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, GetWindowLongPtrW, GetWindowThreadProcessId, SetWindowLongPtrW,
-        SetWindowPos, ShowWindow, GWL_EXSTYLE, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE,
-        SWP_NOSIZE, SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNA, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+        GetCursorPos, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect,
+        GetWindowThreadProcessId, IsWindowVisible, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+        GWL_EXSTYLE, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SW_HIDE,
+        SW_SHOWNA, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
     };
 
     /// `CF_UNICODETEXT`, spelled out rather than imported from
@@ -1406,6 +1673,65 @@ mod imp {
             let _ = ShowWindow(hwnd, SW_HIDE);
         }
     }
+
+    /// The overlay's window, as `WebviewWindow::hwnd` hands it out.
+    pub type OverlayHandle = HWND;
+
+    /// Click-through is NOT switched on for Windows yet, pending a check on
+    /// real hardware (docs/TESTING.md) — nobody on the core team runs Windows.
+    ///
+    /// The toggle would be WS_EX_TRANSPARENT | WS_EX_LAYERED, read-modify-write
+    /// on GWL_EXSTYLE (never tao's setter — see `present_overlay`). LAYERED is
+    /// the risk: a window made layered through SetWindowLong is not drawn until
+    /// SetLayeredWindowAttributes is called, and WebView2 is known not to
+    /// render in layered windows. Click-through would be the overlay's DEFAULT
+    /// state (the cursor is off the pill most of the time), so if layering
+    /// blanks the webview the overlay disappears for most of every dictation.
+    /// When enabling it: toggle only those two bits; never clear a LAYERED bit
+    /// that was set before the first toggle; if the webview goes blank, try one
+    /// `SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_ALPHA)` after
+    /// LAYERED is first added, and failing that a SetWindowRgn built from the
+    /// same rects (no poller needed then).
+    ///
+    /// Until then the transparent area stays a dead zone, as it always was.
+    /// The overlay has been WS_EX_NOACTIVATE from the start, so on Windows a
+    /// click there never activated Parley.
+    pub const CLICK_THROUGH: bool = false;
+
+    /// Where the cursor is, as a fraction of the overlay window; None while the
+    /// window is not on screen. Both readings are physical px: tao makes the
+    /// process per-monitor-v2 DPI aware. The overlay is undecorated and
+    /// shadowless, so its window rect is its client rect.
+    pub fn cursor_fraction(hwnd: HWND) -> Option<(f64, f64)> {
+        // SAFETY: `hwnd` is the live overlay window and this runs on its
+        // thread; the calls only read the cursor and that window's rect into
+        // the locals they are handed.
+        unsafe {
+            if !IsWindowVisible(hwnd).as_bool() {
+                return None;
+            }
+            let mut cursor = POINT::default();
+            GetCursorPos(&mut cursor).ok()?;
+            let mut rect = RECT::default();
+            GetWindowRect(hwnd, &mut rect).ok()?;
+            super::fraction_top_left(
+                (f64::from(cursor.x), f64::from(cursor.y)),
+                (f64::from(rect.left), f64::from(rect.top)),
+                (
+                    f64::from(rect.right - rect.left),
+                    f64::from(rect.bottom - rect.top),
+                ),
+            )
+        }
+    }
+
+    /// No-op until Windows click-through is verified (see CLICK_THROUGH).
+    pub fn set_pass_through(_hwnd: HWND, _pass: bool) {}
+
+    /// Never click-through while `set_pass_through` is a no-op.
+    pub fn is_pass_through(_hwnd: HWND) -> bool {
+        false
+    }
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -1420,6 +1746,19 @@ mod imp {
         None
     }
     pub fn accessibility_trusted(_prompt: bool) -> bool {
+        false
+    }
+
+    // No overlay window to drive here: `overlay_handle` is always None.
+    pub type OverlayHandle = *mut std::ffi::c_void;
+    pub const CLICK_THROUGH: bool = false;
+    pub fn present_overlay(_handle: OverlayHandle) {}
+    pub fn dismiss_overlay(_handle: OverlayHandle) {}
+    pub fn cursor_fraction(_handle: OverlayHandle) -> Option<(f64, f64)> {
+        None
+    }
+    pub fn set_pass_through(_handle: OverlayHandle, _pass: bool) {}
+    pub fn is_pass_through(_handle: OverlayHandle) -> bool {
         false
     }
 }
@@ -1579,5 +1918,147 @@ mod session_gate_tests {
         let tap_cutoff = Arc::new(AtomicBool::new(false));
         assert!(!cut_now(&coord, Some(&tap_cutoff), None));
         assert!(tap_cutoff.load(Ordering::SeqCst));
+    }
+}
+
+#[cfg(test)]
+mod overlay_hit_tests {
+    use super::{
+        fraction_bottom_left, fraction_top_left, over_hit_rect, sanitize_hit_rects, HitPoller,
+        HitRect, MAX_HIT_RECTS,
+    };
+
+    fn rect(x: f64, y: f64, w: f64, h: f64) -> HitRect {
+        HitRect { x, y, w, h }
+    }
+
+    fn close(a: Option<(f64, f64)>, b: (f64, f64)) -> bool {
+        a.is_some_and(|(x, y)| (x - b.0).abs() < 1e-9 && (y - b.1).abs() < 1e-9)
+    }
+
+    /// The pill: centred, near the bottom of the 460×180 overlay.
+    const PILL: (f64, f64, f64, f64) = (0.36, 0.7, 0.28, 0.2);
+
+    #[test]
+    fn a_point_on_a_block_is_a_hit_and_anywhere_else_passes_through() {
+        let (x, y, w, h) = PILL;
+        let rects = [rect(x, y, w, h)];
+        assert!(over_hit_rect(&rects, 0.5, 0.8));
+        assert!(!over_hit_rect(&rects, 0.1, 0.8), "beside the pill");
+        assert!(!over_hit_rect(&rects, 0.5, 0.2), "above the pill");
+    }
+
+    #[test]
+    fn edges_are_half_open_like_hit_at() {
+        let rects = [rect(0.25, 0.5, 0.5, 0.25)];
+        assert!(over_hit_rect(&rects, 0.25, 0.5), "left/top edge is inside");
+        assert!(!over_hit_rect(&rects, 0.75, 0.6), "right edge is outside");
+        assert!(!over_hit_rect(&rects, 0.5, 0.75), "bottom edge is outside");
+    }
+
+    #[test]
+    fn no_report_means_the_whole_window_passes_clicks_through() {
+        assert!(!over_hit_rect(&[], 0.5, 0.5));
+    }
+
+    #[test]
+    fn a_cursor_off_the_window_or_not_a_number_is_never_a_hit() {
+        let rects = [rect(0.0, 0.0, 1.0, 1.0)];
+        assert!(over_hit_rect(&rects, 0.0, 0.0));
+        for (fx, fy) in [
+            (-0.01, 0.5),
+            (0.5, -0.01),
+            (1.0, 0.5),
+            (0.5, 1.0),
+            (f64::NAN, 0.5),
+            (0.5, f64::NAN),
+            (f64::INFINITY, 0.5),
+            (0.5, f64::NEG_INFINITY),
+        ] {
+            assert!(!over_hit_rect(&rects, fx, fy), "({fx}, {fy})");
+        }
+    }
+
+    #[test]
+    fn cocoa_coordinates_flip_to_a_top_left_fraction() {
+        // A 460×180 overlay whose frame starts at (100, 50), bottom-left origin.
+        let at = |mouse| fraction_bottom_left(mouse, (100.0, 50.0), (460.0, 180.0));
+        // The frame's TOP-left corner is (100, 50 + 180) in Cocoa.
+        assert!(close(at((100.0, 230.0)), (0.0, 0.0)));
+        // Its bottom-right corner.
+        assert!(close(at((560.0, 50.0)), (1.0, 1.0)));
+        // A point 45 pt up from the bottom edge sits at 3/4 of the height.
+        assert!(close(at((330.0, 95.0)), (0.5, 0.75)));
+    }
+
+    #[test]
+    fn cocoa_fractions_hold_on_a_display_left_of_or_below_the_primary() {
+        let at = |mouse| fraction_bottom_left(mouse, (-1700.0, -900.0), (460.0, 180.0));
+        assert!(close(at((-1470.0, -810.0)), (0.5, 0.5)));
+    }
+
+    #[test]
+    fn windows_coordinates_are_already_top_left() {
+        // 460×180 at 200 %, in physical px.
+        let at = |cursor| fraction_top_left(cursor, (730.0, 836.0), (920.0, 360.0));
+        assert!(close(at((730.0, 836.0)), (0.0, 0.0)));
+        assert!(close(at((1190.0, 1106.0)), (0.5, 0.75)));
+        // A monitor left of the primary has negative physical coordinates.
+        let left = |cursor| fraction_top_left(cursor, (-1690.0, 836.0), (920.0, 360.0));
+        assert!(close(left((-1230.0, 1016.0)), (0.5, 0.5)));
+    }
+
+    #[test]
+    fn a_window_without_a_size_gives_no_fraction() {
+        for size in [
+            (0.0, 180.0),
+            (460.0, 0.0),
+            (f64::NAN, 180.0),
+            (460.0, f64::INFINITY),
+        ] {
+            assert!(fraction_bottom_left((1.0, 1.0), (0.0, 0.0), size).is_none());
+            assert!(fraction_top_left((1.0, 1.0), (0.0, 0.0), size).is_none());
+        }
+    }
+
+    #[test]
+    fn hit_rects_deserialize_from_what_the_overlay_sends() {
+        let rects: Vec<HitRect> =
+            serde_json::from_str(r#"[{"x":0.1,"y":0.8,"w":0.3,"h":0.2}]"#).unwrap();
+        assert_eq!(rects, vec![rect(0.1, 0.8, 0.3, 0.2)]);
+    }
+
+    #[test]
+    fn a_report_keeps_finite_rects_and_at_most_the_cap() {
+        let kept = sanitize_hit_rects(vec![
+            rect(f64::NAN, 0.0, 0.1, 0.1),
+            rect(0.1, 0.2, 0.3, 0.4),
+            rect(0.0, 0.0, f64::INFINITY, 0.1),
+        ]);
+        assert_eq!(kept, vec![rect(0.1, 0.2, 0.3, 0.4)]);
+
+        let many = vec![rect(0.0, 0.0, 0.1, 0.1); MAX_HIT_RECTS + 5];
+        assert_eq!(sanitize_hit_rects(many).len(), MAX_HIT_RECTS);
+    }
+
+    #[test]
+    fn a_dismiss_or_the_next_present_makes_an_older_poller_stale() {
+        let poller = HitPoller::default();
+        let first = poller.begin();
+        assert!(poller.is_current(first));
+
+        // Dismiss: the poller, and any tick it already queued, stand down.
+        poller.stop();
+        assert!(!poller.is_current(first));
+
+        // The next present takes over; the old generation stays stale.
+        let second = poller.begin();
+        assert!(poller.is_current(second));
+        assert!(!poller.is_current(first));
+
+        // A present while one is still running replaces it outright.
+        let third = poller.begin();
+        assert!(poller.is_current(third));
+        assert!(!poller.is_current(second));
     }
 }

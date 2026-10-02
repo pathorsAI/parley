@@ -1,7 +1,8 @@
 //! Lifecycle for the floating voice-typing overlay window: a transparent,
 //! always-on-top, non-focusing panel pinned to the bottom-centre of the display
 //! the mouse pointer sits on. Created once (hidden) and shown/repositioned per
-//! dictation.
+//! dictation. Only what it draws catches clicks; the transparent rest of the
+//! window passes them to the app behind (macOS — see hitRegions.ts).
 
 import { isTauri } from "../tauriEvents";
 import { log } from "../log";

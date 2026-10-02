@@ -90,6 +90,13 @@ the overlay:
   field. The suggestion's Add, Ignore and Undo still respond to the first
   click. On macOS, `parley.log` shows `overlay panel preventsActivation=true`
   the first time the overlay appears.
+- **Transparent parts pass clicks through** (macOS; `start_hit_poller`). With
+  a chat app's composer at the bottom centre of the screen, start a dictation
+  and click the composer beside or above the pill: the caret lands there and
+  the menu bar stays on the chat app. Moving onto the pill or a suggestion
+  bubble catches clicks again, and the buttons still respond. Repeat on a 1×
+  external display next to a Retina laptop, and over a full-screen app's
+  Space.
 
 ## Windows: what only a Windows machine can check
 
@@ -126,6 +133,14 @@ involved:
 - **Voice-typing overlay clicks.** The overlay checks in the section above:
   clicking the pill or a suggestion button mid-dictation leaves the target app
   in front, and the release still pastes into the original field.
+- **Overlay click-through, before it is switched on** (`CLICK_THROUGH` in the
+  Windows `imp` of `src-tauri/src/voice_typing.rs`). It is off on Windows:
+  the toggle needs WS_EX_LAYERED, which can blank a WebView2 window, so the
+  transparent area around the pill still eats clicks. Whoever implements the
+  toggle walks this at 100 % and 150 % scaling: clicks beside or above the
+  pill reach the app behind; the overlay never shows in Alt+Tab or the
+  taskbar; it never turns black or invisible after the cursor moves on and off
+  the pill; and Ctrl+V still lands in the target app.
 - **Clipboard paste** (`paste_to_frontmost` in `src-tauri/src/voice_typing.rs`).
   Dictating into Notepad, a browser text field and an Office app pastes the
   text at the caret, and the held Ctrl+Alt of the shortcut does not turn the
