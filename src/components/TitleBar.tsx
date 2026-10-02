@@ -234,7 +234,7 @@ function useOrgFolders(orgId: string | null): { id: string; name: string }[] | n
       active = false;
     };
   }, [orgId]);
-  return state && state.orgId === orgId ? state.folders : null;
+  return state?.orgId === orgId ? state.folders : null;
 }
 
 /** The same icon the sidebar row for that node wears. */
