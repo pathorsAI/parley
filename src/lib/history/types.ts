@@ -58,6 +58,13 @@ export interface HistoryEntry {
    *  this field existed omit it → the brief page generates once on open and saves
    *  the result back, so a given recording only ever pays for it once. */
   brief?: string | null;
+  /** True when the last brief generation FAILED (an error, or a response with no
+   *  text) and no brief has been saved since. Exists for the same reason
+   *  {@link HistoryEntry.filingSuggested} does: an absent brief alone reads as
+   *  "never generated", so a brief that keeps failing would silently re-run on
+   *  every open. With this set, loading restores the brief as "error" instead —
+   *  the user sees it and retries by hand. Cleared by a successful generation. */
+  briefFailed?: boolean;
   /** Which personal folder this entry lives in; null/absent = the personal root
    *  (個人). A folderId not in the live personal folder list renders at the root. */
   folderId?: string | null;

@@ -4,10 +4,10 @@ import { hasProviderKey } from "../ai/settings";
 import { analyzeTimeline } from "../ai/timeline";
 import { detectMeetingKind } from "../ai/meetingKind";
 import { analysisSignature, lensOf } from "./lens";
-import { applyKindTemplate } from "./kindTemplate";
+import { applyKindTemplate, evalsImpliedBy } from "./kindTemplate";
 import { readJsonCache, writeJsonCache, clearCacheByPrefix, ANALYSIS_CACHE_PREFIX } from "../cache";
 import { clearStudyCache } from "../history/studyCache";
-import { makeRunGuard } from "./runGuard";
+import { landStage, makeRunGuard } from "./runGuard";
 import { translate } from "../../i18n";
 import { isTauri } from "../tauriEvents";
 import type {
@@ -103,15 +103,20 @@ function workloadForMode(mode: AnalysisMode): LlmWorkload {
   return mode === "replay" ? "deep" : "realtime";
 }
 
-/** Apply a cached replay analysis, if there is one. True when it was applied. */
-function applyCachedAnalysis(cacheKey: string, evalSig: string): boolean {
-  const cached = readJsonCache<TimelineEvent[]>(cacheKey);
-  if (!cached) return false;
-  const state = useStore.getState();
-  state.setFindings(cached);
-  state.setAnalysisStatus("done");
+/** Land a finished findings pass (fresh or from the content cache) in the
+ *  store: the findings, the kind they were read through, and the eval set they
+ *  reflect. */
+function applyFindings(events: TimelineEvent[], kind: MeetingKind | null, evalSig: string): void {
+  const store = useStore.getState();
+  // A kind detected while the recording was off screen (the user left and came
+  // back mid-pass) arrives here instead of from resolveMeetingKind.
+  if (kind && store.meetingKind === null) {
+    store.setMeetingKind(kind);
+    applyKindTemplate(kind);
+  }
+  store.setFindings(events);
+  store.setAnalysisStatus("done");
   useStore.setState({ analyzedEvalSig: evalSig });
-  return true;
 }
 
 /** The message the UI shows for a failed pass — hosted credit/auth exhaustion
@@ -137,24 +142,32 @@ async function analysisErrorMessage(err: unknown, provider: string): Promise<str
  *
  * Only REPLAY classifies: a live meeting is still arriving, and the frame it
  * would be judged by should not flip mid-conversation.
+ *
+ * The detected kind only goes into the store (and swaps the watchers) while the
+ * recording is still on screen — `alive` — so a classification that outlives it
+ * can never retag whatever the user opened next. Either way it is returned, and
+ * persisted with the findings it shaped.
  */
 async function resolveMeetingKind(args: {
   state: StoreState;
   mode: AnalysisMode;
   segments: TranscriptSegment[];
   meetingContext: string;
+  alive: () => boolean;
 }): Promise<MeetingKind | null> {
-  const { state, mode, segments, meetingContext } = args;
+  const { state, mode, segments, meetingContext, alive } = args;
   const { settings, speakerNames, meetingKind } = state;
   if (meetingKind !== null) return meetingKind;
   if (mode !== "replay" || !hasProviderKey(settings, "realtime")) return null;
 
   const kind = await detectMeetingKind({ settings, segments, meetingContext, names: speakerNames });
   if (!kind) return null;
-  useStore.getState().setMeetingKind(kind);
-  // Watchers follow the kind — but only when the user hasn't hand-picked a set.
-  // A custom eval list is a deliberate choice; do not stomp it on a guess.
-  applyKindTemplate(kind);
+  if (alive()) {
+    useStore.getState().setMeetingKind(kind);
+    // Watchers follow the kind — but only when the user hasn't hand-picked a set.
+    // A custom eval list is a deliberate choice; do not stomp it on a guess.
+    applyKindTemplate(kind);
+  }
   return kind;
 }
 
@@ -165,10 +178,12 @@ async function resolveMeetingKind(args: {
  * whole recording). Skips silently if there's no LLM key, no transcript, or a
  * run is in flight. Each run REPLACES the findings list — `setFindings` clears
  * the selection and any cached solutions (the model mints fresh ids per pass).
- * A run that outlives its session or is superseded by a newer pass stops
- * writing (see runGuard) — its results are discarded, never misfiled.
+ * A run that outlives its recording being on screen stops writing into the
+ * store but still finishes: its findings (and the detected kind) are written
+ * onto that recording's saved entry, so reopening it never re-runs the pass (see
+ * runGuard.landStage). A run superseded by a newer pass is discarded.
  */
-const analysisGuard = makeRunGuard();
+const analysisGuard = makeRunGuard("findings");
 export async function runAnalysis(opts?: {
   mode?: AnalysisMode;
   force?: boolean;
@@ -194,58 +209,77 @@ export async function runAnalysis(opts?: {
   // the classification below both awaits AND writes to the store, so leaving the
   // status idle across it would dispatch a second (and third) analysis pass off
   // its own progress.
-  const alive = analysisGuard.begin();
+  const run = analysisGuard.begin();
   state.setAnalysisError(null);
   state.setAnalysisStatus("running");
 
-  const kind = await resolveMeetingKind({ state, mode, segments, meetingContext });
-  if (!alive()) return;
-  const lens = lensOf(kind);
-  // applyKindTemplate may have swapped the eval set; re-read it.
-  const evals = useStore.getState().settings.evaluations;
-
-  // REPLAY: reuse a cached analysis for the exact same recording + template +
-  // speaker names + model — re-analyzing the same upload is then instant + free.
-  // (LIVE re-runs over a growing transcript, so it isn't cached.) `force` (the
-  // user explicitly picking "re-analyze" from the player menu) skips the cache
-  // READ so the model runs fresh — the fresh result still overwrites the cache.
-  const cacheKey =
-    mode === "replay"
-      ? analysisCacheKey(settings, segments, evals, meetingContext, speakerNames, kind)
-      : null;
-  // Remember which eval set these findings reflect, so the UI can flag them as
-  // stale when the template / evals change before the next re-analysis.
-  const evalSig = analysisSignature(kind, evals);
-  // A cache hit lands the findings and flips the status to "done" itself.
-  if (cacheKey && !opts?.force && applyCachedAnalysis(cacheKey, evalSig)) return;
-
   try {
-    const events = await analyzeTimeline({
-      settings,
-      segments,
-      evals,
-      meetingContext,
-      names: speakerNames,
-      mode,
-      lens,
-      // Stream findings into the store as they're generated so dots + rows appear
-      // progressively instead of all at once when the whole pass finishes.
-      onPartial: (partial) => {
-        if (alive()) useStore.getState().setFindings(partial);
-      },
-    });
+    const kind = await resolveMeetingKind({ state, mode, segments, meetingContext, alive: run.alive });
+    // A newer pass for this recording took over — its result is the one kept,
+    // so don't spend the deep lane on one that would be dropped.
+    if (run.superseded()) return;
+    const lens = lensOf(kind);
+    // On screen, applyKindTemplate may have swapped the eval set — re-read it.
+    // Off screen nothing was swapped, so take the set the kind implies.
+    const evals = run.alive()
+      ? useStore.getState().settings.evaluations
+      : evalsImpliedBy(kind, useStore.getState().settings);
+
+    // REPLAY: reuse a cached analysis for the exact same recording + template +
+    // speaker names + model — re-analyzing the same upload is then instant + free.
+    // (LIVE re-runs over a growing transcript, so it isn't cached.) `force` (the
+    // user explicitly picking "re-analyze" from the player menu) skips the cache
+    // READ so the model runs fresh — the fresh result still overwrites the cache.
+    const cacheKey =
+      mode === "replay"
+        ? analysisCacheKey(settings, segments, evals, meetingContext, speakerNames, kind)
+        : null;
+    // Remember which eval set these findings reflect, so the UI can flag them as
+    // stale when the template / evals change before the next re-analysis.
+    const evalSig = analysisSignature(kind, evals);
+    const cached = cacheKey && !opts?.force ? readJsonCache<TimelineEvent[]>(cacheKey) : null;
+
+    const events =
+      cached ??
+      (await analyzeTimeline({
+        settings,
+        segments,
+        evals,
+        meetingContext,
+        names: speakerNames,
+        mode,
+        lens,
+        // Stream findings into the store as they're generated so dots + rows appear
+        // progressively instead of all at once when the whole pass finishes.
+        onPartial: (partial) => {
+          if (run.alive()) useStore.getState().setFindings(partial);
+        },
+      }));
     // The content-keyed cache write is session-independent — always keep it.
-    if (cacheKey) writeJsonCache(cacheKey, events);
-    if (!alive()) return;
-    useStore.getState().setFindings(events);
-    useStore.getState().setAnalysisStatus("done");
-    useStore.setState({ analyzedEvalSig: evalSig });
+    if (cacheKey && !cached) writeJsonCache(cacheKey, events);
+    // Saved onto the entry right away — even while it's still on screen — so
+    // leaving during the action-items pass can't lose them. `analyzed` stays
+    // untouched: it means findings AND action items completed.
+    await landStage(run, {
+      stage: "findings",
+      apply: () => applyFindings(events, kind, evalSig),
+      patch: { findings: events, meetingKind: kind },
+      persistWhileLoaded: true,
+      pushWhileLoaded: false,
+    });
   } catch (err) {
     console.error("[analysis]", err);
-    if (!alive()) return;
     const message = await analysisErrorMessage(err, settings.llmProviders[workload]);
-    useStore.getState().setAnalysisError(message);
-    useStore.getState().setAnalysisStatus("error");
+    await landStage(run, {
+      stage: "findings",
+      apply: () => {
+        useStore.getState().setAnalysisError(message);
+        useStore.getState().setAnalysisStatus("error");
+      },
+      patch: null,
+    });
+  } finally {
+    run.end();
   }
 }
 

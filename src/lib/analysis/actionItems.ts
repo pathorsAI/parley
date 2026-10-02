@@ -2,19 +2,24 @@ import { useStore, isTrimmed, hasSpokenSegment, meetingBriefText } from "../stor
 import { hasProviderKey } from "../ai/settings";
 import { generateActionItems } from "../ai/actionItems";
 import { lensOf } from "./lens";
-import { makeRunGuard } from "./runGuard";
+import { landStage, makeRunGuard } from "./runGuard";
 
 /**
  * Generate post-meeting action items from the analysis findings + transcript and
  * write them into the store (REPLAY only). Skips silently if there's no key, no
  * transcript, or a run is in flight (the status is the lock — set synchronously
- * below, so two back-to-back calls can't interleave). A run that outlives its
- * session or is superseded by a newer pass stops writing (see runGuard).
+ * below, so two back-to-back calls can't interleave).
+ *
+ * While the recording is on screen, initHistoryPersistSync saves the completed
+ * pipeline. A run that outlives that (the user left) writes its result onto the
+ * recording's entry itself — together with the findings it ran on and
+ * `analyzed: true`, because that pair IS the completed pipeline — so reopening
+ * never re-runs it. A run superseded by a newer pass is discarded (runGuard).
  */
-const guard = makeRunGuard();
+const guard = makeRunGuard("actions");
 export async function runActionItems(): Promise<void> {
   const state = useStore.getState();
-  const { settings, speakerNames, findings } = state;
+  const { settings, speakerNames, findings, meetingKind } = state;
   const meetingContext = meetingBriefText(state);
   // Honor the trim keep-window (replay-only feature) — same as the analysis pass.
   const segments = state.segments.filter((s) => !isTrimmed(s, state.replayTrim));
@@ -22,7 +27,7 @@ export async function runActionItems(): Promise<void> {
   if (!hasProviderKey(settings, "deep")) return;
   if (!hasSpokenSegment(segments)) return;
 
-  const alive = guard.begin();
+  const run = guard.begin();
   state.setActionItemsError(null);
   state.setActionItemsStatus("running");
   try {
@@ -32,20 +37,33 @@ export async function runActionItems(): Promise<void> {
       findings,
       meetingContext,
       names: speakerNames,
-      lens: lensOf(state.meetingKind),
+      lens: lensOf(meetingKind),
       // Stream items into the store so they appear one-by-one while generating.
       onPartial: (partial) => {
-        if (alive()) useStore.getState().setActionItems(partial);
+        if (run.alive()) useStore.getState().setActionItems(partial);
       },
     });
-    if (!alive()) return;
-    useStore.getState().setActionItems(items);
-    useStore.getState().setActionItemsStatus("done");
+    await landStage(run, {
+      stage: "actions",
+      apply: () => {
+        useStore.getState().setActionItems(items);
+        useStore.getState().setActionItemsStatus("done");
+      },
+      patch: { findings, actionItems: items, analyzed: true, meetingKind },
+    });
   } catch (err) {
     console.error("[actionItems]", err);
-    if (!alive()) return;
     const { describeAiError } = await import("../ai/errors");
-    useStore.getState().setActionItemsError(describeAiError(err));
-    useStore.getState().setActionItemsStatus("error");
+    const message = describeAiError(err);
+    await landStage(run, {
+      stage: "actions",
+      apply: () => {
+        useStore.getState().setActionItemsError(message);
+        useStore.getState().setActionItemsStatus("error");
+      },
+      patch: null,
+    });
+  } finally {
+    run.end();
   }
 }

@@ -15,7 +15,10 @@
 // hold their own reentrancy locks (status set synchronously) and write-guards
 // (runGuard: session pin + latest-wins), so double-dispatch is a no-op and a
 // stale pass can't corrupt — there are no once-per-session refs, no busy
-// flags, and no gate to leak.
+// flags, and no gate to leak. A pass that outlives its recording being on
+// screen still lands its result on that recording's entry, and reopening the
+// recording mid-pass restores the stage as "running" (runRegistry) instead of
+// dispatching it a second time.
 //
 // Both pure functions read the same StudyPipelineFacts value — plain
 // primitives extracted from the store by factsOf() — so the scheduler and the
@@ -30,7 +33,7 @@ import { runActionItems } from "./actionItems";
 import { runBriefGeneration } from "./briefRun";
 import { runDeliveryAnalysis } from "./deliveryRun";
 import { runFilingSuggestion } from "./filingRun";
-import { persistStudyOutputs, saveUploadToHistory } from "../history/history";
+import { persistReadOnlyStudyOutputs, saveUploadToHistory } from "../history/history";
 import { isSampleEntry } from "../onboarding/sample";
 import { log } from "../log";
 
@@ -270,7 +273,7 @@ export function initStudyPipeline(): () => void {
     if (state.appMode !== "study" || !state.replay || state.loadedHistoryId) return;
     if (state.replayReadOnly) {
       if (actionsSettled || analysisDone) {
-        persistStudyOutputs().catch((e) =>
+        persistReadOnlyStudyOutputs().catch((e) =>
           log.error("study: read-only cache persist failed", { error: String(e) }),
         );
       }

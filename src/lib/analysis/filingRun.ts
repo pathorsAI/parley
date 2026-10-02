@@ -2,7 +2,7 @@ import { useStore, isTrimmed, hasSpokenSegment, meetingBriefText } from "../stor
 import { hasProviderKey } from "../ai/settings";
 import { suggestFiling } from "../ai/filing";
 import { filingChoices, listLocalFolders } from "../history/folders";
-import { makeRunGuard } from "./runGuard";
+import { landStage, makeRunGuard } from "./runGuard";
 import { log } from "../log";
 
 /**
@@ -11,12 +11,13 @@ import { log } from "../log";
  * both the study pipeline (which dispatches it as soon as there is a transcript
  * — it depends on nothing upstream) and the card's manual regenerate (`force`
  * re-runs over a done/error state; the pipeline never forces). A run that
- * outlives its session or is superseded by a newer pass stops writing (runGuard).
+ * outlives its recording being on screen still saves its suggestion onto that
+ * entry; a superseded run is discarded (runGuard).
  *
  * Unlike the report artifacts this rides the cheap REALTIME lane, so a user who
  * only configured that provider still gets the suggestion.
  */
-const guard = makeRunGuard();
+const guard = makeRunGuard("filing");
 export async function runFilingSuggestion(opts?: { force?: boolean }): Promise<void> {
   const state = useStore.getState();
   if (state.filingStatus === "running") return;
@@ -29,7 +30,7 @@ export async function runFilingSuggestion(opts?: { force?: boolean }): Promise<v
   const segments = state.segments.filter((s) => !isTrimmed(s, state.replayTrim));
   if (!hasSpokenSegment(segments)) return;
 
-  const alive = guard.begin();
+  const run = guard.begin();
   state.setFilingStatus("running");
   try {
     const suggestion = await suggestFiling({
@@ -43,19 +44,26 @@ export async function runFilingSuggestion(opts?: { force?: boolean }): Promise<v
       folders: filingChoices(listLocalFolders()).map((f) => ({ id: f.id, name: f.name })),
       currentTitle: state.replay?.name ?? "",
     });
-    if (!alive()) return;
     // A null suggestion (the model had nothing better to propose) is still a
     // COMPLETED run: record it as done and persist, so this recording never pays
     // for the pass a second time. See HistoryEntry.filingSuggested.
-    useStore.getState().setFilingSuggestion(suggestion);
-    useStore.getState().setFilingStatus("done");
-    void import("../history/history").then((m) =>
-      m.persistFilingSuggestion().catch((e) =>
-        log.warn("filing: persist failed", { error: String(e) })
-      )
-    );
+    await landStage(run, {
+      stage: "filing",
+      apply: () => {
+        useStore.getState().setFilingSuggestion(suggestion);
+        useStore.getState().setFilingStatus("done");
+      },
+      patch: { filingSuggestion: suggestion, filingSuggested: true },
+      persistWhileLoaded: true,
+    });
   } catch (e) {
     log.error("filing: suggestion failed", { error: String(e) });
-    if (alive()) useStore.getState().setFilingStatus("error");
+    await landStage(run, {
+      stage: "filing",
+      apply: () => useStore.getState().setFilingStatus("error"),
+      patch: null,
+    });
+  } finally {
+    run.end();
   }
 }

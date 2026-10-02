@@ -10,14 +10,14 @@
 // "Clear Cache → Analysis" menu action.
 
 import { readJsonCache, writeJsonCache, clearCacheByPrefix, STUDY_CACHE_PREFIX } from "../cache";
-import type { ActionItem, DeliveryAssessment, TimelineEvent } from "../types";
+import type { ActionItem, DeliveryAssessment, MeetingKind, TimelineEvent } from "../types";
 
 const PREFIX = STUDY_CACHE_PREFIX;
 const key = (entryId: string) => `${PREFIX}${entryId}`;
 
 /** Everything the pipeline generates for a recording. All fields optional — the
  *  cache accretes as each output finishes (a brief finishing must not clobber a
- *  cached delivery assessment, mirroring persistStudyOutputs' merge semantics). */
+ *  cached delivery assessment, mirroring mergeStageOutputs' semantics). */
 export interface StudyCacheEntry {
   findings?: TimelineEvent[];
   actionItems?: ActionItem[];
@@ -26,7 +26,12 @@ export interface StudyCacheEntry {
    *  HistoryEntry.analyzed). Accretive: once true it never un-sets. */
   analyzed?: boolean;
   brief?: string | null;
+  /** The read-only twin of HistoryEntry.briefFailed. */
+  briefFailed?: boolean;
   deliveryAssessment?: DeliveryAssessment | null;
+  /** The kind the cached outputs were read through, so reopening neither
+   *  re-detects it nor renders the brief through the wrong lens. */
+  meetingKind?: MeetingKind | null;
   savedAt?: number;
 }
 
@@ -53,8 +58,11 @@ export function writeStudyCache(entryId: string, patch: StudyCacheEntry): void {
     // `|| undefined` so a mid-pipeline persist (actions still running → false)
     // keeps an earlier true and a plain false is dropped from the JSON.
     analyzed: patch.analyzed || prev.analyzed || undefined,
-    brief: patch.brief ?? prev.brief ?? null,
+    // An empty brief is never a result (it is what a failed stream yields).
+    brief: patch.brief || prev.brief || null,
+    briefFailed: patch.briefFailed ?? prev.briefFailed,
     deliveryAssessment: patch.deliveryAssessment ?? prev.deliveryAssessment ?? null,
+    meetingKind: patch.meetingKind ?? prev.meetingKind ?? null,
     savedAt: Date.now(),
   };
   memoId = entryId;
