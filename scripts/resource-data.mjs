@@ -33,8 +33,12 @@ export function resourcePath(name) {
 
 /// Resolve `branch` to a commit, then fetch every path in `files` at that one
 /// commit. Returns the commit so the caller can stamp it into its header.
-export async function downloadData({ repo, branch, files, prefix }) {
-  const commit = await resolveCommit(repo, branch);
+///
+/// `commit`, when given, is used as it is and the branch is not consulted —
+/// for rebuilding a resource from the commit its header already names, so a
+/// change to the *generator* does not drag an upstream data change in with it.
+export async function downloadData({ repo, branch, commit: pinned, files, prefix }) {
+  const commit = pinned || (await resolveCommit(repo, branch));
   const dir = await mkdtemp(join(tmpdir(), prefix));
   const texts = await Promise.all(
     files.map((path) => download(repo, commit, path, dir))
