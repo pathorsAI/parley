@@ -205,7 +205,8 @@ export async function hideOverlay(): Promise<void> {
  *
  * - `empty`: nothing was said, so nothing was copied.
  * - `clipboard-only`: copied, but the synthetic paste was refused (no
- *   Accessibility on macOS, UIPI on Windows); the overlay names the paste key.
+ *   Accessibility on macOS, UIPI on Windows) or went to Parley itself (the
+ *   host decides that one); the overlay names the paste key.
  * - `ok-unpolished`: pasted, but as dictated, because the polish pass was
  *   attempted and did not come back (timed out, or the request failed).
  * - `ok`: pasted — polished, or with no polish to expect.

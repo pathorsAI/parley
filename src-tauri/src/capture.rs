@@ -143,6 +143,23 @@ impl MicCoordinator {
         }
     }
 
+    /// Stop `user`'s session only while it is still the capture `gate` armed
+    /// (the gate [`Begin::Started`] handed out). A late stop — a release's tail
+    /// cut, a watchdog — can therefore never kill a NEWER capture of the same
+    /// user that started in the meantime, which a check-then-[`stop`](Self::stop)
+    /// by user could. Returns whether it stopped anything.
+    pub fn stop_if(&self, user: MicUser, gate: &Arc<AtomicBool>) -> bool {
+        let mut active = self.0.lock().unwrap();
+        if !matches!(active.as_ref(), Some(a) if a.user == user && Arc::ptr_eq(&a.session.gate, gate))
+        {
+            return false;
+        }
+        if let Some(mut a) = active.take() {
+            a.session.stop();
+        }
+        true
+    }
+
     /// Who currently owns the mic (`None` when idle).
     pub fn owner(&self) -> Option<MicUser> {
         self.0.lock().unwrap().as_ref().map(|a| a.user)
@@ -315,10 +332,12 @@ async fn meter_chunks(
 /// host-side busy/generation checks.
 ///
 /// `cutoff`: voice typing sets this on release (see `stop_voice_typing`) to HARD
-/// CUT the audio the instant the key is let go — the counter stops forwarding
-/// (and billing) new chunks and drops its sender, closing the STT input NOW so
-/// only what was said before release is transcribed and flushed. Meetings pass
-/// `None` (they stop by dropping the mic sender via the gate).
+/// CUT the audio `RELEASE_TAIL` after the key is let go (at once on the cap) —
+/// the counter stops forwarding (and billing) new chunks and drops its sender,
+/// closing the STT input NOW so only what was said up to the release, plus the
+/// short tail that lets the recognizer close the last word, is transcribed and
+/// flushed. Meetings pass `None` (they stop by dropping the mic sender via the
+/// gate).
 ///
 /// `paused`: the meeting's pause switch (see `set_meeting_paused`). While set,
 /// chunks are DROPPED here — not counted (billed), not recorded, not forwarded
@@ -414,12 +433,14 @@ pub fn run_metered_session(
                 "seconds": seconds,
             }),
         );
-        // The session is fully over: the socket is closed and every final
-        // token has been emitted. The voice-typing host finalizes (pastes) on
-        // this signal instead of polling for the transcript to go quiet —
-        // meetings have their own teardown and ignore it. Deliberately NOT
-        // reached when the task is aborted (a superseded session must never
-        // finalize its successor's overlay).
+        // The session is over and every token it will ever produce has been
+        // emitted: the provider answered the closing finalize (Soniox's
+        // `<fin>`), closed the socket, or failed — or, after a normal stop,
+        // DRAIN_READ_GRACE ran out on a provider that did neither. The
+        // voice-typing host delivers on this signal; meetings have their own
+        // teardown and ignore it. Deliberately NOT reached when the task is
+        // aborted (a superseded session must never finalize its successor's
+        // overlay), so the host still caps its own wait.
         let _ = app.emit(
             "stt://closed",
             serde_json::json!({ "source": label, "session": session }),
@@ -487,6 +508,44 @@ mod mic_tap_tests {
             Err(tokio::sync::mpsc::error::TryRecvError::Disconnected)
         ));
         assert_eq!(rx2.try_recv().unwrap(), vec![7]);
+    }
+}
+
+#[cfg(test)]
+mod coordinator_tests {
+    use super::{Begin, MicCoordinator, MicUser};
+    use std::sync::atomic::Ordering;
+
+    fn started(coord: &MicCoordinator) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        match coord.begin(MicUser::VoiceTyping) {
+            Begin::Started(gate) => gate,
+            _ => panic!("expected a fresh capture"),
+        }
+    }
+
+    /// A release's late cut must not kill the capture a quick re-press opened.
+    #[test]
+    fn stop_if_leaves_a_newer_capture_of_the_same_user_alone() {
+        let coord = MicCoordinator::default();
+        let old = started(&coord);
+        coord.stop(MicUser::VoiceTyping); // the re-press's start
+        let new = started(&coord);
+
+        assert!(!coord.stop_if(MicUser::VoiceTyping, &old));
+        assert_eq!(coord.owner(), Some(MicUser::VoiceTyping));
+        assert!(new.load(Ordering::SeqCst));
+
+        assert!(coord.stop_if(MicUser::VoiceTyping, &new));
+        assert_eq!(coord.owner(), None);
+        assert!(!new.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn stop_if_leaves_another_user_alone() {
+        let coord = MicCoordinator::default();
+        let gate = started(&coord);
+        assert!(!coord.stop_if(MicUser::Meeting, &gate));
+        assert_eq!(coord.owner(), Some(MicUser::VoiceTyping));
     }
 }
 

@@ -100,6 +100,49 @@ describe("SessionTranscript", () => {
     expect(await text(t)).toBe("好的");
   });
 
+  /** The host's settle rule waits while a tentative run is pending: words the
+   *  closing finalize may still revise or commit. */
+  it("tracks whether a tentative tail is pending", () => {
+    const t = new SessionTranscript();
+    t.reset(1);
+    expect(t.hasPendingTail()).toBe(false);
+    t.accept(tail("我們明", 1));
+    expect(t.hasPendingTail()).toBe(true);
+    t.accept(final("voice-typing-0", "我們明天", 1));
+    expect(t.hasPendingTail()).toBe(false);
+    t.accept(tail("見", 1));
+    expect(t.hasPendingTail()).toBe(true);
+    // Rust's answer to the closing finalize: the last final, then the empty
+    // tail that clears the tentative run.
+    t.accept(final("voice-typing-0", "我們明天見", 1));
+    t.accept(tail("", 1));
+    expect(t.hasPendingTail()).toBe(false);
+    t.accept(tail("  ", 1));
+    expect(t.hasPendingTail()).toBe(false);
+  });
+
+  /** The host keeps one instance per session: a re-press must not null the
+   *  report the previous dictation's delivery is still converting. */
+  it("keeps an older instance's in-flight report when the next session starts", async () => {
+    const previous = new SessionTranscript();
+    previous.reset(1);
+    previous.accept(final("voice-typing-0", "上一句", 1));
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const inFlight = previous.report(async (raw) => {
+      await gate;
+      return raw;
+    });
+    const next = new SessionTranscript();
+    next.reset(2);
+    next.accept(final("voice-typing-0", "下一句", 2));
+    release();
+    expect(await inFlight).toEqual({ text: "上一句", session: 1 });
+    expect(await text(next)).toBe("下一句");
+  });
+
   it("ignores a meeting's segments", async () => {
     const t = new SessionTranscript();
     t.reset(1);

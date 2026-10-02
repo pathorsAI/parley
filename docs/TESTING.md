@@ -103,6 +103,11 @@ involved:
   text lands on the clipboard. Where it pastes depends on which window is in
   front when the dictation ends — after a tray click that is usually not your
   document, so the clipboard is the reliable result.
+- **Dictating with the window hidden** (`src/lib/voiceTyping/settle.ts`). The
+  dictation host runs in the main window, and WebView2 throttles a hidden
+  page's timers harder after five minutes. Hide Parley to the tray for longer
+  than that, then dictate a single word with a short tap: it still pastes, and
+  `parley.log` shows `voice-typing: settled` with `reason` `closed`.
 - **Clipboard paste** (`paste_to_frontmost` in `src-tauri/src/voice_typing.rs`).
   Dictating into Notepad, a browser text field and an Office app pastes the
   text at the caret, and the held Ctrl+Alt of the shortcut does not turn the

@@ -1,11 +1,15 @@
-//! Voice-typing host: runs in the main window. Listens for the global fn-key
-//! push-to-talk events from Rust, drives the streaming session + overlay, and on
-//! release copies the (Simplified→Traditional converted) result to the clipboard
-//! and — when enabled — pastes it into the frontmost app.
+//! Voice-typing host: runs in the main window. Listens for the global
+//! push-to-talk events from Rust, drives the streaming session + overlay, and
+//! once the recognizer has answered the release, copies the result to the
+//! clipboard and pastes it into the frontmost app.
 //!
-//! The overlay window owns the live text (it converts S→T and renders it) and
-//! reports the current text back over `voicetyping://text`; we copy exactly what
-//! the user saw.
+//! The host keeps its own transcript of each session: it folds the same
+//! `transcript://segment` events the overlay renders through the same pipeline
+//! (Simplified→Traditional, the dictionary, pause-made full stops), so the text
+//! it delivers never waits on another window. It used to paste whatever the
+//! overlay had last reported over an IPC hop — a hop that could lag the final
+//! tokens, or never come from a suspended overlay. The overlay is told what was
+//! delivered on `done` and ends on exactly that.
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, emit, type UnlistenFn } from "@tauri-apps/api/event";
@@ -18,8 +22,11 @@ import { sttApiKey, sttRelayUrl } from "../transcription/providers";
 import { languageHintsFromSettings } from "../transcription/languageHints";
 import { HOSTED_VOICE_TYPING_MAX_SECONDS } from "../limits";
 import { log } from "../log";
+import { normalizeTranscriptText } from "../textNormalize";
+import { preloadZhConverter } from "../zhConvert";
 import { showOverlay, hideOverlay, prewarmOverlay, doneMessage } from "./overlay";
-import { SessionOwner, type SessionEvent, type TextReport } from "./transcript";
+import { SessionOwner, SessionTranscript, type Segment, type SessionEvent } from "./transcript";
+import { settleVerdict, type SettleReason } from "./settle";
 import { appendVoiceEntry } from "./history";
 import { canPolish, polishTranscriptOutcome, shouldPolish, type PolishOutcome } from "./polish";
 import {
@@ -49,16 +56,15 @@ import {
  *  for this install (see initVoiceTyping — later launches must not re-nag). */
 const AX_BOOT_PROMPTED_KEY = "parley:ax-boot-prompted";
 
-// After the key is released we keep the session open and wait for the STT to
-// flush its final tokens. FAST PATH: the backend emits `stt://closed` once the
-// session is fully over (socket closed, every final token emitted) — from
-// there we only wait CLOSE_DRAIN_MS for those last tokens to cross the
-// overlay's S→T convert-and-report hop before pasting. FALLBACK (a provider or
-// relay that never closes the socket): finalize once the text has been quiet
-// for SETTLE_MS, capped at MAX_WAIT_MS after release.
-const CLOSE_DRAIN_MS = 150;
-const SETTLE_MS = 500;
-const MAX_WAIT_MS = 3000;
+/** Parley's own bundle id. A paste that lands here went nowhere the user was
+ *  typing: Parley was frontmost (a click on one of its windows), so the text is
+ *  on the clipboard and the overlay should say to paste it by hand. */
+const PARLEY_BUNDLE_ID = "com.pathors.parley";
+
+// After the key is released the session stays open until the recognizer has
+// answered the closing finalize — `stt://closed` — with a bounded fallback for
+// a close that never comes. settle.ts holds the policy and its reasoning.
+
 /** Keep the "Copied to clipboard" confirmation floating a beat so the user
  *  clearly registers it before the overlay fades out. The overlay animates its
  *  own fade in the final stretch (see VoiceTypingApp's fade timing) — this sits
@@ -85,18 +91,30 @@ const SUGGEST_SHORTCUT = "Alt+Enter";
  *  stop. Starts armed so the very first press acts. */
 let toggleArmed = true;
 
-let latestText = "";
-let lastTextAt = 0;
+/** The current session's transcript: a fresh instance per press, so a delivery
+ *  still reading the previous one is never reset under it. */
+let transcript = new SessionTranscript();
+/** When the current dictation's key went down / came up (0 = not yet). */
+let pressedAt = 0;
 let releasedAt = 0;
 /** When `stt://closed` arrived for the current session (0 = not yet). */
 let closedAt = 0;
+/** When the current session's last segment arrived (0 = none yet), and how
+ *  many it has sent — the settle rule and the "ended empty" log need both. */
+let lastSegmentAt = 0;
+let segmentCount = 0;
+/** Deliveries (polish → copy → paste → history) run one at a time, in the
+ *  order their dictations ended. A re-press hands the previous dictation over
+ *  without waiting for it, so a polish round trip can still be in flight when
+ *  the next one settles — and two pastes must land in the order spoken. */
+let deliveryChain: Promise<void> = Promise.resolve();
 let down = false;
 let busy = false;
 /** The backend reported the STT session dead (voicetyping://error). */
 let failed = false;
 /** Which backend session the events we act on must come from. */
 const owner = new SessionOwner();
-/** Session generation. A finalize that was still awaiting its copy/paste when
+/** Session generation. A delivery that was still awaiting its copy/paste when
  *  a NEW session started must not run its tail (emit "done" + schedule hide)
  *  against the new session's overlay. */
 let gen = 0;
@@ -182,16 +200,24 @@ export function initVoiceTyping(): () => void {
         );
     }),
   );
+  // The host's own copy of the transcript (see the header). Only while the
+  // dictation is open: once it settles, the instance its delivery reads is
+  // final, and a straggler must not change the text being pasted.
   track(
-    listen<TextReport>("voicetyping://text", (e) => {
-      if (!owner.owns(e.payload)) return;
-      latestText = e.payload.text;
-      lastTextAt = Date.now();
+    listen<Segment>("transcript://segment", (e) => {
+      if (!busy || !owner.owns(e.payload)) return;
+      if (!transcript.accept(e.payload)) return;
+      lastSegmentAt = Date.now();
+      segmentCount += 1;
+      if (releasedAt > 0) waitForSettle();
     }),
   );
   track(
     listen<SessionEvent>("voicetyping://session", (e) => {
-      if (e.payload.phase === "start") owner.start(e.payload.session);
+      if (e.payload.phase !== "start") return;
+      owner.start(e.payload.session);
+      transcript = new SessionTranscript();
+      transcript.reset(e.payload.session);
     }),
   );
   // Backend STT failure (rejected key, expired hosted session, out of
@@ -200,7 +226,7 @@ export function initVoiceTyping(): () => void {
   // picks the overlay message (quota/auth/…). Without this, a dead session
   // looks like successful silence: frozen waveform, no transcript, no
   // explanation. The mic stays claimed until release; endSession still stops
-  // it, and finalize still delivers whatever text arrived before the death.
+  // it, and the delivery still pastes whatever text arrived before the death.
   track(
     listen<{ code: string; session: number | null }>("voicetyping://error", (e) => {
       if (!busy || !owner.owns(e.payload)) return;
@@ -209,22 +235,23 @@ export function initVoiceTyping(): () => void {
       emit("voicetyping://session", { phase: "error", message: e.payload.code }).catch((error) =>
         log.warn("voice-typing: error event emit failed", { error: String(error) }),
       );
+      if (releasedAt > 0) waitForSettle();
     }),
   );
-  // The backend session is fully over — every final token has been emitted.
-  // Re-arm the settle loop: it sees `closedAt` and finalizes after the short
-  // CLOSE_DRAIN_MS instead of the SETTLE_MS quiet poll. Ignored unless we're
-  // between release and finalize: while the key is DOWN the event is a
-  // server-side close mid-hold, which then ends on the normal release path. A
-  // close from the previous session after a fast re-press carries that
-  // session's id and is dropped by `owner` before any of this. Failed sessions
-  // are finalized immediately by endSession already.
+  // The backend session is over: the recognizer answered the closing finalize
+  // (or the socket closed, or the drain grace ran out), and every segment it
+  // produced was emitted BEFORE this — one task emits both, and each webview
+  // receives events in order — so the transcript is complete and the settle
+  // rule delivers at once. A close before the release is remembered too: a
+  // dead connection comes with an error first (`failed`), and a stream that
+  // really ended mid-hold (a meeting tapped for its mic stopped) has nothing
+  // more to say at the release. A previous session's close after a fast
+  // re-press carries that session's id and `owner` drops it.
   track(
     listen<{ source: string; session: number | null }>("stt://closed", (e) => {
-      if (!owner.owns(e.payload)) return;
-      if (!busy || down || failed) return;
+      if (!busy || !owner.owns(e.payload)) return;
       closedAt = Date.now();
-      waitForSettle();
+      if (releasedAt > 0) waitForSettle();
     }),
   );
   // Apply the saved push-to-talk key so the right trigger is live from launch
@@ -252,7 +279,7 @@ export function initVoiceTyping(): () => void {
   // running this block there would be a request that can neither fail nor
   // succeed — and a reader would have to know the Rust stub to see that. When
   // a Windows paste IS refused it is UIPI blocking injection into an elevated
-  // window, which no prompt can fix; the overlay says so at finalize instead.
+  // window, which no prompt can fix; the overlay says so at delivery instead.
   if (isMac() && useStore.getState().settings.voiceTypingEnabled) {
     invoke<boolean>("accessibility_status", { prompt: false })
       .then((trusted) => {
@@ -266,6 +293,9 @@ export function initVoiceTyping(): () => void {
         log.warn("voice-typing: startup Accessibility check failed", { error: String(error) }),
       );
   }
+  // The host converts S→T itself now (see the header): load OpenCC before the
+  // first delivery needs it, not during it.
+  preloadZhConverter();
   // Warm the overlay window so it's listening before the first key press.
   prewarmOverlay().catch((error) =>
     log.warn("voice-typing: overlay prewarm failed", { error: String(error) }),
@@ -291,11 +321,13 @@ async function onPtt(isDown: boolean) {
     }
     if (!toggleArmed) return; // key-repeat while held — ignore
     toggleArmed = false;
+    // A tap while the last dictation is still settling lands in endSession
+    // and is a no-op there — it was already ended.
     if (busy) {
-      down = false; // mirror hold-mode release so the flush fast-path applies
+      down = false; // mirror the hold-mode release (the tray reads `down`)
       await endSession();
     } else {
-      down = true; // guard a stale stt://closed during startup, like hold mode
+      down = true; // recording, as in hold mode
       await startSession();
       down = busy; // clear if the start didn't actually take
     }
@@ -327,6 +359,7 @@ async function onTrayToggle() {
 }
 
 async function startSession() {
+  const pressed = Date.now();
   // The recognition bias below is read synchronously from the dictionary
   // cache, which is empty until this window's boot read lands — a press in the
   // first moments after launch would otherwise go out without it. Resolved for
@@ -339,14 +372,15 @@ async function startSession() {
   cancelSuggestion();
   if (busy) {
     // A press during the previous dictation's settle window. Swallowing it
-    // (the old behavior) left the user talking into nothing — instead deliver
-    // the pending text now and fall through to a fresh session. The backend
-    // start also aborts any session task still flushing, so the old session
-    // cannot leak tokens into the new overlay.
-    clearTimeout(settleTimer);
-    await finalize().catch((error) =>
-      log.error("voice-typing: finalize before restart failed", { error: String(error) }),
-    );
+    // (the old behavior) left the user talking into nothing — instead settle
+    // the pending text now and fall through to a fresh session. Its delivery
+    // is queued, not awaited: the mic only opens below, and a polish round
+    // trip in front of it would cost the start of the next utterance. The
+    // backend start also aborts the old session's task, so the old session
+    // cannot leak tokens into the new overlay — and whatever it had not
+    // flushed yet is lost, which the log records as reason "restart".
+    const d = settleNow("restart");
+    if (d) void enqueueDelivery(d);
   }
   const { settings } = useStore.getState();
   if (!settings.voiceTypingEnabled) return;
@@ -363,16 +397,19 @@ async function startSession() {
   failed = false;
   gen += 1;
   owner.begin();
-  latestText = "";
-  lastTextAt = Date.now();
+  transcript = new SessionTranscript();
+  pressedAt = pressed;
+  releasedAt = 0;
   closedAt = 0;
+  lastSegmentAt = 0;
+  segmentCount = 0;
   clearTimeout(settleTimer);
   clearTimeout(hideTimer);
   clearTimeout(capTimer);
   // The hosted "parley" plan caps a single dictation; BYOK is uncapped. Pass
   // the cap to the backend as a safety net (a hung webview can't stream the
-  // paid relay forever) and mirror it with a frontend timer that finalizes
-  // gracefully (delivering the transcript). null = no cap for BYOK.
+  // paid relay forever) and mirror it with a frontend timer that ends the
+  // dictation gracefully (delivering the transcript). null = no cap for BYOK.
   const hosted = provider === "parley";
   // MIC FIRST, overlay second. Placing the overlay costs four round-trips to
   // the app's main thread (cursor position → monitor list → setPosition →
@@ -398,7 +435,7 @@ async function startSession() {
   );
   try {
     await starting;
-    log.info("voice-typing: session started", { provider });
+    log.info("voice-typing: session started", { provider, startMs: Date.now() - pressed });
     if (hosted) {
       capTimer = setTimeout(() => {
         onCapReached().catch((error) =>
@@ -419,77 +456,132 @@ async function startSession() {
 }
 
 async function endSession() {
-  if (!busy) return;
+  // Once per dictation: a toggle-mode tap while it settles must not restart
+  // the wait (or cut a second time).
+  if (!busy || releasedAt > 0) return;
+  const myGen = gen;
   clearTimeout(capTimer);
   releasedAt = Date.now();
-  // Closing the mic tells the STT adapter to finalize; the trailing final tokens
-  // arrive over the next moments and keep updating the text. We wait for them.
-  try {
-    await invoke("stop_voice_typing");
-  } catch (e) {
-    log.warn("voice-typing: stop failed", { error: String(e) });
-  }
-  if (failed) {
-    // The session already died — no final flush is coming, and emitting
-    // "stop" would replace the overlay's error state with a spinner. Deliver
-    // whatever text arrived before the death right away.
-    finalize().catch((error) =>
-      log.error("voice-typing: finalize after failed session failed", { error: String(error) }),
-    );
-    return;
-  }
-  await emit("voicetyping://session", { phase: "stop" });
+  log.info("voice-typing: released", { heldMs: releasedAt - pressedAt });
+  // Rust keeps a short tail of audio, then cuts the capture, which tells the
+  // STT adapter to finalize; the final tokens arrive over the next moments.
+  await stopCapture({ tail: true });
+  // The close (or a failure) may have settled it while the stop was in flight.
+  if (!busy || gen !== myGen) return;
+  // A failed session already shows its error, and a closed one is about to
+  // be delivered: neither gets the "finalizing" spinner.
+  if (!failed && closedAt === 0) await emit("voicetyping://session", { phase: "stop" });
   waitForSettle();
 }
 
 /** The hosted single-dictation cap elapsed while the key was still held. Treat
- *  it as a release: stop the backend session, mark the key up so the real
- *  key-up is a no-op, tell the overlay the limit ended it, then finalize (the
- *  transcript captured so far is still copied/pasted). */
+ *  it as a release: stop the backend session at once (no release tail — the
+ *  limit is the limit), mark the key up so the real key-up is a no-op, tell
+ *  the overlay the limit ended it, then settle as usual (the transcript
+ *  captured so far is still copied/pasted). */
 async function onCapReached() {
-  if (!busy) return;
+  if (!busy || releasedAt > 0) return;
+  const myGen = gen;
   clearTimeout(capTimer);
   log.info("voice-typing: hosted single-session cap reached; finalizing");
   down = false;
   releasedAt = Date.now();
-  try {
-    await invoke("stop_voice_typing");
-  } catch (e) {
-    log.warn("voice-typing: stop failed at cap", { error: String(e) });
-  }
-  await emit("voicetyping://session", { phase: "limit" }).catch((error) =>
-    log.warn("voice-typing: limit event emit failed", { error: String(error) }),
-  );
-  if (failed) {
-    finalize().catch((error) =>
-      log.error("voice-typing: finalize after cap failed", { error: String(error) }),
+  await stopCapture({ tail: false });
+  if (!busy || gen !== myGen) return;
+  if (!failed) {
+    await emit("voicetyping://session", { phase: "limit" }).catch((error) =>
+      log.warn("voice-typing: limit event emit failed", { error: String(error) }),
     );
-    return;
   }
   waitForSettle();
 }
 
-/** Finalize as soon as the flush is provably over: CLOSE_DRAIN_MS after the
- *  backend's `stt://closed` (fast path), else once the transcript has been
- *  quiet for SETTLE_MS, else MAX_WAIT_MS after release as a hard stop. */
+/**
+ * Cut the backend session's audio: after Rust's short release tail
+ * (`tail: true`, a key-up), or at once (`tail: false`). Only the capture ends
+ * here — the session task keeps running to deliver the recognizer's final
+ * answer, `owner` keeps accepting it, and `stt://closed` settles the
+ * dictation. Resolves as soon as Rust has scheduled the cut.
+ */
+async function stopCapture(opts: { tail: boolean }): Promise<void> {
+  try {
+    await invoke("stop_voice_typing", { tail: opts.tail });
+  } catch (e) {
+    log.warn("voice-typing: stop failed", { tail: opts.tail, error: String(e) });
+  }
+}
+
+/**
+ * Ask settle.ts whether the released dictation is done, and either deliver it
+ * or check again when its verdict says to. Called on the release and on every
+ * event that can change the answer (a segment, the close, an error), so the
+ * only timer is the one fallback deadline — never a polling chain, which a
+ * hidden main window (macOS hides it on close, Windows to the tray) throttles.
+ */
 function waitForSettle() {
   clearTimeout(settleTimer);
-  // Once closed, one short drain tick is all that's left; while still waiting
-  // on the STT flush, poll on a small interval so no path adds avoidable lag.
-  const delay = closedAt > 0 ? CLOSE_DRAIN_MS : 60;
-  settleTimer = setTimeout(() => {
-    const now = Date.now();
-    const drained = closedAt > 0 && now - closedAt >= CLOSE_DRAIN_MS;
-    const quietFor = now - lastTextAt;
-    const elapsed = now - releasedAt;
-    if (drained || quietFor >= SETTLE_MS || elapsed >= MAX_WAIT_MS) {
-      finalize().catch((error) =>
-        log.error("voice-typing: settle finalize failed", { error: String(error) }),
-      );
-    } else {
-      waitForSettle();
-    }
-  }, delay);
+  if (!busy || releasedAt === 0) return;
+  const v = settleVerdict({
+    now: Date.now(),
+    releasedAt,
+    closedAt,
+    failed,
+    lastSegmentAt,
+    tailPending: transcript.hasPendingTail(),
+  });
+  if ("finalize" in v) {
+    const d = settleNow(v.finalize);
+    if (d) void enqueueDelivery(d);
+    return;
+  }
+  settleTimer = setTimeout(waitForSettle, v.waitMs);
+}
+
+/** One settled dictation, handed from the session (which may already be
+ *  running the next one) to delivery. Captured in one synchronous step, so
+ *  nothing in it changes while the delivery awaits. */
+interface Delivery {
+  reason: SettleReason | "restart";
+  /** Its session generation: a newer one owns the overlay. */
+  myGen: number;
+  /** Its own transcript instance; the next press makes a fresh one. */
+  t: SessionTranscript;
+  /** Release → settle, for the log (null if it was never released). */
+  waitMs: number | null;
+  closed: boolean;
+  segments: number;
+}
+
+/**
+ * End the open dictation and hand it over for delivery. Synchronous, so the
+ * next press can start right behind it, and idempotent: whichever of the
+ * close, the settle timer or a re-press gets here first owns the delivery,
+ * and everything after it finds `busy` false.
+ */
+function settleNow(reason: Delivery["reason"]): Delivery | null {
+  if (!busy) return null;
+  const d: Delivery = {
+    reason,
+    myGen: gen,
+    t: transcript,
+    waitMs: releasedAt > 0 ? Date.now() - releasedAt : null,
+    closed: closedAt > 0,
+    segments: segmentCount,
+  };
+  busy = false;
+  clearTimeout(settleTimer);
+  clearTimeout(capTimer);
+  return d;
+}
+
+/** Queue `d` behind every earlier delivery (see `deliveryChain`). */
+function enqueueDelivery(d: Delivery): Promise<void> {
+  deliveryChain = deliveryChain
+    .then(() => deliver(d))
+    .catch((error) =>
+      log.error("voice-typing: delivery failed", { reason: d.reason, error: String(error) }),
+    );
+  return deliveryChain;
 }
 
 /**
@@ -499,7 +591,7 @@ function waitForSettle() {
  * is one-way — no undo, no re-selection — so polishing after the paste would
  * mean typing over a window we do not own. Total by construction: `text` is
  * the text to paste, which is the polished version when everything went right
- * and the raw transcript in every other case, so `finalize` has nothing to
+ * and the raw transcript in every other case, so `deliver` has nothing to
  * handle. `outcome` says which, for the overlay's note. `signal` abandons the
  * round trip (resolving to `"cancelled"` with the raw text). See `polish.ts`.
  */
@@ -514,7 +606,7 @@ async function polishForPaste(
   if (!canPolish(settings)) return { text: raw, outcome: "off" };
   if (!shouldPolish(raw)) return { text: raw, outcome: "tooShort" };
   // Only claim the overlay while it is still ours to claim; a press during the
-  // round trip owns it from here (the gen check in `finalize` is the same guard
+  // round trip owns it from here (the gen check in `deliver` is the same guard
   // for the "done" tail).
   if (gen === myGen) await emit("voicetyping://session", { phase: "polishing" });
   const { text, outcome } = await polishTranscriptOutcome({
@@ -524,19 +616,29 @@ async function polishForPaste(
     speakerTerms: profileTerms(settings),
     signal,
   });
-  // The raw text was already rewritten by the overlay; the polished text never
-  // was, and a model can turn a dictionary term back into a misheard variant
-  // that the prompt's "preserve" line does not catch. Run the same
-  // deterministic pass over it (idempotent, so a term that is already right
-  // stays right). Unpolished text goes out exactly as the overlay showed it.
+  // The raw text already went through the dictionary (normalizeTranscriptText
+  // in the transcript's report); the polished text never did, and a model can
+  // turn a dictionary term back into a misheard variant that the prompt's
+  // "preserve" line does not catch. Run the same deterministic pass over it
+  // (idempotent, so a term that is already right stays right). Unpolished text
+  // goes out exactly as the overlay showed it.
   return { text: text === null ? raw : applyReplacements(text), outcome };
 }
 
-async function finalize() {
-  const myGen = gen;
-  busy = false;
-  clearTimeout(capTimer);
-  const raw = latestText.trim();
+/** Polish, copy, paste and record one settled dictation, then tell the
+ *  overlay what was delivered. Runs on `deliveryChain`, one at a time. */
+async function deliver(d: Delivery): Promise<void> {
+  // Settled dictations only exist after a press, which already waited for
+  // this — but the report below reads the dictionary cache, so say so here.
+  await whenDictionaryReady();
+  const raw = ((await d.t.report(normalizeTranscriptText))?.text ?? "").trim();
+  // Never the text itself (user data): how and when it settled, and how much.
+  const timing = { reason: d.reason, waitMs: d.waitMs, closed: d.closed };
+  if (raw) {
+    log.info("voice-typing: settled", { ...timing, chars: raw.length });
+  } else {
+    log.warn("voice-typing: dictation ended empty", { ...timing, segments: d.segments });
+  }
   let text = raw;
   /** Did the synthetic paste actually land? Stays true when the copy/paste
    *  round trip threw, because then we don't know what reached the clipboard
@@ -544,7 +646,7 @@ async function finalize() {
   let pasted = true;
   let outcome: PolishOutcome = "off";
   if (raw) {
-    ({ text, outcome } = await polishForPaste(raw, myGen));
+    ({ text, outcome } = await polishForPaste(raw, d.myGen));
     let appBundleId: string | null = null;
     try {
       await invoke("copy_to_clipboard", { text });
@@ -563,15 +665,18 @@ async function finalize() {
       // happened and names the manual key instead.
       if (!paste.pasted) {
         log.warn("voice-typing: auto-paste refused; text left on the clipboard", { appBundleId });
+      } else if (appBundleId === PARLEY_BUNDLE_ID) {
+        // Posted, but into Parley itself — frontmost because one of its own
+        // windows took the click — usually with no text field focused, so
+        // the text landed nowhere. It is on the clipboard: say so, and do not
+        // watch a field the user was not typing in.
+        log.warn("voice-typing: paste went to Parley itself; reporting clipboard-only");
+        pasted = false;
       }
-      log.info("voice-typing: copied", {
-        chars: text.length,
-        pasted: paste.pasted,
-        appBundleId,
-      });
+      log.info("voice-typing: copied", { chars: text.length, pasted, appBundleId });
       // Only a text that actually landed somewhere can be corrected in place.
-      if (paste.pasted) {
-        observePastedField(text, myGen).catch((error) =>
+      if (pasted) {
+        observePastedField(text, d.myGen).catch((error) =>
           log.warn("voice-typing: field observation failed", { error: String(error) }),
         );
       }
@@ -582,14 +687,15 @@ async function finalize() {
       log.warn("voice-typing: append history failed", { error: String(error) }),
     );
   }
-  // A new press may have started a session while the copy/paste above was in
-  // flight — its overlay is live, and this finalize's tail must not flip it to
-  // "done" or hide it. The text above was still delivered (it predates the
+  // A new press may have started a session while the delivery above was in
+  // flight — its overlay is live, and this delivery's tail must not flip it
+  // to "done" or hide it. The text above was still delivered (it predates the
   // new session).
-  if (gen !== myGen) return;
+  if (gen !== d.myGen) return;
   await emit("voicetyping://session", {
     phase: "done",
     message: doneMessage({ text, pasted, outcome }),
+    text,
   });
   scheduleHide();
 }

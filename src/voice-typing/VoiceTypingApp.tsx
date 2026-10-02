@@ -7,12 +7,8 @@ import { useI18n, type TranslationKey } from "../i18n";
 import { useThemePreference } from "../lib/theme";
 import { formatChordLabel, modChordCap } from "../lib/commands/format";
 import { log } from "../lib/log";
-import {
-  SessionTranscript,
-  type Segment,
-  type SessionEvent,
-  type TextReport,
-} from "../lib/voiceTyping/transcript";
+import { SessionTranscript, type Segment, type SessionEvent } from "../lib/voiceTyping/transcript";
+import type { DoneMessage } from "../lib/voiceTyping/overlay";
 import {
   SUGGEST_ACTION_EVENT,
   SUGGEST_EVENT,
@@ -57,8 +53,8 @@ const ERROR_KEYS: Record<string, TranslationKey> = {
   key: "voiceTyping.error.key",
 };
 
-/** listening = recording; finalizing = waiting for the STT final flush; done =
- *  copied. */
+/** listening = recording; finalizing = waiting for the STT's answer to the
+ *  release; done = delivered (or nothing was heard — see `verdict`). */
 /** `polishing` is a second, longer wait after `finalizing`: the transcript has
  *  settled and is being cleaned up by the model before it is pasted. It gets
  *  its own phase rather than reusing `finalizing` because it is the only part
@@ -92,12 +88,21 @@ function instantWaveform(level: number): number[] {
   });
 }
 
+/** The verdicts that mean the text reached the clipboard (see doneMessage). */
+const COPIED_VERDICTS: ReadonlySet<string> = new Set([
+  "ok",
+  "ok-unpolished",
+  "clipboard-only",
+] satisfies DoneMessage[]);
+
 /**
  * The floating dictation overlay. Listens to the same realtime transcription
- * events as a meeting (tagged source "voice-typing"), normalizes them for
- * display (Simplified → Traditional, then the user's phrase dictionary), and
- * reports the current text back to the host so the clipboard matches what's
- * shown. A waveform tracks the live mic level.
+ * events as a meeting (tagged source "voice-typing") and normalizes them for
+ * display (Simplified → Traditional, then the user's phrase dictionary). It is
+ * display only: the host keeps its own transcript of the same events and
+ * delivers from that, then tells this window what it delivered on `done` —
+ * the text, polished or not, and a verdict. From then on the pill is frozen on
+ * exactly that. A waveform tracks the live mic level while listening.
  *
  * It also renders the "add this correction to the dictionary?" bubble the host
  * pushes here after the user fixes a word in the app they pasted into.
@@ -129,7 +134,15 @@ export const VoiceTypingApp = () => {
     Array.from({ length: BAR_COUNT }, () => BAR_FLOOR),
   );
 
+  // What the host said about the delivery (a DoneMessage), null until `done`.
+  const [verdict, setVerdict] = useState<string | null>(null);
+
   const transcript = useRef(new SessionTranscript());
+  // Set on `done`: the pill shows what was delivered, and a straggling
+  // segment (or a conversion still in flight) must not replace it.
+  const frozen = useRef(false);
+  // The phase as the event handlers see it (they are bound once).
+  const phaseRef = useRef<Phase>("listening");
   // Stable per-position keys for the waveform bars (values shift, positions don't).
   const barKeys = useRef(Array.from({ length: BAR_COUNT }, (_, i) => `bar-${i}`));
 
@@ -152,11 +165,8 @@ export const VoiceTypingApp = () => {
   const publish = useRef(async () => {});
   publish.current = async () => {
     const report = await transcript.current.report(normalizeTranscriptText);
-    if (!report) return;
+    if (!report || frozen.current) return;
     setText(report.text);
-    emit("voicetyping://text", report satisfies TextReport).catch((error) =>
-      log.warn("voice typing overlay: text publish failed", { error: String(error) }),
-    );
   };
 
   // Back to a blank pill: the last dictation's text, verdict, and fade are
@@ -168,6 +178,7 @@ export const VoiceTypingApp = () => {
     setFading(false);
     setPasteBlocked(false);
     setUnpolished(false);
+    setVerdict(null);
     setSuggest(null);
     setSuggestAdded(false);
   };
@@ -190,6 +201,11 @@ export const VoiceTypingApp = () => {
       );
     };
 
+    const enterPhase = (p: Phase) => {
+      phaseRef.current = p;
+      setPhase(p);
+    };
+
     // Warm the S→T dictionary while the overlay is prewarmed/idle, so the
     // first dictation's publish doesn't stall on the dictionary parse.
     preloadZhConverter();
@@ -197,6 +213,7 @@ export const VoiceTypingApp = () => {
     track(
       listen<Segment>("transcript://segment", (e) => {
         const p = e.payload;
+        if (frozen.current) return;
         if (!transcript.current.accept(p)) return;
         publish.current().catch((error) =>
           log.warn("voice typing overlay: transcript publish failed", {
@@ -207,8 +224,11 @@ export const VoiceTypingApp = () => {
       }),
     );
 
+    // Only while listening: Rust keeps streaming a short tail of audio after
+    // the release, which would otherwise flicker the bars under "finalizing".
     track(
       listen<LevelPayload>("audio://level", (e) => {
+        if (phaseRef.current !== "listening") return;
         if (!transcript.current.owns(e.payload)) return;
         setBars(instantWaveform(e.payload.level));
       }),
@@ -216,41 +236,49 @@ export const VoiceTypingApp = () => {
 
     track(
       listen<SessionEvent>("voicetyping://session", (e) => {
-        if (e.payload.phase === "start") {
-          transcript.current.reset(e.payload.session);
+        const ev = e.payload;
+        if (ev.phase === "start") {
+          transcript.current.reset(ev.session);
+          frozen.current = false;
           resetPresentation();
-          setPhase("listening");
-          // Tell the host the new session has no text yet, so the previous
-          // dictation's last report is not what it pastes.
-          publish.current().catch((error) =>
-            log.warn("voice typing overlay: reset publish failed", { error: String(error) }),
-          );
+          enterPhase("listening");
           return;
         }
-        const { phase: p, message } = e.payload;
-        if (p === "stop") {
-          setPhase("finalizing");
-        } else if (p === "polishing") {
-          setPhase("polishing");
-        } else if (p === "limit") {
-          // Cap hit while the key was held: the transcript still flushes and
-          // pastes; flag the note and fall through the normal finalize path.
-          setLimited(true);
-          setPhase("finalizing");
-        } else if (p === "done") {
+        if (ev.phase === "done") {
+          // The host's word on what was delivered: from here the pill shows
+          // exactly that (the polished text, when polish ran) and ignores any
+          // straggler — before, late tokens kept arriving under a green
+          // "Copied" that no longer matched the clipboard, or had nothing on
+          // it at all.
+          frozen.current = true;
+          if (typeof ev.text === "string") setText(ev.text);
+          setVerdict(ev.message ?? null);
           // "clipboard-only" = the transcript was copied but the synthetic
-          // paste was refused (no Accessibility on macOS, UIPI on Windows).
-          // The confirmation has to change, or the user watches "Copied" go by
-          // while nothing appears where they were typing.
-          setPasteBlocked(message === "clipboard-only");
+          // paste was refused (no Accessibility on macOS, UIPI on Windows), or
+          // it went to Parley itself. The confirmation has to change, or the
+          // user watches "Copied" go by while nothing appears where they were
+          // typing.
+          setPasteBlocked(ev.message === "clipboard-only");
           // "ok-unpolished" = pasted, but raw: the polish pass timed out or
           // failed. Never set together with "clipboard-only" (see doneMessage).
-          setUnpolished(message === "ok-unpolished");
-          setPhase("done");
+          setUnpolished(ev.message === "ok-unpolished");
+          enterPhase("done");
+          return;
+        }
+        const { phase: p, message } = ev;
+        if (p === "stop") {
+          enterPhase("finalizing");
+        } else if (p === "polishing") {
+          enterPhase("polishing");
+        } else if (p === "limit") {
+          // Cap hit while the key was held: the transcript still flushes and
+          // pastes; flag the note and fall through the normal settle path.
+          setLimited(true);
+          enterPhase("finalizing");
         } else if (p === "error") {
           resetPresentation();
           setError(message || "error");
-          setPhase("done");
+          enterPhase("done");
         }
       }),
     );
@@ -263,7 +291,7 @@ export const VoiceTypingApp = () => {
       listen<SuggestPayload>(SUGGEST_EVENT, (e) => {
         resetPresentation();
         setSuggest(e.payload);
-        setPhase("done");
+        enterPhase("done");
       }),
     );
 
@@ -369,15 +397,16 @@ export const VoiceTypingApp = () => {
         </div>
       )}
 
-      {/* Copied-to-clipboard confirmation. The transcript is always on the
-          clipboard, so the "done" state announces it near the overlay. When the
-          auto-paste was refused as well (no Accessibility on macOS, UIPI
-          refusing an elevated window on Windows) it turns warning and names the
-          paste key — otherwise the user reads "Copied", sees nothing appear
-          where they were typing, and assumes the dictation was lost. A
-          dictation whose polish did not come back still reads as a success
-          (it was delivered), but says it went out as dictated. */}
-      {phase === "done" && !error && text && (
+      {/* Copied-to-clipboard confirmation, shown only on the host's word that
+          the text reached the clipboard (not merely because there is text on
+          screen). When the auto-paste was refused as well (no Accessibility
+          on macOS, UIPI refusing an elevated window on Windows) it turns
+          warning and names the paste key — otherwise the user reads "Copied",
+          sees nothing appear where they were typing, and assumes the
+          dictation was lost. A dictation whose polish did not come back still
+          reads as a success (it was delivered), but says it went out as
+          dictated. */}
+      {phase === "done" && !error && COPIED_VERDICTS.has(verdict ?? "") && (
         <div
           className={`flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-medium shadow-md ${
             pasteBlocked
@@ -387,6 +416,14 @@ export const VoiceTypingApp = () => {
         >
           {!pasteBlocked && <Check className="size-2.5" strokeWidth={3} />}
           {doneNote}
+        </div>
+      )}
+
+      {/* Nothing was heard, so nothing was copied: say so plainly, instead of
+          an empty pill that leaves the user guessing. Neutral, not an error. */}
+      {phase === "done" && !error && !suggest && verdict === "empty" && (
+        <div className="rounded-full bg-foreground px-2.5 py-0.5 text-[11px] font-medium text-background shadow-md">
+          {t("voiceTyping.empty")}
         </div>
       )}
 

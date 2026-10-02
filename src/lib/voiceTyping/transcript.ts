@@ -1,6 +1,6 @@
 import { softenPausePeriods } from "./punctuation";
 
-/** A `transcript://segment` payload as the overlay sees it. */
+/** A `transcript://segment` payload as the host and the overlay see it. */
 export interface Segment {
   id: string;
   source: string;
@@ -11,14 +11,19 @@ export interface Segment {
 }
 
 /** `voicetyping://session`. `start` comes from Rust once the previous session's
- *  task is gone and names the new session; the other phases come from the host. */
+ *  task is gone and names the new session; the other phases come from the host.
+ *  `done` carries the verdict (a `DoneMessage`, see overlay.ts) and the text
+ *  that was delivered, so the overlay ends on exactly what was pasted — the
+ *  polished text included — rather than on its own copy of the transcript. */
 export type SessionEvent =
   | { phase: "start"; session: number }
-  | { phase: "stop" | "polishing" | "done" | "error" | "limit"; message?: string };
+  | { phase: "done"; message?: string; text?: string }
+  | { phase: "stop" | "polishing" | "error" | "limit"; message?: string };
 
-/** `voicetyping://text`: what the overlay shows for `session`, which is what the
- *  host copies and pastes. */
-export interface TextReport {
+/** One dictation's text as `report()` renders it: what the overlay shows while
+ *  it runs and what the host delivers once it settles — the two windows fold
+ *  the same segments through the same pipeline. */
+export interface TranscriptText {
   text: string;
   session: number;
 }
@@ -33,8 +38,10 @@ function idIndex(id: string): number {
 }
 
 /**
- * The transcript the overlay shows for one dictation: committed runs keyed by
- * segment id, in id order, then the tentative tail.
+ * The transcript of one dictation: committed runs keyed by segment id, in id
+ * order, then the tentative tail. The overlay keeps one to display; the host
+ * keeps one per session to deliver, so a new session's instance can never
+ * clear the text an older delivery is still reading.
  */
 export class SessionTranscript {
   private session: number | null = null;
@@ -60,6 +67,13 @@ export class SessionTranscript {
     return this.session === null || p.session >= this.session;
   }
 
+  /** Whether the text still ends in a tentative run: words the recognizer may
+   *  yet revise, or finalize. An endpoint or `<fin>` response commits it and
+   *  sends an empty tail. */
+  hasPendingTail(): boolean {
+    return this.interim.trim() !== "";
+  }
+
   /** Fold a segment in. Returns false when the segment is not ours. */
   accept(seg: Segment): boolean {
     if (!this.owns(seg)) return false;
@@ -77,7 +91,7 @@ export class SessionTranscript {
    *  pause-made full stops softened. Null when a reset landed while the
    *  conversion was in flight: the text is a previous dictation's and must not
    *  be shown or reported for this one. */
-  async report(normalize: Normalize): Promise<TextReport | null> {
+  async report(normalize: Normalize): Promise<TranscriptText | null> {
     const session = this.session;
     if (session === null) return null;
     const entries = [...this.finals.entries()].sort((a, b) => idIndex(a[0]) - idIndex(b[0]));
@@ -100,8 +114,8 @@ export class SessionTranscript {
     // space), and only this join can see a seam. It must not move into
     // normalizeTranscriptText: that runs per segment, and it is shared with
     // meetings and replay, which keep the STT's punctuation as it came. The
-    // softened text is what the overlay shows and the host copies, polishes,
-    // pastes and saves, so all of them stay the same text.
+    // host and the overlay both report through here, so what the overlay shows
+    // and what the host copies, polishes, pastes and saves stay the same text.
     return { text: softenPausePeriods((finals + interim).trim()), session };
   }
 }
@@ -109,7 +123,7 @@ export class SessionTranscript {
 /**
  * The host's side of the same token: which backend session its events belong
  * to. Between a press and Rust's `start` event nothing is owned, so a previous
- * session's late error, close, or text report cannot be taken for the new one's.
+ * session's late error, close, or segment cannot be taken for the new one's.
  */
 export class SessionOwner {
   private current: number | null = null;

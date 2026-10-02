@@ -15,6 +15,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -24,16 +25,27 @@ use crate::commands::{read_config_file, write_config_file};
 use crate::transcription::common::VOICE_TYPING_SOURCE;
 use crate::transcription::{SttProvider, TranscribeConfig};
 
-/// Grace for the post-release final flush before a lingering session task is
-/// force-aborted (mirrors `stop_meeting`'s backstop). The frontend waits at
-/// most ~3 s for the flush, so 8 s cuts only genuine zombies.
-const FLUSH_ABORT_GRACE: std::time::Duration = std::time::Duration::from_secs(8);
+/// Grace for the post-release final flush, counted from the cut, before a
+/// lingering session task is force-aborted (mirrors `stop_meeting`'s backstop).
+/// It only cuts genuine zombies: the host stops waiting CLOSE_WAIT_MAX_MS
+/// (6 s) after the release, and a healthy session that is merely never told
+/// the stream is over ends itself first, DRAIN_READ_GRACE (7 s) after its
+/// input drains — which, unlike this abort, still bills the audio and fires
+/// `stt://closed`.
+const FLUSH_ABORT_GRACE: Duration = Duration::from_secs(8);
+
+/// Audio kept after key-up before the hard cut. People let go during the last
+/// syllable's decay, and the recognizer needs a little trailing context to
+/// close the last word — without it the word was dropped or misheard. Short of
+/// a conversational turn gap, so a remark to someone after the release mostly
+/// stays out. `Duration::ZERO` restores #128's exact-key-up cut.
+const RELEASE_TAIL: Duration = Duration::from_millis(250);
 
 /// Extra grace on top of the hosted single-session cap before the backend
 /// force-stops the mic. The frontend caps and stops the session at exactly the
 /// limit; this watchdog only fires when the webview never did (hung/crashed),
 /// so it must not race the normal frontend stop.
-const CAP_BACKEND_GRACE: std::time::Duration = std::time::Duration::from_secs(20);
+const CAP_BACKEND_GRACE: Duration = Duration::from_secs(20);
 
 /// The one live voice-typing session task: the next start retires it before
 /// opening a new one, and a stop bounds its flush.
@@ -44,16 +56,21 @@ pub struct VoiceTypingState(Arc<Mutex<VtInner>>);
 struct VtInner {
     session: u64,
     task: Option<tauri::async_runtime::JoinHandle<()>>,
-    /// The current session's audio cutoff. `stop_voice_typing` sets it to hard
-    /// cut the stream on release so nothing said after the key is let go is
-    /// transcribed (see `run_metered_session`). Replaced each start.
+    /// The current session's audio cutoff. `stop_voice_typing` sets it
+    /// RELEASE_TAIL after key-up to hard cut the stream, so nothing said after
+    /// that is transcribed (see `run_metered_session`). Replaced each start.
     cutoff: Option<Arc<AtomicBool>>,
+    /// The gate of the capture this session opened (`Begin::Started`), so a
+    /// stop can end exactly that capture and never a newer one (see
+    /// `MicCoordinator::stop_if`). `None` while the session taps a meeting's
+    /// mic: the meeting owns that capture, and the cutoff alone ends the tap.
+    mic_gate: Option<Arc<AtomicBool>>,
 }
 
 /// How long the next start waits for the previous task to finish the poll it
 /// was aborted in. A poll is one frame parse or one emit, so this only cuts a
 /// task stuck in a bug; its stragglers carry the old session id and are dropped.
-const RETIRE_GRACE: std::time::Duration = std::time::Duration::from_millis(300);
+const RETIRE_GRACE: Duration = Duration::from_millis(300);
 
 impl VoiceTypingState {
     /// Retire the previous task, then `announce` the next session id and
@@ -64,6 +81,10 @@ impl VoiceTypingState {
         let (session, previous) = {
             let mut vt = self.0.lock().unwrap();
             vt.session += 1;
+            // The handles belong to the session being retired; until `adopt`
+            // installs the new one's, a stop must find nothing to cut.
+            vt.cutoff = None;
+            vt.mic_gate = None;
             (vt.session, vt.task.take())
         };
         if let Some(task) = previous {
@@ -84,18 +105,36 @@ impl VoiceTypingState {
         session: u64,
         task: tauri::async_runtime::JoinHandle<()>,
         cutoff: Arc<AtomicBool>,
+        mic_gate: Option<Arc<AtomicBool>>,
     ) {
         let mut vt = self.0.lock().unwrap();
         if vt.session == session {
             vt.task = Some(task);
             vt.cutoff = Some(cutoff);
+            vt.mic_gate = mic_gate;
         } else {
             task.abort();
         }
     }
 
-    fn is_current(&self, session: u64) -> bool {
-        self.0.lock().unwrap().session == session
+    /// Whether `session` is current AND still capturing: its release has not
+    /// cut it yet. A stopped session stays current until the next start, so
+    /// `session == current` alone made the cap watchdog fire (and warn) ~10
+    /// minutes after the last dictation of every burst.
+    fn is_capturing(&self, session: u64) -> bool {
+        let vt = self.0.lock().unwrap();
+        vt.session == session
+            && vt
+                .cutoff
+                .as_ref()
+                .is_some_and(|c| !c.load(Ordering::SeqCst))
+    }
+
+    /// The current session's id with its cutoff and mic gate, read under one
+    /// lock so whatever cuts with them cuts that session and no other.
+    fn handles(&self) -> (u64, Option<Arc<AtomicBool>>, Option<Arc<AtomicBool>>) {
+        let vt = self.0.lock().unwrap();
+        (vt.session, vt.cutoff.clone(), vt.mic_gate.clone())
     }
 
     fn abort_if_current(&self, session: u64) {
@@ -173,12 +212,25 @@ pub async fn start_voice_typing(
             );
         })
         .await;
-    let Some(rx) = acquire_mic(&coord, &tap, input_device)? else {
+    let opening = Instant::now();
+    let Some((rx, mic_gate)) = acquire_mic(&coord, &tap, input_device)? else {
         // Unreachable in practice: the host serializes press/release, so no
         // second voice-typing start can land between the stop above and this
         // begin. Kept for safety.
         return Ok(());
     };
+    // Everything said between the press and this point is lost (the capture
+    // is not running yet), so it is worth knowing how long it takes: a
+    // Bluetooth headset can need a second or more.
+    let tapped = if mic_gate.is_none() {
+        " (meeting tap)"
+    } else {
+        ""
+    };
+    log::info!(
+        "voice-typing: mic open in {}ms{tapped}",
+        opening.elapsed().as_millis()
+    );
     let model = model
         .filter(|m| !m.trim().is_empty())
         .unwrap_or_else(|| provider.default_model().to_string());
@@ -190,8 +242,9 @@ pub async fn start_voice_typing(
         relay_endpoint,
         vocabulary: vocabulary.unwrap_or_default(),
     };
-    // Per-session cutoff: `stop_voice_typing` flips it to end the stream the
-    // moment the key is released, before the mic thread even notices the gate.
+    // Per-session cutoff: `stop_voice_typing` flips it to end the stream
+    // RELEASE_TAIL after the key is released, before the mic thread even
+    // notices the gate.
     let cutoff = Arc::new(AtomicBool::new(false));
     let task = run_metered_session(
         &app,
@@ -208,7 +261,7 @@ pub async fn start_voice_typing(
         None,
         Some(session),
     );
-    state.adopt(session, task, cutoff);
+    state.adopt(session, task, cutoff, mic_gate);
     // The Windows tray's voice-typing item now reads "Stop" (no-op elsewhere).
     crate::tray::set_voice_typing_active(&app, true);
 
@@ -221,6 +274,13 @@ pub async fn start_voice_typing(
     Ok(())
 }
 
+/// The PCM a dictation session reads, with the gate of the capture it opened
+/// (`None` when it taps a meeting's mic).
+type MicInput = (
+    tokio::sync::mpsc::UnboundedReceiver<Vec<i16>>,
+    Option<Arc<AtomicBool>>,
+);
+
 /// Take the microphone for a dictation session: our own capture normally, or a
 /// tee of the meeting's raw mic when a meeting owns the one input stream.
 /// `Ok(None)` means voice typing already holds the mic and the start is a no-op.
@@ -228,14 +288,20 @@ fn acquire_mic(
     coord: &MicCoordinator,
     tap: &MicTap,
     input_device: Option<String>,
-) -> Result<Option<tokio::sync::mpsc::UnboundedReceiver<Vec<i16>>>, String> {
+) -> Result<Option<MicInput>, String> {
     match coord.begin(MicUser::VoiceTyping) {
         Begin::Started(gate) => {
             let mic = Microphone {
                 device_name: input_device,
             };
-            match spawn_capture(coord, MicUser::VoiceTyping, mic, gate, "voice-typing") {
-                Ok(rx) => Ok(Some(rx)),
+            match spawn_capture(
+                coord,
+                MicUser::VoiceTyping,
+                mic,
+                gate.clone(),
+                "voice-typing",
+            ) {
+                Ok(rx) => Ok(Some((rx, Some(gate)))),
                 Err(e) => {
                     coord.stop(MicUser::VoiceTyping);
                     Err(format!("microphone failed to start: {e}"))
@@ -253,26 +319,51 @@ fn acquire_mic(
         Begin::Busy(MicUser::Meeting) => {
             let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
             tap.subscribe(tx)?;
-            Ok(Some(rx))
+            Ok(Some((rx, None)))
         }
         Begin::Busy(owner) => Err(format!("microphone is in use by {owner:?}")),
     }
 }
 
 /// Force-stop the mic once the hosted per-dictation cap (+ grace) has passed,
-/// unless `session` already ended or was superseded.
+/// unless the release already cut `session`, or it was superseded. A hung
+/// webview, which never cuts, is still caught.
 fn arm_cap_watchdog(app: &AppHandle, state: VoiceTypingState, session: u64, secs: u64) {
     let app = app.clone();
-    let deadline = std::time::Duration::from_secs(secs) + CAP_BACKEND_GRACE;
+    let deadline = Duration::from_secs(secs) + CAP_BACKEND_GRACE;
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(deadline).await;
-        if !state.is_current(session) {
+        if !state.is_capturing(session) {
             return;
         }
         log::warn!("voice-typing: hosted session exceeded {secs}s cap; backend safety-stop");
-        app.state::<MicCoordinator>().stop(MicUser::VoiceTyping);
+        let (current, cutoff, gate) = state.handles();
+        if current == session {
+            let a = app.clone();
+            let _ = tauri::async_runtime::spawn_blocking(move || {
+                cut_now(&a.state::<MicCoordinator>(), cutoff.as_ref(), gate.as_ref())
+            })
+            .await;
+        }
         state.abort_if_current(session);
     });
+}
+
+/// Cut a session's audio: set its cutoff (the counter stops forwarding, which
+/// closes the STT input and starts the final flush) and stop the capture it
+/// opened — that capture only, by gate identity, so a cut that lands after a
+/// quick re-press cannot stop the new dictation's mic. Returns whether a
+/// capture was stopped. Blocking: stopping joins the capture threads with a
+/// grace of up to 1.5 s, so async callers run it on the blocking pool.
+fn cut_now(
+    coord: &MicCoordinator,
+    cutoff: Option<&Arc<AtomicBool>>,
+    gate: Option<&Arc<AtomicBool>>,
+) -> bool {
+    if let Some(c) = cutoff {
+        c.store(true, Ordering::SeqCst);
+    }
+    gate.is_some_and(|g| coord.stop_if(MicUser::VoiceTyping, g))
 }
 
 /// Name of the voice-typing history file (one JSON object per line) in the app
@@ -308,38 +399,55 @@ pub fn write_voice_history(app: AppHandle, content: String) -> Result<(), String
     write_config_file(&app, HISTORY_FILE, &content)
 }
 
-/// Stop the session: clear its gate and join the mic thread with a bounded
-/// grace (which drops its PCM sender, closing the STT session cleanly — the
-/// graceful path that lets the provider flush its final tokens). No-op if
-/// voice typing doesn't own the mic.
+/// Stop the session: after RELEASE_TAIL (`tail`, the default) or at once
+/// (`tail: false` — the hosted cap, which must not stream past its limit), set
+/// the cutoff and stop the capture this session opened. The cutoff closes the
+/// STT input, the graceful path that lets the provider flush its final tokens;
+/// the host waits for that flush (`stt://closed`) before it pastes.
 ///
-/// Backstop: a provider/relay that never closes the socket would leave the
-/// session task parked on its read half forever. Mirror `stop_meeting`'s
-/// direct-cancel safety net — abort the task once the flush window has long
-/// passed. Guarded by the session id so a backstop from THIS session can never
-/// abort a newer one started during the grace.
+/// Returns immediately; the tail and the cut run in the background. A quick
+/// re-press queues its start behind this command on the host, and holding it
+/// for the tail would cost the NEXT dictation its first 250 ms. A start that
+/// does land during the tail is safe: it releases this session's capture
+/// itself, and the cut stops by capture identity (`MicCoordinator::stop_if`),
+/// so it cannot stop the new one.
 ///
-/// `async` for the same reason as [`start_voice_typing`], with one extra: the
-/// `coord.stop` below joins the capture threads with a bounded grace, and doing
-/// that on the main thread hitched every window on every key release.
+/// Backstop: a provider/relay that never ends the stream would leave the
+/// session task parked on its read half. DRAIN_READ_GRACE ends a healthy one
+/// first; for anything else mirror `stop_meeting`'s direct-cancel safety net
+/// and abort the task once the flush window has long passed. Guarded by the
+/// session id so a backstop from THIS session can never abort a newer one
+/// started during the grace.
+///
+/// `async` for the same reason as [`start_voice_typing`], and the capture stop
+/// runs on the blocking pool: it joins the capture threads with a bounded
+/// grace, which on the main thread hitched every window on every key release
+/// and on an async worker could stall the task driving the flush's socket.
 #[tauri::command]
 pub async fn stop_voice_typing(
     app: AppHandle,
-    coord: State<'_, MicCoordinator>,
     state: State<'_, VoiceTypingState>,
+    tail: Option<bool>,
 ) -> Result<(), String> {
     crate::tray::set_voice_typing_active(&app, false);
-    // Hard cut FIRST: stop forwarding audio to the STT session immediately so
-    // nothing captured after release is transcribed, and its input closes now
-    // for a prompt final flush — set before `coord.stop` so forwarding ceases
-    // without waiting for the mic thread to observe the cleared gate.
-    if let Some(cutoff) = state.0.lock().unwrap().cutoff.as_ref() {
-        cutoff.store(true, Ordering::SeqCst);
-    }
-    coord.stop(MicUser::VoiceTyping);
-    let session = state.0.lock().unwrap().session;
+    let (session, cutoff, gate) = state.handles();
     let state = state.inner().clone();
+    let tail = if tail.unwrap_or(true) {
+        RELEASE_TAIL
+    } else {
+        Duration::ZERO
+    };
     tauri::async_runtime::spawn(async move {
+        // A second stop (the cap racing a release) finds the cut already made
+        // and must not add another tail.
+        if !tail.is_zero() && cutoff.as_ref().is_some_and(|c| !c.load(Ordering::SeqCst)) {
+            tokio::time::sleep(tail).await;
+        }
+        let a = app.clone();
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            cut_now(&a.state::<MicCoordinator>(), cutoff.as_ref(), gate.as_ref())
+        })
+        .await;
         tokio::time::sleep(FLUSH_ABORT_GRACE).await;
         state.abort_if_current(session);
     });
@@ -518,6 +626,7 @@ mod imp {
         ) -> CGEventRef;
         fn CGEventSetFlags(event: CGEventRef, flags: u64);
         fn CGEventPost(tap: u32, event: CGEventRef);
+        fn CGEventSourceFlagsState(state_id: i32) -> u64;
     }
 
     #[link(name = "ApplicationServices", kind = "framework")]
@@ -534,6 +643,9 @@ mod imp {
     const KVK_ANSI_V: u16 = 9;
     const FLAG_COMMAND: u64 = 0x0010_0000; // kCGEventFlagMaskCommand
     const HID_EVENT_TAP: u32 = 0; // kCGHIDEventTap
+    const HID_SYSTEM_STATE: i32 = 1; // kCGEventSourceStateHIDSystemState
+    /// Shift, Control, Option, Command and fn (kCGEventFlagMask*).
+    const MODIFIER_FLAGS: u64 = 0x0002_0000 | 0x0004_0000 | 0x0008_0000 | 0x0010_0000 | 0x0080_0000;
 
     /// NSPasteboard generalPasteboard -> clearContents -> setString:forType:.
     /// CFString is toll-free bridged to NSString, so we pass it straight through.
@@ -608,6 +720,16 @@ mod imp {
             return false;
         }
         unsafe {
+            // A quick re-press pastes the previous dictation while the trigger
+            // (⌥Space, or a held right-modifier) is still physically down.
+            // Windows lifts held modifiers before its Ctrl+V; here only the
+            // Command flag is set on the posted events, and whether the window
+            // server folds a held ⌥ into them is unverified. Logged only when
+            // something is held, so an ordinary paste stays quiet.
+            let held = CGEventSourceFlagsState(HID_SYSTEM_STATE) & MODIFIER_FLAGS;
+            if held != 0 {
+                log::info!("voice-typing: pasting with modifiers held (flags {held:#x})");
+            }
             let down = CGEventCreateKeyboardEvent(std::ptr::null(), KVK_ANSI_V, true);
             let up = CGEventCreateKeyboardEvent(std::ptr::null(), KVK_ANSI_V, false);
             if down.is_null() || up.is_null() {
@@ -1260,8 +1382,9 @@ mod imp {
 
 #[cfg(test)]
 mod session_gate_tests {
-    use super::{VoiceTypingState, RETIRE_GRACE};
-    use std::sync::atomic::AtomicBool;
+    use super::{cut_now, VoiceTypingState, RETIRE_GRACE};
+    use crate::capture::{Begin, MicCoordinator, MicUser};
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::time::{Duration, Instant};
     use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
@@ -1284,7 +1407,7 @@ mod session_gate_tests {
                 tokio::task::yield_now().await;
             }
         });
-        state.adopt(session, task, Arc::new(AtomicBool::new(false)));
+        state.adopt(session, task, Arc::new(AtomicBool::new(false)), None);
         entered_rx.recv().await;
     }
 
@@ -1346,5 +1469,71 @@ mod session_gate_tests {
         open_announced(&state, events_tx).await;
         assert!(started.elapsed() < RETIRE_GRACE * 3, "took {:?}", started.elapsed());
         assert_eq!(settled(&mut events).await, vec!["reset", "reset"]);
+    }
+
+    /// Adopt an idle task for `session` with a fresh cutoff; returns the cutoff.
+    fn adopt_idle(state: &VoiceTypingState, session: u64) -> Arc<AtomicBool> {
+        let cutoff = Arc::new(AtomicBool::new(false));
+        let task = tauri::async_runtime::spawn(async {});
+        state.adopt(session, task, cutoff.clone(), None);
+        cutoff
+    }
+
+    /// The cap watchdog's guard: a released (cut) session is over as far as
+    /// the cap goes, even though it stays current until the next start.
+    #[tokio::test]
+    async fn is_capturing_ends_at_the_cut() {
+        let state = VoiceTypingState::default();
+        let session = state.open_session(|_| {}).await;
+        assert!(!state.is_capturing(session), "nothing adopted yet");
+        let cutoff = adopt_idle(&state, session);
+        assert!(state.is_capturing(session));
+
+        cutoff.store(true, Ordering::SeqCst);
+        assert!(!state.is_capturing(session));
+    }
+
+    #[tokio::test]
+    async fn is_capturing_ends_when_a_newer_session_starts() {
+        let state = VoiceTypingState::default();
+        let first = state.open_session(|_| {}).await;
+        let first_cutoff = adopt_idle(&state, first);
+        let second = state.open_session(|_| {}).await;
+        // Never cut — a hung webview — yet no longer the watchdog's business.
+        assert!(!first_cutoff.load(Ordering::SeqCst));
+        assert!(!state.is_capturing(first));
+        adopt_idle(&state, second);
+        assert!(state.is_capturing(second));
+        assert!(!state.is_capturing(first));
+    }
+
+    #[test]
+    fn cut_now_sets_the_cutoff_and_stops_only_its_own_capture() {
+        let coord = MicCoordinator::default();
+        let Begin::Started(old_gate) = coord.begin(MicUser::VoiceTyping) else {
+            panic!("expected a fresh capture");
+        };
+        let old_cutoff = Arc::new(AtomicBool::new(false));
+        // A re-press during the release tail: its start released the old
+        // capture and opened its own.
+        coord.stop(MicUser::VoiceTyping);
+        let Begin::Started(new_gate) = coord.begin(MicUser::VoiceTyping) else {
+            panic!("expected a fresh capture");
+        };
+
+        assert!(!cut_now(&coord, Some(&old_cutoff), Some(&old_gate)));
+        assert!(old_cutoff.load(Ordering::SeqCst));
+        assert_eq!(coord.owner(), Some(MicUser::VoiceTyping));
+        assert!(new_gate.load(Ordering::SeqCst));
+
+        let new_cutoff = Arc::new(AtomicBool::new(false));
+        assert!(cut_now(&coord, Some(&new_cutoff), Some(&new_gate)));
+        assert!(new_cutoff.load(Ordering::SeqCst));
+        assert_eq!(coord.owner(), None);
+
+        // A meeting-tap session has no capture of its own: the cutoff is the cut.
+        let tap_cutoff = Arc::new(AtomicBool::new(false));
+        assert!(!cut_now(&coord, Some(&tap_cutoff), None));
+        assert!(tap_cutoff.load(Ordering::SeqCst));
     }
 }

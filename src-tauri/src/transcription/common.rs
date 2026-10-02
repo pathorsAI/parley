@@ -8,6 +8,8 @@
 //! Diarization is optional: adapters that can't tell speakers apart simply pass
 //! `speaker = 0` for everything, which the UI renders as a single speaker.
 
+use std::time::Duration;
+
 use anyhow::{anyhow, Result};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
@@ -203,6 +205,14 @@ pub async fn connect_with_headers(
     Ok(ws)
 }
 
+/// After a normal stop, how long the read half may take to answer the closing
+/// handshake before the session ends anyway. Just inside the 8 s abort
+/// backstops (`voice_typing::FLUSH_ABORT_GRACE`, `teardown_meeting`), so a
+/// provider or relay that neither closes nor acknowledges the finalize ends in
+/// a normal return — `usage://stt` billed, `stt://closed` fired — rather than
+/// in a silent abort that skips both.
+pub const DRAIN_READ_GRACE: Duration = Duration::from_secs(7);
+
 /// Drive a realtime session's two halves to completion and classify the
 /// outcome. Every adapter hands over:
 /// - `forward`: pumps PCM to the socket; resolves `true` when it drained its
@@ -216,8 +226,25 @@ pub async fn connect_with_headers(
 /// mid-session disconnect is indistinguishable from successful silence
 /// (frozen level meter, no transcript, no event; see `run_metered_session`'s
 /// error surface). A normal stop instead awaits the read half so the
-/// provider's final-token flush is delivered before the session resolves.
+/// provider's final-token flush is delivered before the session resolves —
+/// for at most [`DRAIN_READ_GRACE`]: the flush is the provider's answer to the
+/// closing handshake, and one that never comes must not keep the session (and
+/// its socket) alive until something aborts it.
 pub async fn drive_session<F, R>(provider: &'static str, forward: F, read_loop: R) -> Result<()>
+where
+    F: std::future::Future<Output = bool>,
+    R: std::future::Future<Output = Result<()>>,
+{
+    drive_session_with(provider, forward, read_loop, DRAIN_READ_GRACE).await
+}
+
+/// [`drive_session`] with the post-drain grace as a parameter, for tests.
+async fn drive_session_with<F, R>(
+    provider: &'static str,
+    forward: F,
+    read_loop: R,
+    grace: Duration,
+) -> Result<()>
 where
     F: std::future::Future<Output = bool>,
     R: std::future::Future<Output = Result<()>>,
@@ -228,8 +255,18 @@ where
         drained = &mut forward => {
             if drained {
                 // Normal stop: wait for the final flush. A terminal in-band
-                // error during the flush still surfaces.
-                read_loop.await
+                // error during the flush still surfaces; a flush that never
+                // ends is cut after `grace` and counts as a normal end, since
+                // every token it did deliver has already been emitted.
+                match tokio::time::timeout(grace, read_loop).await {
+                    Ok(result) => result,
+                    Err(_elapsed) => {
+                        log::warn!(
+                            "{provider}: final flush not acknowledged within {grace:?}; ending the session"
+                        );
+                        Ok(())
+                    }
+                }
             } else {
                 // A send failed, so the socket is gone. Give the read half a
                 // short grace to deliver the server's explanation (an in-band
@@ -237,7 +274,7 @@ where
                 // a half-dead connection can leave the read side hanging far
                 // longer than the failure took.
                 let death = || anyhow!("{provider} stream died mid-session (send failed)");
-                match tokio::time::timeout(std::time::Duration::from_secs(5), read_loop).await {
+                match tokio::time::timeout(Duration::from_secs(5), read_loop).await {
                     Ok(read_result) => {
                         read_result?;
                         Err(death())
@@ -443,6 +480,53 @@ mod tests {
             "Parley".to_string(),
         ];
         assert_eq!(clean_vocabulary(&raw), vec!["Parley", "派勒"]);
+    }
+
+    /// A relay that neither closes nor acknowledges the finalize used to park
+    /// the session on its read half until an 8 s abort skipped usage and close.
+    #[tokio::test]
+    async fn a_flush_that_never_ends_is_cut_after_the_grace_as_a_normal_end() {
+        let grace = Duration::from_millis(30);
+        let started = std::time::Instant::now();
+        let result = drive_session_with(
+            "test",
+            async { true },
+            futures_util::future::pending::<Result<()>>(),
+            grace,
+        )
+        .await;
+        assert!(result.is_ok());
+        let took = started.elapsed();
+        assert!(took >= grace, "returned after {took:?}");
+        assert!(took < Duration::from_secs(2), "returned after {took:?}");
+    }
+
+    #[tokio::test]
+    async fn an_error_during_the_flush_still_surfaces() {
+        let result = drive_session_with(
+            "test",
+            async { true },
+            async {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                Err(anyhow!("server error 401: bad key"))
+            },
+            Duration::from_secs(5),
+        )
+        .await;
+        assert!(result.unwrap_err().to_string().contains("401"));
+    }
+
+    #[tokio::test]
+    async fn a_read_loop_that_ends_while_audio_flows_is_a_failure() {
+        let result = drive_session_with(
+            "test",
+            futures_util::future::pending::<bool>(),
+            async { Ok(()) },
+            Duration::from_secs(5),
+        )
+        .await;
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("ended mid-session"), "{error}");
     }
 
     #[test]
