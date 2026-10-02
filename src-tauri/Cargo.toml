@@ -68,6 +68,11 @@ tauri-plugin-os = "2.3.2"
 # Desktop-only: routes a second app launch to the existing instance. macOS gets
 # the same via RunEvent::Reopen, but Windows/Linux have no Dock semantics.
 tauri-plugin-single-instance = "2"
+# Launch at login (Settings › Basic, see autostart.rs). Pinned to 2.5: 2.6+
+# require tauri ^2.12, and this tree is on 2.11 — taking it would drag the
+# tauri crate past @tauri-apps/api 2.11, which the CLI refuses to build. Rust
+# only: the webview talks to our two commands, not the plugin's JS package.
+tauri-plugin-autostart = "~2.5.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 coreaudio-sys = "0.2"
