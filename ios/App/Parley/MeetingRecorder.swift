@@ -371,10 +371,14 @@ final class MeetingRecorder: ObservableObject {
 
     // MARK: relay
 
+    /// The personal dictionary biases a meeting's recognition too, as the
+    /// desktop's does (`src/lib/meeting/start.ts` passes the same vocabulary):
+    /// a name the keyboard learned is a name people say in meetings.
     private func makeRelay(token: String, leg: Int, timeOffsetMs: UInt64) -> SttRelayClient {
         SttRelayClient(
             options: .init(
-                bearerToken: token, feature: "meeting",
+                bearerToken: token, vocabulary: LexiconStore.recognitionTerms(),
+                feature: "meeting",
                 // Every leg numbers its own segments from zero, so without a
                 // per-leg prefix a reconnect would overwrite the opening of the
                 // meeting with its own first sentence.

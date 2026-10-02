@@ -3,10 +3,18 @@ import SwiftUI
 
 /// The personal dictionary, made visible.
 ///
-/// Everything on this screen was learned without being asked for, which is the
+/// Most of this screen was learned without being asked for, which is the
 /// reason the screen exists at all: a feature that quietly rewrites what someone
 /// dictates has to be a list they can read and a row they can delete. The
-/// mechanism is `LexiconStore`; this is the only place a person edits it.
+/// mechanism is `LexiconStore`; this is where a person edits it — adding a
+/// correction outright ("Add correction", the same sheet as "Fix this word" in
+/// the dictation history), a term, or taking either away.
+///
+/// The last section is the one thing here that is not the user's to edit: the
+/// names and phrases the keyboard reads from Contacts and Text Replacement
+/// (`Lexicon.systemTerms`). It is shown so nothing biasing recognition is
+/// hidden, and read-only because it is replaced wholesale every time the
+/// keyboard reads it — a row deleted here would only come back.
 struct PersonalDictionaryView: View {
     /// Read once per appearance rather than observed. The keyboard writes this
     /// file from another process, and there is nothing to observe across that
@@ -16,11 +24,13 @@ struct PersonalDictionaryView: View {
     @State private var lexicon = Lexicon()
     @State private var newTerm = ""
     @State private var showClearConfirmation = false
+    @State private var correction: LexiconCorrectionDraft?
 
     var body: some View {
         Form {
             correctionsSection
             termsSection
+            systemSection
             if !lexicon.pairs.isEmpty || !lexicon.terms.isEmpty {
                 clearSection
             }
@@ -32,6 +42,12 @@ struct PersonalDictionaryView: View {
         .environment(\.defaultMinListRowHeight, 48)
         .navigationTitle("Personal dictionary")
         .onAppear { lexicon = LexiconStore.load() }
+        .sheet(item: $correction) { draft in
+            LexiconCorrectionSheet(heard: draft.heard) { original, replacement in
+                LexiconStore.recordConfirmed(original: original, replacement: replacement)
+                lexicon = LexiconStore.load()
+            }
+        }
         .confirmationDialog(
             "Clear your personal dictionary?", isPresented: $showClearConfirmation,
             titleVisibility: .visible
@@ -49,6 +65,12 @@ struct PersonalDictionaryView: View {
 
     private var correctionsSection: some View {
         Section {
+            Button {
+                correction = LexiconCorrectionDraft(heard: "")
+            } label: {
+                Label("Add correction", systemImage: "plus")
+                    .font(.parley.subheadlineEmphasized)
+            }
             if lexicon.pairs.isEmpty {
                 Text("Nothing learned yet.")
                     .font(.parley.subheadline)
@@ -119,7 +141,28 @@ struct PersonalDictionaryView: View {
         } header: {
             SettingsSection.header("Your terms")
         } footer: {
-            SettingsSection.footer("Names, jargon, and anything else you say often. Parley keeps them so it can prefer your spelling — this list is yours to keep even where transcription can't yet be biased toward it.")
+            SettingsSection.footer("Names, jargon, and anything else you say often. Parley listens for them when you dictate and keeps your spelling.")
+        }
+    }
+
+    // MARK: from the system
+
+    private var systemSection: some View {
+        Section {
+            if lexicon.systemTerms.isEmpty {
+                Text("Nothing here yet. The Parley keyboard brings these in when it opens, with Full Access on.")
+                    .font(.parley.subheadline)
+                    .foregroundStyle(Color(.secondaryLabel))
+            } else {
+                ForEach(lexicon.systemTerms, id: \.self) { term in
+                    Text(verbatim: term)
+                        .foregroundStyle(Color(.secondaryLabel))
+                }
+            }
+        } header: {
+            SettingsSection.header("From Contacts and Text Replacement")
+        } footer: {
+            SettingsSection.footer("Names from your contacts, and phrases you saved in Settings › General › Keyboard › Text Replacement. Parley listens for them after your own words. They refresh automatically whenever the Parley keyboard opens — change them there, not here.")
         }
     }
 

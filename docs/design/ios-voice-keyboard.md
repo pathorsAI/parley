@@ -907,12 +907,29 @@ on a machine that has no App Group container.
 
 The desktop reads the field it pasted into through the Accessibility API and
 watches the value settle. The keyboard has no such thing. Its entire view of the
-field is `textDocumentProxy.documentContextBeforeInput`: a run of text ending at
-the cursor, clipped at a length iOS does not promise, with no notification when
-anything changes. So the shape is a snapshot and a comparison — snapshot the
-window when the dictated text has just landed (`state == .done`), compare it
-against the window again at `viewWillDisappear` or at the start of the next
-session, diff, record.
+field is the proxy's `documentContextBeforeInput` and
+`documentContextAfterInput`: the runs of text either side of the cursor, each
+clipped at a length iOS does not promise, with no notification when anything
+changes. So the shape is a snapshot and a comparison — snapshot both sides when
+the dictated text has just landed, compare them against both sides again at
+`viewWillDisappear` or at the start of the next session, diff, record.
+
+**The snapshot is taken by the insertion, once.** It used to be taken whenever a
+drain saw `state == .done` — and `done` is republished on every drain, which
+runs on every appearance. A keyboard that came back after the user had fixed the
+word re-snapshotted the *fixed* field, and the fix disappeared from the
+comparison. Now `noteInserted` is called from the branch of `drainDownlink` that
+types the transcript, which the `insertedCount` high-water mark already runs
+exactly once per session.
+
+**Both sides of the cursor, not just the text before it.** With only the text
+before the cursor, fixing 派斯 → Pathors in 「我們派斯的產品很好」 and leaving
+the cursor after the fix turned the view into 「我們Pathors」: the rest of the
+sentence was behind the cursor, which a one-sided view cannot tell from deleted —
+and because it sat right against the real change, the diff merged them into
+`派斯的產品很好 → Pathors`. A misheard word after where the cursor ended up was
+never seen at all. Reading both sides (up to 200 characters each), the field is
+the same field wherever the cursor is.
 
 **The scope this buys is narrow, and it is worth stating rather than discovering:
 only edits the user makes while our keyboard is still up in that same field.**
@@ -924,18 +941,24 @@ alignment in a field longer than 200 characters when an edit changes the text's
 length, and `viewWillDisappear` is not a promise on a process iOS kills without
 ceremony. In both cases nothing is learned, which is the intended failure —
 **capturing garbage here becomes a rule that rewrites the user's words from then
-on**, and that is far worse than capturing nothing.
+on**, and that is far worse than capturing nothing. (Fixes made where the
+keyboard cannot see them have their own way in: "Fix this word", below.)
 
-`LexiconCapture.alignable` is the one gate: the two windows have to agree at one
-end or the other, or they are two different pieces of text. It deliberately does
-*not* trim them down to their disagreement first, because a character-level trim
-cuts through the middle of words — "we use pearly" against "we use Parley" shares
-the prefix `we use ` and the suffix `y`, so the trimmed pair is `pearl → Parle`,
-a rule that could never match again since Latin pairs need a whole word. Handing
-both whole windows to a token-level diff is what keeps a learned pair at word
-edges. The anchor is also *weighted* rather than counted — an ideograph is worth
-two — because Chinese packs into five characters what English spends a clause on,
-and a raw count would have refused 在 → 再, the correction this was built for.
+`LexiconCapture.harvest` runs three gates. **Same field:** the token alignment
+has to cover at least half of the smaller view — the ends no longer have to
+agree, because in a field longer than the windows moving the cursor slides both
+of them. **A vocabulary change:** `EditDiff`'s refusals, below. **Anchored:**
+every change has to be pinned by shared text on both sides (at least 3 on each
+side and 6 together, weighted), or, on a side with none, by the real edge of the
+field — and an edge only counts as real when neither view was clipped there,
+since a change that runs into a clipped edge may include text that merely slid
+out of view. Nothing is trimmed before the diff, because a character-level trim
+cuts through the middle of words — "we use pearly" against "we use Parley"
+shares the prefix `we use ` and the suffix `y`, so the trimmed pair is
+`pearl → Parle`, a rule that could never match again since Latin pairs need a
+whole word. The weights count an ideograph as two, because Chinese packs into
+five characters what English spends a clause on, and a raw count would demand
+several times more agreement from a Chinese user than from an English one.
 
 `EditDiff` is that token-level diff: Latin runs are words, ideographs are single
 characters, an LCS aligns them, and adjacent changed tokens merge into one span.
@@ -943,6 +966,22 @@ Most of the file is refusals — pure insertions, pure deletions, case,
 punctuation, whitespace, and anything over ten characters on either side. An
 insertion, a deletion, a typo fix and a wholesale rewrite all arrive through the
 same channel; only one of them is vocabulary.
+
+**A CJK pair is never one character.** Ideographs are diffed one at a time, so
+派斯 → 帕斯 aligns 斯 and comes out as 派 → 帕 — which, applied as a plain
+substring, turns every 派對 into 帕對. When either side of a CJK change would be a
+single character, the shared character after it (or, failing that, before it) is
+taken onto both sides: 派斯 → 帕斯 is learned as 派斯 → 帕斯, 在 → 再 as 在來 → 再來,
+帕索斯 → 派斯 as 帕索斯 → 派斯. An original that is still one character — nothing
+shared to widen into — is refused, `Lexicon.record` refuses it too, and `apply`
+skips single-character originals already on file from before the rule.
+
+Every harvest is logged (`os.Logger`, subsystem
+`com.pathors.parley.ios.keyboard`, category `lexicon`): what was learned, with
+the words `.private`, and every refusal reason by name, public. The app logs how
+many replacements each fold made (category `lexicon`), counts only. Without the
+reasons, a capture that never learns is indistinguishable from one that is never
+fed.
 
 ### Why a pair does nothing until it has been seen twice
 
@@ -979,25 +1018,75 @@ sentence around it. Once insertion becomes one shot at `done` (#309) the boundar
 is zero and the whole transcript goes through the dictionary, which is where this
 wants to end up.
 
-Application itself is three rules, each of them a way of not doing damage: only
+Application itself is four rules, each of them a way of not doing damage: only
 confirmed pairs; longest original first (with both `parley` and `parley cloud` on
-file the longer has to win, or it comes out as neither); and word boundaries with
+file the longer has to win, or it comes out as neither); word boundaries with
 case-insensitive matching for an all-ASCII original against a plain substring
 replacement for CJK, which is what makes `api` leave the `api` inside `rapid`
-alone while 在 → 再 works at all. A pair whose replacement properly contains its
-original is never applied — it would grow the text on every pass.
+alone while 在來 → 再來 works at all; and never a single-CJK-character original.
+A pair whose replacement properly contains its original is never applied — it
+would grow the text on every pass.
 
-### Known follow-up: recognition context
+### Recognition context
 
-The dictionary currently only rewrites text after the fact. Biasing recognition
-*at the source* would be better and the terms are ready for it
-(`LexiconStore.recognitionTerms`), but the wire is deliberately untouched:
-Soniox's config frame takes a `context.terms` list and the desktop fills it
-(`src-tauri/src/transcription/soniox.rs`), while `SonioxProtocol.Config` on the
-phone carries no such field. Whether the hosted relay forwards a `context` from
-an iOS client cannot be established from this side, and a config frame the relay
-rejects costs the user dictation altogether — so adding it is a separate change,
-made against a relay whose behaviour has been confirmed.
+Rewriting after the fact is the second line; the first is biasing recognition
+at the source. Every relay session — dictation and meetings alike, as on the
+desktop — sends `LexiconStore.recognitionTerms()` as Soniox's `context.terms`
+in the config frame (`SonioxProtocol.Config.context`), cleaned exactly as the
+desktop cleans them (`clean_vocabulary`: trimmed, no empties, de-duplicated in
+order) and capped at 200, the desktop's `VOCABULARY_LIMIT`. With no terms the
+field is omitted and the frame is byte-identical to before. The hosted relay
+injects the key and forces the model and forwards every other field unchanged
+(parley-internal `apps/cloud/src/stt.ts`), which is what the desktop has relied
+on since its dictionary shipped — no backend change.
+
+The order of `recognitionTerms` is the priority under every cap: the user's
+typed terms, then the replacements of their corrections, newest first, then the
+system terms below. The polish prompt keeps the first 30 and Soniox the first
+200, so the system's words only ever fill the room the user's leave.
+
+### Corrections the keyboard cannot see: "Fix this word"
+
+Most fixes happen where the keyboard is not looking — with the Apple keyboard,
+after the message was sent, in another app. The dictation history (Library ›
+Voice typing) is where those can be taught: select the misheard words in an
+entry's detail sheet and choose **Fix this word** from the selection menu (or
+long-press a row for **Fix a word**), and a sheet asks for *Heard as* (prefilled
+with the selection) and *Should be*. Saving stores the pair **already confirmed**
+(`LexiconStore.recordConfirmed`, count at the threshold) — the two-sightings rule
+tells a mishearing from a change of mind, and nobody fills in a form by changing
+their mind — so it applies from the next dictation and its replacement joins the
+recognition terms. It also rewrites that entry's text with the pair
+(`DictationHistoryStore.correct`), keeping the words as said: `rawText` is never
+touched, and an entry without one gets its uncorrected text as `rawText`. The
+personal dictionary screen has the same sheet as **Add correction**. Both refuse
+what the dictionary would refuse (`Lexicon.problem`): a single CJK character, a
+replacement that contains its original.
+
+### Contacts and Text Replacement
+
+On its first appearance in a process the keyboard calls
+`requestSupplementaryLexicon`, off the keystroke path, and sorts what comes back
+(`SystemLexicon.partition`):
+
+- **Entries whose `userInput` equals their `documentText`** — contact names, and
+  Text Replacement phrases saved without a shortcut — become the dictionary's
+  *system terms* (`Lexicon.systemTerms`, at most 300), replaced wholesale on
+  every read, and included in `recognitionTerms` after the user's own words.
+  Writing them needs the App Group and so Full Access; without it the write is
+  skipped and the app keeps what was last written. They are listed read-only in
+  Settings › Personal dictionary under *From Contacts and Text Replacement* —
+  shown so nothing that biases recognition is hidden, not editable because the
+  next read would put them back. They are deliberately **not** offered on the
+  English suggestion bar (`LexiconStore.suggestionTerms` is the user's words
+  only): a few hundred names ahead of the word list would put "Andy" before
+  "and" on every keystroke.
+- **Entries whose `userInput` differs** are Text Replacement shortcuts. They stay
+  in the keyboard's memory (`TextReplacements`, no Full Access needed). While the
+  word immediately before the cursor on the English pane is a shortcut
+  (case-insensitively), its expansion is the bar's **first** suggestion; tapping
+  it deletes the shortcut and inserts the expansion. Nothing expands on its own
+  — the bar offers, as everywhere else.
 
 ## Action Button / Control Center trigger
 
@@ -1560,7 +1649,14 @@ the one source that knows the names and jargon this particular person types. The
 live in the App Group, so a keyboard without Full Access simply has none of them
 and the list answers alone; that is a supported state, not a failure, and it is
 the state App Review 4.4.1 judges the keyboard in. The suggestions themselves
-need no network and no App Group at all.
+need no network and no App Group at all. Contact names are *not* among those
+terms, though they are in the dictionary (see "Contacts and Text Replacement"):
+a few hundred names ahead of the list would crowd out the commonest words.
+
+A Text Replacement shortcut in front of the cursor puts its expansion first on
+the bar; a tap deletes the shortcut — which need not be letters, so it is
+deleted by its own length rather than the partial word's — and inserts the
+expansion. Same contract as every other suggestion: offered, never applied.
 
 **The data** is `english-words.txt` in ParleyKit: 40,000 lowercase words, 338 KiB,
 frequency ordered, generated by `scripts/gen-english-words.mjs` from

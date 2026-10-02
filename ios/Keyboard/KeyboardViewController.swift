@@ -92,6 +92,9 @@ final class KeyboardViewController: UIInputViewController {
     /// Everything it does lives in `KeyboardLexiconWatch`; this class only tells
     /// it when the text landed and when the editing is over.
     private let lexicon = KeyboardLexiconWatch()
+    /// Contact names and Text Replacement, read once per process — see
+    /// `KeyboardSystemLexicon`.
+    private let systemLexicon = KeyboardSystemLexicon()
     private var host: UIHostingController<KeyboardRootView>?
     /// A canvas behind the SwiftUI root, shown only when the system's would
     /// disagree with the caps. See `needsOwnBackdrop`.
@@ -415,8 +418,12 @@ final class KeyboardViewController: UIInputViewController {
         returnToField()
         // The field may be a different one, with a different word half-typed in
         // front of the cursor, so both the user's terms and the bar are re-read
-        // rather than carried over.
-        lexiconTerms = WordSuggestions.LexiconTerms(LexiconStore.recognitionTerms())
+        // rather than carried over. The user's own words only: contact names
+        // ahead of the word list would put "Andy" before "and".
+        lexiconTerms = WordSuggestions.LexiconTerms(LexiconStore.suggestionTerms())
+        systemLexicon.load(from: self, canWrite: hasFullAccess) { [weak self] in
+            self?.refreshSuggestions()
+        }
         refreshSuggestions()
         // The tail belongs to the field it was dictated into. Coming back to a
         // *different* field it would read as text that is already there, so it
@@ -470,7 +477,7 @@ final class KeyboardViewController: UIInputViewController {
         // that session's microphone is open and its audio is being held, which
         // is precisely the thing the user is walking away from.
         if hasFullAccess, bridge.listening { Haptics.dictationContinuesInBackground() }
-        lexicon.harvest(context: textDocumentProxy.documentContextBeforeInput)
+        lexicon.harvest(textDocumentProxy)
         leaveComposition()
     }
 
@@ -728,7 +735,7 @@ final class KeyboardViewController: UIInputViewController {
         guard hasFullAccess else { return }
         // A new session ends the last one's editing window: anything the user
         // was going to fix, they have finished fixing.
-        lexicon.harvest(context: textDocumentProxy.documentContextBeforeInput)
+        lexicon.harvest(textDocumentProxy)
         session = UUID().uuidString
         insertedCount = 0
         sessionStartedAt = Date()
@@ -1351,6 +1358,11 @@ final class KeyboardViewController: UIInputViewController {
         let landed = min(max(insertedCount, 0), committed.count)
         if d.state == .done, committed.count > landed {
             typeOutsideComposition(String(committed[landed...]))
+            // The dictated text is all in the field now, so this is the picture
+            // any later edit gets compared against — taken here, by the
+            // insertion, rather than by the `.done` below, which every later
+            // drain repeats over a field the user may already have fixed.
+            lexicon.noteInserted(textDocumentProxy)
             insertedCount = committed.count
             var up = DictationChannel.readUplink() ?? .init(session: session)
             up.insertedCount = insertedCount
@@ -1437,9 +1449,6 @@ final class KeyboardViewController: UIInputViewController {
             // The words are in the field. The wave eases off them rather than
             // stopping mid-crest; the button is already back to the microphone.
             leaveFinishing(settled: true)
-            // The dictated text is all in the field now, so this is the picture
-            // any later edit gets compared against.
-            lexicon.noteInserted(context: textDocumentProxy.documentContextBeforeInput)
             // The tail stays: the last thing said is worth still being able to
             // read once the button has gone quiet.
         case .cancelled:
@@ -1959,12 +1968,15 @@ final class KeyboardViewController: UIInputViewController {
         // Shift is decided from the same read; see `refreshShift`.
         refreshShift(context: context)
         let partial = WordSuggestions.partialWord(before: context)
+        let words =
+            partial.isEmpty
+            ? WordSuggestions.predictions(after: context, in: EnglishWords.bundled)
+            : WordSuggestions.suggestions(
+                for: partial, in: EnglishWords.bundled, lexicon: lexiconTerms)
+        // A Text Replacement shortcut in front of the cursor puts its
+        // expansion first. Offered, never applied: see `TextReplacements`.
         publishSuggestions(
-            partial: partial,
-            suggestions: partial.isEmpty
-                ? WordSuggestions.predictions(after: context, in: EnglishWords.bundled)
-                : WordSuggestions.suggestions(
-                    for: partial, in: EnglishWords.bundled, lexicon: lexiconTerms))
+            partial: partial, suggestions: systemLexicon.lead(words, before: context))
     }
 
     /// One assignment, and only on a real change: a keystroke that changed
@@ -1992,10 +2004,15 @@ final class KeyboardViewController: UIInputViewController {
     ///
     /// The suggestion already carries the case the partial asked for, so it is
     /// inserted as it is shown.
+    ///
+    /// A Text Replacement expansion takes back the shortcut it stands for
+    /// rather than the partial word — the two differ for a shortcut that is
+    /// not letters ("@@") or follows a bracket — so "omw" becomes "On my way!"
+    /// and nothing of the shortcut is left behind.
     func pickSuggestion(_ word: String) {
         // Empty right after a space, where the bar holds predictions: the tap
         // then deletes nothing and only inserts.
-        let partial = bridge.english.partialWord
+        let partial = systemLexicon.expansion(for: word)?.typed ?? bridge.english.partialWord
         keyPressed()
         apply(zhuyin.confirm())
         for _ in 0..<partial.count { textDocumentProxy.deleteBackward() }

@@ -342,6 +342,23 @@
         }
       }
     },
+    "Add correction" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add correction"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新增更正"
+          }
+        }
+      }
+    },
     "Add the Parley keyboard" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1906,6 +1923,23 @@
         }
       }
     },
+    "Fix a word" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fix a word"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "修正用詞"
+          }
+        }
+      }
+    },
     "Fix a word right after dictating it and Parley learns how you say it. What it has learned is in the personal dictionary, where you can also add names it should get right." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1923,6 +1957,23 @@
         }
       }
     },
+    "Fix this word" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fix this word"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "修正這個詞"
+          }
+        }
+      }
+    },
     "Folder name" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1936,6 +1987,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "資料夾名稱"
+          }
+        }
+      }
+    },
+    "From Contacts and Text Replacement" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "From Contacts and Text Replacement"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "來自通訊錄與文字替換"
           }
         }
       }
@@ -2004,6 +2072,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已交給 AI"
+          }
+        }
+      }
+    },
+    "Heard as" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Heard as"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "聽成"
           }
         }
       }
@@ -2922,19 +3007,36 @@
         }
       }
     },
-    "Names, jargon, and anything else you say often. Parley keeps them so it can prefer your spelling — this list is yours to keep even where transcription can't yet be biased toward it." : {
+    "Names from your contacts, and phrases you saved in Settings › General › Keyboard › Text Replacement. Parley listens for them after your own words. They refresh automatically whenever the Parley keyboard opens — change them there, not here." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Names, jargon, and anything else you say often. Parley keeps them so it can prefer your spelling — this list is yours to keep even where transcription can't yet be biased toward it."
+            "value" : "Names from your contacts, and phrases you saved in Settings › General › Keyboard › Text Replacement. Parley listens for them after your own words. They refresh automatically whenever the Parley keyboard opens — change them there, not here."
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "名字、行話，還有任何你常講的詞。Parley 會留著，好照你的寫法來寫——即使目前還無法讓辨識偏向這份清單，它仍然是你的。"
+            "value" : "通訊錄裡的名字，以及你在「設定 › 一般 › 鍵盤 › 文字替換」存下的詞句。Parley 會在你自己的詞之後優先辨識它們。每次 Parley 鍵盤出現時都會自動更新——要修改請到原本的地方，不是這裡。"
+          }
+        }
+      }
+    },
+    "Names, jargon, and anything else you say often. Parley listens for them when you dictate and keeps your spelling." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Names, jargon, and anything else you say often. Parley listens for them when you dictate and keeps your spelling."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "名字、行話，還有任何你常講的詞。聽寫時 Parley 會優先辨識這些詞，並照你的寫法來寫。"
           }
         }
       }
@@ -3173,6 +3275,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "備忘錄"
+          }
+        }
+      }
+    },
+    "Nothing here yet. The Parley keyboard brings these in when it opens, with Full Access on." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nothing here yet. The Parley keyboard brings these in when it opens, with Full Access on."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "目前還沒有。開啟「完全取用」後，Parley 鍵盤出現時就會自動帶入。"
           }
         }
       }
@@ -3624,6 +3743,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "擁有者"
+          }
+        }
+      }
+    },
+    "Parley changes it to this from your next dictation, and listens for it when you speak." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Parley changes it to this from your next dictation, and listens for it when you speak."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "從下一次聽寫開始，Parley 會自動改成這樣，辨識時也會優先聽這個詞。"
           }
         }
       }
@@ -4669,6 +4805,23 @@
         }
       }
     },
+    "Save" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Save"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "儲存"
+          }
+        }
+      }
+    },
     "Saving it to your library…" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5105,6 +5258,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "分享到組織（複製）"
+          }
+        }
+      }
+    },
+    "Should be" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Should be"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "應該是"
           }
         }
       }
@@ -6027,6 +6197,23 @@
         }
       }
     },
+    "The correction can't contain what was heard, or it would keep growing every time it's applied." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The correction can't contain what was heard, or it would keep growing every time it's applied."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「應該是」不能包含「聽成」的內容，否則每次套用都會越改越長。"
+          }
+        }
+      }
+    },
     "The microphone dropped %lld times during this recording." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6533,6 +6720,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "用量（本期）"
+          }
+        }
+      }
+    },
+    "Use at least two characters, so one character isn't changed everywhere it appears." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use at least two characters, so one character isn't changed everywhere it appears."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請至少輸入兩個字，以免單一個字在每個出現的地方都被改掉。"
           }
         }
       }

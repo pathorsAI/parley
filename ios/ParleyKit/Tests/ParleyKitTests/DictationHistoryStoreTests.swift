@@ -37,6 +37,52 @@ final class DictationHistoryStoreTests: XCTestCase {
             source: source, hostBundleID: "com.apple.mobilenotes")
     }
 
+    // MARK: correcting an entry
+
+    func testACorrectionRewritesTheTextAndKeepsTheWordsAsSaid() {
+        let store = makeStore()
+        let e = entry("我們派斯的產品很好，派斯很棒")
+        store.append(e)
+
+        let after = store.correct(id: e.id, original: "派斯", replacement: "Pathors")
+
+        XCTAssertEqual(after.first?.text, "我們Pathors的產品很好，Pathors很棒")
+        // The text was the raw transcript, so it becomes the original.
+        XCTAssertEqual(after.first?.rawText, "我們派斯的產品很好，派斯很棒")
+        XCTAssertEqual(store.load().first?.text, "我們Pathors的產品很好，Pathors很棒")
+    }
+
+    func testACorrectionLeavesAPolishedEntrysOriginalAlone() {
+        let store = makeStore()
+        let e = DictationHistoryEntry(
+            text: "We use pearly daily.", startedAt: clock.now, durationMs: 1_000,
+            source: .keyboard, rawText: "we use pearly every day", polish: .polished)
+        store.append(e)
+
+        let after = store.correct(id: e.id, original: "pearly", replacement: "Parley")
+
+        XCTAssertEqual(after.first?.text, "We use Parley daily.")
+        XCTAssertEqual(after.first?.rawText, "we use pearly every day")
+        XCTAssertEqual(after.first?.polish, .polished)
+    }
+
+    func testACorrectionThatDoesNotOccurChangesNothing() {
+        let store = makeStore()
+        let e = entry("nothing to fix here")
+        store.append(e)
+        let after = store.correct(id: e.id, original: "pearly", replacement: "Parley")
+        XCTAssertEqual(after.first, e)
+    }
+
+    func testACorrectionUsesWholeWordsForLatin() {
+        let store = makeStore()
+        let e = entry("a rapid api call")
+        store.append(e)
+        XCTAssertEqual(
+            store.correct(id: e.id, original: "api", replacement: "API").first?.text,
+            "a rapid API call")
+    }
+
     // MARK: retention
 
     /// 200 is the cap: the 201st entry evicts the oldest, and only the oldest.
