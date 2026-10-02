@@ -119,6 +119,44 @@ the overlay:
   - If ⌥Esc, fn+Esc or another held-key Esc never fires, `parley.log` names
     the chord that did not register (`escape cancel … not registered`).
 
+## Voice typing and the clipboard: what only a person can check
+
+A dictation reaches the field through the clipboard and then gives the
+clipboard back (`insert_text`, `src-tauri/src/voice_typing/clipboard.rs`).
+The bookkeeping is unit-tested against a fake clipboard; what the real
+pasteboard and the apps reading it do is not. On a Mac, and on Windows as
+part of the next section:
+
+- **Your clipboard survives a dictation.** Copy an image (from a browser or
+  Preview), then a link, and each time dictate into Notes and into a browser
+  text field: the text is inserted and the overlay says "Inserted"; ⌘V
+  afterwards pastes the image or the link, not the dictation. `parley.log`
+  shows `clipboard restored` about a second after each paste.
+- **The paste reads the dictation, not the restore.** Dictate into a busy
+  Electron app (Slack, VS Code) and a Chromium page: the dictated text
+  appears, never the clipboard you had before.
+- **A copy made right after wins.** Dictate, then copy something else within
+  the second after the text appears: ⌘V pastes what you copied, and the log
+  says `clipboard changed after the paste; left as it is`.
+- **Back to back.** Two quick dictations in a row, then ⌘V: your original
+  clipboard, not the first dictation.
+- **No paste, so the clipboard is the delivery.** Revoke Accessibility (or
+  click Parley's main window so it is in front) and dictate: the overlay
+  turns warning and says to press ⌘V; the text is on the clipboard and stays
+  there.
+- **Clipboard managers do not keep it.** With Maccy, Raycast or Paste
+  running, dictate: the dictation does not appear in their history.
+- **Nowhere to paste.** Dictate with no text field focused (click the
+  desktop first): nothing is inserted; the overlay's Copy puts the text on the
+  clipboard and the pill turns into "Copied to clipboard", which ⌘V then
+  pastes.
+- **Esc, Undo.** Undo of a cancelled dictation leaves its text on the
+  clipboard to stay, also when the previous dictation's restore was still
+  pending.
+- **A password stays out of it.** Copy a password from a password manager,
+  then dictate: the dictation is inserted, and afterwards the clipboard is
+  empty — Parley neither keeps nor puts back a concealed entry.
+
 ## Windows: what only a Windows machine can check
 
 CI builds and lints the Windows target (`cargo clippy --target
@@ -142,10 +180,10 @@ involved:
   second copy. Quit Parley from the tray ends the process (check Task Manager),
   and mid-meeting it saves the meeting first.
 - **Tray voice typing.** Start voice typing opens the overlay and the item
-  turns into Stop voice typing; the second click ends the dictation and the
-  text lands on the clipboard. Where it pastes depends on which window is in
-  front when the dictation ends — after a tray click that is usually not your
-  document, so the clipboard is the reliable result.
+  turns into Stop voice typing; the second click ends the dictation. Where it
+  goes depends on which window is in front when the dictation ends — after a
+  tray click that is often not your document. When it is Parley itself, the
+  text is left on the clipboard and the overlay says to press Ctrl+V.
 - **Dictating with the window hidden** (`src/lib/voiceTyping/settle.ts`). The
   dictation host runs in the main window, and WebView2 throttles a hidden
   page's timers harder after five minutes. Hide Parley to the tray for longer
@@ -168,14 +206,23 @@ involved:
   right Alt (and AltGr on a German or French layout — no menu bar is left
   armed in Notepad), with Ctrl+Alt+Space held, and with an elevated window in
   front.
-- **Clipboard paste** (`paste_to_frontmost` in `src-tauri/src/voice_typing.rs`).
+- **Clipboard paste** (`insert_text` in `src-tauri/src/voice_typing.rs`).
   Dictating into Notepad, a browser text field and an Office app pastes the
   text at the caret, and the held Ctrl+Alt of the shortcut does not turn the
   paste into Ctrl+Alt+V.
+- **The clipboard comes back** (`clipboard/windows.rs`). Walk the clipboard
+  section above on Windows. Also: copy a range of cells in Excel, dictate into
+  Notepad, then paste into Excel — the cells come back as cells (the restore
+  is best effort: formats that are GDI objects are skipped, and Windows
+  rebuilds the bitmap ones from the DIB). Win+V history (turn it on in
+  Settings › System › Clipboard) does not list the dictation. If the restore
+  never happens, `parley.log` says why (`clipboard changed after the paste`
+  means the sequence number moved while the target app read the paste).
 - **UIPI clipboard-only fallback.** Dictating into a window running as
   administrator (e.g. an elevated terminal) cannot paste — Windows blocks
   input injection into higher-integrity processes. The overlay should say the
-  text is on the clipboard, and Ctrl+V should paste it.
+  text is on the clipboard, and Ctrl+V should paste it; it stays there (no
+  restore follows a refused paste).
 - **Caches** (Settings › MCP Server › Caches). The only way to clear caches on
   Windows, which draws no menu bar: sizes show, each Clear works, and Clear all
   asks first.

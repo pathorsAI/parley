@@ -6,6 +6,7 @@
 
 import { isTauri } from "../tauriEvents";
 import { log } from "../log";
+import type { TranslationKey } from "../../i18n/messages";
 import type { PolishOutcome } from "./polish";
 
 const LABEL = "voice-typing";
@@ -227,19 +228,21 @@ export async function hideOverlay(): Promise<void> {
  * The `message` of the host's `{ phase: "done" }` event — what the overlay's
  * closing confirmation says about a finished dictation:
  *
- * - `empty`: nothing was said, so nothing was copied.
- * - `clipboard-only`: copied, but the synthetic paste was refused (no
- *   Accessibility on macOS, UIPI on Windows) or went to Parley itself (the
- *   host decides that one); the overlay names the paste key.
- * - `ok-unpolished`: pasted, but as dictated, because the polish pass was
+ * - `empty`: nothing was said, so nothing was inserted.
+ * - `clipboard-only`: no paste went out — the synthetic paste was refused (no
+ *   Accessibility on macOS, UIPI on Windows) or Parley itself was in front —
+ *   so the text was left on the clipboard; the overlay names the paste key.
+ * - `ok-unpolished`: inserted, but as dictated, because the polish pass was
  *   attempted and did not come back (timed out, or the request failed).
- * - `ok`: pasted — polished, or with no polish to expect.
+ * - `ok`: inserted — polished, or with no polish to expect.
  *
- * Two more come only from an Undo of an Esc-cancelled dictation (host.ts,
- * deliverRecovered), never from {@link doneMessage}:
+ * Three more never come from {@link doneMessage}:
  *
- * - `recovered`: copied to the clipboard (Undo never pastes).
- * - `nothing`: the cancelled dictation had no text to bring back.
+ * - `recovered`: an Undo of an Esc-cancelled dictation copied it to the
+ *   clipboard (Undo never pastes; host.ts, deliverRecovered).
+ * - `nothing`: that cancelled dictation had no text to bring back.
+ * - `copied`: the user clicked Copy on an inserted dictation's confirmation,
+ *   and its text is on the clipboard now (host.ts, onCopyAction).
  */
 export type DoneMessage =
   | "empty"
@@ -247,7 +250,8 @@ export type DoneMessage =
   | "ok-unpolished"
   | "ok"
   | "recovered"
-  | "nothing";
+  | "nothing"
+  | "copied";
 
 /**
  * Pick the {@link DoneMessage} for one finalized dictation.
@@ -256,9 +260,9 @@ export type DoneMessage =
  * too short) the user is not waiting on it; when the answer was refused by the
  * guard, the raw text is the guard working as designed. But a timeout or a
  * failed request means the "polishing…" beat the user just sat through
- * produced nothing — and pasting the raw text under a plain "Copied" is what
- * kept a CORS failure that broke every hosted polish on the Mac out of sight.
- * A refused paste outranks all of it: that note tells the user to act.
+ * produced nothing — and pasting the raw text under a plain confirmation is
+ * what kept a CORS failure that broke every hosted polish on the Mac out of
+ * sight. A refused paste outranks all of it: that note tells the user to act.
  */
 export function doneMessage(d: {
   text: string;
@@ -269,4 +273,47 @@ export function doneMessage(d: {
   if (!d.pasted) return "clipboard-only";
   if (d.outcome === "timedOut" || d.outcome === "failed") return "ok-unpolished";
   return "ok";
+}
+
+/** The overlay's closing confirmation for a {@link DoneMessage}. */
+export interface DonePill {
+  /** What it says. `voiceTyping.pasteBlocked` takes the paste key as
+   *  `{paste}`. */
+  note: TranslationKey;
+  /** Warning when the user has something left to do (paste by hand). */
+  tone: "success" | "warning";
+  /** Offer Copy: the text went into a field, and not onto the clipboard. A
+   *  paste can land nowhere — no field had focus — and the clipboard has
+   *  already been given back, so this is the way to get the text then. */
+  copy: boolean;
+}
+
+/**
+ * The confirmation pill for the host's verdict, or null when there is none
+ * (no verdict yet, or one with its own note: `empty`, `nothing`). An insert
+ * says "inserted", not "copied": the text did not stay on the clipboard, and
+ * a note that says it did sends the user to ⌘V for nothing.
+ */
+export function donePill(verdict: string | null): DonePill | null {
+  switch (verdict) {
+    case "ok":
+      return { note: "voiceTyping.inserted", tone: "success", copy: true };
+    case "ok-unpolished":
+      return { note: "voiceTyping.insertedUnpolished", tone: "success", copy: true };
+    case "clipboard-only":
+      return { note: "voiceTyping.pasteBlocked", tone: "warning", copy: false };
+    case "recovered":
+    case "copied":
+      return { note: "voiceTyping.copied", tone: "success", copy: false };
+    default:
+      return null;
+  }
+}
+
+/** Overlay → main window: a button on the closing confirmation was clicked. */
+export const DONE_ACTION_EVENT = "voicetyping://done-action";
+
+export interface DoneActionPayload {
+  /** Copy the dictation just inserted to the clipboard. */
+  action: "copy";
 }

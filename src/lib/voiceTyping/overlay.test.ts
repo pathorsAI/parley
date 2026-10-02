@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { bottomCenterPhysical, doneMessage, monitorContaining, type MonitorGeometry } from "./overlay";
+import {
+  bottomCenterPhysical,
+  doneMessage,
+  donePill,
+  monitorContaining,
+  type MonitorGeometry,
+} from "./overlay";
 
 // Mirrors the module's own constants (the overlay is 460x180 logical px and
 // clears the Dock by 64).
@@ -142,7 +148,7 @@ describe("monitorContaining", () => {
  * refused by the guard is not news, and a refused paste outranks everything.
  */
 describe("doneMessage", () => {
-  it("says nothing was copied when nothing was said", () => {
+  it("says nothing was inserted when nothing was said", () => {
     expect(doneMessage({ text: "", pasted: true, outcome: "off" })).toBe("empty");
     expect(doneMessage({ text: "", pasted: false, outcome: "failed" })).toBe("empty");
   });
@@ -167,6 +173,50 @@ describe("doneMessage", () => {
       "rejectedScript",
     ] as const) {
       expect(doneMessage({ text: "hi", pasted: true, outcome })).toBe("ok");
+    }
+  });
+});
+
+/**
+ * The confirmation the overlay shows for each verdict. An insert hands the
+ * clipboard back, so it must never say "copied" — that sends the user to ⌘V
+ * for text that is no longer there — and it is the one that offers Copy.
+ */
+describe("donePill", () => {
+  it("says inserted, and offers Copy, when the text went into the field", () => {
+    expect(donePill("ok")).toEqual({ note: "voiceTyping.inserted", tone: "success", copy: true });
+    expect(donePill("ok-unpolished")).toEqual({
+      note: "voiceTyping.insertedUnpolished",
+      tone: "success",
+      copy: true,
+    });
+  });
+
+  it("names the paste key, with no Copy, when the text was left on the clipboard", () => {
+    expect(donePill("clipboard-only")).toEqual({
+      note: "voiceTyping.pasteBlocked",
+      tone: "warning",
+      copy: false,
+    });
+  });
+
+  it("says copied when the text is on the clipboard on the user's request", () => {
+    for (const verdict of ["recovered", "copied"]) {
+      expect(donePill(verdict)).toEqual({ note: "voiceTyping.copied", tone: "success", copy: false });
+    }
+  });
+
+  it("has no pill for the verdicts with their own note, or before there is one", () => {
+    for (const verdict of ["empty", "nothing", null, "unknown"]) {
+      expect(donePill(verdict)).toBeNull();
+    }
+  });
+
+  it("has a pill for every delivery that put text somewhere", () => {
+    for (const pasted of [true, false]) {
+      for (const outcome of ["polished", "off", "failed", "timedOut"] as const) {
+        expect(donePill(doneMessage({ text: "hi", pasted, outcome }))).not.toBeNull();
+      }
     }
   });
 });

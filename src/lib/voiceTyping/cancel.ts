@@ -3,9 +3,9 @@
 //! The rules, kept pure (no clock, no Tauri) so every ordering is testable:
 //!
 //! - Esc cancels the dictation the overlay is showing, from its press until the
-//!   host commits the text to the clipboard. The mic stops as on a release, and
-//!   the recognizer still answers, so the text settles as usual — the host just
-//!   never copies, pastes or records a cancelled dictation. It holds the text.
+//!   host sends the text to the field. The mic stops as on a release, and the
+//!   recognizer still answers, so the text settles as usual — the host just
+//!   never inserts or records a cancelled dictation. It holds the text.
 //! - The overlay offers Undo for {@link CANCEL_UNDO_MS}. Undo copies the text to
 //!   the clipboard (never pastes: the caret may have moved since) and records
 //!   it in the history. Undo before the text has settled waits for it.

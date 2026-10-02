@@ -11,7 +11,11 @@ import { log } from "../lib/log";
 import { isTauri } from "../lib/platform";
 import { sameHitRects, toHitRects, type HitRect } from "../lib/voiceTyping/hitRegions";
 import { SessionTranscript, type Segment, type SessionEvent } from "../lib/voiceTyping/transcript";
-import type { DoneMessage } from "../lib/voiceTyping/overlay";
+import {
+  DONE_ACTION_EVENT,
+  donePill,
+  type DoneActionPayload,
+} from "../lib/voiceTyping/overlay";
 import {
   CANCEL_ACTION_EVENT,
   CANCEL_UNDO_MS,
@@ -39,7 +43,7 @@ const WAVE_PROFILE = [
   0.38, 0.62, 0.44, 0.28,
 ];
 
-/** Once copied, hold the confirmation fully visible this long, then fade out
+/** Once delivered, hold the confirmation fully visible this long, then fade out
  *  over FADE_MS. The sum must land at/before the host's HIDE_DELAY_MS so the
  *  window is already invisible when it's ordered out (no abrupt pop). */
 const DONE_DWELL_MS = 2150;
@@ -76,6 +80,16 @@ type Phase = "listening" | "finalizing" | "polishing" | "cancelled" | "done";
 function suggestAct(action: SuggestActionPayload["action"]): void {
   emit(SUGGEST_ACTION_EVENT, { action } satisfies SuggestActionPayload).catch((error) =>
     log.warn("voice typing overlay: suggest action emit failed", {
+      action,
+      error: String(error),
+    }),
+  );
+}
+
+/** Report the confirmation's Copy to the host, which owns every decision. */
+function doneAct(action: DoneActionPayload["action"]): void {
+  emit(DONE_ACTION_EVENT, { action } satisfies DoneActionPayload).catch((error) =>
+    log.warn("voice typing overlay: done action emit failed", {
       action,
       error: String(error),
     }),
@@ -122,15 +136,6 @@ function instantWaveform(level: number): number[] {
   });
 }
 
-/** The verdicts that mean the text reached the clipboard (see doneMessage) —
- *  an Undo's recovered text included. */
-const COPIED_VERDICTS: ReadonlySet<string> = new Set([
-  "ok",
-  "ok-unpolished",
-  "clipboard-only",
-  "recovered",
-] satisfies DoneMessage[]);
-
 /**
  * The floating dictation overlay. Listens to the same realtime transcription
  * events as a meeting (tagged source "voice-typing") and normalizes them for
@@ -152,14 +157,7 @@ export const VoiceTypingApp = () => {
   // Set when the hosted single-dictation cap ended the session: a note shown
   // alongside the (still delivered) transcript so the abrupt stop is explained.
   const [limited, setLimited] = useState(false);
-  // Set when the transcript reached the clipboard but the auto-paste did not
-  // land, so the confirmation can name the key the user has to press instead.
-  const [pasteBlocked, setPasteBlocked] = useState(false);
-  // Set when the text went out as dictated because the polish pass was tried
-  // and did not come back (timed out or failed) — the confirmation says so
-  // instead of letting the user wonder why "polishing" changed nothing.
-  const [unpolished, setUnpolished] = useState(false);
-  // Drives the graceful fade-out of the whole overlay after the copied
+  // Drives the graceful fade-out of the whole overlay after the closing
   // confirmation has dwelled — reset whenever a new session starts.
   const [fading, setFading] = useState(false);
   // The dictionary suggestion the host asked us to offer, and whether it has
@@ -171,6 +169,9 @@ export const VoiceTypingApp = () => {
   );
 
   // What the host said about the delivery (a DoneMessage), null until `done`.
+  // It picks the closing confirmation (see donePill): "Inserted", the paste
+  // key to press when no paste went out, a note when polish did not come
+  // back.
   const [verdict, setVerdict] = useState<string | null>(null);
 
   const transcript = useRef(new SessionTranscript());
@@ -261,8 +262,6 @@ export const VoiceTypingApp = () => {
     setError(null);
     setLimited(false);
     setFading(false);
-    setPasteBlocked(false);
-    setUnpolished(false);
     setVerdict(null);
     setSuggest(null);
     setSuggestAdded(false);
@@ -338,15 +337,10 @@ export const VoiceTypingApp = () => {
           frozen.current = true;
           if (typeof ev.text === "string") setText(ev.text);
           setVerdict(ev.message ?? null);
-          // "clipboard-only" = the transcript was copied but the synthetic
-          // paste was refused (no Accessibility on macOS, UIPI on Windows), or
-          // it went to Parley itself. The confirmation has to change, or the
-          // user watches "Copied" go by while nothing appears where they were
-          // typing.
-          setPasteBlocked(ev.message === "clipboard-only");
-          // "ok-unpolished" = pasted, but raw: the polish pass timed out or
-          // failed. Never set together with "clipboard-only" (see doneMessage).
-          setUnpolished(ev.message === "ok-unpolished");
+          // Every done comes with a fresh hide on the host's side — a Copy's
+          // "copied" too, which can land just as the first confirmation
+          // began to fade — so it is shown in full again.
+          setFading(false);
           enterPhase("done");
           return;
         }
@@ -415,18 +409,19 @@ export const VoiceTypingApp = () => {
     return () => clearInterval(id);
   }, [phase]);
 
-  // Once copied, let the confirmation dwell, then fade the overlay out just
-  // before the host orders the window hidden. Only the genuine "copied" state
+  // Once delivered, let the confirmation dwell, then fade the overlay out just
+  // before the host orders the window hidden. Only a genuine delivery
   // fades: an error also lands on the "done" phase but must stay visible until
   // the session is dismissed (toggle mode has no release to hide it), so never
   // fade an error out from under the user.
   // A suggestion bubble is interactive and lives on the host's own clock — never
-  // fade one out from under the user's cursor.
+  // fade one out from under the user's cursor. A new verdict (Copy turning
+  // "Inserted" into "Copied") restarts the dwell, as the host restarts its hide.
   useEffect(() => {
     if (phase !== "done" || error || suggest) return;
     const id = setTimeout(() => setFading(true), DONE_DWELL_MS);
     return () => clearTimeout(id);
-  }, [phase, error, suggest]);
+  }, [phase, error, suggest, verdict]);
 
   // A cancelled dictation is not "done": its Undo stays fully visible for
   // (almost) the whole offer, then fades just before the host takes the
@@ -440,14 +435,8 @@ export const VoiceTypingApp = () => {
   const errorKey = (error && ERROR_KEYS[error]) || "voiceTyping.error";
   const bubble = error ? t(errorKey) : text;
 
-  // The "done" confirmation's wording. A refused paste outranks everything: it
-  // is the one note that asks the user to do something.
-  let doneNote = t("voiceTyping.copied");
-  if (pasteBlocked) {
-    doneNote = t("voiceTyping.pasteBlocked", { paste: modChordCap("V") });
-  } else if (unpolished) {
-    doneNote = t("voiceTyping.copiedUnpolished");
-  }
+  // The "done" confirmation, when the verdict has one.
+  const pill = phase === "done" && !error ? donePill(verdict) : null;
 
   let phaseIcon = <Mic className="size-2.5" />;
   if (phase === "polishing") {
@@ -549,30 +538,49 @@ export const VoiceTypingApp = () => {
         </div>
       )}
 
-      {/* Copied-to-clipboard confirmation, shown only on the host's word that
-          the text reached the clipboard (not merely because there is text on
-          screen). When the auto-paste was refused as well (no Accessibility
-          on macOS, UIPI refusing an elevated window on Windows) it turns
-          warning and names the paste key — otherwise the user reads "Copied",
-          sees nothing appear where they were typing, and assumes the
-          dictation was lost. A dictation whose polish did not come back still
-          reads as a success (it was delivered), but says it went out as
-          dictated. */}
-      {phase === "done" && !error && COPIED_VERDICTS.has(verdict ?? "") && (
+      {/* The closing confirmation, on the host's word about the delivery (not
+          merely because there is text on screen). "Inserted" — the text went
+          into the field and the clipboard is the user's again — with a Copy
+          for a paste that landed nowhere (no field had focus). When no paste
+          went out (no Accessibility on macOS, UIPI refusing an elevated
+          window on Windows, Parley itself in front) it turns warning and
+          names the paste key: the text is on the clipboard — otherwise the
+          user sees nothing appear where they were typing and assumes the
+          dictation was lost. A dictation whose polish did not come back
+          still reads as a success, but says it went out as dictated. One
+          row; Copy acts on pointer-down like the other overlay buttons, and
+          stops catching clicks as the pill fades. */}
+      {pill && (
         <div
           data-overlay-hit
-          className={`flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-medium shadow-md ${
-            pasteBlocked
+          className={`flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-medium shadow-md ${
+            pill.tone === "warning"
               ? "border-warning-border bg-warning text-warning-foreground"
               : "border-success-border bg-success text-success-foreground"
-          }`}
+          } ${fading ? "pointer-events-none" : ""}`}
         >
-          {!pasteBlocked && <Check className="size-2.5" strokeWidth={3} />}
-          {doneNote}
+          {pill.tone === "success" && <Check className="size-2.5" strokeWidth={3} />}
+          {t(pill.note, { paste: modChordCap("V") })}
+          {pill.copy && (
+            <>
+              <span className="opacity-60">·</span>
+              <button
+                type="button"
+                tabIndex={-1}
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  doneAct("copy");
+                }}
+                className="underline underline-offset-2"
+              >
+                {t("voiceTyping.copyAction")}
+              </button>
+            </>
+          )}
         </div>
       )}
 
-      {/* Nothing was heard, so nothing was copied: say so plainly, instead of
+      {/* Nothing was heard, so nothing was inserted: say so plainly, instead of
           an empty pill that leaves the user guessing. Neutral, not an error. */}
       {phase === "done" && !error && !suggest && verdict === "empty" && (
         <div

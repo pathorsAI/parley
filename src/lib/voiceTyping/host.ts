@@ -1,7 +1,10 @@
 //! Voice-typing host: runs in the main window. Listens for the global
 //! push-to-talk events from Rust, drives the streaming session + overlay, and
-//! once the recognizer has answered the release, copies the result to the
-//! clipboard and pastes it into the frontmost app.
+//! once the recognizer has answered the release, has the result typed into the
+//! frontmost app's focused field. Rust does that through the clipboard and
+//! gives the clipboard back a moment later (`insert_text`, see
+//! src-tauri/src/voice_typing/clipboard.rs), so a dictation never costs the
+//! user what they had copied.
 //!
 //! The host keeps its own transcript of each session: it folds the same
 //! `transcript://segment` events the overlay renders through the same pipeline
@@ -11,10 +14,10 @@
 //! tokens, or never come from a suspended overlay. The overlay is told what was
 //! delivered on `done` and ends on exactly that.
 //!
-//! Esc cancels the dictation on screen until its text is committed to the
-//! clipboard: the mic stops as on a release, the text still settles, and the
-//! host holds it instead of delivering it, for an Undo that copies it to the
-//! clipboard. The rules are in cancel.ts; the orderings are here.
+//! Esc cancels the dictation on screen until its text is sent to the field:
+//! the mic stops as on a release, the text still settles, and the host holds
+//! it instead of delivering it, for an Undo that copies it to the clipboard.
+//! The rules are in cancel.ts; the orderings are here.
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, emit, type UnlistenFn } from "@tauri-apps/api/event";
@@ -29,7 +32,14 @@ import { HOSTED_VOICE_TYPING_MAX_SECONDS } from "../limits";
 import { log } from "../log";
 import { normalizeTranscriptText } from "../textNormalize";
 import { preloadZhConverter } from "../zhConvert";
-import { showOverlay, hideOverlay, prewarmOverlay, doneMessage } from "./overlay";
+import {
+  DONE_ACTION_EVENT,
+  showOverlay,
+  hideOverlay,
+  prewarmOverlay,
+  doneMessage,
+  type DoneActionPayload,
+} from "./overlay";
 import { SessionOwner, SessionTranscript, type Segment, type SessionEvent } from "./transcript";
 import { settleVerdict, type SettleReason } from "./settle";
 import { appendVoiceEntry } from "./history";
@@ -69,21 +79,16 @@ import {
  *  for this install (see initVoiceTyping — later launches must not re-nag). */
 const AX_BOOT_PROMPTED_KEY = "parley:ax-boot-prompted";
 
-/** Parley's own bundle id. A paste that lands here went nowhere the user was
- *  typing: Parley was frontmost (a click on one of its windows), so the text is
- *  on the clipboard and the overlay should say to paste it by hand. */
-const PARLEY_BUNDLE_ID = "com.pathors.parley";
-
 // After the key is released the session stays open until the recognizer has
 // answered the closing finalize — `stt://closed` — with a bounded fallback for
 // a close that never comes. settle.ts holds the policy and its reasoning.
 
-/** Keep the "Copied to clipboard" confirmation floating a beat so the user
- *  clearly registers it before the overlay fades out. The overlay animates its
- *  own fade in the final stretch (see VoiceTypingApp's fade timing) — this sits
- *  comfortably AFTER that fade completes (dwell + fade ≈ 2600ms, plus event/IPC
- *  latency before the overlay's clock even starts) so the native hide always
- *  lands on an already-invisible window. */
+/** Keep the closing confirmation ("Inserted", or what to do instead) floating
+ *  a beat so the user clearly registers it before the overlay fades out. The
+ *  overlay animates its own fade in the final stretch (see VoiceTypingApp's
+ *  fade timing) — this sits comfortably AFTER that fade completes (dwell +
+ *  fade ≈ 2600ms, plus event/IPC latency before the overlay's clock even
+ *  starts) so the native hide always lands on an already-invisible window. */
 const HIDE_DELAY_MS = 2900;
 
 /** How long the "add this correction to the dictionary?" bubble waits for an
@@ -116,7 +121,7 @@ let closedAt = 0;
  *  many it has sent — the settle rule and the "ended empty" log need both. */
 let lastSegmentAt = 0;
 let segmentCount = 0;
-/** Deliveries (polish → copy → paste → history) run one at a time, in the
+/** Deliveries (polish → insert → history) run one at a time, in the
  *  order their dictations ended. A re-press hands the previous dictation over
  *  without waiting for it, so a polish round trip can still be in flight when
  *  the next one settles — and two pastes must land in the order spoken. */
@@ -127,7 +132,7 @@ let busy = false;
 let failed = false;
 /** Which backend session the events we act on must come from. */
 const owner = new SessionOwner();
-/** Session generation. A delivery that was still awaiting its copy/paste when
+/** Session generation. A delivery that was still awaiting its insert when
  *  a NEW session started must not run its tail (emit "done" + schedule hide)
  *  against the new session's overlay. */
 let gen = 0;
@@ -148,7 +153,7 @@ let pttChain: Promise<void> = Promise.resolve();
 // ── Esc cancels, Undo copies (see cancel.ts) ────────────────────────────────
 /** The generation Esc cancels right now; null when nothing is cancellable.
  *  Bound to a generation rather than a flag: dictation N can still be
- *  polishing while N+1 records, and N reaching the clipboard must not disarm
+ *  polishing while N+1 records, and N reaching its field must not disarm
  *  Esc for N+1 — nor may an Esc meant for N touch N+1's key state. */
 let cancellable: number | null = null;
 /** The mic is open for `gen` (from the start until a release, the cap or an
@@ -160,6 +165,11 @@ const cancels = new CancelLedger();
 let cancelTimer: ReturnType<typeof setTimeout> | undefined;
 /** The polish round trip in flight, so an Esc can abandon it. */
 let polishing: { gen: number; ctl: AbortController } | null = null;
+
+/** What the last delivery sent to the field, for the Copy on its confirmation
+ *  (see onCopyAction). Tagged with its generation: a click that arrives after
+ *  the next press is about a dictation the user has moved on from. */
+let lastInserted: { gen: number; text: string } | null = null;
 
 // ── Correction → dictionary suggestion ──────────────────────────────────────
 /** Listener for the one correction candidate the current observation may
@@ -227,6 +237,15 @@ export function initVoiceTyping(): () => void {
       if (e.payload.action !== "undo") return;
       onUndoCancel().catch((error) =>
         log.error("voice-typing: cancel undo failed", { error: String(error) }),
+      );
+    }),
+  );
+  // The Copy on an inserted dictation's confirmation.
+  track(
+    listen<DoneActionPayload>(DONE_ACTION_EVENT, (e) => {
+      if (e.payload.action !== "copy") return;
+      onCopyAction().catch((error) =>
+        log.error("voice-typing: copy action failed", { error: String(error) }),
       );
     }),
   );
@@ -653,7 +672,7 @@ function enqueueDelivery(d: Delivery): Promise<void> {
 }
 
 /**
- * The clean-up pass, run between the transcript settling and the clipboard.
+ * The clean-up pass, run between the transcript settling and the insert.
  *
  * This is the last moment the text is still ours: ⌘V into somebody else's app
  * is one-way — no undo, no re-selection — so polishing after the paste would
@@ -699,8 +718,8 @@ async function polishForPaste(
   return { text: text === null ? raw : applyReplacements(text), outcome };
 }
 
-/** Polish, copy, paste and record one settled dictation, then tell the
- *  overlay what was delivered. Runs on `deliveryChain`, one at a time. */
+/** Polish, insert and record one settled dictation, then tell the overlay
+ *  what was delivered. Runs on `deliveryChain`, one at a time. */
 async function deliver(d: Delivery): Promise<void> {
   // Settled dictations only exist after a press, which already waited for
   // this — but the report below reads the dictionary cache, so say so here.
@@ -717,9 +736,9 @@ async function deliver(d: Delivery): Promise<void> {
   // delivery held this one up): hold the text for Undo, deliver nothing.
   if (cancels.isCancelled(d.myGen)) return holdCancelled(d.myGen, raw, false);
   let text = raw;
-  /** Did the synthetic paste actually land? Stays true when the copy/paste
-   *  round trip threw, because then we don't know what reached the clipboard
-   *  and must not tell the user to paste something that isn't there. */
+  /** Did the paste go out? Stays true when the insert threw, because then we
+   *  don't know what reached the clipboard and must not tell the user to
+   *  paste something that isn't there. */
   let pasted = true;
   let outcome: PolishOutcome = "off";
   if (raw) {
@@ -738,9 +757,9 @@ async function deliver(d: Delivery): Promise<void> {
       return holdCancelled(d.myGen, text, outcome !== "cancelled");
     }
   }
-  // The point of no return: from here the text goes to the clipboard and the
-  // field, so Esc goes back to the app in front. Only this dictation's
-  // arming — a newer press may own Esc already.
+  // The point of no return: from here the text goes into the field, so Esc
+  // goes back to the app in front. Only this dictation's arming — a newer
+  // press may own Esc already.
   if (cancellable === d.myGen) {
     cancellable = null;
     armCancel(false);
@@ -748,31 +767,27 @@ async function deliver(d: Delivery): Promise<void> {
   if (raw) {
     let appBundleId: string | null = null;
     try {
-      await invoke("copy_to_clipboard", { text });
-      // Auto-paste is the default behaviour (no setting): simulate ⌘V into the
-      // frontmost app; without Accessibility it degrades to clipboard-only.
-      const paste = await invoke<{ pasted: boolean; appBundleId: string | null }>(
-        "paste_to_frontmost",
-      );
-      appBundleId = paste.appBundleId;
-      pasted = paste.pasted;
-      // Two different refusals, one outcome: on macOS the Accessibility grant
-      // is missing or stale; on Windows UIPI blocks injection into a window
+      // Auto-paste is the default behaviour (no setting). Rust posts the
+      // paste into the frontmost app through the clipboard, then puts the
+      // user's own clipboard back; when it cannot paste, it leaves the text
+      // on the clipboard instead.
+      const r = await invoke<{ pasted: boolean; appBundleId: string | null }>("insert_text", {
+        text,
+      });
+      appBundleId = r.appBundleId;
+      pasted = r.pasted;
+      // Three refusals, one outcome: on macOS the Accessibility grant is
+      // missing or stale; on Windows UIPI blocks injection into a window
       // running at a higher integrity level (anything launched as
-      // administrator). Neither is recoverable from here and both leave the
-      // text on the clipboard, so the overlay stops claiming the paste
-      // happened and names the manual key instead.
-      if (!paste.pasted) {
-        log.warn("voice-typing: auto-paste refused; text left on the clipboard", { appBundleId });
-      } else if (appBundleId === PARLEY_BUNDLE_ID) {
-        // Posted, but into Parley itself — frontmost because one of its own
-        // windows took the click — usually with no text field focused, so
-        // the text landed nowhere. It is on the clipboard: say so, and do not
-        // watch a field the user was not typing in.
-        log.warn("voice-typing: paste went to Parley itself; reporting clipboard-only");
-        pasted = false;
+      // administrator); and anywhere, Parley itself was frontmost, where the
+      // paste would have gone to one of Parley's own windows rather than the
+      // app being dictated into. None is recoverable from here and all leave
+      // the text on the clipboard, so the overlay stops claiming an insert
+      // and names the paste key instead. Rust's log says which it was.
+      if (!pasted) {
+        log.warn("voice-typing: not pasted; text left on the clipboard", { appBundleId });
       }
-      log.info("voice-typing: copied", { chars: text.length, pasted, appBundleId });
+      log.info("voice-typing: inserted", { chars: text.length, pasted, appBundleId });
       // Only a text that actually landed somewhere can be corrected in place.
       if (pasted) {
         observePastedField(text, d.myGen).catch((error) =>
@@ -780,8 +795,9 @@ async function deliver(d: Delivery): Promise<void> {
         );
       }
     } catch (e) {
-      log.error("voice-typing: copy/paste failed", { error: String(e) });
+      log.error("voice-typing: insert failed", { error: String(e) });
     }
+    lastInserted = { gen: d.myGen, text };
     appendVoiceEntry(text, appBundleId).catch((error) =>
       log.warn("voice-typing: append history failed", { error: String(error) }),
     );
@@ -933,7 +949,9 @@ function enqueueRecovery(g: number, text: string, polished: boolean): Promise<vo
  * Undo's delivery: the clipboard and the history, never a paste — seconds
  * have passed, the caret may have moved, and the click that asked for it
  * landed on the overlay. Polished first unless the polish pass already ran to
- * its end, so it reads as it would have. Runs on `deliveryChain`.
+ * its end, so it reads as it would have. Runs on `deliveryChain`. An explicit
+ * copy, so Rust calls off any clipboard restore still pending from an earlier
+ * insert: the recovered text stays.
  */
 async function deliverRecovered(g: number, text: string, polished: boolean): Promise<void> {
   const out =
@@ -977,6 +995,35 @@ function dropCancel(): void {
   if (cancels.supersede()) {
     log.info("voice-typing: cancelled dictation discarded", { reason: "new press" });
   }
+}
+
+// ── Copy on the confirmation ────────────────────────────────────────────────
+
+/**
+ * The Copy on an inserted dictation's confirmation: its text goes to the
+ * clipboard. The safety net for a paste that landed nowhere — no field had
+ * focus — because the insert does not leave the text on the clipboard. Only
+ * for the dictation the overlay is showing: a click that arrives after the
+ * next press is about one the user has moved on from. An explicit copy, so
+ * Rust calls off the insert's pending clipboard restore and the text stays.
+ */
+async function onCopyAction(): Promise<void> {
+  const last = lastInserted;
+  if (!last || last.gen !== gen) return;
+  try {
+    await invoke("copy_to_clipboard", { text: last.text });
+  } catch (e) {
+    log.error("voice-typing: copy failed", { error: String(e) });
+    return;
+  }
+  log.info("voice-typing: copied on request", { chars: last.text.length });
+  // The overlay may have moved on while the copy ran: a new dictation, or the
+  // dictionary's question (which keeps the overlay up on its own clock).
+  if (gen !== last.gen || suggestion || suggestTimer !== undefined) return;
+  await emit("voicetyping://session", { phase: "done", message: "copied", text: last.text });
+  // A fresh dwell, so the confirmation can be read; the overlay restarts its
+  // fade on the new verdict to match.
+  scheduleHide();
 }
 
 // ── Learn from an in-place correction ───────────────────────────────────────

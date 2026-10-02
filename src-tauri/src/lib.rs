@@ -107,6 +107,9 @@ pub fn run() {
         // Where the voice-typing overlay draws, and the poller that makes the
         // rest of its window click-through — see voice_typing::OverlayHitState.
         .manage(voice_typing::OverlayHitState::default())
+        // The clipboard a dictation borrows for its paste, and the restore
+        // that gives it back — see voice_typing::ClipboardState.
+        .manage(voice_typing::ClipboardState::default())
         // Native menu-bar "Diagnostics" submenu (View Logs + Clear Cache).
         .menu(menu::build)
         .on_menu_event(|app, event| menu::on_event(app, event.id().as_ref()))
@@ -208,7 +211,7 @@ pub fn run() {
             voice_typing::read_voice_history,
             voice_typing::write_voice_history,
             voice_typing::copy_to_clipboard,
-            voice_typing::paste_to_frontmost,
+            voice_typing::insert_text,
             voice_typing::accessibility_status,
             voice_typing::present_voice_overlay,
             voice_typing::dismiss_voice_overlay,

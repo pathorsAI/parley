@@ -4,11 +4,13 @@
 //!
 //! It emits the same `transcript://segment` and `audio://level` events as a
 //! meeting, tagged `source: "voice-typing"`, which the floating overlay window
-//! renders. On release, the host copies the final text to the clipboard through
-//! the OS (the webview can't, because Parley isn't the focused app) and — when
-//! the user enabled it — synthesizes the paste chord into the frontmost app:
-//! ⌘V on macOS, which needs Accessibility, or Ctrl+V on Windows, which needs no
-//! permission but is refused by UIPI when the target window runs elevated.
+//! renders. Once the dictation has settled, the host has it typed into the
+//! frontmost app's focused field (`insert_text`): the text goes up on the
+//! clipboard through the OS (the webview can't, because Parley isn't the
+//! focused app), the paste chord is synthesized — ⌘V on macOS, which needs
+//! Accessibility, or Ctrl+V on Windows, which needs no permission but is
+//! refused by UIPI when the target window runs elevated — and a moment later
+//! the clipboard gets back what the user had on it (see `clipboard`).
 
 // The `objc` 0.2 macros emit `cfg(cargo-clippy)` checks newer compilers warn on.
 #![allow(unexpected_cfgs)]
@@ -24,6 +26,10 @@ use crate::capture::{run_metered_session, spawn_capture, Begin, MicCoordinator, 
 use crate::commands::{read_config_file, write_config_file};
 use crate::transcription::common::VOICE_TYPING_SOURCE;
 use crate::transcription::{SttProvider, TranscribeConfig};
+
+mod clipboard;
+pub use self::clipboard::ClipboardState;
+use self::clipboard::{Blocked, SystemPasteboard};
 
 /// Grace for the post-release final flush, counted from the cut, before a
 /// lingering session task is force-aborted (mirrors `stop_meeting`'s backstop).
@@ -454,20 +460,24 @@ pub async fn stop_voice_typing(
     Ok(())
 }
 
-/// Copy text to the system clipboard via the native pasteboard. Needed because
-/// the webview's `navigator.clipboard` is blocked while Parley isn't focused.
+/// Copy text to the system clipboard: an explicit copy the user asked for
+/// (Esc's Undo, the overlay's Copy). Through the OS because the webview's
+/// `navigator.clipboard` is blocked while Parley isn't focused. Never restored
+/// over — a restore still pending from the last dictation is called off.
 #[tauri::command]
-pub fn copy_to_clipboard(text: String) -> Result<(), String> {
-    imp::copy_to_clipboard(&text)
+pub fn copy_to_clipboard(state: State<'_, ClipboardState>, text: String) -> Result<(), String> {
+    clipboard::copy(&mut state.lock(), &mut SystemPasteboard, &text)
 }
 
-/// Outcome of an auto-paste: whether the keystroke went out, and WHO it went to.
+/// Outcome of an insert: whether the paste went out, and WHO it went to.
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PasteResult {
-    /// False when the keystroke could not be posted: on macOS because
-    /// Accessibility isn't granted, on Windows because UIPI refused the
-    /// injection (the target window belongs to an elevated process).
+    /// False when no paste chord was posted and the text was left on the
+    /// clipboard for the user to paste: on macOS because Accessibility isn't
+    /// granted, on Windows because UIPI refused the injection (the target
+    /// window belongs to an elevated process), and anywhere when Parley
+    /// itself was frontmost.
     pasted: bool,
     /// Identifier of the app that was frontmost at paste time, sampled BEFORE
     /// the paste chord so it names the app that actually received the text.
@@ -481,20 +491,56 @@ pub struct PasteResult {
     app_bundle_id: Option<String>,
 }
 
-/// Paste into the frontmost app by simulating ⌘V. Requires Accessibility.
-/// Reports whether the keystroke was posted (never, when untrusted) and which
-/// app received it — the dictionary's correction watcher needs to know which
-/// app's field it is about to observe.
+/// Type `text` into the frontmost app's focused field: borrow the clipboard,
+/// post the paste chord, and give the clipboard back a moment later (see
+/// `clipboard`), so a dictation never costs the user what they had copied.
+/// Reports whether the paste went out and which app received it — the
+/// dictionary's correction watcher needs to know which app's field it is
+/// about to observe.
+///
+/// Posts nothing, and leaves the text on the clipboard to paste by hand, when
+/// macOS has not granted Accessibility, when Windows refuses the injection,
+/// or when Parley itself is in front, where the paste would go to one of
+/// Parley's own windows rather than the app the user is dictating into.
 #[tauri::command]
-pub fn paste_to_frontmost() -> PasteResult {
-    // Sample the frontmost app FIRST: posting ⌘V can move focus (a paste that
-    // opens a sheet, an app that activates on input), so reading it afterward
-    // could name the wrong app.
+pub fn insert_text(
+    app: AppHandle,
+    state: State<'_, ClipboardState>,
+    text: String,
+) -> Result<PasteResult, String> {
+    // Sample the frontmost app FIRST: posting the paste can move focus (a
+    // paste that opens a sheet, an app that activates on input), so reading
+    // it afterward could name the wrong app.
     let app_bundle_id = imp::frontmost_bundle_id();
-    PasteResult {
-        pasted: imp::paste_to_frontmost(),
-        app_bundle_id,
+    let blocked = if parley_is_frontmost() {
+        Some(Blocked::Parley)
+    } else if !imp::accessibility_trusted(false) {
+        Some(Blocked::Accessibility)
+    } else {
+        None
+    };
+    let done = clipboard::insert(
+        &mut state.lock(),
+        &mut SystemPasteboard,
+        &text,
+        blocked,
+        imp::paste_to_frontmost,
+    )?;
+    if let Some(generation) = done.restore {
+        clipboard::schedule_restore(&app, generation);
     }
+    Ok(PasteResult {
+        pasted: done.pasted,
+        app_bundle_id,
+    })
+}
+
+/// Whether the frontmost app is this process. By process id rather than
+/// bundle id, which an unbundled dev build does not have.
+fn parley_is_frontmost() -> bool {
+    imp::frontmost_pid()
+        .and_then(|pid| u32::try_from(pid).ok())
+        .is_some_and(|pid| pid == std::process::id())
 }
 
 /// Whether the app is trusted for Accessibility (needed for auto-paste).
@@ -850,29 +896,6 @@ mod imp {
     const HID_SYSTEM_STATE: i32 = 1; // kCGEventSourceStateHIDSystemState
     /// Shift, Control, Option, Command and fn (kCGEventFlagMask*).
     const MODIFIER_FLAGS: u64 = 0x0002_0000 | 0x0004_0000 | 0x0008_0000 | 0x0010_0000 | 0x0080_0000;
-
-    /// NSPasteboard generalPasteboard -> clearContents -> setString:forType:.
-    /// CFString is toll-free bridged to NSString, so we pass it straight through.
-    pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
-        unsafe {
-            let pb: *mut Object = msg_send![class!(NSPasteboard), generalPasteboard];
-            if pb.is_null() {
-                return Err("no general pasteboard".into());
-            }
-            let _: i64 = msg_send![pb, clearContents];
-            let value = CFString::new(text);
-            let value_obj = value.as_concrete_TypeRef() as *const Object;
-            // NSPasteboardTypeString's UTI; avoids linking the extern NSString const.
-            let ty = CFString::new("public.utf8-plain-text");
-            let ty_obj = ty.as_concrete_TypeRef() as *const Object;
-            let ok: bool = msg_send![pb, setString: value_obj forType: ty_obj];
-            if ok {
-                Ok(())
-            } else {
-                Err("pasteboard rejected string".into())
-            }
-        }
-    }
 
     /// Bundle identifier of the frontmost application, via
     /// `NSWorkspace.sharedWorkspace.frontmostApplication.bundleIdentifier`.
@@ -1315,11 +1338,7 @@ mod imp {
 #[cfg(target_os = "windows")]
 mod imp {
     use windows::core::PWSTR;
-    use windows::Win32::Foundation::{CloseHandle, GlobalFree, HANDLE, HWND, POINT, RECT};
-    use windows::Win32::System::DataExchange::{
-        CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
-    };
-    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+    use windows::Win32::Foundation::{CloseHandle, HWND, POINT, RECT};
     use windows::Win32::System::Threading::{
         OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
         PROCESS_QUERY_LIMITED_INFORMATION,
@@ -1336,20 +1355,6 @@ mod imp {
         SW_SHOWNA, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
     };
 
-    /// `CF_UNICODETEXT`, spelled out rather than imported from
-    /// `Win32::System::Ole` so one 16-bit constant doesn't drag the whole OLE
-    /// feature (and its compile time) into the build.
-    const CF_UNICODETEXT: u32 = 13;
-
-    /// `OpenClipboard` does not queue: it fails outright while another process
-    /// holds the clipboard, and something briefly does all the time (the app
-    /// the user just copied from, a clipboard manager sampling the change).
-    /// A dictation ends with a copy that MUST land — the clipboard is the only
-    /// copy of what the user just said — so a lost race is retried rather than
-    /// reported.
-    const CLIPBOARD_OPEN_ATTEMPTS: u32 = 5;
-    const CLIPBOARD_OPEN_RETRY: std::time::Duration = std::time::Duration::from_millis(20);
-
     /// Virtual key for "V". Win32 declares no `VK_V`: the letter keys' virtual
     /// codes are just their ASCII uppercase values.
     const VK_V: VIRTUAL_KEY = VIRTUAL_KEY(0x56);
@@ -1358,107 +1363,6 @@ mod imp {
     /// now". The low bit is the unrelated "was pressed since the last call"
     /// flag, which we must not confuse for a held key.
     const KEY_DOWN_MASK: u16 = 0x8000;
-
-    /// Publish `text` on the clipboard as `CF_UNICODETEXT`.
-    ///
-    /// The Win32 clipboard is a process-wide lock, not an object: between the
-    /// `OpenClipboard` and the `CloseClipboard` below, no other process on the
-    /// desktop can copy or paste. Every exit path therefore has to close it.
-    pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
-        // CF_UNICODETEXT is a NUL-terminated wide string: consumers read up to
-        // the terminator, not to the allocation's length, so the terminator is
-        // part of the payload rather than an afterthought.
-        let mut utf16: Vec<u16> = text.encode_utf16().collect();
-        utf16.push(0);
-
-        open_clipboard()?;
-        let result = write_unicode_text(&utf16);
-        // SAFETY: `open_clipboard` returned Ok, so this thread owns the
-        // clipboard, and this is the single matching close on every path out.
-        unsafe {
-            let _ = CloseClipboard();
-        }
-        result
-    }
-
-    /// Take the clipboard, retrying briefly while another process holds it (see
-    /// [`CLIPBOARD_OPEN_ATTEMPTS`]). Passing no owner window is deliberate: we
-    /// have no HWND worth associating and want no clipboard notifications.
-    fn open_clipboard() -> Result<(), String> {
-        let mut last = String::new();
-        for attempt in 0..CLIPBOARD_OPEN_ATTEMPTS {
-            // SAFETY: takes nothing from us and owns nothing of ours; the only
-            // state it changes is the global clipboard lock, released by the
-            // `CloseClipboard` in `copy_to_clipboard`.
-            match unsafe { OpenClipboard(None) } {
-                Ok(()) => return Ok(()),
-                Err(e) => {
-                    last = e.to_string();
-                    if attempt + 1 < CLIPBOARD_OPEN_ATTEMPTS {
-                        std::thread::sleep(CLIPBOARD_OPEN_RETRY);
-                    }
-                }
-            }
-        }
-        Err(format!("clipboard is held by another process: {last}"))
-    }
-
-    /// Write an already NUL-terminated UTF-16 string to the open clipboard.
-    ///
-    /// The ownership rule this function exists to get right: on SUCCESS
-    /// `SetClipboardData` takes the memory block and the OS frees it later, so
-    /// freeing it here would leave every subsequent paste reading freed memory.
-    /// On FAILURE the transfer never happened and the block is still ours, so
-    /// NOT freeing it leaks a global allocation on every dictation.
-    fn write_unicode_text(utf16: &[u16]) -> Result<(), String> {
-        // SAFETY: the clipboard is open on this thread. `EmptyClipboard` frees
-        // only handles the clipboard already owns; ours isn't published yet.
-        unsafe { EmptyClipboard() }.map_err(|e| format!("EmptyClipboard failed: {e}"))?;
-
-        let bytes = std::mem::size_of_val(utf16);
-        // GMEM_MOVEABLE is required, not preferred: `SetClipboardData` rejects
-        // fixed memory, because the OS takes ownership and may relocate it.
-        // SAFETY: a plain allocation request; the returned handle is either
-        // handed to the OS below or freed on each failure path.
-        let hglobal =
-            unsafe { GlobalAlloc(GMEM_MOVEABLE, bytes) }.map_err(|e| format!("GlobalAlloc failed: {e}"))?;
-
-        // SAFETY: `hglobal` is a live moveable block of exactly `bytes` bytes
-        // that we just allocated and to which nobody else holds a pointer, so
-        // locking it and writing `utf16` into it cannot overlap another object
-        // or overrun the allocation.
-        unsafe {
-            let dst = GlobalLock(hglobal);
-            if dst.is_null() {
-                let _ = GlobalFree(Some(hglobal));
-                return Err("GlobalLock failed".into());
-            }
-            std::ptr::copy_nonoverlapping(utf16.as_ptr(), dst.cast::<u16>(), utf16.len());
-            // `GlobalUnlock` returns FALSE *on success* when the lock count
-            // reaches zero (with a last-error of NO_ERROR), so the `windows`
-            // wrapper hands back an Err on the normal path. Nothing to check.
-            let _ = GlobalUnlock(hglobal);
-        }
-
-        // SAFETY: the clipboard is open on this thread and `hglobal` is a valid
-        // moveable block holding a NUL-terminated UTF-16 string, which is what
-        // CF_UNICODETEXT promises its readers.
-        match unsafe { SetClipboardData(CF_UNICODETEXT, Some(HANDLE(hglobal.0))) } {
-            // Ownership has moved to the OS — do NOT free.
-            Ok(_) => Ok(()),
-            Err(e) => {
-                // The transfer did not happen, so the block is still ours.
-                // SAFETY: `SetClipboardData` failed, so the OS did not take
-                // `hglobal`, and nothing else holds it. (`GlobalFree` reports
-                // success by returning NULL, which the `windows` wrapper maps
-                // to Err, so its result is not worth inspecting either.)
-                unsafe {
-                    let _ = GlobalFree(Some(hglobal));
-                }
-                Err(format!("SetClipboardData failed: {e}"))
-            }
-        }
-    }
 
     /// One keyboard `INPUT` record for `SendInput`.
     fn key_event(vk: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS) -> INPUT {
@@ -1736,13 +1640,13 @@ mod imp {
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 mod imp {
-    pub fn copy_to_clipboard(_text: &str) -> Result<(), String> {
-        Err("clipboard only implemented on macOS and Windows".into())
-    }
     pub fn paste_to_frontmost() -> bool {
         false
     }
     pub fn frontmost_bundle_id() -> Option<String> {
+        None
+    }
+    pub fn frontmost_pid() -> Option<i32> {
         None
     }
     pub fn accessibility_trusted(_prompt: bool) -> bool {

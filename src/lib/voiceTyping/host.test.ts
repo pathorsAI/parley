@@ -92,6 +92,9 @@ vi.mock("../dictionary/diffCorrection", () => ({ detectCorrection: () => null })
 const backend = {
   session: 0,
   pasteApp: "com.apple.Notes" as string | null,
+  /** What `insert_text` says about the paste: false when Rust left the text
+   *  on the clipboard (no Accessibility, UIPI, Parley itself in front). */
+  pasted: true,
   /** When set, `stop_voice_typing` waits for this before resolving. */
   stopGate: null as Promise<void> | null,
   /** When set, `start_voice_typing` waits for this, then fails with it. */
@@ -116,8 +119,8 @@ function routeInvoke(): void {
       case "stop_voice_typing":
         if (backend.stopGate) await backend.stopGate;
         return undefined;
-      case "paste_to_frontmost":
-        return { pasted: true, appBundleId: backend.pasteApp };
+      case "insert_text":
+        return { pasted: backend.pasted, appBundleId: backend.pasteApp };
       case "observe_pasted_field":
         return false;
       default:
@@ -160,6 +163,12 @@ function calls(cmd: string): unknown[] {
   return mocks.invoke.mock.calls.filter((c) => c[0] === cmd).map((c) => c[1]);
 }
 
+/** What was typed into the field (the normal delivery). */
+function inserted(): string[] {
+  return calls("insert_text").map((a) => (a as { text: string }).text);
+}
+
+/** What was explicitly copied to the clipboard (Undo, the Copy button). */
 function copied(): string[] {
   return calls("copy_to_clipboard").map((a) => (a as { text: string }).text);
 }
@@ -205,6 +214,7 @@ beforeEach(async () => {
   };
   backend.session = 0;
   backend.pasteApp = "com.apple.Notes";
+  backend.pasted = true;
   backend.stopGate = null;
   backend.startFailure = null;
   backend.startGate = null;
@@ -230,12 +240,14 @@ describe("voice-typing host", () => {
     expect(calls("stop_voice_typing")).toEqual([{ tail: true }]);
 
     await tick(2500);
-    expect(copied()).toEqual([]);
+    expect(inserted()).toEqual([]);
     expect(dones()).toEqual([]);
 
     finish(1, "0", "好");
     await tick();
-    expect(copied()).toEqual(["好"]);
+    expect(inserted()).toEqual(["好"]);
+    // The insert is the delivery: nothing is copied to the clipboard to stay.
+    expect(copied()).toEqual([]);
     expect(dones()).toEqual([{ message: "ok", text: "好" }]);
     expect(settledReasons()).toEqual(["closed"]);
   });
@@ -250,11 +262,11 @@ describe("voice-typing host", () => {
     await key(false);
 
     await tick(1400);
-    expect(copied()).toEqual([]);
+    expect(inserted()).toEqual([]);
 
     finish(1, "0", "我們明天見面");
     await tick();
-    expect(copied()).toEqual(["我們明天見面"]);
+    expect(inserted()).toEqual(["我們明天見面"]);
   });
 
   it("falls back to quiet after a post-release answer when no close comes", async () => {
@@ -264,9 +276,9 @@ describe("voice-typing host", () => {
     segment(1, "0", "收到", true);
     segment(1, "tail", "", false);
     await tick(600);
-    expect(copied()).toEqual([]);
+    expect(inserted()).toEqual([]);
     await tick(100);
-    expect(copied()).toEqual(["收到"]);
+    expect(inserted()).toEqual(["收到"]);
     expect(settledReasons()).toEqual(["quiet"]);
   });
 
@@ -277,7 +289,7 @@ describe("voice-typing host", () => {
     expect(dones()).toEqual([]);
     await tick(1);
     expect(dones()).toEqual([{ message: "empty", text: "" }]);
-    expect(copied()).toEqual([]);
+    expect(inserted()).toEqual([]);
     expect(settledReasons()).toEqual(["timeout"]);
     expect(mocks.log.warn).toHaveBeenCalledWith(
       "voice-typing: dictation ended empty",
@@ -302,19 +314,19 @@ describe("voice-typing host", () => {
     await key(true); // re-press while the first one is still settling
 
     expect(calls("start_voice_typing")).toHaveLength(2);
-    expect(copied()).toEqual([]);
+    expect(inserted()).toEqual([]);
     expect(settledReasons()).toEqual(["restart"]);
 
     segment(2, "0", "第二句", true);
     await key(false);
     finish(2, "0", "第二句話");
     await tick();
-    expect(copied()).toEqual([]); // queued behind the first delivery's polish
+    expect(inserted()).toEqual([]); // queued behind the first delivery's polish
 
     await tick(2000);
-    expect(copied()).toEqual(["第一句話。"]);
+    expect(inserted()).toEqual(["第一句話。"]);
     await tick(2000);
-    expect(copied()).toEqual(["第一句話。", "第二句話。"]);
+    expect(inserted()).toEqual(["第一句話。", "第二句話。"]);
     // Only the dictation that still owns the overlay ends it.
     expect(dones()).toEqual([{ message: "ok", text: "第二句話。" }]);
   });
@@ -330,11 +342,11 @@ describe("voice-typing host", () => {
     await tick(500);
     await key(false);
     await tick(100);
-    expect(copied()).toEqual(["舊的"]);
+    expect(inserted()).toEqual(["舊的"]);
 
     finish(2, "0", "新的話");
     await tick();
-    expect(copied()).toEqual(["舊的", "新的話"]);
+    expect(inserted()).toEqual(["舊的", "新的話"]);
   });
 
   it("cuts at the cap with no release tail, and ignores the real release", async () => {
@@ -348,7 +360,7 @@ describe("voice-typing host", () => {
     expect(calls("stop_voice_typing")).toHaveLength(1);
     finish(1, "0", "很長的一段話結束");
     await tick();
-    expect(copied()).toEqual(["很長的一段話結束"]);
+    expect(inserted()).toEqual(["很長的一段話結束"]);
   });
 
   it("delivers what arrived before a mid-hold failure at once on release", async () => {
@@ -358,7 +370,7 @@ describe("voice-typing host", () => {
     await key(false);
     await tick();
     expect(phases()).not.toContain("stop");
-    expect(copied()).toEqual(["說到一半"]);
+    expect(inserted()).toEqual(["說到一半"]);
     expect(settledReasons()).toEqual(["failed"]);
   });
 
@@ -372,24 +384,36 @@ describe("voice-typing host", () => {
     await tick();
     finish(1, "0", "很快");
     await tick();
-    expect(copied()).toEqual(["很快"]);
+    expect(inserted()).toEqual(["很快"]);
 
     releaseStop();
     await tick(6000);
-    expect(copied()).toEqual(["很快"]);
+    expect(inserted()).toEqual(["很快"]);
     // No "finalizing" spinner after the dictation was already delivered.
     expect(phases().filter((p) => p !== "start")).toEqual(["done"]);
   });
 
-  it("reports a paste that went to Parley itself as clipboard-only", async () => {
+  /** Rust decides (Accessibility, UIPI, Parley itself in front); the host
+   *  only reports it, and does not watch a field nothing was pasted into. */
+  it("reports an insert Rust could not paste as clipboard-only", async () => {
+    backend.pasted = false;
     backend.pasteApp = "com.pathors.parley";
     await key(true);
     await key(false);
     finish(1, "0", "貼到哪裡了");
     await tick();
-    expect(copied()).toEqual(["貼到哪裡了"]);
+    expect(inserted()).toEqual(["貼到哪裡了"]);
     expect(dones()).toEqual([{ message: "clipboard-only", text: "貼到哪裡了" }]);
     expect(calls("observe_pasted_field")).toEqual([]);
+    expect(mocks.append).toHaveBeenCalledWith("貼到哪裡了", "com.pathors.parley");
+  });
+
+  it("watches the field a pasted dictation landed in", async () => {
+    await key(true);
+    await key(false);
+    finish(1, "0", "看得到嗎");
+    await tick();
+    expect(calls("observe_pasted_field")).toEqual([{ insertedText: "看得到嗎" }]);
   });
 
   it("toggle mode: a tap while the last dictation settles does not cut it again", async () => {
@@ -404,7 +428,7 @@ describe("voice-typing host", () => {
     expect(calls("stop_voice_typing")).toHaveLength(1);
     finish(1, "0", "切換模式");
     await tick();
-    expect(copied()).toEqual(["切換模式"]);
+    expect(inserted()).toEqual(["切換模式"]);
   });
 });
 
@@ -454,7 +478,7 @@ describe("voice-typing host: Esc cancels, Undo copies", () => {
     finish(1, "0", "不要了");
     await tick(4999);
     expect(copied()).toEqual([]);
-    expect(calls("paste_to_frontmost")).toEqual([]);
+    expect(inserted()).toEqual([]);
     expect(mocks.append).not.toHaveBeenCalled();
     expect(dones()).toEqual([]);
     // No "finalizing" spinner over the Undo.
@@ -477,7 +501,7 @@ describe("voice-typing host: Esc cancels, Undo copies", () => {
     finish(1, "0", "先取消再復原");
     await tick();
     expect(copied()).toEqual(["先取消再復原"]);
-    expect(calls("paste_to_frontmost")).toEqual([]);
+    expect(inserted()).toEqual([]);
     expect(calls("observe_pasted_field")).toEqual([]);
     expect(mocks.append).toHaveBeenCalledWith("先取消再復原", null);
     expect(dones()).toEqual([{ message: "recovered", text: "先取消再復原" }]);
@@ -542,7 +566,7 @@ describe("voice-typing host: Esc cancels, Undo copies", () => {
     expect(last(phases())).toBe("cancelled");
     await tick(3000);
     expect(copied()).toEqual([]);
-    expect(calls("paste_to_frontmost")).toEqual([]);
+    expect(inserted()).toEqual([]);
     expect(mocks.log.warn).not.toHaveBeenCalledWith(
       expect.stringContaining("polish"),
       expect.anything(),
@@ -552,7 +576,7 @@ describe("voice-typing host: Esc cancels, Undo copies", () => {
     expect(last(phases())).toBe("polishing");
     await tick(2000);
     expect(copied()).toEqual(["潤飾到一半取消。"]);
-    expect(calls("paste_to_frontmost")).toEqual([]);
+    expect(inserted()).toEqual([]);
     expect(dones()).toEqual([{ message: "recovered", text: "潤飾到一半取消。" }]);
   });
 
@@ -592,7 +616,7 @@ describe("voice-typing host: Esc cancels, Undo copies", () => {
     expect(calls("stop_voice_typing")).toEqual([{ tail: true }, { tail: true }]);
     finish(2, "0", "第二句話");
     await tick();
-    expect(copied()).toEqual(["第二句話"]);
+    expect(inserted()).toEqual(["第二句話"]);
   });
 
   it("a delivery reaching the clipboard never disarms Esc for the dictation after it", async () => {
@@ -606,7 +630,7 @@ describe("voice-typing host: Esc cancels, Undo copies", () => {
 
     await key(true); // the next dictation, while the first one polishes
     await tick(2000);
-    expect(copied()).toEqual(["第一句話。"]);
+    expect(inserted()).toEqual(["第一句話。"]);
     expect(armed()).toEqual([true, true]);
 
     // …and Esc still cancels the new one.
@@ -615,12 +639,12 @@ describe("voice-typing host: Esc cancels, Undo copies", () => {
     expect(calls("stop_voice_typing")).toEqual([{ tail: true }, { tail: false }]);
   });
 
-  it("disarms Esc once the text is committed to the clipboard", async () => {
+  it("disarms Esc once the text is sent to the field", async () => {
     await key(true);
     await key(false);
     finish(1, "0", "照常貼上");
     await tick();
-    expect(copied()).toEqual(["照常貼上"]);
+    expect(inserted()).toEqual(["照常貼上"]);
     expect(armed()).toEqual([true, false]);
   });
 
@@ -641,7 +665,8 @@ describe("voice-typing host: Esc cancels, Undo copies", () => {
     await key(false);
     finish(2, "0", "新的");
     await tick(6000);
-    expect(copied()).toEqual(["新的"]);
+    expect(inserted()).toEqual(["新的"]);
+    expect(copied()).toEqual([]);
     expect(mocks.append).toHaveBeenCalledTimes(1);
   });
 
@@ -653,7 +678,7 @@ describe("voice-typing host: Esc cancels, Undo copies", () => {
     await key(false);
     await key(true); // the restart settles it on the spot
     expect(copied()).toEqual(["要回來的"]);
-    expect(calls("paste_to_frontmost")).toEqual([]);
+    expect(inserted()).toEqual([]);
   });
 
   it("toggle mode: a tap after Esc starts a fresh dictation at once", async () => {
@@ -686,6 +711,7 @@ describe("voice-typing host: Esc cancels, Undo copies", () => {
     await escape(true); // …when Esc cancels it; its release is never reported
     finish(1, "0", "切換取消");
     await tick();
+    expect(inserted()).toEqual([]);
     expect(copied()).toEqual([]);
     await key(true);
     expect(calls("start_voice_typing")).toHaveLength(2);
@@ -758,5 +784,82 @@ describe("voice-typing host: Esc cancels, Undo copies", () => {
     await tick(600_000);
     expect(phases()).not.toContain("limit");
     expect(calls("stop_voice_typing")).toEqual([{ tail: false }]);
+  });
+});
+
+async function copyAction(): Promise<void> {
+  fire("voicetyping://done-action", { action: "copy" });
+  await tick();
+}
+
+describe("voice-typing host: Copy on the confirmation", () => {
+  it("copies the inserted text, says so, and keeps the overlay up to say it", async () => {
+    await key(true);
+    await key(false);
+    finish(1, "0", "沒有地方可以貼");
+    await tick();
+    expect(dones()).toEqual([{ message: "ok", text: "沒有地方可以貼" }]);
+
+    await tick(2000);
+    await copyAction();
+    expect(copied()).toEqual(["沒有地方可以貼"]);
+    expect(last(dones())).toEqual({ message: "copied", text: "沒有地方可以貼" });
+    // The hide the insert scheduled gives way to a fresh one from the click.
+    await tick(1000);
+    expect(mocks.hide).not.toHaveBeenCalled();
+    await tick(1900);
+    expect(mocks.hide).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a click that arrives after the next press", async () => {
+    await key(true);
+    await key(false);
+    finish(1, "0", "上一句");
+    await tick();
+    await key(true);
+    await copyAction();
+    expect(copied()).toEqual([]);
+    expect(dones()).toEqual([{ message: "ok", text: "上一句" }]);
+  });
+
+  it("copies the newest dictation, never an older one", async () => {
+    await key(true);
+    await key(false);
+    finish(1, "0", "第一句");
+    await tick();
+    await key(true);
+    await key(false);
+    finish(2, "0", "第二句");
+    await tick();
+    await copyAction();
+    expect(copied()).toEqual(["第二句"]);
+  });
+
+  it("has nothing to copy before a dictation was inserted, or after an empty one", async () => {
+    await copyAction();
+    await key(true);
+    await key(false);
+    finish(1, "0", "");
+    await tick();
+    expect(dones()).toEqual([{ message: "empty", text: "" }]);
+    await copyAction();
+    expect(copied()).toEqual([]);
+    expect(phases()).not.toContain("copied");
+  });
+
+  it("does not confirm, or hold the overlay, when the copy fails", async () => {
+    await key(true);
+    await key(false);
+    finish(1, "0", "複製不了");
+    await tick();
+    mocks.invoke.mockImplementationOnce(async () => {
+      throw new Error("clipboard is held by another process");
+    });
+    await copyAction();
+    expect(copied()).toEqual(["複製不了"]);
+    expect(mocks.log.error).toHaveBeenCalledWith("voice-typing: copy failed", expect.anything());
+    expect(dones()).toEqual([{ message: "ok", text: "複製不了" }]);
+    await tick(2900);
+    expect(mocks.hide).toHaveBeenCalledTimes(1);
   });
 });
