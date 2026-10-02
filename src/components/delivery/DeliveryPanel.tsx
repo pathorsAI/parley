@@ -334,9 +334,9 @@ function DeliveryReadoutSkeleton({ caption }: Readonly<{ caption: ReactNode }>) 
         <Skeleton className="h-3 w-14" />
       </div>
       {/* The advisory line's slot carries the status, so the wait is named. */}
-      <p role="status" className="-mt-0.5 flex items-center gap-1 text-[10px] text-muted-foreground/70">
+      <output className="-mt-0.5 flex items-center gap-1 text-[10px] text-muted-foreground/70">
         {caption}
-      </p>
+      </output>
       <div className="flex h-4 items-center justify-between gap-2" aria-hidden="true">
         <Skeleton className="h-3 w-12" />
         <Skeleton className="h-3 w-20" />

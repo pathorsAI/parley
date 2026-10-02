@@ -148,8 +148,10 @@ function ReplayFindingsPending() {
   }
   return (
     <ul className="-mx-3 flex flex-col" aria-busy="true">
-      <li className="sr-only" role="status">
+      <li className="sr-only">
+        <output>
         {display === "running" ? t("timeline.analyzing") : t("studyGen.status.queued")}
+      </output>
       </li>
       {["w-2/5", "w-1/2", "w-1/3", "w-3/5"].map((w) => (
         <FindingRowSkeleton key={w} titleWidth={w} />

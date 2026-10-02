@@ -743,9 +743,9 @@ export function LibraryCard({
 export function LibraryCardsSkeleton({ label }: Readonly<{ label: string }>) {
   return (
     <div className="flex flex-col divide-y divide-border" aria-busy="true">
-      <span className="sr-only" role="status">
+      <output className="sr-only">
         {label}
-      </span>
+      </output>
       {["w-3/5", "w-2/5", "w-1/2", "w-2/3", "w-1/3"].map((w) => (
         <div key={w} className="flex flex-col gap-2 px-2 py-3" aria-hidden="true">
           <Skeleton className="h-[19px] w-14 rounded-full" />

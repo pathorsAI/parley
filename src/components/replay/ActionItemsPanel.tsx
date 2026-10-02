@@ -103,15 +103,14 @@ export function ActionItemsPanel({
           (the report's section spacing, or the scroller's bottom padding), so it
           comes and goes without moving anything. */}
       {!gate && pending && (
-        <p
-          role="status"
+        <output
           className={`absolute flex items-center gap-1.5 text-[11px] text-muted-foreground ${
             embedded ? "left-1 top-full pt-1" : "bottom-2 left-4"
           }`}
         >
           {running ? <Loader2 className="size-3 animate-spin" /> : <Clock className="size-3" />}
           {running ? t("actionItems.generating") : t("actionItems.queued")}
-        </p>
+        </output>
       )}
     </div>
   );

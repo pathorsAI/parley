@@ -329,9 +329,9 @@ function TimelineRow({
 export function RecordingTimelineSkeleton({ label }: Readonly<{ label: string }>) {
   return (
     <div className="flex flex-col" aria-busy="true">
-      <span className="sr-only" role="status">
+      <output className="sr-only">
         {label}
-      </span>
+      </output>
       <div className="flex h-[28.5px] items-center" aria-hidden="true">
         <Skeleton className="h-3 w-12" />
       </div>
