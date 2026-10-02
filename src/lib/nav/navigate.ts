@@ -1,5 +1,5 @@
 import { loadHistoryEntry } from "../history/history";
-import { isMeetingActive, useStore } from "../store";
+import { isMeetingActive, useStore, type LibrarySelection } from "../store";
 import { log } from "../log";
 import { createNavHistory, type NavStatus } from "./history";
 import { sameLocation, type Location } from "./location";
@@ -25,6 +25,14 @@ export interface NavOutcome {
 export interface NavigateOptions {
   /** Traversals pass false — replaying the back stack must not push onto it. */
   record?: boolean;
+  /**
+   * Where the trip started, for a caller that had to leave it BEFORE calling
+   * (see {@link leaveRecordingTo}: by the time this runs the recording is gone
+   * and the window reads as Home). It is recorded behind the destination so ⌘[
+   * comes back to it; null means it was nowhere that can be returned to.
+   * Omitted → the current location, which only ever seeds an empty stack.
+   */
+  from?: Location | null;
 }
 
 /**
@@ -107,11 +115,41 @@ export async function navigateTo(
   const before = currentLocation();
   const outcome = await applyLocation(location);
   if (outcome.status === "applied" && opts.record !== false) {
-    // Seed the stack with wherever we came from, once. Without it the first
-    // jump of a session has nothing behind it and ⌘[ does nothing — the place
-    // you started in is a place you were.
-    if (navHistory.entries().length === 0 && before) navHistory.record(before);
+    if (opts.from !== undefined) {
+      // An explicit origin is a place the user was standing on, whether or
+      // not they got there through this module (record() skips it if it is
+      // already the stack's current entry).
+      if (opts.from) navHistory.record(opts.from);
+    } else if (navHistory.entries().length === 0 && before) {
+      // Seed the stack with wherever we came from, once. Without it the first
+      // jump of a session has nothing behind it and ⌘[ does nothing — the place
+      // you started in is a place you were.
+      navHistory.record(before);
+    }
     navHistory.record(location);
   }
   return outcome;
+}
+
+/**
+ * Close the open recording and go to a node of the library — the titlebar
+ * breadcrumb's parent crumb, which replaced the old 關閉這場錄音 button.
+ *
+ * The recording is thrown away (exitReplay, exactly what that button did, so
+ * the study pipeline and persist subscriptions see the same exit they always
+ * have) and the library opens in the SAME synchronous turn: applyLocation
+ * reaches openLibrary before its first await, so React batches both and Home
+ * never paints in between. The recording is handed over as `from`, so ⌘[ reopens
+ * it.
+ */
+export async function leaveRecordingTo(selection: LibrarySelection): Promise<NavOutcome> {
+  const store = useStore.getState();
+  // exitReplay resets meetingStatus to idle — never let it run over a live call.
+  if (store.appMode !== "study" || isMeetingActive(store.meetingStatus)) {
+    return { status: "refused" };
+  }
+  const from = currentLocation();
+  store.exitReplay();
+  store.setStudyTab("report");
+  return navigateTo({ kind: "library", selection }, { from });
 }
