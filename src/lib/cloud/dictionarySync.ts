@@ -193,21 +193,7 @@ export function outgoingChanges(
   for (const [phrase, list] of groups) {
     const fp = fingerprint(list);
     if (fp === syncedFingerprint(state, phrase) || state.parked[phrase] === fp) continue;
-    const knownId = state.synced[phrase]?.id;
-    const primary =
-      list.find((e) => e.id === knownId) ?? [...list].sort((a, b) => a.createdAt - b.createdAt)[0];
-    const newest = list.reduce((a, b) => (stamp(b) > stamp(a) ? b : a));
-    const variants: string[] = [];
-    for (const e of list) for (const v of e.variants) if (!variants.includes(v)) variants.push(v);
-    entries.push({
-      id: primary.id,
-      phrase,
-      variants,
-      source: toCloudSource(newest.source),
-      confirmed: true,
-      updatedAt: stamp(newest),
-      deletedAt: null,
-    });
+    entries.push(changedEntry(phrase, list, state.synced[phrase]?.id));
     sentFrom.set(phrase, fp);
   }
 
@@ -217,19 +203,47 @@ export function outgoingChanges(
       if (groups.has(phrase)) continue;
       const at = state.pendingDeletes[phrase] ?? now;
       pendingDeletes[phrase] = at;
-      entries.push({
-        id: synced.id,
-        phrase,
-        variants: [],
-        source: toCloudSource(synced.source),
-        confirmed: true,
-        updatedAt: at,
-        deletedAt: at,
-      });
+      entries.push(tombstone(phrase, synced, at));
       sentFrom.set(phrase, fingerprint([]));
     }
   }
   return { entries, sentFrom, pendingDeletes, reset };
+}
+
+/** One phrase's local group as a single cloud entry: under the id the cloud
+ *  already knows (else the oldest entry's), every variant of the group, and the
+ *  newest entry's source and clock. */
+function changedEntry(
+  phrase: string,
+  list: readonly DictionaryEntry[],
+  knownId: string | undefined,
+): CloudDictionaryEntry {
+  const primary =
+    list.find((e) => e.id === knownId) ?? [...list].sort((a, b) => a.createdAt - b.createdAt)[0];
+  const newest = list.reduce((a, b) => (stamp(b) > stamp(a) ? b : a), list[0]);
+  const variants: string[] = [];
+  for (const v of list.flatMap((e) => e.variants)) if (!variants.includes(v)) variants.push(v);
+  return {
+    id: primary.id,
+    phrase,
+    variants,
+    source: toCloudSource(newest.source),
+    confirmed: true,
+    updatedAt: stamp(newest),
+    deletedAt: null,
+  };
+}
+
+function tombstone(phrase: string, synced: SyncedEntry, at: number): CloudDictionaryEntry {
+  return {
+    id: synced.id,
+    phrase,
+    variants: [],
+    source: toCloudSource(synced.source),
+    confirmed: true,
+    updatedAt: at,
+    deletedAt: at,
+  };
 }
 
 /** The result of one exchange with the cloud, ready to be folded in. */
@@ -268,56 +282,91 @@ export function applyExchange(
     parked: { ...state.parked },
   };
 
-  const rows = new Map<string, CloudDictionaryEntry>();
-  for (const row of exchange.pulled) {
-    if (outgoing.sentFrom.has(row.phrase)) continue;
-    if (groupFp(row.phrase) !== syncedFingerprint(next, row.phrase)) continue;
-    rows.set(row.phrase, row);
-  }
-  for (const row of exchange.pushed) {
-    if (outgoing.sentFrom.get(row.phrase) !== groupFp(row.phrase)) continue;
-    rows.set(row.phrase, row);
-  }
-  for (const { phrase, error } of exchange.rejected) {
-    if (TRANSIENT_REJECTIONS.has(error)) continue;
-    const fp = outgoing.sentFrom.get(phrase);
-    if (fp === undefined || fp !== groupFp(phrase)) continue;
-    if (groups.has(phrase)) next.parked[phrase] = fp;
-    else {
-      delete next.synced[phrase];
-      delete next.pendingDeletes[phrase];
-    }
-  }
-
+  const rows = rowsToApply(exchange, outgoing, next, groupFp);
+  recordRejections(exchange.rejected, outgoing, next, groups, groupFp);
   if (rows.size === 0) return { entries: null, state: next };
 
   let entries = [...local];
   for (const [phrase, row] of rows) {
-    const group = groups.get(phrase) ?? [];
-    entries = entries.filter((e) => e.phrase.trim() !== phrase);
-    delete next.pendingDeletes[phrase];
-    delete next.parked[phrase];
-    if (row.deletedAt !== null) {
-      delete next.synced[phrase];
-      continue;
-    }
-    // Ids are unique locally (Settings keys rows by them). Should an unrelated
-    // local entry still hold this id — a term renamed here keeps its id — that
-    // one takes a fresh id and is reconciled by phrase on the next run.
-    entries = entries.map((e) => (e.id === row.id ? { ...e, id: newId() } : e));
-    const base = group.find((e) => e.id === row.id) ?? group[0];
-    const source = fromCloudSource(row.source);
-    entries.push({
-      id: row.id,
-      phrase,
-      variants: [...row.variants],
-      createdAt: base?.createdAt ?? row.updatedAt,
-      updatedAt: row.updatedAt,
-      source,
-    });
-    next.synced[phrase] = { id: row.id, variants: [...row.variants], source };
+    entries = applyRow(entries, row, groups.get(phrase) ?? [], next, newId);
   }
   return { entries, state: next };
+}
+
+/** The rows that may touch the file: pulled ones for phrases still untouched
+ *  here, pushed ones for phrases that look as they did when sent. */
+function rowsToApply(
+  exchange: SyncExchange,
+  outgoing: Outgoing,
+  state: DictionarySyncState,
+  groupFp: (phrase: string) => string,
+): Map<string, CloudDictionaryEntry> {
+  const rows = new Map<string, CloudDictionaryEntry>();
+  for (const row of exchange.pulled) {
+    if (outgoing.sentFrom.has(row.phrase)) continue;
+    if (groupFp(row.phrase) === syncedFingerprint(state, row.phrase)) rows.set(row.phrase, row);
+  }
+  for (const row of exchange.pushed) {
+    if (outgoing.sentFrom.get(row.phrase) === groupFp(row.phrase)) rows.set(row.phrase, row);
+  }
+  return rows;
+}
+
+/** Permanent refusals: park a local form so it isn't offered again, or drop a
+ *  deletion the cloud has no use for. Transient ones are simply retried. */
+function recordRejections(
+  rejected: SyncExchange["rejected"],
+  outgoing: Outgoing,
+  state: DictionarySyncState,
+  groups: Map<string, DictionaryEntry[]>,
+  groupFp: (phrase: string) => string,
+): void {
+  for (const { phrase, error } of rejected) {
+    if (TRANSIENT_REJECTIONS.has(error)) continue;
+    const fp = outgoing.sentFrom.get(phrase);
+    if (fp === undefined || fp !== groupFp(phrase)) continue;
+    if (groups.has(phrase)) {
+      state.parked[phrase] = fp;
+    } else {
+      delete state.synced[phrase];
+      delete state.pendingDeletes[phrase];
+    }
+  }
+}
+
+/** Write one cloud row over a phrase's local group (collapsing duplicates) and
+ *  record it in the snapshot. Returns the new entry list. */
+function applyRow(
+  entries: DictionaryEntry[],
+  row: CloudDictionaryEntry,
+  group: readonly DictionaryEntry[],
+  state: DictionarySyncState,
+  newId: () => string,
+): DictionaryEntry[] {
+  const phrase = row.phrase;
+  let out = entries.filter((e) => e.phrase.trim() !== phrase);
+  delete state.pendingDeletes[phrase];
+  delete state.parked[phrase];
+  if (row.deletedAt !== null) {
+    delete state.synced[phrase];
+    return out;
+  }
+  // Ids are unique locally (Settings keys rows by them). Should an unrelated
+  // local entry still hold this id — a term renamed here keeps its id — that
+  // one takes a fresh id and is reconciled by phrase on the next run.
+  out = out.map((e) => (e.id === row.id ? { ...e, id: newId() } : e));
+  const base = group.find((e) => e.id === row.id) ?? group[0];
+  const source = fromCloudSource(row.source);
+  out.push({
+    id: row.id,
+    phrase,
+    variants: [...row.variants],
+    createdAt: base?.createdAt ?? row.updatedAt,
+    updatedAt: row.updatedAt,
+    source,
+  });
+  state.synced[phrase] = { id: row.id, variants: [...row.variants], source };
+  return out;
 }
 
 // ── Persistence ───────────────────────────────────────────────────────────────
@@ -325,7 +374,7 @@ export function applyExchange(
 function loadState(userId: string): DictionarySyncState {
   try {
     const raw = JSON.parse(localStorage.getItem(STATE_KEY) ?? "null") as DictionarySyncState | null;
-    if (raw && raw.userId === userId && raw.synced && typeof raw.synced === "object") {
+    if (raw?.userId === userId && raw.synced && typeof raw.synced === "object") {
       return {
         userId,
         cursor: typeof raw.cursor === "number" ? raw.cursor : null,
@@ -373,7 +422,7 @@ async function pull(cursor: number | null): Promise<{ entries: CloudDictionaryEn
   const res = await cloudFetch(`/v1/dictionary${query}`);
   const body = (await res.json()) as { entries?: CloudDictionaryEntry[]; now?: number };
   if (!Array.isArray(body.entries) || typeof body.now !== "number") {
-    throw new Error("dictionary sync: malformed pull response");
+    throw new TypeError("dictionary sync: malformed pull response");
   }
   return { entries: body.entries, now: body.now };
 }
@@ -420,7 +469,7 @@ async function runOnce(): Promise<void> {
 
   let state = loadState(userId);
   const previous = readDictionarySyncStatus();
-  const lastSyncedAt = previous && previous.lastSyncedAt ? previous.lastSyncedAt : null;
+  const lastSyncedAt = previous?.lastSyncedAt ?? null;
   setStatus({ state: "syncing", lastSyncedAt });
   try {
     const outgoing = outgoingChanges(listEntries(), state, Date.now());
