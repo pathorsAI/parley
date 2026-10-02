@@ -2,7 +2,7 @@ import { useStore } from "../store";
 import { findActiveTemplate } from "../evaluations/presets";
 import { EVAL_TEMPLATE_OF } from "./lens";
 import { log } from "../log";
-import type { MeetingKind } from "../types";
+import type { MeetingKind, Settings } from "../types";
 
 /**
  * Point the active evaluation set at the template a kind implies.
@@ -18,17 +18,43 @@ import type { MeetingKind } from "../types";
  */
 export function applyKindTemplate(kind: MeetingKind, opts?: { force?: boolean }): boolean {
   const state = useStore.getState();
-  const { evalTemplates, evaluations } = state.settings;
-  const wanted = evalTemplates.find((t) => t.id === EVAL_TEMPLATE_OF[kind]);
+  const wanted = templateSwapFor(kind, state.settings, opts);
   if (!wanted) return false;
-
-  const active = findActiveTemplate(evalTemplates, evaluations);
-  if (!active && !opts?.force) return false; // hand-edited — the user's list wins
-  if (active?.id === wanted.id) return false; // already there
 
   state.updateSettings({ evaluations: wanted.evals.map((e) => ({ ...e })) });
   log.info("analysis: eval template followed meeting kind", { kind, template: wanted.id });
   return true;
+}
+
+/** The template {@link applyKindTemplate} would swap in, or null when it would
+ *  leave the set alone. */
+function templateSwapFor(
+  kind: MeetingKind,
+  settings: Pick<Settings, "evalTemplates" | "evaluations">,
+  opts?: { force?: boolean },
+) {
+  const { evalTemplates, evaluations } = settings;
+  const wanted = evalTemplates.find((t) => t.id === EVAL_TEMPLATE_OF[kind]);
+  if (!wanted) return null;
+
+  const active = findActiveTemplate(evalTemplates, evaluations);
+  if (!active && !opts?.force) return null; // hand-edited — the user's list wins
+  if (active?.id === wanted.id) return null; // already there
+  return wanted;
+}
+
+/**
+ * The evaluation set an auto-detected kind implies, WITHOUT applying it — for a
+ * pass that outlived its recording being on screen (the user opened another
+ * one). Swapping the global watchers then would act on whatever is loaded now,
+ * but the pass still has to analyze with the set this recording would have had.
+ */
+export function evalsImpliedBy(
+  kind: MeetingKind | null,
+  settings: Pick<Settings, "evalTemplates" | "evaluations">,
+): Settings["evaluations"] {
+  const wanted = kind ? templateSwapFor(kind, settings) : null;
+  return wanted ? wanted.evals.map((e) => ({ ...e })) : settings.evaluations;
 }
 
 /**

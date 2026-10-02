@@ -33,6 +33,7 @@ import type {
   TimelineEvent,
   TranscriptSegment,
 } from "../types";
+import type { StudyCacheEntry } from "./studyCache";
 import type { HistoryEntry, HistoryEntrySummary } from "./types";
 
 const HISTORY_UPDATED_EVENT = "history://updated";
@@ -103,6 +104,9 @@ function snapshotAnalysis() {
     speechRateHz: s.replay?.speechRateHz ?? null,
     // Study outputs ride along so a plain save/overwrite never drops them.
     brief: s.brief,
+    // A failed brief stays failed across a plain overwrite (see
+    // HistoryEntry.briefFailed) — and a good one clears the flag.
+    briefFailed: s.briefStatus === "error" && !s.brief,
     // Same for the filing suggestion: the upload's FIRST save happens while the
     // pass may already have landed, and a re-analysis overwrite must not drop a
     // suggestion the user hasn't answered yet. The completion flag comes from the
@@ -135,6 +139,33 @@ export type AnalysisSnapshot = ReturnType<typeof snapshotAnalysis>;
 /** Whether the current transcript has any spoken content worth saving. */
 function hasSpokenTranscript(): boolean {
   return hasSpokenSegment(useStore.getState().segments);
+}
+
+// ── Per-entry write serialization ───────────────────────────────────────────
+//
+// Every in-place update is a read-modify-write of meta.json. Two of them for
+// the same entry must not interleave — the later save would write back the
+// meta it read BEFORE the earlier one landed, silently undoing it. That used to
+// be rare (one stage persisting at a time, while the recording was on screen);
+// now a stage can finish after the user left and write while they refile or
+// rename the same recording, so every RMW below goes through this chain.
+const entryWrites = new Map<string, Promise<unknown>>();
+
+function withEntryWrite<T>(id: string, fn: () => Promise<T>): Promise<T> {
+  const prev = entryWrites.get(id) ?? Promise.resolve();
+  const next = prev.catch(() => {}).then(fn);
+  entryWrites.set(id, next);
+  const clear = () => {
+    if (entryWrites.get(id) === next) entryWrites.delete(id);
+  };
+  next.then(clear, clear);
+  return next;
+}
+
+/** Resolves once every queued write for this entry has landed (or failed). */
+export function entryWritesSettled(id: string): Promise<void> {
+  const pending = entryWrites.get(id);
+  return pending ? pending.then(() => {}, () => {}) : Promise.resolve();
 }
 
 /** Persist an entry: write meta + summary and place the audio. */
@@ -481,6 +512,33 @@ export async function saveTranscriptToHistory(save: TranscriptImportSave): Promi
 }
 
 /**
+ * Lay a store snapshot over the saved entry for {@link updateHistoryEntry}.
+ * Pure + exported for testing.
+ *
+ * The snapshot is taken when findings + action items settle, while the brief,
+ * delivery and filing passes may still be generating — the store reads null for
+ * those, and each lands on disk by itself moments later (persistStageOutputs).
+ * The snapshot's write can still arrive AFTER theirs (it is debounced), so a
+ * null there means "not known yet", never "erase": it must not undo a sibling
+ * stage that already saved. A filing answer the user gave (dismiss/accept: the
+ * pass is done and the suggestion is null) is still copied, because then the
+ * store's null IS the answer.
+ */
+export function mergeAnalysisSnapshot(meta: HistoryEntry, analysis: AnalysisSnapshot): HistoryEntry {
+  return {
+    ...meta,
+    ...analysis,
+    deliveryAssessment: analysis.deliveryAssessment ?? meta.deliveryAssessment ?? null,
+    brief: analysis.brief || meta.brief || null,
+    briefFailed: analysis.brief ? false : analysis.briefFailed || !!meta.briefFailed,
+    meetingKind: analysis.meetingKind ?? meta.meetingKind ?? null,
+    ...(analysis.filingSuggested
+      ? {}
+      : { filingSuggestion: meta.filingSuggestion ?? null, filingSuggested: meta.filingSuggested }),
+  };
+}
+
+/**
  * Overwrite an existing entry's ANALYSIS in place — used after the user re-runs
  * the analysis on a loaded record. Reads the saved entry first so its title,
  * source, createdAt, duration and audio are preserved, then patches in the
@@ -492,76 +550,160 @@ export async function updateHistoryEntry(id: string, snapshot?: AnalysisSnapshot
   // Use the caller's captured snapshot when given (a deferred/flushed save — the
   // live store may since have been cleared); otherwise snapshot now.
   const analysis = snapshot ?? snapshotAnalysis();
-  const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
-  const updated: HistoryEntry = { ...meta, ...analysis };
-  await invoke("save_history_entry", {
-    id,
-    summaryJson: JSON.stringify(buildSummary(updated)),
-    metaJson: JSON.stringify(updated),
-    audioSourcePath: null,
-    compress: false,
+  const updated = await withEntryWrite(id, async () => {
+    const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
+    const next = mergeAnalysisSnapshot(meta, analysis);
+    await invoke("save_history_entry", {
+      id,
+      summaryJson: JSON.stringify(buildSummary(next)),
+      metaJson: JSON.stringify(next),
+      audioSourcePath: null,
+      compress: false,
+    });
+    return next;
   });
   await emitHistoryUpdated(id);
   pushToCloud(id); // re-analysis → refresh the cloud copy too (best-effort)
   log.info("history: entry analysis overwritten", { id, findings: updated.findings.length });
 }
 
+/** What one study stage produced, as the entry fields it owns. */
+export type StageOutputPatch = Partial<
+  Pick<
+    HistoryEntry,
+    | "findings"
+    | "actionItems"
+    | "analyzed"
+    | "meetingKind"
+    | "deliveryAssessment"
+    | "brief"
+    | "briefFailed"
+    | "filingSuggestion"
+    | "filingSuggested"
+  >
+>;
+
 /**
- * Persist the loaded entry's STUDY OUTPUTS (brief and a legacy entry's
- * recomputed delivery assessment) without touching the rest of its analysis.
- * Called right after each output finishes generating, so a recording pays for
- * each generation exactly once. Store-null outputs keep the on-disk value (a
- * brief finishing must not clobber a saved delivery assessment, and vice
- * versa). A READ-ONLY org recording can't be written back — its outputs go into
- * the local study cache instead, so anything that ran is still stored and
- * reopening never re-spends it. No-op when nothing is loaded (live meeting /
- * fresh upload — their save paths snapshot these fields anyway).
+ * Fold one stage's output onto a saved entry. Only the stage's own fields move,
+ * so a brief landing can't clobber a delivery assessment and vice versa. Pure +
+ * exported for testing.
+ *
+ *  - findings / actionItems / deliveryAssessment: replaced when given;
+ *  - analyzed: only ever set true here (it means the findings + action-items
+ *    pipeline completed, and only the action-items stage says so);
+ *  - meetingKind: a null never erases a saved kind;
+ *  - brief: only a NON-EMPTY text is a brief (an empty one is what a failed
+ *    stream yields — see HistoryEntry.briefFailed);
+ *  - filingSuggestion: copied authoritatively when present, null included (a
+ *    pass that had nothing to propose).
  */
-export async function persistStudyOutputs(): Promise<void> {
-  const s = useStore.getState();
-  const id = s.loadedHistoryId;
-  if (s.replayReadOnly && s.replay?.id) {
-    writeStudyCache(s.replay.id, {
-      findings: s.findings,
-      actionItems: s.actionItems,
-      analyzed: s.analysisStatus === "done" && s.actionItemsStatus === "done",
-      brief: s.brief,
-      deliveryAssessment: s.deliveryAssessment,
+export function mergeStageOutputs(meta: HistoryEntry, patch: StageOutputPatch): HistoryEntry {
+  const next: HistoryEntry = { ...meta };
+  if (patch.findings) next.findings = patch.findings;
+  if (patch.actionItems) next.actionItems = patch.actionItems;
+  if (patch.analyzed) next.analyzed = true;
+  if (patch.meetingKind) next.meetingKind = patch.meetingKind;
+  if (patch.deliveryAssessment) next.deliveryAssessment = patch.deliveryAssessment;
+  if (patch.brief) next.brief = patch.brief;
+  if (patch.briefFailed !== undefined) next.briefFailed = patch.briefFailed;
+  if ("filingSuggestion" in patch) next.filingSuggestion = patch.filingSuggestion ?? null;
+  if (patch.filingSuggested !== undefined) next.filingSuggested = patch.filingSuggested;
+  return next;
+}
+
+/** The read-only twin of {@link mergeStageOutputs}: the same patch, as the
+ *  local study cache's fields (writeStudyCache merges them accretively). */
+function cachePatchOf(patch: StageOutputPatch): StudyCacheEntry {
+  return {
+    findings: patch.findings,
+    actionItems: patch.actionItems,
+    analyzed: patch.analyzed,
+    meetingKind: patch.meetingKind,
+    brief: patch.brief || undefined,
+    briefFailed: patch.briefFailed,
+    deliveryAssessment: patch.deliveryAssessment,
+  };
+}
+
+/**
+ * Write one study stage's output onto a saved entry — on disk, then the cloud
+ * copy. Used both while the recording is on screen and after the user left it
+ * (a stage that finished off screen), which is why it takes the entry id rather
+ * than reading `loadedHistoryId`. Serialized per entry with every other in-place
+ * update, so two stages landing together can't race their read-modify-writes.
+ * `push: false` only marks the entry dirty, for a write the next stage's write
+ * will push anyway (each push re-uploads the audio).
+ */
+export async function patchEntryOutputs(
+  id: string,
+  patch: StageOutputPatch,
+  opts?: { push?: boolean },
+): Promise<void> {
+  if (!isTauri()) return;
+  await withEntryWrite(id, async () => {
+    // An upload's initial save may still be compressing — wait so the entry exists.
+    await Promise.resolve(uploadSaveInFlight).catch(() => {});
+    const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
+    const updated = mergeStageOutputs(meta, patch);
+    await invoke("save_history_entry", {
+      id,
+      summaryJson: JSON.stringify(buildSummary(updated)),
+      metaJson: JSON.stringify(updated),
+      audioSourcePath: null, // leave the recording untouched
+      compress: false,
     });
-    log.info("history: study outputs cached (read-only entry)", { id: s.replay.id });
+  });
+  await emitHistoryUpdated(id).catch(() => {});
+  if (opts?.push === false) markDirty(id);
+  else pushToCloud(id).catch((e) => log.warn("history: cloud push failed", { id, error: String(e) }));
+  log.info("history: stage outputs saved", { id, fields: Object.keys(patch).join(",") });
+}
+
+/**
+ * Persist one stage's output wherever its recording keeps outputs: its own
+ * saved entry, or — for a READ-ONLY org recording, which can't be written back —
+ * the local study cache, so anything that ran is still stored and reopening
+ * never re-spends it. No-op for a not-yet-saved upload (its first save
+ * snapshots the store anyway).
+ */
+export async function persistStageOutputs(
+  target: { entryId: string | null; readOnlyId: string | null },
+  patch: StageOutputPatch,
+  opts?: { push?: boolean },
+): Promise<void> {
+  if (target.readOnlyId) {
+    writeStudyCache(target.readOnlyId, cachePatchOf(patch));
+    log.info("history: study outputs cached (read-only entry)", { id: target.readOnlyId });
     return;
   }
-  if (!isTauri() || !id) return;
-  // An upload's initial save may still be compressing — wait so the entry exists.
-  await Promise.resolve(uploadSaveInFlight).catch(() => {});
-  const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
-  const updated: HistoryEntry = {
-    ...meta,
-    brief: s.brief ?? meta.brief ?? null,
-    meetingKind: s.meetingKind ?? meta.meetingKind ?? null,
-    deliveryAssessment: s.deliveryAssessment ?? meta.deliveryAssessment ?? null,
-  };
-  await invoke("save_history_entry", {
-    id,
-    summaryJson: JSON.stringify(buildSummary(updated)),
-    metaJson: JSON.stringify(updated),
-    audioSourcePath: null, // leave the recording untouched
-    compress: false,
+  if (target.entryId) await patchEntryOutputs(target.entryId, patch, opts);
+}
+
+/**
+ * Fold the loaded READ-ONLY org recording's study outputs into the local study
+ * cache. The study pipeline calls this when a findings or action-items pass
+ * settles on one (those have no runner-side persist; brief, delivery and a pass
+ * that finished off screen persist from their runners via persistStageOutputs).
+ */
+export async function persistReadOnlyStudyOutputs(): Promise<void> {
+  const s = useStore.getState();
+  if (!s.replayReadOnly || !s.replay?.id) return;
+  writeStudyCache(s.replay.id, {
+    findings: s.findings,
+    actionItems: s.actionItems,
+    analyzed: s.analysisStatus === "done" && s.actionItemsStatus === "done",
+    meetingKind: s.meetingKind,
+    brief: s.brief,
+    deliveryAssessment: s.deliveryAssessment,
   });
-  pushToCloud(id);
-  log.info("history: study outputs saved", { id, brief: !!updated.brief });
+  log.info("history: study outputs cached (read-only entry)", { id: s.replay.id });
 }
 
 /**
  * Persist the loaded entry's FILING SUGGESTION — the proposed title + folders,
- * or its absence once the user has answered it.
- *
- * Deliberately NOT folded into {@link persistStudyOutputs}: that function writes
- * `store ?? disk ?? null` so one output finishing can't clobber another that is
- * still generating, and under that rule a null can only ever mean "I have
- * nothing to say", never "write null". A dismissal is exactly the second thing,
- * so the filing fields get their own writer — the one place that copies them
- * from the store authoritatively.
+ * or its absence once the user has answered it (a dismissal or acceptance). The
+ * one place that copies the filing fields from the STORE authoritatively; the
+ * filing pass itself lands its suggestion through {@link persistStageOutputs}.
  *
  * No-op for a read-only org recording (nothing to rename or refile, so it never
  * had a suggestion) and for a not-yet-saved upload (there is no entry yet; its
@@ -573,19 +715,22 @@ export async function persistFilingSuggestion(): Promise<void> {
   if (!isTauri() || s.replayReadOnly || !id) return;
   // An upload's initial save may still be compressing — wait so the entry exists.
   await Promise.resolve(uploadSaveInFlight).catch(() => {});
-  const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
-  const updated: HistoryEntry = {
-    ...meta,
-    filingSuggestion: s.filingSuggestion,
-    // The pass ran, whatever it produced — so reopening never pays for it twice.
-    filingSuggested: true,
-  };
-  await invoke("save_history_entry", {
-    id,
-    summaryJson: JSON.stringify(buildSummary(updated)),
-    metaJson: JSON.stringify(updated),
-    audioSourcePath: null, // leave the recording untouched
-    compress: false,
+  const updated = await withEntryWrite(id, async () => {
+    const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
+    const next: HistoryEntry = {
+      ...meta,
+      filingSuggestion: s.filingSuggestion,
+      // The pass ran, whatever it produced — so reopening never pays for it twice.
+      filingSuggested: true,
+    };
+    await invoke("save_history_entry", {
+      id,
+      summaryJson: JSON.stringify(buildSummary(next)),
+      metaJson: JSON.stringify(next),
+      audioSourcePath: null, // leave the recording untouched
+      compress: false,
+    });
+    return next;
   });
   pushToCloud(id);
   log.info("history: filing suggestion saved", { id, pending: !!updated.filingSuggestion });
@@ -611,7 +756,7 @@ export async function listHistory(): Promise<HistoryEntrySummary[]> {
 /** Rename an entry (patches the title in meta + summary). */
 export async function renameHistoryEntry(id: string, title: string): Promise<void> {
   if (!isTauri()) return;
-  await invoke("rename_history_entry", { id, title: title.trim() });
+  await withEntryWrite(id, () => invoke("rename_history_entry", { id, title: title.trim() }));
   log.info("history: entry renamed", { id });
   // A rename is a content change → go through the same dirty→push→clear lifecycle
   // as save/re-analysis, so a failed cloud push is retried by the background sweep.
@@ -637,16 +782,20 @@ export async function renameHistoryEntry(id: string, title: string): Promise<voi
  */
 export async function setEntryFolder(id: string, folderId: string | null): Promise<void> {
   if (!isTauri()) return;
-  const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
-  if ((meta.folderId ?? null) === folderId) return;
-  const updated: HistoryEntry = { ...meta, folderId };
-  await invoke("save_history_entry", {
-    id,
-    summaryJson: JSON.stringify(buildSummary(updated)),
-    metaJson: JSON.stringify(updated),
-    audioSourcePath: null, // leave the recording untouched
-    compress: false,
+  const changed = await withEntryWrite(id, async () => {
+    const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
+    if ((meta.folderId ?? null) === folderId) return false;
+    const updated: HistoryEntry = { ...meta, folderId };
+    await invoke("save_history_entry", {
+      id,
+      summaryJson: JSON.stringify(buildSummary(updated)),
+      metaJson: JSON.stringify(updated),
+      audioSourcePath: null, // leave the recording untouched
+      compress: false,
+    });
+    return true;
   });
+  if (!changed) return;
   const s = useStore.getState();
   if (s.loadedHistoryId === id) s.setReplayFolderId(folderId);
   log.info("history: entry folder set", { id, folderId });
@@ -667,25 +816,28 @@ export interface EntryMetaPatch {
  * Patch a saved recording's FRAME — free-text context, speaker display names —
  * without touching its analysis. This is how an MCP client describes what kind
  * of meeting a recording was, or fixes a wrong speaker mapping, so every later
- * read and analysis pass gets the right frame. Same read-modify-write as {@link persistStudyOutputs}; the open replay's
+ * read and analysis pass gets the right frame. Same read-modify-write as {@link patchEntryOutputs}; the open replay's
  * store is synced so the UI reflects the fix immediately.
  */
 export async function updateEntryMeta(id: string, patch: EntryMetaPatch): Promise<HistoryEntry> {
-  const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
-  const speakerNames = patch.speakerNames
-    ? mergeSpeakerNames(meta.speakerNames ?? {}, patch.speakerNames)
-    : meta.speakerNames;
-  const updated: HistoryEntry = {
-    ...meta,
-    ...(patch.meetingContext === undefined ? {} : { meetingContext: patch.meetingContext }),
-    speakerNames,
-  };
-  await invoke("save_history_entry", {
-    id,
-    summaryJson: JSON.stringify(buildSummary(updated)),
-    metaJson: JSON.stringify(updated),
-    audioSourcePath: null, // leave the recording untouched
-    compress: false,
+  const updated = await withEntryWrite(id, async () => {
+    const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
+    const speakerNames = patch.speakerNames
+      ? mergeSpeakerNames(meta.speakerNames ?? {}, patch.speakerNames)
+      : meta.speakerNames;
+    const next: HistoryEntry = {
+      ...meta,
+      ...(patch.meetingContext === undefined ? {} : { meetingContext: patch.meetingContext }),
+      speakerNames,
+    };
+    await invoke("save_history_entry", {
+      id,
+      summaryJson: JSON.stringify(buildSummary(next)),
+      metaJson: JSON.stringify(next),
+      audioSourcePath: null, // leave the recording untouched
+      compress: false,
+    });
+    return next;
   });
   const s = useStore.getState();
   if (s.loadedHistoryId === id) {
@@ -735,20 +887,25 @@ export async function setEntryAnalysis(
   id: string,
   patch: EntryAnalysisPatch,
 ): Promise<{ id: string; findings: number; actionItems: number; brief: boolean; analyzed: boolean | null }> {
-  const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
-  const updated: HistoryEntry = {
-    ...meta,
-    ...(patch.findings ? { findings: patch.findings } : {}),
-    ...(patch.actionItems ? { actionItems: patch.actionItems } : {}),
-    ...(patch.brief === undefined ? {} : { brief: patch.brief }),
-    ...(patch.analyzed === undefined ? {} : { analyzed: patch.analyzed }),
-  };
-  await invoke("save_history_entry", {
-    id,
-    summaryJson: JSON.stringify(buildSummary(updated)),
-    metaJson: JSON.stringify(updated),
-    audioSourcePath: null, // leave the recording untouched
-    compress: false,
+  const updated = await withEntryWrite(id, async () => {
+    const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
+    const next: HistoryEntry = {
+      ...meta,
+      ...(patch.findings ? { findings: patch.findings } : {}),
+      ...(patch.actionItems ? { actionItems: patch.actionItems } : {}),
+      ...(patch.brief === undefined ? {} : { brief: patch.brief }),
+      // An externally written brief supersedes an earlier failed generation.
+      ...(patch.brief ? { briefFailed: false } : {}),
+      ...(patch.analyzed === undefined ? {} : { analyzed: patch.analyzed }),
+    };
+    await invoke("save_history_entry", {
+      id,
+      summaryJson: JSON.stringify(buildSummary(next)),
+      metaJson: JSON.stringify(next),
+      audioSourcePath: null, // leave the recording untouched
+      compress: false,
+    });
+    return next;
   });
   const s = useStore.getState();
   if (s.loadedHistoryId === id) {
@@ -790,14 +947,16 @@ export async function setEntryAnalysis(
  *  entry couldn't be rewritten — logged, never fatal: the sweep goes on. */
 async function repointEntryFolder(id: string, target: string): Promise<boolean> {
   try {
-    const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
-    const updated: HistoryEntry = { ...meta, folderId: target };
-    await invoke("save_history_entry", {
-      id,
-      summaryJson: JSON.stringify(buildSummary(updated)),
-      metaJson: JSON.stringify(updated),
-      audioSourcePath: null, // leave the recording untouched
-      compress: false,
+    await withEntryWrite(id, async () => {
+      const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
+      const updated: HistoryEntry = { ...meta, folderId: target };
+      await invoke("save_history_entry", {
+        id,
+        summaryJson: JSON.stringify(buildSummary(updated)),
+        metaJson: JSON.stringify(updated),
+        audioSourcePath: null, // leave the recording untouched
+        compress: false,
+      });
     });
     return true;
   } catch (e) {
@@ -873,6 +1032,10 @@ interface HistoryReadResult {
  * focus the main window. Called by the main-window listener on `history://open`.
  */
 export async function loadHistoryEntry(id: string): Promise<void> {
+  // A stage that finished after the user left may still be writing its result
+  // onto this entry — read after it lands, or the open would restore the stale
+  // meta and re-run that stage.
+  await entryWritesSettled(id);
   const { meta, audioPath } = await invoke<HistoryReadResult>("read_history_entry", { id });
   const audioSrc = audioPath ? convertFileSrc(audioPath) : "";
   const session: ReplaySession = {
@@ -899,6 +1062,23 @@ export async function loadHistoryEntry(id: string): Promise<void> {
 }
 
 /**
+ * Fold a read-only entry's locally cached study outputs over its fetched meta,
+ * filling only what the shared copy lacks (its own saved outputs win).
+ */
+function foldStudyCache(meta: HistoryEntry, cached: ReturnType<typeof readStudyCache>): void {
+  if (!cached) return;
+  if (!meta.findings.length && cached.findings?.length) meta.findings = cached.findings;
+  if (!meta.actionItems.length && cached.actionItems?.length) meta.actionItems = cached.actionItems;
+  // The VIEWER's own completed pass also counts as analyzed — a clean-empty
+  // result must restore as done here too, or every open re-spends it.
+  if (cached.analyzed) meta.analyzed = true;
+  meta.brief = meta.brief || cached.brief || null;
+  if (!meta.brief && cached.briefFailed) meta.briefFailed = true;
+  meta.deliveryAssessment = meta.deliveryAssessment ?? cached.deliveryAssessment ?? null;
+  meta.meetingKind = meta.meetingKind ?? cached.meetingKind ?? null;
+}
+
+/**
  * Load an ORG (cloud-shared) recording into replay WITHOUT persisting it to the
  * local history dir — org recordings must never pollute the personal list. The
  * full entry (transcript + analysis) comes over HTTP; the audio is streamed to a
@@ -916,16 +1096,7 @@ export async function loadOrgEntry(orgId: string, id: string): Promise<void> {
   // "done" and the pipeline doesn't re-spend a generation. The shared entry's
   // own saved GENERATED outputs win — the cache only fills what the org copy
   // lacks.
-  const cached = readStudyCache(id);
-  if (cached) {
-    if (!meta.findings.length && cached.findings?.length) meta.findings = cached.findings;
-    if (!meta.actionItems.length && cached.actionItems?.length) meta.actionItems = cached.actionItems;
-    // The VIEWER's own completed pass also counts as analyzed — a clean-empty
-    // result must restore as done here too, or every open re-spends it.
-    if (cached.analyzed) meta.analyzed = true;
-    meta.brief = meta.brief ?? cached.brief ?? null;
-    meta.deliveryAssessment = meta.deliveryAssessment ?? cached.deliveryAssessment ?? null;
-  }
+  foldStudyCache(meta, readStudyCache(id));
   let audioPath = "";
   const t = cloudToken();
   if (meta.audio && t) {
@@ -1005,8 +1176,10 @@ export async function listenForHistoryUpdated(onUpdated: (id: string) => void): 
  * all"'s analysis→action-items two-step into one write).
  *
  * Safety invariants:
- *  - A plain OPEN restores statuses straight to "done" (never "running"), so
- *    `dirty` is set only by a real re-run → opening an entry never re-saves it.
+ *  - A plain OPEN restores statuses to "done"/"idle", so `dirty` is set only by
+ *    a real run → opening an entry never re-saves it. (An open CAN restore
+ *    "running" — a stage still in flight from before the user left — and that
+ *    is a real run, which this then persists like any other.)
  *  - A failed/partial pass (either status "error") is dropped, so it can't
  *    clobber a good saved result with truncated findings/action items.
  *  - The snapshot is captured WHEN THE TIMER ARMS (state still good). Navigating

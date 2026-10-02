@@ -7,7 +7,8 @@ vi.mock("./log", () => ({
   attachConsoleOnce: vi.fn(),
 }));
 
-import { useStore, meetingElapsedMs } from "./store";
+import { useStore, meetingElapsedMs, restoredStudyStatuses } from "./store";
+import { runRegistry } from "./analysis/runRegistry";
 import { seg, replaySession } from "./test/fixtures";
 import type { TimelineEvent } from "./types";
 import type { HistoryEntry } from "./history/types";
@@ -192,18 +193,23 @@ describe("loadHistory", () => {
     expect(useStore.getState().analysisStatus).toBe("idle");
     expect(useStore.getState().actionItemsStatus).toBe("idle");
 
-    // Legacy entry WITH content restores done, exactly as before the flag.
-    useStore
-      .getState()
-      .loadHistory(histEntry({ id: "hist-3", findings: [makeFinding("f1")] }), session);
+    // Legacy entry with BOTH outputs restores done, exactly as before the flag.
+    useStore.getState().loadHistory(
+      histEntry({
+        id: "hist-3",
+        findings: [makeFinding("f1")],
+        actionItems: [{ id: "a1", text: "x", done: false, linkedEventId: null, atMs: null }],
+      }),
+      session,
+    );
     expect(useStore.getState().analysisStatus).toBe("done");
     expect(useStore.getState().actionItemsStatus).toBe("done");
   });
 
-  it("analyzed:false defers to content — an errored pass must not force re-runs when findings exist", () => {
-    // Shape saveUploadToHistory writes when action items ERRORED after a good
-    // findings pass: analyzed false, findings present. Reopen keeps them "done"
-    // (retry stays manual, matching pre-flag behavior).
+  it("decides findings and action items SEPARATELY — saved findings alone still get their action items", () => {
+    // The shape a findings pass that landed before the user left writes (or an
+    // upload whose action items errored): findings saved, no action items, not
+    // `analyzed`. Coupling the two used to mark it complete forever.
     const session = replaySession([seg({ id: "s1", text: "hi" })], { id: "hist-4" });
     useStore
       .getState()
@@ -212,7 +218,79 @@ describe("loadHistory", () => {
         session,
       );
     expect(useStore.getState().analysisStatus).toBe("done");
-    expect(useStore.getState().actionItemsStatus).toBe("done");
+    expect(useStore.getState().actionItemsStatus).toBe("idle");
+    // The findings themselves are restored, not regenerated.
+    expect(useStore.getState().findings).toHaveLength(1);
+  });
+
+  it("a brief that failed last time restores as error (no silent re-run); a saved brief wins", () => {
+    const session = replaySession([seg({ id: "s1", text: "hi" })], { id: "hist-5" });
+    useStore.getState().loadHistory(histEntry({ id: "hist-5", analyzed: true, briefFailed: true }), session);
+    expect(useStore.getState().briefStatus).toBe("error");
+
+    useStore
+      .getState()
+      .loadHistory(histEntry({ id: "hist-5", analyzed: true, brief: "# Brief", briefFailed: true }), session);
+    expect(useStore.getState().briefStatus).toBe("done");
+    expect(useStore.getState().brief).toBe("# Brief");
+
+    // An empty saved brief is no brief: it generates (idle), never renders "done".
+    useStore.getState().loadHistory(histEntry({ id: "hist-5", analyzed: true, brief: "" }), session);
+    expect(useStore.getState().briefStatus).toBe("idle");
+    expect(useStore.getState().brief).toBeNull();
+  });
+
+  it("a stage still in flight for the entry restores as running, so it is not dispatched twice", () => {
+    const session = replaySession([seg({ id: "s1", text: "hi" })], { id: "hist-6" });
+    runRegistry.add("hist-6", "actions", 1);
+    try {
+      useStore
+        .getState()
+        .loadHistory(histEntry({ id: "hist-6", findings: [makeFinding("f1")] }), session);
+      expect(useStore.getState().analysisStatus).toBe("done");
+      expect(useStore.getState().actionItemsStatus).toBe("running");
+      expect(useStore.getState().briefStatus).toBe("idle");
+    } finally {
+      runRegistry.remove("hist-6", "actions", 1);
+    }
+    // Once it has landed, a reopen restores from the entry as usual.
+    useStore
+      .getState()
+      .loadHistory(histEntry({ id: "hist-6", findings: [makeFinding("f1")] }), session);
+    expect(useStore.getState().actionItemsStatus).toBe("idle");
+  });
+});
+
+describe("restoredStudyStatuses", () => {
+  const base = {
+    findings: [] as TimelineEvent[],
+    actionItems: [] as HistoryEntry["actionItems"],
+  };
+
+  it("`analyzed` marks an empty result done for both stages", () => {
+    const r = restoredStudyStatuses({ ...base, analyzed: true });
+    expect(r.analysisStatus).toBe("done");
+    expect(r.actionItemsStatus).toBe("done");
+  });
+
+  it("action items alone mark only the action-items stage", () => {
+    const r = restoredStudyStatuses({
+      ...base,
+      actionItems: [{ id: "a1", text: "x", done: false, linkedEventId: null, atMs: null }],
+    });
+    expect(r.analysisStatus).toBe("idle");
+    expect(r.actionItemsStatus).toBe("done");
+  });
+
+  it("in flight beats every saved state", () => {
+    const r = restoredStudyStatuses(
+      { ...base, analyzed: true, brief: "b", briefFailed: true, filingSuggested: true },
+      new Set(["findings", "brief", "filing"] as const),
+    );
+    expect(r.analysisStatus).toBe("running");
+    expect(r.actionItemsStatus).toBe("done");
+    expect(r.briefStatus).toBe("running");
+    expect(r.filingStatus).toBe("running");
   });
 });
 

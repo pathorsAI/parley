@@ -48,3 +48,19 @@ describe("writeStudyCache `analyzed` merge", () => {
     expect(readStudyCache("e2")?.analyzed).toBeUndefined();
   });
 });
+
+describe("writeStudyCache brief + kind merge", () => {
+  it("an empty brief never overwrites a cached one; a failure flag accretes until cleared", () => {
+    writeStudyCache("e3", { brief: "debrief", meetingKind: "sales" });
+    writeStudyCache("e3", { brief: "", briefFailed: true, meetingKind: null });
+    let cached = readStudyCache("e3");
+    expect(cached?.brief).toBe("debrief");
+    expect(cached?.briefFailed).toBe(true);
+    expect(cached?.meetingKind).toBe("sales");
+
+    writeStudyCache("e3", { brief: "fresh", briefFailed: false });
+    cached = readStudyCache("e3");
+    expect(cached?.brief).toBe("fresh");
+    expect(cached?.briefFailed).toBe(false);
+  });
+});

@@ -1,7 +1,7 @@
 import { useStore, isTrimmed, hasSpokenSegment } from "../store";
 import { hasProviderKey } from "../ai/settings";
 import { analyzeDelivery } from "../ai/delivery";
-import { makeRunGuard } from "./runGuard";
+import { landStage, makeRunGuard } from "./runGuard";
 
 /**
  * Run the whole-recording delivery assessment (tone + over-frequent fillers + an
@@ -10,10 +10,11 @@ import { makeRunGuard } from "./runGuard";
  * Unlike the LIVE coach (gated behind the opt-in `delivery.tone` toggle, which
  * governs the extra *live* nudges), the post-call pass runs as part of the retro
  * whenever there's a provider key + transcript — same as the timeline analysis
- * and action items. Dispatched by the study pipeline; a run that outlives its
- * session or is superseded stops writing (see runGuard).
+ * and action items. Dispatched by the study pipeline. The assessment is saved
+ * onto the recording's entry when it lands — including when the user already
+ * left it (see runGuard.landStage); a superseded run is discarded.
  */
-const guard = makeRunGuard();
+const guard = makeRunGuard("delivery");
 export async function runDeliveryAnalysis(): Promise<void> {
   const state = useStore.getState();
   const { settings, speakerNames } = state;
@@ -27,7 +28,7 @@ export async function runDeliveryAnalysis(): Promise<void> {
   if (!hasSpokenSegment(segments)) return;
   if (state.deliveryStatus === "running") return;
 
-  const alive = guard.begin();
+  const run = guard.begin();
   state.setDeliveryStatus("running");
   try {
     const res = await analyzeDelivery({
@@ -37,16 +38,25 @@ export async function runDeliveryAnalysis(): Promise<void> {
       measuredRateHz: state.replay?.speechRateHz ?? null,
       mode: "post",
     });
-    if (!alive()) return;
-    useStore.getState().setDeliveryAssessment(res);
-    useStore.getState().setDeliveryStatus("done");
     // A legacy entry (saved before deliveryAssessment existed) recomputes this on
     // open — save it back so it only ever recomputes once. No-op when unsaved.
-    void import("../history/history").then((m) =>
-      m.persistStudyOutputs().catch((e) => console.error("[delivery] persist failed", e))
-    );
+    await landStage(run, {
+      stage: "delivery",
+      apply: () => {
+        useStore.getState().setDeliveryAssessment(res);
+        useStore.getState().setDeliveryStatus("done");
+      },
+      patch: { deliveryAssessment: res },
+      persistWhileLoaded: true,
+    });
   } catch (e) {
     console.error("[delivery]", e);
-    if (alive()) useStore.getState().setDeliveryStatus("error");
+    await landStage(run, {
+      stage: "delivery",
+      apply: () => useStore.getState().setDeliveryStatus("error"),
+      patch: null,
+    });
+  } finally {
+    run.end();
   }
 }
