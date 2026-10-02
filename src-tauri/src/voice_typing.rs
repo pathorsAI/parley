@@ -173,7 +173,7 @@ impl VoiceTypingState {
 /// stay usable while the app is busy with something else (saving, exporting,
 /// transcribing an upload), and a sync command would simply queue behind
 /// whatever main-thread work is in flight. Nothing here touches AppKit — the
-/// overlay/clipboard commands, which do, stay synchronous.
+/// overlay/clipboard commands, which do, stay synchronous on macOS.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn start_voice_typing(
@@ -468,9 +468,26 @@ pub async fn stop_voice_typing(
 /// (Esc's Undo, the overlay's Copy). Through the OS because the webview's
 /// `navigator.clipboard` is blocked while Parley isn't focused. Never restored
 /// over — a restore still pending from the last dictation is called off.
+///
+/// Synchronous on macOS, so Tauri runs it on the main thread, where AppKit
+/// wants the pasteboard. On Windows it runs on a blocking worker instead (see
+/// `insert_text`).
+#[cfg(not(target_os = "windows"))]
 #[tauri::command]
 pub fn copy_to_clipboard(state: State<'_, ClipboardState>, text: String) -> Result<(), String> {
     clipboard::copy(&mut state.lock(), &mut SystemPasteboard, &text)
+}
+
+#[cfg(target_os = "windows")]
+#[tauri::command]
+pub async fn copy_to_clipboard(app: AppHandle, text: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<ClipboardState>();
+        let mut ledger = state.lock();
+        clipboard::copy(&mut ledger, &mut SystemPasteboard, &text)
+    })
+    .await
+    .map_err(|e| format!("clipboard copy did not run: {e}"))?
 }
 
 /// Outcome of an insert: whether the paste went out, and WHO it went to.
@@ -509,26 +526,44 @@ pub struct PasteResult {
 /// fields (the Ask box, a meeting's context, Settings), and the paste lands
 /// there. Holding it back on the clipboard told them to paste by hand a text
 /// that was already in the field — doing so inserted it twice.
+///
+/// Synchronous on macOS, so Tauri runs it on the main thread, where AppKit
+/// wants the pasteboard. On Windows it runs on a blocking worker instead:
+/// saving the clipboard asks the app that copied it to render what it only
+/// promised, and opening the clipboard waits out whoever holds it, so on the
+/// main thread an Excel range or a busy clipboard would freeze every Parley
+/// window. Ctrl+V and the foreground-window queries work from any thread.
+#[cfg(not(target_os = "windows"))]
 #[tauri::command]
-pub fn insert_text(
-    app: AppHandle,
-    state: State<'_, ClipboardState>,
-    text: String,
-) -> Result<PasteResult, String> {
+pub fn insert_text(app: AppHandle, text: String) -> Result<PasteResult, String> {
+    insert_now(&app, &text)
+}
+
+#[cfg(target_os = "windows")]
+#[tauri::command]
+pub async fn insert_text(app: AppHandle, text: String) -> Result<PasteResult, String> {
+    tauri::async_runtime::spawn_blocking(move || insert_now(&app, &text))
+        .await
+        .map_err(|e| format!("insert did not run: {e}"))?
+}
+
+/// `insert_text`'s work, on whichever thread the platform wants it.
+fn insert_now(app: &AppHandle, text: &str) -> Result<PasteResult, String> {
     // Sample the frontmost app FIRST: posting the paste can move focus (a
     // paste that opens a sheet, an app that activates on input), so reading
     // it afterward could name the wrong app.
     let app_bundle_id = imp::frontmost_bundle_id();
     let blocked = (!imp::accessibility_trusted(false)).then_some(Blocked::Accessibility);
+    let state = app.state::<ClipboardState>();
     let done = clipboard::insert(
         &mut state.lock(),
         &mut SystemPasteboard,
-        &text,
+        text,
         blocked,
         imp::paste_to_frontmost,
     )?;
     if let Some(generation) = done.restore {
-        clipboard::schedule_restore(&app, generation);
+        clipboard::schedule_restore(app, generation);
     }
     Ok(PasteResult {
         pasted: done.pasted,

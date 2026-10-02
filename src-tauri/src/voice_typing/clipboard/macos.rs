@@ -12,7 +12,7 @@ use objc::rc::autoreleasepool;
 use objc::runtime::Object;
 use objc::{class, msg_send, sel, sel_impl};
 
-use super::{is_concealed, Pasteboard};
+use super::{is_concealed, is_saved_type, Pasteboard, SnapshotBudget};
 
 /// NSPasteboardTypeString's UTI; spelled out rather than linking the extern
 /// NSString constant.
@@ -43,30 +43,52 @@ impl Pasteboard for SystemPasteboard {
 
     /// Best effort by nature: reading a type makes the app that copied it
     /// produce that data now if it only promised it, and a promise its owner
-    /// does not keep (it quit; a file promise) has nothing to save.
+    /// does not keep (it quit; a file promise) has nothing to save. So only
+    /// the types worth it are read (`is_saved_type`), within a
+    /// [`SnapshotBudget`]: this runs on the main thread, and every window and
+    /// the paste wait for it.
     fn snapshot(&mut self) -> Result<Snapshot, String> {
         autoreleasepool(|| unsafe {
             let pb = general()?;
             let items: *mut Object = msg_send![pb, pasteboardItems];
-            let items = objects(items);
+            let items: Vec<(*mut Object, Vec<(*mut Object, String)>)> = objects(items)
+                .into_iter()
+                .map(|item| {
+                    let types: *mut Object = msg_send![item, types];
+                    let types = objects(types)
+                        .into_iter()
+                        .filter_map(|t| Some((t, string(t)?)))
+                        .collect();
+                    (item, types)
+                })
+                .collect();
+            // Checked on every item before a single byte is read (see
+            // CONCEALED_TYPE).
+            if items
+                .iter()
+                .any(|(_, types)| is_concealed(types.iter().map(|(_, name)| name.as_str())))
+            {
+                log::info!("voice-typing: the clipboard holds a concealed entry; it is cleared, not restored");
+                return Ok(Vec::new());
+            }
+            let mut budget = SnapshotBudget::start();
             let mut saved = Vec::with_capacity(items.len());
-            for &item in &items {
-                let types: *mut Object = msg_send![item, types];
-                let types: Vec<(*mut Object, String)> = objects(types)
-                    .into_iter()
-                    .filter_map(|t| Some((t, string(t)?)))
-                    .collect();
-                // Checked before a single byte is read (see CONCEALED_TYPE).
-                if is_concealed(types.iter().map(|(_, name)| name.as_str())) {
-                    log::info!("voice-typing: the clipboard holds a concealed entry; it is cleared, not restored");
-                    return Ok(Vec::new());
-                }
+            for (item, types) in &items {
+                let item = *item;
+                let names: Vec<&str> = types.iter().map(|(_, name)| name.as_str()).collect();
                 let mut entries = Vec::with_capacity(types.len());
                 for (ty, name) in types {
-                    let data: *mut Object = msg_send![item, dataForType: ty];
-                    if !data.is_null() {
-                        entries.push((name, bytes(data)));
+                    if !is_saved_type(name, &names) {
+                        continue;
                     }
+                    budget.before_read()?;
+                    let data: *mut Object = msg_send![item, dataForType: *ty];
+                    if data.is_null() {
+                        continue;
+                    }
+                    let len: usize = msg_send![data, length];
+                    budget.take(len)?;
+                    entries.push((name.clone(), bytes(data)));
                 }
                 if !entries.is_empty() {
                     saved.push(entries);
@@ -116,13 +138,23 @@ impl Pasteboard for SystemPasteboard {
         }
     }
 
-    fn restore(&mut self, snapshot: &Snapshot) -> Result<(), String> {
+    /// NSPasteboard has no lock to hold across the check, so `changeCount`
+    /// is compared right before the write clears it, on the main thread: a
+    /// copy from another app would have to land between those two calls.
+    fn restore_if_unchanged(&mut self, snapshot: &Snapshot, mark: i64) -> Result<bool, String> {
         let items = snapshot.iter().map(|item| {
             item.iter()
                 .map(|(ty, data)| (ty.as_str(), data.as_slice()))
                 .collect::<Vec<_>>()
         });
-        autoreleasepool(|| unsafe { write(general()?, items, 0) })
+        autoreleasepool(|| unsafe {
+            let pb = general()?;
+            let count: isize = msg_send![pb, changeCount];
+            if count as i64 != mark {
+                return Ok(false);
+            }
+            write(pb, items, 0).map(|()| true)
+        })
     }
 }
 

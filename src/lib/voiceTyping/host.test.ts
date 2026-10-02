@@ -993,7 +993,8 @@ describe("voice-typing host: Copy on the confirmation", () => {
     expect(dones()).toEqual([{ message: "empty", text: "" }]);
     await copyAction();
     expect(copied()).toEqual([]);
-    expect(phases()).not.toContain("copied");
+    // "copied" is a done event's message, not a phase: no confirmation at all.
+    expect(dones()).toEqual([{ message: "empty", text: "" }]);
   });
 
   it("does not confirm, or hold the overlay, when the copy fails", async () => {

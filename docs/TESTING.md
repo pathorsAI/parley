@@ -158,7 +158,18 @@ part of the next section:
   the second after the text appears: ⌘V pastes what you copied, and the log
   says `clipboard changed after the paste; left as it is`.
 - **Back to back.** Two quick dictations in a row, then ⌘V: your original
-  clipboard, not the first dictation.
+  clipboard, not the first dictation. Again with a copy in between (polish
+  on, so the second takes a moment: ⌘X a word in the document right after
+  the first appears): ⌘V afterwards pastes the cut word, not your original
+  clipboard.
+- **A slow or huge clipboard does not hold up the paste.** Copy a large
+  range of cells in Excel, or let a photo copied on an iPhone reach the Mac
+  through Universal Clipboard, then dictate: the text appears without a
+  visible delay and the overlay does not freeze. `parley.log` shows either
+  `clipboard restored`, or `could not save the clipboard; it keeps the
+  dictation: too slow or too large to save (… ms, … bytes in … formats
+  read)` — then ⌘V pastes the dictation, as it did before Parley saved the
+  clipboard.
 - **No paste, so the clipboard is the delivery.** Revoke Accessibility and
   dictate: the overlay turns warning and says to press ⌘V; the text is on the
   clipboard and stays there.
@@ -237,12 +248,26 @@ involved:
   paste into Ctrl+Alt+V.
 - **The clipboard comes back** (`clipboard/windows.rs`). Walk the clipboard
   section above on Windows. Also: copy a range of cells in Excel, dictate into
-  Notepad, then paste into Excel — the cells come back as cells (the restore
-  is best effort: formats that are GDI objects are skipped, and Windows
-  rebuilds the bitmap ones from the DIB). Win+V history (turn it on in
-  Settings › System › Clipboard) does not list the dictation. If the restore
-  never happens, `parley.log` says why (`clipboard changed after the paste`
-  means the sequence number moved while the target app read the paste).
+  Notepad, then paste into Excel — the cells come back as cells, with their
+  values and formatting. The restore brings back the static formats (text,
+  rich text, HTML, a picture), not the live Excel object, so formulas do not
+  survive it, and Windows rebuilds the bitmap formats from the DIB. Win+V
+  history (turn it on in Settings › System › Clipboard) does not list the
+  dictation. If the restore never happens, `parley.log` says why (`clipboard
+  changed after the paste` means the sequence number moved while the target
+  app read the paste; `clipboard restore failed; trying again` means another
+  process held the clipboard, and up to three retries follow).
+- **A large Excel copy does not freeze Parley** (`insert_text` runs off the
+  main thread on Windows). Copy a large range in a big workbook, then
+  dictate into Outlook or Notepad: the overlay and Parley's windows stay
+  responsive while Excel renders, and copying and pasting in other apps keeps
+  working right after. A range too slow to save leaves the dictation on the
+  clipboard (`too slow or too large to save` in `parley.log`).
+- **A dictation left on the clipboard is not mistaken for a password.**
+  With a dictation still on the clipboard (`could not save the clipboard` or
+  `clipboard restore failed; the clipboard keeps the dictation` in the log),
+  dictate again: afterwards Ctrl+V pastes that earlier dictation, not
+  nothing.
 - **UIPI clipboard-only fallback.** Dictating into a window running as
   administrator (e.g. an elevated terminal) cannot paste — Windows blocks
   input injection into higher-integrity processes. The overlay should say the
