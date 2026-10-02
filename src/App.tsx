@@ -50,6 +50,7 @@ import {
   type ReleaseNotes,
 } from "./lib/releaseNotes";
 import { refreshSession } from "./lib/cloud/client";
+import { initDictionarySync } from "./lib/cloud/dictionarySync";
 import { CLOUD_ENABLED } from "./lib/flags";
 import { initVoiceTyping } from "./lib/voiceTyping/host";
 import { preloadZhConverter } from "./lib/zhConvert";
@@ -206,6 +207,9 @@ const App = () => {
     const unHistoryPersist = initHistoryPersistSync();
     const unStudyPipeline = initStudyPipeline();
     const unVoiceTyping = initVoiceTyping();
+    // Personal dictionary ↔ cloud (and so the iPhone). Main window only: it lives
+    // for the whole session; the other windows just edit the file and broadcast.
+    const unDictionarySync = initDictionarySync();
     return () => {
       active = false;
       live.forEach((fn) => fn());
@@ -216,6 +220,7 @@ const App = () => {
       unHistoryPersist();
       unStudyPipeline();
       unVoiceTyping();
+      unDictionarySync();
     };
   }, []);
 
