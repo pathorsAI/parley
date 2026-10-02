@@ -164,14 +164,24 @@ pub fn run() {
             // tao still activates the app at a login launch (its menu bar may
             // show briefly). Accepted: AppHandle::hide() would avoid it, but a
             // hidden app keeps the voice-typing overlay panel from coming up.
-            if autostart::start_hidden(
-                autostart::is_autostart_launch(std::env::args()),
-                has_way_back,
-            ) {
+            //
+            // An in-app update relaunch inherits `--autostart` from the process
+            // it replaces; the marker the update path left says to show the
+            // window anyway. Taken on every launch, so it is always consumed.
+            let launched_at_login = autostart::is_autostart_launch(std::env::args());
+            let relaunched_after_update = autostart::take_show_on_next_launch(app.handle());
+            if autostart::start_hidden(launched_at_login, has_way_back, relaunched_after_update) {
                 log::info!("app: launched at login; main window stays hidden");
             } else {
+                if launched_at_login && relaunched_after_update {
+                    log::info!("app: relaunched by an update; showing the main window");
+                }
                 show_main_window(app.handle());
             }
+            // A LaunchAgent missing AbandonProcessGroup gets it now, so the
+            // next login launch survives an update relaunch (autostart.rs).
+            #[cfg(target_os = "macos")]
+            autostart::repair_launch_agent(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -243,6 +253,8 @@ pub fn run() {
             cache::cache_sizes,
             autostart::launch_at_login_status,
             autostart::set_launch_at_login,
+            autostart::mark_show_on_next_launch,
+            autostart::clear_show_on_next_launch,
             tray::tray_active,
             tray::set_tray_labels
         ])
