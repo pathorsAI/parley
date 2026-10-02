@@ -9,13 +9,30 @@
 // or "stale" when the cloud copy is newer (another device re-analyzed it);
 // local-only are "local" (not backed up yet); cloud-only are "cloud" (on another
 // device, lazily downloaded on click). See ./syncState for the version bookkeeping.
+//
+// Tombstones: the cloud list hides recordings deleted in the cloud (on another
+// device, or moved into an org from here). A newer server reports their ids next
+// to the list and answers 410 to a push of one; either way the id is flagged
+// `cloudGone` and never pushed again — otherwise a recording deleted on the phone
+// but still on this desktop would be re-uploaded, audio and all, on every sweep.
+// The local copy is kept: it is the user's data. An older server reports neither,
+// which leaves today's behaviour in place.
 
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { isTauri } from "../tauriEvents";
 import { log } from "../log";
-import { CLOUD_URL, cloudFetch, cloudToken, isAuthError, syncEnabled } from "./client";
+import { CLOUD_URL, CloudError, cloudFetch, cloudToken, isAuthError, syncEnabled } from "./client";
 import { buildSummary, listHistory, deleteHistoryEntry } from "../history/history";
-import { pruneSyncMeta, readSyncIndex, setSynced, setSyncedMany } from "./syncState";
+import {
+  clearCloudGone,
+  isCloudGone,
+  markCloudGone,
+  pruneSyncMeta,
+  readSyncIndex,
+  setSynced,
+  setSyncedMany,
+  type SyncMeta,
+} from "./syncState";
 import { isSampleEntry } from "../onboarding/sample";
 import type { HistoryEntry, HistoryEntrySummary } from "../history/types";
 import type { CloudRecordingSummary } from "./types";
@@ -36,13 +53,125 @@ export interface HistoryCardItem extends HistoryEntrySummary {
 // `cloudFetch`, `cloudToken`, and `isAuthError` now live in ./client — one shared
 // bearer-fetch seam for sync + orgs + the org-replay download.
 
+/** The personal cloud listing: the live rows plus the ids tombstoned there. */
+export interface CloudLibrary {
+  recordings: CloudRecordingSummary[];
+  /** Ids of the account's personal recordings deleted in the cloud. Always empty
+   *  from an older server that doesn't report them. */
+  tombstones: string[];
+}
+
+/** List the signed-in account's recordings and tombstones. Empty when signed out. */
+export async function listCloudLibrary(): Promise<CloudLibrary> {
+  if (!cloudToken()) return { recordings: [], tombstones: [] };
+  const res = await cloudFetch("/recordings");
+  const data = (await res.json()) as {
+    recordings?: CloudRecordingSummary[];
+    tombstones?: unknown;
+  };
+  const tombstones = Array.isArray(data.tombstones)
+    ? data.tombstones.filter((t): t is string => typeof t === "string")
+    : [];
+  return { recordings: data.recordings ?? [], tombstones };
+}
+
 /** List the signed-in account's recordings (the synced mirror). [] when signed out. */
 export async function listCloudRecordings(): Promise<CloudRecordingSummary[]> {
-  if (!cloudToken()) return [];
-  const res = await cloudFetch("/recordings");
-  const data = (await res.json()) as { recordings?: CloudRecordingSummary[] };
-  return data.recordings ?? [];
+  return (await listCloudLibrary()).recordings;
 }
+
+/** The server's "this id is tombstoned / not yours to write" answer to a push. */
+function isGoneResponse(e: unknown): boolean {
+  return e instanceof CloudError && e.status === 410;
+}
+
+/**
+ * Thrown by an explicit action that needs the cloud copy (share / move into an
+ * org) when the recording was deleted from the cloud and only this device still
+ * has it. The UI maps it to a localized toast; the English message is for logs
+ * and MCP callers.
+ */
+export class CloudGoneError extends Error {
+  constructor(readonly id: string) {
+    super(
+      `recording ${id} was deleted from the cloud (on another device); it is kept on this device only and cannot be shared`,
+    );
+    this.name = "CloudGoneError";
+  }
+}
+
+export function isCloudGoneError(e: unknown): e is CloudGoneError {
+  return e instanceof CloudGoneError;
+}
+
+// Ids already logged as "not pushing: gone" this session — the save paths can try
+// to push a gone entry on every edit, and one line per recording is enough.
+const goneLogged = new Set<string>();
+
+function logGoneOnce(id: string): void {
+  if (goneLogged.has(id)) return;
+  goneLogged.add(id);
+  log.info("cloud: not pushing a recording deleted in the cloud (kept locally)", { id });
+}
+
+/**
+ * Fold one cloud listing into the bookkeeping: local ids the cloud tombstoned are
+ * flagged `cloudGone`; a flagged id the cloud lists as live again is unflagged
+ * (the server is the judge). Non-local tombstones are ignored — there is nothing
+ * here to stop pushing, and prune would drop them anyway. Decided against the
+ * caller's snapshot so a no-op costs no extra parse; returns whether it wrote.
+ */
+function reconcileCloudGone(
+  localIds: ReadonlySet<string>,
+  cloud: CloudLibrary,
+  syncIndex: Readonly<Record<string, SyncMeta>>,
+): boolean {
+  const tombstoned = new Set(cloud.tombstones);
+  const gone = cloud.tombstones.filter((id) => localIds.has(id) && !syncIndex[id]?.cloudGone);
+  const back = cloud.recordings
+    .filter((c) => syncIndex[c.id]?.cloudGone && !tombstoned.has(c.id))
+    .map((c) => c.id);
+  if (back.length) {
+    clearCloudGone(back);
+    for (const id of back) goneLogged.delete(id);
+    log.info("cloud: recordings listed live again; resuming sync", { ids: back });
+  }
+  if (gone.length) {
+    markCloudGone(gone);
+    for (const id of gone) goneLogged.add(id);
+    log.info("cloud: stopped syncing recordings deleted in the cloud (local copies kept)", {
+      count: gone.length,
+      ids: gone,
+    });
+  }
+  return back.length > 0 || gone.length > 0;
+}
+
+/**
+ * Which local entries a sweep pushes: everything the cloud is missing, plus
+ * anything with an unconfirmed local change (dirty) — except the bundled sample
+ * (never leaves the device) and anything the cloud tombstoned, whether the
+ * current listing says so or an earlier one / a 410 did (`cloudGone`). A flagged
+ * id the cloud lists as live again is treated like any other synced entry.
+ */
+export function entriesToPush<T extends { id: string }>(
+  local: readonly T[],
+  cloudIds: ReadonlySet<string>,
+  tombstones: ReadonlySet<string>,
+  syncIndex: Readonly<Record<string, SyncMeta>>,
+): T[] {
+  return local.filter((e) => {
+    if (isSampleEntry(e) || tombstones.has(e.id)) return false;
+    const meta = syncIndex[e.id];
+    const inCloud = cloudIds.has(e.id);
+    if (meta?.cloudGone && !inCloud) return false;
+    return !inCloud || meta?.dirty === true;
+  });
+}
+
+/** What one push did: uploaded, did nothing (signed out / sample), or found the
+ *  id tombstoned in the cloud (now flagged, nothing written). */
+export type PushOutcome = "pushed" | "skipped" | "gone";
 
 // One in-flight push per id. Two pushes for the SAME entry must not race: each
 // reads the current disk content and clears dirty on its own response, so an older
@@ -51,7 +180,7 @@ export async function listCloudRecordings(): Promise<CloudRecordingSummary[]> {
 const pushChains = new Map<string, Promise<unknown>>();
 
 /** Push ONE local entry to the cloud (serialized per id). */
-export async function pushLocalEntry(id: string): Promise<void> {
+export async function pushLocalEntry(id: string): Promise<PushOutcome> {
   const prev = pushChains.get(id) ?? Promise.resolve();
   const next = prev
     .catch((error) =>
@@ -63,45 +192,62 @@ export async function pushLocalEntry(id: string): Promise<void> {
     .then(() => pushLocalEntryNow(id));
   pushChains.set(id, next);
   try {
-    await next;
+    return await next;
   } finally {
     if (pushChains.get(id) === next) pushChains.delete(id);
   }
 }
 
 /** The actual push: summary + full entry JSON, with the audio uploaded first. */
-async function pushLocalEntryNow(id: string): Promise<void> {
-  if (!isTauri() || !cloudToken()) return;
+async function pushLocalEntryNow(id: string): Promise<PushOutcome> {
+  if (!isTauri() || !cloudToken()) return "skipped";
   // The bundled onboarding sample stays on this device: it is demo content, not
   // the user's recording, so it must never land in their cloud account. Every
   // push (inline save paths and the sweep) funnels through here.
-  if (isSampleEntry({ id })) return;
+  if (isSampleEntry({ id })) return "skipped";
+  // Tombstoned in the cloud: checked before reading the multi-MB audio, since the
+  // server would only throw it away.
+  if (isCloudGone(id)) {
+    logGoneOnce(id);
+    return "gone";
+  }
   const { meta, audioPath } = await invoke<{ meta: HistoryEntry; audioPath: string | null }>(
     "read_history_entry",
     { id }
   );
-  // Upload the audio FIRST, then commit the summary row — so a row never claims
-  // hasAudio before its blob exists (which would 404 a download on another device).
-  if (audioPath) {
-    // Read the local recording through the webview's asset channel, then upload it.
-    const buf = await (await fetch(convertFileSrc(audioPath))).arrayBuffer();
-    await cloudFetch(`/recordings/${id}/audio`, {
-      method: "PUT",
-      headers: { "Content-Type": "audio/ogg" },
-      body: buf,
+  let res: Response;
+  try {
+    // Upload the audio FIRST, then commit the summary row — so a row never claims
+    // hasAudio before its blob exists (which would 404 a download on another device).
+    if (audioPath) {
+      // Read the local recording through the webview's asset channel, then upload it.
+      const buf = await (await fetch(convertFileSrc(audioPath))).arrayBuffer();
+      await cloudFetch(`/recordings/${id}/audio`, {
+        method: "PUT",
+        headers: { "Content-Type": "audio/ogg" },
+        body: buf,
+      });
+    }
+    const summary = buildSummary(meta);
+    res = await cloudFetch(`/recordings/${id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ summary, meta }),
     });
+  } catch (e) {
+    // 410 = tombstoned (or not this user's personal row): an expected answer, not
+    // a failure. The server wrote nothing; flag it so no later push tries again.
+    if (!isGoneResponse(e)) throw e;
+    markCloudGone([id]);
+    logGoneOnce(id);
+    return "gone";
   }
-  const summary = buildSummary(meta);
-  const res = await cloudFetch(`/recordings/${id}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ summary, meta }),
-  });
   // Record the cloud version this local copy now matches (and clear dirty), so a
   // later NEWER cloud `updatedAt` (from another device) reads as stale.
   const { updatedAt } = (await res.json().catch(() => ({}))) as { updatedAt?: number };
   if (typeof updatedAt === "number") setSynced(id, updatedAt);
   log.info("cloud: pushed recording", { id, hasAudio: !!audioPath });
+  return "pushed";
 }
 
 /** Best-effort push of one entry — never throws (used from save paths). */
@@ -145,6 +291,11 @@ export async function downloadCloudEntry(rec: {
 export async function deleteCloudRecording(id: string): Promise<void> {
   if (!cloudToken()) return;
   await cloudFetch(`/recordings/${id}`, { method: "DELETE" });
+  // We just tombstoned it ourselves: if the local delete that follows fails (or a
+  // move leaves the local copy behind), the sweep must not keep re-uploading it.
+  // Needs no server support, so this holds against an older server too.
+  markCloudGone([id]);
+  goneLogged.add(id);
 }
 
 /**
@@ -156,24 +307,30 @@ export async function listMergedHistory(): Promise<HistoryCardItem[]> {
   // Sync off (or signed out / OSS edition) → show local only, every card "local".
   if (!syncEnabled()) return local.map((e) => ({ ...e, sync: "local" as const }));
 
-  let cloud: CloudRecordingSummary[];
+  let library: CloudLibrary;
   try {
-    cloud = await listCloudRecordings();
+    library = await listCloudLibrary();
   } catch (e) {
     log.warn("cloud: list failed; showing local only", { error: String(e) });
     return local.map((e) => ({ ...e, sync: "local" as const }));
   }
+  const cloud = library.recordings;
 
   const cloudById = new Map(cloud.map((c) => [c.id, c]));
   const localIds = new Set(local.map((e) => e.id));
   // One parse of the bookkeeping for the whole list, one write for every new
-  // baseline — see readSyncIndex for why this is not a per-entry lookup.
-  const syncIndex = readSyncIndex();
+  // baseline — see readSyncIndex for why this is not a per-entry lookup. Re-read
+  // only when the tombstone reconcile actually changed it.
+  const snapshot = readSyncIndex();
+  const syncIndex = reconcileCloudGone(localIds, library, snapshot) ? readSyncIndex() : snapshot;
   const baselines: [string, number][] = [];
   const merged: HistoryCardItem[] = local.map((e) => {
+    const meta = syncIndex[e.id] ?? {};
+    // Deleted in the cloud: only this device has it now, so it is a local card —
+    // never "synced"/"stale", and never a baseline (there is no cloud version).
+    if (meta.cloudGone) return { ...e, sync: "local" as const };
     const c = cloudById.get(e.id);
     if (!c) return { ...e, sync: "local" as const }; // not backed up yet
-    const meta = syncIndex[e.id] ?? {};
     if (meta.cloudUpdatedAt === undefined) {
       // First sight of an already-synced entry → assume the local copy matches the
       // current cloud (it was pushed/pulled from this device) and record that, so
@@ -207,44 +364,60 @@ export async function listMergedHistory(): Promise<HistoryCardItem[]> {
       cloudUpdatedAt: c.updatedAt,
     });
   }
-  // Forget bookkeeping for ids that no longer exist anywhere.
+  // Forget bookkeeping for ids that no longer exist anywhere. A cloudGone entry is
+  // local, so its flag survives until the local copy is deleted too.
   pruneSyncMeta(new Set([...localIds, ...cloudById.keys()]));
   merged.sort((a, b) => b.createdAt - a.createdAt);
   return merged;
 }
 
+// The sweep in flight, if any. The library starts one every time the personal
+// scope is (re)entered and never cancels it, so two can overlap; each would take
+// its own snapshot and push the same entries again (the per-id pushChains only
+// serialize them — the second still uploads). A second caller joins the first.
+let sweepInFlight: Promise<number> | null = null;
+
 /**
  * Background: push every local entry the cloud is MISSING, plus any whose local
  * content changed but never got a confirmed push (dirty — e.g. an inline push
- * failed offline). Returns how many were pushed so the caller can refresh the
- * grid. Bails on the first auth failure rather than retrying every entry.
+ * failed offline), minus anything tombstoned in the cloud (see entriesToPush).
+ * Returns how many were pushed so the caller can refresh the grid. Bails on the
+ * first auth failure rather than retrying every entry. Concurrent calls share one
+ * run.
  */
-export async function pushUnsyncedToCloud(): Promise<number> {
+export function pushUnsyncedToCloud(): Promise<number> {
+  sweepInFlight ??= runSweep().finally(() => {
+    sweepInFlight = null;
+  });
+  return sweepInFlight;
+}
+
+async function runSweep(): Promise<number> {
   if (!isTauri() || !syncEnabled()) return 0;
   // If the cloud list itself fails, skip the pass — don't treat "cloud empty" as
   // "push everything" (that would hammer the server on a transient outage).
-  let cloud: CloudRecordingSummary[];
+  let library: CloudLibrary;
   try {
-    cloud = await listCloudRecordings();
+    library = await listCloudLibrary();
   } catch (e) {
     log.warn("cloud: sweep skipped (list failed)", { error: String(e) });
     return 0;
   }
   const local = await listHistory();
-  const cloudIds = new Set(cloud.map((c) => c.id));
+  const cloudIds = new Set(library.recordings.map((c) => c.id));
   // Decided up front from one snapshot (see readSyncIndex). An entry marked dirty
   // while the sweep runs is caught by the next one, like any other late change.
-  const syncIndex = readSyncIndex();
-  // The sample is never pushed (see pushLocalEntryNow) — leave it out so the
-  // sweep doesn't count it as pushed on every pass.
-  const toPush = local.filter(
-    (e) => !isSampleEntry(e) && (!cloudIds.has(e.id) || syncIndex[e.id]?.dirty === true),
-  );
+  const snapshot = readSyncIndex();
+  const localIds = new Set(local.map((e) => e.id));
+  const syncIndex = reconcileCloudGone(localIds, library, snapshot) ? readSyncIndex() : snapshot;
+  const toPush = entriesToPush(local, cloudIds, new Set(library.tombstones), syncIndex);
   let pushed = 0;
+  let gone = 0;
   for (const e of toPush) {
     try {
-      await pushLocalEntry(e.id);
-      pushed++;
+      const outcome = await pushLocalEntry(e.id);
+      if (outcome === "pushed") pushed++;
+      else if (outcome === "gone") gone++;
     } catch (err) {
       if (isAuthError(err)) {
         log.warn("cloud: sweep aborted (auth)", { error: String(err) });
@@ -254,6 +427,7 @@ export async function pushUnsyncedToCloud(): Promise<number> {
     }
   }
   if (pushed) log.info("cloud: pushed unsynced entries", { pushed });
+  if (gone) log.info("cloud: sweep found recordings deleted in the cloud", { gone });
   return pushed;
 }
 
@@ -282,7 +456,11 @@ export async function shareRecordingToOrg(
   orgId: string,
   folderId: string | null = null,
 ): Promise<CloudRecordingSummary> {
+  // Deleted from the cloud elsewhere → there is no source for the server to copy,
+  // and a push can't bring it back. Say so instead of a confusing share failure.
+  if (isCloudGone(id)) throw new CloudGoneError(id);
   await pushLocalEntrySafe(id); // ensure the source exists in the user keyspace
+  if (isCloudGone(id)) throw new CloudGoneError(id); // that push just got a 410
   const res = await cloudFetch(`/recordings/${encodeURIComponent(id)}/share`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
