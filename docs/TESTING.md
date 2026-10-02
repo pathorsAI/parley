@@ -110,7 +110,13 @@ the overlay:
   (tap, speak, Esc), and during "Polishing…". Then:
   - Undo within 5 s: the text is on the clipboard, a history entry appears,
     nothing is pasted, and the target app keeps focus. Undo while the
-    spinner still shows works too.
+    spinner still shows works too. So does Undo at the last moment, just
+    before the pill starts to fade (about 4 s): with polish on, "Polishing…"
+    and then "Copied to clipboard" show in full rather than the overlay
+    fading out with no answer.
+  - Undo with polish on and the network off: after "Polishing…" the pill
+    reads "Copied as dictated (polish unavailable)", and the raw text is on
+    the clipboard.
   - No Undo: the overlay fades and hides at about 5 s, with no history
     entry.
   - A new press during those 5 s starts a fresh dictation.

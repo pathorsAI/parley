@@ -106,13 +106,22 @@ function cancelAct(action: CancelActionPayload["action"]): void {
   );
 }
 
+/** This load of the page, and its running count of hit reports. The native
+ *  command is async, so two reports a frame apart can be stored in either
+ *  order; the count lets it drop the older one, and the page id tells it a
+ *  reload started counting over (HitReport in voice_typing.rs). Without them
+ *  a stale layout could stick: an unchanged layout is never sent again. */
+const HIT_PAGE = Math.floor(Math.random() * 2 ** 32);
+let hitSeq = 0;
+
 /** Tell the native side which parts of this window catch clicks (see
  *  hitRegions.ts); everywhere else passes them through to the app behind.
  *  Outside Tauri (`bun run dev` in a browser) there is no window to make
  *  click-through, so nothing is sent. */
 function sendHitRects(rects: HitRect[]): void {
   if (!isTauri()) return;
-  invoke("set_voice_overlay_hit_rects", { rects }).catch((error) =>
+  hitSeq += 1;
+  invoke("set_voice_overlay_hit_rects", { rects, page: HIT_PAGE, seq: hitSeq }).catch((error) =>
     log.warn("voice typing overlay: hit rects report failed", {
       count: rects.length,
       error: String(error),
@@ -426,10 +435,18 @@ export const VoiceTypingApp = () => {
   // A cancelled dictation is not "done": its Undo stays fully visible for
   // (almost) the whole offer, then fades just before the host takes the
   // overlay down at CANCEL_UNDO_MS.
+  // Leaving "cancelled" takes that fade back, however the phase changed. The
+  // Undo stays clickable until the fade starts, and the host's answer to a
+  // click just before it ("polishing" for the recovery's polish, then "done")
+  // lands an IPC round trip later — by then the fade may have begun, and the
+  // recovery would play out at opacity 0, reading as an Undo that did nothing.
   useEffect(() => {
     if (phase !== "cancelled") return;
     const id = setTimeout(() => setFading(true), CANCEL_UNDO_MS - FADE_MS - 300);
-    return () => clearTimeout(id);
+    return () => {
+      clearTimeout(id);
+      setFading(false);
+    };
   }, [phase]);
 
   const errorKey = (error && ERROR_KEYS[error]) || "voiceTyping.error";

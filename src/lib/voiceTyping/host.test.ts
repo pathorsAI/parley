@@ -613,6 +613,30 @@ describe("voice-typing host: Esc cancels, Undo copies", () => {
     expect(dones()).toEqual([{ message: "recovered", text: "潤飾到一半取消。" }]);
   });
 
+  it.each(["timedOut", "failed"] as const)(
+    "an Undo whose polish %s copies the text as dictated, and says so",
+    async (outcome) => {
+      mocks.polish.on = true;
+      // The dictation's own pass is abandoned by the Esc; the Undo's breaks.
+      mocks.polish.run
+        .mockImplementationOnce(slowPolish(2000))
+        .mockImplementationOnce(async () => ({ text: null, outcome }));
+      await key(true);
+      await key(false);
+      finish(1, "0", "潤飾沒有回來的一句話");
+      await tick(500);
+      await escape();
+      await tick(1000);
+
+      await undo();
+      expect(mocks.polish.run).toHaveBeenCalledTimes(2);
+      expect(copied()).toEqual(["潤飾沒有回來的一句話"]);
+      expect(mocks.append).toHaveBeenCalledWith("潤飾沒有回來的一句話", null);
+      // Not the plain "copied": the user just sat through "polishing…".
+      expect(dones()).toEqual([{ message: "recovered-unpolished", text: "潤飾沒有回來的一句話" }]);
+    },
+  );
+
   it("a polish that came back despite the Esc is not run again on Undo", async () => {
     mocks.polish.on = true;
     // The answer was already on its way: the abort does not stop it.

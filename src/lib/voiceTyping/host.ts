@@ -38,6 +38,7 @@ import {
   hideOverlay,
   prewarmOverlay,
   doneMessage,
+  recoveredMessage,
   type DoneActionPayload,
 } from "./overlay";
 import { SessionOwner, SessionTranscript, type Segment, type SessionEvent } from "./transcript";
@@ -969,13 +970,17 @@ function enqueueRecovery(g: number, text: string, polished: boolean): Promise<vo
  * Undo's delivery: the clipboard and the history, never a paste — seconds
  * have passed, the caret may have moved, and the click that asked for it
  * landed on the overlay. Polished first unless the polish pass already ran to
- * its end, so it reads as it would have. Runs on `deliveryChain`. An explicit
- * copy, so Rust calls off any clipboard restore still pending from an earlier
- * insert: the recovered text stays.
+ * its end, so it reads as it would have; when that pass breaks, the overlay
+ * says the text went out as dictated, as `deliver` does. Runs on
+ * `deliveryChain`. An explicit copy, so Rust calls off any clipboard restore
+ * still pending from an earlier insert: the recovered text stays.
  */
 async function deliverRecovered(g: number, text: string, polished: boolean): Promise<void> {
-  const out =
-    text && !polished ? (await polishForPaste(text, g, { recovering: true })).text : text;
+  let out = text;
+  let outcome: PolishOutcome = "off";
+  if (text && !polished) {
+    ({ text: out, outcome } = await polishForPaste(text, g, { recovering: true }));
+  }
   if (out) {
     try {
       await invoke("copy_to_clipboard", { text: out });
@@ -990,7 +995,7 @@ async function deliverRecovered(g: number, text: string, polished: boolean): Pro
   if (gen !== g) return;
   await emit("voicetyping://session", {
     phase: "done",
-    message: out ? "recovered" : "nothing",
+    message: recoveredMessage({ text: out, outcome }),
     text: out,
   });
   scheduleHide();

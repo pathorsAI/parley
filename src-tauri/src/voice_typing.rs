@@ -702,10 +702,49 @@ impl HitPoller {
     }
 }
 
+/// The rects the overlay reported last, and which report they came from.
+///
+/// Reports can arrive out of order: the command is async, and Tauri runs each
+/// async invoke as its own task on a multi-threaded runtime, so of two reports
+/// sent a frame apart the older one can be the last to store. The webview only
+/// sends a layout that changed — and the waveform re-renders the same one many
+/// times a second — so it would never send the newer layout again, and clicks
+/// would go by a stale one (a visible block passing them through, a vanished
+/// one catching them) until a block moved. Each report is numbered, and an
+/// older one than what is held is dropped.
+#[derive(Default)]
+struct HitReport {
+    /// Which load of the overlay page sent it (a random id per load). A
+    /// reloaded page counts its reports from 1 again, so its numbers are not
+    /// comparable with the last page's — a report from a new page is always
+    /// taken, rather than ignored until its count passes the old one.
+    page: u32,
+    /// That page's running count of reports.
+    seq: u64,
+    rects: Vec<HitRect>,
+}
+
+impl HitReport {
+    /// Take a report unless it is older than the one held; true when taken.
+    fn apply(&mut self, page: u32, seq: u64, rects: Vec<HitRect>) -> bool {
+        if page == self.page && seq < self.seq {
+            return false;
+        }
+        *self = HitReport {
+            page,
+            seq,
+            rects: sanitize_hit_rects(rects),
+        };
+        true
+    }
+}
+
 /// The overlay's reported hit rects and the poller that applies them.
 #[derive(Default)]
 pub struct OverlayHitState {
-    rects: Mutex<Vec<HitRect>>,
+    /// The order check and the store happen under this one lock, so two
+    /// reports cannot both pass the check and then store in the wrong order.
+    report: Mutex<HitReport>,
     poller: HitPoller,
     /// A tick is queued on the main thread and has not run yet. The poller
     /// skips a tick rather than stack a second one behind a busy main thread.
@@ -768,15 +807,18 @@ fn sanitize_hit_rects(rects: Vec<HitRect>) -> Vec<HitRect> {
 
 /// The overlay reports where its visible blocks are, whenever that changes.
 /// Async so it runs off the main thread: the transcript bubble grows with every
-/// few words, and a synchronous command would queue each report there. The
-/// rects are kept across a dismiss — the webview owns them, and it has already
-/// reported none by the time a done confirmation fades out.
+/// few words, and a synchronous command would queue each report there. Which
+/// is also why reports can land out of order, and carry `page` and `seq` (see
+/// `HitReport`). The rects are kept across a dismiss — the webview owns them,
+/// and it has already reported none by the time a done confirmation fades out.
 #[tauri::command]
 pub async fn set_voice_overlay_hit_rects(
     state: State<'_, OverlayHitState>,
     rects: Vec<HitRect>,
+    page: u32,
+    seq: u64,
 ) -> Result<(), String> {
-    *state.rects.lock().unwrap() = sanitize_hit_rects(rects);
+    state.report.lock().unwrap().apply(page, seq, rects);
     Ok(())
 }
 
@@ -831,7 +873,7 @@ fn hit_tick(app: &AppHandle, generation: u64) {
         return;
     };
     let over = imp::cursor_fraction(handle)
-        .is_some_and(|(fx, fy)| over_hit_rect(&state.rects.lock().unwrap(), fx, fy));
+        .is_some_and(|(fx, fy)| over_hit_rect(&state.report.lock().unwrap().rects, fx, fy));
     // Against the window's real state, not a remembered one: anything that
     // rewrites it behind our back would leave a cached flag saying
     // "click-through" over a window that is catching clicks.
@@ -1819,7 +1861,7 @@ mod session_gate_tests {
 mod overlay_hit_tests {
     use super::{
         fraction_bottom_left, fraction_top_left, over_hit_rect, sanitize_hit_rects, HitPoller,
-        HitRect, MAX_HIT_RECTS,
+        HitRect, HitReport, MAX_HIT_RECTS,
     };
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> HitRect {
@@ -1933,6 +1975,43 @@ mod overlay_hit_tests {
 
         let many = vec![rect(0.0, 0.0, 0.1, 0.1); MAX_HIT_RECTS + 5];
         assert_eq!(sanitize_hit_rects(many).len(), MAX_HIT_RECTS);
+    }
+
+    #[test]
+    fn an_older_report_landing_last_does_not_replace_the_newer_layout() {
+        let bubble = vec![rect(0.1, 0.3, 0.8, 0.4)];
+        let done = vec![rect(0.1, 0.2, 0.8, 0.4), rect(0.3, 0.7, 0.4, 0.15)];
+        let mut held = HitReport::default();
+        // The newer report's task stores first…
+        assert!(held.apply(7, 2, done.clone()));
+        // …and the older one, run late on another worker, is dropped.
+        assert!(!held.apply(7, 1, bubble.clone()));
+        assert_eq!(held.rects, done);
+        // The next report from the same page is taken as usual.
+        assert!(held.apply(7, 3, bubble.clone()));
+        assert_eq!(held.rects, bubble);
+    }
+
+    #[test]
+    fn a_reloaded_overlay_page_is_heard_although_it_counts_from_one_again() {
+        let mut held = HitReport::default();
+        assert!(held.apply(7, 500, vec![rect(0.1, 0.3, 0.8, 0.4)]));
+        // A new page id: its count starts over, and it still wins.
+        assert!(held.apply(9, 1, vec![]));
+        assert_eq!(held.rects, vec![]);
+        assert!(held.apply(9, 2, vec![rect(0.3, 0.7, 0.4, 0.15)]));
+        assert_eq!((held.page, held.seq), (9, 2));
+    }
+
+    #[test]
+    fn the_first_report_is_taken_and_kept_sanitized() {
+        let mut held = HitReport::default();
+        assert!(held.apply(
+            0,
+            1,
+            vec![rect(f64::NAN, 0.0, 0.1, 0.1), rect(0.1, 0.2, 0.3, 0.4)]
+        ));
+        assert_eq!(held.rects, vec![rect(0.1, 0.2, 0.3, 0.4)]);
     }
 
     #[test]

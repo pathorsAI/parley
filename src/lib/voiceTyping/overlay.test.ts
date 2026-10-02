@@ -4,6 +4,7 @@ import {
   doneMessage,
   donePill,
   monitorContaining,
+  recoveredMessage,
   type MonitorGeometry,
 } from "./overlay";
 
@@ -178,6 +179,34 @@ describe("doneMessage", () => {
 });
 
 /**
+ * The closing note of an Undo. It copies, never pastes, but it can run the
+ * polish the Esc abandoned — and a "polishing…" that broke is news here too.
+ */
+describe("recoveredMessage", () => {
+  it("says there is nothing to recover when the cancelled dictation heard nothing", () => {
+    expect(recoveredMessage({ text: "", outcome: "off" })).toBe("nothing");
+    expect(recoveredMessage({ text: "", outcome: "failed" })).toBe("nothing");
+  });
+
+  it("flags a recovery whose polish timed out or failed", () => {
+    expect(recoveredMessage({ text: "hi", outcome: "timedOut" })).toBe("recovered-unpolished");
+    expect(recoveredMessage({ text: "hi", outcome: "failed" })).toBe("recovered-unpolished");
+  });
+
+  it("stays quiet when the polish worked, never ran, or was refused by the guard", () => {
+    for (const outcome of [
+      "polished",
+      "off",
+      "tooShort",
+      "rejectedLength",
+      "rejectedScript",
+    ] as const) {
+      expect(recoveredMessage({ text: "hi", outcome })).toBe("recovered");
+    }
+  });
+});
+
+/**
  * The confirmation the overlay shows for each verdict. An insert hands the
  * clipboard back, so it must never say "copied" — that sends the user to ⌘V
  * for text that is no longer there — and it is the one that offers Copy.
@@ -204,6 +233,11 @@ describe("donePill", () => {
     for (const verdict of ["recovered", "copied"]) {
       expect(donePill(verdict)).toEqual({ note: "voiceTyping.copied", tone: "success", copy: false });
     }
+    expect(donePill("recovered-unpolished")).toEqual({
+      note: "voiceTyping.copiedUnpolished",
+      tone: "success",
+      copy: false,
+    });
   });
 
   it("has no pill for the verdicts with their own note, or before there is one", () => {
@@ -213,10 +247,11 @@ describe("donePill", () => {
   });
 
   it("has a pill for every delivery that put text somewhere", () => {
-    for (const pasted of [true, false]) {
-      for (const outcome of ["polished", "off", "failed", "timedOut"] as const) {
+    for (const outcome of ["polished", "off", "failed", "timedOut"] as const) {
+      for (const pasted of [true, false]) {
         expect(donePill(doneMessage({ text: "hi", pasted, outcome }))).not.toBeNull();
       }
+      expect(donePill(recoveredMessage({ text: "hi", outcome }))).not.toBeNull();
     }
   });
 });

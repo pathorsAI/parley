@@ -236,11 +236,17 @@ export async function hideOverlay(): Promise<void> {
  *   attempted and did not come back (timed out, or the request failed).
  * - `ok`: inserted — polished, or with no polish to expect.
  *
- * Three more never come from {@link doneMessage}:
+ * The rest never come from {@link doneMessage}. Three are an Undo's, from
+ * {@link recoveredMessage}:
  *
  * - `recovered`: an Undo of an Esc-cancelled dictation copied it to the
  *   clipboard (Undo never pastes; host.ts, deliverRecovered).
+ * - `recovered-unpolished`: the same, but as dictated, because the polish the
+ *   Undo ran first timed out or failed.
  * - `nothing`: that cancelled dictation had no text to bring back.
+ *
+ * And one is the Copy button's:
+ *
  * - `copied`: the user clicked Copy on an inserted dictation's confirmation,
  *   and its text is on the clipboard now (host.ts, onCopyAction).
  */
@@ -250,6 +256,7 @@ export type DoneMessage =
   | "ok-unpolished"
   | "ok"
   | "recovered"
+  | "recovered-unpolished"
   | "nothing"
   | "copied";
 
@@ -271,8 +278,27 @@ export function doneMessage(d: {
 }): DoneMessage {
   if (!d.text) return "empty";
   if (!d.pasted) return "clipboard-only";
-  if (d.outcome === "timedOut" || d.outcome === "failed") return "ok-unpolished";
+  if (polishBroke(d.outcome)) return "ok-unpolished";
   return "ok";
+}
+
+/**
+ * Pick the {@link DoneMessage} for an Undo that brought a cancelled dictation
+ * back to the clipboard. `outcome` is the polish the Undo ran first, or `off`
+ * when there was none to run (the dictation's own polish had already finished).
+ * The same rule as {@link doneMessage}: an Undo can sit through "polishing…"
+ * too, and when that pass times out or fails, the plain "copied" would hide it.
+ */
+export function recoveredMessage(d: { text: string; outcome: PolishOutcome }): DoneMessage {
+  if (!d.text) return "nothing";
+  return polishBroke(d.outcome) ? "recovered-unpolished" : "recovered";
+}
+
+/** A polish that was attempted and produced nothing: the user waited on
+ *  "polishing…" for it, so the confirmation says the text went out as
+ *  dictated. */
+function polishBroke(outcome: PolishOutcome): boolean {
+  return outcome === "timedOut" || outcome === "failed";
 }
 
 /** The overlay's closing confirmation for a {@link DoneMessage}. */
@@ -305,6 +331,8 @@ export function donePill(verdict: string | null): DonePill | null {
     case "recovered":
     case "copied":
       return { note: "voiceTyping.copied", tone: "success", copy: false };
+    case "recovered-unpolished":
+      return { note: "voiceTyping.copiedUnpolished", tone: "success", copy: false };
     default:
       return null;
   }
