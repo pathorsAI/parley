@@ -1,4 +1,4 @@
-import { generateText } from "ai";
+import { APICallError, generateText } from "ai";
 import { getModel, getProviderOptions } from "../ai/provider";
 import { hasProviderKey } from "../ai/settings";
 import { logAiError } from "../ai/errors";
@@ -424,25 +424,43 @@ export async function polishTranscriptOutcome(opts: {
   // Settings saved before the style existed have no value; the store backfills
   // it on load, but a caller may hand over a settings object of its own.
   const style: VoicePolishStyle = settings.voiceTypingPolishStyle ?? "proofread";
+  let effort = hostedReasoningEffort(settings);
   try {
-    const result = await generateText({
-      model: getModel(settings, "realtime"),
-      providerOptions: getProviderOptions(settings, "realtime"),
-      system: polishSystemPrompt(protectedTerms, speakerTerms, style),
-      prompt: raw,
-      // A proofread has one right answer; a rewrite gets a little room.
-      temperature: style === "proofread" ? 0 : 0.2,
-      maxOutputTokens: 2048,
-      // No retries. The SDK's first backoff is two seconds — half the budget —
-      // so a single 429/5xx would sleep, retry, and be cut off by the timeout,
-      // and the log would show a TimeoutError in place of the status that
-      // explains it. One attempt, then the raw text.
-      maxRetries: 0,
-      abortSignal: controller.signal,
-    });
+    let result: Awaited<ReturnType<typeof generateText>>;
+    for (;;) {
+      try {
+        result = await generateText({
+          model: getModel(settings, "realtime"),
+          providerOptions: withReasoningEffort(getProviderOptions(settings, "realtime"), effort),
+          system: polishSystemPrompt(protectedTerms, speakerTerms, style),
+          prompt: raw,
+          // A proofread has one right answer; a rewrite gets a little room.
+          temperature: style === "proofread" ? 0 : 0.2,
+          maxOutputTokens: 2048,
+          // No retries. The SDK's first backoff is two seconds — half the
+          // budget — so a single 429/5xx would sleep, retry, and be cut off
+          // by the timeout, and the log would show a TimeoutError in place of
+          // the status that explains it. One attempt, then the raw text.
+          maxRetries: 0,
+          abortSignal: controller.signal,
+        });
+        break;
+      } catch (error) {
+        // The one exception: the backend refused the reasoning effort we
+        // asked for. That answer is quick and says nothing about the
+        // dictation, so ask again with the next value (or none) at once.
+        if (!effort || controller.signal.aborted || !refusesReasoningEffort(error)) throw error;
+        log.info("voice-typing: polish backend refused reasoning_effort; asking without it", {
+          effort,
+          ms: Math.round(performance.now() - startedAt),
+        });
+        hostedEffortRefused(effort);
+        effort = hostedReasoningEffort(settings);
+      }
+    }
     const polished = result.text.trim();
     const ms = Math.round(performance.now() - startedAt);
-    const answer = answerMeta(result);
+    const answer = { ...answerMeta(result), effort: effort ?? null };
     const verdict = polishVerdict(raw, polished, style);
     if (verdict !== "polished") {
       // Not an error — the guard doing its job. Logged at info because a run of
@@ -489,6 +507,63 @@ export async function polishTranscriptOutcome(opts: {
     clearTimeout(timer);
     signal?.removeEventListener("abort", onCancel);
   }
+}
+
+/**
+ * The reasoning effort to ask the hosted model for, most economical first.
+ *
+ * Parley Cloud serves the realtime lane with a model that reasons before it
+ * answers — the log shows 70 of 92 output tokens spent thinking on a
+ * 16-character dictation — and for a clean-up pass all of that is latency:
+ * long dictations ran out of the 4 s budget, or of the 2048-token cap, while
+ * still thinking, and pasted unpolished with every filler still in them. So
+ * the hosted polish asks for as little reasoning as the backend takes.
+ *
+ * The client does not know which model is behind the alias, so it does not
+ * know which values that model accepts ("low" for one family, "none" for
+ * another). It learns: a value the backend refuses (an HTTP 400 that names the
+ * reasoning effort) is not sent again for the rest of the session, and once
+ * every value has been refused the request goes out without one, exactly as
+ * before. BYOK lanes are untouched — getProviderOptions already sends the
+ * user's own setting to a model it knows reasons.
+ */
+const HOSTED_REASONING_EFFORTS = ["low", "none"] as const;
+/** Values the hosted backend refused this session. */
+const refusedEfforts = new Set<string>();
+
+function hostedReasoningEffort(settings: Settings): string | undefined {
+  if (settings.llmProviders.realtime !== "parley") return undefined;
+  return HOSTED_REASONING_EFFORTS.find((e) => !refusedEfforts.has(e));
+}
+
+function hostedEffortRefused(effort: string): void {
+  refusedEfforts.add(effort);
+}
+
+/** For tests: forget what the backend refused. */
+export function resetHostedReasoningEffort(): void {
+  refusedEfforts.clear();
+}
+
+function withReasoningEffort(
+  options: ReturnType<typeof getProviderOptions>,
+  effort: string | undefined,
+): ReturnType<typeof getProviderOptions> {
+  if (!effort) return options;
+  const own = (options as Record<string, Record<string, unknown> | undefined>).parley ?? {};
+  return { ...options, parley: { ...own, reasoningEffort: effort } } as ReturnType<
+    typeof getProviderOptions
+  >;
+}
+
+/** A 400 whose body names the reasoning effort: the backend will not take
+ *  that value (or the parameter at all). Anything else is a real failure. */
+function refusesReasoningEffort(error: unknown): boolean {
+  return (
+    APICallError.isInstance(error) &&
+    error.statusCode === 400 &&
+    /reasoning[_ ]?effort/i.test(`${error.responseBody ?? ""} ${error.message}`)
+  );
 }
 
 /**

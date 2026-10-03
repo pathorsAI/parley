@@ -13,7 +13,12 @@ vi.mock("../log", () => ({
 }));
 
 import { log } from "../log";
-import { POLISH_TIMEOUT_MS, polishTranscript, polishTranscriptOutcome } from "./polish";
+import {
+  POLISH_TIMEOUT_MS,
+  polishTranscript,
+  polishTranscriptOutcome,
+  resetHostedReasoningEffort,
+} from "./polish";
 
 const settings = {
   voiceTypingPolish: true,
@@ -71,6 +76,7 @@ const hang: FetchImpl = (_input, init) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetHostedReasoningEffort();
 });
 
 afterEach(() => {
@@ -275,6 +281,91 @@ describe("polish against Parley Cloud from a WebKit webview", () => {
         reasoningTokens: 2048,
       }),
     );
+  });
+
+  /** The hosted model spent most of its output thinking (70 of 92 tokens on
+   *  a 16-character dictation) and long dictations ran out of time. */
+  it("asks the hosted model for low reasoning", async () => {
+    const fetchSpy = webkitFetch(async () => completion(POLISHED));
+    await polishTranscriptOutcome({ raw: RAW, settings });
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.reasoning_effort).toBe("low");
+    expect(log.info).toHaveBeenCalledWith(
+      "voice-typing: polished",
+      expect.objectContaining({ effort: "low", finish: "stop", model: "parley-fast" }),
+    );
+  });
+
+  it("learns which reasoning efforts the backend refuses, and stops sending them", async () => {
+    const refuse = (value: string) =>
+      new Response(
+        JSON.stringify({
+          error: {
+            message: `reasoning_effort '${value}' is not supported with this model`,
+            type: "invalid_request_error",
+          },
+        }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      );
+    const fetchSpy = webkitFetch(async (_input, init) => {
+      const effort = JSON.parse(String(init?.body)).reasoning_effort;
+      return effort ? refuse(effort) : completion(POLISHED);
+    });
+    await expect(polishTranscriptOutcome({ raw: RAW, settings })).resolves.toEqual({
+      text: POLISHED,
+      outcome: "polished",
+    });
+    const efforts = () =>
+      fetchSpy.mock.calls.map((c) => JSON.parse(String(c[1]?.body)).reasoning_effort ?? null);
+    expect(efforts()).toEqual(["low", "none", null]);
+    expect(log.warn).not.toHaveBeenCalled();
+
+    // Remembered: the next dictation goes straight out without one.
+    await polishTranscriptOutcome({ raw: RAW, settings });
+    expect(efforts()).toEqual(["low", "none", null, null]);
+  });
+
+  it("falls back to none when only low is refused", async () => {
+    const fetchSpy = webkitFetch(async (_input, init) =>
+      JSON.parse(String(init?.body)).reasoning_effort === "low"
+        ? new Response(JSON.stringify({ error: { message: "invalid reasoning_effort" } }), {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          })
+        : completion(POLISHED),
+    );
+    await polishTranscriptOutcome({ raw: RAW, settings });
+    expect(JSON.parse(String(fetchSpy.mock.calls[1][1]?.body)).reasoning_effort).toBe("none");
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry a 400 that is about something else", async () => {
+    const fetchSpy = webkitFetch(
+      async () =>
+        new Response(JSON.stringify({ error: { message: "context length exceeded" } }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    await expect(polishTranscriptOutcome({ raw: RAW, settings })).resolves.toEqual({
+      text: null,
+      outcome: "failed",
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a BYOK lane's options alone", async () => {
+    const fetchSpy = webkitFetch(async () => completion(POLISHED));
+    const byok = {
+      ...settings,
+      llmProviders: { realtime: "custom", deep: "custom" },
+      customBaseUrl: "https://llm.example.test/v1",
+      customApiKey: "k",
+      models: { ...settings.models, custom: { realtime: "some-model", deep: "some-model" } },
+    } as unknown as Settings;
+    await polishTranscriptOutcome({ raw: RAW, settings: byok });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body)).reasoning_effort).toBeUndefined();
   });
 
   it("names the guard's reason when it refuses the answer", async () => {
