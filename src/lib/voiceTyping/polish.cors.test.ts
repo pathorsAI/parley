@@ -233,6 +233,50 @@ describe("polish against Parley Cloud from a WebKit webview", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  /** Field report: long dictations came back empty about 3 s in. The log
+   *  must say whether the model spent its whole budget reasoning. */
+  it("logs why an answer came back empty, and which model served it", async () => {
+    webkitFetch(
+      async () =>
+        new Response(
+          JSON.stringify({
+            id: "x",
+            object: "chat.completion",
+            created: 0,
+            model: "backend-model-x",
+            choices: [
+              {
+                index: 0,
+                message: { role: "assistant", content: "", reasoning: "thinking…" },
+                finish_reason: "length",
+              },
+            ],
+            usage: {
+              prompt_tokens: 900,
+              completion_tokens: 2048,
+              total_tokens: 2948,
+              completion_tokens_details: { reasoning_tokens: 2048 },
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+    await expect(polishTranscriptOutcome({ raw: RAW, settings })).resolves.toEqual({
+      text: null,
+      outcome: "rejectedLength",
+    });
+    expect(log.info).toHaveBeenCalledWith(
+      "voice-typing: polish rejected, keeping raw",
+      expect.objectContaining({
+        polishedChars: 0,
+        finish: "length",
+        model: "backend-model-x",
+        outTokens: 2048,
+        reasoningTokens: 2048,
+      }),
+    );
+  });
+
   it("names the guard's reason when it refuses the answer", async () => {
     webkitFetch(async () => completion("Sure!"));
     const rewrite = { ...settings, voiceTypingPolishStyle: "rewrite" } as Settings;

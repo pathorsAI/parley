@@ -425,7 +425,7 @@ export async function polishTranscriptOutcome(opts: {
   // it on load, but a caller may hand over a settings object of its own.
   const style: VoicePolishStyle = settings.voiceTypingPolishStyle ?? "proofread";
   try {
-    const { text } = await generateText({
+    const result = await generateText({
       model: getModel(settings, "realtime"),
       providerOptions: getProviderOptions(settings, "realtime"),
       system: polishSystemPrompt(protectedTerms, speakerTerms, style),
@@ -440,8 +440,9 @@ export async function polishTranscriptOutcome(opts: {
       maxRetries: 0,
       abortSignal: controller.signal,
     });
-    const polished = text.trim();
+    const polished = result.text.trim();
     const ms = Math.round(performance.now() - startedAt);
+    const answer = answerMeta(result);
     const verdict = polishVerdict(raw, polished, style);
     if (verdict !== "polished") {
       // Not an error — the guard doing its job. Logged at info because a run of
@@ -453,10 +454,17 @@ export async function polishTranscriptOutcome(opts: {
         polishedChars: polished.length,
         outcome: verdict,
         style,
+        ...answer,
       });
       return { text: null, outcome: verdict };
     }
-    log.info("voice-typing: polished", { ms, rawChars, chars: polished.length, style });
+    log.info("voice-typing: polished", {
+      ms,
+      rawChars,
+      chars: polished.length,
+      style,
+      ...answer,
+    });
     return { text: polished, outcome: "polished" };
   } catch (error) {
     const ms = Math.round(performance.now() - startedAt);
@@ -481,6 +489,37 @@ export async function polishTranscriptOutcome(opts: {
     clearTimeout(timer);
     signal?.removeEventListener("abort", onCancel);
   }
+}
+
+/**
+ * What the model's answer says about itself, for the log: why it stopped, the
+ * model that actually served it (the hosted ids are aliases), and how many of
+ * its output tokens went to reasoning. Counts and names only, never text.
+ *
+ * Long dictations came back empty about three seconds in (`polishedChars=0`,
+ * `rejectedLength`), so the raw text was pasted with every filler still in
+ * it. An answer that spent its whole `maxOutputTokens` thinking stops with
+ * `length` and no text; a server that cut the request off stops otherwise.
+ * These fields tell the two apart.
+ */
+function answerMeta(result: {
+  finishReason: string;
+  usage: {
+    outputTokens?: number | undefined;
+    outputTokenDetails?: { reasoningTokens?: number | undefined };
+    reasoningTokens?: number | undefined;
+  };
+  reasoningText?: string | undefined;
+  response?: { modelId?: string };
+}): Record<string, string | number | null> {
+  const { usage } = result;
+  return {
+    finish: result.finishReason,
+    model: result.response?.modelId ?? null,
+    outTokens: usage.outputTokens ?? null,
+    reasoningTokens: usage.outputTokenDetails?.reasoningTokens ?? usage.reasoningTokens ?? null,
+    reasoningChars: result.reasoningText?.length ?? 0,
+  };
 }
 
 /**
