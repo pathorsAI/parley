@@ -364,6 +364,15 @@ are easy to get wrong:
    listing. Update them in the same PR as the `versionCode` bump; the workflow
    fails before building if either is missing or too long, but it cannot tell
    that they are last release's.
+
+   **The GitHub release needs its own notes too:
+   `.github/release-notes/android-v<version>.md`**, written in the same PR. It
+   is the body of the release on the Releases page — the place contributors
+   look, since they cannot see the Play Console — so it can be longer than the
+   store blurb and say what changed underneath (fixes, Play rejections, known
+   issues). The workflow fails before building if the file is missing or
+   empty. Every release through `android-v1.19` shipped with an empty body
+   because nothing checked; those were backfilled on 2026-10-03.
 7. Keep the R8 `mapping.txt`. Every workflow run attaches it as an artifact and
    the Play upload step sends it along, so crash reports deobfuscate; a stack
    trace from a build whose mapping was lost is unreadable.
