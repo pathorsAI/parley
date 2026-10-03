@@ -8,9 +8,10 @@ import { isTauri } from "../lib/tauriEvents";
 import { broadcastSettings } from "../lib/settingsSync";
 import { log } from "../lib/log";
 import { hasProviderKey } from "../lib/ai/settings";
+import { CANCEL_UNDO_MS } from "../lib/voiceTyping/cancel";
 import { isModifierId, modifierIdsFor, shortcutCaps } from "../lib/voiceTyping/caps";
 import { loneModifierRelease, MODIFIER_CODES } from "../lib/voiceTyping/recorder";
-import type { VoiceTypingMode, VoiceTypingShortcut } from "../lib/types";
+import type { VoicePolishStyle, VoiceTypingMode, VoiceTypingShortcut } from "../lib/types";
 import { Button } from "@/components/ui/button";
 
 interface HotkeyStatus {
@@ -383,6 +384,13 @@ export const VoiceTypingSettings = () => {
       log.warn("voice typing settings: broadcast failed", { error: String(error) }),
     );
   };
+  const setVoiceTypingPolishStyle = (style: VoicePolishStyle) => {
+    updateSettings({ voiceTypingPolishStyle: style });
+    broadcastSettings({ ...useStore.getState().settings }).catch((error) =>
+      log.warn("voice typing settings: broadcast failed", { error: String(error) }),
+    );
+  };
+  const polishStyle = settings.voiceTypingPolishStyle;
   // The toggle stays operable without a realtime provider — turning it on is
   // how someone decides they want this, and the note tells them the one thing
   // left to do. Disabling the control would leave them guessing why nothing
@@ -448,6 +456,39 @@ export const VoiceTypingSettings = () => {
             {t("settings.voiceTyping.polishNoProvider")}
           </p>
         )}
+        {settings.voiceTypingPolish && (
+          <>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-medium text-muted-foreground">
+                {t("settings.voiceTyping.polishStyle")}
+              </span>
+              <div className="flex shrink-0 gap-1.5">
+                {(["proofread", "rewrite"] as const).map((style) => (
+                  <Button
+                    key={style}
+                    variant={polishStyle === style ? "secondary" : "outline"}
+                    size="sm"
+                    className="h-7 px-2.5 text-[11px]"
+                    onClick={() => setVoiceTypingPolishStyle(style)}
+                  >
+                    {t(
+                      style === "proofread"
+                        ? "settings.voiceTyping.polishStyle.proofread"
+                        : "settings.voiceTyping.polishStyle.rewrite",
+                    )}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              {t(
+                polishStyle === "rewrite"
+                  ? "settings.voiceTyping.polishStyle.rewriteHint"
+                  : "settings.voiceTyping.polishStyle.proofreadHint",
+              )}
+            </p>
+          </>
+        )}
       </div>
 
       <div className="flex flex-col gap-2">
@@ -479,6 +520,9 @@ export const VoiceTypingSettings = () => {
               ? "settings.voiceTyping.mode.toggleHint"
               : "settings.voiceTyping.mode.holdHint",
           )}
+        </p>
+        <p className="text-[11px] text-muted-foreground">
+          {t("settings.voiceTyping.cancelHint", { seconds: CANCEL_UNDO_MS / 1000 })}
         </p>
       </div>
 

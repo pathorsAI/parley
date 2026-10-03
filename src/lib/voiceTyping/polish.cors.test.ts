@@ -1,0 +1,401 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Settings } from "../types";
+
+// End to end through the REAL `ai` + `@ai-sdk/openai-compatible` + provider.ts +
+// ai/settings.ts, with only the network and the log file faked. Its own file because
+// polish.test.ts mocks `../ai/settings` for the whole module.
+vi.mock("../cloud/client", () => ({
+  cloudToken: () => "test-token",
+  CLOUD_URL: "https://cloud.example.test",
+}));
+vi.mock("../log", () => ({
+  log: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() },
+}));
+
+import { log } from "../log";
+import {
+  POLISH_TIMEOUT_MS,
+  polishTranscript,
+  polishTranscriptOutcome,
+  resetHostedReasoningEffort,
+} from "./polish";
+
+const settings = {
+  voiceTypingPolish: true,
+  llmProviders: { realtime: "parley", deep: "parley" },
+  models: { parley: { realtime: "parley-fast", deep: "parley-smart" } },
+  reasoningEffort: { realtime: "low", deep: "medium" },
+  parleyApiKey: "",
+} as unknown as Settings;
+
+const RAW = "um so, I think we should uh ship it on friday";
+const POLISHED = "I think we should ship it on Friday.";
+
+/** Parley Cloud's Access-Control-Allow-Headers, verbatim (lower-cased). */
+const ALLOWED = new Set(["content-type", "authorization", "idempotency-key", "x-parley-client"]);
+
+type FetchImpl = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
+/**
+ * A fetch that behaves like WKWebView against Parley Cloud: any request header outside
+ * the server's allow-list fails the CORS preflight, and WebKit reports that as a bare
+ * `TypeError: Load failed` before the request is ever sent. Chromium would have
+ * dropped `user-agent` itself; WebKit does not, which is the whole bug.
+ */
+function webkitFetch(respond: FetchImpl) {
+  const spy = vi.fn<FetchImpl>(async (input, init) => {
+    for (const name of new Headers(init?.headers).keys()) {
+      if (!ALLOWED.has(name)) throw new TypeError("Load failed");
+    }
+    if (init?.signal?.aborted) throw init.signal.reason;
+    return respond(input, init);
+  });
+  vi.stubGlobal("fetch", spy);
+  return spy;
+}
+
+function completion(content: string): Response {
+  return new Response(
+    JSON.stringify({
+      id: "x",
+      object: "chat.completion",
+      created: 0,
+      model: "parley-fast",
+      choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+}
+
+/** Never answers; rejects the way fetch does once its signal aborts. */
+const hang: FetchImpl = (_input, init) =>
+  new Promise<Response>((_resolve, reject) => {
+    init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+  });
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  resetHostedReasoningEffort();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
+
+describe("polish against Parley Cloud from a WebKit webview", () => {
+  /** The production bug: every hosted polish on macOS failed its preflight, so this
+   *  resolved to null (raw text pasted) on every dictation. */
+  it("gets past the CORS preflight and returns the polished text", async () => {
+    const fetchSpy = webkitFetch(async () => completion(POLISHED));
+
+    await expect(polishTranscript({ raw: RAW, settings })).resolves.toBe(POLISHED);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [input, init] = fetchSpy.mock.calls[0];
+    expect(String(input)).toBe("https://cloud.example.test/v1/chat/completions");
+    const headers = new Headers(init?.headers);
+    expect(headers.get("authorization")).toBe("Bearer test-token");
+    expect(headers.has("user-agent")).toBe(false);
+    expect(JSON.parse(String(init?.body)).model).toBe("parley-fast");
+    expect(log.info).toHaveBeenCalledWith("voice-typing: polished", expect.any(Object));
+    expect(log.warn).not.toHaveBeenCalled();
+  });
+
+  it("reports the outcome alongside the text", async () => {
+    webkitFetch(async () => completion(POLISHED));
+    await expect(polishTranscriptOutcome({ raw: RAW, settings })).resolves.toEqual({
+      text: POLISHED,
+      outcome: "polished",
+    });
+  });
+
+  /** What the field log said for every attempt: `error=TypeError` and nothing
+   *  else. The message, the provider and the model are what make it diagnosable. */
+  it("logs a transport failure with its message, provider and model", async () => {
+    const fetchSpy = vi.fn<FetchImpl>(async () => {
+      throw new TypeError("Load failed");
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await expect(polishTranscriptOutcome({ raw: RAW, settings })).resolves.toEqual({
+      text: null,
+      outcome: "failed",
+    });
+    expect(log.warn).toHaveBeenCalledWith(
+      "voice-typing.polish: failed",
+      expect.objectContaining({
+        error: "TypeError",
+        message: "Load failed",
+        provider: "parley",
+        model: "parley-fast",
+        outcome: "failed",
+        rawChars: RAW.length,
+      }),
+    );
+    expect(vi.mocked(log.warn).mock.calls[0][1]).toHaveProperty("ms");
+  });
+
+  /** A retry's first backoff is 2 s of a 4 s budget: one attempt, and the status
+   *  in the log rather than a TimeoutError. */
+  it("does not retry a 5xx, and logs its status", async () => {
+    const body = JSON.stringify({ error: { message: "upstream down", type: "server_error" } });
+    const fetchSpy = webkitFetch(
+      async () =>
+        new Response(body, { status: 500, headers: { "content-type": "application/json" } }),
+    );
+
+    await expect(polishTranscriptOutcome({ raw: RAW, settings })).resolves.toEqual({
+      text: null,
+      outcome: "failed",
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(log.warn).toHaveBeenCalledWith(
+      "voice-typing.polish: failed",
+      expect.objectContaining({ status: 500, outcome: "failed" }),
+    );
+  });
+
+  it("gives up after the budget and says it timed out", async () => {
+    vi.useFakeTimers();
+    const fetchSpy = webkitFetch(hang);
+
+    let settled = false;
+    const pending = polishTranscriptOutcome({ raw: RAW, settings }).finally(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(POLISH_TIMEOUT_MS - 1);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(pending).resolves.toEqual({ text: null, outcome: "timedOut" });
+    expect(log.warn).toHaveBeenCalledWith(
+      "voice-typing.polish: failed",
+      expect.objectContaining({ outcome: "timedOut", provider: "parley" }),
+    );
+  });
+
+  /** ESC during "polishing": the caller walked away, nothing failed. */
+  it("resolves to cancelled when the caller aborts, without a WARN", async () => {
+    const fetchSpy = webkitFetch(hang);
+    const controller = new AbortController();
+
+    const pending = polishTranscriptOutcome({ raw: RAW, settings, signal: controller.signal });
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+    controller.abort();
+
+    await expect(pending).resolves.toEqual({ text: null, outcome: "cancelled" });
+    expect(log.warn).not.toHaveBeenCalled();
+    expect(log.info).toHaveBeenCalledWith("voice-typing: polish cancelled", expect.any(Object));
+  });
+
+  it("does not send anything when the caller has already cancelled", async () => {
+    const fetchSpy = webkitFetch(async () => completion(POLISHED));
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      polishTranscriptOutcome({ raw: RAW, settings, signal: controller.signal }),
+    ).resolves.toEqual({ text: null, outcome: "cancelled" });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("names why it did not run: off, or too short", async () => {
+    const fetchSpy = webkitFetch(async () => completion(POLISHED));
+    await expect(
+      polishTranscriptOutcome({ raw: RAW, settings: { ...settings, voiceTypingPolish: false } }),
+    ).resolves.toEqual({ text: null, outcome: "off" });
+    await expect(polishTranscriptOutcome({ raw: "ok", settings })).resolves.toEqual({
+      text: null,
+      outcome: "tooShort",
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  /** The host passes the dictation before softenPausePeriods as `gateText`:
+   *  the dropped 。 must not decide that a 7-character phrase is too short. */
+  it("measures the length gate on gateText, and polishes raw", async () => {
+    const fetchSpy = webkitFetch(async () => completion("好的，明天見吧"));
+    await expect(
+      polishTranscriptOutcome({ raw: "好的，明天見。", gateText: "好的。 明天見。", settings }),
+    ).resolves.toEqual({ text: "好的，明天見吧", outcome: "polished" });
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.messages.at(-1).content).toBe("好的，明天見。");
+    // Without it, the softened text alone is under the gate.
+    await expect(polishTranscriptOutcome({ raw: "好的，明天見。", settings })).resolves.toEqual({
+      text: null,
+      outcome: "tooShort",
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("never sends a single clause", async () => {
+    const fetchSpy = webkitFetch(async () => completion("unused"));
+    await expect(
+      polishTranscriptOutcome({ raw: "我們明天下午三點見個面", settings }),
+    ).resolves.toEqual({ text: null, outcome: "singleClause" });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  /** Field report: long dictations came back empty about 3 s in. The log
+   *  must say whether the model spent its whole budget reasoning. */
+  it("logs why an answer came back empty, and which model served it", async () => {
+    webkitFetch(
+      async () =>
+        new Response(
+          JSON.stringify({
+            id: "x",
+            object: "chat.completion",
+            created: 0,
+            model: "backend-model-x",
+            choices: [
+              {
+                index: 0,
+                message: { role: "assistant", content: "", reasoning: "thinking…" },
+                finish_reason: "length",
+              },
+            ],
+            usage: {
+              prompt_tokens: 900,
+              completion_tokens: 2048,
+              total_tokens: 2948,
+              completion_tokens_details: { reasoning_tokens: 2048 },
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+    await expect(polishTranscriptOutcome({ raw: RAW, settings })).resolves.toEqual({
+      text: null,
+      outcome: "rejectedLength",
+    });
+    expect(log.info).toHaveBeenCalledWith(
+      "voice-typing: polish rejected, keeping raw",
+      expect.objectContaining({
+        polishedChars: 0,
+        finish: "length",
+        model: "backend-model-x",
+        outTokens: 2048,
+        reasoningTokens: 2048,
+      }),
+    );
+  });
+
+  /** The hosted model spent most of its output thinking (70 of 92 tokens on
+   *  a 16-character dictation) and long dictations ran out of time. */
+  it("asks the hosted model for low reasoning", async () => {
+    const fetchSpy = webkitFetch(async () => completion(POLISHED));
+    await polishTranscriptOutcome({ raw: RAW, settings });
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.reasoning_effort).toBe("low");
+    expect(log.info).toHaveBeenCalledWith(
+      "voice-typing: polished",
+      expect.objectContaining({ effort: "low", finish: "stop", model: "parley-fast" }),
+    );
+  });
+
+  it("learns which reasoning efforts the backend refuses, and stops sending them", async () => {
+    const refuse = (value: string) =>
+      new Response(
+        JSON.stringify({
+          error: {
+            message: `reasoning_effort '${value}' is not supported with this model`,
+            type: "invalid_request_error",
+          },
+        }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      );
+    const fetchSpy = webkitFetch(async (_input, init) => {
+      const effort = JSON.parse(String(init?.body)).reasoning_effort;
+      return effort ? refuse(effort) : completion(POLISHED);
+    });
+    await expect(polishTranscriptOutcome({ raw: RAW, settings })).resolves.toEqual({
+      text: POLISHED,
+      outcome: "polished",
+    });
+    const efforts = () =>
+      fetchSpy.mock.calls.map((c) => JSON.parse(String(c[1]?.body)).reasoning_effort ?? null);
+    expect(efforts()).toEqual(["low", "none", null]);
+    expect(log.warn).not.toHaveBeenCalled();
+
+    // Remembered: the next dictation goes straight out without one.
+    await polishTranscriptOutcome({ raw: RAW, settings });
+    expect(efforts()).toEqual(["low", "none", null, null]);
+  });
+
+  it("falls back to none when only low is refused", async () => {
+    const fetchSpy = webkitFetch(async (_input, init) =>
+      JSON.parse(String(init?.body)).reasoning_effort === "low"
+        ? new Response(JSON.stringify({ error: { message: "invalid reasoning_effort" } }), {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          })
+        : completion(POLISHED),
+    );
+    await polishTranscriptOutcome({ raw: RAW, settings });
+    expect(JSON.parse(String(fetchSpy.mock.calls[1][1]?.body)).reasoning_effort).toBe("none");
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry a 400 that is about something else", async () => {
+    const fetchSpy = webkitFetch(
+      async () =>
+        new Response(JSON.stringify({ error: { message: "context length exceeded" } }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    await expect(polishTranscriptOutcome({ raw: RAW, settings })).resolves.toEqual({
+      text: null,
+      outcome: "failed",
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a BYOK lane's options alone", async () => {
+    const fetchSpy = webkitFetch(async () => completion(POLISHED));
+    const byok = {
+      ...settings,
+      llmProviders: { realtime: "custom", deep: "custom" },
+      customBaseUrl: "https://llm.example.test/v1",
+      customApiKey: "k",
+      models: { ...settings.models, custom: { realtime: "some-model", deep: "some-model" } },
+    } as unknown as Settings;
+    await polishTranscriptOutcome({ raw: RAW, settings: byok });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body)).reasoning_effort).toBeUndefined();
+  });
+
+  it("names the guard's reason when it refuses the answer", async () => {
+    webkitFetch(async () => completion("Sure!"));
+    const rewrite = { ...settings, voiceTypingPolishStyle: "rewrite" } as Settings;
+    await expect(polishTranscriptOutcome({ raw: RAW, settings: rewrite })).resolves.toEqual({
+      text: null,
+      outcome: "rejectedLength",
+    });
+    expect(log.info).toHaveBeenCalledWith(
+      "voice-typing: polish rejected, keeping raw",
+      expect.objectContaining({ outcome: "rejectedLength", style: "rewrite" }),
+    );
+    expect(log.warn).not.toHaveBeenCalled();
+  });
+
+  /** Settings saved before the style existed proofread, and a proofread that
+   *  rewrote the sentence is refused. */
+  it("proofreads by default, and refuses an answer that rewrote the dictation", async () => {
+    const fetchSpy = webkitFetch(async () => completion("Sure! Shipping on Friday works."));
+    await expect(polishTranscriptOutcome({ raw: RAW, settings })).resolves.toEqual({
+      text: null,
+      outcome: "rejectedRewrite",
+    });
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.messages[0].content).toContain("You proofread raw voice-dictation transcripts.");
+    expect(body.temperature).toBe(0);
+    expect(log.info).toHaveBeenCalledWith(
+      "voice-typing: polish rejected, keeping raw",
+      expect.objectContaining({ outcome: "rejectedRewrite", style: "proofread" }),
+    );
+  });
+});

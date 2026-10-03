@@ -479,7 +479,8 @@ fn teardown_meeting(
     // so even a slow finalize completes first — aborting an already-finished task
     // is a no-op, and after stop no new audio flows, so the extra idle wait
     // produces no new transcript. (A short grace would cut a slow finalize and
-    // lose the last segment + usage event.)
+    // lose the last segment; the usage event survives an abort, see
+    // capture.rs `UsageReport`.)
     // From this point the meeting is over: a failure inside the flush/abort
     // grace below belongs to THIS (ended) meeting, and raising meeting://error
     // for it would tear down whatever meeting the user starts next (or toast a

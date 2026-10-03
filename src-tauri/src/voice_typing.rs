@@ -4,17 +4,20 @@
 //!
 //! It emits the same `transcript://segment` and `audio://level` events as a
 //! meeting, tagged `source: "voice-typing"`, which the floating overlay window
-//! renders. On release, the host copies the final text to the clipboard through
-//! the OS (the webview can't, because Parley isn't the focused app) and — when
-//! the user enabled it — synthesizes the paste chord into the frontmost app:
-//! ⌘V on macOS, which needs Accessibility, or Ctrl+V on Windows, which needs no
-//! permission but is refused by UIPI when the target window runs elevated.
+//! renders. Once the dictation has settled, the host has it typed into the
+//! frontmost app's focused field (`insert_text`): the text goes up on the
+//! clipboard through the OS (the webview can't, because Parley isn't the
+//! focused app), the paste chord is synthesized — ⌘V on macOS, which needs
+//! Accessibility, or Ctrl+V on Windows, which needs no permission but is
+//! refused by UIPI when the target window runs elevated — and a moment later
+//! the clipboard gets back what the user had on it (see `clipboard`).
 
 // The `objc` 0.2 macros emit `cfg(cargo-clippy)` checks newer compilers warn on.
 #![allow(unexpected_cfgs)]
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -24,16 +27,38 @@ use crate::commands::{read_config_file, write_config_file};
 use crate::transcription::common::VOICE_TYPING_SOURCE;
 use crate::transcription::{SttProvider, TranscribeConfig};
 
-/// Grace for the post-release final flush before a lingering session task is
-/// force-aborted (mirrors `stop_meeting`'s backstop). The frontend waits at
-/// most ~3 s for the flush, so 8 s cuts only genuine zombies.
-const FLUSH_ABORT_GRACE: std::time::Duration = std::time::Duration::from_secs(8);
+mod clipboard;
+pub use self::clipboard::ClipboardState;
+use self::clipboard::SystemPasteboard;
+
+/// Grace for the post-release final flush, counted from the cut, before a
+/// lingering session task is force-aborted (mirrors `stop_meeting`'s backstop).
+/// It must not beat the session's own ending: the drain (the last audio sent,
+/// then the finalize) cannot come before the socket has connected, which
+/// CONNECT_TIMEOUT bounds from the start — so never later than the cut — and
+/// the session then ends itself DRAIN_READ_GRACE after the drain at the
+/// latest, `stt://closed` included. A short tap over a slow relay connect
+/// (seen at 6.5 s) used to be aborted here, 8 s after the cut, with its
+/// finalize still in flight: no `stt://closed`, and nothing pasted. This only
+/// catches a task that is stuck past every one of its own bounds.
+const FLUSH_ABORT_GRACE: Duration = Duration::from_secs(
+    crate::transcription::common::CONNECT_TIMEOUT.as_secs()
+        + crate::transcription::common::DRAIN_READ_GRACE.as_secs()
+        + 1,
+);
+
+/// Audio kept after key-up before the hard cut. People let go during the last
+/// syllable's decay, and the recognizer needs a little trailing context to
+/// close the last word — without it the word was dropped or misheard. Short of
+/// a conversational turn gap, so a remark to someone after the release mostly
+/// stays out. `Duration::ZERO` restores #128's exact-key-up cut.
+const RELEASE_TAIL: Duration = Duration::from_millis(250);
 
 /// Extra grace on top of the hosted single-session cap before the backend
 /// force-stops the mic. The frontend caps and stops the session at exactly the
 /// limit; this watchdog only fires when the webview never did (hung/crashed),
 /// so it must not race the normal frontend stop.
-const CAP_BACKEND_GRACE: std::time::Duration = std::time::Duration::from_secs(20);
+const CAP_BACKEND_GRACE: Duration = Duration::from_secs(20);
 
 /// The one live voice-typing session task: the next start retires it before
 /// opening a new one, and a stop bounds its flush.
@@ -44,16 +69,21 @@ pub struct VoiceTypingState(Arc<Mutex<VtInner>>);
 struct VtInner {
     session: u64,
     task: Option<tauri::async_runtime::JoinHandle<()>>,
-    /// The current session's audio cutoff. `stop_voice_typing` sets it to hard
-    /// cut the stream on release so nothing said after the key is let go is
-    /// transcribed (see `run_metered_session`). Replaced each start.
+    /// The current session's audio cutoff. `stop_voice_typing` sets it
+    /// RELEASE_TAIL after key-up to hard cut the stream, so nothing said after
+    /// that is transcribed (see `run_metered_session`). Replaced each start.
     cutoff: Option<Arc<AtomicBool>>,
+    /// The gate of the capture this session opened (`Begin::Started`), so a
+    /// stop can end exactly that capture and never a newer one (see
+    /// `MicCoordinator::stop_if`). `None` while the session taps a meeting's
+    /// mic: the meeting owns that capture, and the cutoff alone ends the tap.
+    mic_gate: Option<Arc<AtomicBool>>,
 }
 
 /// How long the next start waits for the previous task to finish the poll it
 /// was aborted in. A poll is one frame parse or one emit, so this only cuts a
 /// task stuck in a bug; its stragglers carry the old session id and are dropped.
-const RETIRE_GRACE: std::time::Duration = std::time::Duration::from_millis(300);
+const RETIRE_GRACE: Duration = Duration::from_millis(300);
 
 impl VoiceTypingState {
     /// Retire the previous task, then `announce` the next session id and
@@ -64,6 +94,10 @@ impl VoiceTypingState {
         let (session, previous) = {
             let mut vt = self.0.lock().unwrap();
             vt.session += 1;
+            // The handles belong to the session being retired; until `adopt`
+            // installs the new one's, a stop must find nothing to cut.
+            vt.cutoff = None;
+            vt.mic_gate = None;
             (vt.session, vt.task.take())
         };
         if let Some(task) = previous {
@@ -84,18 +118,36 @@ impl VoiceTypingState {
         session: u64,
         task: tauri::async_runtime::JoinHandle<()>,
         cutoff: Arc<AtomicBool>,
+        mic_gate: Option<Arc<AtomicBool>>,
     ) {
         let mut vt = self.0.lock().unwrap();
         if vt.session == session {
             vt.task = Some(task);
             vt.cutoff = Some(cutoff);
+            vt.mic_gate = mic_gate;
         } else {
             task.abort();
         }
     }
 
-    fn is_current(&self, session: u64) -> bool {
-        self.0.lock().unwrap().session == session
+    /// Whether `session` is current AND still capturing: its release has not
+    /// cut it yet. A stopped session stays current until the next start, so
+    /// `session == current` alone made the cap watchdog fire (and warn) ~10
+    /// minutes after the last dictation of every burst.
+    fn is_capturing(&self, session: u64) -> bool {
+        let vt = self.0.lock().unwrap();
+        vt.session == session
+            && vt
+                .cutoff
+                .as_ref()
+                .is_some_and(|c| !c.load(Ordering::SeqCst))
+    }
+
+    /// The current session's id with its cutoff and mic gate, read under one
+    /// lock so whatever cuts with them cuts that session and no other.
+    fn handles(&self) -> (u64, Option<Arc<AtomicBool>>, Option<Arc<AtomicBool>>) {
+        let vt = self.0.lock().unwrap();
+        (vt.session, vt.cutoff.clone(), vt.mic_gate.clone())
     }
 
     fn abort_if_current(&self, session: u64) {
@@ -125,7 +177,7 @@ impl VoiceTypingState {
 /// stay usable while the app is busy with something else (saving, exporting,
 /// transcribing an upload), and a sync command would simply queue behind
 /// whatever main-thread work is in flight. Nothing here touches AppKit — the
-/// overlay/clipboard commands, which do, stay synchronous.
+/// overlay/clipboard commands, which do, stay synchronous on macOS.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn start_voice_typing(
@@ -173,12 +225,25 @@ pub async fn start_voice_typing(
             );
         })
         .await;
-    let Some(rx) = acquire_mic(&coord, &tap, input_device)? else {
+    let opening = Instant::now();
+    let Some((rx, mic_gate)) = acquire_mic(&coord, &tap, input_device)? else {
         // Unreachable in practice: the host serializes press/release, so no
         // second voice-typing start can land between the stop above and this
         // begin. Kept for safety.
         return Ok(());
     };
+    // Everything said between the press and this point is lost (the capture
+    // is not running yet), so it is worth knowing how long it takes: a
+    // Bluetooth headset can need a second or more.
+    let tapped = if mic_gate.is_none() {
+        " (meeting tap)"
+    } else {
+        ""
+    };
+    log::info!(
+        "voice-typing: mic open in {}ms{tapped}",
+        opening.elapsed().as_millis()
+    );
     let model = model
         .filter(|m| !m.trim().is_empty())
         .unwrap_or_else(|| provider.default_model().to_string());
@@ -190,8 +255,9 @@ pub async fn start_voice_typing(
         relay_endpoint,
         vocabulary: vocabulary.unwrap_or_default(),
     };
-    // Per-session cutoff: `stop_voice_typing` flips it to end the stream the
-    // moment the key is released, before the mic thread even notices the gate.
+    // Per-session cutoff: `stop_voice_typing` flips it to end the stream
+    // RELEASE_TAIL after the key is released, before the mic thread even
+    // notices the gate.
     let cutoff = Arc::new(AtomicBool::new(false));
     let task = run_metered_session(
         &app,
@@ -208,7 +274,7 @@ pub async fn start_voice_typing(
         None,
         Some(session),
     );
-    state.adopt(session, task, cutoff);
+    state.adopt(session, task, cutoff, mic_gate);
     // The Windows tray's voice-typing item now reads "Stop" (no-op elsewhere).
     crate::tray::set_voice_typing_active(&app, true);
 
@@ -221,6 +287,13 @@ pub async fn start_voice_typing(
     Ok(())
 }
 
+/// The PCM a dictation session reads, with the gate of the capture it opened
+/// (`None` when it taps a meeting's mic).
+type MicInput = (
+    tokio::sync::mpsc::UnboundedReceiver<Vec<i16>>,
+    Option<Arc<AtomicBool>>,
+);
+
 /// Take the microphone for a dictation session: our own capture normally, or a
 /// tee of the meeting's raw mic when a meeting owns the one input stream.
 /// `Ok(None)` means voice typing already holds the mic and the start is a no-op.
@@ -228,14 +301,20 @@ fn acquire_mic(
     coord: &MicCoordinator,
     tap: &MicTap,
     input_device: Option<String>,
-) -> Result<Option<tokio::sync::mpsc::UnboundedReceiver<Vec<i16>>>, String> {
+) -> Result<Option<MicInput>, String> {
     match coord.begin(MicUser::VoiceTyping) {
         Begin::Started(gate) => {
             let mic = Microphone {
                 device_name: input_device,
             };
-            match spawn_capture(coord, MicUser::VoiceTyping, mic, gate, "voice-typing") {
-                Ok(rx) => Ok(Some(rx)),
+            match spawn_capture(
+                coord,
+                MicUser::VoiceTyping,
+                mic,
+                gate.clone(),
+                "voice-typing",
+            ) {
+                Ok(rx) => Ok(Some((rx, Some(gate)))),
                 Err(e) => {
                     coord.stop(MicUser::VoiceTyping);
                     Err(format!("microphone failed to start: {e}"))
@@ -253,26 +332,51 @@ fn acquire_mic(
         Begin::Busy(MicUser::Meeting) => {
             let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
             tap.subscribe(tx)?;
-            Ok(Some(rx))
+            Ok(Some((rx, None)))
         }
         Begin::Busy(owner) => Err(format!("microphone is in use by {owner:?}")),
     }
 }
 
 /// Force-stop the mic once the hosted per-dictation cap (+ grace) has passed,
-/// unless `session` already ended or was superseded.
+/// unless the release already cut `session`, or it was superseded. A hung
+/// webview, which never cuts, is still caught.
 fn arm_cap_watchdog(app: &AppHandle, state: VoiceTypingState, session: u64, secs: u64) {
     let app = app.clone();
-    let deadline = std::time::Duration::from_secs(secs) + CAP_BACKEND_GRACE;
+    let deadline = Duration::from_secs(secs) + CAP_BACKEND_GRACE;
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(deadline).await;
-        if !state.is_current(session) {
+        if !state.is_capturing(session) {
             return;
         }
         log::warn!("voice-typing: hosted session exceeded {secs}s cap; backend safety-stop");
-        app.state::<MicCoordinator>().stop(MicUser::VoiceTyping);
+        let (current, cutoff, gate) = state.handles();
+        if current == session {
+            let a = app.clone();
+            let _ = tauri::async_runtime::spawn_blocking(move || {
+                cut_now(&a.state::<MicCoordinator>(), cutoff.as_ref(), gate.as_ref())
+            })
+            .await;
+        }
         state.abort_if_current(session);
     });
+}
+
+/// Cut a session's audio: set its cutoff (the counter stops forwarding, which
+/// closes the STT input and starts the final flush) and stop the capture it
+/// opened — that capture only, by gate identity, so a cut that lands after a
+/// quick re-press cannot stop the new dictation's mic. Returns whether a
+/// capture was stopped. Blocking: stopping joins the capture threads with a
+/// grace of up to 1.5 s, so async callers run it on the blocking pool.
+fn cut_now(
+    coord: &MicCoordinator,
+    cutoff: Option<&Arc<AtomicBool>>,
+    gate: Option<&Arc<AtomicBool>>,
+) -> bool {
+    if let Some(c) = cutoff {
+        c.store(true, Ordering::SeqCst);
+    }
+    gate.is_some_and(|g| coord.stop_if(MicUser::VoiceTyping, g))
 }
 
 /// Name of the voice-typing history file (one JSON object per line) in the app
@@ -308,58 +412,97 @@ pub fn write_voice_history(app: AppHandle, content: String) -> Result<(), String
     write_config_file(&app, HISTORY_FILE, &content)
 }
 
-/// Stop the session: clear its gate and join the mic thread with a bounded
-/// grace (which drops its PCM sender, closing the STT session cleanly — the
-/// graceful path that lets the provider flush its final tokens). No-op if
-/// voice typing doesn't own the mic.
+/// Stop the session: after RELEASE_TAIL (`tail`, the default) or at once
+/// (`tail: false` — the hosted cap, which must not stream past its limit), set
+/// the cutoff and stop the capture this session opened. The cutoff closes the
+/// STT input, the graceful path that lets the provider flush its final tokens;
+/// the host waits for that flush (`stt://closed`) before it pastes.
 ///
-/// Backstop: a provider/relay that never closes the socket would leave the
-/// session task parked on its read half forever. Mirror `stop_meeting`'s
-/// direct-cancel safety net — abort the task once the flush window has long
-/// passed. Guarded by the session id so a backstop from THIS session can never
-/// abort a newer one started during the grace.
+/// Returns immediately; the tail and the cut run in the background. A quick
+/// re-press queues its start behind this command on the host, and holding it
+/// for the tail would cost the NEXT dictation its first 250 ms. A start that
+/// does land during the tail is safe: it releases this session's capture
+/// itself, and the cut stops by capture identity (`MicCoordinator::stop_if`),
+/// so it cannot stop the new one.
 ///
-/// `async` for the same reason as [`start_voice_typing`], with one extra: the
-/// `coord.stop` below joins the capture threads with a bounded grace, and doing
-/// that on the main thread hitched every window on every key release.
+/// Backstop: a provider/relay that never ends the stream would leave the
+/// session task parked on its read half. CONNECT_TIMEOUT and DRAIN_READ_GRACE
+/// end it first (see FLUSH_ABORT_GRACE); for anything else mirror
+/// `stop_meeting`'s direct-cancel safety net and abort the task once the flush
+/// window has long passed. Guarded by the session id
+/// so a backstop from THIS session can never abort a newer one started during
+/// the grace.
+///
+/// `async` for the same reason as [`start_voice_typing`], and the capture stop
+/// runs on the blocking pool: it joins the capture threads with a bounded
+/// grace, which on the main thread hitched every window on every key release
+/// and on an async worker could stall the task driving the flush's socket.
 #[tauri::command]
 pub async fn stop_voice_typing(
     app: AppHandle,
-    coord: State<'_, MicCoordinator>,
     state: State<'_, VoiceTypingState>,
+    tail: Option<bool>,
 ) -> Result<(), String> {
     crate::tray::set_voice_typing_active(&app, false);
-    // Hard cut FIRST: stop forwarding audio to the STT session immediately so
-    // nothing captured after release is transcribed, and its input closes now
-    // for a prompt final flush — set before `coord.stop` so forwarding ceases
-    // without waiting for the mic thread to observe the cleared gate.
-    if let Some(cutoff) = state.0.lock().unwrap().cutoff.as_ref() {
-        cutoff.store(true, Ordering::SeqCst);
-    }
-    coord.stop(MicUser::VoiceTyping);
-    let session = state.0.lock().unwrap().session;
+    let (session, cutoff, gate) = state.handles();
     let state = state.inner().clone();
+    let tail = if tail.unwrap_or(true) {
+        RELEASE_TAIL
+    } else {
+        Duration::ZERO
+    };
     tauri::async_runtime::spawn(async move {
+        // A second stop (the cap racing a release) finds the cut already made
+        // and must not add another tail.
+        if !tail.is_zero() && cutoff.as_ref().is_some_and(|c| !c.load(Ordering::SeqCst)) {
+            tokio::time::sleep(tail).await;
+        }
+        let a = app.clone();
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            cut_now(&a.state::<MicCoordinator>(), cutoff.as_ref(), gate.as_ref())
+        })
+        .await;
         tokio::time::sleep(FLUSH_ABORT_GRACE).await;
         state.abort_if_current(session);
     });
     Ok(())
 }
 
-/// Copy text to the system clipboard via the native pasteboard. Needed because
-/// the webview's `navigator.clipboard` is blocked while Parley isn't focused.
+/// Copy text to the system clipboard: an explicit copy the user asked for
+/// (Esc's Undo, the overlay's Copy). Through the OS because the webview's
+/// `navigator.clipboard` is blocked while Parley isn't focused. Never restored
+/// over — a restore still pending from the last dictation is called off.
+///
+/// Synchronous on macOS, so Tauri runs it on the main thread, where AppKit
+/// wants the pasteboard. On Windows it runs on a blocking worker instead (see
+/// `insert_text`).
+#[cfg(not(target_os = "windows"))]
 #[tauri::command]
-pub fn copy_to_clipboard(text: String) -> Result<(), String> {
-    imp::copy_to_clipboard(&text)
+pub fn copy_to_clipboard(state: State<'_, ClipboardState>, text: String) -> Result<(), String> {
+    clipboard::copy(&mut state.lock(), &mut SystemPasteboard, &text)
 }
 
-/// Outcome of an auto-paste: whether the keystroke went out, and WHO it went to.
+#[cfg(target_os = "windows")]
+#[tauri::command]
+pub async fn copy_to_clipboard(app: AppHandle, text: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<ClipboardState>();
+        let mut ledger = state.lock();
+        clipboard::copy(&mut ledger, &mut SystemPasteboard, &text)
+    })
+    .await
+    .map_err(|e| format!("clipboard copy did not run: {e}"))?
+}
+
+/// Outcome of an insert: whether the paste went out, and WHO it went to.
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PasteResult {
-    /// False when the keystroke could not be posted: on macOS because
-    /// Accessibility isn't granted, on Windows because UIPI refused the
-    /// injection (the target window belongs to an elevated process).
+    /// False when no paste chord was posted and the text was left on the
+    /// clipboard for the user to paste: on macOS because Accessibility isn't
+    /// granted, on Windows because UIPI refused the injection (the target
+    /// window belongs to an elevated process) or because the foreground
+    /// window is Parley's own hidden tray window, where a paste lands nowhere.
     pasted: bool,
     /// Identifier of the app that was frontmost at paste time, sampled BEFORE
     /// the paste chord so it names the app that actually received the text.
@@ -373,20 +516,67 @@ pub struct PasteResult {
     app_bundle_id: Option<String>,
 }
 
-/// Paste into the frontmost app by simulating ⌘V. Requires Accessibility.
-/// Reports whether the keystroke was posted (never, when untrusted) and which
-/// app received it — the dictionary's correction watcher needs to know which
-/// app's field it is about to observe.
+/// Type `text` into the frontmost app's focused field: borrow the clipboard,
+/// post the paste chord, and give the clipboard back a moment later (see
+/// `clipboard`), so a dictation never costs the user what they had copied.
+/// Reports whether the paste went out and which app received it — the
+/// dictionary's correction watcher needs to know which app's field it is
+/// about to observe.
+///
+/// Posts nothing, and leaves the text on the clipboard to paste by hand, when
+/// macOS has not granted Accessibility or Windows refuses the injection.
+///
+/// Parley itself in front is pasted into like any other app. The overlay
+/// never activates Parley, so that is the user dictating into one of its own
+/// fields (the Ask box, a meeting's context, Settings), and the paste lands
+/// there. Holding it back on the clipboard told them to paste by hand a text
+/// that was already in the field — doing so inserted it twice. The one
+/// exception is a Parley window that is not on screen: on Windows the tray
+/// menu leaves its hidden window in front, so a dictation stopped from the
+/// tray stays on the clipboard (`clipboard::paste_block`).
+///
+/// Synchronous on macOS, so Tauri runs it on the main thread, where AppKit
+/// wants the pasteboard. On Windows it runs on a blocking worker instead:
+/// saving the clipboard asks the app that copied it to render what it only
+/// promised, and opening the clipboard waits out whoever holds it, so on the
+/// main thread an Excel range or a busy clipboard would freeze every Parley
+/// window. Ctrl+V and the foreground-window queries work from any thread.
+#[cfg(not(target_os = "windows"))]
 #[tauri::command]
-pub fn paste_to_frontmost() -> PasteResult {
-    // Sample the frontmost app FIRST: posting ⌘V can move focus (a paste that
-    // opens a sheet, an app that activates on input), so reading it afterward
-    // could name the wrong app.
+pub fn insert_text(app: AppHandle, text: String) -> Result<PasteResult, String> {
+    insert_now(&app, &text)
+}
+
+#[cfg(target_os = "windows")]
+#[tauri::command]
+pub async fn insert_text(app: AppHandle, text: String) -> Result<PasteResult, String> {
+    tauri::async_runtime::spawn_blocking(move || insert_now(&app, &text))
+        .await
+        .map_err(|e| format!("insert did not run: {e}"))?
+}
+
+/// `insert_text`'s work, on whichever thread the platform wants it.
+fn insert_now(app: &AppHandle, text: &str) -> Result<PasteResult, String> {
+    // Sample the frontmost app FIRST: posting the paste can move focus (a
+    // paste that opens a sheet, an app that activates on input), so reading
+    // it afterward could name the wrong app.
     let app_bundle_id = imp::frontmost_bundle_id();
-    PasteResult {
-        pasted: imp::paste_to_frontmost(),
-        app_bundle_id,
+    let blocked = clipboard::paste_block(imp::accessibility_trusted(false), imp::foreground());
+    let state = app.state::<ClipboardState>();
+    let done = clipboard::insert(
+        &mut state.lock(),
+        &mut SystemPasteboard,
+        text,
+        blocked,
+        imp::paste_to_frontmost,
+    )?;
+    if let Some(generation) = done.restore {
+        clipboard::schedule_restore(app, generation);
     }
+    Ok(PasteResult {
+        pasted: done.pasted,
+        app_bundle_id,
+    })
 }
 
 /// Whether the app is trusted for Accessibility (needed for auto-paste).
@@ -425,6 +615,25 @@ pub(crate) fn frontmost_app_pid() -> Option<i32> {
     imp::frontmost_pid()
 }
 
+/// The overlay window's label (overlay.ts creates it).
+const OVERLAY_LABEL: &str = "voice-typing";
+
+/// The overlay's native window: the NSWindow on macOS, the HWND on Windows.
+#[cfg(target_os = "macos")]
+fn overlay_handle(app: &AppHandle) -> Option<imp::OverlayHandle> {
+    app.get_webview_window(OVERLAY_LABEL)?.ns_window().ok()
+}
+
+#[cfg(target_os = "windows")]
+fn overlay_handle(app: &AppHandle) -> Option<imp::OverlayHandle> {
+    app.get_webview_window(OVERLAY_LABEL)?.hwnd().ok()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn overlay_handle(_app: &AppHandle) -> Option<imp::OverlayHandle> {
+    None
+}
+
 /// Show the overlay above ALL apps without activating Parley or stealing focus.
 /// Driving visibility natively avoids Tauri's `show()`, which can bring Parley
 /// to the front — and the front is exactly where it must not go, because the
@@ -432,27 +641,22 @@ pub(crate) fn frontmost_app_pid() -> Option<i32> {
 /// there. macOS gets `orderFrontRegardless` + a floating level + all-spaces /
 /// full-screen collection behaviour; Windows gets a non-activating topmost
 /// `SetWindowPos` (see each platform's `imp::present_overlay`).
+///
+/// Where click-through is live (`imp::CLICK_THROUGH`, macOS today), the window
+/// comes up click-through and stays that way except while the cursor is over
+/// one of the blocks the overlay draws (see `start_hit_poller`): its
+/// transparent 460×180 rectangle sits right where chat composers are, and it
+/// used to swallow every click there for the length of a dictation.
 #[tauri::command]
 pub fn present_voice_overlay(app: AppHandle) {
-    #[cfg(target_os = "macos")]
-    {
-        use tauri::Manager;
-        if let Some(win) = app.get_webview_window("voice-typing") {
-            if let Ok(ns) = win.ns_window() {
-                imp::present_overlay(ns);
-            }
-        }
-    }
-    #[cfg(target_os = "windows")]
-    {
-        if let Some(win) = app.get_webview_window("voice-typing") {
-            if let Ok(hwnd) = win.hwnd() {
-                imp::present_overlay(hwnd);
-            }
-        }
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    let _ = app;
+    let Some(handle) = overlay_handle(&app) else {
+        return;
+    };
+    // Before the window is on screen, so it never catches a click it should
+    // not have; the poller's first tick turns capture back on under the pill.
+    imp::set_pass_through(handle, true);
+    imp::present_overlay(handle);
+    start_hit_poller(&app);
 }
 
 /// Keep a visible overlay in front of the user as they swipe between Spaces
@@ -468,29 +672,262 @@ pub fn install_space_observer(app: AppHandle) {
 /// counterpart to `present_voice_overlay`.
 #[tauri::command]
 pub fn dismiss_voice_overlay(app: AppHandle) {
-    #[cfg(target_os = "macos")]
-    {
-        use tauri::Manager;
-        if let Some(win) = app.get_webview_window("voice-typing") {
-            if let Ok(ns) = win.ns_window() {
-                imp::dismiss_overlay(ns);
+    // Stop the poller first. This runs on the main thread, as every tick does,
+    // so a tick already queued sees the new generation and leaves the window
+    // alone instead of turning capture back on behind the hide.
+    app.state::<OverlayHitState>().poller.stop();
+    let Some(handle) = overlay_handle(&app) else {
+        return;
+    };
+    imp::set_pass_through(handle, true);
+    imp::dismiss_overlay(handle);
+}
+
+// ── Click-through ───────────────────────────────────────────────────────────
+//
+// The overlay is a transparent 460×180 window, but what it draws — the pill,
+// the transcript, a suggestion bubble — covers a fraction of that. Transparent
+// webview pixels are not click-through at the window-server level, so the rest
+// of the rectangle was a dead zone over whatever sat behind it (and on macOS,
+// before the panel stopped activating Parley, a click there brought Parley
+// forward). The webview reports where its blocks are; while the overlay is up
+// a poller compares the cursor with them and makes the window ignore the mouse
+// everywhere else. It fails open: with no report, the whole window is
+// click-through. macOS only for now; Windows keeps the dead zone until its
+// toggle is checked on hardware (see the Windows `imp::CLICK_THROUGH`).
+
+/// One block of the overlay that catches clicks, as fractions (0..1) of the
+/// overlay's viewport with the origin at its top-left — what `toHitRects`
+/// (src/lib/voiceTyping/hitRegions.ts) reports. Fractions keep both sides out
+/// of unit conversions: the webview measures CSS px under any page zoom, the
+/// native side Cocoa points or physical px, and only a ratio means the same
+/// thing to both — whatever the display's scale factor.
+#[derive(serde::Deserialize, Clone, Copy, Debug, PartialEq)]
+pub struct HitRect {
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+}
+
+impl HitRect {
+    fn is_finite(&self) -> bool {
+        self.x.is_finite() && self.y.is_finite() && self.w.is_finite() && self.h.is_finite()
+    }
+}
+
+/// Well past the handful of blocks the overlay ever shows at once; a bound so
+/// a runaway report cannot lengthen every poll tick.
+const MAX_HIT_RECTS: usize = 16;
+
+/// How often the cursor is checked while the overlay is up. A flip is at most
+/// this late, which is shorter than any deliberate move-and-click; each tick is
+/// a few microseconds on the main thread.
+const OVERLAY_HIT_POLL: Duration = Duration::from_millis(33);
+
+/// Which hit poller is the live one. Every present begins a new generation and
+/// a dismiss ends the current one, so an older poller — and any tick it has
+/// already queued on the main thread — can tell it is stale.
+#[derive(Default)]
+struct HitPoller(AtomicU64);
+
+impl HitPoller {
+    fn begin(&self) -> u64 {
+        self.0.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    fn is_current(&self, generation: u64) -> bool {
+        self.0.load(Ordering::SeqCst) == generation
+    }
+
+    fn stop(&self) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+/// The rects the overlay reported last, and which report they came from.
+///
+/// Reports can arrive out of order: the command is async, and Tauri runs each
+/// async invoke as its own task on a multi-threaded runtime, so of two reports
+/// sent a frame apart the older one can be the last to store. The webview only
+/// sends a layout that changed — and the waveform re-renders the same one many
+/// times a second — so it would never send the newer layout again, and clicks
+/// would go by a stale one (a visible block passing them through, a vanished
+/// one catching them) until a block moved. Each report is numbered, and an
+/// older one than what is held is dropped.
+#[derive(Default)]
+struct HitReport {
+    /// Which load of the overlay page sent it (a random id per load). A
+    /// reloaded page counts its reports from 1 again, so its numbers are not
+    /// comparable with the last page's — a report from a new page is always
+    /// taken, rather than ignored until its count passes the old one.
+    page: u32,
+    /// That page's running count of reports.
+    seq: u64,
+    rects: Vec<HitRect>,
+}
+
+impl HitReport {
+    /// Take a report unless it is older than the one held; true when taken.
+    fn apply(&mut self, page: u32, seq: u64, rects: Vec<HitRect>) -> bool {
+        if page == self.page && seq < self.seq {
+            return false;
+        }
+        *self = HitReport {
+            page,
+            seq,
+            rects: sanitize_hit_rects(rects),
+        };
+        true
+    }
+}
+
+/// The overlay's reported hit rects and the poller that applies them.
+#[derive(Default)]
+pub struct OverlayHitState {
+    /// The order check and the store happen under this one lock, so two
+    /// reports cannot both pass the check and then store in the wrong order.
+    report: Mutex<HitReport>,
+    poller: HitPoller,
+    /// A tick is queued on the main thread and has not run yet. The poller
+    /// skips a tick rather than stack a second one behind a busy main thread.
+    tick_pending: AtomicBool,
+}
+
+/// Whether the overlay-relative point `(fx, fy)` falls on a reported block.
+/// Half-open on every edge, like `hitAt` in hitRegions.ts. Anything off the
+/// window — or not a number — is not a hit, so the window passes the click on.
+fn over_hit_rect(rects: &[HitRect], fx: f64, fy: f64) -> bool {
+    if !(0.0..1.0).contains(&fx) || !(0.0..1.0).contains(&fy) {
+        return false;
+    }
+    rects
+        .iter()
+        .any(|r| fx >= r.x && fx < r.x + r.w && fy >= r.y && fy < r.y + r.h)
+}
+
+/// The cursor as a fraction of the window, from Cocoa's global coordinates:
+/// points (no scale factor, so a mixed-DPI desktop is fine) with the origin at
+/// the BOTTOM-left, hence the flip into the overlay's top-left fractions.
+#[cfg(any(target_os = "macos", test))]
+fn fraction_bottom_left(
+    mouse: (f64, f64),
+    origin: (f64, f64),
+    size: (f64, f64),
+) -> Option<(f64, f64)> {
+    let (w, h) = size;
+    if w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0 {
+        Some(((mouse.0 - origin.0) / w, (origin.1 + h - mouse.1) / h))
+    } else {
+        None
+    }
+}
+
+/// The cursor as a fraction of the window, from Win32's screen coordinates:
+/// physical px with the origin at the top-left.
+#[cfg(any(target_os = "windows", test))]
+fn fraction_top_left(
+    cursor: (f64, f64),
+    origin: (f64, f64),
+    size: (f64, f64),
+) -> Option<(f64, f64)> {
+    let (w, h) = size;
+    if w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0 {
+        Some(((cursor.0 - origin.0) / w, (cursor.1 - origin.1) / h))
+    } else {
+        None
+    }
+}
+
+/// What a report keeps: finite rects only, at most MAX_HIT_RECTS of them.
+fn sanitize_hit_rects(rects: Vec<HitRect>) -> Vec<HitRect> {
+    rects
+        .into_iter()
+        .filter(HitRect::is_finite)
+        .take(MAX_HIT_RECTS)
+        .collect()
+}
+
+/// The overlay reports where its visible blocks are, whenever that changes.
+/// Async so it runs off the main thread: the transcript bubble grows with every
+/// few words, and a synchronous command would queue each report there. Which
+/// is also why reports can land out of order, and carry `page` and `seq` (see
+/// `HitReport`). The rects are kept across a dismiss — the webview owns them,
+/// and it has already reported none by the time a done confirmation fades out.
+#[tauri::command]
+pub async fn set_voice_overlay_hit_rects(
+    state: State<'_, OverlayHitState>,
+    rects: Vec<HitRect>,
+    page: u32,
+    seq: u64,
+) -> Result<(), String> {
+    state.report.lock().unwrap().apply(page, seq, rects);
+    Ok(())
+}
+
+/// Poll the cursor against the hit rects until the overlay is dismissed or
+/// presented again, turning the window's mouse capture on over a block and off
+/// everywhere else. Natively, rather than from the webview with Tauri's
+/// `setIgnoreCursorEvents`: the cursor position the webview can get is scaled
+/// by the PRIMARY display's factor (off by 2× on a Retina laptop next to a 1×
+/// screen), and on Windows tao's setter rewrites the window's styles and hides
+/// it (see the Windows `imp::present_overlay`).
+fn start_hit_poller(app: &AppHandle) {
+    if !imp::CLICK_THROUGH {
+        return;
+    }
+    let generation = app.state::<OverlayHitState>().poller.begin();
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut tick = tokio::time::interval(OVERLAY_HIT_POLL);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tick.tick().await;
+            let state = app.state::<OverlayHitState>();
+            if !state.poller.is_current(generation) {
+                break;
+            }
+            if state.tick_pending.swap(true, Ordering::SeqCst) {
+                continue;
+            }
+            let main = app.clone();
+            if app
+                .run_on_main_thread(move || hit_tick(&main, generation))
+                .is_err()
+            {
+                // The event loop is gone; nothing left to poll for.
+                state.tick_pending.store(false, Ordering::SeqCst);
+                break;
             }
         }
+    });
+}
+
+/// One poll, on the main thread (where AppKit wants the window touched).
+fn hit_tick(app: &AppHandle, generation: u64) {
+    let state = app.state::<OverlayHitState>();
+    state.tick_pending.store(false, Ordering::SeqCst);
+    // Queued before a dismiss, or before the next present's poller took over:
+    // the window is no longer this tick's to change.
+    if !state.poller.is_current(generation) {
+        return;
     }
-    #[cfg(target_os = "windows")]
-    {
-        if let Some(win) = app.get_webview_window("voice-typing") {
-            if let Ok(hwnd) = win.hwnd() {
-                imp::dismiss_overlay(hwnd);
-            }
-        }
+    let Some(handle) = overlay_handle(app) else {
+        return;
+    };
+    let over = imp::cursor_fraction(handle)
+        .is_some_and(|(fx, fy)| over_hit_rect(&state.report.lock().unwrap().rects, fx, fy));
+    // Against the window's real state, not a remembered one: anything that
+    // rewrites it behind our back would leave a cached flag saying
+    // "click-through" over a window that is catching clicks.
+    if imp::is_pass_through(handle) == over {
+        imp::set_pass_through(handle, !over);
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    let _ = app;
 }
 
 #[cfg(target_os = "macos")]
 mod imp {
+    use super::clipboard::Foreground;
     use core_foundation::base::TCFType;
     use core_foundation::string::CFString;
     use objc::runtime::{Class, Object};
@@ -518,6 +955,7 @@ mod imp {
         ) -> CGEventRef;
         fn CGEventSetFlags(event: CGEventRef, flags: u64);
         fn CGEventPost(tap: u32, event: CGEventRef);
+        fn CGEventSourceFlagsState(state_id: i32) -> u64;
     }
 
     #[link(name = "ApplicationServices", kind = "framework")]
@@ -534,29 +972,9 @@ mod imp {
     const KVK_ANSI_V: u16 = 9;
     const FLAG_COMMAND: u64 = 0x0010_0000; // kCGEventFlagMaskCommand
     const HID_EVENT_TAP: u32 = 0; // kCGHIDEventTap
-
-    /// NSPasteboard generalPasteboard -> clearContents -> setString:forType:.
-    /// CFString is toll-free bridged to NSString, so we pass it straight through.
-    pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
-        unsafe {
-            let pb: *mut Object = msg_send![class!(NSPasteboard), generalPasteboard];
-            if pb.is_null() {
-                return Err("no general pasteboard".into());
-            }
-            let _: i64 = msg_send![pb, clearContents];
-            let value = CFString::new(text);
-            let value_obj = value.as_concrete_TypeRef() as *const Object;
-            // NSPasteboardTypeString's UTI; avoids linking the extern NSString const.
-            let ty = CFString::new("public.utf8-plain-text");
-            let ty_obj = ty.as_concrete_TypeRef() as *const Object;
-            let ok: bool = msg_send![pb, setString: value_obj forType: ty_obj];
-            if ok {
-                Ok(())
-            } else {
-                Err("pasteboard rejected string".into())
-            }
-        }
-    }
+    const HID_SYSTEM_STATE: i32 = 1; // kCGEventSourceStateHIDSystemState
+    /// Shift, Control, Option, Command and fn (kCGEventFlagMask*).
+    const MODIFIER_FLAGS: u64 = 0x0002_0000 | 0x0004_0000 | 0x0008_0000 | 0x0010_0000 | 0x0080_0000;
 
     /// Bundle identifier of the frontmost application, via
     /// `NSWorkspace.sharedWorkspace.frontmostApplication.bundleIdentifier`.
@@ -603,11 +1021,32 @@ mod imp {
         }
     }
 
+    /// Whether Parley itself is the frontmost app. macOS answers per app, not
+    /// per window, and has nothing like Windows' hidden tray window for the
+    /// paste to land on: Parley has no menu-bar icon, and the overlay never
+    /// activates it. So Parley in front means the user brought up one of its
+    /// windows, and the paste goes there.
+    pub fn foreground() -> Foreground {
+        let own = frontmost_pid()
+            .is_some_and(|pid| u32::try_from(pid).is_ok_and(|pid| pid == std::process::id()));
+        Foreground { own, hidden: false }
+    }
+
     pub fn paste_to_frontmost() -> bool {
         if !accessibility_trusted(false) {
             return false;
         }
         unsafe {
+            // A quick re-press pastes the previous dictation while the trigger
+            // (⌥Space, or a held right-modifier) is still physically down.
+            // Windows lifts held modifiers before its Ctrl+V; here only the
+            // Command flag is set on the posted events, and whether the window
+            // server folds a held ⌥ into them is unverified. Logged only when
+            // something is held, so an ordinary paste stays quiet.
+            let held = CGEventSourceFlagsState(HID_SYSTEM_STATE) & MODIFIER_FLAGS;
+            if held != 0 {
+                log::info!("voice-typing: pasting with modifiers held (flags {held:#x})");
+            }
             let down = CGEventCreateKeyboardEvent(std::ptr::null(), KVK_ANSI_V, true);
             let up = CGEventCreateKeyboardEvent(std::ptr::null(), KVK_ANSI_V, false);
             if down.is_null() || up.is_null() {
@@ -648,6 +1087,12 @@ mod imp {
                 object_setClass(w, class!(NSPanel) as *const Class);
                 let style: usize = msg_send![w, styleMask];
                 let _: () = msg_send![w, setStyleMask: style | NONACTIVATING_PANEL];
+                // Only take key status when a view genuinely needs it — none
+                // here does, and the panel is borderless, so it never asks.
+                let _: () = msg_send![w, setBecomesKeyOnlyIfNeeded: true];
+                // Once per window: a recreated overlay starts as a TaoWindow
+                // again and comes back through this branch.
+                prevent_activation(w);
                 let _: () = msg_send![w, setFloatingPanel: true];
                 let _: () = msg_send![w, setHidesOnDeactivate: false];
             }
@@ -660,6 +1105,33 @@ mod imp {
             spaces::rejoin_all(w);
         }
         log::info!("voice-typing: overlay presented (panel)");
+    }
+
+    /// `-setStyleMask:` never propagates NSWindowStyleMaskNonactivatingPanel to
+    /// the activation flag AppKit sets only in NSPanel's own init (Wine's
+    /// cocoa_window.m documents the same bug), so a mouse-down on this converted
+    /// panel activated Parley: the menu bar switched, the main window came
+    /// forward, and the ⌘V that followed the release landed in Parley instead
+    /// of the field the user was dictating into. `_setPreventsActivation:` is
+    /// the private funnel the native init uses. It is idempotent and later
+    /// style-mask changes do not reset it. Guarded like the CGS calls in
+    /// `spaces`: a future macOS without it logs a warning instead of crashing.
+    /// The read-back puts the outcome in parley.log, so a report of "clicking
+    /// the overlay brings Parley up" can be checked against it.
+    unsafe fn prevent_activation(w: *mut Object) {
+        let responds: bool = msg_send![w, respondsToSelector: sel!(_setPreventsActivation:)];
+        if !responds {
+            log::warn!(
+                "voice-typing: _setPreventsActivation: unavailable; overlay clicks may activate Parley"
+            );
+            return;
+        }
+        let _: () = msg_send![w, _setPreventsActivation: true];
+        let can_read: bool = msg_send![w, respondsToSelector: sel!(_preventsActivation)];
+        if can_read {
+            let on: bool = msg_send![w, _preventsActivation];
+            log::info!("voice-typing: overlay panel preventsActivation={on}");
+        }
     }
 
     /// Re-home the overlay whenever the active Space changes (a trackpad swipe,
@@ -874,6 +1346,68 @@ mod imp {
         }
     }
 
+    /// The overlay's NSWindow, as `WebviewWindow::ns_window` hands it out.
+    pub type OverlayHandle = *mut c_void;
+
+    /// Click-through is live here (see `set_pass_through`).
+    pub const CLICK_THROUGH: bool = true;
+
+    // Foundation's geometry structs, for the two getters below that return
+    // them by value. CGFloat is f64 on every 64-bit Mac, and the build is
+    // arm64-only, where objc_msgSend returns these in registers.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct NSPoint {
+        x: f64,
+        y: f64,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct NSSize {
+        width: f64,
+        height: f64,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct NSRect {
+        origin: NSPoint,
+        size: NSSize,
+    }
+
+    /// Where the cursor is, as a fraction of the overlay window; None while the
+    /// window is not on screen. `+[NSEvent mouseLocation]` and `-frame` are
+    /// both global Cocoa points, so no scale factor enters into it — unlike
+    /// tao's cursor position, which a mixed-DPI desktop throws off.
+    pub fn cursor_fraction(ns_window: OverlayHandle) -> Option<(f64, f64)> {
+        unsafe {
+            let w = ns_window as *mut Object;
+            let visible: bool = msg_send![w, isVisible];
+            if !visible {
+                return None;
+            }
+            let mouse: NSPoint = msg_send![class!(NSEvent), mouseLocation];
+            let frame: NSRect = msg_send![w, frame];
+            super::fraction_bottom_left(
+                (mouse.x, mouse.y),
+                (frame.origin.x, frame.origin.y),
+                (frame.size.width, frame.size.height),
+            )
+        }
+    }
+
+    /// `pass` = let clicks through to whatever is behind the overlay.
+    pub fn set_pass_through(ns_window: OverlayHandle, pass: bool) {
+        unsafe {
+            let _: () = msg_send![ns_window as *mut Object, setIgnoresMouseEvents: pass];
+        }
+    }
+
+    pub fn is_pass_through(ns_window: OverlayHandle) -> bool {
+        unsafe { msg_send![ns_window as *mut Object, ignoresMouseEvents] }
+    }
+
     pub fn accessibility_trusted(prompt: bool) -> bool {
         unsafe {
             if !prompt {
@@ -893,12 +1427,9 @@ mod imp {
 
 #[cfg(target_os = "windows")]
 mod imp {
+    use super::clipboard::Foreground;
     use windows::core::PWSTR;
-    use windows::Win32::Foundation::{CloseHandle, GlobalFree, HANDLE, HWND};
-    use windows::Win32::System::DataExchange::{
-        CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
-    };
-    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+    use windows::Win32::Foundation::{CloseHandle, HWND, POINT, RECT};
     use windows::Win32::System::Threading::{
         OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
         PROCESS_QUERY_LIMITED_INFORMATION,
@@ -909,24 +1440,11 @@ mod imp {
         VK_SHIFT,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, GetWindowLongPtrW, GetWindowThreadProcessId, SetWindowLongPtrW,
-        SetWindowPos, ShowWindow, GWL_EXSTYLE, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE,
-        SWP_NOSIZE, SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNA, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+        GetCursorPos, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect,
+        GetWindowThreadProcessId, IsWindowVisible, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+        GWL_EXSTYLE, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SW_HIDE,
+        SW_SHOWNA, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
     };
-
-    /// `CF_UNICODETEXT`, spelled out rather than imported from
-    /// `Win32::System::Ole` so one 16-bit constant doesn't drag the whole OLE
-    /// feature (and its compile time) into the build.
-    const CF_UNICODETEXT: u32 = 13;
-
-    /// `OpenClipboard` does not queue: it fails outright while another process
-    /// holds the clipboard, and something briefly does all the time (the app
-    /// the user just copied from, a clipboard manager sampling the change).
-    /// A dictation ends with a copy that MUST land — the clipboard is the only
-    /// copy of what the user just said — so a lost race is retried rather than
-    /// reported.
-    const CLIPBOARD_OPEN_ATTEMPTS: u32 = 5;
-    const CLIPBOARD_OPEN_RETRY: std::time::Duration = std::time::Duration::from_millis(20);
 
     /// Virtual key for "V". Win32 declares no `VK_V`: the letter keys' virtual
     /// codes are just their ASCII uppercase values.
@@ -936,107 +1454,6 @@ mod imp {
     /// now". The low bit is the unrelated "was pressed since the last call"
     /// flag, which we must not confuse for a held key.
     const KEY_DOWN_MASK: u16 = 0x8000;
-
-    /// Publish `text` on the clipboard as `CF_UNICODETEXT`.
-    ///
-    /// The Win32 clipboard is a process-wide lock, not an object: between the
-    /// `OpenClipboard` and the `CloseClipboard` below, no other process on the
-    /// desktop can copy or paste. Every exit path therefore has to close it.
-    pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
-        // CF_UNICODETEXT is a NUL-terminated wide string: consumers read up to
-        // the terminator, not to the allocation's length, so the terminator is
-        // part of the payload rather than an afterthought.
-        let mut utf16: Vec<u16> = text.encode_utf16().collect();
-        utf16.push(0);
-
-        open_clipboard()?;
-        let result = write_unicode_text(&utf16);
-        // SAFETY: `open_clipboard` returned Ok, so this thread owns the
-        // clipboard, and this is the single matching close on every path out.
-        unsafe {
-            let _ = CloseClipboard();
-        }
-        result
-    }
-
-    /// Take the clipboard, retrying briefly while another process holds it (see
-    /// [`CLIPBOARD_OPEN_ATTEMPTS`]). Passing no owner window is deliberate: we
-    /// have no HWND worth associating and want no clipboard notifications.
-    fn open_clipboard() -> Result<(), String> {
-        let mut last = String::new();
-        for attempt in 0..CLIPBOARD_OPEN_ATTEMPTS {
-            // SAFETY: takes nothing from us and owns nothing of ours; the only
-            // state it changes is the global clipboard lock, released by the
-            // `CloseClipboard` in `copy_to_clipboard`.
-            match unsafe { OpenClipboard(None) } {
-                Ok(()) => return Ok(()),
-                Err(e) => {
-                    last = e.to_string();
-                    if attempt + 1 < CLIPBOARD_OPEN_ATTEMPTS {
-                        std::thread::sleep(CLIPBOARD_OPEN_RETRY);
-                    }
-                }
-            }
-        }
-        Err(format!("clipboard is held by another process: {last}"))
-    }
-
-    /// Write an already NUL-terminated UTF-16 string to the open clipboard.
-    ///
-    /// The ownership rule this function exists to get right: on SUCCESS
-    /// `SetClipboardData` takes the memory block and the OS frees it later, so
-    /// freeing it here would leave every subsequent paste reading freed memory.
-    /// On FAILURE the transfer never happened and the block is still ours, so
-    /// NOT freeing it leaks a global allocation on every dictation.
-    fn write_unicode_text(utf16: &[u16]) -> Result<(), String> {
-        // SAFETY: the clipboard is open on this thread. `EmptyClipboard` frees
-        // only handles the clipboard already owns; ours isn't published yet.
-        unsafe { EmptyClipboard() }.map_err(|e| format!("EmptyClipboard failed: {e}"))?;
-
-        let bytes = std::mem::size_of_val(utf16);
-        // GMEM_MOVEABLE is required, not preferred: `SetClipboardData` rejects
-        // fixed memory, because the OS takes ownership and may relocate it.
-        // SAFETY: a plain allocation request; the returned handle is either
-        // handed to the OS below or freed on each failure path.
-        let hglobal =
-            unsafe { GlobalAlloc(GMEM_MOVEABLE, bytes) }.map_err(|e| format!("GlobalAlloc failed: {e}"))?;
-
-        // SAFETY: `hglobal` is a live moveable block of exactly `bytes` bytes
-        // that we just allocated and to which nobody else holds a pointer, so
-        // locking it and writing `utf16` into it cannot overlap another object
-        // or overrun the allocation.
-        unsafe {
-            let dst = GlobalLock(hglobal);
-            if dst.is_null() {
-                let _ = GlobalFree(Some(hglobal));
-                return Err("GlobalLock failed".into());
-            }
-            std::ptr::copy_nonoverlapping(utf16.as_ptr(), dst.cast::<u16>(), utf16.len());
-            // `GlobalUnlock` returns FALSE *on success* when the lock count
-            // reaches zero (with a last-error of NO_ERROR), so the `windows`
-            // wrapper hands back an Err on the normal path. Nothing to check.
-            let _ = GlobalUnlock(hglobal);
-        }
-
-        // SAFETY: the clipboard is open on this thread and `hglobal` is a valid
-        // moveable block holding a NUL-terminated UTF-16 string, which is what
-        // CF_UNICODETEXT promises its readers.
-        match unsafe { SetClipboardData(CF_UNICODETEXT, Some(HANDLE(hglobal.0))) } {
-            // Ownership has moved to the OS — do NOT free.
-            Ok(_) => Ok(()),
-            Err(e) => {
-                // The transfer did not happen, so the block is still ours.
-                // SAFETY: `SetClipboardData` failed, so the OS did not take
-                // `hglobal`, and nothing else holds it. (`GlobalFree` reports
-                // success by returning NULL, which the `windows` wrapper maps
-                // to Err, so its result is not worth inspecting either.)
-                unsafe {
-                    let _ = GlobalFree(Some(hglobal));
-                }
-                Err(format!("SetClipboardData failed: {e}"))
-            }
-        }
-    }
 
     /// One keyboard `INPUT` record for `SendInput`.
     fn key_event(vk: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS) -> INPUT {
@@ -1111,9 +1528,9 @@ mod imp {
         true
     }
 
-    /// Process id owning the foreground window. `None` when nothing is
-    /// foreground (a locked desktop, or a switch in flight).
-    fn foreground_pid() -> Option<u32> {
+    /// The foreground window and the process id owning it. `None` when
+    /// nothing is foreground (a locked desktop, or a switch in flight).
+    fn foreground_window() -> Option<(HWND, u32)> {
         // SAFETY: reads global window-manager state; returns a null HWND rather
         // than failing when no window is foreground.
         let hwnd = unsafe { GetForegroundWindow() };
@@ -1124,7 +1541,35 @@ mod imp {
         // SAFETY: `pid` is a live local and the call writes exactly one u32 to
         // it. We want the process, not the thread id it returns.
         unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid as *mut u32)) };
-        (pid != 0).then_some(pid)
+        (pid != 0).then_some((hwnd, pid))
+    }
+
+    /// Process id owning the foreground window.
+    fn foreground_pid() -> Option<u32> {
+        foreground_window().map(|(_, pid)| pid)
+    }
+
+    /// Whether the foreground window is one of Parley's own, and whether it
+    /// is on screen.
+    ///
+    /// The tray is why the second half matters. tray-icon opens its menu by
+    /// making its own message window the foreground window (TrackPopupMenu
+    /// needs that to close the menu when the user clicks away), and nothing
+    /// hands the foreground back when the menu closes. That window is never
+    /// shown. So a dictation stopped from the tray settles with an invisible
+    /// Parley window in front, where a Ctrl+V lands nowhere — and SendInput
+    /// still reports it sent. Parley's visible windows (the Ask box,
+    /// Settings) are pasted into like any other app's.
+    pub fn foreground() -> Foreground {
+        let Some((hwnd, pid)) = foreground_window() else {
+            return Foreground::default();
+        };
+        let own = pid == std::process::id();
+        // SAFETY: reads one window's visibility; a window destroyed since
+        // `GetForegroundWindow` answers false, which reads as hidden — and
+        // nothing would take the paste there either.
+        let hidden = own && !unsafe { IsWindowVisible(hwnd) }.as_bool();
+        Foreground { own, hidden }
     }
 
     /// The foreground process id in the shape UI Automation reports
@@ -1202,6 +1647,17 @@ mod imp {
     ///     other windows. Tauri's `alwaysOnTop` is deliberately NOT used for
     ///     this: its implementation activates the window, which is the one
     ///     thing we are avoiding.
+    ///
+    /// Never call one of tao's window-flag setters on this window at runtime —
+    /// `setFocusable`, `setAlwaysOnTop`, `setResizable`, `setIgnoreCursorEvents`
+    /// and the like. The window is created hidden and shown natively here, so
+    /// tao's own VISIBLE flag stays false, and any setter whose change is not
+    /// empty runs tao's `apply_diff`: that calls `ShowWindow(SW_HIDE)` (the
+    /// overlay vanishes mid-dictation) and rewrites GWL_EXSTYLE wholesale from
+    /// tao's flags, which model neither WS_EX_TOOLWINDOW nor, for a window
+    /// created focusable, WS_EX_NOACTIVATE. Creation-time options are fine —
+    /// overlay.ts sets `focusable: false`, so tao applies WS_EX_NOACTIVATE
+    /// from the start and keeps it through its own style recomputes.
     pub fn present_overlay(hwnd: HWND) {
         // SAFETY: `hwnd` is the live overlay window and these commands run on
         // the thread that owns it (Tauri dispatches synchronous commands on the
@@ -1240,15 +1696,76 @@ mod imp {
             let _ = ShowWindow(hwnd, SW_HIDE);
         }
     }
+
+    /// The overlay's window, as `WebviewWindow::hwnd` hands it out.
+    pub type OverlayHandle = HWND;
+
+    /// Click-through is NOT switched on for Windows yet, pending a check on
+    /// real hardware (docs/TESTING.md) — nobody on the core team runs Windows.
+    ///
+    /// The toggle would be WS_EX_TRANSPARENT | WS_EX_LAYERED, read-modify-write
+    /// on GWL_EXSTYLE (never tao's setter — see `present_overlay`). LAYERED is
+    /// the risk: a window made layered through SetWindowLong is not drawn until
+    /// SetLayeredWindowAttributes is called, and WebView2 is known not to
+    /// render in layered windows. Click-through would be the overlay's DEFAULT
+    /// state (the cursor is off the pill most of the time), so if layering
+    /// blanks the webview the overlay disappears for most of every dictation.
+    /// When enabling it: toggle only those two bits; never clear a LAYERED bit
+    /// that was set before the first toggle; if the webview goes blank, try one
+    /// `SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_ALPHA)` after
+    /// LAYERED is first added, and failing that a SetWindowRgn built from the
+    /// same rects (no poller needed then).
+    ///
+    /// Until then the transparent area stays a dead zone, as it always was.
+    /// The overlay has been WS_EX_NOACTIVATE from the start, so on Windows a
+    /// click there never activated Parley.
+    pub const CLICK_THROUGH: bool = false;
+
+    /// Where the cursor is, as a fraction of the overlay window; None while the
+    /// window is not on screen. Both readings are physical px: tao makes the
+    /// process per-monitor-v2 DPI aware. The overlay is undecorated and
+    /// shadowless, so its window rect is its client rect.
+    pub fn cursor_fraction(hwnd: HWND) -> Option<(f64, f64)> {
+        // SAFETY: `hwnd` is the live overlay window and this runs on its
+        // thread; the calls only read the cursor and that window's rect into
+        // the locals they are handed.
+        unsafe {
+            if !IsWindowVisible(hwnd).as_bool() {
+                return None;
+            }
+            let mut cursor = POINT::default();
+            GetCursorPos(&mut cursor).ok()?;
+            let mut rect = RECT::default();
+            GetWindowRect(hwnd, &mut rect).ok()?;
+            super::fraction_top_left(
+                (f64::from(cursor.x), f64::from(cursor.y)),
+                (f64::from(rect.left), f64::from(rect.top)),
+                (
+                    f64::from(rect.right - rect.left),
+                    f64::from(rect.bottom - rect.top),
+                ),
+            )
+        }
+    }
+
+    /// No-op until Windows click-through is verified (see CLICK_THROUGH).
+    pub fn set_pass_through(_hwnd: HWND, _pass: bool) {}
+
+    /// Never click-through while `set_pass_through` is a no-op.
+    pub fn is_pass_through(_hwnd: HWND) -> bool {
+        false
+    }
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 mod imp {
-    pub fn copy_to_clipboard(_text: &str) -> Result<(), String> {
-        Err("clipboard only implemented on macOS and Windows".into())
-    }
+    use super::clipboard::Foreground;
+
     pub fn paste_to_frontmost() -> bool {
         false
+    }
+    pub fn foreground() -> Foreground {
+        Foreground::default()
     }
     pub fn frontmost_bundle_id() -> Option<String> {
         None
@@ -1256,12 +1773,42 @@ mod imp {
     pub fn accessibility_trusted(_prompt: bool) -> bool {
         false
     }
+
+    // No overlay window to drive here: `overlay_handle` is always None.
+    pub type OverlayHandle = *mut std::ffi::c_void;
+    pub const CLICK_THROUGH: bool = false;
+    pub fn present_overlay(_handle: OverlayHandle) {}
+    pub fn dismiss_overlay(_handle: OverlayHandle) {}
+    pub fn cursor_fraction(_handle: OverlayHandle) -> Option<(f64, f64)> {
+        None
+    }
+    pub fn set_pass_through(_handle: OverlayHandle, _pass: bool) {}
+    pub fn is_pass_through(_handle: OverlayHandle) -> bool {
+        false
+    }
+}
+
+#[cfg(test)]
+mod flush_abort_tests {
+    use super::{FLUSH_ABORT_GRACE, RELEASE_TAIL};
+    use crate::transcription::common::{CONNECT_TIMEOUT, DRAIN_READ_GRACE};
+
+    /// The abort must only catch a task stuck past its own bounds: a short tap
+    /// whose socket connects at the last moment still drains, waits out its
+    /// read grace and fires `stt://closed` before this lands.
+    #[test]
+    fn the_abort_waits_out_a_late_connect_and_its_read_grace() {
+        assert!(FLUSH_ABORT_GRACE > CONNECT_TIMEOUT + DRAIN_READ_GRACE);
+        // Counted from the cut, which comes RELEASE_TAIL after the release.
+        assert!(RELEASE_TAIL < FLUSH_ABORT_GRACE);
+    }
 }
 
 #[cfg(test)]
 mod session_gate_tests {
-    use super::{VoiceTypingState, RETIRE_GRACE};
-    use std::sync::atomic::AtomicBool;
+    use super::{cut_now, VoiceTypingState, RETIRE_GRACE};
+    use crate::capture::{Begin, MicCoordinator, MicUser};
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::time::{Duration, Instant};
     use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
@@ -1284,7 +1831,7 @@ mod session_gate_tests {
                 tokio::task::yield_now().await;
             }
         });
-        state.adopt(session, task, Arc::new(AtomicBool::new(false)));
+        state.adopt(session, task, Arc::new(AtomicBool::new(false)), None);
         entered_rx.recv().await;
     }
 
@@ -1346,5 +1893,250 @@ mod session_gate_tests {
         open_announced(&state, events_tx).await;
         assert!(started.elapsed() < RETIRE_GRACE * 3, "took {:?}", started.elapsed());
         assert_eq!(settled(&mut events).await, vec!["reset", "reset"]);
+    }
+
+    /// Adopt an idle task for `session` with a fresh cutoff; returns the cutoff.
+    fn adopt_idle(state: &VoiceTypingState, session: u64) -> Arc<AtomicBool> {
+        let cutoff = Arc::new(AtomicBool::new(false));
+        let task = tauri::async_runtime::spawn(async {});
+        state.adopt(session, task, cutoff.clone(), None);
+        cutoff
+    }
+
+    /// The cap watchdog's guard: a released (cut) session is over as far as
+    /// the cap goes, even though it stays current until the next start.
+    #[tokio::test]
+    async fn is_capturing_ends_at_the_cut() {
+        let state = VoiceTypingState::default();
+        let session = state.open_session(|_| {}).await;
+        assert!(!state.is_capturing(session), "nothing adopted yet");
+        let cutoff = adopt_idle(&state, session);
+        assert!(state.is_capturing(session));
+
+        cutoff.store(true, Ordering::SeqCst);
+        assert!(!state.is_capturing(session));
+    }
+
+    #[tokio::test]
+    async fn is_capturing_ends_when_a_newer_session_starts() {
+        let state = VoiceTypingState::default();
+        let first = state.open_session(|_| {}).await;
+        let first_cutoff = adopt_idle(&state, first);
+        let second = state.open_session(|_| {}).await;
+        // Never cut — a hung webview — yet no longer the watchdog's business.
+        assert!(!first_cutoff.load(Ordering::SeqCst));
+        assert!(!state.is_capturing(first));
+        adopt_idle(&state, second);
+        assert!(state.is_capturing(second));
+        assert!(!state.is_capturing(first));
+    }
+
+    #[test]
+    fn cut_now_sets_the_cutoff_and_stops_only_its_own_capture() {
+        let coord = MicCoordinator::default();
+        let Begin::Started(old_gate) = coord.begin(MicUser::VoiceTyping) else {
+            panic!("expected a fresh capture");
+        };
+        let old_cutoff = Arc::new(AtomicBool::new(false));
+        // A re-press during the release tail: its start released the old
+        // capture and opened its own.
+        coord.stop(MicUser::VoiceTyping);
+        let Begin::Started(new_gate) = coord.begin(MicUser::VoiceTyping) else {
+            panic!("expected a fresh capture");
+        };
+
+        assert!(!cut_now(&coord, Some(&old_cutoff), Some(&old_gate)));
+        assert!(old_cutoff.load(Ordering::SeqCst));
+        assert_eq!(coord.owner(), Some(MicUser::VoiceTyping));
+        assert!(new_gate.load(Ordering::SeqCst));
+
+        let new_cutoff = Arc::new(AtomicBool::new(false));
+        assert!(cut_now(&coord, Some(&new_cutoff), Some(&new_gate)));
+        assert!(new_cutoff.load(Ordering::SeqCst));
+        assert_eq!(coord.owner(), None);
+
+        // A meeting-tap session has no capture of its own: the cutoff is the cut.
+        let tap_cutoff = Arc::new(AtomicBool::new(false));
+        assert!(!cut_now(&coord, Some(&tap_cutoff), None));
+        assert!(tap_cutoff.load(Ordering::SeqCst));
+    }
+}
+
+#[cfg(test)]
+mod overlay_hit_tests {
+    use super::{
+        fraction_bottom_left, fraction_top_left, over_hit_rect, sanitize_hit_rects, HitPoller,
+        HitRect, HitReport, MAX_HIT_RECTS,
+    };
+
+    fn rect(x: f64, y: f64, w: f64, h: f64) -> HitRect {
+        HitRect { x, y, w, h }
+    }
+
+    fn close(a: Option<(f64, f64)>, b: (f64, f64)) -> bool {
+        a.is_some_and(|(x, y)| (x - b.0).abs() < 1e-9 && (y - b.1).abs() < 1e-9)
+    }
+
+    /// The pill: centred, near the bottom of the 460×180 overlay.
+    const PILL: (f64, f64, f64, f64) = (0.36, 0.7, 0.28, 0.2);
+
+    #[test]
+    fn a_point_on_a_block_is_a_hit_and_anywhere_else_passes_through() {
+        let (x, y, w, h) = PILL;
+        let rects = [rect(x, y, w, h)];
+        assert!(over_hit_rect(&rects, 0.5, 0.8));
+        assert!(!over_hit_rect(&rects, 0.1, 0.8), "beside the pill");
+        assert!(!over_hit_rect(&rects, 0.5, 0.2), "above the pill");
+    }
+
+    #[test]
+    fn edges_are_half_open_like_hit_at() {
+        let rects = [rect(0.25, 0.5, 0.5, 0.25)];
+        assert!(over_hit_rect(&rects, 0.25, 0.5), "left/top edge is inside");
+        assert!(!over_hit_rect(&rects, 0.75, 0.6), "right edge is outside");
+        assert!(!over_hit_rect(&rects, 0.5, 0.75), "bottom edge is outside");
+    }
+
+    #[test]
+    fn no_report_means_the_whole_window_passes_clicks_through() {
+        assert!(!over_hit_rect(&[], 0.5, 0.5));
+    }
+
+    #[test]
+    fn a_cursor_off_the_window_or_not_a_number_is_never_a_hit() {
+        let rects = [rect(0.0, 0.0, 1.0, 1.0)];
+        assert!(over_hit_rect(&rects, 0.0, 0.0));
+        for (fx, fy) in [
+            (-0.01, 0.5),
+            (0.5, -0.01),
+            (1.0, 0.5),
+            (0.5, 1.0),
+            (f64::NAN, 0.5),
+            (0.5, f64::NAN),
+            (f64::INFINITY, 0.5),
+            (0.5, f64::NEG_INFINITY),
+        ] {
+            assert!(!over_hit_rect(&rects, fx, fy), "({fx}, {fy})");
+        }
+    }
+
+    #[test]
+    fn cocoa_coordinates_flip_to_a_top_left_fraction() {
+        // A 460×180 overlay whose frame starts at (100, 50), bottom-left origin.
+        let at = |mouse| fraction_bottom_left(mouse, (100.0, 50.0), (460.0, 180.0));
+        // The frame's TOP-left corner is (100, 50 + 180) in Cocoa.
+        assert!(close(at((100.0, 230.0)), (0.0, 0.0)));
+        // Its bottom-right corner.
+        assert!(close(at((560.0, 50.0)), (1.0, 1.0)));
+        // A point 45 pt up from the bottom edge sits at 3/4 of the height.
+        assert!(close(at((330.0, 95.0)), (0.5, 0.75)));
+    }
+
+    #[test]
+    fn cocoa_fractions_hold_on_a_display_left_of_or_below_the_primary() {
+        let at = |mouse| fraction_bottom_left(mouse, (-1700.0, -900.0), (460.0, 180.0));
+        assert!(close(at((-1470.0, -810.0)), (0.5, 0.5)));
+    }
+
+    #[test]
+    fn windows_coordinates_are_already_top_left() {
+        // 460×180 at 200 %, in physical px.
+        let at = |cursor| fraction_top_left(cursor, (730.0, 836.0), (920.0, 360.0));
+        assert!(close(at((730.0, 836.0)), (0.0, 0.0)));
+        assert!(close(at((1190.0, 1106.0)), (0.5, 0.75)));
+        // A monitor left of the primary has negative physical coordinates.
+        let left = |cursor| fraction_top_left(cursor, (-1690.0, 836.0), (920.0, 360.0));
+        assert!(close(left((-1230.0, 1016.0)), (0.5, 0.5)));
+    }
+
+    #[test]
+    fn a_window_without_a_size_gives_no_fraction() {
+        for size in [
+            (0.0, 180.0),
+            (460.0, 0.0),
+            (f64::NAN, 180.0),
+            (460.0, f64::INFINITY),
+        ] {
+            assert!(fraction_bottom_left((1.0, 1.0), (0.0, 0.0), size).is_none());
+            assert!(fraction_top_left((1.0, 1.0), (0.0, 0.0), size).is_none());
+        }
+    }
+
+    #[test]
+    fn hit_rects_deserialize_from_what_the_overlay_sends() {
+        let rects: Vec<HitRect> =
+            serde_json::from_str(r#"[{"x":0.1,"y":0.8,"w":0.3,"h":0.2}]"#).unwrap();
+        assert_eq!(rects, vec![rect(0.1, 0.8, 0.3, 0.2)]);
+    }
+
+    #[test]
+    fn a_report_keeps_finite_rects_and_at_most_the_cap() {
+        let kept = sanitize_hit_rects(vec![
+            rect(f64::NAN, 0.0, 0.1, 0.1),
+            rect(0.1, 0.2, 0.3, 0.4),
+            rect(0.0, 0.0, f64::INFINITY, 0.1),
+        ]);
+        assert_eq!(kept, vec![rect(0.1, 0.2, 0.3, 0.4)]);
+
+        let many = vec![rect(0.0, 0.0, 0.1, 0.1); MAX_HIT_RECTS + 5];
+        assert_eq!(sanitize_hit_rects(many).len(), MAX_HIT_RECTS);
+    }
+
+    #[test]
+    fn an_older_report_landing_last_does_not_replace_the_newer_layout() {
+        let bubble = vec![rect(0.1, 0.3, 0.8, 0.4)];
+        let done = vec![rect(0.1, 0.2, 0.8, 0.4), rect(0.3, 0.7, 0.4, 0.15)];
+        let mut held = HitReport::default();
+        // The newer report's task stores first…
+        assert!(held.apply(7, 2, done.clone()));
+        // …and the older one, run late on another worker, is dropped.
+        assert!(!held.apply(7, 1, bubble.clone()));
+        assert_eq!(held.rects, done);
+        // The next report from the same page is taken as usual.
+        assert!(held.apply(7, 3, bubble.clone()));
+        assert_eq!(held.rects, bubble);
+    }
+
+    #[test]
+    fn a_reloaded_overlay_page_is_heard_although_it_counts_from_one_again() {
+        let mut held = HitReport::default();
+        assert!(held.apply(7, 500, vec![rect(0.1, 0.3, 0.8, 0.4)]));
+        // A new page id: its count starts over, and it still wins.
+        assert!(held.apply(9, 1, vec![]));
+        assert_eq!(held.rects, vec![]);
+        assert!(held.apply(9, 2, vec![rect(0.3, 0.7, 0.4, 0.15)]));
+        assert_eq!((held.page, held.seq), (9, 2));
+    }
+
+    #[test]
+    fn the_first_report_is_taken_and_kept_sanitized() {
+        let mut held = HitReport::default();
+        assert!(held.apply(
+            0,
+            1,
+            vec![rect(f64::NAN, 0.0, 0.1, 0.1), rect(0.1, 0.2, 0.3, 0.4)]
+        ));
+        assert_eq!(held.rects, vec![rect(0.1, 0.2, 0.3, 0.4)]);
+    }
+
+    #[test]
+    fn a_dismiss_or_the_next_present_makes_an_older_poller_stale() {
+        let poller = HitPoller::default();
+        let first = poller.begin();
+        assert!(poller.is_current(first));
+
+        // Dismiss: the poller, and any tick it already queued, stand down.
+        poller.stop();
+        assert!(!poller.is_current(first));
+
+        // The next present takes over; the old generation stays stale.
+        let second = poller.begin();
+        assert!(poller.is_current(second));
+        assert!(!poller.is_current(first));
+
+        // A present while one is still running replaces it outright.
+        let third = poller.begin();
+        assert!(poller.is_current(third));
+        assert!(!poller.is_current(second));
     }
 }

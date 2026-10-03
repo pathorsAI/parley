@@ -22,6 +22,13 @@ const MAX_PORT: u16 = 3020;
 /// Emitted after enqueuing a session command so the frontend applies it now
 /// instead of on its next (possibly suspended) poll tick.
 const SESSION_COMMANDS_EVENT: &str = "session://commands";
+/// Emitted after an MCP tool changed `dictionary.json`, the same broadcast a
+/// window sends after its own write (lib/dictionary). Every window re-reads the
+/// file on it — the voice-typing overlay, which rewrites dictated text, never
+/// takes focus, so the windows' focus re-read alone would leave it on the old
+/// dictionary until the app restarted. `origin` tells the windows it is not one
+/// of their own writes.
+const DICTIONARY_UPDATED_EVENT: &str = "dictionary://updated";
 const PROTOCOL_VERSION: &str = "2025-06-18";
 
 /// Attached to every response that carries Parley's own analysis output
@@ -1172,10 +1179,20 @@ async fn call_tool(state: &HttpState, params: Value) -> anyhow::Result<Value> {
             required_str(&args, "id")?
         )?),
         "list_dictionary_phrases" => list_dictionary_phrases(&state.dictionary_path)?,
-        "add_dictionary_phrase" => add_dictionary_phrase(&state.dictionary_path, args)?,
-        "update_dictionary_phrase" => update_dictionary_phrase(&state.dictionary_path, args)?,
+        "add_dictionary_phrase" => {
+            let out = add_dictionary_phrase(&state.dictionary_path, args)?;
+            announce_dictionary_change(state);
+            out
+        }
+        "update_dictionary_phrase" => {
+            let out = update_dictionary_phrase(&state.dictionary_path, args)?;
+            announce_dictionary_change(state);
+            out
+        }
         "delete_dictionary_phrase" => {
-            delete_dictionary_phrase(&state.dictionary_path, required_str(&args, "id")?)?
+            let out = delete_dictionary_phrase(&state.dictionary_path, required_str(&args, "id")?)?;
+            announce_dictionary_change(state);
+            out
         }
         "get_app_context" => {
             let s = read_session(&state.session_path);
@@ -2306,6 +2323,14 @@ fn read_dictionary_doc(path: &PathBuf) -> anyhow::Result<Value> {
         Ok(_) => anyhow::bail!("dictionary.json is not a JSON object"),
         Err(err) => anyhow::bail!("dictionary.json is not valid JSON: {err}"),
     }
+}
+
+/// Tell every window the dictionary file changed (see DICTIONARY_UPDATED_EVENT).
+/// Best effort: a failed emit leaves the windows' focus re-read as the fallback.
+fn announce_dictionary_change(state: &HttpState) {
+    let _ = state
+        .app
+        .emit(DICTIONARY_UPDATED_EVENT, json!({ "origin": "mcp" }));
 }
 
 fn write_dictionary_doc(path: &PathBuf, doc: &Value) -> anyhow::Result<()> {
