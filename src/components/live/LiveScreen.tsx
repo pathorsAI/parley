@@ -68,13 +68,12 @@ function TranscriptionLinkBanner() {
 
   if (!reconnecting) return null;
   return (
-    <div
-      role="status"
-      className="flex shrink-0 items-center gap-2 border-b border-warning-border bg-warning px-3 py-1.5 text-xs text-warning-foreground"
-    >
+    // <output> carries the implicit "status" live-region role, so screen
+    // readers announce the drop and the recovery without an explicit role.
+    <output className="flex shrink-0 items-center gap-2 border-b border-warning-border bg-warning px-3 py-1.5 text-xs text-warning-foreground">
       <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
       <span className="min-w-0 flex-1">{t("meeting.transcription.reconnectingBanner")}</span>
-    </div>
+    </output>
   );
 }
 
