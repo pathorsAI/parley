@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// One correction the user has made: what dictation produced, and what they
 /// changed it to.
@@ -45,9 +46,9 @@ public struct LexiconPair: Codable, Sendable, Equatable, Identifiable {
 ///
 /// These are not substitutions — there is nothing to substitute, because
 /// nothing came back wrong yet. They exist to bias recognition toward words the
-/// user knows they are going to say. Until the relay carries a recognition
-/// context (see `LexiconStore.recognitionTerms`) they are a list the user keeps
-/// and Parley cannot yet spend.
+/// user knows they are going to say: they ride in Soniox's `context.terms` (see
+/// `LexiconStore.recognitionTerms`) and in the polish prompt's list of words to
+/// leave alone.
 public struct LexiconTerm: Codable, Sendable, Equatable, Identifiable {
     public var text: String
     public var updatedAt: Date
@@ -124,17 +125,16 @@ public struct Lexicon: Codable, Sendable, Equatable {
     /// is for — deleting the row is how the user changes their mind, and it is
     /// a thing they can see, unlike a scoring rule.
     ///
-    /// Refused: empty sides, a no-op, and a replacement that contains its own
-    /// original. The last one is the loop guard — "api" → "api endpoint" would
-    /// grow the text every time it ran — and it is refused here as well as in
-    /// `apply` because a row that can never fire is a row that makes the
-    /// dictionary screen a lie.
+    /// Refused: anything `problem(original:replacement:)` objects to — empty
+    /// sides, a no-op, a single CJK character, and a replacement that contains
+    /// its own original. The last one is the loop guard — "api" → "api
+    /// endpoint" would grow the text every time it ran — and it is refused here
+    /// as well as in `apply` because a row that can never fire is a row that
+    /// makes the dictionary screen a lie.
     public mutating func record(original: String, replacement: String, now: Date = Date()) {
         let from = original.trimmingCharacters(in: .whitespacesAndNewlines)
         let to = replacement.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !from.isEmpty, !to.isEmpty, from != to, !Lexicon.loops(from: from, to: to) else {
-            return
-        }
+        guard Lexicon.problem(original: from, replacement: to) == nil else { return }
 
         if let i = pairs.firstIndex(where: { $0.original == from }) {
             if pairs[i].replacement == to {
@@ -148,6 +148,63 @@ public struct Lexicon: Codable, Sendable, Equatable {
 
         pairs.append(LexiconPair(original: from, replacement: to, count: 1, updatedAt: now))
         evict()
+    }
+
+    /// A correction the user stated outright — typed into the dictionary
+    /// screen, or picked out of a dictation in the history — rather than one
+    /// Parley inferred from an edit.
+    ///
+    /// Stored as already confirmed (`count` at the threshold), because the
+    /// reason for waiting does not apply: the threshold exists to tell a
+    /// mishearing from a change of mind, and someone who opened a sheet and
+    /// typed both sides has not changed their mind. For the same reason it
+    /// replaces whatever correction the original had before, confirmed or not
+    /// — the blunt rule in `record` is about inferred pairs competing, and this
+    /// is not an inference. Returns whether it was stored; the same refusals as
+    /// `record` apply.
+    @discardableResult
+    public mutating func recordConfirmed(
+        original: String, replacement: String, now: Date = Date()
+    ) -> Bool {
+        let from = original.trimmingCharacters(in: .whitespacesAndNewlines)
+        let to = replacement.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard Lexicon.problem(original: from, replacement: to) == nil else { return false }
+        if let i = pairs.firstIndex(where: { $0.original == from }) {
+            let count =
+                pairs[i].replacement == to
+                ? max(pairs[i].count, Lexicon.autoApplyThreshold) : Lexicon.autoApplyThreshold
+            pairs[i] = LexiconPair(original: from, replacement: to, count: count, updatedAt: now)
+            return true
+        }
+        pairs.append(
+            LexiconPair(
+                original: from, replacement: to, count: Lexicon.autoApplyThreshold, updatedAt: now))
+        evict()
+        return true
+    }
+
+    /// Why a pair cannot be stored, or `nil` when it can. Both sides are
+    /// expected trimmed.
+    public enum PairProblem: Equatable, Sendable {
+        /// A side is empty.
+        case empty
+        /// The two sides are the same.
+        case unchanged
+        /// The original is one CJK character. Applied as a plain substring —
+        /// which is the only way CJK can be applied — one character rewrites
+        /// every word it appears in: 派 → 帕 turns 派對 into 帕對.
+        case singleCharacter
+        /// The replacement properly contains the original, so applying it
+        /// would grow the text on every pass. See `loops`.
+        case grows
+    }
+
+    public static func problem(original: String, replacement: String) -> PairProblem? {
+        if original.isEmpty || replacement.isEmpty { return .empty }
+        if original == replacement { return .unchanged }
+        if EditDiff.isLoneIdeograph(original) { return .singleCharacter }
+        if loops(from: original, to: replacement) { return .grows }
+        return nil
     }
 
     /// A term the user added by hand. Re-adding one that is already there just
@@ -193,7 +250,7 @@ public struct Lexicon: Codable, Sendable, Equatable {
     // MARK: reading
 
     /// Newest first — the order the dictionary screen lists them in, and the
-    /// order recognition bias would want if it ever gets a wire to ride on.
+    /// order recognition bias wants: under a cap, the newest words survive.
     public var pairsByRecency: [LexiconPair] {
         pairs.sorted { $0.updatedAt > $1.updatedAt }
     }
@@ -202,9 +259,15 @@ public struct Lexicon: Codable, Sendable, Equatable {
         terms.sorted { $0.updatedAt > $1.updatedAt }
     }
 
-    /// The words the user would rather hear back: everything they typed in, plus
-    /// the right-hand side of every correction. Deduplicated, newest first.
-    public var recognitionTerms: [String] {
+    /// The user's own words: everything they typed in, plus the right-hand
+    /// side of every correction. Deduplicated, newest first — under a cap
+    /// (the polish prompt's 30, Soniox's 200) the newest survive.
+    ///
+    /// These and nothing else are the dictionary's words. The keyboard can
+    /// read contact names (`requestSupplementaryLexicon`), and deliberately
+    /// does not keep them: recognition terms leave the phone — to the relay
+    /// and Soniox, and into the polish prompt — and contacts do not.
+    public var userTerms: [String] {
         var seen = Set<String>()
         var out: [String] = []
         for text in termsByRecency.map(\.text) + pairsByRecency.map(\.replacement) {
@@ -213,11 +276,17 @@ public struct Lexicon: Codable, Sendable, Equatable {
         return out
     }
 
+    /// The words recognition should be biased toward — `userTerms`, and only
+    /// those. A separate name for the separate use: what the suggestion bar
+    /// offers and what leaves the phone happen to be the same list today, and
+    /// anything ever added to one has to be decided for the other on purpose.
+    public var recognitionTerms: [String] { userTerms }
+
     // MARK: applying
 
     /// Rewrite the corrections the user has confirmed.
     ///
-    /// Three rules, each of them a way of not doing damage:
+    /// Four rules, each of them a way of not doing damage:
     ///
     /// - **Only confirmed pairs.** `count >= autoApplyThreshold`; see there.
     /// - **Longest original first.** With both "parley" and "parley cloud" on
@@ -227,17 +296,27 @@ public struct Lexicon: Codable, Sendable, Equatable {
     ///   original matches case-insensitively and only as a whole word: dictation
     ///   capitalises arbitrarily, and "api" must not eat the "api" inside
     ///   "rapid". Chinese has no word boundaries to assert, so there the match
-    ///   is a plain substring — which is exactly what makes 在 → 再 possible.
+    ///   is a plain substring — which is exactly what makes 在來 → 再來 possible.
+    /// - **Never a single CJK character.** `record` no longer stores one, but
+    ///   files written before that rule may hold 派 → 帕, and as a substring it
+    ///   would rewrite 派對 too.
     ///
     /// Deterministic: the same lexicon and the same text always give the same
     /// answer, ties in original length broken alphabetically.
     public func apply(to text: String) -> String {
-        guard !text.isEmpty else { return text }
+        applyCounting(to: text).text
+    }
+
+    /// `apply`, and how many replacements it made — what the app logs, so a
+    /// dictionary that never fires can be told from one that is not reached.
+    public func applyCounting(to text: String) -> (text: String, hits: Int) {
+        guard !text.isEmpty else { return (text, 0) }
         let usable =
             pairs
             .filter {
                 $0.count >= Lexicon.autoApplyThreshold && !$0.original.isEmpty
                     && !$0.replacement.isEmpty
+                    && !EditDiff.isLoneIdeograph($0.original)
                     && !Lexicon.loops(from: $0.original, to: $0.replacement)
             }
             .sorted {
@@ -247,13 +326,30 @@ public struct Lexicon: Codable, Sendable, Equatable {
             }
 
         var out = text
+        var hits = 0
         for pair in usable {
-            out =
-                pair.original.isLatinWordLike
-                ? Lexicon.replaceWord(pair.original, with: pair.replacement, in: out)
-                : out.replacingOccurrences(of: pair.original, with: pair.replacement)
+            let (next, count) = Lexicon.substitute(pair.original, with: pair.replacement, in: out)
+            out = next
+            hits += count
         }
-        return out
+        return (out, hits)
+    }
+
+    /// One pair's rewrite of `text`, by the same matching rule `apply` uses —
+    /// whole words case-insensitively for Latin, a plain substring for CJK —
+    /// and how many places it changed. Public for the one other place a pair is
+    /// applied: a correction made from the dictation history rewrites that
+    /// entry's text with it.
+    public static func substitute(
+        _ original: String, with replacement: String, in text: String
+    ) -> (text: String, hits: Int) {
+        guard !original.isEmpty, !text.isEmpty else { return (text, 0) }
+        if original.isLatinWordLike {
+            return replaceWordCounting(original, with: replacement, in: text)
+        }
+        let hits = text.components(separatedBy: original).count - 1
+        guard hits > 0 else { return (text, 0) }
+        return (text.replacingOccurrences(of: original, with: replacement), hits)
     }
 
     /// The replacement properly contains the original, so substituting would
@@ -276,16 +372,26 @@ public struct Lexicon: Codable, Sendable, Equatable {
     /// matches at the end of a clause.
     static func replaceWord(_ original: String, with replacement: String, in text: String) -> String
     {
+        replaceWordCounting(original, with: replacement, in: text).text
+    }
+
+    private static func replaceWordCounting(
+        _ original: String, with replacement: String, in text: String
+    ) -> (text: String, hits: Int) {
         let escaped = NSRegularExpression.escapedPattern(for: original)
         let before = original.first.map(isWordScalar) == true ? "(?<![A-Za-z0-9_])" : ""
         let after = original.last.map(isWordScalar) == true ? "(?![A-Za-z0-9_])" : ""
         guard
             let re = try? NSRegularExpression(
                 pattern: before + escaped + after, options: [.caseInsensitive])
-        else { return text }
-        return re.stringByReplacingMatches(
-            in: text, range: NSRange(text.startIndex..., in: text),
+        else { return (text, 0) }
+        let range = NSRange(text.startIndex..., in: text)
+        let hits = re.numberOfMatches(in: text, range: range)
+        guard hits > 0 else { return (text, 0) }
+        let out = re.stringByReplacingMatches(
+            in: text, range: range,
             withTemplate: NSRegularExpression.escapedTemplate(for: replacement))
+        return (out, hits)
     }
 
     private static func isWordScalar(_ c: Character) -> Bool {
@@ -328,9 +434,40 @@ struct Lossy<T: Decodable>: Decodable {
 public enum LexiconStore {
     public static let fileName = "lexicon.json"
 
+    /// Counts only — how many replacements a fold made. Never the words: what
+    /// someone dictated is not log material, and the count is all that is
+    /// needed to see whether the dictionary is firing at all.
+    private static let log = Logger(subsystem: ParleyLog.subsystem, category: "lexicon")
+
     public static func load() -> Lexicon {
         guard let url = url, let data = try? Data(contentsOf: url) else { return Lexicon() }
-        return (try? decoder.decode(Lexicon.self, from: data)) ?? Lexicon()
+        let lexicon = (try? decoder.decode(Lexicon.self, from: data)) ?? Lexicon()
+        // Development builds of the keyboard briefly wrote contact names here as
+        // `systemTerms`. Nothing reads them any more, and they are not to stay
+        // on disk either: the first load that finds them writes the file back
+        // without them (an encode only ever writes `pairs` and `terms`).
+        if carriesRetiredFields(data) { save(lexicon) }
+        return lexicon
+    }
+
+    /// Whether a `lexicon.json` still holds a field that must not linger —
+    /// `systemTerms`, the contact names one build stored. A byte scan first, so
+    /// the every-appearance load pays nothing for a clean file; then a real
+    /// decode, so a term that merely *is* the word "systemTerms" does not
+    /// count.
+    static func carriesRetiredFields(_ data: Data) -> Bool {
+        guard data.range(of: Data(#""systemTerms""#.utf8)) != nil else { return false }
+        return (try? decoder.decode(RetiredFields.self, from: data))?.present ?? false
+    }
+
+    private struct RetiredFields: Decodable {
+        let present: Bool
+
+        private enum Keys: String, CodingKey { case systemTerms }
+
+        init(from decoder: Decoder) throws {
+            present = try decoder.container(keyedBy: Keys.self).contains(.systemTerms)
+        }
     }
 
     public static func save(_ lexicon: Lexicon) {
@@ -363,6 +500,14 @@ public enum LexiconStore {
         }
     }
 
+    /// See `Lexicon.recordConfirmed`. Returns whether the pair was stored.
+    @discardableResult
+    public static func recordConfirmed(original: String, replacement: String) -> Bool {
+        var stored = false
+        mutate { stored = $0.recordConfirmed(original: original, replacement: replacement) }
+        return stored
+    }
+
     public static func addTerm(_ text: String) {
         mutate { $0.addTerm(text) }
     }
@@ -382,17 +527,26 @@ public enum LexiconStore {
     public static func pairs() -> [LexiconPair] { load().pairsByRecency }
     public static func terms() -> [LexiconTerm] { load().termsByRecency }
 
-    /// The terms recognition should be biased toward.
+    /// The terms recognition should be biased toward (`Lexicon.recognitionTerms`):
+    /// the user's own words, never anything read from Contacts.
     ///
-    /// Nothing spends these yet. Soniox's config frame has a `context.terms`
-    /// field and the desktop already fills it (`transcription/soniox.rs`), but
-    /// `SonioxProtocol.Config` on the phone carries no such field and whether
-    /// the hosted relay forwards one from an iOS client is not something this
-    /// side can establish — so the wire is deliberately left alone and this is
-    /// the seam the follow-up plugs into. See `docs/design/ios-voice-keyboard.md`.
+    /// Spent in two places: every relay session sends them as Soniox's
+    /// `context.terms` (`SonioxProtocol.context(for:)`, capped at 200, the
+    /// desktop's `VOCABULARY_LIMIT`), and the polish prompt protects the first
+    /// 30 (`TranscriptPolisher`).
     public static func recognitionTerms() -> [String] { load().recognitionTerms }
 
-    public static func apply(to text: String) -> String { load().apply(to: text) }
+    /// The user's own words only — what the keyboard's English suggestion bar
+    /// offers. See `Lexicon.userTerms`.
+    public static func suggestionTerms() -> [String] { load().userTerms }
+
+    public static func apply(to text: String) -> String {
+        let (out, hits) = load().applyCounting(to: text)
+        if hits > 0 {
+            log.info("applied \(hits, privacy: .public) correction(s)")
+        }
+        return out
+    }
 
     // MARK: file plumbing
 

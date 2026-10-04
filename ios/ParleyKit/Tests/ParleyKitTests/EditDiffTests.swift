@@ -19,10 +19,54 @@ final class EditDiffTests: XCTestCase {
 
     func testCJKHomophoneFix() {
         // The case this feature exists for: one character, one tone apart, and
-        // the sentence around it untouched.
+        // the sentence around it untouched. Learned with the character after
+        // it, because a single character applied as a substring would rewrite
+        // every 在 the user ever dictates.
         XCTAssertEqual(
             EditDiff.spans(pasted: "我在來一次", edited: "我再來一次"),
-            [EditDiff.Span(original: "在", replacement: "再")])
+            [EditDiff.Span(original: "在來", replacement: "再來")])
+    }
+
+    // MARK: the CJK minimum span
+
+    func testASingleCharacterFixKeepsTheSharedCharacterAfterIt() {
+        // 派斯 → 帕斯 aligns 斯 and diffs to 派 → 帕; stored like that it would
+        // turn 派對 into 帕對.
+        XCTAssertEqual(
+            EditDiff.spans(pasted: "我們派斯很好", edited: "我們帕斯很好"),
+            [EditDiff.Span(original: "派斯", replacement: "帕斯")])
+    }
+
+    func testASingleCharacterReplacementIsWidenedToo() {
+        // 帕索斯 → 派斯 diffs to 帕索 → 派. The original is two characters
+        // already, but a one-character replacement is as narrow a rule.
+        XCTAssertEqual(
+            EditDiff.spans(pasted: "用帕索斯做", edited: "用派斯做"),
+            [EditDiff.Span(original: "帕索斯", replacement: "派斯")])
+    }
+
+    func testWideningFallsBackToTheCharacterBefore() {
+        // Nothing ideographic after the change, so the character before it is
+        // taken instead.
+        XCTAssertEqual(
+            EditDiff.spans(pasted: "我在。", edited: "我再。"),
+            [EditDiff.Span(original: "我在", replacement: "我再")])
+    }
+
+    func testASingleCharacterWithNothingToWidenIntoIsRefused() {
+        XCTAssertTrue(EditDiff.spans(pasted: "在", edited: "再").isEmpty)
+        XCTAssertTrue(EditDiff.spans(pasted: "ok 在 ok", edited: "ok 再 ok").isEmpty)
+    }
+
+    func testASingleCharacterOriginalWithALatinReplacementIsRefused() {
+        // There is no "rest of the word" to widen with across scripts.
+        XCTAssertTrue(EditDiff.spans(pasted: "我們派的", edited: "我們Pathors的").isEmpty)
+    }
+
+    func testATwoCharacterFixIsLeftAsItIs() {
+        XCTAssertEqual(
+            EditDiff.spans(pasted: "我們派斯的產品", edited: "我們Pathors的產品"),
+            [EditDiff.Span(original: "派斯", replacement: "Pathors")])
     }
 
     func testAdjacentChangedTokensBecomeOneSpan() {
@@ -53,7 +97,7 @@ final class EditDiffTests: XCTestCase {
         XCTAssertEqual(
             spans,
             [
-                EditDiff.Span(original: "在", replacement: "再"),
+                EditDiff.Span(original: "在來", replacement: "再來"),
                 EditDiff.Span(original: "pearly", replacement: "Parley"),
             ])
     }
