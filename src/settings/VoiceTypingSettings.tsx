@@ -10,8 +10,36 @@ import { log } from "../lib/log";
 import { hasProviderKey } from "../lib/ai/settings";
 import { isModifierId, modifierIdsFor, shortcutCaps } from "../lib/voiceTyping/caps";
 import { loneModifierRelease, MODIFIER_CODES } from "../lib/voiceTyping/recorder";
-import type { VoiceTypingMode, VoiceTypingShortcut } from "../lib/types";
+import type {
+  VoiceTypingMode,
+  VoiceTypingPolishStyle,
+  VoiceTypingShortcut,
+} from "../lib/types";
 import { Button } from "@/components/ui/button";
+
+/** The polish styles in the order the picker shows them, with their name and
+ *  the one line saying what each does to the words. */
+const POLISH_STYLE_OPTIONS: readonly {
+  style: VoiceTypingPolishStyle;
+  label: TranslationKey;
+  hint: TranslationKey;
+}[] = [
+  {
+    style: "off",
+    label: "settings.voiceTyping.polishStyle.off",
+    hint: "settings.voiceTyping.polishStyle.offHint",
+  },
+  {
+    style: "tidy",
+    label: "settings.voiceTyping.polishStyle.tidy",
+    hint: "settings.voiceTyping.polishStyle.tidyHint",
+  },
+  {
+    style: "concise",
+    label: "settings.voiceTyping.polishStyle.concise",
+    hint: "settings.voiceTyping.polishStyle.conciseHint",
+  },
+];
 
 interface HotkeyStatus {
   authorized: boolean;
@@ -377,17 +405,20 @@ export const VoiceTypingSettings = () => {
   };
   const mode = settings.voiceTypingMode;
 
-  const setVoiceTypingPolish = (polish: boolean) => {
-    updateSettings({ voiceTypingPolish: polish });
+  const setVoiceTypingPolishStyle = (style: VoiceTypingPolishStyle) => {
+    updateSettings({ voiceTypingPolishStyle: style });
     broadcastSettings({ ...useStore.getState().settings }).catch((error) =>
       log.warn("voice typing settings: broadcast failed", { error: String(error) }),
     );
   };
-  // The toggle stays operable without a realtime provider — turning it on is
-  // how someone decides they want this, and the note tells them the one thing
-  // left to do. Disabling the control would leave them guessing why nothing
-  // happens.
+  // The picker stays operable without a realtime provider — choosing a style
+  // is how someone decides they want this, and the note tells them the one
+  // thing left to do. Disabling the control would leave them guessing why
+  // nothing happens.
   const polishHasProvider = hasProviderKey(settings, "realtime");
+  const polishStyle = settings.voiceTypingPolishStyle;
+  const polishOption =
+    POLISH_STYLE_OPTIONS.find((o) => o.style === polishStyle) ?? POLISH_STYLE_OPTIONS[1];
 
   // Guidance renders as single inline lines (no nested boxes) and only when
   // actionable — the default state is just the recorder, the chips and one
@@ -428,22 +459,25 @@ export const VoiceTypingSettings = () => {
         <div className="flex items-center justify-between gap-3">
           <span className="flex flex-col gap-0.5">
             <span className="text-sm font-medium">{t("settings.voiceTyping.polish")}</span>
-            <span className="text-[11px] text-muted-foreground">
-              {t("settings.voiceTyping.polishHint")}
-            </span>
+            <span className="text-[11px] text-muted-foreground">{t(polishOption.hint)}</span>
           </span>
-          <Button
-            variant={settings.voiceTypingPolish ? "outline" : "default"}
-            size="sm"
-            className="h-7 shrink-0 px-2 text-[11px]"
-            onClick={() => setVoiceTypingPolish(!settings.voiceTypingPolish)}
-          >
-            {settings.voiceTypingPolish
-              ? t("settings.voiceTyping.disable")
-              : t("settings.voiceTyping.enable")}
-          </Button>
+          <div className="flex shrink-0 gap-1.5" role="radiogroup">
+            {POLISH_STYLE_OPTIONS.map((o) => (
+              <Button
+                key={o.style}
+                role="radio"
+                aria-checked={polishStyle === o.style}
+                variant={polishStyle === o.style ? "secondary" : "outline"}
+                size="sm"
+                className="h-7 px-2.5 text-[11px]"
+                onClick={() => setVoiceTypingPolishStyle(o.style)}
+              >
+                {t(o.label)}
+              </Button>
+            ))}
+          </div>
         </div>
-        {settings.voiceTypingPolish && !polishHasProvider && (
+        {polishStyle !== "off" && !polishHasProvider && (
           <p className="text-[11px] text-warning-foreground">
             {t("settings.voiceTyping.polishNoProvider")}
           </p>

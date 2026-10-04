@@ -392,23 +392,6 @@
         }
       }
     },
-    "After dictation ends, AI rewrites what you said into written text before it is inserted: filler and misheard words out, punctuation and clause order fixed, a spoken \"first, second, third\" laid out as a list. Nothing is added or summarised away, and the original language is preserved." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "After dictation ends, AI rewrites what you said into written text before it is inserted: filler and misheard words out, punctuation and clause order fixed, a spoken \"first, second, third\" laid out as a list. Nothing is added or summarised away, and the original language is preserved."
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "聽寫結束後，AI 會先把口說重寫成書面文字再輸入：清掉贅詞、修正聽錯的字與顛倒的語序、重下標點，說「第一點、第二點、第三點」會排成條列。內容不會被增刪，也會保留原本的語言。"
-          }
-        }
-      }
-    },
     "After dictation ends, AI tidies the wording and punctuation before the text is inserted. The original language is preserved." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -541,6 +524,24 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "也改了"
+          }
+        }
+      }
+    },
+    "Also cuts verbal tics and pleasantries, leaving the shortest sentences that still mean the same thing." : {
+      "comment" : "Settings › Polish with AI caption when the style is Concise",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Also cuts verbal tics and pleasantries, leaving the shortest sentences that still mean the same thing."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "再刪掉口頭禪與客套，寫成最短、意思不變的句子。"
           }
         }
       }
@@ -1375,6 +1376,24 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已刪除。要把這筆的診斷傳給我們嗎？"
+          }
+        }
+      }
+    },
+    "Dictation is inserted exactly as it was transcribed." : {
+      "comment" : "Settings › Polish with AI caption when the style is Off",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dictation is inserted exactly as it was transcribed."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "聽寫內容照原樣輸入，不經 AI 改寫。"
           }
         }
       }
@@ -3968,6 +3987,60 @@
         }
       }
     },
+    "Polish style: concise" : {
+      "comment" : "Settings › Polish with AI picker option: the rewrite that also cuts verbal tics and pleasantries",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Concise"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "精簡"
+          }
+        }
+      }
+    },
+    "Polish style: off" : {
+      "comment" : "Settings › Polish with AI picker option: no AI rewrite",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Off"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不潤飾"
+          }
+        }
+      }
+    },
+    "Polish style: tidy" : {
+      "comment" : "Settings › Polish with AI picker option: the default rewrite that keeps every sentence",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tidy"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "整理"
+          }
+        }
+      }
+    },
     "Polish with AI" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3999,6 +4072,24 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已潤飾"
+          }
+        }
+      }
+    },
+    "Polished · Concise" : {
+      "comment" : "History row: this entry's text is the AI-polished version, made with the Concise style",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Polished · Concise"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已潤飾 · 精簡"
           }
         }
       }
@@ -4477,6 +4568,24 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "要移除手機上保留的音檔嗎？"
+          }
+        }
+      }
+    },
+    "Removes filler, fixes slips of the tongue and lays the text out, keeping every sentence you said." : {
+      "comment" : "Settings › Polish with AI caption when the style is Tidy",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Removes filler, fixes slips of the tongue and lays the text out, keeping every sentence you said."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "刪贅字、修口誤、排版，保留你說的每一句。"
           }
         }
       }
