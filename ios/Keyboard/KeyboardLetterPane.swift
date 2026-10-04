@@ -31,6 +31,9 @@ struct LetterPane: View, Equatable {
     /// what knows when it should arm by itself: the start of the field, after
     /// `. `, after a line break — see `AutoCapitalization`.
     @ObservedObject private var shift: ShiftModel
+    /// Whether the space bar is steering the caret, observed on its own for
+    /// the reason shift is — see `SpaceCursorModel`.
+    @ObservedObject private var cursor: SpaceCursorModel
 
     init(bridge: KeyboardBridge, dark: Bool, showsGlobe: Bool, returnKey: ReturnKeyStyle) {
         self.bridge = bridge
@@ -38,6 +41,7 @@ struct LetterPane: View, Equatable {
         self.showsGlobe = showsGlobe
         self.returnKey = returnKey
         self.shift = bridge.shift
+        self.cursor = bridge.spaceCursor
     }
 
     /// What the pane draws. Shift and the plane are observed on their own;
@@ -68,8 +72,12 @@ struct LetterPane: View, Equatable {
     /// case they had. On the simulator the letter after a line break came out
     /// lower case, and a words-capitalised field typed `HI YO` for `hi yo`. A
     /// captured value is part of what the reader compares.
+    ///
+    /// The space bar's trackpad is read out here for the same reason, and
+    /// reaches the keys through the environment (`keysRecede`).
     private var letterPlane: some View {
         let shiftState = shift.state
+        let receding = cursor.steering
         return GeometryReader { geo in
             let m = KeyRowMetrics(width: geo.size.width)
             VStack(spacing: KBMetrics.rowSpacing) {
@@ -102,6 +110,7 @@ struct LetterPane: View, Equatable {
             .padding(.top, KBMetrics.paneTop)
             .padding(.bottom, KBMetrics.paneBottom)
         }
+        .environment(\.keysRecede, receding)
         // The keys' targets stop at the pane's edge (see `RowReach`). The
         // panes sit side by side on one track, and an end key reaching past
         // its own pane would take touches meant for the pane beside it.
@@ -153,11 +162,9 @@ struct LetterPane: View, Equatable {
             }
             .equatable()
             .accessibilityLabel(Text("At sign"))
-            KeyButton(dark: dark, width: nil, reach: reach.key(), action: { bridge.space() }) {
-                Text("Space").font(.system(size: 15))
-            }
-            .equatable()
-            .accessibilityLabel(Text("Space"))
+            // Held still, the space bar becomes a trackpad; see `SpaceKey`.
+            SpaceKey(bridge: bridge, dark: dark, reach: reach.key())
+                .equatable()
             ReturnKey(
                 bridge: bridge, style: returnKey, dark: dark, width: m.wide,
                 reach: reach.key(last: true)

@@ -378,6 +378,8 @@ struct KeyButton<Label: View>: View {
     let action: () -> Void
     var onPressDown: (() -> Void)?
     let label: Label
+    /// The space bar is a trackpad; see `SpaceKey`.
+    @Environment(\.keysRecede) private var recede
 
     init(
         dark: Bool, tint: KeyTint = .letter, width: CGFloat? = nil,
@@ -408,8 +410,9 @@ struct KeyButton<Label: View>: View {
         ) { pressed in
             ZStack {
                 KeyCap(dark: dark, tint: tint, pressed: pressed)
-                label.foregroundStyle(ink ?? KBTheme.ink(dark))
+                label.foregroundStyle(ink ?? KBTheme.ink(dark)).recedingLabel(recede)
             }
+            .recedingCap(recede)
             .frame(width: width, height: height)
             .frame(maxWidth: width == nil ? .infinity : nil)
             .anchorPreference(key: PressedKeys.self, value: .bounds) { bounds in
@@ -454,6 +457,8 @@ struct DeleteKey: View, Equatable {
     let action: () -> Void
     var repeatAction: ((DeleteRepeat.Unit) -> Void)?
     var onRelease: (() -> Void)?
+    /// The space bar is a trackpad; see `SpaceKey`.
+    @Environment(\.keysRecede) private var recede
 
     static func == (a: Self, b: Self) -> Bool {
         a.dark == b.dark && a.width == b.width && a.height == b.height && a.reach == b.reach
@@ -481,7 +486,9 @@ struct DeleteKey: View, Equatable {
                 Image(systemName: "delete.left")
                     .font(.system(size: 19, weight: .regular))
                     .foregroundStyle(KBTheme.ink(dark))
+                    .recedingLabel(recede)
             }
+            .recedingCap(recede)
             .frame(width: width, height: height)
             .frame(maxWidth: width == nil ? .infinity : nil)
         }
@@ -521,6 +528,9 @@ struct GlobeKey: View {
     var reach = EdgeInsets()
 
     @State private var pressed = false
+    /// The space bar is a trackpad; see `SpaceKey`. Never set on the voice
+    /// pane, which has no space bar.
+    @Environment(\.keysRecede) private var recede
 
     var body: some View {
         ZStack {
@@ -533,9 +543,11 @@ struct GlobeKey: View {
                 .font(.system(size: round ? 16 : 17, weight: .regular))
                 .foregroundStyle(round ? KBTheme.inkSoft(dark) : KBTheme.ink(dark))
                 .accessibilityHidden(true)
+                .recedingLabel(recede)
             InputModeSwitchButton(controller: controller, pressed: $pressed)
                 .padding(reach.negated)
         }
+        .recedingCap(recede)
         // Pressed on the frame the finger lands; see `PressableButton`.
         .animation(pressed ? nil : .easeOut(duration: 0.1), value: pressed)
     }
