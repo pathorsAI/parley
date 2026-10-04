@@ -1,11 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { finalizingHold, shellTreeVisible, type ShellTreeFacts } from "./sidebar";
+import { cockpitHold, shellTreeVisible, type ShellTreeFacts } from "./sidebar";
 
-/** Live idle, tree expanded, no peek — the plain case. */
+/** A stopped meeting's cockpit, tree expanded, no peek. */
 function facts(patch: Partial<ShellTreeFacts> = {}): ShellTreeFacts {
   return {
     meetingActive: false,
-    finalizing: false,
     liveRoute: true,
     collapsed: false,
     peek: false,
@@ -20,38 +19,32 @@ describe("shellTreeVisible (the shell's one tree decision)", () => {
     expect(shellTreeVisible(facts({ meetingActive: true, collapsed: true }))).toBe(false);
   });
 
-  it("after End, the tree stays hidden on the cockpit until the save opens the report", () => {
-    // The exact frame that used to go four-column: stopped, finalizing, still live.
-    expect(shellTreeVisible(facts({ finalizing: true }))).toBe(false);
+  it("a stopped meeting's cockpit never shows the tree — saving, saved, discarded or failed alike", () => {
+    // The four-column frame: the meeting is over, the cockpit is still up. It
+    // used to be held back only while the save was in flight, so a meeting too
+    // short to keep (no report ever opens) left the tree beside the coach.
+    expect(shellTreeVisible(facts())).toBe(false);
   });
 
-  it("⌘B during the save peeks: the peek alone decides, the saved preference is ignored", () => {
-    expect(shellTreeVisible(facts({ finalizing: true, peek: true }))).toBe(true);
-    // An expanded preference doesn't leak the tree in early...
-    expect(shellTreeVisible(facts({ finalizing: true, collapsed: false }))).toBe(false);
-    // ...and a collapsed one doesn't stop a peek from showing it.
-    expect(shellTreeVisible(facts({ finalizing: true, collapsed: true, peek: true }))).toBe(true);
+  it("⌘B on the stopped cockpit peeks: the peek alone decides, the saved preference is ignored", () => {
+    expect(shellTreeVisible(facts({ peek: true }))).toBe(true);
+    expect(shellTreeVisible(facts({ collapsed: false }))).toBe(false);
+    expect(shellTreeVisible(facts({ collapsed: true, peek: true }))).toBe(true);
   });
 
-  it("once the report opens (study route) the saved preference is back in charge", () => {
-    expect(shellTreeVisible(facts({ finalizing: true, liveRoute: false }))).toBe(true);
+  it("off the cockpit (report, Home, library) the saved preference is in charge", () => {
+    expect(shellTreeVisible(facts({ liveRoute: false }))).toBe(true);
     expect(shellTreeVisible(facts({ liveRoute: false, collapsed: true }))).toBe(false);
     // A stale peek can't override the preference outside the hold.
-    expect(shellTreeVisible(facts({ collapsed: true, peek: true }))).toBe(false);
-  });
-
-  it("outside any meeting it is simply the ⌘B preference", () => {
-    expect(shellTreeVisible(facts())).toBe(true);
-    expect(shellTreeVisible(facts({ collapsed: true }))).toBe(false);
+    expect(shellTreeVisible(facts({ liveRoute: false, collapsed: true, peek: true }))).toBe(false);
   });
 });
 
-describe("finalizingHold", () => {
-  it("holds only between End and the report: stopped, saving, still on the cockpit", () => {
-    expect(finalizingHold(facts({ finalizing: true }))).toBe(true);
-    expect(finalizingHold(facts({ finalizing: false }))).toBe(false);
-    expect(finalizingHold(facts({ finalizing: true, liveRoute: false }))).toBe(false);
+describe("cockpitHold", () => {
+  it("holds exactly while a stopped meeting's cockpit is on screen", () => {
+    expect(cockpitHold(facts())).toBe(true);
+    expect(cockpitHold(facts({ liveRoute: false }))).toBe(false);
     // A running meeting is its own focus, not the hold — ⌘B keeps its old meaning there.
-    expect(finalizingHold(facts({ finalizing: true, meetingActive: true }))).toBe(false);
+    expect(cockpitHold(facts({ meetingActive: true }))).toBe(false);
   });
 });

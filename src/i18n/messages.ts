@@ -950,6 +950,9 @@ export const zhTW = {
   "speakers.voiceFound": "辨識出 {speakers} 位說話者，幫他們命名：",
   "speakers.voiceDone": "完成",
   "speakers.postRefined": "已依錄音聲紋重新校正說話者",
+  "meeting.notSaved.tooShort": "會議太短，沒有存下來",
+  "meeting.notSaved.noTranscript": "沒有轉錄到任何內容，這場沒有存下來",
+  "meeting.notSaved.failed": "這場會議沒能存下來：{error}",
   "speakers.voiceBusyPostSave": "正在自動依聲紋校正說話者，完成後即可再手動辨識",
   "speakers.hintWhoAmI": "哪一位是你？把那一欄改成你的名字，AI 才知道哪邊是我方。",
 
@@ -2180,6 +2183,9 @@ export const en = {
   "speakers.voiceFound": "Found {speakers} speakers — name them:",
   "speakers.voiceDone": "Done",
   "speakers.postRefined": "Speaker labels refined from the recording",
+  "meeting.notSaved.tooShort": "The meeting was too short to save",
+  "meeting.notSaved.noTranscript": "Nothing was transcribed, so this meeting wasn't saved",
+  "meeting.notSaved.failed": "This meeting couldn't be saved: {error}",
   "speakers.voiceBusyPostSave": "Speakers are being corrected from the recording — try again once that finishes",
   "speakers.hintWhoAmI": "Which one is you? Rename that column to your name so the AI knows which side is yours.",
 
