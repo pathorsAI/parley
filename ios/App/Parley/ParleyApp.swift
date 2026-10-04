@@ -59,6 +59,10 @@ struct ParleyApp: App {
                     WhatsNewPresenter.shared.noteOpenedByURL()
                     if let session = DictationChannel.session(fromStart: url) {
                         Task { await dictation.begin(session: session) }
+                    } else if let link = SettingsLink(url: url) {
+                        // The keyboard's 📋 panel, linking to Settings ›
+                        // 剪貼簿 or 常用資訊. See `SettingsLinkInbox`.
+                        SettingsLinkInbox.shared.post(link)
                     } else if QuickRecord.isRequest(url) {
                         // The lock-screen control, the lock-screen widget or
                         // the Siri shortcut. The Record tab picks it up; see
@@ -90,6 +94,9 @@ struct ParleyApp: App {
                     // the transcript moves. This is the only event that can make
                     // the next attempt different.
                     MicActivityController.shared.appBecameActive()
+                    // 「自動收錄剪貼簿」, when the user turned it on: the
+                    // app's one moment to keep what was copied elsewhere.
+                    AppClipboard.captureIfEnabled()
                     Task { await app.refreshFeatureFlags() }
                     // The line that turns "dead until force-quit" into
                     // "recovers by itself". `UIBackgroundModes` here is `audio`
@@ -171,6 +178,9 @@ struct MainTabs: View {
         // A lock-screen "start recording" lands on the Record tab whatever tab
         // was up when the app was last left.
         .onReceive(QuickRecordInbox.shared.$requestedAt) { if $0 != nil { router.tab = .record } }
+        // The keyboard's 📋 panel linking into Settings; the section itself is
+        // found by `SettingsView`, which takes the request.
+        .onReceive(SettingsLinkInbox.shared.$request) { if $0 != nil { router.tab = .settings } }
         // Once, after an update, when nothing else is going on — see
         // `WhatsNewPresenter` for what "nothing" has to mean.
         .whatsNewSheet()
