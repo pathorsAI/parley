@@ -88,8 +88,102 @@ final class LexiconTests: XCTestCase {
         for span in EditDiff.spans(pasted: "我在來一次", edited: "我再來一次") {
             lexicon.record(original: span.original, replacement: span.replacement, now: t0)
         }
-        XCTAssertEqual(lexicon.pairs.map(\.original), ["在"])
+        XCTAssertEqual(lexicon.pairs.map(\.original), ["在來"])
     }
+
+    func testASingleCJKCharacterOriginalIsNeverStored() {
+        // Applied as a substring, 派 → 帕 would rewrite 派對 as well.
+        var lexicon = Lexicon()
+        lexicon.record(original: "派", replacement: "帕", now: t0)
+        XCTAssertFalse(lexicon.recordConfirmed(original: "派", replacement: "帕", now: t0))
+        XCTAssertTrue(lexicon.pairs.isEmpty)
+        XCTAssertEqual(Lexicon.problem(original: "派", replacement: "帕"), .singleCharacter)
+        // One Latin letter is a different matter: it only ever matches as a
+        // whole word.
+        XCTAssertNil(Lexicon.problem(original: "d", replacement: "the"))
+    }
+
+    // MARK: confirmed corrections
+
+    func testAConfirmedCorrectionAppliesAtOnce() {
+        var lexicon = Lexicon()
+        XCTAssertTrue(lexicon.recordConfirmed(original: " 派斯 ", replacement: "Pathors", now: t0))
+        XCTAssertEqual(lexicon.pairs, [confirmed("派斯", "Pathors")])
+        XCTAssertEqual(lexicon.apply(to: "我們派斯的產品"), "我們Pathors的產品")
+    }
+
+    func testAConfirmedCorrectionReplacesEvenAConfirmedPair() {
+        // `record` keeps a confirmed pair against a rival inference; a
+        // correction the user typed in is not an inference.
+        var lexicon = Lexicon(pairs: [confirmed("pearly", "Parley")])
+        lexicon.recordConfirmed(original: "pearly", replacement: "Pearl Lee", now: t(60))
+        XCTAssertEqual(lexicon.pairs.count, 1)
+        XCTAssertEqual(lexicon.pairs[0].replacement, "Pearl Lee")
+        XCTAssertEqual(lexicon.pairs[0].count, Lexicon.autoApplyThreshold)
+        XCTAssertEqual(lexicon.pairs[0].updatedAt, t(60))
+    }
+
+    func testConfirmingAPairAlreadySeenKeepsItsCount() {
+        var lexicon = Lexicon(pairs: [
+            LexiconPair(original: "pearly", replacement: "Parley", count: 5, updatedAt: t0)
+        ])
+        lexicon.recordConfirmed(original: "pearly", replacement: "Parley", now: t(60))
+        XCTAssertEqual(lexicon.pairs[0].count, 5)
+    }
+
+    func testAConfirmedCorrectionIsRefusedLikeAnyOther() {
+        var lexicon = Lexicon()
+        XCTAssertFalse(lexicon.recordConfirmed(original: "", replacement: "x", now: t0))
+        XCTAssertFalse(lexicon.recordConfirmed(original: "same", replacement: "same", now: t0))
+        XCTAssertFalse(lexicon.recordConfirmed(original: "api", replacement: "api v2", now: t0))
+        XCTAssertTrue(lexicon.pairs.isEmpty)
+        XCTAssertEqual(Lexicon.problem(original: "api", replacement: "api v2"), .grows)
+        XCTAssertEqual(Lexicon.problem(original: "", replacement: "x"), .empty)
+        XCTAssertEqual(Lexicon.problem(original: "a b", replacement: "a b"), .unchanged)
+    }
+
+    func testAConfirmedCorrectionJoinsTheRecognitionTerms() {
+        var lexicon = Lexicon()
+        lexicon.recordConfirmed(original: "派斯", replacement: "Pathors", now: t0)
+        XCTAssertEqual(lexicon.recognitionTerms, ["Pathors"])
+    }
+
+    // MARK: what leaves the phone
+
+    func testRecognitionTermsAreTheUsersOwnWordsOnly() {
+        var lexicon = Lexicon()
+        lexicon.addTerm("Pathors", now: t(10))
+        lexicon.record(original: "pearly", replacement: "Parley", now: t(20))
+        XCTAssertEqual(lexicon.recognitionTerms, ["Pathors", "Parley"])
+        XCTAssertEqual(lexicon.recognitionTerms, lexicon.userTerms)
+    }
+
+    func testContactNamesWrittenByAnEarlierBuildAreDroppedAndFlagged() throws {
+        // Development builds stored contact names as `systemTerms`. They must
+        // neither be read nor survive the next write.
+        let json = #"""
+            {"pairs":[{"original":"pearly","replacement":"Parley","count":2}],
+             "terms":[{"text":"Pathors"}],"systemTerms":["Andy Chen","王小明"]}
+            """#
+        let data = Data(json.utf8)
+        XCTAssertTrue(LexiconStore.carriesRetiredFields(data))
+
+        let decoded = try JSONDecoder().decode(Lexicon.self, from: data)
+        XCTAssertEqual(decoded.recognitionTerms, ["Pathors", "Parley"])
+        let rewritten = String(decoding: try JSONEncoder().encode(decoded), as: UTF8.self)
+        XCTAssertFalse(rewritten.contains("systemTerms"))
+        XCTAssertFalse(rewritten.contains("Andy Chen"))
+        XCTAssertFalse(LexiconStore.carriesRetiredFields(Data(rewritten.utf8)))
+    }
+
+    func testATermThatIsTheWordSystemTermsIsNotARetiredField() throws {
+        var lexicon = Lexicon()
+        lexicon.addTerm("systemTerms", now: t0)
+        let data = try JSONEncoder().encode(lexicon)
+        XCTAssertFalse(LexiconStore.carriesRetiredFields(data))
+        XCTAssertFalse(LexiconStore.carriesRetiredFields(Data("{}".utf8)))
+    }
+
 
     // MARK: terms
 
@@ -203,12 +297,39 @@ final class LexiconTests: XCTestCase {
 
     func testApplyIsDeterministicAndLeavesUnknownTextAlone() {
         let lexicon = Lexicon(pairs: [
-            confirmed("pearly", "Parley"), confirmed("在", "再"),
+            confirmed("pearly", "Parley"), confirmed("在說", "再說"),
         ])
         let text = "我在說 pearly 的事"
         let once = lexicon.apply(to: text)
         XCTAssertEqual(once, "我再說 Parley 的事")
         XCTAssertEqual(lexicon.apply(to: text), once)
+    }
+
+    func testAWidenedCJKPairLeavesOtherWordsWithTheSameCharacterAlone() {
+        let lexicon = Lexicon(pairs: [confirmed("派斯", "帕斯")])
+        XCTAssertEqual(lexicon.apply(to: "派斯的派對"), "帕斯的派對")
+        XCTAssertEqual(lexicon.apply(to: "派對"), "派對")
+    }
+
+    func testALegacySingleCharacterPairIsNotApplied() {
+        // Written before the minimum span existed, and still on file.
+        let lexicon = Lexicon(pairs: [confirmed("派", "帕")])
+        XCTAssertEqual(lexicon.apply(to: "派對"), "派對")
+    }
+
+    func testApplyCountsItsReplacements() {
+        let lexicon = Lexicon(pairs: [confirmed("pearly", "Parley"), confirmed("派斯", "Pathors")])
+        let result = lexicon.applyCounting(to: "pearly, Pearly, 派斯 and rapid")
+        XCTAssertEqual(result.text, "Parley, Parley, Pathors and rapid")
+        XCTAssertEqual(result.hits, 3)
+        XCTAssertEqual(lexicon.applyCounting(to: "nothing here").hits, 0)
+    }
+
+    func testSubstituteUsesTheSameMatchingRules() {
+        XCTAssertEqual(
+            Lexicon.substitute("api", with: "API", in: "a rapid api").text, "a rapid API")
+        XCTAssertEqual(Lexicon.substitute("派斯", with: "Pathors", in: "派斯派斯").hits, 2)
+        XCTAssertEqual(Lexicon.substitute("zzz", with: "y", in: "abc").hits, 0)
     }
 
     func testApplyOnEmptyLexiconAndEmptyText() {

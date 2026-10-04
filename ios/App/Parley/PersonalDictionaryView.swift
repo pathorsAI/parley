@@ -3,10 +3,12 @@ import SwiftUI
 
 /// The personal dictionary, made visible.
 ///
-/// Everything on this screen was learned without being asked for, which is the
+/// Most of this screen was learned without being asked for, which is the
 /// reason the screen exists at all: a feature that quietly rewrites what someone
 /// dictates has to be a list they can read and a row they can delete. The
-/// mechanism is `LexiconStore`; this is the only place a person edits it.
+/// mechanism is `LexiconStore`; this is where a person edits it — adding a
+/// correction outright ("Add correction", the same sheet as "Fix this word" in
+/// the dictation history), a term, or taking either away.
 struct PersonalDictionaryView: View {
     /// Read once per appearance rather than observed. The keyboard writes this
     /// file from another process, and there is nothing to observe across that
@@ -16,6 +18,7 @@ struct PersonalDictionaryView: View {
     @State private var lexicon = Lexicon()
     @State private var newTerm = ""
     @State private var showClearConfirmation = false
+    @State private var correction: LexiconCorrectionDraft?
 
     var body: some View {
         Form {
@@ -32,6 +35,12 @@ struct PersonalDictionaryView: View {
         .environment(\.defaultMinListRowHeight, 48)
         .navigationTitle("Personal dictionary")
         .onAppear { lexicon = LexiconStore.load() }
+        .sheet(item: $correction) { draft in
+            LexiconCorrectionSheet(heard: draft.heard) { original, replacement in
+                LexiconStore.recordConfirmed(original: original, replacement: replacement)
+                lexicon = LexiconStore.load()
+            }
+        }
         .confirmationDialog(
             "Clear your personal dictionary?", isPresented: $showClearConfirmation,
             titleVisibility: .visible
@@ -49,6 +58,12 @@ struct PersonalDictionaryView: View {
 
     private var correctionsSection: some View {
         Section {
+            Button {
+                correction = LexiconCorrectionDraft(heard: "")
+            } label: {
+                Label("Add correction", systemImage: "plus")
+                    .font(.parley.subheadlineEmphasized)
+            }
             if lexicon.pairs.isEmpty {
                 Text("Nothing learned yet.")
                     .font(.parley.subheadline)
@@ -119,7 +134,7 @@ struct PersonalDictionaryView: View {
         } header: {
             SettingsSection.header("Your terms")
         } footer: {
-            SettingsSection.footer("Names, jargon, and anything else you say often. Parley keeps them so it can prefer your spelling — this list is yours to keep even where transcription can't yet be biased toward it.")
+            SettingsSection.footer("Names, jargon, and anything else you say often. Parley listens for them when you dictate and keeps your spelling.")
         }
     }
 

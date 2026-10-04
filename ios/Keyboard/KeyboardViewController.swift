@@ -92,6 +92,9 @@ final class KeyboardViewController: UIInputViewController {
     /// Everything it does lives in `KeyboardLexiconWatch`; this class only tells
     /// it when the text landed and when the editing is over.
     private let lexicon = KeyboardLexiconWatch()
+    /// Text Replacement shortcuts, read once per process — see
+    /// `KeyboardSystemLexicon`.
+    private let systemLexicon = KeyboardSystemLexicon()
     /// The strip's transient chips and the 📋 panel — see `KeyboardClipboard`.
     /// Lazy only because it holds this controller weakly and cannot be built
     /// before `self` exists.
@@ -435,7 +438,10 @@ final class KeyboardViewController: UIInputViewController {
         // The field may be a different one, with a different word half-typed in
         // front of the cursor, so both the user's terms and the bar are re-read
         // rather than carried over.
-        lexiconTerms = WordSuggestions.LexiconTerms(LexiconStore.recognitionTerms())
+        lexiconTerms = WordSuggestions.LexiconTerms(LexiconStore.suggestionTerms())
+        systemLexicon.load(from: self) { [weak self] in
+            self?.refreshSuggestions()
+        }
         refreshSuggestions()
         // The tail belongs to the field it was dictated into. Coming back to a
         // *different* field it would read as text that is already there, so it
@@ -494,7 +500,7 @@ final class KeyboardViewController: UIInputViewController {
         // that session's microphone is open and its audio is being held, which
         // is precisely the thing the user is walking away from.
         if hasFullAccess, bridge.listening { Haptics.dictationContinuesInBackground() }
-        lexicon.harvest(context: textDocumentProxy.documentContextBeforeInput)
+        lexicon.harvest(textDocumentProxy)
         leaveComposition()
         clipboard.disappeared()
         // A pick a moment ago may still be waiting on its debounce, and this
@@ -773,7 +779,7 @@ final class KeyboardViewController: UIInputViewController {
         guard hasFullAccess else { return }
         // A new session ends the last one's editing window: anything the user
         // was going to fix, they have finished fixing.
-        lexicon.harvest(context: textDocumentProxy.documentContextBeforeInput)
+        lexicon.harvest(textDocumentProxy)
         clipboard.sessionStarted()
         session = UUID().uuidString
         insertedCount = 0
@@ -1398,6 +1404,11 @@ final class KeyboardViewController: UIInputViewController {
         if d.state == .done, committed.count > landed {
             let inserted = String(committed[landed...])
             typeOutsideComposition(inserted)
+            // The dictated text is all in the field now, so this is the picture
+            // any later edit gets compared against — taken here, by the
+            // insertion, rather than by the `.done` below, which every later
+            // drain repeats over a field the user may already have fixed.
+            lexicon.noteInserted(textDocumentProxy)
             // The polish can be undone only when this one insertion is the
             // whole transcript — which, since dictation inserts once at `done`,
             // is every time but a keyboard relaunched mid-delivery.
@@ -1488,9 +1499,6 @@ final class KeyboardViewController: UIInputViewController {
             // The words are in the field. The wave eases off them rather than
             // stopping mid-crest; the button is already back to the microphone.
             leaveFinishing(settled: true)
-            // The dictated text is all in the field now, so this is the picture
-            // any later edit gets compared against.
-            lexicon.noteInserted(context: textDocumentProxy.documentContextBeforeInput)
             // The tail stays: the last thing said is worth still being able to
             // read once the button has gone quiet.
         case .cancelled:
@@ -1754,7 +1762,7 @@ final class KeyboardViewController: UIInputViewController {
     /// had already fixed, before the inserted text can be part of it.
     func insertFromStrip(_ text: String) {
         keyPressed()
-        lexicon.harvest(context: textDocumentProxy.documentContextBeforeInput)
+        lexicon.harvest(textDocumentProxy)
         typeOutsideComposition(text)
         refreshSuggestions()
     }
@@ -1766,12 +1774,14 @@ final class KeyboardViewController: UIInputViewController {
     /// The lexicon watch is moved to the raw words: they are now the dictation
     /// the user may go on to fix, and leaving the polished text as the picture
     /// would teach the dictionary every rewrite the polish made, as if the user
-    /// had typed them in reverse.
+    /// had typed them in reverse. The same insertion-tied, two-sided snapshot
+    /// the dictation's own insertion takes, replacing it — this is the raw
+    /// words' insertion.
     func replaceDictation(deleting count: Int, with raw: String) {
         keyPressed()
         for _ in 0..<max(count, 0) { textDocumentProxy.deleteBackward() }
         textDocumentProxy.insertText(raw)
-        lexicon.noteInserted(context: textDocumentProxy.documentContextBeforeInput)
+        lexicon.noteInserted(textDocumentProxy)
         refreshSuggestions()
     }
 
@@ -2095,12 +2105,15 @@ final class KeyboardViewController: UIInputViewController {
         // Shift is decided from the same read; see `refreshShift`.
         refreshShift(context: context)
         let partial = WordSuggestions.partialWord(before: context)
+        let words =
+            partial.isEmpty
+            ? WordSuggestions.predictions(after: context, in: EnglishWords.bundled)
+            : WordSuggestions.suggestions(
+                for: partial, in: EnglishWords.bundled, lexicon: lexiconTerms)
+        // A Text Replacement shortcut in front of the cursor puts its
+        // expansion first. Offered, never applied: see `TextReplacements`.
         publishSuggestions(
-            partial: partial,
-            suggestions: partial.isEmpty
-                ? WordSuggestions.predictions(after: context, in: EnglishWords.bundled)
-                : WordSuggestions.suggestions(
-                    for: partial, in: EnglishWords.bundled, lexicon: lexiconTerms))
+            partial: partial, suggestions: systemLexicon.lead(words, before: context))
     }
 
     /// One assignment, and only on a real change: a keystroke that changed
@@ -2128,10 +2141,15 @@ final class KeyboardViewController: UIInputViewController {
     ///
     /// The suggestion already carries the case the partial asked for, so it is
     /// inserted as it is shown.
+    ///
+    /// A Text Replacement expansion takes back the shortcut it stands for
+    /// rather than the partial word — the two differ for a shortcut that is
+    /// not letters ("@@") or follows a bracket — so "omw" becomes "On my way!"
+    /// and nothing of the shortcut is left behind.
     func pickSuggestion(_ word: String) {
         // Empty right after a space, where the bar holds predictions: the tap
         // then deletes nothing and only inserts.
-        let partial = bridge.english.partialWord
+        let partial = systemLexicon.expansion(for: word)?.typed ?? bridge.english.partialWord
         keyPressed()
         apply(zhuyin.confirm())
         zhuyin.resetContext()
