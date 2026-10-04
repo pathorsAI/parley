@@ -1898,7 +1898,9 @@ pitch — and `123` and return are about 2.5 keys wide.
 The pane now does all of that. Where 1.15 differed, the difference was the
 composer's limit rather than a position anybody argued for.
 
-**v1 is 傳統注音: typed continuously, predicted by phrase, converted greedily.**
+**v1 is 傳統注音: typed continuously, predicted by phrase, converted by a
+lattice, and learning from the candidates the user picks.** (Converted greedily
+until the lattice; see *The lattice*.)
 
 - **大千 layout**, as it is actually defined: a mapping onto a QWERTY board. So
   the top row is *eleven* keys (`1234567890-`) and the three below it are ten
@@ -2193,7 +2195,8 @@ syllable is finished. libtabe's notice sits beside McBopomofo's in
   lot to hold in a keyboard extension for phrases that occur nine times in a
   corpus.
 - **Ordered once, at generation time.** The file's order is the ranking and the
-  class does no sorting. The score is not raw occurrence: the corpus is written
+  bar does no sorting. Each row also carries that score as a log10 probability
+  in a third column, which only the lattice reads (see *The lattice*). The score is not raw occurrence: the corpus is written
   news, and by raw count `ㄋㄏ` puts 女孩, 年後, 男孩, 南韓 and 內涵 ahead of 你好
   (12th). So the score is `ln(occ + 1)` plus the mean `ln(charOcc + 1)` of the
   phrase's characters — a phrase built of common characters is more likely to be
@@ -2215,13 +2218,10 @@ syllable is finished. libtabe's notice sits beside McBopomofo's in
   reach — the typed symbol or one of its alternatives, for each of the two —
   which is up to about forty buckets for two lone 聲母. The exact half still
   reads only the typed key.
-- **`best` is greedy, not a lattice.** Return, space-on-a-toned-syllable,
-  punctuation and leaving the pane all commit `best`, which walks the buffer
-  left to right taking the longest phrase that exactly covers the syllables in
-  front of it (four, then three, then two) and otherwise that syllable's top
-  character. Deterministic and explainable, and wrong in ways the user can see
-  in the bar and fix by tapping instead. A viterbi over the same table is the
-  obvious next step and is not this one.
+- **`best` is a lattice.** Return, space-on-a-toned-syllable, punctuation and
+  leaving the pane all commit `best`, the likeliest segmentation of the whole
+  buffer. Until this release it walked greedily, longest phrase first; see *The
+  lattice* for what replaced it and what that changed.
 - **Loaded lazily, warmed early, never twice at once.** Parsing and indexing
   61,000 rows is about 100 ms on a current phone, which is not a hitch to spend
   on the user's second syllable. So both tables are warmed on a background
@@ -2332,9 +2332,13 @@ neighbours nearest-centre first — `ㄋ` → ㄌㄇㄎㄊㄍㄏ, `ㄓ` → ㄗ�
   `ㄗㄨㄥ ㄨㄣˊ` offers 中文 first.
 - **`best` is stricter than the bar**, because the bar is a list to choose from
   and `best` is text that lands unasked. An exact cover of any length beats a
-  forgiven one of any length. A forgiven cover is taken only for a window
-  holding a syllable with **no exact row** — one that cannot be right as typed
-  — and then the fewest errors win, length breaking a tie. So `ㄓㄨㄡ ㄨㄣˊ`
+  forgiven one of any length. A forgiven cover is a node of the lattice only
+  for a window holding a syllable with **no exact row** — one that cannot be
+  right as typed — and every forgiven symbol costs it a penalty of 20 in log10
+  units, more than any difference the tables can express over six syllables,
+  so fewer errors always win. (The greedy walk stated these as `if`s; the
+  lattice keeps them as arithmetic, and every test written for the greedy
+  rules still passes.) So `ㄓㄨㄡ ㄨㄣˊ`
   commits 中文, but `ㄗㄨㄥ ㄨㄣˊ`, whose syllables are both real readings (從,
   文), commits as typed with 中文 first in the bar. Letting any forgiven cover
   beat one character per syllable was tried first and changed five of twenty
@@ -2349,25 +2353,128 @@ pending syllables whose every symbol has alternatives, 0.65 ms for two lone
 matching alone was 0.02–0.8 ms in the same debug build. The budget is 8 ms on a
 phone.
 
+#### The lattice
+
+`ZhuyinComposer.best` scores every way of cutting the buffer into phrases and
+single characters and commits the likeliest. The nodes are each syllable as its
+top character — exactly what the bar would show first for it — and each window
+of two to four syllables as the best phrase that covers exactly it
+(`ZhuyinPhrases.exactCover`). The walk is McBopomofo's (`ReadingGrid::walk()` in
+their gramambular2, MIT): the lattice only points forward, so one pass in
+position order finds the path with the highest summed score. Six syllables are
+at most eighteen nodes; the cost is the dozen phrase lookups, about 0.15 ms in a
+debug build on an M4 Mac mini.
+
+- **Scores.** The generators now write a log10 probability per row: for a
+  phrase in the phrase table's third column, for a reading's first character in
+  the dictionary's. Both are on McBopomofo's scale (`frequency_builder.py`):
+  `log10(2.7^(len−1) × count / norm)`, `norm` being the length-scaled sum of
+  every `phrase.occ` count, so a phrase and the characters that would spell it
+  are comparable — the one question rank cannot answer. A phrase's count is
+  not its raw count but the pseudo-count its ordering score already implies,
+  `e^(score − pivot)` (`pivot` the median character term), so the score is
+  monotone in rank within a length: the first exact match of a span is also its
+  highest-scoring one, the walk and the bar never disagree about which phrase
+  answers a span, and the bar is byte-for-byte the order it was. The score fills
+  what was padding in a phrase row, which is still 32 bytes; the file grows from
+  1.7 to 2.0 MB.
+- **What changed.** Typing every pair of the 400 commonest two-character phrases
+  toneless (144,728 four-syllable buffers) and comparing walks: they disagree on
+  5,808; the lattice commits the intended pair on 3,901 of those, the greedy
+  walk on 173. 我們的話 used to commit as 我們的化, 一個辦法 as 一個半法,
+  可能回來 as 可能會來, 重要事情 as 中藥商情, because a three-character phrase
+  across the seam beat the two words. Six of these are tests.
+- **The cases it loses** are mostly function words the corpus over-counts in a
+  phrase: 只是 typed after another word can lose to 這是. They are a tap away in
+  the bar, and the memory below learns them in two.
+
+#### Learning from picks
+
+`ZhuyinMemory` is McBopomofo's user override model (`UserOverrideModel`, MIT)
+carried over to a keyboard that commits from the front of a six-syllable buffer.
+
+- **The key** is McBopomofo's: the two words committed before the node, the
+  node's reading (as typed, tones dropped), and the value the walk had chosen.
+  The words come from the composer's `context` — its picks, the nodes of a
+  confirmed walk, associations — and the keyboard resets them when the field
+  changes, when the caret leaves the composition, and when anything from outside
+  the composer (punctuation, English, a space or delete typed into the
+  document) lands.
+- **Only a tap teaches.** A candidate picked that differs from the front of the
+  walk the corpus alone would have committed is observed; return and space
+  teach nothing. A remembered choice that return or space commits is touched —
+  its age starts again — so a word in daily use does not age out.
+- **Two picks make a preference.** Each choice has a count and a last-used time;
+  its weight is the count halved every seven days unused. It is offered at
+  weight 1.5 — two picks, the second within about three days — and dropped
+  below 0.25. A pick adds one to what is left of the old weight, so two picks a
+  fortnight apart are not yet a preference. One pick is not enough because one
+  pick is ambiguous: the user may have meant that word only that once.
+- **Applied two ways.** The remembered choice goes to the front of the bar, and
+  replaces the node in the walk — with a score no path can beat when the user
+  chose a longer phrase than the walk had (McBopomofo's
+  `kOverrideValueWithHighScore`, for 增加[自][會] → 增加[字彙]: two characters
+  outscore the phrase, which is why the walk kept choosing them), otherwise with
+  the score of the node it replaces, so only the word changes. A refresh first
+  asks whether any window of the buffer has a reading the memory knows, so a
+  keystroke with nothing learned for it costs what it did.
+- **Bounded.** 500 keys, least recently used out first (McBopomofo's capacity).
+  A full memory measured about 150–210 KB of footprint.
+- **Stored on the phone only.** `zhuyin-memory.json` in the App Group, read on a
+  background queue with the 注音 tables' warm and written two seconds after the
+  last change, off the main thread (and flushed when the keyboard goes away).
+  Without Full Access there is no App Group, and the memory lives only as long
+  as the process. See `ios/AppStore/privacy-label.md`.
+- **Forgetting.** Holding a learned candidate in the strip or the ⌄ grid puts
+  「不要再建議」/"Don't suggest this" in the strip, beside the candidate and a ✕;
+  it removes every lesson that produces that word and demotes nothing else. It
+  is an inline prompt rather than a context menu because a keyboard extension
+  cannot reliably present one, and only learned candidates offer it. The tap the
+  hold's lift becomes is swallowed while the prompt is up, so a hold never also
+  commits. Settings › Keyboards has 「重置注音學習」/"Reset Zhuyin learning", outside
+  the account gate because the pane learns without an account; it deletes the
+  file and bumps a counter in the App Group's defaults, which the keyboard checks
+  on every appearance and before every write, so a keyboard holding the old
+  memory drops it rather than writing it back.
+
+#### Associated phrases (聯想詞)
+
+After a pick that empties the buffer the strip offers what usually comes next:
+pick 研 and it offers 究, 究所, 發 …; tap 究 and it offers what follows 研究, then
+what follows 究. Any 注音 key, delete, space, return or punctuation dismisses
+them.
+
+The table (`zhuyin-associations.txt`, `ZhuyinAssociations`,
+`scripts/gen-zhuyin-associations.mjs`) is built the way McBopomofo builds
+`associated-phrases-v2.txt` (`phrase_deriver.py`, MIT): every phrase under its
+first character, best first, sixty per character. Their file is a build product
+of their cooked data, not in their repository, so this derives it again from the
+same `BPMFMappings.txt` and `phrase.occ`, scored by the phrase table's own
+`scoredRows`. Two differences: rows are keyed by character, not by (character,
+reading) — a commit here may be a phrase, a prediction or a forgiven match, so
+the reading is not reliably known — and only phrases the corpus counted are
+kept. A lookup reads the last three committed characters, then two, then one,
+so a chain keeps following one phrase as long as the table has it. 3,490 rows,
+190 KB on disk, about 0.5 MB resident; loaded lazily with the other 注音 tables
+and dropped under memory pressure whenever its suggestions are not on screen.
+The lookup returns at most thirty, the strip's `drawnLimit`, and there is no ⌄
+grid behind them.
+
 #### What v1 does not do
 
 Named here so nobody has to guess whether it was forgotten:
 
-- **No lattice.** Phrases are predicted and committed greedily (above); there is
-  no viterbi over segmentations, and no 5–6 character phrases. That includes
-  error tolerance: `best` weighs a forgiven cover against the covers at the same
-  position, never against a whole alternative segmentation.
+- **No 5–6 character phrases**, in the bar or the lattice.
 - **One wrong symbol per syllable, and only a wrong one.** A syllable with two
   substitutions, a missing symbol, an extra one, two symbols swapped between
   syllables, or a wrong tone is not forgiven (see *Error tolerance*).
-- **No user dictionary and no learning.** The bar's order is the corpus's, not
-  yours. A keyboard extension that accumulated a per-user model would be holding
-  state this process is deliberately kept free of.
+- **No user dictionary of new words.** The memory reorders and overrides what
+  the tables already hold; it cannot add a word they lack. And it learns only
+  from taps on the bar, never from what is typed or committed otherwise.
 - **No 漢語拼音 or 倚天 layouts.**
 - **No half-width/full-width toggle.** The 注音 pane types full-width marks and
   the English pane ASCII (see *Punctuation is full-width* above); a user who
   wants `,` in Chinese text swipes to English for it.
-- **No associated-phrase prompts** after a commit.
 - **No unbounded buffer.** Six syllables may be pending; a seventh commits the
   oldest at its best guess. A sentence-length buffer would be a sentence this
   process has to hold, redraw and unwind, and phrases are four syllables at
@@ -2376,7 +2483,8 @@ Named here so nobody has to guess whether it was forgotten:
 What is *not* on this list any more is having to finish a syllable before
 starting the next. Until 1.16 a tone key was the only way to move on; that was
 the composer's limit, and it read as a rule. Nor, since 1.20, is exact-only
-matching: one wrong symbol per syllable no longer empties the bar.
+matching: one wrong symbol per syllable no longer empties the bar. Nor, now, a
+greedy walk, a bar that never learns, or nothing after a pick.
 
 #### The globe, and why it is still not on every device
 
@@ -2603,9 +2711,11 @@ are value-fed and `Equatable`, like the panes.
   that draw one, and ours on the devices that don't — `needsInputModeSwitchKey`
   decides, on every pane. See the 注音 section above.
 - **Third-party data**: the 注音 dictionary is generated from McBopomofo's
-  MIT-licensed lexicon, and the phrase table from their `BPMFMappings.txt`,
-  which descends from libtabe's BSD-licensed `tsi.src`; both notices are in
-  `ios/THIRD-PARTY.md`. Nothing with an unclear licence is shipped.
+  MIT-licensed lexicon, and the phrase and associated-phrase tables from their
+  `BPMFMappings.txt`, which descends from libtabe's BSD-licensed `tsi.src`; the
+  lattice and the learning port McBopomofo's MIT-licensed algorithms. All the
+  notices are in `ios/THIRD-PARTY.md`. Nothing with an unclear licence is
+  shipped.
 - **2.5.1** (private APIs): the only private code in the project is the
   pre-26.4 auto-return — reading the host's bundle id, and asking
   `LSApplicationWorkspace` to open it — version-gated to where it works. Every
@@ -2622,5 +2732,7 @@ are value-fed and `Equatable`, like the panes.
   visible and reversible: see that section.
 - Memory: the keyboard process holds no audio, no model, and no transcript
   history — it only shuttles text — to stay under the tight jetsam limit
-  keyboard extensions run against. The one file it does read is the 注音
-  dictionary, lazily and once; see that section for what it costs.
+  keyboard extensions run against. The files it reads are the 注音 tables,
+  lazily; see those sections for what they cost. With Full Access it also
+  writes one small file, the 注音 pane's learned picks (see *Learning from
+  picks*), which never leaves the phone.

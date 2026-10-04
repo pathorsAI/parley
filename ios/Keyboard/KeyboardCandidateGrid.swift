@@ -14,12 +14,15 @@ import SwiftUI
 /// syllable's characters, most likely first. The grid never re-sorts, so the
 /// candidate at the head of the bar is the first cell here.
 ///
-/// Plain values in, closures out: whether it is showing and what a tap does
-/// are the bridge's business, and the view holds no state of its own.
+/// Plain values in, closures out: whether it is showing and what a tap or a
+/// hold does are the bridge's business, and the view holds no state of its own.
 struct CandidateGrid: View {
     var candidates: [String]
     var dark: Bool
     var pick: (String) -> Void
+    /// A long press on a cell — the same as on the strip: offer to forget a
+    /// learned candidate. The prompt appears in the strip above.
+    var hold: (String) -> Void
     var backspace: () -> Void
 
     /// Narrow enough that a phone gets five or six columns, wide enough for a
@@ -63,6 +66,8 @@ struct CandidateGrid: View {
                             .minimumScaleFactor(0.5)
                             .padding(.horizontal, 2)
                     }
+                    .simultaneousGesture(
+                        LongPressGesture(minimumDuration: 0.5).onEnded { _ in hold(candidate) })
                     .accessibilityLabel(Text(verbatim: candidate))
                 }
             }

@@ -4,16 +4,19 @@ Parley for iOS is Apache-2.0. It embeds the following third-party material.
 
 ## McBopomofo lexicon data
 
-The 注音 keyboard's two tables — the single-character candidate dictionary
-(`ParleyKit/Sources/ParleyKit/Resources/zhuyin-dict.txt`) and the phrase table
+The 注音 keyboard's three tables — the single-character candidate dictionary
+(`ParleyKit/Sources/ParleyKit/Resources/zhuyin-dict.txt`), the phrase table
 that lets the pane predict
-(`ParleyKit/Sources/ParleyKit/Resources/zhuyin-phrases.txt`) — are generated
-from the open-source lexicon data of the **McBopomofo** input method:
+(`ParleyKit/Sources/ParleyKit/Resources/zhuyin-phrases.txt`) and the
+associated-phrase table it offers after a pick
+(`ParleyKit/Sources/ParleyKit/Resources/zhuyin-associations.txt`) — are
+generated from the open-source lexicon data of the **McBopomofo** input method:
 
 - Source: <https://github.com/openvanilla/McBopomofo>, `Source/Data/`
 - Files used: `BPMFBase.txt` (single-character 注音 readings),
   `BPMFMappings.txt` (multi-character phrase readings) and `phrase.occ`
-  (corpus occurrence counts, used only for ordering)
+  (corpus occurrence counts, used for ordering and for the log10 scores the
+  tables carry)
 - License: **MIT** — `LICENSE.txt` at the repository root, "Copyright (c)
   2011-2026 Mengjuei Hsieh et al."
 
@@ -21,10 +24,34 @@ from the open-source lexicon data of the **McBopomofo** input method:
 own data README describes it as "Originally simplified from tsi.src of libtabe
 (BSD Licensed) with modifications". libtabe's notice is reproduced below.
 
-Regenerate with `node scripts/gen-zhuyin-dict.mjs` and
-`node scripts/gen-zhuyin-phrases.mjs`. Both scripts pin the download to a commit
-and stamp it into the resource's header, so the committed files name exactly what
-they were built from.
+Regenerate with `node scripts/gen-zhuyin-dict.mjs`,
+`node scripts/gen-zhuyin-phrases.mjs` and
+`node scripts/gen-zhuyin-associations.mjs`. The scripts pin the download to a
+commit and stamp it into the resource's header, so the committed files name
+exactly what they were built from — currently
+`a733ec5966ead4017aaf37067b11e2bdf17863e4`. The three are read together at
+runtime, so they must come from one commit: set `MCBOPOMOFO_COMMIT` to the
+commit the headers name to rebuild without taking a newer upstream.
+
+### McBopomofo algorithms
+
+Beyond the data, the 注音 engine ports four of McBopomofo's algorithms, under the
+same MIT licence and notice below. Each is rewritten in Swift or JavaScript
+rather than copied, and each is credited where it lives:
+
+- the lattice walk in `ZhuyinComposer.best` — `Source/Engine/gramambular2/
+  reading_grid.cpp`, `ReadingGrid::walk()` (dynamic programming over a forward
+  lattice, maximising the summed log probability);
+- the user override model, `ZhuyinMemory` — `Source/Engine/UserOverrideModel.
+  {h,cpp}` (the key of the two previous nodes plus the node's reading and
+  value, the LRU of 500, the high-score override for a longer choice);
+- the unigram score both tables carry — `Source/Data/curation/builders/
+  frequency_builder.py` (`log10(2.7^(len−1) × count / norm)`);
+- the associated-phrase table — `Source/Data/curation/builders/
+  phrase_deriver.py` (phrases filed under their first character, best first,
+  sixty per prefix), from which McBopomofo builds `associated-phrases-v2.txt`.
+
+vChewing, an LGPL fork of McBopomofo, was not used.
 
 ```
 MIT License

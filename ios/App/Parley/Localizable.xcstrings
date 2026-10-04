@@ -5032,6 +5032,57 @@
         }
       }
     },
+    "Reset" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reset"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重置"
+          }
+        }
+      }
+    },
+    "Reset Zhuyin learning" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reset Zhuyin learning"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重置注音學習"
+          }
+        }
+      }
+    },
+    "Reset Zhuyin learning?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reset Zhuyin learning?"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "要重置注音學習嗎？"
+          }
+        }
+      }
+    },
     "Resize controls" : {
       "comment" : "Accessibility label for the grabber that resizes the recording controls panel",
       "extractionState" : "manual",
@@ -6472,6 +6523,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "就是這樣。搜尋可以找關鍵字。"
+          }
+        }
+      }
+    },
+    "The Bopomofo keyboard forgets every word it learned from the candidates you picked, and suggests in its original order again." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The Bopomofo keyboard forgets every word it learned from the candidates you picked, and suggests in its original order again."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "注音鍵盤會忘記從你點選的候選字學到的所有用字，候選順序恢復預設。"
           }
         }
       }
