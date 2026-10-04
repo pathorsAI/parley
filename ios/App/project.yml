@@ -57,8 +57,8 @@ targets:
       path: Parley/Info.plist
       properties:
         CFBundleDisplayName: Parley
-        CFBundleShortVersionString: "1.29"
-        CFBundleVersion: "46"
+        CFBundleShortVersionString: "1.30"
+        CFBundleVersion: "47"
         UILaunchScreen: {}
         # Localized in Parley/InfoPlist.xcstrings; this is the fallback value.
         NSMicrophoneUsageDescription: Parley records the meeting in the room so it can transcribe it live. Audio goes only to the transcription provider tied to your account.
@@ -123,8 +123,8 @@ targets:
       properties:
         # Localized in ../Keyboard/InfoPlist.xcstrings; this is the fallback.
         CFBundleDisplayName: Parley Voice
-        CFBundleShortVersionString: "1.29"
-        CFBundleVersion: "46"
+        CFBundleShortVersionString: "1.30"
+        CFBundleVersion: "47"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.keyboard-service
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).KeyboardViewController
@@ -177,8 +177,8 @@ targets:
       properties:
         # Localized in ../Activities/InfoPlist.xcstrings; this is the fallback.
         CFBundleDisplayName: Parley Live Activity
-        CFBundleShortVersionString: "1.29"
-        CFBundleVersion: "46"
+        CFBundleShortVersionString: "1.30"
+        CFBundleVersion: "47"
         NSExtension:
           # There is no ActivityKit extension point: a Live Activity is drawn by
           # a WidgetKit extension, from the same `ActivityConfiguration` that a

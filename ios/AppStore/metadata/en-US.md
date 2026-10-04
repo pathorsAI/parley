@@ -83,6 +83,20 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.30
+
+The Parley keyboard now saves you a lot of trips out to other apps.
+
+Whatever you just copied appears above the keys; tap it to paste. The clipboard button on the right keeps your saved info — addresses, phone numbers, email, your ID number — so each one is a tap away, and your ID number shows only its first and last two characters. Turn on Auto-collect clipboard in Settings and the same panel also brings back text you copied earlier. All of this stays on your phone.
+
+Bopomofo remembers what you pick: choose the same word twice after the same words and it comes first next time, and touching and holding a candidate lets you say Don't suggest this. When you type several syllables at once it now weighs the whole phrase before choosing, and after you pick, the bar suggests what usually comes next. What it learns stays on your phone and can be reset in Settings.
+
+Voice typing has a new Concise style. Besides removing filler and fixing slips, it drops verbal tics and small talk and writes the shortest sentences that keep your meaning. The previous behaviour is now called Tidy and is still the default. If a polished result is not what you wanted, tap Use original above the keys.
+
+Misheard words are easier to teach: select text in your dictation history and choose Fix this word — one fix is enough. Your personal dictionary now helps recognition directly and syncs with Parley on your computer.
+
+Also: touch and hold the space bar to move the cursor, and the Text Replacement shortcuts you set up in iOS Settings now work in the Parley keyboard.
+
 ## What's New — 1.29
 
 Start recording from the lock screen. Touch and hold the lock screen, tap Customize, and put Parley's Record in place of the flashlight or camera button. Press it, unlock, and Parley opens already recording. The same control works from Control Center and the Action button, there is a lock screen widget that does the same, and you can ask Siri to "Record with Parley".
