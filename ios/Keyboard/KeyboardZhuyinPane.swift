@@ -43,6 +43,18 @@ struct ZhuyinPane: View, Equatable {
     var returnKey: ReturnKeyStyle
 
     @State private var symbols = false
+    /// Whether the space bar is steering the caret. Observed on its own, as
+    /// the letter pane observes shift: it publishes twice per trackpad drag and
+    /// never on a keystroke — see `SpaceCursorModel`.
+    @ObservedObject private var cursor: SpaceCursorModel
+
+    init(bridge: KeyboardBridge, dark: Bool, showsGlobe: Bool, returnKey: ReturnKeyStyle) {
+        self.bridge = bridge
+        self.dark = dark
+        self.showsGlobe = showsGlobe
+        self.returnKey = returnKey
+        self.cursor = bridge.spaceCursor
+    }
 
     /// What the pane draws. The bridge is the same object for the process's
     /// life, and every key's action is a function of that key alone, so
@@ -67,8 +79,13 @@ struct ZhuyinPane: View, Equatable {
     /// pane — see `RowReach`. The stagger is the first key's reach, so a finger
     /// in the strip a staggered row starts with types that row's first key, and
     /// what the stagger leaves at the right end is the last key's.
+    ///
+    /// The space bar's trackpad is read outside the `GeometryReader`, as the
+    /// letter pane reads shift, and reaches the keys through the environment
+    /// (`keysRecede`).
     private var zhuyinPlane: some View {
-        GeometryReader { geo in
+        let receding = cursor.steering
+        return GeometryReader { geo in
             let m = KeyRowMetrics(
                 width: geo.size.width, columns: ZhuyinDachen.rows[0].count)
             // One column, key to matching key: what the stagger is measured in.
@@ -102,6 +119,7 @@ struct ZhuyinPane: View, Equatable {
             .padding(.top, KBMetrics.paneTop)
             .padding(.bottom, KBMetrics.paneBottom)
         }
+        .environment(\.keysRecede, receding)
         // The keys' targets stop at the pane's edge (see `RowReach`). The
         // panes sit side by side on one track, and an end key reaching past
         // its own pane would take touches meant for the pane beside it.
@@ -178,14 +196,14 @@ struct ZhuyinPane: View, Equatable {
             // `ZhuyinComposer.space()`. The label stays put: a key whose
             // caption changes under the finger is harder to aim at than one
             // whose meaning follows the state.
-            KeyButton(
-                dark: dark, width: nil, height: KBMetrics.zhuyinKeyHeight, reach: reach.key(),
-                action: { bridge.space() }
-            ) {
-                Text("Space").font(.system(size: 15))
-            }
+            //
+            // Held still, it becomes a trackpad (`SpaceKey`) — but not while
+            // a reading is pending, when it is still the tone or the confirm.
+            SpaceKey(
+                bridge: bridge, dark: dark, height: KBMetrics.zhuyinKeyHeight,
+                reach: reach.key()
+            )
             .equatable()
-            .accessibilityLabel(Text("Space"))
             punctuationKey(
                 ".", width: m.unit, reach: reach.key(), label: Text("Chinese period"))
             ReturnKey(

@@ -23,6 +23,7 @@ import {
   Volume2,
   X,
 } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useI18n } from "../../i18n";
 import { Button } from "@/components/ui/button";
 import {
@@ -733,5 +734,31 @@ export function LibraryCard({
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
+  );
+}
+
+/** The list while it loads: rows in {@link LibraryCard}'s own shape — badge,
+ *  title, date, snippet, the stats footer — under the same dividers, so the
+ *  real list lands in place. `label` is announced, not shown. */
+export function LibraryCardsSkeleton({ label }: Readonly<{ label: string }>) {
+  return (
+    <div className="flex flex-col divide-y divide-border" aria-busy="true">
+      <output className="sr-only">
+        {label}
+      </output>
+      {["w-3/5", "w-2/5", "w-1/2", "w-2/3", "w-1/3"].map((w) => (
+        <div key={w} className="flex flex-col gap-2 px-2 py-3" aria-hidden="true">
+          <Skeleton className="h-[19px] w-14 rounded-full" />
+          <Skeleton className={`my-0.5 h-4 ${w}`} />
+          <Skeleton className="my-0.5 h-3 w-28" />
+          <Skeleton className="my-0.5 h-3 w-4/5" />
+          <div className="flex items-center gap-3 pt-1">
+            {["w-10", "w-6", "w-14"].map((m) => (
+              <Skeleton key={m} className={`h-3 ${m}`} />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }

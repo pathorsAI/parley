@@ -20,6 +20,7 @@ import type {
   TimelineEvent,
   TodoItem,
   TranscriptSegment,
+  VoiceTypingPolishStyle,
 } from "./types";
 import type { ReplaySession } from "./replay/types";
 import type { CloudAuth } from "./cloud/types";
@@ -35,6 +36,7 @@ import {
 } from "./evaluations/presets";
 import { reconcileTemplates } from "./templates";
 import { analysisSignature } from "./analysis/lens";
+import { inFlightStagesFor, type StudyStage } from "./analysis/runRegistry";
 import { buildPresetTodoTemplates } from "./todoTemplates";
 import { translate, type TranslationKey } from "../i18n/messages";
 import { DEFAULT_MODELS } from "./ai/providers";
@@ -161,6 +163,29 @@ export function migrateVoiceTypingShortcut(
   return MAC_ONLY_SHORTCUTS.has(saved) ? DEFAULT_VOICE_TYPING_SHORTCUT : saved;
 }
 
+const POLISH_STYLES: readonly VoiceTypingPolishStyle[] = ["off", "tidy", "concise"];
+
+/**
+ * The polish style a persisted settings blob amounts to.
+ *
+ * The on/off `voiceTypingPolish` switch became a three-way style. A recognised
+ * `voiceTypingPolishStyle` wins; without one the old switch decides — off stays
+ * off, and on (or never set, which defaulted to on) becomes `tidy`, which is
+ * exactly what "on" used to do. Mirrors iOS's `PolishStyle.resolve`.
+ *
+ * Exported for tests.
+ */
+export function migrateVoiceTypingPolishStyle(saved: {
+  voiceTypingPolishStyle?: unknown;
+  voiceTypingPolish?: unknown;
+}): VoiceTypingPolishStyle {
+  const style = saved.voiceTypingPolishStyle;
+  if (typeof style === "string" && (POLISH_STYLES as readonly string[]).includes(style)) {
+    return style as VoiceTypingPolishStyle;
+  }
+  return saved.voiceTypingPolish === false ? "off" : "tidy";
+}
+
 /** Every one-time hint id. Existing users are migrated with all of them seen. */
 export const ALL_HINT_IDS: readonly HintId[] = [
   "report.filing",
@@ -215,7 +240,7 @@ const DEFAULT_SETTINGS: Settings = {
   voiceTypingEnabled: true,
   voiceTypingShortcut: DEFAULT_VOICE_TYPING_SHORTCUT,
   voiceTypingMode: "hold",
-  voiceTypingPolish: true,
+  voiceTypingPolishStyle: "tidy",
   evaluations: defaultEvalDefs(tDefault),
   evalTemplates: buildPresetEvalTemplates(tDefault),
   todoTemplates: buildPresetTodoTemplates(tDefault),
@@ -384,6 +409,61 @@ const CLEARED_STUDY_SLICE: Pick<
   meetingKind: null,
 };
 
+type StudyStatusFields =
+  | "analysisStatus"
+  | "actionItemsStatus"
+  | "deliveryStatus"
+  | "briefStatus"
+  | "filingStatus";
+
+/**
+ * The study statuses a saved entry restores to. Pure + exported for testing.
+ *
+ * Present output → "done": the pipeline only starts "idle" stages, so loading a
+ * saved entry never re-spends a generation. Absent (transcript-only save, an
+ * entry predating the field, a pass the user left before it finished) → "idle",
+ * generated once on open and written back.
+ *
+ *  - findings and action items are decided SEPARATELY. The saved `analyzed`
+ *    flag (both completed) marks even a genuinely EMPTY result as done; without
+ *    it, each falls back to its own content. A stage's result is now saved the
+ *    moment it lands, so an entry can hold findings but no action items yet —
+ *    it must still get its action items rather than read as complete.
+ *  - a brief that FAILED last time (and none saved since) restores as "error",
+ *    not "idle": the user sees it and retries by hand instead of it silently
+ *    re-running on every open.
+ *  - a stage still IN FLIGHT for this recording (the user left and came back
+ *    mid-pass) restores as "running", so the scheduler doesn't dispatch a
+ *    duplicate — the original pass resumes writing into the store.
+ */
+export function restoredStudyStatuses(
+  entry: Pick<
+    HistoryEntry,
+    | "analyzed"
+    | "findings"
+    | "actionItems"
+    | "deliveryAssessment"
+    | "brief"
+    | "briefFailed"
+    | "filingSuggested"
+    | "filingSuggestion"
+  >,
+  inFlight: ReadonlySet<StudyStage> = new Set(),
+): Pick<ParleyState, StudyStatusFields> {
+  const pick = (stage: StudyStage, done: boolean, failed = false): AsyncTaskStatus => {
+    if (inFlight.has(stage)) return "running";
+    if (done) return "done";
+    return failed ? "error" : "idle";
+  };
+  return {
+    analysisStatus: pick("findings", !!entry.analyzed || entry.findings.length > 0),
+    actionItemsStatus: pick("actions", !!entry.analyzed || entry.actionItems.length > 0),
+    deliveryStatus: pick("delivery", !!entry.deliveryAssessment),
+    briefStatus: pick("brief", !!entry.brief, !!entry.briefFailed),
+    filingStatus: pick("filing", !!entry.filingSuggested || !!entry.filingSuggestion),
+  };
+}
+
 /**
  * Replay keep-window. Segments that fall entirely OUTSIDE [startMs, endMs] are
  * trimmed: greyed in the transcript and excluded from every analysis (evals,
@@ -504,6 +584,13 @@ interface ParleyState {
    *  stale pin can never re-enable the pipeline for a recording nobody asked
    *  about — no reset path has to remember it. */
   studyManualForId: string | null;
+  /** The saved entry whose post-save voice re-diarization is still running
+   *  (history.saveLiveToHistory opens the report BEFORE that pass finishes).
+   *  While it matches the loaded recording, the study pipeline holds every
+   *  deep-lane stage so no model reads the provider's drifted speaker labels
+   *  and then has to re-run. Deliberately NOT in CLEARED_STUDY_SLICE: leaving
+   *  the recording and coming back mid-pass must find the gate still shut. */
+  postSaveDiarizingId: string | null;
   setFindings: (events: TimelineEvent[]) => void;
   /** Which study-tense page is open while a recording is loaded: the merged
    *  meeting report (read the outcome) or the replay workbench (check the
@@ -620,9 +707,12 @@ interface ParleyState {
   toggleActionItem: (id: string) => void;
 
   meetingStatus: MeetingStatus;
-  /** True from "End meeting" until the recording is saved and its report loaded
-   *  (or Rust reports it was discarded). Backs the titlebar "saving…" state so
-   *  the multi-second save → re-diarize → share → load window doesn't look hung. */
+  /** True from "End meeting" until the recording's first file write lands and
+   *  its report opens (or Rust reports it was discarded, or the save fails).
+   *  Backs the titlebar "saving…" state so the multi-second encode → persist
+   *  window doesn't look hung, and keeps the shell's focused layout up until the
+   *  report replaces the cockpit. Speaker re-diarization and the org share run
+   *  AFTER it clears — see postSaveDiarizingId. */
   isFinalizingMeeting: boolean;
   setFinalizingMeeting: (v: boolean) => void;
   meetingStartedAt: number | null;
@@ -734,7 +824,12 @@ interface ParleyState {
  * persisted state (runs after {@link migratePersistedState}). Exported for tests.
  */
 export function mergePersistedState(persisted: unknown, current: ParleyState): ParleyState {
-  const p = (persisted as { settings?: Partial<Settings> } | undefined)?.settings ?? {};
+  const persistedSettings =
+    (persisted as { settings?: Partial<Settings> & { voiceTypingPolish?: unknown } } | undefined)
+      ?.settings ?? {};
+  // The retired on/off polish switch is read once, below, and not carried
+  // forward into the live settings.
+  const { voiceTypingPolish: legacyPolish, ...p } = persistedSettings;
   // Template shapes changed over time; fall back to defaults if the
   // persisted value is an old shape (e.g. todoTemplates used to be string[]).
   const validTodoTpls =
@@ -776,6 +871,11 @@ export function mergePersistedState(persisted: unknown, current: ParleyState): P
       // persisted state is stale default, not intent — see
       // migrateVoiceTypingShortcut.
       voiceTypingShortcut: migrateVoiceTypingShortcut(p.voiceTypingShortcut),
+      // The on/off switch became a style: off → off, on → tidy.
+      voiceTypingPolishStyle: migrateVoiceTypingPolishStyle({
+        voiceTypingPolishStyle: p.voiceTypingPolishStyle,
+        voiceTypingPolish: legacyPolish,
+      }),
       llmProviders,
       // Per-provider models, legacy {ask,eval} roles already remapped;
       // providers missing from persisted state keep their defaults.
@@ -828,6 +928,7 @@ export const useStore = create<ParleyState>()(
       analyzedEvalSig: "",
       meetingKind: null,
       studyManualForId: null,
+      postSaveDiarizingId: null,
       selectedFindingId: null,
       solutionFindingId: null,
       findingSolutions: {},
@@ -931,13 +1032,7 @@ export const useStore = create<ParleyState>()(
       findings: entry.findings.length,
       readOnly: !!opts?.readOnly,
     });
-    // Did the findings + action-items pipeline already run for this entry? The
-    // saved `analyzed` flag says so even when the result was genuinely EMPTY (a
-    // clean meeting yields 0 findings and 0 action items) — without it, every
-    // reopen would re-dispatch and re-spend the action-items generation. Entries
-    // predating the flag fall back to inferring completion from content.
-    const analysisDone =
-      entry.analyzed || entry.findings.length > 0 || entry.actionItems.length > 0;
+    const restored = restoredStudyStatuses(entry, inFlightStagesFor(session.id));
     set((state) => ({
       appMode: "study",
       replay: session,
@@ -956,25 +1051,18 @@ export const useStore = create<ParleyState>()(
       speakerNames: entry.speakerNames,
       meetingStatus: "stopped",
       highlightMs: null,
-      // Base-clear every study slice, then restore what the entry has. Present
-      // → "done" (the pipeline only starts "idle" stages, so loading a saved
-      // entry never re-spends a generation); absent (transcript-only save, or
-      // an entry predating the field) → stays "idle" and generates once on
-      // open, written back by initHistoryPersistSync / persistStudyOutputs.
+      // Base-clear every study slice, then restore what the entry has (see
+      // restoredStudyStatuses for how each status is decided).
       ...CLEARED_STUDY_SLICE,
+      ...restored,
       findings: entry.findings,
-      analysisStatus: analysisDone ? "done" : "idle",
       analyzedEvalSig: analysisSignature(entry.meetingKind, state.evaluations),
       actionItems: entry.actionItems,
-      actionItemsStatus: analysisDone ? "done" : "idle",
       deliveryAssessment: entry.deliveryAssessment ?? null,
-      deliveryStatus: entry.deliveryAssessment ? "done" : "idle",
-      brief: entry.brief ?? null,
-      briefStatus: entry.brief ? "done" : "idle",
+      brief: entry.brief || null,
       // A read-only org recording can be neither renamed nor refiled, so it
       // carries no suggestion — and the pass that would produce one declines too.
       filingSuggestion: opts?.readOnly ? null : entry.filingSuggestion ?? null,
-      filingStatus: entry.filingSuggested || entry.filingSuggestion ? "done" : "idle",
       meetingKind: entry.meetingKind ?? null,
       // Restore the per-meeting context + negotiation setup.
       meetingContext: entry.meetingContext,

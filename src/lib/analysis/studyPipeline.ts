@@ -15,7 +15,10 @@
 // hold their own reentrancy locks (status set synchronously) and write-guards
 // (runGuard: session pin + latest-wins), so double-dispatch is a no-op and a
 // stale pass can't corrupt — there are no once-per-session refs, no busy
-// flags, and no gate to leak.
+// flags, and no gate to leak. A pass that outlives its recording being on
+// screen still lands its result on that recording's entry, and reopening the
+// recording mid-pass restores the stage as "running" (runRegistry) instead of
+// dispatching it a second time.
 //
 // Both pure functions read the same StudyPipelineFacts value — plain
 // primitives extracted from the store by factsOf() — so the scheduler and the
@@ -30,7 +33,7 @@ import { runActionItems } from "./actionItems";
 import { runBriefGeneration } from "./briefRun";
 import { runDeliveryAnalysis } from "./deliveryRun";
 import { runFilingSuggestion } from "./filingRun";
-import { persistStudyOutputs, saveUploadToHistory } from "../history/history";
+import { persistReadOnlyStudyOutputs, saveUploadToHistory } from "../history/history";
 import { isSampleEntry } from "../onboarding/sample";
 import { log } from "../log";
 
@@ -59,6 +62,14 @@ export interface StudyPipelineFacts {
    *  speaker naming, the first analysis at Confirm) — the whole DAG defers
    *  while it's open so no pass spends on an unconfirmed transcript. */
   wizardOpen: boolean;
+  /** The loaded recording is a just-saved live meeting whose voice
+   *  re-diarization is still running (store.postSaveDiarizingId). Its speaker
+   *  labels are about to change, so the deep-lane stages — which read who said
+   *  what — wait for the corrected transcript instead of analysing the
+   *  provider's drifted labels and then re-running. Filing reads only the text,
+   *  so it is not held. The artifacts still read "queued" meanwhile: a run IS
+   *  coming, it is only waiting for its input. */
+  diarizing: boolean;
   hasDeepKey: boolean;
   /** The cheap lane. Only the filing pass rides it, which is why it can run for a
    *  user who has no deep-lane key at all. */
@@ -88,6 +99,7 @@ export function factsOf(s: StoreState): StudyPipelineFacts {
   return {
     inReplay: s.appMode === "study" && s.replay != null,
     wizardOpen: s.ingestWizardOpen,
+    diarizing: replayId != null && s.postSaveDiarizingId === replayId,
     hasDeepKey: hasProviderKey(s.settings, "deep"),
     hasRealtimeKey: hasProviderKey(s.settings, "realtime"),
     readOnly: s.replayReadOnly,
@@ -130,6 +142,11 @@ export function evaluateStages(f: StudyPipelineFacts): StudyStageKey[] {
   if (!f.readOnly && f.hasRealtimeKey && f.filingStatus === "idle") out.push("filing");
 
   if (!f.hasDeepKey) return out;
+  // Speaker correction still running: every deep stage reads speaker labels
+  // (findings attribute lines, the brief names people), so they all wait for
+  // the corrected transcript. Clearing the flag is a WATCHED change, so the
+  // pipeline dispatches the moment it does — once, on the corrected labels.
+  if (f.diarizing) return out;
   const analysisDone = f.analysisStatus === "done";
   if (f.analysisStatus === "idle") out.push("findings");
   if (analysisDone && f.actionItemsStatus === "idle") out.push("actions");
@@ -197,6 +214,9 @@ export function regenerateArtifact(key: StudyStageKey): void {
 export async function reanalyzeAll(): Promise<void> {
   const startedFor = useStore.getState().replay?.id ?? null;
   if (!startedFor) return;
+  // This one calls the findings runner directly instead of going through the
+  // scheduler, so it has to honour the speaker-correction hold itself.
+  if (factsOf(useStore.getState()).diarizing) return;
   // Pin BEFORE the pass: with auto-analysis off, the downstream invalidation
   // below would otherwise never be picked up by the scheduler.
   useStore.setState({ studyManualForId: startedFor });
@@ -229,6 +249,7 @@ const WATCHED = [
   "loadedHistoryId",
   "replayReadOnly",
   "studyManualForId",
+  "postSaveDiarizingId",
 ] as const satisfies readonly (keyof StoreState)[];
 
 function dispatchReady(state: StoreState): void {
@@ -270,7 +291,7 @@ export function initStudyPipeline(): () => void {
     if (state.appMode !== "study" || !state.replay || state.loadedHistoryId) return;
     if (state.replayReadOnly) {
       if (actionsSettled || analysisDone) {
-        persistStudyOutputs().catch((e) =>
+        persistReadOnlyStudyOutputs().catch((e) =>
           log.error("study: read-only cache persist failed", { error: String(e) }),
         );
       }
@@ -301,6 +322,9 @@ export interface StudyPipelineState {
   active: boolean;
   hasDeepKey: boolean;
   hasTranscript: boolean;
+  /** Speaker correction is running for this recording (see the fact). The chip
+   *  says so instead of a queued count, and manual regeneration waits. */
+  diarizing: boolean;
 }
 
 /** Queue rule shared by every stage chained off the findings pass (actions /
@@ -327,23 +351,34 @@ function displayStatus(status: AsyncTaskStatus, queued: boolean): StudyArtifactD
   return status;
 }
 
+const ARTIFACT_STATUS = {
+  findings: "analysisStatus",
+  actions: "actionItemsStatus",
+  brief: "briefStatus",
+  delivery: "deliveryStatus",
+} as const satisfies Record<StudyArtifactKey, keyof StudyPipelineFacts>;
+
+const ARTIFACT_ORDER: readonly StudyArtifactKey[] = ["findings", "actions", "brief", "delivery"];
+
+/** One artifact's display state. The chip (deriveStudyPipeline) and the report
+ *  sections (useStudyArtifactDisplay) both go through here, so a section's
+ *  skeleton and the chip's "queued" can't disagree. */
+export function artifactDisplay(f: StudyPipelineFacts, key: StudyArtifactKey): StudyArtifactDisplay {
+  const status = f[ARTIFACT_STATUS[key]];
+  if (key === "findings") {
+    // "queued" is a promise that the scheduler WILL dispatch. With auto-analysis
+    // off nothing is coming, so every untouched artifact reads idle rather than
+    // queuing forever against a pipeline that will never run.
+    return displayStatus(status, f.autoAnalyze && f.hasDeepKey && f.hasTranscript);
+  }
+  return displayStatus(status, chainQueued(f));
+}
+
 export function deriveStudyPipeline(f: StudyPipelineFacts): StudyPipelineState {
-  // "queued" is a promise that the scheduler WILL dispatch. With auto-analysis
-  // off nothing is coming, so every untouched artifact reads idle rather than
-  // queuing forever against a pipeline that will never run.
-  const can = f.autoAnalyze && f.hasDeepKey && f.hasTranscript;
-
-  const findings = displayStatus(f.analysisStatus, can);
-
-  const chained = (status: AsyncTaskStatus): StudyArtifactDisplay =>
-    displayStatus(status, chainQueued(f));
-
-  const artifacts: StudyArtifactState[] = [
-    { key: "findings", display: findings },
-    { key: "actions", display: chained(f.actionItemsStatus) },
-    { key: "brief", display: chained(f.briefStatus) },
-    { key: "delivery", display: chained(f.deliveryStatus) },
-  ];
+  const artifacts: StudyArtifactState[] = ARTIFACT_ORDER.map((key) => ({
+    key,
+    display: artifactDisplay(f, key),
+  }));
 
   return {
     artifacts,
@@ -353,6 +388,7 @@ export function deriveStudyPipeline(f: StudyPipelineFacts): StudyPipelineState {
     active: artifacts.some((a) => a.display === "queued" || a.display === "running"),
     hasDeepKey: f.hasDeepKey,
     hasTranscript: f.hasTranscript,
+    diarizing: f.diarizing,
   };
 }
 
@@ -364,8 +400,20 @@ export function useStudyPipeline(): StudyPipelineState {
   return useMemo(() => deriveStudyPipeline(facts), [facts]);
 }
 
+/** One report section's display state, as a primitive — so a section only
+ *  re-renders when ITS state changes, never on unrelated pipeline transitions.
+ *  Only an idle status needs the full facts (to tell queued from idle); every
+ *  other status is its own answer, which keeps the selector cheap. Mount it in
+ *  study-only components: outside the study tense "queued" means nothing. */
+export function useStudyArtifactDisplay(key: StudyArtifactKey): StudyArtifactDisplay {
+  return useStore((s) => {
+    const status = s[ARTIFACT_STATUS[key]];
+    return status === "idle" ? artifactDisplay(factsOf(s), key) : status;
+  });
+}
+
 /** BriefSection subscribes to just this boolean so unrelated pipeline
  *  transitions never re-render the (potentially large) brief markdown. */
 export function useBriefQueued(): boolean {
-  return useStore((s) => s.briefStatus === "idle" && chainQueued(factsOf(s)));
+  return useStudyArtifactDisplay("brief") === "queued";
 }

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  artifactDisplay,
   chainQueued,
   deriveStudyPipeline,
   evaluateStages,
@@ -13,6 +14,7 @@ function facts(patch: Partial<StudyPipelineFacts> = {}): StudyPipelineFacts {
   return {
     inReplay: true,
     wizardOpen: false,
+    diarizing: false,
     hasDeepKey: true,
     hasRealtimeKey: false,
     readOnly: false,
@@ -120,6 +122,49 @@ describe("evaluateStages: the filing pass (a stage, not a report artifact)", () 
   });
 });
 
+describe("evaluateStages: post-save speaker correction (diarizing)", () => {
+  it("holds every deep-lane stage while the speakers are being corrected", () => {
+    expect(evaluateStages(facts({ diarizing: true }))).toEqual([]);
+    // Mid-chain too: a restored findings pass must not fan out on drifted labels.
+    expect(
+      evaluateStages(facts({ diarizing: true, analysisStatus: "done" }))
+    ).toEqual([]);
+    expect(
+      evaluateStages(
+        facts({ diarizing: true, analysisStatus: "done", actionItemsStatus: "done" })
+      )
+    ).toEqual([]);
+  });
+
+  it("lets filing run immediately — it reads the text, not who said it", () => {
+    expect(evaluateStages(facts({ diarizing: true, hasRealtimeKey: true }))).toEqual([
+      "filing",
+    ]);
+  });
+
+  it("releases the whole chain the moment the correction lands", () => {
+    const held = facts({ diarizing: true, hasRealtimeKey: true, filingStatus: "running" });
+    expect(evaluateStages(held)).toEqual([]);
+    expect(evaluateStages({ ...held, diarizing: false })).toEqual(["findings"]);
+  });
+
+  it("keeps every held artifact reading QUEUED (skeletons), never idle", () => {
+    const p = deriveStudyPipeline(facts({ diarizing: true }));
+    for (const key of ["findings", "actions", "brief", "delivery"]) {
+      expect(displayOf(p, key)).toBe("queued");
+    }
+    expect(p.active).toBe(true);
+    expect(p.diarizing).toBe(true);
+    expect(artifactDisplay(facts({ diarizing: true }), "brief")).toBe("queued");
+  });
+
+  it("an artifact restored as done stays done while the speakers are corrected", () => {
+    const p = deriveStudyPipeline(facts({ diarizing: true, analysisStatus: "done" }));
+    expect(displayOf(p, "findings")).toBe("done");
+    expect(displayOf(p, "actions")).toBe("queued");
+  });
+});
+
 describe("deriveStudyPipeline (what the chip + sections say)", () => {
   it("a fresh session with key + transcript is FULLY queued — never a silent blank", () => {
     const p = deriveStudyPipeline(facts());
@@ -186,6 +231,25 @@ describe("deriveStudyPipeline (what the chip + sections say)", () => {
     // there, so the sections offer "Regenerate" rather than a missing-key hint.
     expect(p.hasDeepKey).toBe(true);
     expect(p.hasTranscript).toBe(true);
+  });
+
+  it("a section's own display (artifactDisplay) is exactly what the chip shows for it", () => {
+    // The report sections pick skeleton vs empty message off artifactDisplay;
+    // the chip counts off deriveStudyPipeline. One must never say "queued"
+    // while the other says "idle".
+    const cases = [
+      facts(),
+      facts({ analysisStatus: "running" }),
+      facts({ analysisStatus: "done", actionItemsStatus: "running" }),
+      facts({ analysisStatus: "error" }),
+      facts({ autoAnalyze: false }),
+      facts({ hasDeepKey: false }),
+      facts({ analysisStatus: "done", actionItemsStatus: "done", briefStatus: "done", deliveryStatus: "done" }),
+    ];
+    for (const f of cases) {
+      const p = deriveStudyPipeline(f);
+      for (const a of p.artifacts) expect(artifactDisplay(f, a.key)).toBe(a.display);
+    }
   });
 
   it("the chip still counts FOUR artifacts — filing is a stage, not one of them", () => {

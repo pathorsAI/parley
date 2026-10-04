@@ -5,6 +5,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { isTauri } from "../tauriEvents";
 import { log } from "../log";
+import type { VoiceTypingPolishStyle } from "../types";
+
+/** A style that produced text — never `off`, which produces none. */
+export type PolishedStyle = Exclude<VoiceTypingPolishStyle, "off">;
 
 export interface VoiceEntry {
   id: string;
@@ -14,18 +18,23 @@ export interface VoiceEntry {
   /** Bundle id of the app the text was pasted into ("com.apple.Notes"), when
    *  the paste reported one. Older lines predate the field. */
   appBundleId?: string | null;
+  /** The polish style that produced `text`, when it is the AI polish. Absent
+   *  for a raw paste and for lines written before the style choice existed. */
+  polishStyle?: PolishedStyle;
 }
 
 /** Record one dictation (no-op for empty text / outside Tauri). */
 export async function appendVoiceEntry(
   text: string,
   appBundleId?: string | null,
+  polishStyle?: PolishedStyle,
 ): Promise<void> {
   if (!isTauri() || !text.trim()) return;
   const entry: VoiceEntry = { id: crypto.randomUUID(), text, ts: Date.now() };
   // Only carry the key when we actually know the target app, so lines written
   // by an older build and lines from a blocked paste look the same.
   if (appBundleId) entry.appBundleId = appBundleId;
+  if (polishStyle) entry.polishStyle = polishStyle;
   await invoke("append_voice_history", { line: JSON.stringify(entry) }).catch((error) =>
     log.warn("voice typing history: append failed", { id: entry.id, error: String(error) }),
   );

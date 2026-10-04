@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Clock, Loader2, MessageCircleQuestion, X } from "lucide-react";
+import { Clock, MessageCircleQuestion, X } from "lucide-react";
 import { DEFAULT_GETTING_STARTED, useStore } from "../../lib/store";
 import { missingProviderRequirement, providerGateKey } from "../../lib/ai/settings";
 import { useBriefQueued } from "../../lib/analysis/studyPipeline";
@@ -18,6 +18,7 @@ import { LapContext, useLapContext, useLapState } from "../../lib/onboarding/lap
 import { GuideBar } from "./GuideBar";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
 
 /** The report's section anchors (order = page order = TOC-rail order). */
 const SECTIONS = [
@@ -256,30 +257,54 @@ function BriefSection({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>) {
     providerGateKey(missingProviderRequirement(s.settings, "deep"), "study.brief.missingKey")
   );
   const queued = useBriefQueued();
+  const running = status === "running";
+
+  // One caption row whose TEXT changes with the stage — queued, generating
+  // (also while text streams in), saved — so moving between them never adds
+  // or removes a line above the brief.
+  let caption: string | null = null;
+  if (!brief && queued) caption = t("study.brief.queued");
+  else if (running) caption = t("study.brief.generating");
+  else if (status === "done" && saved && !!brief) caption = t("study.brief.saved");
 
   return (
     <div>
-      {status === "done" && saved && !!brief && (
-        <p className="mb-2 text-[11px] text-muted-foreground/70">{t("study.brief.saved")}</p>
+      {caption && (
+        <p className="mb-2 flex items-center gap-1.5 text-[11px] text-muted-foreground/70">
+          {!brief && queued && <Clock className="size-3" />}
+          {caption}
+        </p>
       )}
       {/* The key only matters while there's no brief to read. */}
       {gate && !brief && <p className="text-sm text-muted-foreground">{t(gate)}</p>}
-      {queued && !brief && (
-        <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
-          <Clock className="size-3.5" />
-          {t("study.brief.queued")}
-        </p>
-      )}
-      {status === "running" && !brief && (
-        <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
-          <Loader2 className="size-3.5 animate-spin" />
-          {t("study.brief.generating")}
-        </p>
-      )}
+      {/* Before the first token: a placeholder in the brief's own shape, so the
+          section already holds roughly its final height. */}
+      {!gate && !brief && (queued || running) && <BriefSkeleton />}
       {status === "error" && (
         <p className="text-sm text-muted-foreground">{t("study.brief.error")}</p>
       )}
       {brief && <ReportContent markdown={brief} onTimestamp={onSeek} />}
+    </div>
+  );
+}
+
+/** A brief-shaped placeholder: the debrief is a couple of short headed sections
+ *  of prose and bullets (see briefSections in lib/analysis/lens.ts), rendered at
+ *  prose-sm — so two headings, a paragraph and a bullet list, on that rhythm. */
+function BriefSkeleton() {
+  return (
+    <div className="flex flex-col gap-2.5 pt-1" aria-hidden="true">
+      <Skeleton className="h-4 w-32" />
+      <Skeleton className="h-3.5 w-full" />
+      <Skeleton className="h-3.5 w-11/12" />
+      <Skeleton className="h-3.5 w-3/5" />
+      <Skeleton className="mt-3 h-4 w-24" />
+      {["w-10/12", "w-9/12", "w-11/12", "w-7/12"].map((w) => (
+        <div key={w} className="flex items-center gap-2 pl-1">
+          <Skeleton className="size-1.5 shrink-0 rounded-full" />
+          <Skeleton className={`h-3.5 ${w}`} />
+        </div>
+      ))}
     </div>
   );
 }

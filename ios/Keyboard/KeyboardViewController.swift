@@ -2175,6 +2175,29 @@ final class KeyboardViewController: UIInputViewController {
         refreshSuggestions()
     }
 
+    /// Whether a held space bar may turn into a trackpad (`SpaceKey`). Not
+    /// while a 注音 reading is pending: there space is the first tone or the
+    /// confirm key, the reading is marked text the caret cannot leave without
+    /// the host committing or dropping it, and the hold falls back to an
+    /// ordinary press so letting go still does what space does.
+    var spaceCanSteerCaret: Bool { zhuyin.reading.isEmpty }
+
+    /// The text either side of the caret, read once when the space bar becomes
+    /// a trackpad — see `CaretWalk` for why only once.
+    func caretContext() -> (before: String?, after: String?) {
+        (textDocumentProxy.documentContextBeforeInput, textDocumentProxy.documentContextAfterInput)
+    }
+
+    /// Move the caret `offset` UTF-16 code units — what
+    /// `adjustTextPosition(byCharacterOffset:)` counts in, despite its name.
+    /// Everything that depends on where the caret is — shift, the suggestion
+    /// bar — follows from the host's `selectionDidChange` and `textDidChange`,
+    /// as it does when the user taps somewhere else in the field.
+    func moveCaret(by offset: Int) {
+        guard offset != 0 else { return }
+        textDocumentProxy.adjustTextPosition(byCharacterOffset: offset)
+    }
+
     /// The body of `insertSpace`, split out only so its three exits all pass
     /// through one `refreshSuggestions` above.
     private func typeSpace() {
@@ -2510,6 +2533,20 @@ final class KeyboardBridge: ObservableObject {
     func type(_ text: String) { controller?.insert(text) }
     func space() { controller?.insertSpace() }
     func newline() { controller?.insertReturn() }
+
+    // The space bar's trackpad — see `SpaceKey`.
+
+    /// Whether the space bar is steering the caret. Not `@Published`: see
+    /// `SpaceCursorModel`.
+    let spaceCursor = SpaceCursorModel()
+    /// Whether a held space bar may become a trackpad now.
+    var spaceCanSteerCaret: Bool { controller?.spaceCanSteerCaret ?? false }
+    /// The text either side of the caret, as the host shares it.
+    func caretContext() -> (before: String?, after: String?) {
+        controller?.caretContext() ?? (nil, nil)
+    }
+    /// Move the caret by `offset` UTF-16 code units — see `CaretWalk`.
+    func moveCaret(by offset: Int) { controller?.moveCaret(by: offset) }
 
     // 注音. The composer that answers these lives in the controller, so the
     // view never holds input state of its own.

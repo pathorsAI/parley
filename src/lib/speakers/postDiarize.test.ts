@@ -10,7 +10,12 @@ vi.mock("../log", () => ({
   attachConsoleOnce: vi.fn(),
 }));
 
-import { remapToPriorSpeakers, rediarizeSegments, type PriorSeg } from "./postDiarize";
+import {
+  qualifiesForRediarization,
+  remapToPriorSpeakers,
+  rediarizeSegments,
+  type PriorSeg,
+} from "./postDiarize";
 import { seg } from "../test/fixtures";
 
 beforeEach(() => invoke.mockReset());
@@ -160,5 +165,22 @@ describe("rediarizeSegments (audio-based correction of a saved live meeting)", (
       { id: "b", speaker: 2, confidence: 1 },
     ]);
     expect(await rediarizeSegments(segs, "/rec.ogg")).toBeNull();
+  });
+});
+
+describe("qualifiesForRediarization (whether the post-save gate goes up at all)", () => {
+  it("needs a diarized mix meeting with at least two spoken final lines", () => {
+    const mix = (id: string, text = "hi", isFinal = true) =>
+      seg({ id, source: "mix", text, isFinal });
+    expect(qualifiesForRediarization([mix("a"), mix("b")])).toBe(true);
+    expect(qualifiesForRediarization([mix("a")])).toBe(false);
+    // Empty and interim lines don't count — the pass would skip them too.
+    expect(qualifiesForRediarization([mix("a"), mix("b", "  "), mix("c", "x", false)])).toBe(false);
+  });
+
+  it("a mic-only meeting never qualifies, so it never shows 'correcting speakers'", () => {
+    const lines = [seg({ id: "a", source: "me" }), seg({ id: "b", source: "them" })];
+    expect(qualifiesForRediarization(lines)).toBe(false);
+    expect(invoke).not.toHaveBeenCalled();
   });
 });

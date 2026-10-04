@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bucketFor, bucketKey, groupByDate, type DatedRecording } from "./timeline";
+import { bucketFor, bucketKey, groupByDate, newestFirst, type DatedRecording } from "./timeline";
 
 /**
  * Every timestamp here is built with the local-time `Date` constructor, so the
@@ -110,5 +110,16 @@ describe("groupByDate", () => {
 
   it("returns nothing for nothing", () => {
     expect(groupByDate([], FRIDAY)).toEqual([]);
+  });
+});
+
+describe("newestFirst", () => {
+  it("puts the latest recording on top whatever order the list arrived in", () => {
+    const old = { id: "old", createdAt: at(2026, 6, 1) };
+    const mid = { id: "mid", createdAt: at(2026, 7, 1) };
+    const latest = { id: "latest", createdAt: at(2026, 8, 1) };
+    const input = [old, latest, mid];
+    expect(newestFirst(input).map((r) => r.id)).toEqual(["latest", "mid", "old"]);
+    expect(input.map((r) => r.id)).toEqual(["old", "latest", "mid"]); // not mutated
   });
 });

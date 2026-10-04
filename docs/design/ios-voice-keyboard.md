@@ -1192,6 +1192,74 @@ finger landing before the first lifts is handled key by key, and a character
 types on release. Both need one pane-level touch surface in place of the
 per-key buttons.
 
+### The space bar is a trackpad
+
+On the system keyboard, a space bar held still for a moment stops being a key:
+the other caps go blank and sliding the same finger walks the caret through the
+text. Without it, putting the caret between two letters means a long-press in
+the field, a magnifier and a steady thumb, so correcting one word in the middle
+of a sentence was the moment people left Parley's keyboard. The QWERTY and 注音
+space bars both do it now (`SpaceKey`); the symbol planes' space bar does not
+yet.
+
+- **Entering.** The finger has to stay within 10pt of where it landed for
+  0.35s (`SpaceCursor.holdDelay`, `.slop`). Then every other key on the pane
+  fades and drops its label, the bar reads 「左右滑動移動游標」 / "Slide to move
+  the cursor", and a soft `.light` tick plays.
+- **Moving.** Only horizontal travel counts — the caret moves along the text,
+  never between lines. One character per 9pt for a slow drag; above 300 pt/s
+  the gain rises linearly to 2.5× at 1,200 pt/s, so a careful slide is never
+  accelerated and a flick crosses a sentence. Turning round needs a full 9pt in
+  the new direction before the caret follows, so a wobbling finger does not
+  jitter it. Each touch sample that moved the caret plays the system's
+  selection detent.
+- **Leaving.** Letting go puts the keys back and types nothing — including a
+  hold that never moved, because the keys going blank already said this press
+  was not a space.
+- **A tap is unchanged.** A press released before the hold, or one that
+  wandered past the slop first, types exactly what it did: a space, the
+  double-space period, or on the 注音 pane the first tone and then confirm. A
+  press lifted well off the key types nothing, as a button's cancelled touch
+  does.
+- **Not while a 注音 reading is pending.** There space is still composing, and
+  the reading is marked text the caret cannot leave without the host
+  committing or dropping it. The hold is refused, the press stays an ordinary
+  one, and letting go tones or confirms as before.
+- **Not a swipe.** The pane track's swipe needs 24pt of travel before it
+  engages, more than the hold's slop, so it can never be moving when the bar
+  becomes a trackpad; once it has, the track ignores that finger until a turn
+  after it lifts (`SpaceCursorModel.holdsTouch`). A press that travels 24pt
+  sideways *before* the hold is still a swipe, as it always was.
+- **VoiceOver** sees the same "Space" button it did, and activating it types a
+  space. The trackpad is touch-only; VoiceOver already moves the caret with the
+  rotor.
+
+How a drag becomes an offset. `adjustTextPosition(byCharacterOffset:)` counts
+UTF-16 code units, not characters as a reader sees them — a step of 1 across 😀
+lands between its surrogates. So `CaretWalk` walks a snapshot of the text either
+side of the caret one grapheme cluster per step and hands the proxy each
+cluster's UTF-16 length. The snapshot is taken once, when the hold begins,
+because the proxy's context lags an adjustment by a round trip to the host and
+moving the caret never changes the text. Past the ends of what the host shared
+— often a sentence or a line — each step is one code unit, counted and repaid
+on the way back: right for everything in the Basic Multilingual Plane, a few
+units off for the rest of that drag at the true start or end of the document.
+
+What it costs. The panes still do not observe the bridge: `SpaceCursorModel`
+publishes on entering and leaving only, the panes observe it the way the letter
+pane observes shift, and the keys learn it from the environment
+(`keysRecede`). Each key redraws twice per trackpad drag and never on a
+keystroke; the touch samples themselves change nothing SwiftUI watches.
+
+The haptics are the one exception to *no haptics* above, and they are not key
+feedback: the entry tick and the detents answer a drag, the way the system's
+trackpad does. Like every haptic in the extension they need Full Access and
+respect the system's own haptics switch; the key click on touch-down follows
+Keyboard Clicks, as on every key.
+
+Pure logic in ParleyKit (`SpaceCursor`, `CaretWalk`, unit-tested); the touch
+handling in `ios/Keyboard/KeyboardSpaceCursor.swift`.
+
 ### The backdrop: the system's, unless it would disagree
 
 The keyboard's canvas is the system's `UIInputView`. `view.backgroundColor` is
