@@ -136,9 +136,18 @@ async function measureRecordingRate(path: string): Promise<number | null> {
 /** The analysis slice captured by {@link snapshotAnalysis} (passed to a deferred save). */
 export type AnalysisSnapshot = ReturnType<typeof snapshotAnalysis>;
 
-/** Whether the current transcript has any spoken content worth saving. */
-function hasSpokenTranscript(): boolean {
-  return hasSpokenSegment(useStore.getState().segments);
+/**
+ * Keep a finished live meeting's recording, or discard it? Discard only the
+ * accidental Start/Stop — nothing transcribed AND the transcription link never
+ * dropped. A meeting whose link went down at any point is kept even with no
+ * transcript at all (#570): with the network gone, the recording may be the
+ * only copy of what was said, and an empty transcript there means "not
+ * transcribed", not "nothing happened". Pure + exported for testing.
+ */
+export function shouldKeepLiveRecording(
+  s: Pick<ReturnType<typeof useStore.getState>, "segments" | "transcriptionDropped">,
+): boolean {
+  return hasSpokenSegment(s.segments) || s.transcriptionDropped;
 }
 
 // ── Per-entry write serialization ───────────────────────────────────────────
@@ -317,14 +326,16 @@ let uploadSaveInFlight: Promise<unknown> | null = null;
 
 /**
  * Auto-save a finished LIVE meeting once Rust reports the encoded recording.
- * No-op when the meeting produced no transcript (e.g. started + stopped at once).
+ * No-op when the meeting produced no transcript (e.g. started + stopped at once)
+ * — unless its transcription dropped, see {@link shouldKeepLiveRecording}.
  */
 export async function saveLiveToHistory(audioTempPath: string, durationMs: number): Promise<void> {
   if (!isTauri()) return;
-  if (!hasSpokenTranscript()) {
-    // Nothing was transcribed — almost certainly an accidental Start/Stop. Don't
-    // save a history entry, and discard the encoded temp recording so it doesn't
-    // orphan in the temp dir (an entry would normally consume it on save).
+  if (!shouldKeepLiveRecording(useStore.getState())) {
+    // Nothing was transcribed and the link never dropped — almost certainly an
+    // accidental Start/Stop. Don't save a history entry, and discard the encoded
+    // temp recording so it doesn't orphan in the temp dir (an entry would
+    // normally consume it on save).
     log.info("history: live save skipped (no transcript)");
     await invoke("discard_recording", { path: audioTempPath }).catch((error) =>
       log.warn("history: discard empty live recording failed", {
@@ -335,6 +346,15 @@ export async function saveLiveToHistory(audioTempPath: string, durationMs: numbe
     return;
   }
   const s = useStore.getState();
+  if (s.transcriptionDropped) {
+    // Saved past the empty-transcript gate, or saved with a transcript that
+    // has a hole in it — either way worth one line when a user asks where part
+    // of their meeting went.
+    log.info("history: live save after a transcription drop", {
+      spoken: hasSpokenSegment(s.segments),
+      segments: s.segments.length,
+    });
+  }
   const createdAt = s.meetingStartedAt ?? Date.now();
   const dateLabel = new Date(createdAt).toLocaleString(localeOf());
   // Mic-only measured pace (issue #22): prefer the whole-session articulation rate

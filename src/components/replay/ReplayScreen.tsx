@@ -209,7 +209,11 @@ export function ReplayScreen() {
                 playheadMs={playheadMs}
                 playing={player.playing}
                 onSeek={player.seek}
-                emptyLabel={t("replay.empty")}
+                // A loaded recording with no transcript is real now: a live
+                // meeting whose transcription dropped is kept even when nothing
+                // got transcribed (#570). "No recording loaded" would be wrong
+                // there — the audio is right above, playable.
+                emptyLabel={t(session.audioSrc ? "replay.noTranscript" : "replay.empty")}
               />
             </div>
           </div>

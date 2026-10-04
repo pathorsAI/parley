@@ -150,6 +150,25 @@ impl Default for Pump {
     }
 }
 
+/// How long one websocket send may take before the socket is presumed dead.
+///
+/// A dropped network rarely errors a send: the kernel keeps accepting bytes
+/// into its send buffer and then the write simply never completes, until TCP
+/// gives up minutes later. A healthy send finishes in milliseconds, so a ten
+/// second stall is unambiguous — and it bounds noticing a dead socket to
+/// roughly "send buffer fills + 10 s", well inside the meeting's 45 s hold
+/// buffer (see `transcription::bridge`), so the words spoken meanwhile are
+/// still there for the next leg.
+pub const SEND_STALL_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// One send bounded by [`SEND_STALL_TIMEOUT`]; a stall counts as a failure.
+async fn send_bounded(write: &mut WsWrite, msg: Message) -> bool {
+    matches!(
+        tokio::time::timeout(SEND_STALL_TIMEOUT, write.send(msg)).await,
+        Ok(Ok(()))
+    )
+}
+
 /// Wait for the next keepalive tick and yield the frame to send, or never
 /// resolve when the provider has no keepalive — so that `select!` arm simply
 /// stays pending for the life of the session.
@@ -168,7 +187,8 @@ async fn keepalive_tick(keepalive: &mut Option<(Interval, &'static str)>) -> &'s
 /// whatever frame that provider expects.
 ///
 /// Resolves `true` when the input drained (the capture side closed — a normal
-/// stop) and `false` when a send failed, i.e. the socket died under us; see
+/// stop) and `false` when a send failed or stalled past
+/// [`SEND_STALL_TIMEOUT`], i.e. the socket died under us; see
 /// [`super::common::drive_session`], which reports the latter as a failure.
 pub async fn forward_audio<F>(
     mut write: WsWrite,
@@ -194,23 +214,35 @@ where
             maybe_chunk = pcm_rx.recv() => {
                 let Some(chunk) = maybe_chunk else { break true };
                 meter.push(&chunk);
-                if write.send(encode(&chunk)).await.is_err() {
+                if !send_bounded(&mut write, encode(&chunk)).await {
                     break false;
                 }
             }
             frame = keepalive_tick(&mut keepalive) => {
-                if write.send(Message::Text(frame.to_string())).await.is_err() {
+                if !send_bounded(&mut write, Message::Text(frame.to_string())).await {
                     break false;
                 }
             }
         }
     };
 
+    if !drained {
+        // The socket is dead, so there is nobody to say goodbye to — and on a
+        // stalled one the goodbye would stall just like the send that got us
+        // here. Close our input now rather than when this future is dropped:
+        // a meeting's bridge notices the dead leg on its next send and starts
+        // holding audio for the next one, instead of feeding a channel nobody
+        // reads through `drive_session`'s read grace.
+        drop(pcm_rx);
+        return false;
+    }
+    // A normal stop. The goodbye is bounded too, in case the network died
+    // right as the meeting ended.
     if let Some(frame) = pump.finish {
-        let _ = write.send(Message::Text(frame.to_string())).await;
+        let _ = send_bounded(&mut write, Message::Text(frame.to_string())).await;
     }
     if pump.close {
-        let _ = write.close().await;
+        let _ = tokio::time::timeout(SEND_STALL_TIMEOUT, write.close()).await;
     }
-    drained
+    true
 }

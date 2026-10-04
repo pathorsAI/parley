@@ -857,6 +857,8 @@ export const zhTW = {
   "meeting.warning.systemAudioBanner": "目前只錄到你的麥克風——對方的聲音不會出現在逐字稿(系統音訊未送達,通常是「系統音訊錄製」權限未授權)。",
   "meeting.warning.systemAudioBanner.windows":
     "目前只錄到你的麥克風——對方的聲音不會出現在逐字稿（擷取不到任何輸出裝置，請確認喇叭或耳機已連接）。",
+  "meeting.transcription.reconnectingBanner":
+    "轉錄連線中斷，正在重新連線…錄音仍在進行。短暫中斷時說的話會補進逐字稿；斷線較久的部分仍完整保留在錄音裡，只是不會出現在即時逐字稿。",
   "common.dismiss": "關閉",
   "meeting.contextPlaceholder": "會議描述 / 與會者角色（例：A 輪募資談判，對方是投資人，我是創辦人）…",
   "meeting.contextButton": "補充背景",
@@ -987,6 +989,7 @@ export const zhTW = {
   "replay.play": "播放",
   "replay.pause": "暫停",
   "replay.empty": "尚未載入錄音。按「匯入錄音」開始。",
+  "replay.noTranscript": "這段錄音沒有逐字稿，但音訊仍可以播放。",
   "replay.seekHint": "點任一句就跳到那個時間。{shortcut} 搜尋逐字稿。",
   "replay.export": "另存音檔…",
   "replay.exportFailed": "音檔儲存失敗：{error}",
@@ -2069,6 +2072,8 @@ export const en = {
   "meeting.warning.systemAudioBanner": "Only your mic is being recorded — the other party won't appear in the transcript (no system audio; usually the \"System Audio Recording\" permission is missing).",
   "meeting.warning.systemAudioBanner.windows":
     "Only your mic is being recorded — the other party won't appear in the transcript (no output device could be captured; check that speakers or headphones are connected).",
+  "meeting.transcription.reconnectingBanner":
+    "Transcription dropped — reconnecting… The recording is still running. What's said during a short drop catches up in the transcript; a longer gap is kept in the recording but won't appear in the live transcript.",
   "common.dismiss": "Dismiss",
   "meeting.contextPlaceholder": "Meeting description / attendee roles (e.g. Series A negotiation, they are investors, I am the founder)…",
   "meeting.contextButton": "Context",
@@ -2199,6 +2204,7 @@ export const en = {
   "replay.play": "Play",
   "replay.pause": "Pause",
   "replay.empty": "No recording loaded. Click \"Import recording\" to start.",
+  "replay.noTranscript": "This recording has no transcript, but its audio can still be played back.",
   "replay.seekHint": "Click any line to jump to that moment. {shortcut} searches the transcript.",
   "replay.export": "Save audio…",
   "replay.exportFailed": "Couldn't save the audio: {error}",

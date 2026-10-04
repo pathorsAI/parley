@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useDefaultLayout } from "react-resizable-panels";
-import { MicOff, X } from "lucide-react";
+import { Loader2, MicOff, X } from "lucide-react";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -50,6 +50,35 @@ function SystemAudioBanner() {
 }
 
 /**
+ * The live transcript lost its connection and the backend is redialling (#570).
+ * The meeting is NOT failing: the mic keeps recording, the backend carries a
+ * bounded stretch of audio across the gap so a short drop catches up in the
+ * transcript, and anything past that is still in the saved recording. So this
+ * reads as a pause — warning family and a spinner, the same language as the
+ * mobile apps' "reconnecting…" row — never as an error.
+ *
+ * Not dismissable, unlike the system-audio banner: it describes a state that
+ * ends by itself, and it goes away the moment every dropped leg is live again
+ * (store.transcriptionLink). Hiding it early would leave a frozen transcript
+ * with no explanation.
+ */
+function TranscriptionLinkBanner() {
+  const { t } = useI18n();
+  const reconnecting = useStore((s) => s.transcriptionLink === "reconnecting");
+
+  if (!reconnecting) return null;
+  return (
+    <div
+      role="status"
+      className="flex shrink-0 items-center gap-2 border-b border-warning-border bg-warning px-3 py-1.5 text-xs text-warning-foreground"
+    >
+      <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
+      <span className="min-w-0 flex-1">{t("meeting.transcription.reconnectingBanner")}</span>
+    </div>
+  );
+}
+
+/**
  * The LIVE screen, in one of two postures (titlebar-center switcher):
  * - coach (default): transcript rail | coach feed | agenda checklist —
  *   the center belongs to the coach's one voice, not a chat pane.
@@ -71,6 +100,7 @@ export function LiveScreen() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
     <SystemAudioBanner />
+    <TranscriptionLinkBanner />
     <ResizablePanelGroup
       key={layout}
       orientation="horizontal"

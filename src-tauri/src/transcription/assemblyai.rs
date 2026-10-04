@@ -12,8 +12,8 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::common::{
-    clean_vocabulary, connect_with_headers, drive_session, urlencode, LevelMeter, SegmentBuilder,
-    TranscribeConfig, LEVEL_EVENT, TRANSCRIPT_EVENT,
+    clean_vocabulary, connect_with_headers, drive_session, note_connected, urlencode, LevelMeter,
+    SegmentBuilder, Timeline, TranscribeConfig, LEVEL_EVENT, TRANSCRIPT_EVENT,
 };
 use super::ws::{self, Next, OnClose, Pump, WsRead};
 use crate::audio::resample::pcm_to_le_bytes;
@@ -87,8 +87,13 @@ fn apply_turn(builder: &mut SegmentBuilder, m: &AaiMessage) {
 
 /// Parse server frames into transcript segments until the socket ends or an
 /// in-band error arrives.
-async fn read_transcripts(app: AppHandle, source: &'static str, read: WsRead) -> Result<()> {
-    let mut builder = SegmentBuilder::new(app, source, TRANSCRIPT_EVENT);
+async fn read_transcripts(
+    app: AppHandle,
+    source: &'static str,
+    timeline: Timeline,
+    read: WsRead,
+) -> Result<()> {
+    let mut builder = SegmentBuilder::new(app, source, TRANSCRIPT_EVENT, timeline);
     ws::read_frames("assemblyai", source, read, OnClose::Stop, |payload| {
         let m: AaiMessage = match serde_json::from_str(payload) {
             Ok(m) => m,
@@ -126,9 +131,14 @@ pub async fn run_session(
     // AssemblyAI takes the API key directly in the Authorization header.
     let ws = connect_with_headers(&url, &[("Authorization", config.api_key.clone())]).await?;
     let (write, read) = ws.split();
-    eprintln!("[assemblyai:{source}] connected (diarization unsupported → speaker 0)");
+    eprintln!(
+        "[assemblyai:{source}] connected (diarization unsupported → speaker 0), leg={}",
+        config.leg
+    );
+    // The URL carries the whole config: the upgrade is the handshake.
+    note_connected(&app, source, config.leg);
 
-    let meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT);
+    let meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT).enabled(config.level_events);
     // Raw pcm_s16le on the wire; `Terminate` is v3's goodbye frame.
     let pump = Pump {
         finish: Some("{\"type\":\"Terminate\"}"),
@@ -138,7 +148,12 @@ pub async fn run_session(
         Message::Binary(pcm_to_le_bytes(chunk))
     });
 
-    drive_session("assemblyai", forward, read_transcripts(app, source, read)).await
+    drive_session(
+        "assemblyai",
+        forward,
+        read_transcripts(app, source, config.timeline(), read),
+    )
+    .await
 }
 
 #[cfg(test)]

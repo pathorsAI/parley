@@ -9,8 +9,8 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::common::{
-    clean_vocabulary, connect_with_headers, drive_session, urlencode, LevelMeter, SegmentBuilder,
-    TranscribeConfig, LEVEL_EVENT, TRANSCRIPT_EVENT,
+    clean_vocabulary, connect_with_headers, drive_session, note_connected, urlencode, LevelMeter,
+    SegmentBuilder, Timeline, TranscribeConfig, LEVEL_EVENT, TRANSCRIPT_EVENT,
 };
 use super::ws::{self, Next, OnClose, Pump, WsRead, WsWrite};
 use crate::audio::resample::pcm_to_le_bytes;
@@ -173,8 +173,13 @@ fn apply_response(builder: &mut SegmentBuilder, resp: DgResponse) {
 /// Deepgram has no in-band error messages — terminal errors arrive as an
 /// abnormal close code (1008 DATA-*, 1011 NET-*, …) whose reason is the only
 /// diagnostic we get. A normal close (1000) follows our CloseStream.
-async fn read_transcripts(app: AppHandle, source: &'static str, read: WsRead) -> Result<()> {
-    let mut builder = SegmentBuilder::new(app, source, TRANSCRIPT_EVENT);
+async fn read_transcripts(
+    app: AppHandle,
+    source: &'static str,
+    timeline: Timeline,
+    read: WsRead,
+) -> Result<()> {
+    let mut builder = SegmentBuilder::new(app, source, TRANSCRIPT_EVENT, timeline);
     ws::read_frames(
         "deepgram",
         source,
@@ -211,16 +216,18 @@ pub async fn run_session(
     .await?;
     let (write, read) = ws.split();
     eprintln!(
-        "[deepgram:{source}] connected, model={model}, diarization={}",
-        config.diarization
+        "[deepgram:{source}] connected, model={model}, diarization={}, leg={}",
+        config.diarization, config.leg
     );
+    // Deepgram takes its whole config in the URL: the upgrade is the handshake.
+    note_connected(&app, source, config.leg);
 
-    let meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT);
+    let meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT).enabled(config.level_events);
 
     drive_session(
         "deepgram",
         forward_audio(write, meter, pcm_rx),
-        read_transcripts(app, source, read),
+        read_transcripts(app, source, config.timeline(), read),
     )
     .await
 }
