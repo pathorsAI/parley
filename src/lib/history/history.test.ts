@@ -5,16 +5,21 @@ import { describe, it, expect, vi } from "vitest";
 vi.mock("../log", () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
+vi.mock("sonner", () => ({
+  toast: Object.assign(vi.fn(), { message: vi.fn(), error: vi.fn(), success: vi.fn() }),
+}));
 
 import {
   applyCorrectedSpeakers,
   buildSummary,
+  leaveStoppedCockpit,
   mergeAnalysisSnapshot,
   mergeStageOutputs,
   shouldKeepLiveRecording,
   type AnalysisSnapshot,
 } from "./history";
-import { speakerKey } from "../store";
+import { speakerKey, useStore } from "../store";
+import { toast } from "sonner";
 import type { HistoryEntry } from "./types";
 import type { DeliveryAssessment } from "../types";
 import { seg } from "../test/fixtures";
@@ -271,5 +276,27 @@ describe("shouldKeepLiveRecording (the live save's keep/discard gate)", () => {
 
   it("keeps a transcript-less recording when the link dropped (#570) — it may be the only copy", () => {
     expect(shouldKeepLiveRecording({ segments: [], transcriptionDropped: true })).toBe(true);
+  });
+});
+
+describe("leaveStoppedCockpit (a meeting that ended without a report)", () => {
+  it("leaves the stopped cockpit for Home and says why", () => {
+    vi.mocked(toast.message).mockClear();
+    useStore.setState({ appMode: "live", meetingStatus: "stopped" });
+    leaveStoppedCockpit("meeting.notSaved.tooShort");
+    expect(useStore.getState().appMode).toBe("home");
+    expect(toast.message).toHaveBeenCalledTimes(1);
+  });
+
+  it("does nothing once the user has moved on or started another meeting", () => {
+    vi.mocked(toast.message).mockClear();
+    useStore.setState({ appMode: "library", meetingStatus: "stopped" });
+    leaveStoppedCockpit("meeting.notSaved.noTranscript");
+    expect(useStore.getState().appMode).toBe("library");
+
+    useStore.setState({ appMode: "live", meetingStatus: "recording" });
+    leaveStoppedCockpit("meeting.notSaved.noTranscript");
+    expect(useStore.getState().appMode).toBe("live");
+    expect(toast.message).not.toHaveBeenCalled();
   });
 });

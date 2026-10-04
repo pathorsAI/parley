@@ -343,6 +343,7 @@ export async function saveLiveToHistory(audioTempPath: string, durationMs: numbe
         error: String(error),
       }),
     );
+    leaveStoppedCockpit("meeting.notSaved.noTranscript");
     return;
   }
   const s = useStore.getState();
@@ -1253,6 +1254,20 @@ export async function loadOrgEntry(orgId: string, id: string): Promise<void> {
 // call and needs no `history://open` round trip. What remains here is the
 // broadcast that a saved entry CHANGED, which several surfaces still listen to.
 
+/**
+ * A stopped meeting that produced no report — too short for Rust to keep, or
+ * nothing transcribed — has nowhere to go but its own cockpit, which is a dead
+ * screen once the meeting is over (and, before the cockpit hold, a four-column
+ * one). Go Home and say why, unless the user has already moved on: started
+ * another meeting, or opened something else while the stop settled.
+ */
+export function leaveStoppedCockpit(reasonKey: "meeting.notSaved.tooShort" | "meeting.notSaved.noTranscript"): void {
+  const s = useStore.getState();
+  if (s.appMode !== "live" || isMeetingActive(s.meetingStatus)) return;
+  s.openHome();
+  toast.message(translate(s.settings.language, reasonKey));
+}
+
 /** Main-window listener: auto-save the meeting once Rust finishes encoding it,
  *  and release the titlebar "finalizing" state. saveLiveToHistory clears it
  *  itself the moment the report opens (its speaker correction and org share
@@ -1263,10 +1278,19 @@ export async function listenForRecordingSaved(): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
   const unlistenSaved = await listen<{ path: string; durationMs: number }>(RECORDING_SAVED_EVENT, (e) => {
     saveLiveToHistory(e.payload.path, e.payload.durationMs)
-      .catch((err) => log.error("history: live save failed", { error: String(err) }))
+      .catch((err) => {
+        log.error("history: live save failed", { error: String(err) });
+        // Stay on the cockpit (its transcript is the only copy left on screen)
+        // but say so — a failed save used to look exactly like a slow one.
+        const lang = useStore.getState().settings.language;
+        toast.error(translate(lang, "meeting.notSaved.failed", { error: String(err) }));
+      })
       .finally(clearFinalizing);
   });
-  const unlistenDiscarded = await listen(RECORDING_DISCARDED_EVENT, clearFinalizing);
+  const unlistenDiscarded = await listen(RECORDING_DISCARDED_EVENT, () => {
+    clearFinalizing();
+    leaveStoppedCockpit("meeting.notSaved.tooShort");
+  });
   return () => {
     unlistenSaved();
     unlistenDiscarded();

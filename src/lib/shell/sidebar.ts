@@ -46,45 +46,47 @@ export function useSidebarCollapsed(): boolean {
   );
 }
 
-// ── The finalizing hold ──────────────────────────────────────────────────────
+// ── The cockpit hold ─────────────────────────────────────────────────────────
 //
-// Between End and the report opening (the recording is being encoded and
-// written), the live cockpit is still on screen but the meeting is no longer
-// running. Bringing the tree back right then turned the three-column coach into
-// a four-column frame for the whole save, only to re-lay everything out again a
-// few seconds later when the report replaced it. So the tree stays away until
-// the report arrives: the layout changes exactly once.
+// The live cockpit is never shown beside the tree. While a meeting runs the
+// coach owns the window; once it stops, the cockpit is only ever on screen on
+// its way out — to the report (the save opens it), or Home (a meeting too short
+// or too empty to keep). Bringing the tree back in between turned the
+// three-column coach into a four-column frame, then re-laid everything out
+// again when the next screen arrived. It used to be held back only while the
+// save was in flight, which left the four-column frame up whenever a meeting
+// ended without a report; now it is held for as long as the stopped cockpit is
+// on screen, whatever the save is doing.
 //
-// A save can still take minutes, and a long one must not trap the user, so ⌘B
-// during the hold PEEKS: it shows/hides the tree for this hold only, without
-// touching the saved collapsed preference above. The peek resets when the hold
-// ends (AppShell), so the next meeting starts hidden again.
+// That can last (a long save, a failed one left up so its transcript is still
+// readable), and it must not trap the user, so ⌘B during the hold PEEKS: it
+// shows/hides the tree for this hold only, without touching the saved collapsed
+// preference above. The peek resets when the hold ends (AppShell), so the next
+// meeting starts hidden again.
 
 /** The facts the shell's tree decision depends on, as plain values. */
 export interface ShellTreeFacts {
   /** A meeting is recording or paused — the coach owns the window. */
   meetingActive: boolean;
-  /** End was pressed and the recording's first write hasn't landed yet. */
-  finalizing: boolean;
   /** The live route (the cockpit) is what's on screen. */
   liveRoute: boolean;
   /** The saved ⌘B preference. */
   collapsed: boolean;
-  /** The session-only ⌘B reveal during a finalizing hold. */
+  /** The session-only ⌘B reveal during the cockpit hold. */
   peek: boolean;
 }
 
-/** Whether the finalizing hold applies: the cockpit is still up, the meeting
- *  has stopped, and its save hasn't opened the report yet. Leaving the live
- *  route (⌘K, ⌘1…) ends the hold — there is no cockpit left to protect. */
-export function finalizingHold(f: Pick<ShellTreeFacts, "meetingActive" | "finalizing" | "liveRoute">): boolean {
-  return !f.meetingActive && f.finalizing && f.liveRoute;
+/** Whether the cockpit hold applies: the meeting has stopped but its cockpit
+ *  is still on screen. Leaving the live route (the report or Home opening, ⌘K,
+ *  ⌘1…) ends the hold — there is no cockpit left to protect. */
+export function cockpitHold(f: Pick<ShellTreeFacts, "meetingActive" | "liveRoute">): boolean {
+  return !f.meetingActive && f.liveRoute;
 }
 
 /** Whether the left tree is on screen. Pure + exported for testing. */
 export function shellTreeVisible(f: ShellTreeFacts): boolean {
   if (f.meetingActive) return false;
-  if (finalizingHold(f)) return f.peek;
+  if (cockpitHold(f)) return f.peek;
   return !f.collapsed;
 }
 
@@ -97,7 +99,7 @@ function setPeek(next: boolean): void {
   for (const l of peekListeners) l();
 }
 
-/** ⌘B during a finalizing hold: show/hide the tree without saving anything. */
+/** ⌘B during the cockpit hold: show/hide the tree without saving anything. */
 export function toggleSidebarPeek(): void {
   setPeek(!peek);
 }
