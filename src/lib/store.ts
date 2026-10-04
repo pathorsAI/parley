@@ -363,6 +363,26 @@ const CLEARED_PREP_SLICE = {
 /** Lifecycle status of an async pass (analysis, delivery assessment, action items). */
 export type AsyncTaskStatus = "idle" | "running" | "done" | "error";
 
+/** Health of the live meeting's link to the transcription service, as the
+ *  backend reports it on `meeting://transcription` (see tauriEvents). */
+export type TranscriptionLink = "live" | "reconnecting";
+
+/**
+ * The transcription link back at rest: live, nothing redialling. Applied on
+ * start, stop and cancel — a stopped meeting must not keep showing the
+ * reconnecting banner (the backend stops redialling with the meeting), and the
+ * next one starts clean. `transcriptionDropped` is NOT part of it: stop keeps
+ * that flag for the save that follows, and only startMeeting/cancelMeeting
+ * clear it.
+ */
+const CLEARED_TRANSCRIPTION_LINK: Pick<
+  ParleyState,
+  "transcriptionLink" | "transcriptionReconnectingSources"
+> = {
+  transcriptionLink: "live",
+  transcriptionReconnectingSources: [],
+};
+
 /**
  * Every analysis/study output slice, cleared as ONE unit. enterReplay,
  * loadHistory (as the base under its restores), exitReplay and startMeeting all
@@ -658,6 +678,30 @@ interface ParleyState {
    *  meeting start; dismissable. */
   systemAudioWarning: boolean;
   setSystemAudioWarning: (on: boolean) => void;
+
+  /** The live transcript's connection, for THIS meeting (#570). A dropped
+   *  transcription socket no longer ends the meeting: the backend keeps the
+   *  microphone recording and redials with backoff, so a network blip is a
+   *  pause in the live transcript, never the end of a recording. "reconnecting"
+   *  drives the live screen's non-dismissable banner and clears by itself once
+   *  every leg that dropped has reported back in. */
+  transcriptionLink: TranscriptionLink;
+  /** The link went to "reconnecting" at least once this meeting. Sticky until
+   *  the next startMeeting (or a cancel) — stopping keeps it, because the save that runs
+   *  AFTER stop reads it: a meeting whose transcription was interrupted is
+   *  saved even with no transcript, since the recording may be the only copy
+   *  of what was said (history.shouldKeepLiveRecording). */
+  transcriptionDropped: boolean;
+  /** Which sources ("mix", or "me"/"them" when two sessions run) are currently
+   *  redialling. The link is reconnecting while ANY is; it reads live again
+   *  only once each of them has reported live. */
+  transcriptionReconnectingSources: string[];
+  /** Fold one `meeting://transcription` report into the three fields above.
+   *  Ignored outside an active meeting (a stray event racing stop_meeting's
+   *  teardown must not raise the banner over a finished call), and a "live"
+   *  from a source that never reported reconnecting — every leg's FIRST
+   *  handshake also reports live — is a no-op. */
+  reportTranscriptionLink: (source: string, state: TranscriptionLink) => void;
 
   /** Auto-run the analysis on an interval while recording (LIVE; default off). */
   autoAnalyze: boolean;
@@ -1225,6 +1269,27 @@ export const useStore = create<ParleyState>()(
   clearDeliveryNudge: () => set({ deliveryNudge: null }),
   systemAudioWarning: false,
   setSystemAudioWarning: (systemAudioWarning) => set({ systemAudioWarning }),
+  ...CLEARED_TRANSCRIPTION_LINK,
+  transcriptionDropped: false,
+  reportTranscriptionLink: (source, linkState) =>
+    set((state) => {
+      if (!isMeetingActive(state.meetingStatus)) return {};
+      const pending = state.transcriptionReconnectingSources;
+      if (linkState === "reconnecting") {
+        return {
+          transcriptionLink: "reconnecting",
+          transcriptionDropped: true,
+          // Re-reported on every redial attempt while offline: keep one entry.
+          transcriptionReconnectingSources: pending.includes(source) ? pending : [...pending, source],
+        };
+      }
+      if (!pending.includes(source)) return {};
+      const rest = pending.filter((s) => s !== source);
+      return {
+        transcriptionReconnectingSources: rest,
+        transcriptionLink: rest.length === 0 ? "live" : "reconnecting",
+      };
+    }),
   setDeliveryAssessment: (a) => set({ deliveryAssessment: a }),
   setDeliveryStatus: (s) => set({ deliveryStatus: s }),
 
@@ -1283,6 +1348,8 @@ export const useStore = create<ParleyState>()(
       filledPauseCounted: {},
       deliveryNudge: null,
       systemAudioWarning: false,
+      ...CLEARED_TRANSCRIPTION_LINK,
+      transcriptionDropped: false,
     });
   },
 
@@ -1324,6 +1391,9 @@ export const useStore = create<ParleyState>()(
       filledPauseCount: 0,
       filledPauseCounted: {},
       deliveryNudge: null,
+      // A cancelled meeting saves nothing, so nothing downstream reads these.
+      ...CLEARED_TRANSCRIPTION_LINK,
+      transcriptionDropped: false,
     });
   },
 
@@ -1351,6 +1421,10 @@ export const useStore = create<ParleyState>()(
       meetingPausedAt: null,
       prosody: null,
       deliveryNudge: null,
+      // The backend stops redialling with the meeting, so a banner left up
+      // here would never clear. `transcriptionDropped` stays: the save that
+      // runs after stop reads it.
+      ...CLEARED_TRANSCRIPTION_LINK,
     });
   },
 

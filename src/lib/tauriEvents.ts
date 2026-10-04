@@ -112,11 +112,17 @@ const MEETING_ERROR_KEY_BY_CODE: Partial<Record<string, TranslationKey>> = {
 };
 
 /**
- * Subscribe to backend transcription-failure events. A meeting that loses its
- * STT session would otherwise sit in "recording" with no transcript and no
- * signal — especially in hosted mode, where 402 (out of credits) and 401
- * (expired session) are routine. Stop the meeting and surface an actionable
- * toast. No-op outside Tauri.
+ * Subscribe to backend transcription-FAILURE events — the ones a redial can't
+ * fix. Hosted mode makes 402 (out of credits) and 401 (expired session)
+ * routine; a rejected BYOK key and a capture that never started are just as
+ * final. A meeting stuck in any of them would otherwise sit in "recording"
+ * with no transcript and no signal, so stop it and surface an actionable toast.
+ *
+ * A dropped connection is NOT one of them any more (#570): the backend keeps
+ * the mic recording and redials, reporting progress on `meeting://transcription`
+ * (see {@link listenForTranscriptionLink}). "connect" stays mapped for a
+ * backend that still sends it, but a network blip mid-meeting no longer lands
+ * here. No-op outside Tauri.
  */
 export async function listenForMeetingError(): Promise<UnlistenFn> {
   if (!("__TAURI_INTERNALS__" in globalThis)) {
@@ -131,6 +137,51 @@ export async function listenForMeetingError(): Promise<UnlistenFn> {
     );
     const key: TranslationKey = MEETING_ERROR_KEY_BY_CODE[code] ?? "meeting.error.connect";
     toast.error(translate(useStore.getState().settings.language, key));
+  });
+}
+
+/** Shape of the `meeting://transcription` payload: one STT leg's link state. */
+type TranscriptionLinkPayload =
+  /** A leg died or a handshake failed and a redial is scheduled. Fires once per
+   *  attempt while offline; `attempt` is 1-based and consecutive. */
+  | { source: string; state: "reconnecting"; attempt: number }
+  /** A leg's handshake completed — including the meeting's very first one
+   *  (leg 0), which the store ignores because nothing was reconnecting. */
+  | { source: string; state: "live"; leg: number };
+
+/**
+ * Subscribe to the live transcript's link health (#570). Losing the network
+ * mid-meeting used to end the whole recording; now the backend keeps the mic
+ * recording, buffers what it can across the gap and redials with backoff —
+ * the way iOS and Android already behave. This mirrors that into the store,
+ * which drives the live screen's "reconnecting…" banner and makes the save
+ * keep a recording whose transcript was cut short. A meeting may run two
+ * sessions ("me" + "them" when diarization is off); the store holds the link
+ * as reconnecting until every source that dropped is back. No-op outside Tauri.
+ */
+export async function listenForTranscriptionLink(): Promise<UnlistenFn> {
+  if (!("__TAURI_INTERNALS__" in globalThis)) {
+    return () => {};
+  }
+  return listen<TranscriptionLinkPayload>("meeting://transcription", (event) => {
+    const p = event.payload;
+    const store = useStore.getState();
+    if (p.state === "reconnecting") {
+      log.info("meeting: transcription reconnecting", { source: p.source, attempt: p.attempt });
+      store.reportTranscriptionLink(p.source, "reconnecting");
+      return;
+    }
+    if (p.state !== "live") return;
+    // Log only the transition back, not every leg's first handshake.
+    const wasReconnecting = store.transcriptionReconnectingSources.includes(p.source);
+    store.reportTranscriptionLink(p.source, "live");
+    if (wasReconnecting) {
+      log.info("meeting: transcription live again", {
+        source: p.source,
+        leg: p.leg,
+        stillReconnecting: useStore.getState().transcriptionReconnectingSources,
+      });
+    }
   });
 }
 

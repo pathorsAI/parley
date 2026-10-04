@@ -189,6 +189,10 @@ pub async fn start_voice_typing(
         diarization: false,
         relay_endpoint,
         vocabulary: vocabulary.unwrap_or_default(),
+        // Dictation is one session, never a chain of reconnected legs.
+        leg: 0,
+        time_offset_ms: 0,
+        level_events: true,
     };
     // Per-session cutoff: `stop_voice_typing` flips it to end the stream the
     // moment the key is released, before the mic thread even notices the gate.
@@ -207,6 +211,9 @@ pub async fn start_voice_typing(
         // meeting (whose mic it taps) is paused.
         None,
         Some(session),
+        // Single-shot: a dropped connection ends the dictation with an error
+        // the overlay shows, rather than redialling under someone waiting.
+        false,
     );
     state.adopt(session, task, cutoff);
     // The Windows tray's voice-typing item now reads "Stop" (no-op elsewhere).

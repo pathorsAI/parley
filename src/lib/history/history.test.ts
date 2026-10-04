@@ -11,6 +11,7 @@ import {
   buildSummary,
   mergeAnalysisSnapshot,
   mergeStageOutputs,
+  shouldKeepLiveRecording,
   type AnalysisSnapshot,
 } from "./history";
 import { speakerKey } from "../store";
@@ -246,5 +247,29 @@ describe("applyCorrectedSpeakers (folding the background speaker correction in)"
     expect(applyCorrectedSpeakers(extra, before)).toBe(extra);
     const moved = applyCorrectedSpeakers(extra, [seg({ id: "mix-0", source: "mix", speaker: 3 })]);
     expect(moved.map((s) => s.speaker)).toEqual([3, 1, 2, 1]);
+  });
+});
+
+describe("shouldKeepLiveRecording (the live save's keep/discard gate)", () => {
+  const spoken = [seg({ id: "a", text: "hello" })];
+
+  it("discards the accidental Start/Stop: nothing spoken, link never dropped", () => {
+    expect(shouldKeepLiveRecording({ segments: [], transcriptionDropped: false })).toBe(false);
+    // Interim-only or blank lines are not spoken content either.
+    expect(
+      shouldKeepLiveRecording({
+        segments: [seg({ id: "i", text: "hel", isFinal: false }), seg({ id: "b", text: "  " })],
+        transcriptionDropped: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps a meeting with a spoken transcript", () => {
+    expect(shouldKeepLiveRecording({ segments: spoken, transcriptionDropped: false })).toBe(true);
+    expect(shouldKeepLiveRecording({ segments: spoken, transcriptionDropped: true })).toBe(true);
+  });
+
+  it("keeps a transcript-less recording when the link dropped (#570) — it may be the only copy", () => {
+    expect(shouldKeepLiveRecording({ segments: [], transcriptionDropped: true })).toBe(true);
   });
 });

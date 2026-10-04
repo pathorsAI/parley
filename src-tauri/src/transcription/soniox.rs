@@ -9,8 +9,9 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::common::{
-    clean_vocabulary, connect_with_headers, drive_session, ensure_crypto_provider, LevelMeter,
-    SegmentBuilder, TranscribeConfig, LEVEL_EVENT, TRANSCRIPT_EVENT,
+    clean_vocabulary, connect_with_headers, drive_session, ensure_crypto_provider, note_connected,
+    with_connect_timeout, LevelMeter, SegmentBuilder, Timeline, TranscribeConfig, LEVEL_EVENT,
+    TRANSCRIPT_EVENT,
 };
 use super::ws::{self, Next, OnClose, Pump, Ws, WsRead, WsWrite};
 use crate::audio::resample::pcm_to_le_bytes;
@@ -93,13 +94,16 @@ struct SonioxResponse {
 /// Open the session's socket. Hosted "parley" relay (config.relay_endpoint set):
 /// connect to the cloud WSS with a Bearer token instead of the vendor with an
 /// api_key. Otherwise BYOK: straight to Soniox. Both yield the same Soniox wire
-/// protocol.
+/// protocol. Either dial is bounded by `common::CONNECT_TIMEOUT`.
 async fn open_socket(config: &TranscribeConfig) -> Result<Ws> {
     let Some(relay_url) = &config.relay_endpoint else {
         ensure_crypto_provider();
-        let (ws, _) = tokio_tungstenite::connect_async(SONIOX_WS_URL)
-            .await
-            .map_err(|e| anyhow!("connect failed: {e}"))?;
+        let (ws, _) = with_connect_timeout(async {
+            tokio_tungstenite::connect_async(SONIOX_WS_URL)
+                .await
+                .map_err(|e| anyhow!("connect failed: {e}"))
+        })
+        .await?;
         return Ok(ws);
     };
     connect_with_headers(
@@ -212,8 +216,13 @@ fn apply_tokens(builder: &mut SegmentBuilder, tokens: &[SonioxToken]) -> bool {
 /// an in-band error frame (e.g. a rejected api key) so the caller's error
 /// surface fires — the session is dead from that point, and returning Ok would
 /// leave the UI listening to nothing.
-async fn read_transcripts(app: AppHandle, source: &'static str, read: WsRead) -> Result<()> {
-    let mut builder = SegmentBuilder::new(app, source, TRANSCRIPT_EVENT);
+async fn read_transcripts(
+    app: AppHandle,
+    source: &'static str,
+    timeline: Timeline,
+    read: WsRead,
+) -> Result<()> {
+    let mut builder = SegmentBuilder::new(app, source, TRANSCRIPT_EVENT, timeline);
     ws::read_frames("soniox", source, read, OnClose::Stop, |payload| {
         let resp: SonioxResponse = match serde_json::from_str(payload) {
             Ok(r) => r,
@@ -257,19 +266,21 @@ pub async fn run_session(
         .send(Message::Text(serde_json::to_string(&wire_config(&config))?))
         .await?;
     eprintln!(
-        "[soniox:{source}] connected, model={}, diarization={}, vocabulary={}",
+        "[soniox:{source}] connected, model={}, diarization={}, vocabulary={}, leg={}",
         config.model,
         config.diarization,
-        config.vocabulary.len()
+        config.vocabulary.len(),
+        config.leg
     );
+    note_connected(&app, source, config.leg);
 
-    let meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT);
+    let meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT).enabled(config.level_events);
     let is_relay = config.relay_endpoint.is_some();
 
     drive_session(
         "soniox",
         forward_audio(write, meter, pcm_rx, source, is_relay),
-        read_transcripts(app, source, read),
+        read_transcripts(app, source, config.timeline(), read),
     )
     .await
 }

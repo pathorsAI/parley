@@ -22,6 +22,7 @@ import {
   isTauri,
   listenForMeetingError,
   listenForMeetingWarning,
+  listenForTranscriptionLink,
   listenForProsody,
   listenForTranscript,
 } from "./lib/tauriEvents";
@@ -191,6 +192,7 @@ const App = () => {
     track(listenForProsody());
     track(listenForMeetingError());
     track(listenForMeetingWarning());
+    track(listenForTranscriptionLink());
     track(listenForSettings());
     track(listenForSttUsage());
     track(listenForCacheClear());
