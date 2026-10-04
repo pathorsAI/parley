@@ -36,3 +36,15 @@ Use `[fix]`, `[feature]`, `[refactor]`, `[chore]`, or `[docs]`. Explain *why* in
 ## Before opening a PR
 
 `bunx tsc --noEmit` and `bunx vitest run` must both pass. Add an i18n key to both dictionaries whenever you add user-facing text.
+
+## Every release has release notes
+
+A release with an empty body is not done. Whoever cuts the tag writes the notes, in the same change that bumps the version:
+
+| Release | Tag | Notes go in |
+|---|---|---|
+| Desktop | `v*.*.*` | `.github/release-notes/v<version>.md` — `bun run release … --message` / `--notes-file` writes it |
+| Android | `android-v*` | `.github/release-notes/android-v<version>.md` for GitHub, **and** `android/play/whatsnew/` for Play |
+| iOS | `ios-v*` | `## What's New — <version>` in `ios/AppStore/metadata/en-US.md` and `zh-Hant.md` (the store submission refuses to run without it); no GitHub release is made |
+
+Say what a user notices first, then what changed underneath. A list of PR titles is not release notes, and neither is "Release v1.2.3". Both release workflows fail before building when the notes are missing or blank, so an empty release now costs a failed run rather than a silent gap on the Releases page.
