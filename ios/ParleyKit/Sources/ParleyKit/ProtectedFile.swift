@@ -1,23 +1,20 @@
 import Foundation
 
-/// Reading and writing the small JSON files that hold things a person would not
-/// want read off a locked phone: the keyboard's clipboard history and the
-/// 常用資訊 (snippets) the user saved.
+/// Reading and writing a small JSON file that holds things a person would not
+/// want read off a locked phone: the 常用資訊 (snippets) the user saved.
 ///
-/// Both live in the App Group container because both processes need them —
-/// the app edits the snippets and captures the clipboard when it comes to the
-/// front, the keyboard shows and inserts them — and both are written with
-/// `FileProtectionType.complete`: the file's key is discarded a few seconds
-/// after the phone locks, so nothing (a backup tool, a forensic image, another
-/// process in the group) can read it until the user unlocks again. That is
-/// stricter than `DictationHistoryStore`'s "until first unlock", on purpose:
-/// that history has to be writable from a session that ends with the phone
-/// locked, while nothing here is ever written without the user in front of an
-/// unlocked phone — a keyboard is never on screen over the lock screen, and the
-/// app captures only on becoming active.
+/// It lives in the App Group container because both processes need it — the
+/// app edits the snippets, the keyboard shows and inserts them — and it is
+/// written with `FileProtectionType.complete`: the file's key is discarded a
+/// few seconds after the phone locks, so nothing (a backup tool, a forensic
+/// image, another process in the group) can read it until the user unlocks
+/// again. That is stricter than `DictationHistoryStore`'s "until first unlock",
+/// on purpose: that history has to be writable from a session that ends with
+/// the phone locked, while snippets are only ever edited by the user in front
+/// of an unlocked phone.
 ///
 /// Excluded from iCloud backup for the same promise the privacy label makes
-/// about the voice-typing history: these are on this phone and nowhere else.
+/// about the voice-typing history: it is on this phone and nowhere else.
 ///
 /// The Keychain was the other candidate for the snippets and was ruled out:
 /// sharing an item between the app and the keyboard needs a keychain access

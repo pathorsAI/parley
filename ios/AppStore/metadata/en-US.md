@@ -87,7 +87,7 @@ Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
 The Parley keyboard now saves you a lot of trips out to other apps.
 
-Whatever you just copied appears above the keys; tap it to paste. The clipboard button on the right keeps your saved info — addresses, phone numbers, email, your ID number — so each one is a tap away, and your ID number shows only its first and last two characters. Turn on Auto-collect clipboard in Settings and the same panel also brings back text you copied earlier. All of this stays on your phone.
+Your saved info is one tap away. The card button on the right of the keys keeps your name, phone numbers, addresses, email and ID number, and email, phone and address fields suggest the matching one right above the keys. Your ID number shows only its first and last two characters. All of this stays on your phone.
 
 Bopomofo remembers what you pick: choose the same word twice after the same words and it comes first next time, and touching and holding a candidate lets you say Don't suggest this. When you type several syllables at once it now weighs the whole phrase before choosing, and after you pick, the bar suggests what usually comes next. What it learns stays on your phone and can be reset in Settings.
 

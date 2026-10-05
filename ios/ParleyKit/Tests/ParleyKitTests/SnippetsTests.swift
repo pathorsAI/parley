@@ -3,9 +3,10 @@ import XCTest
 
 @testable import ParleyKit
 
-/// 常用資訊: masking, the fields each kind is suggested in, recognising copied
-/// text worth saving, the light validation, the file, and the revert chip's
-/// test of whether the cursor is still where the dictation left it.
+/// 常用資訊: masking, the fields each kind is suggested in, the shapes and the
+/// light validation the editor hints with, the file, the sweep of 1.30's
+/// clipboard leftovers, and the revert chip's test of whether the cursor is
+/// still where the dictation left it.
 final class SnippetsTests: XCTestCase {
     private var directory: URL!
 
@@ -74,25 +75,17 @@ final class SnippetsTests: XCTestCase {
         }
     }
 
-    // MARK: detecting copied text
+    // MARK: shapes
 
-    func testDetectsEmailPhoneAndAddress() {
-        XCTAssertEqual(SnippetDetector.field(for: "jack@pathors.com"), .email)
-        XCTAssertEqual(SnippetDetector.field(for: "0912-345-678"), .phone)
-        XCTAssertEqual(SnippetDetector.field(for: "+886 912 345 678"), .phone)
-        XCTAssertEqual(SnippetDetector.field(for: "(02) 2345-6789 轉 123"), .phone)
-        XCTAssertEqual(SnippetDetector.field(for: "台北市信義區市府路45號"), .address)
-        XCTAssertEqual(SnippetDetector.field(for: "1 Infinite Loop, Cupertino"), .address)
-        XCTAssertEqual(SnippetDetector.field(for: "221B Baker Street, London"), .address)
-    }
-
-    func testDoesNotDetectOrdinaryText() {
-        XCTAssertNil(SnippetDetector.field(for: "see you at 3"))
-        XCTAssertNil(SnippetDetector.field(for: "1234"))
-        XCTAssertNil(SnippetDetector.field(for: "jack@pathors"))
-        XCTAssertNil(SnippetDetector.field(for: "明天見"))
-        XCTAssertNil(SnippetDetector.field(for: "3 apples and 2 pears"))
-        XCTAssertNil(SnippetDetector.field(for: ""))
+    func testEmailAndPhoneShapes() {
+        XCTAssertTrue(SnippetDetector.isEmail("jack@pathors.com"))
+        XCTAssertFalse(SnippetDetector.isEmail("jack@pathors"))
+        XCTAssertFalse(SnippetDetector.isEmail("jack @pathors.com"))
+        XCTAssertTrue(SnippetDetector.isPhone("0912-345-678"))
+        XCTAssertTrue(SnippetDetector.isPhone("+886 912 345 678"))
+        XCTAssertTrue(SnippetDetector.isPhone("(02) 2345-6789 轉 123"))
+        XCTAssertFalse(SnippetDetector.isPhone("1234"))
+        XCTAssertFalse(SnippetDetector.isPhone("see you at 3"))
     }
 
     // MARK: validation
@@ -124,19 +117,67 @@ final class SnippetsTests: XCTestCase {
 
     // MARK: the store
 
-    func testStoreKeepsOrderAndDeduplicatesAdds() {
+    func testStoreKeepsTheUsersOrder() {
         let store = SnippetStore(directory: directory)
         XCTAssertTrue(store.load().isEmpty)
         let a = Snippet(kind: .mobile, label: "手機", value: "0912345678")
         let b = Snippet(kind: .email, label: "Email", value: "jack@pathors.com")
         store.save([b, a])
         XCTAssertEqual(store.load().map(\.id), [b.id, a.id])
+        store.save([a, b])
+        XCTAssertEqual(store.load().map(\.id), [a.id, b.id])
+    }
 
-        // The same kind with the same value, written differently, is not added twice.
-        let again = store.add(Snippet(kind: .mobile, label: "手機", value: "0912 345 678"))
-        XCTAssertEqual(again.count, 2)
-        // A different kind with the same value is a different snippet.
-        XCTAssertEqual(store.add(Snippet(kind: .phone, label: "市話", value: "0912345678")).count, 3)
+    // MARK: 1.30's clipboard leftovers
+
+    func testTheRetiredClipboardFileAndKeysAreRemoved() throws {
+        let suite = "SnippetsTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let history = directory.appendingPathComponent(RetiredClipboard.historyFileName)
+        try Data(#"[{"text":"copied elsewhere"}]"#.utf8).write(to: history)
+        for key in RetiredClipboard.retiredKeys { defaults.set(true, forKey: key) }
+        defaults.set(Data([1, 2, 3]), forKey: "clipboard.pasteOffer")
+        defaults.set(["english"], forKey: TypingKeyboards.defaultsKey)
+        let snippets = SnippetStore(directory: directory)
+        snippets.save([Snippet(kind: .name, label: "姓名", value: "王小明")])
+
+        RetiredClipboard.remove(in: directory, defaults: defaults)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: history.path))
+        for key in RetiredClipboard.retiredKeys {
+            XCTAssertNil(defaults.object(forKey: key), key)
+        }
+        // Only what 1.30's clipboard features left: other settings and the
+        // user's saved info are untouched.
+        XCTAssertEqual(defaults.stringArray(forKey: TypingKeyboards.defaultsKey), ["english"])
+        XCTAssertEqual(snippets.load().map(\.value), ["王小明"])
+
+        // Idempotent: a second run, with nothing left, is harmless.
+        RetiredClipboard.remove(in: directory, defaults: defaults)
+        XCTAssertEqual(snippets.load().count, 1)
+    }
+
+    func testTheRetiredKeysAreTheOnes130Wrote() {
+        XCTAssertEqual(
+            Set(RetiredClipboard.retiredKeys),
+            [
+                "clipboard.autoCapture", "clipboard.retention", "clipboard.previewInStrip",
+                "clipboard.pasteOffer", "clipboard.lastCapturedChangeCount",
+            ])
+        XCTAssertEqual(RetiredClipboard.historyFileName, "clipboard-history.json")
+    }
+
+    // MARK: settings links
+
+    func testSettingsLinks() {
+        XCTAssertEqual(SettingsLink.snippets.url.absoluteString, "parley://settings/snippets")
+        XCTAssertEqual(SettingsLink(url: SettingsLink.snippets.url), .snippets)
+        // 1.30's clipboard section is gone; an old keyboard's link opens the app.
+        XCTAssertNil(SettingsLink(url: URL(string: "parley://settings/clipboard")!))
+        XCTAssertNil(SettingsLink(url: URL(string: "parley://dictate?session=x")!))
+        XCTAssertNil(SettingsLink(url: URL(string: "https://settings/snippets")!))
     }
 
     func testAnUnknownKindReadsAsCustom() throws {

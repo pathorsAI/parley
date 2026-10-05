@@ -1559,10 +1559,10 @@ would contradict it two panes later.
 The strip defaults to the first typing pane when there is no Full Access,
 because that is the pane that still works in that state.
 
-With Full Access the strip also carries a **📋 button** at its trailing end,
-after the tabs, and the wordmark's place doubles as a **transient chip slot** —
-「↩︎ 換回原文」, 「📋 貼上」, or the field's 常用資訊. Both are described in
-[The strip slot and the clipboard](#the-strip-slot-and-the-clipboard) below.
+With Full Access the strip also carries a **saved-info button** at its
+trailing end, after the tabs, and the wordmark's place doubles as a **transient
+chip slot** — 「↩︎ 換回原文」 or the field's 常用資訊. Both are described in
+[The strip slot and saved info](#the-strip-slot-and-saved-info) below.
 
 While 注音 is being typed the strip gives its whole row over to the candidates
 for the oldest pending syllable; see below. The composition itself is marked
@@ -2638,21 +2638,19 @@ supply, and it is UIKit's own globe behaviour — a tap advances to the next
 keyboard, a hold presents the system keyboard picker, from which 注音 is one
 more tap.
 
-## The strip slot and the clipboard
+## The strip slot and saved info
 
-Three things a phone keyboard is expected to do that have nothing to do with
-voice — undo an autocorrect, paste what was just copied, and fill in a form —
-share one place on the strip and one panel over the keys. The keyboard's half is
-`KeyboardClipboard` (state and rules) and `ClipboardPanel` (the view); the
-stores and every rule that can be tested without a phone are in ParleyKit
-(`ClipboardHistory.swift`, `ClipboardSettings.swift`, `Snippets.swift`); the
-app's half is Settings › 剪貼簿, Settings › 常用資訊 (`SavedInfoView`) and
-`AppClipboard`.
+Two things a phone keyboard is expected to do that have nothing to do with
+voice — undo a rewrite it did not ask for, and fill in a form — share one place
+on the strip and one panel over the keys. The keyboard's half is
+`KeyboardStripSlot` (state and rules) and `SavedInfoPanel` (the view); the
+store and every rule that can be tested without a phone are in ParleyKit
+(`Snippets.swift`); the app's half is Settings › 常用資訊 (`SavedInfoView`).
 
-**None of it exists without Full Access.** There is no App Group to keep a
-history or a snippet in, and the pasteboard is not the keyboard's to read. The
-📋 button and every chip are hidden, and nothing else about the keyboard
-changes — App Review 4.4.1 judges the keyboard in exactly that state.
+**None of it exists without Full Access.** There is no App Group to read a
+snippet from. The saved-info button and every chip are hidden, and nothing else
+about the keyboard changes — App Review 4.4.1 judges the keyboard in exactly
+that state.
 
 ### The slot
 
@@ -2662,18 +2660,17 @@ The wordmark's place holds at most one kind of chip, chosen in this order:
    polished and the polish changed it, and the cursor is still right after it.
    A tap deletes the inserted text (`deleteBackward()` once per grapheme, the
    unit measured for the suggestion bar) and inserts the raw words.
-2. **「📋 貼上」** — something new was copied in another app. A tap pastes it.
-3. **Field chips** — the field's `textContentType` (or, failing that, its
+2. **Field chips** — the field's `textContentType` (or, failing that, its
    `keyboardType`) asks for an email, a phone number, an address or a name, and
    the user saved one in 常用資訊. Suggested only; nothing is inserted without
    a tap.
 
 The order is how perishable each is: the revert stops being possible the moment
-the user types, the paste offer lasts three minutes, and the field's kind lasts
-as long as the field. "✓ Copied" still takes the slot for its 1.2 s — it
-confirms a tap the user just made — and the first-run copy hint gives way to any
-chip. A chip takes the wordmark's place *and* the run after it: the tabs, the mic
-chip and 📋 keep their widths, and the chip's text truncates into what is left.
+the user types, and the field's kind lasts as long as the field. "✓ Copied"
+still takes the slot for its 1.2 s — it confirms a tap the user just made — and
+the first-run copy hint gives way to any chip. A chip takes the wordmark's place
+*and* the run after it: the tabs, the mic chip and the saved-info button keep
+their widths, and the chip's text truncates into what is left.
 
 #### The revert needs the raw words
 
@@ -2690,73 +2687,21 @@ clipped context rather than guessing), a new session, or a pane switch. After a
 revert the lexicon watch is moved to the raw words; leaving the polished text as
 its picture would teach the dictionary every rewrite the polish made.
 
-### Pasteboard rules: nothing is read without intent
+### The saved-info panel
 
-Deciding whether to offer a paste reads `changeCount`, `hasStrings`, `hasURLs`
-and `types` only — none of which iOS counts as reading the pasteboard, so none
-shows the paste banner or the "Allow Paste" prompt. The counter is compared with
-`PasteOffer`, kept in the App Group's defaults because the keyboard process is
-torn down between appearances: a generation that moved is a new copy, offered
-from when it was first noticed for three minutes, until it is pasted or the user
-types past it. The first look after install is a baseline, not an offer — what
-is on the pasteboard then may be days old. Parley's own writes (the voice pane's
-tap-to-copy, every copy in the app through `TranscriptClipboard.write`) record
-their generation as already seen, so the chip never offers Parley's own text
-back. The counter is checked when the keyboard appears and when the strip comes
-back to rest (`StripHome` appearing again after a 注音 reading or an English
-word) — never per key.
+The button — a card with a person on it, `person.text.rectangle`, read by
+VoiceOver as 「常用資訊」 — opens a panel over the key area like the candidate
+grid, the same 213pt so the keyboard never changes height. One list: icon,
+label and value; 身分證字號 and 統一編號 masked; a tap inserts the whole value
+with `insertText` — never through the system pasteboard — and closes the panel.
+The last row, and the empty state, link to Settings › 常用資訊
+(`parley://settings/snippets`), where the list is edited.
 
-The contents are read in exactly three cases:
-
-- **The user taps the paste chip.** The text is inserted with `insertText` and
-  kept in the history, whatever the auto-collect setting says.
-- **「在狀態列預覽剪貼簿內容」 is on** (off by default): the chip reads
-  `📋 貼上 <first 12 characters>` instead of `貼上網址` / `貼上文字`. Turning
-  it on is the user saying they set iOS's 「從其他 App 貼上」 to 允許, which
-  Settings tells them to do right beside it; without that iOS would ask on every
-  appearance with a new copy.
-- **「自動收錄剪貼簿」 is on** (off by default): the keyboard's appearance and
-  the app becoming active keep what is on the pasteboard, once per generation
-  (`ClipboardSettings.lastCapturedChangeCount`, shared by both processes).
-
-A pasteboard carrying a password manager's marker —
-`org.nspasteboard.ConcealedType`, `TransientType`, `AutoGeneratedType`, or
-`com.agilebits.onepassword` — is never read for a preview or for auto-collect
-and never stored. The chip can still paste it: that is what it was copied for.
-
-### The clipboard history
-
-`ClipboardHistoryStore`: text only, at most 2,000 characters an item (longer is
-skipped, not cut), the newest 50 unpinned items, kept for 1 hour, 24 hours
-(default) or 7 days; pinned items never expire and do not count against the 50.
-A repeat capture moves the existing item to the top. Excluded: concealed
-pasteboards; four-to-eight-digit numbers (one-time codes); strings that look
-like secrets (printable ASCII, no whitespace, at least 16 characters, three
-character classes — or two at 32+ — and at least 3 bits of entropy per
-character; URLs and email addresses are let through); and any copy of one of
-the user's sensitive 常用資訊. Saving a sensitive snippet in the app also removes
-copies of it already in the history.
-
-### The 📋 panel
-
-Over the key area like the candidate grid, the same 213pt so the keyboard never
-changes height, with two tabs. **剪貼簿**: 釘選, then 最近 with a relative age;
-a tap inserts with `insertText` — never through the system pasteboard — and
-closes the panel; a long press opens a small in-panel menu (釘選 / 取消釘選,
-刪除, and 存成常用資訊 when `SnippetDetector` recognises a phone number, an
-address or an email, which then asks for the kind). The menu is drawn inside the
-panel because a system context menu's platter is clipped to a keyboard
-extension's frame. With auto-collect off the tab carries a one-line hint that
-links to Settings › 剪貼簿 (`parley://settings/clipboard`). **常用**: icon,
-label and value; sensitive values masked; a tap inserts the whole value. Empty,
-it links to Settings › 常用資訊 (`parley://settings/snippets`).
-
-The panel is built when it opens and dropped when it closes; its lists are a
-`LazyVStack`, each row is handed at most 160 characters, and it holds no full
-item and no unmasked sensitive value — taps go back to `KeyboardClipboard` by
-id. Inserting from the strip or the panel harvests the lexicon watch first, so
-pasted or saved text — an ID number included — can never become a dictionary
-"correction".
+The panel is built when it opens and dropped when it closes; the list is a
+`LazyVStack`, and it holds no unmasked sensitive value — taps go back to
+`KeyboardStripSlot` by id. Inserting from the strip or the panel harvests the
+lexicon watch first, so a saved value — an ID number included — can never
+become a dictionary "correction".
 
 ### 常用資訊 (snippets)
 
@@ -2767,31 +2712,53 @@ format hint (a Taiwan ID's check digit, eight digits for 統一編號) that neve
 refuses a value. **身分證字號 and 統一編號 are sensitive**: the keyboard draws
 them masked (first two, `•` for each in between, last two — `A1••••••89`),
 VoiceOver reads only their label and "hidden", a tap inserts the full value, and
-the value never goes to the polish, the lexicon, the clipboard history, a log or
-the system pasteboard.
+the value never goes to the polish, the lexicon, a log or the system pasteboard.
 
-### Storage and privacy
-
-Both files — `clipboard-history.json` and `snippets.json` — live in the App
-Group container, written atomically with `FileProtectionType.complete` (the key
-is discarded shortly after the phone locks; nothing here is ever written with
-the phone locked — a keyboard is never on screen over the lock screen, and the
-app captures only when it becomes active) and excluded from backup. They are
-local only: nothing is uploaded, synced or logged. The Keychain was considered
-for the snippets and ruled out — sharing an item between the app and the
-keyboard needs a keychain access group, an entitlement and signing change on
+`snippets.json` lives in the App Group container, written atomically with
+`FileProtectionType.complete` (the key is discarded shortly after the phone
+locks; snippets are only ever edited by the user in front of an unlocked phone)
+and excluded from backup. Local only: nothing is uploaded, synced or logged.
+The Keychain was considered and ruled out — sharing an item between the app and
+the keyboard needs a keychain access group, an entitlement and signing change on
 both targets, for what a protected file in the group they already share gives
-just as well. The settings (`ClipboardSettings`) live in the App Group's
-`UserDefaults`, like the typing-keyboard toggles.
+just as well.
+
+### The clipboard features 1.30 had, and why they went
+
+1.30 (TestFlight build 47) also had a **paste chip** — 「📋 貼上」 when
+something new had been copied in another app — and a **clipboard history** in
+the same panel, with optional auto-collect and a preview of the copied text in
+the strip. Both were removed before release, and **the keyboard no longer reads
+the pasteboard at all.** The reasons are iOS's, not ours to engineer around:
+
+- **No background access.** A keyboard runs only while it is on screen, and
+  iOS gives it no way to hear about a copy made while it is not. A history can
+  only capture what is on the pasteboard at the moments the keyboard appears —
+  so it misses most of what the user copies, and a history with holes the user
+  cannot predict is worse than none.
+- **Every read prompts.** Reading what another app put on the pasteboard shows
+  the paste banner, or the "Allow Paste?" prompt, unless the user goes to
+  Settings › Parley › Paste from Other Apps › Allow. Asking people to change a
+  privacy setting before a convenience feature works — and explaining why the
+  keyboard asks otherwise — was not a trade worth making. The counter-only
+  check (`changeCount`, `hasStrings`) the paste chip used avoided the prompt
+  for *offering* a paste, but the paste itself, the preview and every capture
+  were reads.
+
+The one pasteboard call left in the keyboard is the voice pane's tap-to-copy,
+which writes. `RetiredClipboard` sweeps what build 47 left behind —
+`clipboard-history.json` in the App Group and its five `clipboard.*` defaults
+keys — on every app launch and every keyboard load with Full Access;
+idempotent, and covered by `SnippetsTests`. A `parley://settings/clipboard` link
+from an old keyboard no longer parses and simply opens the app.
 
 ### Performance
 
-Nothing here runs on the keystroke path except `KeyboardClipboard.keyPressed`,
-which is a few `nil` checks unless a chip is up (then it takes the chip down
-once). The pasteboard counter is read on appearance and when the strip returns
-to rest; the snippets are read once per appearance and only when a field asks or
-the panel opens; the history only when the panel opens. The strip and the panel
-are value-fed and `Equatable`, like the panes.
+Nothing here runs on the keystroke path except `KeyboardStripSlot.keyPressed`,
+which is one `nil` check unless the revert chip is up (then it takes the chip
+down once). The snippets are read once per appearance, and only when a field
+asks or the panel opens. The strip and the panel are value-fed and `Equatable`,
+like the panes.
 
 ## App Review notes
 
@@ -2817,9 +2784,9 @@ are value-fed and `Equatable`, like the panes.
   the feature actually runs on is public: audio session, openURL, App Group,
   Darwin notifications, insertText, App Intents. Note this path is now live for
   the first time; before the `HostBundleID` fix it was unreachable code.
-- **The pasteboard** is read only on a tap, or where the user opted in under
-  Settings › 剪貼簿 (both switches off by default) — see "The strip slot and
-  the clipboard". Without Full Access the keyboard never touches it.
+- **The pasteboard** is never read. The keyboard's only pasteboard call is the
+  voice pane's tap-to-copy, which writes, and only with Full Access — see "The
+  strip slot and saved info".
 - **The microphone window** is the one part of this keyboard that holds a
   system resource while the user is elsewhere. Its defence is consent that is
   visible and reversible: see that section.
