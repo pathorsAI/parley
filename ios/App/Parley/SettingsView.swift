@@ -39,14 +39,7 @@ struct SettingsView: View {
     @AppStorage(DictationHistoryStore.enabledKey) private var keepDictationHistory = true
     @ObservedObject private var dictationHistory = DictationHistory.shared
     @State private var showClearHistoryConfirmation = false
-    /// Settings › 剪貼簿. Read once here and written straight through to the
-    /// App Group's defaults, where the keyboard reads them on every appearance
-    /// — the same arrangement as `enabled` above. See `ClipboardSettings`.
-    @State private var clipboardAutoCapture = ClipboardSettings.autoCapture()
-    @State private var clipboardRetention = ClipboardSettings.retention()
-    @State private var clipboardPreview = ClipboardSettings.previewInStrip()
-    @State private var showClearClipboardConfirmation = false
-    /// Pushes 常用資訊 when the keyboard's 📋 panel links to it.
+    /// Pushes 常用資訊 when the keyboard's saved-info panel links to it.
     @State private var showSavedInfo = false
     @State private var showResetZhuyinConfirmation = false
     @State private var personalFolders: [CloudFolder] = []
@@ -92,9 +85,9 @@ struct SettingsView: View {
                         dictationHistorySection
                     }
                     keyboardsSection
-                    // Outside the account gate, like the keyboards: neither the
-                    // clipboard nor 常用資訊 needs an account.
-                    clipboardSection.id(Self.clipboardSectionID)
+                    // Outside the account gate, like the keyboards: 常用資訊
+                    // needs no account.
+                    savedInfoSection
                     appearanceSection
                     languageSection
                     // Outside every gate: a report can be sent signed out —
@@ -132,16 +125,12 @@ struct SettingsView: View {
                 // Settings is a page of short rows; the default height packs
                 // them tighter than anything else in the app.
                 .environment(\.defaultMinListRowHeight, 48)
-                // The keyboard's 📋 panel linking here (`SettingsLinkInbox`).
-                // Taken, so it is acted on once; .center for the same reason
-                // as the screenshot route below.
+                // The keyboard's saved-info panel linking here
+                // (`SettingsLinkInbox`). Taken, so it is acted on once.
                 .onReceive(SettingsLinkInbox.shared.$request) { request in
                     guard request != nil, let link = SettingsLinkInbox.shared.take() else { return }
                     switch link {
-                    case .clipboard:
-                        withAnimation { proxy.scrollTo(Self.clipboardSectionID, anchor: .center) }
-                    case .snippets:
-                        showSavedInfo = true
+                    case .snippets: showSavedInfo = true
                     }
                 }
                 #if DEBUG
@@ -182,16 +171,6 @@ struct SettingsView: View {
                 Text("The recordings themselves stay in the cloud. You can download the audio again whenever you need it.")
             }
             .confirmationDialog(
-                "Clear clipboard history?",
-                isPresented: $showClearClipboardConfirmation, titleVisibility: .visible
-            ) {
-                Button("Clear all", role: .destructive) {
-                    ClipboardHistoryStore.shared()?.clearAll()
-                }
-            } message: {
-                Text("Everything the keyboard kept from your clipboard is removed from this phone, pinned items included. This can't be undone.")
-            }
-            .confirmationDialog(
                 "Clear voice typing history?",
                 isPresented: $showClearHistoryConfirmation, titleVisibility: .visible
             ) {
@@ -215,7 +194,6 @@ struct SettingsView: View {
     }
 
     private static let keyboardSectionID = "voice-keyboard"
-    private static let clipboardSectionID = "clipboard"
 
     private func sectionHeader(_ title: LocalizedStringKey) -> some View {
         SettingsSection.header(title)
@@ -785,100 +763,20 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: clipboard and saved info
+    // MARK: saved info
 
-    /// What the keyboard's 📋 panel and strip chips may do with the clipboard,
-    /// and the way to 常用資訊.
-    ///
-    /// Both pasteboard reads that happen without a tap — collecting into the
-    /// history, and previewing in the strip — are off until switched on here,
-    /// and the how-to under them is the part that makes them bearable: iOS
-    /// asks "Allow Paste?" every time unless 「從其他 App 貼上」 is 允許.
-    private var clipboardSection: some View {
+    /// The way to 常用資訊 — the name, phone numbers, addresses and IDs the
+    /// keyboard types with one tap. Its own section, outside the account gate,
+    /// because it needs neither an account nor the network.
+    private var savedInfoSection: some View {
         Section {
             NavigationLink {
                 SavedInfoView()
             } label: {
                 Label("Saved info", systemImage: "person.text.rectangle")
             }
-            VStack(alignment: .leading, spacing: 4) {
-                Toggle("Auto-collect clipboard", isOn: clipboardAutoCaptureBinding)
-                Text("When the keyboard appears or Parley opens, keep what you copied so the keyboard's 📋 panel can type it again. Passwords, one-time codes and your ID numbers are never kept. Text you paste from the keyboard's top row is kept either way.")
-                    .font(.parley.caption)
-                    .foregroundStyle(Color(.secondaryLabel))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.vertical, 2)
-            Picker("Keep for", selection: clipboardRetentionBinding) {
-                ForEach(ClipboardRetention.allCases) { retention in
-                    Text(Self.retentionLabel(retention)).tag(retention)
-                }
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                Toggle("Preview clipboard in the top row", isOn: clipboardPreviewBinding)
-                Text("The keyboard's paste button shows the first few characters of what you copied instead of just \"Paste text\".")
-                    .font(.parley.caption)
-                    .foregroundStyle(Color(.secondaryLabel))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.vertical, 2)
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Stop iOS asking every time")
-                    .font(.parley.subheadlineEmphasized)
-                Text("Settings › Parley › Paste from Other Apps › Allow. Without it, iOS asks for permission each time Parley reads what you copied.")
-                    .font(.parley.caption)
-                    .foregroundStyle(Color(.secondaryLabel))
-                    .fixedSize(horizontal: false, vertical: true)
-                Button("Open in Settings") {
-                    if let url = URL(string: UIApplication.openSettingsURLString) {
-                        UIApplication.shared.open(url)
-                    }
-                }
-                .font(.parley.subheadlineEmphasized)
-            }
-            .padding(.vertical, 4)
-            Button("Clear clipboard history", role: .destructive) {
-                showClearClipboardConfirmation = true
-            }
-        } header: {
-            sectionHeader("Clipboard")
         } footer: {
-            sectionFooter("The clipboard history stays on this phone. It is never uploaded, and pinned items are kept until you remove them.")
-        }
-    }
-
-    private var clipboardAutoCaptureBinding: Binding<Bool> {
-        Binding(
-            get: { clipboardAutoCapture },
-            set: { on in
-                ClipboardSettings.setAutoCapture(on)
-                clipboardAutoCapture = on
-            })
-    }
-
-    private var clipboardRetentionBinding: Binding<ClipboardRetention> {
-        Binding(
-            get: { clipboardRetention },
-            set: { value in
-                ClipboardSettings.setRetention(value)
-                clipboardRetention = value
-            })
-    }
-
-    private var clipboardPreviewBinding: Binding<Bool> {
-        Binding(
-            get: { clipboardPreview },
-            set: { on in
-                ClipboardSettings.setPreviewInStrip(on)
-                clipboardPreview = on
-            })
-    }
-
-    private static func retentionLabel(_ retention: ClipboardRetention) -> LocalizedStringKey {
-        switch retention {
-        case .oneHour: return "1 hour"
-        case .oneDay: return "24 hours"
-        case .sevenDays: return "7 days"
+            sectionFooter("Your name, phone numbers, addresses and ID numbers, one tap away on the Parley keyboard. They stay on this phone.")
         }
     }
 

@@ -35,23 +35,6 @@
         }
       }
     },
-    "Auto-collect is off. Turn it on in Parley": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Auto-collect is off. Turn it on in Parley"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "自動收錄已關閉，可到 Parley 開啟"
-          }
-        }
-      }
-    },
     "Bopomofo keyboard": {
       "extractionState": "manual",
       "localizations": {
@@ -150,40 +133,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "句號"
-          }
-        }
-      }
-    },
-    "Clipboard": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Clipboard"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "剪貼簿"
-          }
-        }
-      }
-    },
-    "Clipboard and saved info": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Clipboard and saved info"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "剪貼簿與常用資訊"
           }
         }
       }
@@ -356,6 +305,23 @@
         }
       }
     },
+    "Edit in Parley": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Edit in Parley"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "到 Parley 編輯"
+          }
+        }
+      }
+    },
     "English": {
       "extractionState": "manual",
       "localizations": {
@@ -492,23 +458,6 @@
         }
       }
     },
-    "Inserts this text. Touch and hold for more.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Inserts this text. Touch and hold for more."
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "輸入這段文字。按住可看更多選項。"
-          }
-        }
-      }
-    },
     "Mic ready": {
       "extractionState": "manual",
       "localizations": {
@@ -628,23 +577,6 @@
         }
       }
     },
-    "Nothing copied yet. Text you paste from the strip shows up here.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Nothing copied yet. Text you paste from the strip shows up here."
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "還沒有複製的內容。從上方列貼上的文字會出現在這裡。"
-          }
-        }
-      }
-    },
     "Open Parley to set up voice typing": {
       "localizations": {
         "en": {
@@ -677,91 +609,6 @@
         }
       }
     },
-    "Paste %@": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Paste %@"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "貼上 %@"
-          }
-        }
-      }
-    },
-    "Paste link": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Paste link"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "貼上網址"
-          }
-        }
-      }
-    },
-    "Paste text": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Paste text"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "貼上文字"
-          }
-        }
-      }
-    },
-    "Pin": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Pin"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "釘選"
-          }
-        }
-      }
-    },
-    "Pinned": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Pinned"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "釘選"
-          }
-        }
-      }
-    },
     "Polishing…": {
       "extractionState": "manual",
       "localizations": {
@@ -775,23 +622,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "潤飾中…"
-          }
-        }
-      }
-    },
-    "Recent": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Recent"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "最近"
           }
         }
       }
@@ -830,40 +660,6 @@
         }
       }
     },
-    "Save as": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Save as"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "存成"
-          }
-        }
-      }
-    },
-    "Save as saved info": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Save as saved info"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "存成常用資訊"
-          }
-        }
-      }
-    },
     "Saved info": {
       "extractionState": "manual",
       "localizations": {
@@ -876,7 +672,7 @@
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "常用"
+            "value": "常用資訊"
           }
         }
       }
@@ -1189,23 +985,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "三聲"
-          }
-        }
-      }
-    },
-    "Unpin": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Unpin"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "取消釘選"
           }
         }
       }

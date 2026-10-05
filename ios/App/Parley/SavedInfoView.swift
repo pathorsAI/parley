@@ -2,20 +2,19 @@ import ParleyKit
 import SwiftUI
 
 /// Settings › 常用資訊: the name, phone numbers, addresses and IDs the Parley
-/// keyboard offers on its strip and in its 📋 panel.
+/// keyboard offers on its strip and in its saved-info panel.
 ///
 /// Editing lives here rather than on the keyboard because a keyboard is the
 /// wrong place to type a form — it is the thing doing the typing. The keyboard
-/// only reads these (and adds one when the user saves a copied phone number,
-/// address or email from the panel).
+/// only reads these.
 ///
 /// Stored in the App Group (`SnippetStore`), on this phone only. 身分證字號 and
 /// 統一編號 are drawn masked on the keyboard and never copied to the clipboard,
 /// the polish, the dictionary or a log; here, on the user's own screen behind
 /// their own unlock, they are shown as typed so they can be checked.
 struct SavedInfoView: View {
-    /// Read once per appearance: the keyboard may have added one from another
-    /// process, and there is nothing to observe across that boundary.
+    /// Read once per appearance. The file is shared with the keyboard, and
+    /// reading it fresh is simpler than holding a copy that could drift.
     @State private var snippets: [Snippet] = []
     @State private var editing: Draft?
 
@@ -51,7 +50,7 @@ struct SavedInfoView: View {
                     Label("Add", systemImage: "plus")
                 }
             } footer: {
-                SettingsSection.footer("Tap one on the Parley keyboard's 📋 panel to type it. Email, phone and address fields also suggest the matching one on the keyboard's top row. Everything here stays on this phone.")
+                SettingsSection.footer("Tap the card button on the Parley keyboard's top row, then tap one to type it. Email, phone and address fields also suggest the matching one on the top row. Everything here stays on this phone.")
             }
         }
         // Pushed from Settings, so it keeps Settings' surfaces — see
@@ -99,11 +98,6 @@ struct SavedInfoView: View {
 
     private func persist() {
         store?.save(snippets)
-        // A sensitive value just saved may already sit in the clipboard
-        // history as plain text — copied before it was saved here. It goes now,
-        // and the history refuses it from here on (`ClipboardRules`).
-        ClipboardHistoryStore.shared()?.remove(
-            matching: SnippetStore.sensitiveValues(in: snippets))
     }
 
     private func save(_ snippet: Snippet, isNew: Bool) {

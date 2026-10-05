@@ -52,8 +52,8 @@ import os
 /// Kept in its own file, wired to the controller through one-line hooks: the
 /// dictation's insertion and the revert chip's raw insertion (`noteInserted`,
 /// which replaces the picture), and the keyboard leaving, the next session
-/// starting, and text arriving from the strip or the 📋 panel (`harvest`, which
-/// ends the watch — pasted text, possibly an ID number, is never a correction).
+/// starting, and a saved-info value arriving from the strip or its panel
+/// (`harvest`, which ends the watch — an ID number is never a correction).
 final class KeyboardLexiconWatch {
     /// Outcomes only. The words themselves are `.private` — redacted unless a
     /// device is attached to a debugger — because what someone typed into

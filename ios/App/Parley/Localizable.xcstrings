@@ -224,23 +224,6 @@
         }
       }
     },
-    "24 hours" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "24 hours"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "24 小時"
-          }
-        }
-      }
-    },
     "3 / 3 · Hand it to your AI" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -271,23 +254,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "5 分鐘"
-          }
-        }
-      }
-    },
-    "7 days" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "7 days"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "7 天"
           }
         }
       }
@@ -750,23 +716,6 @@
         }
       }
     },
-    "Auto-collect clipboard" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Auto-collect clipboard"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "自動收錄剪貼簿"
-          }
-        }
-      }
-    },
     "Bopomofo keyboard" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -903,40 +852,6 @@
         }
       }
     },
-    "Clear clipboard history" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Clear clipboard history"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "清除剪貼簿歷史"
-          }
-        }
-      }
-    },
-    "Clear clipboard history?" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Clear clipboard history?"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "要清除剪貼簿歷史嗎？"
-          }
-        }
-      }
-    },
     "Clear everything" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1001,23 +916,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "要清空個人詞庫嗎？"
-          }
-        }
-      }
-    },
-    "Clipboard" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Clipboard"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "剪貼簿"
           }
         }
       }
@@ -2026,23 +1924,6 @@
         }
       }
     },
-    "Everything the keyboard kept from your clipboard is removed from this phone, pinned items included. This can't be undone." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Everything the keyboard kept from your clipboard is removed from this phone, pinned items included. This can't be undone."
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "鍵盤從剪貼簿收錄的所有內容（包含釘選的項目）都會從這支手機移除，且無法復原。"
-          }
-        }
-      }
-    },
     "Everything you have dictated is removed from this phone. This can't be undone." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2566,23 +2447,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "保留音檔在手機上"
-          }
-        }
-      }
-    },
-    "Keep for" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Keep for"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "保留時間"
           }
         }
       }
@@ -3842,23 +3706,6 @@
         }
       }
     },
-    "Open in Settings" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Open in Settings"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "前往設定"
-          }
-        }
-      }
-    },
     "Open the transcript" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4566,23 +4413,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "準備中…"
-          }
-        }
-      }
-    },
-    "Preview clipboard in the top row" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Preview clipboard in the top row"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "在狀態列預覽剪貼簿內容"
           }
         }
       }
@@ -5626,23 +5456,6 @@
         }
       }
     },
-    "Settings › Parley › Paste from Other Apps › Allow. Without it, iOS asks for permission each time Parley reads what you copied." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Settings › Parley › Paste from Other Apps › Allow. Without it, iOS asks for permission each time Parley reads what you copied."
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "設定 › Parley › 從其他 App 貼上 › 允許。沒有這樣設定的話，每次 Parley 讀取你複製的內容時，iOS 都會詢問一次。"
-          }
-        }
-      }
-    },
     "Share" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6343,23 +6156,6 @@
         }
       }
     },
-    "Stop iOS asking every time" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Stop iOS asking every time"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "不讓 iOS 每次都詢問"
-          }
-        }
-      }
-    },
     "Stop recording" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6613,19 +6409,19 @@
         }
       }
     },
-    "Tap one on the Parley keyboard's 📋 panel to type it. Email, phone and address fields also suggest the matching one on the keyboard's top row. Everything here stays on this phone." : {
+    "Tap the card button on the Parley keyboard's top row, then tap one to type it. Email, phone and address fields also suggest the matching one on the top row. Everything here stays on this phone." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Tap one on the Parley keyboard's 📋 panel to type it. Email, phone and address fields also suggest the matching one on the keyboard's top row. Everything here stays on this phone."
+            "value" : "Tap the card button on the Parley keyboard's top row, then tap one to type it. Email, phone and address fields also suggest the matching one on the top row. Everything here stays on this phone."
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在 Parley 鍵盤的 📋 面板點一下就能輸入。遇到 Email、電話和地址欄位時，鍵盤上方列也會建議對應的資訊。這裡的資料只存在這支手機上。"
+            "value" : "點 Parley 鍵盤上方列的名片按鈕，再點想輸入的資訊。遇到 Email、電話和地址欄位時，上方列也會建議對應的資訊。這裡的資料只存在這支手機上。"
           }
         }
       }
@@ -6799,23 +6595,6 @@
         }
       }
     },
-    "The clipboard history stays on this phone. It is never uploaded, and pinned items are kept until you remove them." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The clipboard history stays on this phone. It is never uploaded, and pinned items are kept until you remove them."
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "剪貼簿歷史只存在這支手機上，永遠不會上傳；釘選的項目會保留到你自行移除。"
-          }
-        }
-      }
-    },
     "The connection dropped before sign-in finished. Check your network and try again." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6863,23 +6642,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "鍵盤上會以遮罩顯示（例如 A1••••••89），點一下才會輸入完整號碼。它永遠不會被複製到剪貼簿。"
-          }
-        }
-      }
-    },
-    "The keyboard's paste button shows the first few characters of what you copied instead of just \"Paste text\"." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The keyboard's paste button shows the first few characters of what you copied instead of just \"Paste text\"."
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "鍵盤的貼上按鈕會顯示你複製內容的前幾個字，而不只是「貼上文字」。"
           }
         }
       }
@@ -7836,23 +7598,6 @@
         }
       }
     },
-    "When the keyboard appears or Parley opens, keep what you copied so the keyboard's 📋 panel can type it again. Passwords, one-time codes and your ID numbers are never kept. Text you paste from the keyboard's top row is kept either way." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "When the keyboard appears or Parley opens, keep what you copied so the keyboard's 📋 panel can type it again. Passwords, one-time codes and your ID numbers are never kept. Text you paste from the keyboard's top row is kept either way."
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "鍵盤出現或打開 Parley 時，收錄你複製的內容，讓鍵盤的 📋 面板可以再次輸入。密碼、一次性驗證碼和你的證號永遠不會被收錄。從鍵盤上方列貼上的文字則一律收錄。"
-          }
-        }
-      }
-    },
     "When the network drops, the server goes quiet, or you run out of quota, the phone holds on to finished recordings until they sync." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8053,6 +7798,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "帳號尚未刪除。請確認網路後再試一次。"
+          }
+        }
+      }
+    },
+    "Your name, phone numbers, addresses and ID numbers, one tap away on the Parley keyboard. They stay on this phone." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your name, phone numbers, addresses and ID numbers, one tap away on the Parley keyboard. They stay on this phone."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "姓名、電話、地址和證號，在 Parley 鍵盤上點一下就能輸入。資料只存在這支手機上。"
           }
         }
       }

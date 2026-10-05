@@ -27,8 +27,8 @@ public enum SnippetKind: String, CaseIterable, Codable, Sendable, Identifiable {
 
     /// 身分證字號 and 統一編號. The keyboard shows them masked
     /// (`Snippet.masked`) and inserts the full value only on a tap, and the
-    /// value never goes anywhere else: not into the polish, the lexicon, the
-    /// clipboard history, a log, or the system pasteboard.
+    /// value never goes anywhere else: not into the polish, the lexicon, a log,
+    /// or the system pasteboard.
     public var isSensitive: Bool {
         self == .nationalID || self == .taxID
     }
@@ -116,9 +116,9 @@ public struct Snippet: Codable, Identifiable, Equatable, Sendable {
             + String(chars.suffix(2))
     }
 
-    /// The form two values are compared in — trimmed, without inner spaces or
-    /// hyphens, uppercased — so `a123 456 789` copied from somewhere is still
-    /// recognised as the 身分證字號 `A123456789`.
+    /// The form a value is checked in — trimmed, without inner spaces or
+    /// hyphens, uppercased — so `a123 456 789` typed with spaces still passes
+    /// the 身分證字號 format hint as `A123456789`.
     public static func normalized(_ value: String) -> String {
         String(
             value.uppercased().filter { !$0.isWhitespace && $0 != "-" })
@@ -156,21 +156,11 @@ public enum SnippetField: String, Sendable, CaseIterable {
     }
 }
 
-/// Recognising copied text the 📋 panel can offer to save as 常用資訊 — a phone
-/// number, an address, an email. Heuristic and generous in what it accepts:
-/// all it does is decide whether 「存成常用資訊」 appears in a menu, and the
-/// user still picks the kind.
+/// The shape of an email address or a phone number — what the editor's format
+/// hints (`SnippetValidation`) are judged against. Generous in what it
+/// accepts: a hint that fires on a real number is worse than one that misses a
+/// typo.
 public enum SnippetDetector {
-    public static func field(for text: String) -> SnippetField? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed.count <= 200, !trimmed.contains("\n") || isAddress(trimmed)
-        else { return nil }
-        if isEmail(trimmed) { return .email }
-        if isPhone(trimmed) { return .phone }
-        if isAddress(trimmed) { return .address }
-        return nil
-    }
-
     /// One `@`, something before it, and a dotted domain after it, with no
     /// whitespace anywhere.
     public static func isEmail(_ text: String) -> Bool {
@@ -196,26 +186,6 @@ public enum SnippetDetector {
         guard body.allSatisfy({ allowed.contains($0) }) else { return false }
         let digits = body.filter(\.isNumber).count
         return (8...15).contains(digits)
-    }
-
-    /// A Taiwanese address — a 縣/市 or 區/鄉/鎮 and a 路/街/段/巷/弄/號/樓 —
-    /// or a Western one: a house number, then a word that names a street.
-    public static func isAddress(_ text: String) -> Bool {
-        let area = ["縣", "市", "區", "鄉", "鎮"].contains { text.contains($0) }
-        let street = ["路", "街", "大道", "段", "巷", "弄", "號", "樓"].contains { text.contains($0) }
-        if area && street { return true }
-        let words = text.lowercased()
-            .split(whereSeparator: { $0.isWhitespace || $0 == "," || $0 == "." })
-            .map(String.init)
-        guard let first = words.first, first.first?.isNumber == true, words.count >= 3 else {
-            return false
-        }
-        let streetWords: Set<String> = [
-            "st", "street", "ave", "avenue", "rd", "road", "blvd", "boulevard", "ln", "lane",
-            "dr", "drive", "way", "ct", "court", "pl", "place", "hwy", "highway", "sq", "square",
-            "loop", "pkwy", "parkway", "ter", "terrace", "cir", "circle",
-        ]
-        return words.dropFirst().contains { streetWords.contains($0) }
     }
 }
 
@@ -286,9 +256,8 @@ public enum SnippetValidation {
 /// with `FileProtectionType.complete` (see `ProtectedFile`), in the order the
 /// user arranged them.
 ///
-/// Edited in the app (Settings › 常用資訊) and read by the keyboard; the
-/// keyboard also adds one when the user saves a copied phone number, address
-/// or email from the 📋 panel. Local only — never uploaded, never logged.
+/// Edited in the app (Settings › 常用資訊) and only read by the keyboard.
+/// Local only — never uploaded, never logged.
 public final class SnippetStore: @unchecked Sendable {
     public static let fileName = "snippets.json"
 
@@ -318,29 +287,6 @@ public final class SnippetStore: @unchecked Sendable {
         write(snippets)
     }
 
-    /// One more at the end, unless the same kind already holds the same value.
-    @discardableResult
-    public func add(_ snippet: Snippet) -> [Snippet] {
-        lock.lock()
-        defer { lock.unlock() }
-        var all = read()
-        let key = Snippet.normalized(snippet.value)
-        if !all.contains(where: { $0.kind == snippet.kind && Snippet.normalized($0.value) == key }) {
-            all.append(snippet)
-            write(all)
-        }
-        return all
-    }
-
-    /// The sensitive values, normalised: what the clipboard history refuses to
-    /// keep a copy of.
-    public static func sensitiveValues(in snippets: [Snippet]) -> Set<String> {
-        Set(
-            snippets.filter { $0.kind.isSensitive }
-                .map { Snippet.normalized($0.value) }
-                .filter { !$0.isEmpty })
-    }
-
     private func read() -> [Snippet] {
         guard let data = ProtectedFile.read(fileURL),
             let rows = try? ProtectedFile.decoder.decode([LossyRow<Snippet>].self, from: data)
@@ -351,6 +297,17 @@ public final class SnippetStore: @unchecked Sendable {
     private func write(_ snippets: [Snippet]) {
         guard let data = try? ProtectedFile.encoder.encode(snippets) else { return }
         ProtectedFile.write(data, to: fileURL)
+    }
+}
+
+/// Decodes an element or shrugs, so one bad row costs one row rather than the
+/// file. The snippets' own, rather than the lexicon's `Lossy`, so the two
+/// files can change independently.
+struct LossyRow<T: Decodable>: Decodable {
+    let value: T?
+
+    init(from decoder: Decoder) throws {
+        value = try? T(from: decoder)
     }
 }
 

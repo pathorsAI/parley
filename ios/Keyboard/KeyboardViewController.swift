@@ -95,10 +95,11 @@ final class KeyboardViewController: UIInputViewController {
     /// Text Replacement shortcuts, read once per process — see
     /// `KeyboardSystemLexicon`.
     private let systemLexicon = KeyboardSystemLexicon()
-    /// The strip's transient chips and the 📋 panel — see `KeyboardClipboard`.
+    /// The strip's transient chips and the saved-info panel — see
+    /// `KeyboardStripSlot`.
     /// Lazy only because it holds this controller weakly and cannot be built
     /// before `self` exists.
-    private(set) lazy var clipboard = KeyboardClipboard(bridge: bridge, controller: self)
+    private(set) lazy var stripSlot = KeyboardStripSlot(bridge: bridge, controller: self)
     private var host: UIHostingController<KeyboardRootView>?
     /// A canvas behind the SwiftUI root, shown only when the system's would
     /// disagree with the caps. See `needsOwnBackdrop`.
@@ -357,6 +358,12 @@ final class KeyboardViewController: UIInputViewController {
         }
 
         armChannelObservers()
+        // 1.30's clipboard history and paste chip left a file of copied text
+        // and a few settings in the App Group; nothing reads them any more.
+        // The app sweeps them on launch too — whichever runs first wins, and
+        // the other finds nothing. Full Access only: without it the container
+        // cannot be opened, and the next load with it will do this.
+        if hasFullAccess { RetiredClipboard.remove() }
     }
 
     /// Subscribe to the five notes the app sends, once Full Access allows it.
@@ -466,10 +473,8 @@ final class KeyboardViewController: UIInputViewController {
         // already the right size rather than growing into it.
         readMicLevel()
         // Before the drain: an appearance clears the last field's revert chip,
-        // and a dictation the drain lands now offers a fresh one. The
-        // pasteboard's counter is read here — the one look at it this
-        // keyboard takes without being asked.
-        clipboard.appeared()
+        // and a dictation the drain lands now offers a fresh one.
+        stripSlot.appeared()
         drainDownlink()
         // Warm the Taptic Engine while the keyboard is coming up, so the thump
         // lands with the first press on the record button rather than a beat
@@ -502,7 +507,7 @@ final class KeyboardViewController: UIInputViewController {
         if hasFullAccess, bridge.listening { Haptics.dictationContinuesInBackground() }
         lexicon.harvest(textDocumentProxy)
         leaveComposition()
-        clipboard.disappeared()
+        stripSlot.disappeared()
         // A pick a moment ago may still be waiting on its debounce, and this
         // may be the last chance the process gets. The write itself is off
         // the main thread.
@@ -525,8 +530,8 @@ final class KeyboardViewController: UIInputViewController {
         // the word in front of it is re-read rather than assumed.
         refreshSuggestions()
         // Whether the cursor is still after the dictation, and what the field
-        // asks for — see `KeyboardClipboard`.
-        clipboard.textChanged()
+        // asks for — see `KeyboardStripSlot`.
+        stripSlot.textChanged()
     }
 
     override func selectionDidChange(_ textInput: UITextInput?) {
@@ -535,7 +540,7 @@ final class KeyboardViewController: UIInputViewController {
         // The caret moved: whether the next letter starts a sentence is a
         // question about where it is now.
         refreshShift()
-        clipboard.selectionChanged()
+        stripSlot.selectionChanged()
     }
 
     /// The constraint measures the whole input view, but the content is pinned
@@ -574,7 +579,7 @@ final class KeyboardViewController: UIInputViewController {
         applyHeight(animated: true)
         warmTables()
         refreshSuggestions()
-        clipboard.paneChanged()
+        stripSlot.paneChanged()
     }
 
     /// Start loading the tables the current pane types against, off the main
@@ -780,7 +785,7 @@ final class KeyboardViewController: UIInputViewController {
         // A new session ends the last one's editing window: anything the user
         // was going to fix, they have finished fixing.
         lexicon.harvest(textDocumentProxy)
-        clipboard.sessionStarted()
+        stripSlot.sessionStarted()
         session = UUID().uuidString
         insertedCount = 0
         sessionStartedAt = Date()
@@ -1412,7 +1417,7 @@ final class KeyboardViewController: UIInputViewController {
             // The polish can be undone only when this one insertion is the
             // whole transcript — which, since dictation inserts once at `done`,
             // is every time but a keyboard relaunched mid-delivery.
-            clipboard.dictationInserted(inserted, raw: landed == 0 ? d.revertibleRaw : nil)
+            stripSlot.dictationInserted(inserted, raw: landed == 0 ? d.revertibleRaw : nil)
             insertedCount = committed.count
             var up = DictationChannel.readUplink() ?? .init(session: session)
             up.insertedCount = insertedCount
@@ -1701,8 +1706,6 @@ final class KeyboardViewController: UIInputViewController {
     func copyDictation() {
         guard hasFullAccess, let text = bridge.copyableText else { return }
         UIPasteboard.general.string = text
-        // Parley's own copy: the paste chip must not offer it straight back.
-        clipboard.noteOwnWrite()
         Haptics.dictationCopied()
         if UIAccessibility.isVoiceOverRunning {
             UIAccessibility.post(notification: .announcement, argument: String(localized: "Copied"))
@@ -1741,7 +1744,7 @@ final class KeyboardViewController: UIInputViewController {
     /// cursor. So the keys call this, and the words stay on screen as they
     /// always have — only the copy target goes.
     private func keyPressed() {
-        clipboard.keyPressed()
+        stripSlot.keyPressed()
         // Any key is an answer to the "Don't suggest this" prompt: not now.
         if bridge.forgetPrompt != nil { bridge.forgetPrompt = nil }
         guard bridge.copyableText != nil else { return }
@@ -1749,11 +1752,11 @@ final class KeyboardViewController: UIInputViewController {
         offerCopy(nil)
     }
 
-    // MARK: text from the strip and the 📋 panel (called by `KeyboardClipboard`)
+    // MARK: text from the strip and the saved-info panel (called by `KeyboardStripSlot`)
 
-    /// Put text from a chip or the 📋 panel in the field: a paste, a clipboard
-    /// item, a 常用資訊 value. Typed exactly like a key — after any pending
-    /// 注音 reading, never through the system pasteboard.
+    /// Put a 常用資訊 value from a field chip or the saved-info panel in the
+    /// field. Typed exactly like a key — after any pending 注音 reading, never
+    /// through the system pasteboard.
     ///
     /// The lexicon watch is harvested first. It compares the field against the
     /// dictation that last landed to learn corrections, and text arriving from
@@ -2585,12 +2588,10 @@ final class KeyboardBridge: ObservableObject {
     @Published var english = EnglishStrip(partialWord: "", suggestions: [])
 
     /// What the strip's transient slot — the wordmark's place — offers, if
-    /// anything. Decided by `KeyboardClipboard`, which documents the order.
+    /// anything. Decided by `KeyboardStripSlot`, which documents the order.
     enum StripChip: Equatable {
         /// 「↩︎ 換回原文」: swap the polished dictation for the raw words.
         case revert
-        /// 「📋 貼上」, labelled by what was copied.
-        case paste(PasteChipLabel)
         /// The 常用資訊 this field asks for.
         case fields([FieldChip])
     }
@@ -2604,9 +2605,9 @@ final class KeyboardBridge: ObservableObject {
     }
 
     @Published var stripChip: StripChip?
-    /// The 📋 panel's content while it is open over the keys; `nil` while it
-    /// is closed, which is also when none of it is in memory.
-    @Published var clipboardPanel: ClipboardPanelContent?
+    /// The saved-info panel's content while it is open over the keys; `nil`
+    /// while it is closed, which is also when none of it is in memory.
+    @Published var savedInfoPanel: SavedInfoPanelContent?
 
     /// What the host field wants the return key to say. It never changes what
     /// the key does.
@@ -2707,19 +2708,13 @@ final class KeyboardBridge: ObservableObject {
     /// The user tapped a word in the English suggestion bar.
     func pickSuggestion(_ word: String) { controller?.pickSuggestion(word) }
 
-    // The strip's chips and the 📋 panel. Everything they do lives in
-    // `KeyboardClipboard`; these only route the taps.
-    func useOriginal() { controller?.clipboard.useOriginal() }
-    func pasteFromPasteboard() { controller?.clipboard.pasteFromPasteboard() }
-    func insertFieldSnippet(_ id: UUID) { controller?.clipboard.insertFieldSnippet(id) }
-    func stripAtRest() { controller?.clipboard.stripAtRest() }
-    func toggleClipboard() { controller?.clipboard.togglePanel() }
-    func closeClipboard() { controller?.clipboard.closePanel() }
-    func pickClip(_ id: UUID) { controller?.clipboard.pickClip(id) }
-    func pickSnippet(_ id: UUID) { controller?.clipboard.pickSnippet(id) }
-    func setClipPinned(_ id: UUID, _ pinned: Bool) { controller?.clipboard.setPinned(id, pinned) }
-    func deleteClip(_ id: UUID) { controller?.clipboard.deleteClip(id) }
-    func saveClip(_ id: UUID, as kind: SnippetKind) { controller?.clipboard.saveClip(id, as: kind) }
+    // The strip's chips and the saved-info panel. Everything they do lives in
+    // `KeyboardStripSlot`; these only route the taps.
+    func useOriginal() { controller?.stripSlot.useOriginal() }
+    func insertFieldSnippet(_ id: UUID) { controller?.stripSlot.insertFieldSnippet(id) }
+    func toggleSavedInfo() { controller?.stripSlot.togglePanel() }
+    func closeSavedInfo() { controller?.stripSlot.closePanel() }
+    func pickSnippet(_ id: UUID) { controller?.stripSlot.pickSnippet(id) }
 }
 
 /// Best-effort resolution of the app the keyboard is typing into, for the app's
