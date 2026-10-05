@@ -143,6 +143,31 @@ function moveTargetFolders(
   return filingChoices(scopeFolders, open);
 }
 
+/**
+ * Which action a destination means for a card: a refile inside the open org,
+ * a personal folder change, or a handoff into an org.
+ */
+function routeFiling(
+  inOrg: boolean,
+  item: HistoryCardItem,
+  destination: LibraryDestination,
+  mode: OrgHandoffMode | null,
+  actions: Readonly<{
+    moveInOrg: (item: HistoryCardItem, folderId: string | null) => Promise<void>;
+    move: (item: HistoryCardItem, folderId: string | null) => Promise<void>;
+    handOffToOrg: (
+      item: HistoryCardItem,
+      orgId: string,
+      folderId: string | null,
+      mode: OrgHandoffMode
+    ) => Promise<void>;
+  }>
+): Promise<void> {
+  if (inOrg) return actions.moveInOrg(item, destination.folderId);
+  if (destination.scope === "personal") return actions.move(item, destination.folderId);
+  return actions.handOffToOrg(item, destination.orgId, destination.folderId, mode ?? "move");
+}
+
 /** Where a card lives: its folder in the open org, or in Personal. */
 function cardLocation(selection: LibrarySelection, item: HistoryCardItem): LibraryDestination {
   if (selection.kind === "org") return { scope: "org", orgId: selection.id, folderId: item.folderId ?? null };
@@ -182,6 +207,9 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   /** The card whose destination sheet is open. Every door onto filing — the
    *  card's toolbar, its context menu, the timeline row — goes through here. */
   const [fileItem, setFileItem] = useState<HistoryCardItem | null>(null);
+  const closeFiling = useCallback((open: boolean) => {
+    if (!open) setFileItem(null);
+  }, []);
 
   const isOrg = selection.kind === "org";
   const isVoice = selection.kind === "voice";
@@ -421,11 +449,11 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   /** The destination sheet's answer for a card, routed to the action it means. */
   const fileTo = useCallback(
     (item: HistoryCardItem, destination: LibraryDestination, mode: OrgHandoffMode | null) => {
-      let run: Promise<void>;
-      if (selection.kind === "org") run = moveInOrg(item, destination.folderId);
-      else if (destination.scope === "personal") run = move(item, destination.folderId);
-      else run = handOffToOrg(item, destination.orgId, destination.folderId, mode ?? "move");
-      run.catch(() => {});
+      routeFiling(selection.kind === "org", item, destination, mode, {
+        moveInOrg,
+        move,
+        handOffToOrg,
+      }).catch(() => {});
     },
     [selection, moveInOrg, move, handOffToOrg]
   );
@@ -455,11 +483,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   if (entries === null) {
     // Rows in the list's own shape, from the top, so the list lands in place
     // instead of replacing a spinner centred in the pane.
-    body = isAll ? (
-      <RecordingTimelineSkeleton label={t("history.loading")} />
-    ) : (
-      <LibraryCardsSkeleton label={t("history.loading")} />
-    );
+    body = <ListSkeleton timeline={isAll} label={t("history.loading")} />;
   } else if (visible.length === 0) {
     body = (
       <div className="flex h-full flex-col items-center justify-center gap-1 text-center">
@@ -603,9 +627,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
 
       <DestinationSheet
         open={!!fileItem}
-        onOpenChange={(open) => {
-          if (!open) setFileItem(null);
-        }}
+        onOpenChange={closeFiling}
         title={t("library.menu.move")}
         verb="move"
         current={fileItem ? cardLocation(selection, fileItem) : null}
@@ -616,6 +638,11 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
       />
     </div>
   );
+}
+
+/** The loading rows, in the shape of whichever list is about to land. */
+function ListSkeleton({ timeline, label }: Readonly<{ timeline: boolean; label: string }>) {
+  return timeline ? <RecordingTimelineSkeleton label={label} /> : <LibraryCardsSkeleton label={label} />;
 }
 
 function ScopeTitle({

@@ -19,7 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { sameDestination, type LibraryDestination, type OrgHandoffMode } from "../lib/library/destination";
+import type { LibraryDestination, OrgHandoffMode } from "../lib/library/destination";
 import {
   PERSONAL_WORKSPACE,
   breadcrumb,
@@ -151,6 +151,76 @@ function useCrumb(sources: DestinationSources) {
   };
 }
 
+/** A workspace's filing folders; null while an org's are still loading. */
+function workspaceFolders(
+  ws: string,
+  sources: DestinationSources,
+  personalFolders: boolean,
+  current: LibraryDestination | null
+): NamedFolder[] | null {
+  if (ws !== PERSONAL_WORKSPACE) return sources.orgFolders[ws] ?? null;
+  if (!personalFolders) return [];
+  // An archived folder is not a destination — except the one the recording is in.
+  return filingChoices(sources.personalFolders, current?.scope === "personal" ? current.folderId : null);
+}
+
+/**
+ * Where the sheet opens: the recording's place, else the caller's pick so far,
+ * else (nothing yet) the last-used place. A remembered folder that has since
+ * gone opens on its workspace root instead of a pick the list cannot show.
+ */
+function openingDestination(o: {
+  current: LibraryDestination | null;
+  initial: LibraryDestination | null;
+  lastUsed: LibraryDestination | null;
+  orgs: WorkspaceRef[] | null;
+  lockWorkspace: string | undefined;
+  foldersOf: (ws: string) => NamedFolder[] | null;
+}): LibraryDestination {
+  const known = o.current ?? o.initial;
+  let proposed: LibraryDestination;
+  if (o.lockWorkspace) proposed = known ?? workspaceRoot(o.lockWorkspace);
+  else proposed = initialDestination(known, known ? null : o.lastUsed, o.orgs);
+  const ws = workspaceOf(proposed);
+  const folders = o.foldersOf(ws);
+  const gone = !!proposed.folderId && !!folders && !folders.some((f) => f.id === proposed.folderId);
+  return gone ? workspaceRoot(ws) : proposed;
+}
+
+/** Create the staged new folder (if any) in the picked workspace. */
+async function createStagedFolder(
+  selected: LibraryDestination,
+  name: string | null,
+  reload: () => void
+): Promise<LibraryDestination> {
+  if (!name) return selected;
+  if (selected.scope === "personal") {
+    const created = createLocalFolder(name);
+    emitFoldersUpdated().catch(() => {});
+    return { scope: "personal", folderId: created.id };
+  }
+  const { createOrgFolder } = await import("../lib/cloud/folders");
+  const created = await createOrgFolder(selected.orgId, name);
+  reload();
+  return { scope: "org", orgId: selected.orgId, folderId: created.id };
+}
+
+/** Into an org from Personal is a handoff — a copy when the personal original
+ *  is kept, else a move. Anything else is not a handoff at all. */
+function handoffMode(
+  dest: LibraryDestination,
+  current: LibraryDestination | null,
+  keepCopy: boolean
+): OrgHandoffMode | null {
+  if (dest.scope !== "org" || current?.scope === "org") return null;
+  return keepCopy ? "copy" : "move";
+}
+
+function orgNameOf(orgs: WorkspaceRef[] | null, d: LibraryDestination): string {
+  if (d.scope !== "org") return "";
+  return orgs?.find((o) => o.id === d.orgId)?.name ?? "";
+}
+
 // ── The sheet ───────────────────────────────────────────────────────────────
 
 function actionLabel(t: ReturnType<typeof useI18n>["t"], action: PrimaryAction): string {
@@ -231,38 +301,16 @@ export function DestinationSheet({
     setBusy(false);
   }, [open, initialMode]);
 
-  // The last-used place only stands in for a recording with no place yet.
-  const remembered = current || initial ? null : lastUsed;
-  const proposed = lockWorkspace
-    ? (current ?? workspaceRoot(lockWorkspace))
-    : initialDestination(current ?? initial, remembered, sources.orgs);
-
   const workspaces: WorkspaceRef[] = useMemo(
     () => [{ id: PERSONAL_WORKSPACE, name: t("destination.personal") }, ...(sources.orgs ?? [])],
     [sources.orgs, t]
   );
 
-  const keepFolderId = current?.scope === "personal" ? current.folderId : null;
-  const foldersOf = (ws: string): NamedFolder[] | null => {
-    if (ws === PERSONAL_WORKSPACE) {
-      return personalFolders ? filingChoices(sources.personalFolders, keepFolderId) : [];
-    }
-    return sources.orgFolders[ws] ?? null;
-  };
-  // A remembered folder that has since gone (deleted, archived, or never
-  // loaded for this org) opens on its workspace root instead of a pick the
-  // list cannot show.
-  const proposedFolders = foldersOf(workspaceOf(proposed));
-  const start =
-    proposed.folderId && proposedFolders && !proposedFolders.some((f) => f.id === proposed.folderId)
-      ? workspaceRoot(workspaceOf(proposed))
-      : proposed;
-  const selected = picked ?? start;
+  const foldersOf = (ws: string) => workspaceFolders(ws, sources, personalFolders, current);
+  const selected =
+    picked ?? openingDestination({ current, initial, lastUsed, orgs: sources.orgs, lockWorkspace, foldersOf });
   const workspace = workspaceOf(selected);
   const folders = foldersOf(workspace);
-
-  const shown = folders ? filterFolders(folders, query) : [];
-  const offerCreate = !!folders && canCreateFolder(folders, query);
   const showFolderList = workspace !== PERSONAL_WORKSPACE || personalFolders;
 
   function pickWorkspace(ws: string) {
@@ -293,57 +341,33 @@ export function DestinationSheet({
     setQuery("");
   }
 
-  const target = crumb(selected, newFolder);
-  const action = newFolder
-    ? primaryAction(verb, null, selected, target)
-    : primaryAction(verb, current, selected, target);
-  const reveals = revealsToOrg(current, selected);
-  const orgName = selected.scope === "org" ? (sources.orgs?.find((o) => o.id === selected.orgId)?.name ?? "") : "";
+  // A folder still to be created is never "where it already is".
+  const action = primaryAction(verb, newFolder ? null : current, selected, crumb(selected, newFolder));
   const showKeepCopy = allowKeepCopy && offersKeepCopy(current, selected);
   const disabled = busy || action.kind === "stay" || (showFolderList && folders === null);
-
-  /** Create the staged folder (if any) in the picked workspace. */
-  async function resolveFolder(): Promise<LibraryDestination> {
-    if (!newFolder) return selected;
-    if (selected.scope === "personal") {
-      const created = createLocalFolder(newFolder);
-      emitFoldersUpdated().catch(() => {});
-      return { scope: "personal", folderId: created.id };
-    }
-    const { createOrgFolder } = await import("../lib/cloud/folders");
-    const created = await createOrgFolder(selected.orgId, newFolder);
-    sources.reload();
-    return { scope: "org", orgId: selected.orgId, folderId: created.id };
-  }
 
   async function confirm() {
     if (disabled) return;
     setBusy(true);
     try {
-      const dest = await resolveFolder();
-      let mode: OrgHandoffMode | null = null;
-      if (dest.scope === "org" && current?.scope !== "org") mode = showKeepCopy && keepCopy ? "copy" : "move";
+      const dest = await createStagedFolder(selected, newFolder, sources.reload);
       if (verb !== "share") saveLastDestination(dest);
       onOpenChange(false);
-      onConfirm(dest, mode);
+      onConfirm(dest, handoffMode(dest, current, showKeepCopy && keepCopy));
     } catch (error) {
       log.error("destination: folder create failed", { error: String(error) });
-      toast.error(t("dest.createFailed", { error: error instanceof Error ? error.message : String(error) }));
+      toast.error(t("dest.createFailed", { error: String(error instanceof Error ? error.message : error) }));
       setBusy(false);
     }
   }
 
-  const description = current ? t("dest.currentlyIn", { place: crumb(current) }) : undefined;
   const showSwitch = !lockWorkspace && workspaces.length > 1;
-  const showSearch = showFolderList && !!folders && needsFolderSearch(folders.length);
-  const isCurrent = (folderId: string | null) =>
-    !!current && sameDestination(current, inWorkspace(workspace, folderId));
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         title={title}
-        description={description}
+        description={current ? t("dest.currentlyIn", { place: crumb(current) }) : undefined}
         closeLabel={t("common.close")}
         // Esc while naming a new folder closes the field, not the sheet.
         onEscapeKeyDown={(e) => {
@@ -353,7 +377,7 @@ export function DestinationSheet({
         }}
         footer={
           <SheetActions
-            orgNote={reveals ? t("dest.orgNote", { org: orgName }) : null}
+            orgNote={revealsToOrg(current, selected) ? t("dest.orgNote", { org: orgNameOf(sources.orgs, selected) }) : null}
             keepCopy={showKeepCopy ? keepCopy : null}
             onKeepCopyChange={setKeepCopy}
             label={actionLabel(t, action)}
@@ -366,68 +390,128 @@ export function DestinationSheet({
       >
         {/* The workspace switch and the search stay put while the list scrolls
             under them — the list is the sheet's own scroll area. */}
-        {(showSwitch || showSearch) && (
-          <div className="sticky top-0 z-10 flex flex-col gap-3 bg-background px-4 pb-2 pt-3">
-            {showSwitch && (
+        <FolderPane
+          switcher={
+            showSwitch ? (
               <WorkspaceSwitch workspaces={workspaces} value={workspace} onChange={pickWorkspace} />
-            )}
-            {showSearch && (
-              <FolderSearchField
-                value={query}
-                onChange={setQuery}
-                onSubmit={() => {
-                  if (offerCreate && shown.length === 0) stageNewFolder(query);
-                }}
-              />
-            )}
-          </div>
-        )}
-
-        {showFolderList && (
-          <div className={cn("px-4 pb-3", !showSwitch && !showSearch && "pt-3")}>
-            {folders ? (
-              <div className="flex flex-col gap-px">
-                {!query && (
-                  <FolderRow
-                    icon={<FolderClosed className="size-3.5" />}
-                    label={t("dest.noFolder")}
-                    selected={!newFolder && selected.folderId === null}
-                    isCurrent={isCurrent(null)}
-                    onSelect={() => pickFolder(null)}
-                  />
-                )}
-                {shown.map((f) => (
-                  <FolderRow
-                    key={f.id}
-                    icon={<Folder className="size-3.5" />}
-                    label={f.name}
-                    selected={!newFolder && selected.folderId === f.id}
-                    isCurrent={isCurrent(f.id)}
-                    onSelect={() => pickFolder(f.id)}
-                  />
-                ))}
-                {newFolder && (
-                  <FolderRow icon={<Plus className="size-3.5" />} label={newFolder} selected isCurrent={false} />
-                )}
-                {query && shown.length === 0 && !offerCreate && (
-                  <p className="px-2 py-3 text-center text-xs text-muted-foreground">{t("dest.noMatch")}</p>
-                )}
-                <NewFolderRow
-                  creating={creating}
-                  query={offerCreate ? query.trim() : ""}
-                  onStart={() => setCreating(true)}
-                  onSubmit={stageNewFolder}
-                />
-              </div>
-            ) : (
-              <div className="flex items-center justify-center py-6 text-muted-foreground">
-                <Loader2 className="size-4 animate-spin" />
-              </div>
-            )}
-          </div>
-        )}
+            ) : null
+          }
+          folders={showFolderList ? folders : []}
+          hidden={!showFolderList}
+          query={query}
+          onQueryChange={setQuery}
+          selectedFolderId={newFolder ? undefined : selected.folderId}
+          currentFolderId={current && workspaceOf(current) === workspace ? current.folderId : undefined}
+          newFolder={newFolder}
+          creating={creating}
+          onStartCreate={() => setCreating(true)}
+          onPick={pickFolder}
+          onStage={stageNewFolder}
+        />
       </SheetContent>
     </Sheet>
+  );
+}
+
+/** The workspace switch and search (sticky), then the folder list — the
+ *  sheet's own scroll area, so the list scrolls with the sheet. */
+function FolderPane({
+  switcher,
+  folders,
+  hidden,
+  query,
+  onQueryChange,
+  selectedFolderId,
+  currentFolderId,
+  newFolder,
+  creating,
+  onStartCreate,
+  onPick,
+  onStage,
+}: Readonly<{
+  switcher: ReactNode;
+  /** null while loading. */
+  folders: NamedFolder[] | null;
+  /** No folder list at all (Personal in the auto-share setting). */
+  hidden: boolean;
+  query: string;
+  onQueryChange: (q: string) => void;
+  /** The picked folder (null = root); undefined when a new folder is staged. */
+  selectedFolderId: string | null | undefined;
+  /** The recording's folder in this workspace; undefined when it is elsewhere. */
+  currentFolderId: string | null | undefined;
+  newFolder: string | null;
+  creating: boolean;
+  onStartCreate: () => void;
+  onPick: (folderId: string | null) => void;
+  onStage: (name: string) => void;
+}>) {
+  const { t } = useI18n();
+  const shown = folders ? filterFolders(folders, query) : [];
+  const offerCreate = !!folders && canCreateFolder(folders, query);
+  const showSearch = !hidden && !!folders && needsFolderSearch(folders.length);
+  const header = !!switcher || showSearch;
+
+  return (
+    <>
+      {header && (
+        <div className="sticky top-0 z-10 flex flex-col gap-3 bg-background px-4 pb-2 pt-3">
+          {switcher}
+          {showSearch && (
+            <FolderSearchField
+              value={query}
+              onChange={onQueryChange}
+              onSubmit={() => {
+                if (offerCreate && shown.length === 0) onStage(query);
+              }}
+            />
+          )}
+        </div>
+      )}
+      {!hidden && (
+        <div className={cn("px-4 pb-3", !header && "pt-3")}>
+          {folders ? (
+            <div className="flex flex-col gap-px">
+              {!query && (
+                <FolderRow
+                  icon={<FolderClosed className="size-3.5" />}
+                  label={t("dest.noFolder")}
+                  selected={selectedFolderId === null}
+                  isCurrent={currentFolderId === null}
+                  onSelect={() => onPick(null)}
+                />
+              )}
+              {shown.map((f) => (
+                <FolderRow
+                  key={f.id}
+                  icon={<Folder className="size-3.5" />}
+                  label={f.name}
+                  selected={selectedFolderId === f.id}
+                  isCurrent={currentFolderId === f.id}
+                  onSelect={() => onPick(f.id)}
+                />
+              ))}
+              {newFolder && (
+                <FolderRow icon={<Plus className="size-3.5" />} label={newFolder} selected isCurrent={false} />
+              )}
+              {query && shown.length === 0 && !offerCreate && (
+                <p className="px-2 py-3 text-center text-xs text-muted-foreground">{t("dest.noMatch")}</p>
+              )}
+              <NewFolderRow
+                creating={creating}
+                query={offerCreate ? query.trim() : ""}
+                onStart={onStartCreate}
+                onSubmit={onStage}
+              />
+            </div>
+          ) : (
+            <div className="flex items-center justify-center py-6 text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" />
+            </div>
+          )}
+        </div>
+      )}
+    </>
   );
 }
 
