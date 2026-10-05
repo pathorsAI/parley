@@ -70,7 +70,7 @@ import type { AppLanguage, AppTheme, EvalDef, LlmProvider,
   LlmWorkload, ReasoningEffort, Settings, SttProviderId } from "../lib/types";
 import { VoiceTypingSettings } from "./VoiceTypingSettings";
 import { DictionarySettings } from "./DictionarySettings";
-import { OrgSharePicker } from "../components/OrgSharePicker";
+import { DestinationField } from "../components/DestinationSheet";
 import { PermissionsPanel } from "./PermissionsPanel";
 
 // The panel ids live in the store as SettingsCategory so other surfaces (e.g.
@@ -405,21 +405,29 @@ export function SettingsApp() {
             {cloudAuth && (
               <Field label={t("settings.account.defaultSave.title")}>
                 <div className="flex max-w-md flex-col gap-2">
-                  <OrgSharePicker
+                  {/* Personal here means "don't share": the auto-share default
+                      only ever adds an org copy, so Personal has no folders. */}
+                  <DestinationField
+                    verb="share"
+                    title={t("settings.account.defaultSave.title")}
+                    personalFolders={false}
+                    allowKeepCopy={false}
                     value={
                       settings.defaultSaveLocation.scope === "org" &&
                       settings.defaultSaveLocation.orgId
                         ? {
+                            scope: "org",
                             orgId: settings.defaultSaveLocation.orgId,
                             folderId: settings.defaultSaveLocation.folderId ?? null,
                           }
-                        : null
+                        : { scope: "personal", folderId: null }
                     }
                     onChange={(target) =>
                       patch({
-                        defaultSaveLocation: target
-                          ? { scope: "org", orgId: target.orgId, folderId: target.folderId }
-                          : { scope: "personal", folderId: null },
+                        defaultSaveLocation:
+                          target.scope === "org"
+                            ? { scope: "org", orgId: target.orgId, folderId: target.folderId }
+                            : { scope: "personal", folderId: null },
                       })
                     }
                   />

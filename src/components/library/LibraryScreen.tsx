@@ -31,13 +31,15 @@ import { log } from "../../lib/log";
 import { markGettingStarted } from "../../lib/onboarding/gettingStarted";
 import { isTauri } from "../../lib/tauriEvents";
 import { VoiceTypingHistory } from "../../history/VoiceTypingHistory";
-import { LibraryCard, LibraryCardsSkeleton, MoveDialog } from "./LibraryCards";
+import { LibraryCard, LibraryCardsSkeleton } from "./LibraryCards";
+import { DestinationSheet } from "../DestinationSheet";
 import { ConfirmDialog } from "../shell/ConfirmDialog";
 import { RecordingTimeline, RecordingTimelineSkeleton } from "./RecordingTimeline";
 import { useRenderWindow } from "./useRenderWindow";
 import type { LibraryTree } from "../shell/useLibraryTree";
 import { filingChoices, type Folder as LocalFolder } from "../../lib/history/folders";
-import type { CloudOrg, CloudRecordingSummary } from "../../lib/cloud/types";
+import type { CloudRecordingSummary } from "../../lib/cloud/types";
+import type { LibraryDestination, OrgHandoffMode } from "../../lib/library/destination";
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -71,21 +73,6 @@ function openFolderName(selection: LibrarySelection, folders: LocalFolder[]): st
   }
   if (!id) return null;
   return folders.find((f) => f.id === id)?.name ?? null;
-}
-
-/** "Pathors AI / 和運租車" or "Pathors AI （根目錄）" — the dialog says exactly
- *  where the copy is about to land. */
-function handoffTarget(
-  t: Translate,
-  prompt: Readonly<{ org: CloudOrg; folderId: string | null }> | null,
-  orgFolders: Record<string, LocalFolder[]>
-): string {
-  if (!prompt) return "";
-  const folder = prompt.folderId
-    ? (orgFolders[prompt.org.id] ?? []).find((f) => f.id === prompt.folderId)
-    : undefined;
-  if (folder) return `${prompt.org.name} / ${folder.name}`;
-  return `${prompt.org.name} ${t("history.move.rootLabel")}`;
 }
 
 /** Which "nothing here" copy fits the open scope. */
@@ -156,6 +143,12 @@ function moveTargetFolders(
   return filingChoices(scopeFolders, open);
 }
 
+/** Where a card lives: its folder in the open org, or in Personal. */
+function cardLocation(selection: LibrarySelection, item: HistoryCardItem): LibraryDestination {
+  if (selection.kind === "org") return { scope: "org", orgId: selection.id, folderId: item.folderId ?? null };
+  return { scope: "personal", folderId: item.folderId ?? null };
+}
+
 /** What the open list is a list OF — the scope, the node within it, the search.
  *  A change starts the render window (useRenderWindow) back on its first page. */
 function listKey(selection: LibrarySelection, searchQuery: string): string {
@@ -186,13 +179,9 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
    *  trash button and the timeline row's — go through here, so only one dialog
    *  can ever be on screen. */
   const [pendingDelete, setPendingDelete] = useState<HistoryCardItem | null>(null);
-  /** A pending hand-off to an org: which recording, which org, and which of its
-   *  folders (null = the org root). The copy-or-move answer comes next. */
-  const [movePrompt, setMovePrompt] = useState<{
-    item: HistoryCardItem;
-    org: CloudOrg;
-    folderId: string | null;
-  } | null>(null);
+  /** The card whose destination sheet is open. Every door onto filing — the
+   *  card's toolbar, its context menu, the timeline row — goes through here. */
+  const [fileItem, setFileItem] = useState<HistoryCardItem | null>(null);
 
   const isOrg = selection.kind === "org";
   const isVoice = selection.kind === "voice";
@@ -258,15 +247,6 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopeKey]);
-
-  // The share menu offers each org's folders, so they have to be loaded before
-  // it opens — the org scopes load their own on selection, but a card being
-  // shared FROM the personal scope has never touched them.
-  const { orgs: allOrgs, ensureOrgFolders } = tree;
-  useEffect(() => {
-    if (isOrg) return;
-    for (const o of allOrgs) ensureOrgFolders(o.id);
-  }, [isOrg, allOrgs, ensureOrgFolders]);
 
   // ── Node visibility ───────────────────────────────────────────────────────
   const scopeFolders =
@@ -407,25 +387,25 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
     [selection, t]
   );
 
-  const resolveOrgHandoff = useCallback(
-    async (mode: "copy" | "move") => {
-      const p = movePrompt;
-      setMovePrompt(null);
-      if (!p) return;
-      setSharingId(p.item.id);
+  /** Hand a personal recording to an org: a copy, or a move that drops the
+   *  personal original once the org copy is in. */
+  const handOffToOrg = useCallback(
+    async (item: HistoryCardItem, orgId: string, folderId: string | null, mode: OrgHandoffMode) => {
+      const orgName = tree.orgs.find((o) => o.id === orgId)?.name ?? "";
+      setSharingId(item.id);
       try {
         if (mode === "copy") {
-          await shareRecordingToOrg(p.item.id, p.org.id, p.folderId);
-          toast.success(t("history.move.copied", { org: p.org.name }));
+          await shareRecordingToOrg(item.id, orgId, folderId);
+          toast.success(t("history.move.copied", { org: orgName }));
         } else {
-          await moveRecordingToOrg(p.item.id, p.org.id, p.folderId);
-          setEntries((prev) => prev?.filter((e) => e.id !== p.item.id) ?? null);
-          toast.success(t("history.move.moved", { org: p.org.name }));
+          await moveRecordingToOrg(item.id, orgId, folderId);
+          setEntries((prev) => prev?.filter((e) => e.id !== item.id) ?? null);
+          toast.success(t("history.move.moved", { org: orgName }));
         }
         markGettingStarted("filed");
         tree.reloadSummaries();
       } catch (e) {
-        log.error("library: org handoff failed", { id: p.item.id, error: String(e) });
+        log.error("library: org handoff failed", { id: item.id, error: String(e) });
         toast.error(
           isCloudGoneError(e)
             ? t("history.move.cloudGone")
@@ -435,7 +415,19 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
         setSharingId(null);
       }
     },
-    [movePrompt, t, tree]
+    [t, tree]
+  );
+
+  /** The destination sheet's answer for a card, routed to the action it means. */
+  const fileTo = useCallback(
+    (item: HistoryCardItem, destination: LibraryDestination, mode: OrgHandoffMode | null) => {
+      let run: Promise<void>;
+      if (selection.kind === "org") run = moveInOrg(item, destination.folderId);
+      else if (destination.scope === "personal") run = move(item, destination.folderId);
+      else run = handOffToOrg(item, destination.orgId, destination.folderId, mode ?? "move");
+      run.catch(() => {});
+    },
+    [selection, moveInOrg, move, handOffToOrg]
   );
 
   if (!isTauri()) {
@@ -457,7 +449,6 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   // ── Header identity: name the node the way the tree names it ──────────────
   const folderName = openFolderName(selection, scopeFolders);
   const searching = searchQuery.length > 0;
-  const promptTarget = handoffTarget(t, movePrompt, tree.orgFolders);
   const empty = emptyStateCopy(t, { searching, hasFolder: !!folderName, isOrg, isAll });
 
   let body;
@@ -485,7 +476,6 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
           locale={locale}
           signedIn={tree.signedIn}
           orgs={tree.orgs}
-          orgFolders={tree.orgFolders}
           busyId={busyId}
           downloadingId={downloadingId}
           sharingId={sharingId}
@@ -499,10 +489,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
           onRename={(id, title) => {
             rename(id, title).catch(() => {});
           }}
-          onShare={(entry, org, folderId) => setMovePrompt({ item: entry, org, folderId })}
-          onMove={(entry, folderId) => {
-            move(entry, folderId).catch(() => {});
-          }}
+          onFile={setFileItem}
         />
         {sentinel}
       </>
@@ -519,7 +506,6 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
               signedIn={tree.signedIn}
               isOrgContext={isOrg}
               orgs={tree.orgs}
-              orgFolders={tree.orgFolders}
               busy={busyId === entry.id}
               downloading={downloadingId === entry.id}
               sharing={sharingId === entry.id}
@@ -533,11 +519,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
               onRename={(title) => {
                 rename(entry.id, title).catch(() => {});
               }}
-              onShare={(org, folderId) => setMovePrompt({ item: entry, org, folderId })}
-              onMove={(folderId) => {
-                const run = isOrg ? moveInOrg(entry, folderId) : move(entry, folderId);
-                run.catch(() => {});
-              }}
+              onFile={() => setFileItem(entry)}
             />
           ))}
         </div>
@@ -619,19 +601,19 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
         />
       )}
 
-      {movePrompt && (
-        <MoveDialog
-          orgName={movePrompt.org.name}
-          target={promptTarget}
-          onCopy={() => {
-            resolveOrgHandoff("copy").catch(() => {});
-          }}
-          onMove={() => {
-            resolveOrgHandoff("move").catch(() => {});
-          }}
-          onCancel={() => setMovePrompt(null)}
-        />
-      )}
+      <DestinationSheet
+        open={!!fileItem}
+        onOpenChange={(open) => {
+          if (!open) setFileItem(null);
+        }}
+        title={t("library.menu.move")}
+        verb="move"
+        current={fileItem ? cardLocation(selection, fileItem) : null}
+        lockWorkspace={selection.kind === "org" ? selection.id : undefined}
+        onConfirm={(destination, mode) => {
+          if (fileItem) fileTo(fileItem, destination, mode);
+        }}
+      />
     </div>
   );
 }
