@@ -4,14 +4,13 @@ import { useStore } from "../../lib/store";
 import { listLocalFolders } from "../../lib/history/folders";
 import { useI18n } from "../../i18n";
 import { Button } from "@/components/ui/button";
-import { Sheet, SheetContent } from "@/components/ui/sheet";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { DestinationPicker } from "../DestinationPicker";
+import { DestinationSheet } from "../DestinationSheet";
 import { useRefile } from "../useRefile";
 import { personalDestination } from "../../lib/library/destination";
 import { MeetingContextSheet } from "../MeetingContextButton";
@@ -102,23 +101,18 @@ export function StudyLinkBar({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {/* Edit flow → Sheet (repo rule). The move persists as it is picked, so
-          "done" is just closing. */}
-      <Sheet open={pickerOpen} onOpenChange={setPickerOpen}>
-        <SheetContent
-          title={t("study.link.attach")}
-          closeLabel={t("common.close")}
-          footer={
-            <Button size="sm" className="h-8" onClick={() => setPickerOpen(false)}>
-              {t("common.done")}
-            </Button>
-          }
-        >
-          <div className="px-4 py-3">
-            <DestinationPicker value={personalDestination(folderId)} onChange={refile} />
-          </div>
-        </SheetContent>
-      </Sheet>
+      {/* Edit flow → Sheet (repo rule). Nothing moves until the sheet's own
+          button is pressed. */}
+      <DestinationSheet
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        title={t("study.link.attach")}
+        verb="move"
+        current={personalDestination(folderId)}
+        onConfirm={(destination, mode) => {
+          void refile(destination, mode);
+        }}
+      />
 
       <MeetingContextSheet open={contextOpen} onOpenChange={setContextOpen} />
     </div>
