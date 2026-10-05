@@ -74,8 +74,8 @@ internal object BatchTokenSerializer : KSerializer<BatchToken> {
     override val descriptor: SerialDescriptor =
         buildClassSerialDescriptor("com.pathors.parley.kit.BatchToken") {
             element<String>("text")
-            element<Long>("startMs")
-            element<Long>("endMs")
+            element<Long>("start_ms")
+            element<Long>("end_ms")
             element<Int>("speaker", isOptional = true)
         }
 
@@ -84,10 +84,14 @@ internal object BatchTokenSerializer : KSerializer<BatchToken> {
             "BatchToken is only ever decoded from JSON"
         }
         val obj = input.decodeJsonElement() as? JsonObject ?: JsonObject(emptyMap())
+        // The cloud passes the vendor's tokens through untouched, so timing is
+        // snake_case on the wire (`start_ms`, what `replay.rs` reads). Reading
+        // `startMs` alone decoded every token at 0 and synced batch-transcribed
+        // recordings with every line at 00:00 (#576); camelCase stays a fallback.
         return BatchToken(
             text = (obj["text"] as? JsonPrimitive)?.takeIf { it.isString }?.content.orEmpty(),
-            startMs = obj.millis("startMs"),
-            endMs = obj.millis("endMs"),
+            startMs = obj.millis("start_ms") ?: obj.millis("startMs") ?: 0,
+            endMs = obj.millis("end_ms") ?: obj.millis("endMs") ?: 0,
             speaker = obj.speaker(),
         )
     }
@@ -99,8 +103,8 @@ internal object BatchTokenSerializer : KSerializer<BatchToken> {
         output.encodeJsonElement(
             buildJsonObject {
                 put("text", JsonPrimitive(value.text))
-                put("startMs", JsonPrimitive(value.startMs))
-                put("endMs", JsonPrimitive(value.endMs))
+                put("start_ms", JsonPrimitive(value.startMs))
+                put("end_ms", JsonPrimitive(value.endMs))
                 value.speaker?.let { put("speaker", JsonPrimitive(it)) }
             }
         )
@@ -108,14 +112,15 @@ internal object BatchTokenSerializer : KSerializer<BatchToken> {
 
     /**
      * A timestamp the provider may write as an integer or as a fractional
-     * number of milliseconds. Anything that is not a number at all reads as 0
-     * rather than failing the whole response — one unparseable token must not
-     * cost the transcript it is in.
+     * number of milliseconds. Anything that is not a number at all reads as
+     * null (the caller then tries the other spelling, and finally 0) rather than
+     * failing the whole response — one unparseable token must not cost the
+     * transcript it is in.
      */
-    private fun JsonObject.millis(key: String): Long {
-        val primitive = this[key] as? JsonPrimitive ?: return 0
-        if (primitive.isString) return 0
-        return primitive.doubleOrNull?.toLong() ?: 0
+    private fun JsonObject.millis(key: String): Long? {
+        val primitive = this[key] as? JsonPrimitive ?: return null
+        if (primitive.isString) return null
+        return primitive.doubleOrNull?.takeIf { it.isFinite() && it >= 0 }?.toLong()
     }
 
     private fun JsonObject.speaker(): Int? {

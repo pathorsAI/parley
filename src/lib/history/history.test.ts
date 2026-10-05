@@ -15,7 +15,9 @@ import {
   leaveStoppedCockpit,
   mergeAnalysisSnapshot,
   mergeStageOutputs,
+  replaySessionFor,
   shouldKeepLiveRecording,
+  snapshotAnalysis,
   type AnalysisSnapshot,
 } from "./history";
 import { speakerKey, useStore } from "../store";
@@ -298,5 +300,45 @@ describe("leaveStoppedCockpit (a meeting that ended without a report)", () => {
     leaveStoppedCockpit("meeting.notSaved.noTranscript");
     expect(useStore.getState().appMode).toBe("live");
     expect(toast.message).not.toHaveBeenCalled();
+  });
+});
+
+describe("a transcript that synced with no timing (#576)", () => {
+  // A phone batch transcription before the fix: every line stamped 0 → 0.
+  const untimed = [
+    seg({ id: "mix-0", source: "mix", speaker: 1, text: "你好，今天討論報價", startMs: 0, endMs: 0 }),
+    seg({ id: "mix-1", source: "mix", speaker: 2, text: "好的，我們先看數字", startMs: 0, endMs: 0 }),
+    seg({ id: "mix-2", source: "mix", speaker: 1, text: "那就這樣決定", startMs: 0, endMs: 0 }),
+  ];
+
+  it("opens with an estimated timeline spread over the recording, flagged as estimated", () => {
+    const session = replaySessionFor(entry({ segments: untimed, durationMs: 90_000 }), "/a.ogg", "asset://a");
+    expect(session.timingEstimated).toBe(true);
+    const starts = session.segments.map((s) => s.startMs);
+    expect(starts[0]).toBe(0);
+    expect(starts[1]).toBeGreaterThan(0);
+    expect(starts[2]).toBeGreaterThan(starts[1]);
+    expect(session.segments[2].endMs).toBe(90_000);
+  });
+
+  it("opens a timed transcript exactly as saved", () => {
+    const timed = [seg({ id: "a", startMs: 0, endMs: 800 }), seg({ id: "b", startMs: 1000, endMs: 2000 })];
+    const session = replaySessionFor(entry({ segments: timed }), "", "");
+    expect(session.timingEstimated).toBeUndefined();
+    expect(session.segments).toBe(timed);
+  });
+
+  it("saves the untimed transcript back, never the estimate", () => {
+    const session = replaySessionFor(entry({ segments: untimed, durationMs: 90_000 }), "", "");
+    useStore.setState({ replay: session, segments: session.segments });
+    try {
+      expect(snapshotAnalysis().segments).toEqual(untimed);
+      // A transcript with real timing is saved as it is.
+      const timed = [seg({ id: "a", startMs: 0, endMs: 800 }), seg({ id: "b", startMs: 1000, endMs: 2000 })];
+      useStore.setState({ replay: { ...session, timingEstimated: undefined }, segments: timed });
+      expect(snapshotAnalysis().segments).toBe(timed);
+    } finally {
+      useStore.setState({ replay: null, segments: [] });
+    }
   });
 });

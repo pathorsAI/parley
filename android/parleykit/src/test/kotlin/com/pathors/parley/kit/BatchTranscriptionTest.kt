@@ -210,9 +210,9 @@ class BatchTranscriptionTest {
             BatchTranscriptResponse.serializer(),
             """
             {"tokens":[
-              {"text":"a","startMs":0,"endMs":100,"speaker":2},
-              {"text":"b","startMs":100,"endMs":200,"speaker":"3"},
-              {"text":"c","startMs":200,"endMs":300}
+              {"text":"a","start_ms":0,"end_ms":100,"speaker":2},
+              {"text":"b","start_ms":100,"end_ms":200,"speaker":"3"},
+              {"text":"c","start_ms":200,"end_ms":300}
             ]}
             """.trimIndent(),
         )
@@ -221,6 +221,46 @@ class BatchTranscriptionTest {
         assertEquals(listOf(2, 3, null), decoded.tokens.map { it.speaker })
         assertEquals("b", decoded.tokens[1].text)
         assertEquals(300L, decoded.tokens[2].endMs)
+    }
+
+    @Test
+    fun `token timing decodes from the snake_case wire shape`() {
+        // Verbatim shape of a token the cloud passes through from the vendor —
+        // timing is snake_case, and a missed key silently decodes as 0 (#576).
+        val decoded = json.decodeFromString(
+            BatchTranscriptResponse.serializer(),
+            """{"tokens":[{"text":"你好","start_ms":1520,"end_ms":1880,"confidence":0.98,"speaker":"1","language":"zh"},{"text":"嗎","start_ms":2400,"end_ms":2600,"speaker":"2"}]}""",
+        )
+        val segments = groupBatchTokens(decoded.tokens, source = "mix")
+
+        assertEquals(1520L, decoded.tokens[0].startMs)
+        assertEquals(1880L, decoded.tokens[0].endMs)
+        assertEquals(listOf(1520L, 2400L), segments.map { it.startMs })
+        assertEquals(listOf(1880L, 2600L), segments.map { it.endMs })
+    }
+
+    @Test
+    fun `token timing prefers the wire key and falls back to camelCase`() {
+        val decoded = json.decodeFromString(
+            BatchTranscriptResponse.serializer(),
+            """{"tokens":[
+              {"text":"a","start_ms":700.6,"end_ms":900,"startMs":1,"endMs":2},
+              {"text":"b","startMs":1000,"endMs":1200},
+              {"text":"c","start_ms":"oops"}
+            ]}""",
+        )
+
+        assertEquals(listOf(700L, 1000L, 0L), decoded.tokens.map { it.startMs })
+        assertEquals(listOf(900L, 1200L, 0L), decoded.tokens.map { it.endMs })
+    }
+
+    @Test
+    fun `a token round-trips through its own serializer`() {
+        val token = BatchToken(text = "hi", startMs = 1520, endMs = 1880, speaker = 1)
+        val encoded = json.encodeToString(BatchToken.serializer(), token)
+
+        assertTrue(encoded.contains("\"start_ms\":1520"))
+        assertEquals(token, json.decodeFromString(BatchToken.serializer(), encoded))
     }
 
     @Test

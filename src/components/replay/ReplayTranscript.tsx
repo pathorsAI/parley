@@ -67,6 +67,9 @@ export function ReplayTranscript({
   // The guide bar teaches the same thing while it's up; saying it twice is noise.
   const lap = useLapContext();
   const showSeekHint = seekHintVisible && !preview && !lap.visible;
+  // A transcript that synced with no timing shows an estimated clock (#576) —
+  // say so, so a jump that lands a few lines off doesn't read as a bug.
+  const timingEstimated = useStore((s) => !preview && !!s.replay?.timingEstimated);
 
   // While the guide bar is on its replay step, the first line pulses once, for
   // about two seconds — "this, click this" — then settles.
@@ -283,6 +286,15 @@ export function ReplayTranscript({
         ))}
       <ScrollArea className="h-full">
         <div className="mx-auto flex max-w-3xl flex-col gap-1 px-4 py-4">
+          {timingEstimated && (
+            // pr-10 keeps the text clear of the floating search button.
+            <div
+              role="note"
+              className="mb-1 border-b border-border pb-2 pl-2 pr-10 text-xs text-muted-foreground"
+            >
+              {t("replay.timingEstimated")}
+            </div>
+          )}
           {showSeekHint && (
             // pr-10 keeps the × clear of the floating search button.
             <div className="mb-1 flex items-center gap-2 border-b border-border pb-2 pl-2 pr-10 text-xs text-muted-foreground">
