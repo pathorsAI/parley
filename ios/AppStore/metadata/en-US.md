@@ -97,6 +97,8 @@ Misheard words are easier to teach: select text in your dictation history and ch
 
 Also: touch and hold the space bar to move the cursor, and the Text Replacement shortcuts you set up in iOS Settings now work in the Parley keyboard.
 
+Recordings the phone re-transcribed, filled in after a gap, or imported from a file keep their timing again, so highlights made from them on your computer no longer all land at 00:00; re-transcribe an affected recording once to fix it.
+
 Also since the last release on the App Store: start recording from the lock screen. Touch and hold the lock screen, tap Customize, and put Parley's Record in place of the flashlight or camera button; the same control works from Control Center and the Action button, and you can ask Siri to "Record with Parley". And tapping Start recording now starts right away, without first asking you to confirm that everyone has agreed. As with any recorder, getting the consent of the people in the room, as the law where you are requires, is up to you.
 
 ## What's New — 1.29
