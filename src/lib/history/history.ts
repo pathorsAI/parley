@@ -27,6 +27,7 @@ import { qualifiesForRediarization, rediarizeSegments } from "../speakers/postDi
 import { translate } from "../../i18n/messages";
 import { markGettingStarted } from "../onboarding/gettingStarted";
 import type { ReplaySession } from "../replay/types";
+import { withTimingRepaired, withoutEstimatedTiming } from "../replay/timing";
 import type {
   ActionItem,
   DefaultSaveLocation,
@@ -79,11 +80,14 @@ export function buildSummary(entry: HistoryEntry): HistoryEntrySummary {
   };
 }
 
-/** Snapshot the analysis-related slice of the store into a partial entry. */
-function snapshotAnalysis() {
+/** Snapshot the analysis-related slice of the store into a partial entry.
+ *  Exported for testing. */
+export function snapshotAnalysis() {
   const s = useStore.getState();
   return {
-    segments: s.segments,
+    // An estimated timeline is a display aid, not data: the entry keeps the
+    // untimed transcript it came with (see replay/timing).
+    segments: s.replay?.timingEstimated ? withoutEstimatedTiming(s.segments) : s.segments,
     speakerNames: s.speakerNames,
     findings: s.findings,
     actionItems: s.actionItems,
@@ -1145,6 +1149,36 @@ interface HistoryReadResult {
 }
 
 /**
+ * The replay session for a saved entry. A transcript that synced with no timing
+ * at all (#576) gets an estimated timeline here, at the one place every opened
+ * recording passes through, so the transcript, seek, findings and brief all
+ * read the same clock. Pure + exported for testing.
+ */
+export function replaySessionFor(meta: HistoryEntry, audioPath: string, audioSrc: string): ReplaySession {
+  const { segments, estimated } = withTimingRepaired(meta.segments ?? [], meta.durationMs);
+  if (estimated) {
+    log.info("history: transcript has no timing; estimating it", {
+      id: meta.id,
+      segments: segments.length,
+      durationMs: meta.durationMs,
+    });
+  }
+  return {
+    id: meta.id,
+    name: meta.title,
+    audioPath,
+    audioSrc,
+    durationMs: meta.durationMs,
+    audioOffsetMs: 0,
+    createdAt: meta.createdAt,
+    segments,
+    speakerNames: meta.speakerNames,
+    speechRateHz: meta.speechRateHz ?? null,
+    ...(estimated ? { timingEstimated: true } : {}),
+  };
+}
+
+/**
  * Read a saved entry and load it into the replay UI (restoring its analysis), then
  * focus the main window. Called by the main-window listener on `history://open`.
  */
@@ -1155,19 +1189,8 @@ export async function loadHistoryEntry(id: string): Promise<void> {
   await entryWritesSettled(id);
   const { meta, audioPath } = await invoke<HistoryReadResult>("read_history_entry", { id });
   const audioSrc = audioPath ? convertFileSrc(audioPath) : "";
-  const session: ReplaySession = {
-    id: meta.id,
-    name: meta.title,
-    audioPath: audioPath ?? "",
-    audioSrc,
-    durationMs: meta.durationMs,
-    audioOffsetMs: 0,
-    createdAt: meta.createdAt,
-    segments: meta.segments,
-    speakerNames: meta.speakerNames,
-    speechRateHz: meta.speechRateHz ?? null,
-  };
-  useStore.getState().loadHistory(meta, session);
+  const session = replaySessionFor(meta, audioPath ?? "", audioSrc);
+  useStore.getState().loadHistory({ ...meta, segments: session.segments }, session);
   log.info("history: entry loaded", { id, hasAudio: !!audioPath });
   if (isTauri()) {
     try {
@@ -1224,19 +1247,8 @@ export async function loadOrgEntry(orgId: string, id: string): Promise<void> {
     });
   }
   const audioSrc = audioPath ? convertFileSrc(audioPath) : "";
-  const session: ReplaySession = {
-    id: meta.id,
-    name: meta.title,
-    audioPath,
-    audioSrc,
-    durationMs: meta.durationMs,
-    audioOffsetMs: 0,
-    createdAt: meta.createdAt,
-    segments: meta.segments,
-    speakerNames: meta.speakerNames,
-    speechRateHz: meta.speechRateHz ?? null,
-  };
-  useStore.getState().loadHistory(meta, session, { readOnly: true });
+  const session = replaySessionFor(meta, audioPath, audioSrc);
+  useStore.getState().loadHistory({ ...meta, segments: session.segments }, session, { readOnly: true });
   log.info("history: org entry loaded", { orgId, id, hasAudio: !!audioPath });
   if (isTauri()) {
     try {
