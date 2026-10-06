@@ -28,7 +28,8 @@ function escapeCommon(s) {
 }
 const swiftString = (s) => `"${escapeCommon(s)}"`;
 // Kotlin string templates make a bare `$` live, so it is escaped too.
-const kotlinString = (s) => `"${escapeCommon(s).replaceAll("$", String.raw`\$`)}"`;
+const KOTLIN_DOLLAR = String.raw`\$`;
+const kotlinString = (s) => `"${escapeCommon(s).replaceAll("$", KOTLIN_DOLLAR)}"`;
 
 export function renderSwift(p) {
   const str = (name, v) => `    public static let ${name} = ${swiftString(v)}`;
