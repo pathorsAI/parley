@@ -111,7 +111,20 @@ export function hoursUntilExpiry(inv: Pick<CloudInvitation, "expiresAt">, now = 
 
 // ── Invite input ─────────────────────────────────────────────────────────────
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
+/**
+ * Loose shape check — one "@", something before it, a dot inside the domain with
+ * text on both sides, no whitespace. The server is the real validator; this only
+ * catches typos early. Plain string ops rather than a regex, so there is no
+ * backtracking to reason about on pasted input.
+ */
+function looksLikeEmail(s: string): boolean {
+  if (/\s/u.test(s)) return false;
+  const at = s.indexOf("@");
+  if (at < 1 || at !== s.lastIndexOf("@")) return false;
+  const domain = s.slice(at + 1);
+  const dot = domain.lastIndexOf(".");
+  return dot > 0 && dot < domain.length - 1;
+}
 
 /** Split pasted text ("a@x.com, b@x.com\nc@x.com" or "Name <a@x.com>") into addresses. */
 export function splitEmails(text: string): string[] {
@@ -142,7 +155,7 @@ export function classifyInviteEmails(
   return emails.map((email) => {
     const key = email.toLowerCase();
     let status: InviteEmailStatus = "ok";
-    if (!EMAIL_RE.test(email)) status = "invalid";
+    if (!looksLikeEmail(email)) status = "invalid";
     else if (seen.has(key)) status = "duplicate";
     else if (memberEmails.has(key)) status = "member";
     else if (invited.has(key)) status = "invited";

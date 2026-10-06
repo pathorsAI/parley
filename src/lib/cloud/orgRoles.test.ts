@@ -108,4 +108,9 @@ describe("invite input", () => {
     );
     expect(out.map((o) => o.status)).toEqual(["ok", "invalid", "member", "invited", "duplicate", "ok"]);
   });
+  it("rejects malformed shapes", () => {
+    const bad = ["@x.com", "a@", "a@x", "a@x.", "a@.com", "a@@x.com", "a b@x.com", "a@x@y.com"];
+    expect(classifyInviteEmails(bad, [], [], NOW).every((o) => o.status === "invalid")).toBe(true);
+    expect(classifyInviteEmails(["first.last+tag@sub.example.co"], [], [], NOW)[0].status).toBe("ok");
+  });
 });

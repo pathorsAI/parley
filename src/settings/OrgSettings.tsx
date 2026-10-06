@@ -964,6 +964,10 @@ function InviteSheet({
   const classified = useMemo(() => classifyInviteEmails(emails, members, invitations), [emails, members, invitations]);
   const sendable = classified.filter((c) => c.status === "ok").map((c) => c.email);
 
+  function removeEmailAt(index: number) {
+    setEmails((cur) => cur.filter((_, j) => j !== index));
+  }
+
   function commit(text: string) {
     const parts = splitEmails(text);
     // A repeat of an address already in the box is dropped, not flagged — pasting
@@ -1047,7 +1051,7 @@ function InviteSheet({
                     type="button"
                     className="cursor-pointer rounded-full opacity-70 hover:opacity-100"
                     aria-label={t("settings.org.removeEmail", { email: c.email })}
-                    onClick={() => setEmails((cur) => cur.filter((_, j) => j !== i))}
+                    onClick={() => removeEmailAt(i)}
                   >
                     <X className="size-3" />
                   </button>
