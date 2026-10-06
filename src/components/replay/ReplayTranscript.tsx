@@ -9,6 +9,7 @@ import { useCommandShortcut } from "../../lib/commands/bind";
 import { markGettingStarted, useHint } from "../../lib/onboarding/gettingStarted";
 import { useLapContext } from "../../lib/onboarding/lap";
 import { emitTranscriptSeek } from "../../lib/onboarding/motion";
+import { isTextSelected } from "../../lib/replay/selection";
 import type { TranscriptSegment } from "../../lib/types";
 
 interface ReplayTranscriptProps {
@@ -344,7 +345,7 @@ export function ReplayTranscript({
                 >
                   {formatClock(seg.startMs)}
                 </button>
-                <span className="flex min-w-0 flex-1 flex-col items-start">
+                <div className="flex min-w-0 flex-1 flex-col items-start">
                   {showBadge &&
                     (editingKey === key ? (
                       <SpeakerNameInput
@@ -370,18 +371,26 @@ export function ReplayTranscript({
                         {speakerLabel(seg, speakerNames)}
                       </button>
                     ))}
-                  <button
-                    type="button"
-                    onClick={() => seekToLine(seg.startMs)}
+                  {/* A paragraph, not a button: WebKit will not drag-select text inside a
+                      <button>, so wrapping the line in one meant the transcript could be
+                      read but never highlighted and copied with ⌘C. Seeking by keyboard
+                      goes through the timestamp button beside it; this is strictly the
+                      pointer gesture — a primary-button release that did not end up
+                      selecting text — so highlighting a line doesn't also jump the audio. */}
+                  <p
+                    onPointerUp={(e) => {
+                      if (e.button !== 0 || isTextSelected(globalThis.getSelection())) return;
+                      seekToLine(seg.startMs);
+                    }}
                     className={cn(
-                      "w-full min-w-0 text-left",
+                      "w-full min-w-0 select-text text-left",
                       active ? "text-foreground" : "text-foreground/90",
                       trimmed && "line-through"
                     )}
                   >
                     {searching ? highlightMatches(seg.text, trimmedQuery, isCurrentMatch) : seg.text}
-                  </button>
-                </span>
+                  </p>
+                </div>
               </div>
             );
           })}
