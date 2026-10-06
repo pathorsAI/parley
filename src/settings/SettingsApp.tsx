@@ -6,7 +6,8 @@ import { appLogDir, join } from "@tauri-apps/api/path";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 import { log } from "../lib/log";
-import { Check, Download, Loader2, LogIn, LogOut, Monitor, Moon, PlugZap, Plus, ScrollText, Sun, Trash2 } from "lucide-react";
+import { Check, ChevronRight, Download, Loader2, LogIn, LogOut, Monitor, Moon, PlugZap, Plus, ScrollText, Sun, Trash2 } from "lucide-react";
+import { isMac } from "../lib/platform";
 import { useStore } from "../lib/store";
 import { resetGettingStarted } from "../lib/onboarding/gettingStarted";
 import { LANGUAGE_OPTIONS, useI18n, type TranslationKey } from "../i18n";
@@ -69,6 +70,7 @@ const PROVIDER_TAG_TONES: Record<ProviderTagTone, string> = {
 import type { AppLanguage, AppTheme, EvalDef, LlmProvider,
   LlmWorkload, ReasoningEffort, Settings, SttProviderId } from "../lib/types";
 import { VoiceTypingSettings } from "./VoiceTypingSettings";
+import { InfoTip } from "@/components/ui/info-tip";
 import { DictionarySettings } from "./DictionarySettings";
 import { DestinationField } from "../components/DestinationSheet";
 import { PermissionsPanel } from "./PermissionsPanel";
@@ -366,8 +368,6 @@ export function SettingsApp() {
 
       {/* Content */}
       <div className="min-w-0 flex-1 overflow-y-auto px-8 py-6">
-        <p className="mb-5 text-xs text-muted-foreground">{t("settings.note")}</p>
-
         {cat === "account" && CLOUD_ENABLED && (
           <Section title={t("settings.nav.account")}>
             <AccountSignInField
@@ -811,7 +811,10 @@ export function SettingsApp() {
         )}
 
         {cat === "dictionary" && (
-          <Section title={t("settings.dictionary.title")}>
+          <Section
+            title={t("settings.dictionary.title")}
+            info={`${t("settings.dictionary.intro")}\n\n${t("settings.dictionary.privacy")}`}
+          >
             <DictionarySettings />
           </Section>
         )}
@@ -961,76 +964,49 @@ export function SettingsApp() {
         )}
 
         {cat === "mcp" && (
-          <Section title={t("settings.mcp.title")}>
-            <p className="text-[11px] text-muted-foreground">
-              {t("settings.mcp.description")}
-            </p>
-
-            <div className="flex max-w-xl items-center gap-3 rounded-lg border bg-muted/20 p-4">
-              <div className="flex size-9 shrink-0 items-center justify-center rounded-md bg-secondary text-foreground">
-                <PlugZap className="size-4" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <span>{t("settings.mcp.status")}</span>
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                      mcpInfo?.running
-                        ? "bg-success text-success-foreground"
-                        : "bg-warning text-warning-foreground"
-                    }`}
-                  >
-                    {mcpInfo?.running ? t("settings.mcp.running") : t("settings.mcp.starting")}
-                  </span>
-                </div>
-                <div className="mt-1 flex items-center gap-1">
-                  <p className="truncate font-mono text-[11px] text-muted-foreground">
-                    {mcpInfo?.endpoint || t("settings.mcp.endpointPending")}
-                  </p>
-                  {mcpInfo?.endpoint && (
-                    <CopyButton
-                      iconOnly
-                      value={mcpInfo.endpoint}
-                      title={t("settings.mcp.copyUrl")}
-                      className="size-6 shrink-0 text-muted-foreground"
-                    />
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Client connection + recent read/write activity (same data as the
-                titlebar chip, so MCP data access is auditable from here too). */}
-            <div className="max-w-xl rounded-lg border bg-muted/20 p-4">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <span>{t("mcp.panel.client")}</span>
+          <Section title={t("settings.mcp.title")} info={t("settings.mcp.description")}>
+            {/* One card: is the server up, where is it, who is talking to it.
+                The recent-activity list (same data as the titlebar chip, so MCP
+                data access stays auditable) folds away until asked for. */}
+            <div className="flex max-w-xl flex-col gap-2 rounded-lg border p-3">
+              <div className="flex items-center gap-2">
                 <span
-                  className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                    ["active", "connected"].includes(connState(mcpActivity, Date.now()))
-                      ? "bg-success text-success-foreground"
-                      : "bg-muted text-muted-foreground"
+                  aria-hidden
+                  className={`size-2 shrink-0 rounded-full ${
+                    mcpInfo?.running ? "bg-success-foreground" : "bg-warning-foreground"
                   }`}
-                >
-                  {t(`mcp.state.${connState(mcpActivity, Date.now())}`)}
+                />
+                <span className="text-sm font-medium">
+                  {mcpInfo?.running ? t("settings.mcp.running") : t("settings.mcp.starting")}
                 </span>
-                <span className="ml-auto truncate text-xs text-muted-foreground">
-                  {clientLabel(mcpActivity?.client) ?? t("mcp.panel.noClient")}
+                <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">
+                  {mcpInfo?.endpoint || t("settings.mcp.endpointPending")}
                 </span>
+                {mcpInfo?.endpoint && (
+                  <CopyButton
+                    iconOnly
+                    value={mcpInfo.endpoint}
+                    title={t("settings.mcp.copyUrl")}
+                    className="size-6 shrink-0 text-muted-foreground"
+                  />
+                )}
               </div>
-              <div className="mt-1 text-[11px] text-muted-foreground">
-                {t("mcp.panel.lastRequest")}：
-                {mcpActivity?.lastRequestAt
-                  ? relativeTime(t, mcpActivity.lastRequestAt, Date.now())
-                  : "—"}
-              </div>
-              <div className="mt-2 border-t pt-2">
-                <div className="mb-1 text-[11px] font-semibold text-muted-foreground">
-                  {t("mcp.panel.activity")}
-                </div>
+              <details className="group text-[11px] text-muted-foreground">
+                <summary className="flex cursor-pointer list-none items-center gap-1.5">
+                  <ChevronRight className="size-3 shrink-0 transition-transform group-open:rotate-90" />
+                  <span>
+                    {clientLabel(mcpActivity?.client) ?? t("mcp.panel.noClient")}
+                    {" · "}
+                    {t(`mcp.state.${connState(mcpActivity, Date.now())}`)}
+                    {mcpActivity?.lastRequestAt
+                      ? ` · ${relativeTime(t, mcpActivity.lastRequestAt, Date.now())}`
+                      : ""}
+                  </span>
+                </summary>
                 {mcpActivity?.recent?.length ? (
-                  <ul className="max-h-48 space-y-0.5 overflow-y-auto">
+                  <ul className="mt-2 max-h-48 space-y-0.5 overflow-y-auto">
                     {mcpActivity.recent.map((e) => (
-                      <li key={`${e.at}-${e.tool}`} className="flex items-center gap-2 text-[11px]">
+                      <li key={`${e.at}-${e.tool}`} className="flex items-center gap-2">
                         <span
                           className={`w-6 shrink-0 rounded px-1 text-center text-[9.5px] font-semibold ${
                             e.kind === "write"
@@ -1040,86 +1016,63 @@ export function SettingsApp() {
                         >
                           {t(`mcp.kind.${e.kind}`)}
                         </span>
-                        <span className="min-w-0 flex-1 truncate font-mono">{e.tool}</span>
+                        <span className="min-w-0 flex-1 truncate font-mono text-foreground">{e.tool}</span>
                         {!e.ok && <span className="shrink-0 text-destructive">{t("mcp.panel.failed")}</span>}
-                        <span className="shrink-0 tabular-nums text-[10px] text-muted-foreground">
+                        <span className="shrink-0 tabular-nums text-[10px]">
                           {relativeTime(t, e.at, Date.now())}
                         </span>
                       </li>
                     ))}
                   </ul>
                 ) : (
-                  <p className="text-[11px] text-muted-foreground">{t("mcp.panel.emptyActivity")}</p>
+                  <p className="mt-2">{t("mcp.panel.emptyActivity")}</p>
                 )}
-              </div>
+              </details>
             </div>
 
-            <Field label={t("settings.mcp.sharedFile")}>
-              <div className="flex max-w-xl items-center gap-2">
-                <Input
-                  readOnly
-                  value={templatesPath || mcpInfo?.templates_path || "Loading..."}
-                  className="bg-muted/30 font-mono text-xs"
-                />
-                <CopyButton
-                  className="h-9 shrink-0 gap-1"
-                  value={templatesPath || mcpInfo?.templates_path || ""}
-                  label={t("settings.mcp.copyPath")}
-                  disabled={!templatesPath && !mcpInfo?.templates_path}
-                />
-              </div>
-            </Field>
+            {/* Connecting is a copy-and-paste job, so each way in is one row with
+                one copy button; the command and JSON themselves are what the
+                button copies, not something to read on this page. */}
+            <div className="flex max-w-xl flex-col divide-y rounded-lg border">
+              <CopyRow
+                label={t("settings.mcp.claudeCodeInstructions")}
+                info={t("settings.mcp.claudeCodeHelp")}
+                value={() => claudeCodeCommand(mcpInfo?.endpoint)}
+                copyLabel={t("settings.mcp.copyCommand")}
+              />
+              <CopyRow
+                label={t("settings.mcp.configInstructions")}
+                info={t("settings.mcp.configHelp")}
+                value={() => mcpClientConfigJson(mcpInfo?.endpoint)}
+                copyLabel={t("settings.mcp.copyConfig")}
+              />
+              <CopyRow
+                label={t("settings.mcp.sharedFile")}
+                info={templatesPath || mcpInfo?.templates_path || ""}
+                value={templatesPath || mcpInfo?.templates_path || ""}
+                copyLabel={t("settings.mcp.copyPath")}
+              />
+            </div>
 
             {/* Lives on the MCP panel because turning it OFF is what hands
                 analysis to the external AI connected here. */}
-            <Field label={t("settings.autoStudyAnalysis.title")}>
-              <div className="flex max-w-xl flex-col gap-2 rounded-lg border p-3">
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    className="size-3.5 accent-primary"
-                    checked={settings.autoStudyAnalysis}
-                    onChange={(e) => patch({ autoStudyAnalysis: e.target.checked })}
-                  />
-                  {t("settings.autoStudyAnalysis.title")}
-                </label>
-                <p className="text-[11px] text-muted-foreground">{t("settings.autoStudyAnalysis.desc")}</p>
-              </div>
-            </Field>
-
-            <div className="flex flex-col gap-3 rounded-lg border bg-muted/20 p-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-semibold tracking-tight">{t("settings.mcp.claudeCodeInstructions")}</h3>
-                <CopyButton
-                  className="h-8 gap-1"
-                  value={() => claudeCodeCommand(mcpInfo?.endpoint)}
-                  label={t("settings.mcp.copyCommand")}
-                />
-              </div>
-              <p className="text-[11px] text-muted-foreground">{t("settings.mcp.claudeCodeHelp")}</p>
-              <pre className="rounded bg-muted p-2.5 font-mono text-xs text-foreground overflow-x-auto border">
-                {claudeCodeCommand(mcpInfo?.endpoint)}
-              </pre>
-            </div>
-
-            <div className="flex flex-col gap-3 rounded-lg border bg-muted/20 p-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-semibold tracking-tight">{t("settings.mcp.configInstructions")}</h3>
-                <CopyButton
-                  className="h-8 gap-1"
-                  value={() => mcpClientConfigJson(mcpInfo?.endpoint)}
-                  label={t("settings.mcp.copyConfig")}
-                />
-              </div>
-              <p className="text-[11px] text-muted-foreground">{t("settings.mcp.configHelp")}</p>
-              <pre className="rounded bg-muted p-2.5 font-mono text-xs text-foreground overflow-x-auto border">
-                {mcpClientConfigJson(mcpInfo?.endpoint)}
-              </pre>
-            </div>
+            <label className="flex max-w-xl items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="size-3.5 accent-primary"
+                checked={settings.autoStudyAnalysis}
+                onChange={(e) => patch({ autoStudyAnalysis: e.target.checked })}
+              />
+              {t("settings.autoStudyAnalysis.title")}
+              <InfoTip label={t("settings.info")}>{t("settings.autoStudyAnalysis.desc")}</InfoTip>
+            </label>
           </Section>
         )}
 
-        {cat === "mcp" && (
+        {/* Logs and caches are system-level chores: on macOS they live in the
+            menu bar's Diagnostics menu (menu.rs). Windows draws no menu bar, so
+            there this page is still their only door. */}
+        {cat === "mcp" && !isMac() && (
           <Section title={t("settings.logs.title")}>
             <p className="text-[11px] text-muted-foreground">{t("settings.logs.help")}</p>
             {logPath && (
@@ -1167,7 +1120,7 @@ export function SettingsApp() {
           </Section>
         )}
 
-        {cat === "mcp" && (
+        {cat === "mcp" && !isMac() && (
           <Section title={t("settings.caches.title")}>
             <CachesPanel />
           </Section>
@@ -2111,12 +2064,42 @@ function OrgPanel() {
  * finished meetings auto-share into that team space (see history.ts resolveDefaultSave).
  */
 /** Fetch one org's folders as an [orgId, folders] entry, tolerating per-org failures. */
-function Section({ title, children }: Readonly<{ title: string; children: React.ReactNode }>) {
+function Section({
+  title,
+  info,
+  children,
+}: Readonly<{ title: string; info?: string; children: React.ReactNode }>) {
+  const { t } = useI18n();
   return (
     <section className="flex max-w-2xl flex-col gap-4">
-      <h2 className="text-base font-semibold tracking-tight">{title}</h2>
+      <h2 className="flex items-center gap-1.5 text-base font-semibold tracking-tight">
+        {title}
+        {info && <InfoTip label={t("settings.info")}>{info}</InfoTip>}
+      </h2>
       {children}
     </section>
+  );
+}
+
+/** One way to connect: a label, its explanation on hover, and a copy button. */
+function CopyRow({
+  label,
+  info,
+  value,
+  copyLabel,
+}: Readonly<{ label: string; info: string; value: string | (() => string); copyLabel: string }>) {
+  const { t } = useI18n();
+  return (
+    <div className="flex items-center gap-2 px-3 py-2">
+      <span className="text-xs font-medium">{label}</span>
+      {info && <InfoTip label={t("settings.info")}>{info}</InfoTip>}
+      <CopyButton
+        className="ml-auto h-7 shrink-0 gap-1 text-[11px]"
+        value={value}
+        label={copyLabel}
+        disabled={typeof value === "string" && !value}
+      />
+    </div>
   );
 }
 
