@@ -378,9 +378,8 @@ export function ReplayTranscript({
                       it steps aside when the mouse-up ends a selection so highlighting a
                       line doesn't also jump the audio. */}
                   <p
-                    role="presentation"
                     onClick={() => {
-                      if (isTextSelected(window.getSelection())) return;
+                      if (isTextSelected(globalThis.getSelection())) return;
                       seekToLine(seg.startMs);
                     }}
                     className={cn(
