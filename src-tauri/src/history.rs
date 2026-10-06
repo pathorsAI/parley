@@ -278,7 +278,8 @@ pub fn read_history_entry(app: AppHandle, id: String) -> Result<HistoryRead, Str
 }
 
 /// Rename an entry: patch `title` in both `meta.json` and `summary.json` (leaving
-/// the recording + analysis untouched).
+/// the recording + analysis untouched), and retire the pending filing
+/// suggestion's title in the same write (see [`apply_rename`]).
 #[tauri::command]
 pub fn rename_history_entry(app: AppHandle, id: String, title: String) -> Result<(), String> {
     let dir = history_dir(&app)?.join(safe_id(&id));
@@ -286,14 +287,45 @@ pub fn rename_history_entry(app: AppHandle, id: String, title: String) -> Result
         let path = dir.join(file);
         let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
         let mut value: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
-        if let Some(obj) = value.as_object_mut() {
-            obj.insert("title".into(), serde_json::Value::String(title.clone()));
-        }
+        apply_rename(&mut value, &title);
         let out = serde_json::to_string(&value).map_err(|e| e.to_string())?;
         std::fs::write(&path, out).map_err(|e| e.to_string())?;
     }
     log::info!("history: renamed entry {id}");
     Ok(())
+}
+
+/// The JSON side of a rename. Sets `title` and, when the entry carries a pending
+/// `filingSuggestion`, clears that suggestion's title: whatever the user (or an
+/// MCP client) just named the recording answers the title half of the
+/// suggestion, and leaving the old proposal in place is how one recording came
+/// to show two titles — its name, and a stale "suggested title" beside it on
+/// every device the meta syncs to. The folder half is still unanswered, so it
+/// stays; with no folders left there is nothing pending and the suggestion
+/// becomes null. `filingSuggested` is untouched, so the pass never re-runs.
+///
+/// Done here rather than by the caller so the title and the cleared suggestion
+/// land in ONE write — and one cloud push — instead of two racing ones.
+fn apply_rename(value: &mut serde_json::Value, title: &str) {
+    let Some(obj) = value.as_object_mut() else {
+        return;
+    };
+    obj.insert("title".into(), serde_json::Value::String(title.to_owned()));
+    let Some(suggestion) = obj.get_mut("filingSuggestion") else {
+        return;
+    };
+    let Some(pending) = suggestion.as_object_mut() else {
+        return; // null (already answered) or junk — nothing pending to retire
+    };
+    let has_folders = pending
+        .get("folders")
+        .and_then(|f| f.as_array())
+        .is_some_and(|f| !f.is_empty());
+    if has_folders {
+        pending.insert("title".into(), serde_json::Value::String(String::new()));
+    } else {
+        *suggestion = serde_json::Value::Null;
+    }
 }
 
 /// Delete an entry's folder and everything in it.
@@ -343,4 +375,53 @@ pub fn read_transcript_file(path: String) -> Result<TranscriptFile, String> {
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as f64);
     Ok(TranscriptFile { text, modified_ms })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::apply_rename;
+    use serde_json::json;
+
+    #[test]
+    fn rename_sets_title() {
+        let mut v = json!({ "title": "old", "id": "a" });
+        apply_rename(&mut v, "new");
+        assert_eq!(v, json!({ "title": "new", "id": "a" }));
+    }
+
+    #[test]
+    fn rename_clears_pending_title_but_keeps_folders() {
+        let folders = json!([{ "folderId": null, "name": "Acme", "reason": "customer" }]);
+        let mut v = json!({
+            "title": "會議 10/6",
+            "filingSuggested": true,
+            "filingSuggestion": { "title": "Acme 需求訪談", "folders": folders.clone() },
+        });
+        apply_rename(&mut v, "Acme kickoff");
+        assert_eq!(v["title"], "Acme kickoff");
+        assert_eq!(v["filingSuggestion"], json!({ "title": "", "folders": folders }));
+        assert_eq!(v["filingSuggested"], true);
+    }
+
+    #[test]
+    fn rename_drops_a_suggestion_left_with_nothing() {
+        let mut v = json!({ "title": "x", "filingSuggestion": { "title": "y", "folders": [] } });
+        apply_rename(&mut v, "z");
+        assert_eq!(v["filingSuggestion"], serde_json::Value::Null);
+
+        let mut v = json!({ "title": "x", "filingSuggestion": { "title": "y" } });
+        apply_rename(&mut v, "z");
+        assert_eq!(v["filingSuggestion"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn rename_leaves_an_answered_or_absent_suggestion_alone() {
+        let mut v = json!({ "title": "x", "filingSuggestion": null });
+        apply_rename(&mut v, "z");
+        assert_eq!(v, json!({ "title": "z", "filingSuggestion": null }));
+
+        let mut v = json!({ "title": "x" });
+        apply_rename(&mut v, "z");
+        assert_eq!(v, json!({ "title": "z" }));
+    }
 }

@@ -187,6 +187,15 @@ class ImportSession(
      * exactly as it would have resolved it. Null leaves it to the uploader.
      */
     private val defaultDestination: (suspend () -> SaveDestination)? = null,
+    /**
+     * Run the filing pass (the AI title + folder suggestion) for the recording
+     * just uploaded, and persist it on the recording so its page offers it.
+     * Called only for a recording that reached the personal library with
+     * something said in it — the live meeting screen's rule. The callee owns
+     * the scope: the import screen closes itself on a clean finish, and the
+     * pass must not go with it.
+     */
+    private val runFilingPass: (recordingId: String) -> Unit = {},
 ) {
     private val _state = MutableStateFlow<ImportState>(ImportState.Idle)
     val state: StateFlow<ImportState> = _state.asStateFlow()
@@ -408,6 +417,12 @@ class ImportSession(
         // queue now instead of leaving it for the next launch.
         drainBackfills()
         val pending = result == null || result.remaining > 0
+        // Imports name a recording after its file, which is the worst title of
+        // all; the pass is what gives it an honest one. Only once the cloud has
+        // the recording (the pass reads and writes its meta there), only in the
+        // personal library (an org copy cannot be renamed or re-filed from
+        // here), and only with words to read.
+        if (!pending && destination?.isOrg != true && segments.isNotEmpty()) runFilingPass(id)
         _state.value = ImportState.Finished(
             recordingId = id,
             pendingUpload = pending,

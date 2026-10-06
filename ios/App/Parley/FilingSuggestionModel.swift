@@ -54,10 +54,13 @@ import SwiftUI
 ///
 /// ## Two screens, two kinds of recording
 ///
-/// The record screen runs the pass itself (`consider`) for the recording that
-/// just landed. The recording screen shows a suggestion that is already
-/// *pending* on the recording (`present`): a desktop pass leaves one in the
-/// synced meta's `filingSuggestion`, and the bundled sample ships with one. The
+/// The record screen asks for the pass (`consider`) for the recording that
+/// just landed — joining the one the upload already started (`FilingPass`),
+/// which persists its answer into the meta before handing it over. The
+/// recording screen shows a suggestion that is already *pending* on the
+/// recording (`present`): any pass — this phone's on an import or a queued
+/// upload, or the desktop's — leaves one in the synced meta's
+/// `filingSuggestion`, and the bundled sample ships with one. The
 /// writes differ only in where they land — `Target` — and both answer the
 /// offer the same way: a cloud recording's meta gets `filingSuggestion: null`
 /// and `filingSuggested: true` (the desktop's "resolved"), the sample's local
@@ -245,37 +248,34 @@ final class FilingSuggestionModel: ObservableObject {
         }
         guard !spoken.isEmpty else { return }
 
-        do {
-            // Personal folders only: an org folder is not somewhere this
-            // recording can be moved to from here.
-            let all = try await app.cloud.listFolders()
-            let folders = all.filter { $0.orgId == nil }
-            let proposal = try await FilingSuggester.suggest(
-                segments: spoken,
-                // A live meeting on the phone carries no speaker names — the
-                // uploader writes an empty map — so there is nothing to hand
-                // the pass beyond the transcript itself.
-                speakerNames: [:],
-                currentTitle: settled.title,
-                folders: folders,
-                cloud: app.cloud)
-            guard let proposal else { return }
-            // A new meeting cancels the pass through `forget()`. Nothing after
-            // an await is guaranteed to still be wanted, and a card that
-            // reappeared over the recording that replaced it would be offering
-            // a rename for the wrong meeting.
-            guard !Task.isCancelled else { return }
-            target = .cloud(id: settled.id)
-            currentTitle = settled.title
-            currentFolderId = settled.folderId
-            existingFolders = folders
-            writeFailed = false
-            suggestion = proposal
-        } catch {
-            // Best-effort by design: the recording is already safely in the
-            // cloud under its clock name, and a suggestion nobody asked for is
-            // not worth an error on the record screen.
-        }
+        // The pass itself is shared with the upload queue (`FilingPass`):
+        // the upload that landed this recording has usually started it
+        // already, and asking again joins that pass rather than spending a
+        // second one. It reads the transcript, the speaker names and the
+        // meeting context off the recording's own meta, and writes its
+        // answer back into that meta before returning — so the suggestion
+        // survives this screen, and the desktop finds the pass already
+        // spent instead of running its own.
+        async let proposal = FilingPass.shared.run(id: settled.id, cloud: app.cloud)
+        // Personal folders only: an org folder is not somewhere this
+        // recording can be moved to from here. Kept for the Adjust sheet,
+        // and not worth losing the card over — the pass lists them itself.
+        let folders = ((try? await app.cloud.listFolders()) ?? []).filter { $0.orgId == nil }
+        // Best-effort by design: nil is every failure as well as "nothing
+        // to offer", and the recording is already safely in the cloud
+        // under its clock name either way.
+        guard let proposal = await proposal else { return }
+        // A new meeting cancels the pass through `forget()`. Nothing after
+        // an await is guaranteed to still be wanted, and a card that
+        // reappeared over the recording that replaced it would be offering
+        // a rename for the wrong meeting.
+        guard !Task.isCancelled else { return }
+        target = .cloud(id: settled.id)
+        currentTitle = settled.title
+        currentFolderId = settled.folderId
+        existingFolders = folders
+        writeFailed = false
+        suggestion = proposal
     }
 
     // MARK: a suggestion that is already pending
@@ -437,34 +437,11 @@ final class FilingSuggestionModel: ObservableObject {
         // Answered, whichever way: the desktop reads a non-null suggestion as
         // still waiting, and would offer it again on the Mac.
         meta.filingSuggestion = nil
-        try await cloud.pushRecording(id: id, summary: summary(from: meta), meta: meta)
-    }
-
-    /// Rebuild the library row from the meta being pushed, the way the desktop
-    /// derives its summary from the entry on every save. The summary is a
-    /// projection of the meta and nothing else — fetching one separately and
-    /// re-sending it is what lets a title land in the report and not in the
-    /// list.
-    private static func summary(from meta: RecordingMeta) -> CloudRecordingSummary {
-        let finals = meta.segments.filter { $0.isFinal }
-        let speakers = Set(finals.map { "\($0.source)-\($0.speaker)" }).count
-        let snippet = finals.prefix(3).map { $0.text }.joined(separator: " ").prefix(120)
-        let audio = meta.raw["audio"] as? String
-        return CloudRecordingSummary(
-            id: meta.id,
-            title: meta.title,
-            source: meta.raw["source"] as? String ?? "live",
-            createdAt: meta.createdAt,
-            durationMs: meta.durationMs,
-            speakerCount: max(speakers, finals.isEmpty ? 0 : 1),
-            findingsCount: (meta.raw["findings"] as? [Any])?.count ?? 0,
-            actionItemsCount: (meta.raw["actionItems"] as? [Any])?.count ?? 0,
-            hasAudio: !(audio ?? "").isEmpty,
-            snippet: String(snippet),
-            folderId: meta.folderId,
-            // Server push time is the server's to set, exactly as the upload
-            // leaves it.
-            updatedAt: nil)
+        // The library row is a projection of the meta and nothing else —
+        // fetching one separately and re-sending it is what lets a title land
+        // in the report and not in the list.
+        try await cloud.pushRecording(
+            id: id, summary: CloudRecordingSummary(projecting: meta), meta: meta)
     }
 
     #if DEBUG
