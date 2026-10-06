@@ -95,7 +95,7 @@ class MeetingUploaderRepushTest {
         title = CLOCK_TITLE,
         startedAtMs = 1_700_000_000_000,
         durationMs = 60_000.0,
-        segments = listOf(TranscriptSegmentDto(id = "mix-0", text = "Hello.", startMs = 0, endMs = 1_000)),
+        segments = listOf(TranscriptSegmentDto(id = "mix-0", text = SPOKEN, startMs = 0, endMs = 1_000)),
         folderId = "folder-q",
         pushAttempted = pushAttempted,
     )
@@ -148,7 +148,7 @@ class MeetingUploaderRepushTest {
         assertTrue(meta.filingSuggested)
         assertEquals("Acme renewal", meta.filingSuggestion?.title)
         assertEquals("desktop analysis", meta.raw.getValue("brief").jsonPrimitive.content)
-        assertEquals(listOf("Hello."), meta.segments.map { it.text })
+        assertEquals(listOf(SPOKEN), meta.segments.map { it.text })
     }
 
     @Test
@@ -164,7 +164,7 @@ class MeetingUploaderRepushTest {
 
         val meta = RecordingMeta(stored!!)
         assertEquals(RENAMED, meta.title)
-        assertEquals(listOf("Hello."), meta.segments.map { it.text })
+        assertEquals(listOf(SPOKEN), meta.segments.map { it.text })
         assertEquals("audio.ogg", meta.audio)
     }
 
@@ -210,5 +210,6 @@ class MeetingUploaderRepushTest {
         const val ID = "rec-retry"
         const val CLOCK_TITLE = "Meeting Sep 7, 3:20 PM"
         const val RENAMED = "Acme renewal, final terms"
+        const val SPOKEN = "Hello."
     }
 }

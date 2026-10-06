@@ -157,10 +157,8 @@ export function filingUserMessage(opts: {
   let msg = "";
   if (context) msg += `${FILING.meetingContextPrefix}${context}\n\n`;
   msg += `${FILING.currentTitlePrefix}${opts.currentTitle.trim() || FILING.untitled}\n\n`;
-  msg +=
-    names.length > 0
-      ? `${FILING.foldersHeader}\n${names.map((n) => `- ${n}`).join("\n")}\n\n`
-      : `${FILING.noFolders}\n\n`;
+  const menu = names.map((n) => "- " + n).join("\n");
+  msg += names.length > 0 ? `${FILING.foldersHeader}\n${menu}\n\n` : `${FILING.noFolders}\n\n`;
   return `${msg}${FILING.transcriptHeader}\n${opts.transcript}`;
 }
 

@@ -322,8 +322,8 @@ class TranscriptBackfillerTest {
         // While the job ran: renamed, moved, and offered a filing suggestion.
         cloudMeta["rec-1"] = buildJsonObject {
             captured.forEach { (key, value) -> if (key != "title" && key != "folderId") put(key, value) }
-            put("title", "Acme pricing, final")
-            put("folderId", "folder-acme")
+            put("title", FINAL_TITLE)
+            put("folderId", ACME_FOLDER)
             put("filingSuggested", true)
             putJsonObject("filingSuggestion") {
                 put("title", "Acme pricing")
@@ -346,12 +346,12 @@ class TranscriptBackfillerTest {
         assertTrue(meta.analyzed)
         assertEquals("only the desktop writes this", meta.raw["brief"]?.toString()?.trim('"'))
         // The recording as it is NOW, not as it was when the run was asked for.
-        assertEquals("Acme pricing, final", meta.title)
-        assertEquals("folder-acme", meta.folderId)
+        assertEquals(FINAL_TITLE, meta.title)
+        assertEquals(ACME_FOLDER, meta.folderId)
         assertTrue(meta.filingSuggested)
         assertEquals("Acme pricing", meta.filingSuggestion?.title)
-        assertEquals("Acme pricing, final", pushedSummary.title)
-        assertEquals("folder-acme", pushedSummary.folderId)
+        assertEquals(FINAL_TITLE, pushedSummary.title)
+        assertEquals(ACME_FOLDER, pushedSummary.folderId)
         // The analysis counts belong to the recording, not to the transcript.
         assertEquals(4, pushedSummary.findingsCount)
         assertEquals(2, pushedSummary.speakerCount)
@@ -362,10 +362,10 @@ class TranscriptBackfillerTest {
         val queue = queue("gone")
         val ledger = ledger("gone-l")
         queue.enqueueCopying(
-            BackfillRequest(pending = pending("rec-gone"), manualRetries = 1, existingMeta = buildJsonObject { put("id", "rec-gone") }),
+            BackfillRequest(pending = pending(GONE), manualRetries = 1, existingMeta = buildJsonObject { put("id", GONE) }),
             audio("a.ogg"),
         )
-        missing += "rec-gone"
+        missing += GONE
 
         val result = backfiller(queue, ledger, FakeBatch(fullTranscript())).drain()
 
@@ -535,8 +535,8 @@ class TranscriptBackfillerTest {
     @Test
     fun `a manifest whose blob is gone is discarded instead of wedging the queue`() = runBlocking {
         val queue = queue("orphan")
-        queue.enqueueMoving(BackfillRequest(pending = pending("rec-gone")), audio("a.ogg"))
-        queue.audioFile("rec-gone").delete()
+        queue.enqueueMoving(BackfillRequest(pending = pending(GONE)), audio("a.ogg"))
+        queue.audioFile(GONE).delete()
         queue.enqueueMoving(BackfillRequest(pending = pending("rec-ok")), audio("b.ogg"))
 
         val result = backfiller(queue, ledger("orphan-l"), FakeBatch(fullTranscript())).drain()
@@ -651,6 +651,9 @@ class TranscriptBackfillerTest {
         const val RECORDING = "rec-renamed"
         const val RENAMED = "Acme renewal terms"
         const val MOVED_TO = "folder-3"
+        const val FINAL_TITLE = "Acme pricing, final"
+        const val ACME_FOLDER = "folder-acme"
+        const val GONE = "rec-gone"
 
         /** The two runs the batch job comes back with. */
         const val FIRST_LINE = "Every word of it."

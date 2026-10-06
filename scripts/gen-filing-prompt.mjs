@@ -20,15 +20,15 @@ const HEADER = `GENERATED from ${SOURCE} by scripts/gen-filing-prompt.mjs — do
 
 function escapeCommon(s) {
   return s
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"')
-    .replace(/\n/g, "\\n")
-    .replace(/\r/g, "\\r")
-    .replace(/\t/g, "\\t");
+    .replaceAll("\\", String.raw`\\`)
+    .replaceAll('"', String.raw`\"`)
+    .replaceAll("\n", String.raw`\n`)
+    .replaceAll("\r", String.raw`\r`)
+    .replaceAll("\t", String.raw`\t`);
 }
 const swiftString = (s) => `"${escapeCommon(s)}"`;
 // Kotlin string templates make a bare `$` live, so it is escaped too.
-const kotlinString = (s) => `"${escapeCommon(s).replace(/\$/g, "\\$")}"`;
+const kotlinString = (s) => `"${escapeCommon(s).replaceAll("$", String.raw`\$`)}"`;
 
 export function renderSwift(p) {
   const str = (name, v) => `    public static let ${name} = ${swiftString(v)}`;

@@ -35,18 +35,24 @@ function rememberEmpty(...ids: (string | null | undefined)[]): void {
   for (const id of ids) if (id) emptyThisSession.add(id);
 }
 
-export async function runFilingSuggestion(opts?: { force?: boolean }): Promise<void> {
-  const state = useStore.getState();
-  if (state.filingStatus === "running") return;
-  if (!opts?.force && state.filingStatus !== "idle") return;
+/** Whether a non-forced run should not start at all. Returns true after marking
+ *  the stage done when this session already got an empty answer for it. */
+function alreadyAnswered(state: ReturnType<typeof useStore.getState>): boolean {
+  if (state.filingStatus !== "idle") return true;
   const key = state.loadedHistoryId ?? state.replay?.id;
-  if (!opts?.force && key && emptyThisSession.has(key)) {
+  if (key && emptyThisSession.has(key)) {
     state.setFilingStatus("done");
-    return;
+    return true;
   }
   // Belt and braces for the once-per-recording rule above: a pending suggestion
   // on screen means the pass already ran, whatever the status says.
-  if (!opts?.force && state.filingSuggestion) return;
+  return state.filingSuggestion != null;
+}
+
+export async function runFilingSuggestion(opts?: { force?: boolean }): Promise<void> {
+  const state = useStore.getState();
+  if (state.filingStatus === "running") return;
+  if (!opts?.force && alreadyAnswered(state)) return;
   if (!hasProviderKey(state.settings, "realtime")) return;
   // A read-only org recording can be neither renamed nor refiled, so a suggestion
   // for it would be pure spend on something the user cannot act on.
