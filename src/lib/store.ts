@@ -322,6 +322,7 @@ export type AppMode = "home" | "live" | "study" | "library";
 export type SettingsCategory =
   | "basic"
   | "account"
+  | "organizations"
   | "provider"
   | "transcription"
   // The phrase dictionary is NOT part of Settings state: it lives in its own

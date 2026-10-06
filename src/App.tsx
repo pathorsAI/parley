@@ -52,6 +52,7 @@ import {
 } from "./lib/releaseNotes";
 import { refreshSession } from "./lib/cloud/client";
 import { initDictionarySync } from "./lib/cloud/dictionarySync";
+import { runOrgNotices } from "./lib/cloud/orgNotices";
 import { CLOUD_ENABLED } from "./lib/flags";
 import { initVoiceTyping } from "./lib/voiceTyping/host";
 import { preloadZhConverter } from "./lib/zhConvert";
@@ -225,6 +226,14 @@ const App = () => {
       unDictionarySync();
     };
   }, []);
+
+  // Once a session is known (stored on launch, or a fresh sign-in): announce new
+  // org invitations and drop a default save location whose org we've left.
+  const signedInUserId = useStore((s) => s.cloudAuth?.user.id ?? null);
+  useEffect(() => {
+    if (!CLOUD_ENABLED || !signedInUserId) return;
+    runOrgNotices().catch(() => {});
+  }, [signedInUserId]);
 
   useEffect(() => {
     if (!isTauri()) return;

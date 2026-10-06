@@ -12,19 +12,12 @@ import { useStore } from "../lib/store";
 import { resetGettingStarted } from "../lib/onboarding/gettingStarted";
 import { LANGUAGE_OPTIONS, useI18n, type TranslationKey } from "../i18n";
 import { broadcastSettings, SETTINGS_NAVIGATE_EVENT } from "../lib/settingsSync";
-import { signInWithGoogle, signOut, CloudError } from "../lib/cloud/client";
+import { signInWithGoogle, signOut } from "../lib/cloud/client";
 import { CLOUD_ENABLED } from "../lib/flags";
 import { Flag } from "../components/ui/flag";
-import {
-  createOrg,
-  listMyOrgs,
-  listOrgMembers,
-  inviteToOrg,
-  listMyInvitations,
-  acceptInvitation,
-  deleteOrg,
-} from "../lib/cloud/orgs";
-import type { CloudAuth, CloudInvitation, CloudOrg, CloudOrgMember } from "../lib/cloud/types";
+import { listMyInvitations } from "../lib/cloud/orgs";
+import type { CloudAuth } from "../lib/cloud/types";
+import { OrgSettings } from "./OrgSettings";
 import { isTauri } from "../lib/tauriEvents";
 import { openDiagnosticsWindow } from "../lib/diagnostics";
 import { fetchLatestReleaseNotes, markReleaseNotesSeen, type ReleaseNotes } from "../lib/releaseNotes";
@@ -79,7 +72,7 @@ import { PermissionsPanel } from "./PermissionsPanel";
 // the titlebar 🌐 menu) can deep-link a panel without importing this file.
 type Category = import("../lib/store").SettingsCategory;
 
-// `cloudOnly` entries (the account/orgs page) are compiled out of the OSS edition,
+// `cloudOnly` entries (the account and organizations pages) are compiled out of the OSS edition,
 // which has no sign-in at all — so they never appear in that build's nav.
 //
 // `keywordsKey` is what the nav's search box matches BESIDES the label: panels
@@ -91,9 +84,12 @@ const NAV: {
   labelKey: TranslationKey;
   keywordsKey: TranslationKey;
   cloudOnly?: boolean;
+  /** Only listed while signed in — an org is a cloud space, so there's nothing to show signed out. */
+  signedInOnly?: boolean;
 }[] = [
   { id: "basic", labelKey: "settings.nav.basic", keywordsKey: "settings.kw.basic" },
   { id: "account", labelKey: "settings.nav.account", keywordsKey: "settings.kw.account", cloudOnly: true },
+  { id: "organizations", labelKey: "settings.nav.organizations", keywordsKey: "settings.kw.organizations", cloudOnly: true, signedInOnly: true },
   { id: "provider", labelKey: "settings.nav.provider", keywordsKey: "settings.kw.provider" },
   { id: "transcription", labelKey: "settings.nav.transcription", keywordsKey: "settings.kw.transcription" },
   { id: "dictionary", labelKey: "settings.nav.dictionary", keywordsKey: "settings.kw.dictionary" },
@@ -148,15 +144,23 @@ export function SettingsApp() {
   }, []);
   // Nav search (⑥): label OR translated keywords, so "金鑰"/"key" finds the
   // provider panel and "麥克風"/"mic" finds transcription.
+  const cloudAuth = useStore((s) => s.cloudAuth);
+  // Signing out while on a signed-in-only panel (or deep-linking to one while
+  // signed out) lands on Account, where signing in happens.
+  useEffect(() => {
+    if (!cloudAuth && NAV.some((n) => n.id === cat && n.signedInOnly)) setCat("account");
+  }, [cloudAuth, cat]);
   const [navQuery, setNavQuery] = useState("");
   const navMatches = useMemo(() => {
-    const visible = NAV.filter((n) => CLOUD_ENABLED || !n.cloudOnly);
+    const visible = NAV.filter(
+      (n) => (CLOUD_ENABLED || !n.cloudOnly) && (!n.signedInOnly || !!cloudAuth),
+    );
     const q = navQuery.trim().toLowerCase();
     if (!q) return visible;
     return visible.filter((n) =>
       `${t(n.labelKey)} ${t(n.keywordsKey)}`.toLowerCase().includes(q)
     );
-  }, [navQuery, t]);
+  }, [navQuery, t, cloudAuth]);
   const [devices, setDevices] = useState<string[]>([]);
   const [testing, setTesting] = useState(false);
   // A meeting is recording in the main window → lock the mic test + device picker
@@ -172,7 +176,18 @@ export function SettingsApp() {
   const [releaseNotes, setReleaseNotes] = useState<ReleaseNotes | null>(null);
   const [updateMsg, setUpdateMsg] = useState("");
   const [appVersion, setAppVersion] = useState("");
-  const cloudAuth = useStore((s) => s.cloudAuth);
+  // Invitations waiting for the signed-in user, badged on the Organizations nav
+  // item from any panel; the Organizations page keeps it current as they're answered.
+  const [pendingInvites, setPendingInvites] = useState(0);
+  useEffect(() => {
+    if (!CLOUD_ENABLED || !cloudAuth) {
+      setPendingInvites(0);
+      return;
+    }
+    listMyInvitations()
+      .then((inv) => setPendingInvites(inv.length))
+      .catch((error) => log.warn("settings: invitation count failed", { error: String(error) }));
+  }, [cloudAuth]);
   const [signingIn, setSigningIn] = useState(false);
   const signInAbort = useRef<AbortController | null>(null);
 
@@ -354,11 +369,19 @@ export function SettingsApp() {
             key={n.id}
             type="button"
             onClick={() => setCat(n.id)}
-            className={`cursor-pointer rounded-md px-2.5 py-1.5 text-left text-sm transition-colors ${
+            className={`flex cursor-pointer items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-sm transition-colors ${
               cat === n.id ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"
             }`}
           >
             {t(n.labelKey)}
+            {n.id === "organizations" && pendingInvites > 0 && (
+              <span
+                className="min-w-4 rounded-full bg-primary px-1.5 text-center text-[10px] leading-4 font-semibold text-primary-foreground"
+                aria-label={t("settings.org.pendingBadge", { count: pendingInvites })}
+              >
+                {pendingInvites}
+              </span>
+            )}
           </button>
         ))}
         {navMatches.length === 0 && (
@@ -438,12 +461,13 @@ export function SettingsApp() {
                 </div>
               </Field>
             )}
-            {cloudAuth && (
-              <Field label={t("settings.account.org.title")}>
-                <OrgPanel />
-              </Field>
-            )}
           </Section>
+        )}
+
+        {cat === "organizations" && CLOUD_ENABLED && cloudAuth && (
+          <section className="flex max-w-2xl flex-col gap-4">
+            <OrgSettings onPendingCount={setPendingInvites} />
+          </section>
         )}
 
         {cat === "basic" && (
@@ -1705,354 +1729,6 @@ function DiarizeModelField() {
         </>
       )}
       <p className="text-[11px] text-muted-foreground">{t("settings.transcription.speakerModelHelp")}</p>
-    </div>
-  );
-}
-
-/**
- * Organizations management: create an org, invite teammates by email, and accept
- * pending invitations. Talks to the cloud's better-auth `organization` plugin via
- * ../lib/cloud/orgs. Rendered only when signed in (its parent gates on `cloudAuth`).
- */
-/** Button label while an action is in flight: a spinner + the text (no "…"). */
-function Spinning({ label }: Readonly<{ label: string }>) {
-  return (
-    <span className="flex items-center gap-1">
-      <Loader2 className="size-3 animate-spin" />
-      {label}
-    </span>
-  );
-}
-
-/** Translation key for an org member's role badge. */
-function orgRoleLabelKey(role: string): TranslationKey {
-  if (role === "owner") return "settings.account.org.roleOwner";
-  if (role === "admin") return "settings.account.org.roleAdmin";
-  return "settings.account.org.roleMember";
-}
-
-function OrgPanel() {
-  const { t } = useI18n();
-  const cloudAuth = useStore((s) => s.cloudAuth);
-  const [orgs, setOrgs] = useState<CloudOrg[]>([]);
-  // Roster per org id (who's a member), shown under each org.
-  const [members, setMembers] = useState<Record<string, CloudOrgMember[]>>({});
-  const [invitations, setInvitations] = useState<CloudInvitation[]>([]);
-  // Per-org invite inputs + pending flags, keyed by org id.
-  const [inviteEmails, setInviteEmails] = useState<Record<string, string>>({});
-  const [inviting, setInviting] = useState<Record<string, boolean>>({});
-  const [newOrgName, setNewOrgName] = useState("");
-  const [creating, setCreating] = useState(false);
-  // Per-invitation accept flags, keyed by invitation id.
-  const [accepting, setAccepting] = useState<Record<string, boolean>>({});
-  // Org deletion: which org's danger zone is open, the retyped-name confirmation
-  // value, and the in-flight flag — all keyed by org id. Deletion stays gated
-  // until the typed value exactly matches the org name (the second confirmation).
-  const [deletingOpen, setDeletingOpen] = useState<Record<string, boolean>>({});
-  const [deleteConfirm, setDeleteConfirm] = useState<Record<string, string>>({});
-  const [deleting, setDeleting] = useState<Record<string, boolean>>({});
-
-  const reload = useCallback(async () => {
-    try {
-      const [myOrgs, myInvites] = await Promise.all([listMyOrgs(), listMyInvitations()]);
-      setOrgs(myOrgs);
-      setInvitations(myInvites);
-      // Fetch each org's roster in parallel; a single org failing shouldn't blank
-      // the others, so swallow per-org errors and just omit that roster.
-      const rosters = await Promise.all(
-        myOrgs.map((o) =>
-          listOrgMembers(o.id)
-            .then((m) => [o.id, m] as const)
-            .catch(() => [o.id, [] as CloudOrgMember[]] as const),
-        ),
-      );
-      setMembers(Object.fromEntries(rosters));
-    } catch {
-      toast.error(t("settings.account.org.loadFailed"));
-    }
-  }, [t]);
-
-  // (Re)load whenever we have a session — including when sign-in just completed.
-  useEffect(() => {
-    if (cloudAuth) {
-      reload().catch((error) => log.warn("settings: account data reload failed", { error: String(error) }));
-    }
-  }, [cloudAuth, reload]);
-
-  async function create() {
-    const name = newOrgName.trim();
-    if (!name || creating) return;
-    setCreating(true);
-    try {
-      await createOrg(name);
-      toast.success(t("settings.account.org.created", { org: name }));
-      setNewOrgName("");
-      await reload();
-    } catch (e) {
-      toast.error(t("settings.account.org.createFailed", { error: cloudErrMsg(e) }));
-    } finally {
-      setCreating(false);
-    }
-  }
-
-  // Turn a cloud failure into a human, localized reason. better-auth returns a
-  // machine `code` on a 4xx; we translate the ones a user can actually act on, and
-  // fall back to the backend's own message for anything unmapped (still far better
-  // than a bare "→ 400").
-  function cloudErrMsg(e: unknown): string {
-    const code = e instanceof CloudError ? e.code : null;
-    switch (code) {
-      case "USER_IS_ALREADY_A_MEMBER_OF_THIS_ORGANIZATION":
-        return t("settings.account.org.errAlreadyMember");
-      case "USER_IS_ALREADY_INVITED_TO_THIS_ORGANIZATION":
-        return t("settings.account.org.errAlreadyInvited");
-      case "YOU_ARE_NOT_ALLOWED_TO_INVITE_USERS_TO_THIS_ORGANIZATION":
-        return t("settings.account.org.errNoInvitePermission");
-      case "MEMBER_NOT_FOUND":
-      case "ORGANIZATION_NOT_FOUND":
-        return t("settings.account.org.errOrgGone");
-      case "INVALID_EMAIL":
-        return t("settings.account.org.errInvalidEmail");
-      default:
-        return e instanceof Error ? e.message : String(e);
-    }
-  }
-
-  async function invite(orgId: string) {
-    const email = (inviteEmails[orgId] ?? "").trim();
-    if (!email || inviting[orgId]) return;
-    setInviting((m) => ({ ...m, [orgId]: true }));
-    try {
-      await inviteToOrg(orgId, email);
-      toast.success(t("settings.account.org.invited", { email }));
-      setInviteEmails((m) => ({ ...m, [orgId]: "" }));
-    } catch (e) {
-      toast.error(t("settings.account.org.inviteFailed", { error: cloudErrMsg(e) }));
-    } finally {
-      setInviting((m) => ({ ...m, [orgId]: false }));
-    }
-  }
-
-  async function accept(invitation: CloudInvitation) {
-    if (accepting[invitation.id]) return;
-    const name = invitation.organizationName ?? invitation.organizationId;
-    setAccepting((m) => ({ ...m, [invitation.id]: true }));
-    try {
-      await acceptInvitation(invitation.id);
-      toast.success(t("settings.account.org.joined", { org: name }));
-      await reload();
-    } catch (e) {
-      toast.error(t("settings.account.org.acceptFailed", { error: cloudErrMsg(e) }));
-    } finally {
-      setAccepting((m) => ({ ...m, [invitation.id]: false }));
-    }
-  }
-
-  async function remove(org: CloudOrg) {
-    // Hard gate: never fire unless the retyped name matches exactly (trim both
-    // sides so a stray trailing space in the org name can't make it un-typeable).
-    if (deleting[org.id] || (deleteConfirm[org.id] ?? "").trim() !== org.name.trim()) return;
-    setDeleting((m) => ({ ...m, [org.id]: true }));
-    try {
-      await deleteOrg(org.id);
-      toast.success(t("settings.account.org.deleted", { org: org.name }));
-      // The org is gone now; drop its per-org UI state so no stale keys linger.
-      const drop = (m: Record<string, unknown>) => {
-        const next = { ...m };
-        delete next[org.id];
-        return next;
-      };
-      setDeletingOpen((m) => drop(m) as Record<string, boolean>);
-      setDeleteConfirm((m) => drop(m) as Record<string, string>);
-      await reload();
-    } catch (e) {
-      toast.error(t("settings.account.org.deleteFailed", { error: cloudErrMsg(e) }));
-    } finally {
-      setDeleting((m) => ({ ...m, [org.id]: false }));
-    }
-  }
-
-  return (
-    <div className="flex max-w-sm flex-col gap-3">
-      {/* My organizations */}
-      {orgs.length === 0 ? (
-        <p className="text-[11px] text-muted-foreground">{t("settings.account.org.noOrgs")}</p>
-      ) : (
-        <div className="flex flex-col gap-2">
-          {orgs.map((org) => (
-            <div key={org.id} className="flex flex-col gap-1.5 rounded-lg border p-2.5">
-              <div className="truncate text-sm font-medium">{org.name}</div>
-
-              {/* Roster — who's in this org (name/email, role, "you"). */}
-              {(members[org.id]?.length ?? 0) > 0 && (
-                <ul className="flex flex-col gap-1">
-                  {members[org.id].map((mem) => (
-                    <li key={mem.id} className="flex items-center gap-2">
-                      {mem.image ? (
-                        <img src={mem.image} alt="" className="size-5 shrink-0 rounded-full" />
-                      ) : (
-                        <div className="grid size-5 shrink-0 place-items-center rounded-full bg-secondary text-[9px] font-medium">
-                          {(mem.name || mem.email || "?").slice(0, 1).toUpperCase()}
-                        </div>
-                      )}
-                      <span className="min-w-0 flex-1 truncate text-[11px]">
-                        {mem.name || mem.email}
-                        {mem.userId === cloudAuth?.user.id && (
-                          <span className="text-muted-foreground"> {t("settings.account.org.you")}</span>
-                        )}
-                      </span>
-                      <span className="shrink-0 text-[10px] text-muted-foreground">
-                        {t(orgRoleLabelKey(mem.role))}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              {/* Inviting is owner/admin-only — plain members can't (the server
-                  403s), so don't show them an invite box they can't use. */}
-              {(org.role === "owner" || org.role === "admin") && (
-                <div className="flex items-center gap-2">
-                  <Input
-                    className="h-7 text-xs"
-                    placeholder={t("settings.account.org.invitePlaceholder")}
-                    value={inviteEmails[org.id] ?? ""}
-                    onChange={(e) => setInviteEmails((m) => ({ ...m, [org.id]: e.target.value }))}
-                  />
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className="h-7 shrink-0 px-2 text-[11px]"
-                    disabled={inviting[org.id] || !(inviteEmails[org.id] ?? "").trim()}
-                    onClick={() => invite(org.id).catch((error) => log.error("settings: org invite failed", { error: String(error), orgId: org.id }))}
-                  >
-                    {inviting[org.id] ? (
-                      <Spinning label={t("settings.account.org.inviting")} />
-                    ) : (
-                      t("settings.account.org.invite")
-                    )}
-                  </Button>
-                </div>
-              )}
-
-              {/* Danger zone — owner-only. Only the org's owner can delete it (the
-                  server re-checks), so non-owners never see the affordance at all.
-                  Deletion is intentionally awkward: first click reveals the panel;
-                  the final button stays disabled until the org name is retyped
-                  exactly — two deliberate confirmations before anything dies. */}
-              {org.role === "owner" &&
-                (deletingOpen[org.id] ? (
-                  <div className="flex flex-col gap-1.5 rounded-md border border-destructive/40 bg-destructive/5 p-2">
-                    <p className="text-[11px] text-destructive">
-                      {t("settings.account.org.deleteWarning")}
-                    </p>
-                    <p className="text-[11px] text-muted-foreground">
-                      {t("settings.account.org.deleteConfirmPrompt", { org: org.name })}
-                    </p>
-                    <Input
-                      className="h-7 text-xs"
-                      placeholder={org.name}
-                      value={deleteConfirm[org.id] ?? ""}
-                      onChange={(e) => setDeleteConfirm((m) => ({ ...m, [org.id]: e.target.value }))}
-                    />
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        className="h-7 px-2 text-[11px]"
-                        disabled={
-                          deleting[org.id] ||
-                          (deleteConfirm[org.id] ?? "").trim() !== org.name.trim()
-                        }
-                        onClick={() => remove(org).catch((error) => log.error("settings: org delete failed", { error: String(error), orgId: org.id }))}
-                      >
-                        {deleting[org.id] ? (
-                          <Spinning label={t("settings.account.org.deleting")} />
-                        ) : (
-                          t("settings.account.org.deleteConfirm")
-                        )}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 px-2 text-[11px]"
-                        disabled={deleting[org.id]}
-                        onClick={() => {
-                          setDeletingOpen((m) => ({ ...m, [org.id]: false }));
-                          setDeleteConfirm((m) => ({ ...m, [org.id]: "" }));
-                        }}
-                      >
-                        {t("settings.account.org.deleteCancel")}
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    aria-expanded={false}
-                    className="self-start text-[11px] text-muted-foreground underline-offset-2 hover:text-destructive hover:underline"
-                    onClick={() => setDeletingOpen((m) => ({ ...m, [org.id]: true }))}
-                  >
-                    {t("settings.account.org.delete")}
-                  </button>
-                ))}
-            </div>
-          ))}
-          {orgs.some((o) => o.role === "owner" || o.role === "admin") && (
-            <p className="text-[11px] text-muted-foreground">{t("settings.account.org.inviteHint")}</p>
-          )}
-        </div>
-      )}
-
-      {/* Create organization */}
-      <div className="flex items-center gap-2">
-        <Input
-          className="h-7 text-xs"
-          placeholder={t("settings.account.org.createPlaceholder")}
-          value={newOrgName}
-          onChange={(e) => setNewOrgName(e.target.value)}
-        />
-        <Button
-          variant="secondary"
-          size="sm"
-          className="h-7 shrink-0 px-2 text-[11px]"
-          disabled={creating || !newOrgName.trim()}
-          onClick={() => create().catch((error) => log.error("settings: org create failed", { error: String(error) }))}
-        >
-          {creating ? (
-            <Spinning label={t("settings.account.org.creating")} />
-          ) : (
-            t("settings.account.org.create")
-          )}
-        </Button>
-      </div>
-
-      {/* Pending invitations */}
-      {invitations.length > 0 && (
-        <div className="flex flex-col gap-1.5">
-          <p className="text-[11px] font-medium text-muted-foreground">{t("settings.account.org.pending")}</p>
-          {invitations.map((inv) => (
-            <div key={inv.id} className="flex items-center gap-2 rounded-lg border p-2.5">
-              <span className="min-w-0 flex-1 truncate text-sm">
-                {inv.organizationName ?? inv.organizationId}
-              </span>
-              <Button
-                variant="secondary"
-                size="sm"
-                className="h-7 shrink-0 px-2 text-[11px]"
-                disabled={accepting[inv.id]}
-                onClick={() => accept(inv).catch((error) => log.error("settings: invitation accept failed", { error: String(error), invitationId: inv.id }))}
-              >
-                {accepting[inv.id] ? (
-                  <Spinning label={t("settings.account.org.accepting")} />
-                ) : (
-                  t("settings.account.org.accept")
-                )}
-              </Button>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
