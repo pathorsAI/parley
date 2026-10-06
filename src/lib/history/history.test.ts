@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 
 // history.ts pulls in `log` (whose Tauri-less path touches `window`); we only
 // exercise the pure `buildSummary` here, so stub the side-channel to a no-op.
@@ -165,6 +165,26 @@ describe("mergeStageOutputs (one stage's result onto a saved entry)", () => {
   });
 });
 
+describe("snapshotAnalysis — filing fields", () => {
+  const pending = { title: "T", folders: [{ folderId: "f", name: "F", reason: "" }] };
+  afterEach(() => useStore.setState({ filingStatus: "idle", filingSuggestion: null }));
+
+  it("asserts filingSuggested only while a suggestion is pending", () => {
+    useStore.setState({ filingStatus: "done", filingSuggestion: pending });
+    expect(snapshotAnalysis().filingSuggested).toBe(true);
+  });
+
+  it("never persists an empty pass (or an answered one) as suggested — disk decides", () => {
+    // An empty pass is done in memory only, so another device can still try;
+    // an answered one was already written by persistFilingSuggestion.
+    useStore.setState({ filingStatus: "done", filingSuggestion: null });
+    expect(snapshotAnalysis().filingSuggested).toBe(false);
+    const saved = entry({ filingSuggestion: null, filingSuggested: true });
+    expect(mergeAnalysisSnapshot(saved, snapshotAnalysis()).filingSuggested).toBe(true);
+    expect(mergeAnalysisSnapshot(entry(), snapshotAnalysis()).filingSuggested).toBeUndefined();
+  });
+});
+
 describe("mergeAnalysisSnapshot (the completed-pipeline overwrite)", () => {
   function snap(over: Partial<AnalysisSnapshot> = {}): AnalysisSnapshot {
     return {
@@ -206,10 +226,11 @@ describe("mergeAnalysisSnapshot (the completed-pipeline overwrite)", () => {
     expect(next.filingSuggestion).toEqual({ title: "T", folders: [] });
   });
 
-  it("a filing answer the user gave (done, suggestion null) is copied", () => {
+  it("a snapshot carrying a pending suggestion overwrites the saved one", () => {
     const saved = entry({ filingSuggestion: { title: "T", folders: [] }, filingSuggested: true });
-    const next = mergeAnalysisSnapshot(saved, snap({ filingSuggested: true, filingSuggestion: null }));
-    expect(next.filingSuggestion).toBeNull();
+    const pending = { title: "U", folders: [{ folderId: "f", name: "F", reason: "" }] };
+    const next = mergeAnalysisSnapshot(saved, snap({ filingSuggested: true, filingSuggestion: pending }));
+    expect(next.filingSuggestion).toEqual(pending);
   });
 
   it("keeps a recorded brief failure unless a brief is now present", () => {

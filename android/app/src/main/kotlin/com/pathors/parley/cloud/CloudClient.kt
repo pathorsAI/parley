@@ -384,8 +384,20 @@ class CloudClient(
         id: String,
         summary: RecordingSummary? = null,
         edit: (RecordingMeta) -> RecordingMeta,
-    ): RecordingMeta {
-        val meta = edit(recordingMeta(id))
+    ): RecordingMeta = checkNotNull(editRecordingIf(id, summary, edit))
+
+    /**
+     * [editRecording], except that [edit] may decline: returning null from it
+     * pushes nothing and returns null. For an edit whose precondition is only
+     * knowable from the fresh meta — the filing pass persisting its suggestion
+     * unless another device has already spent one on the recording.
+     */
+    suspend fun editRecordingIf(
+        id: String,
+        summary: RecordingSummary? = null,
+        edit: (RecordingMeta) -> RecordingMeta?,
+    ): RecordingMeta? {
+        val meta = edit(recordingMeta(id)) ?: return null
         val base = summary ?: RecordingSummary.fromMeta(meta)
         val card = base.copy(title = meta.title.ifEmpty { base.title }, updatedAt = null)
         val summaryJson = CloudJson.encodeToJsonElement(RecordingSummary.serializer(), card)

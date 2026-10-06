@@ -228,6 +228,12 @@ class FilingSuggesterTest {
         )
     }
 
+    /** Proposing the name it already has is proposing nothing. */
+    @Test
+    fun `rejects the current title`() {
+        assertFalse(FilingSuggester.acceptTitle(RENEWAL, currentTitle = "  $RENEWAL ", transcript = "y"))
+    }
+
     @Test
     fun `rejects simplified drift`() {
         assertFalse(
@@ -238,6 +244,26 @@ class FilingSuggesterTest {
                 transcript = "[0:00] [Speaker 1] 我們來討論報價的部分。",
             ),
         )
+    }
+
+    /** Per character: one Simplified character the conversation used does not license another. */
+    @Test
+    fun `simplified drift is judged character by character`() {
+        val transcript = "[0:00] [Speaker 1] 我們來看報價。"
+        assertFalse(FilingSuggester.acceptTitle("報價说明", currentTitle = "即時會議", transcript = transcript))
+        assertTrue(
+            "说 is fine once the conversation itself said it",
+            FilingSuggester.acceptTitle("報價说明", currentTitle = "即時會議", transcript = "[0:00] [Speaker 1] 我说報價。"),
+        )
+        assertTrue(
+            "or the current title already had it",
+            FilingSuggester.acceptTitle("報價说明", currentTitle = "说明會", transcript = transcript),
+        )
+        assertFalse(
+            "a different Simplified character in the transcript does not excuse 说",
+            FilingSuggester.acceptTitle("報價说明", currentTitle = "即時會議", transcript = "[0:00] [Speaker 1] 时间到了。"),
+        )
+        assertTrue("台 and 后 are written that way in Traditional too", FilingSuggester.acceptTitle("台北會後檢討", "即時會議", transcript))
     }
 
     @Test
@@ -295,21 +321,31 @@ class FilingSuggesterTest {
         val capped = FilingSuggester.capped(long)
 
         assertTrue(
-            capped.length <= FilingSuggester.MAXIMUM_TRANSCRIPT_CHARACTERS + FilingSuggester.ELISION_MARKER.length,
+            capped.length <= FilingPrompt.MAX_TRANSCRIPT_CHARACTERS + FilingPrompt.ELISION_MARKER.length,
         )
         assertTrue(capped.startsWith("xxx"))
         assertTrue(capped.endsWith("THE DECISION"))
-        assertTrue(capped.contains(FilingSuggester.ELISION_MARKER))
+        assertTrue(capped.contains(FilingPrompt.ELISION_MARKER))
         assertFalse(capped.contains("MIDDLE"))
     }
 
     /** A cut never lands inside a surrogate pair. */
     @Test
     fun `a long transcript is cut on code point boundaries`() {
-        val capped = FilingSuggester.capped("😀".repeat(FilingSuggester.MAXIMUM_TRANSCRIPT_CHARACTERS + 10))
-        val body = capped.replace(FilingSuggester.ELISION_MARKER, "")
+        val capped = FilingSuggester.capped("😀".repeat(FilingPrompt.MAX_TRANSCRIPT_CHARACTERS + 10))
+        val body = capped.replace(FilingPrompt.ELISION_MARKER, "")
         assertTrue(body.all { it == '\uD83D' || it == '\uDE00' })
         assertEquals(0, body.length % 2)
+    }
+
+    /** The split is the shared one: two thirds head, the rest tail, around the marker. */
+    @Test
+    fun `a long transcript is split by the shared head share`() {
+        val max = FilingPrompt.MAX_TRANSCRIPT_CHARACTERS
+        val capped = FilingSuggester.capped("h".repeat(max) + "t".repeat(max))
+        val head = max * FilingPrompt.HEAD_SHARE_NUMERATOR / FilingPrompt.HEAD_SHARE_DENOMINATOR
+        assertEquals("h".repeat(head) + FilingPrompt.ELISION_MARKER + "t".repeat(max - head), capped)
+        assertEquals("a transcript exactly at the cap is sent whole", "x".repeat(max), FilingSuggester.capped("x".repeat(max)))
     }
 
     @Test
@@ -326,18 +362,42 @@ class FilingSuggesterTest {
      */
     @Test
     fun `the prompt carries the desktop's filing rules`() {
-        val prompt = FilingSuggester.systemPrompt
+        val prompt = FilingSuggester.systemPrompt(FilingLanguage.EN)
         assertTrue(prompt.startsWith("Given a finished meeting transcript, decide what the recording"))
         assertTrue(prompt.contains("No date and no time."))
         assertTrue(prompt.contains("Copy an existing folder's name EXACTLY"))
         assertTrue(prompt.contains("AT MOST ONE candidate"))
         assertTrue(prompt.contains("2-3 candidates ordered best-first"))
-        assertTrue(prompt.contains("it is shown as a tooltip, not read as prose.\n\nReturn your answer strictly"))
+        assertTrue(prompt.contains("it is shown as a tooltip, not read as prose.\n\nWrite the title and every reason in English"))
+        assertTrue(prompt.endsWith(FilingPrompt.JSON_INSTRUCTION))
+    }
+
+    /** The title follows the app's language, not the language spoken. */
+    @Test
+    fun `the system prompt is rules, then the language, then the JSON shape`() {
+        assertEquals(
+            FilingPrompt.RULES + FilingPrompt.LANGUAGE_INSTRUCTION_ZH_TW + FilingPrompt.JSON_INSTRUCTION,
+            FilingSuggester.systemPrompt(FilingLanguage.ZH_TW),
+        )
+        assertEquals(
+            FilingPrompt.RULES + FilingPrompt.LANGUAGE_INSTRUCTION_EN + FilingPrompt.JSON_INSTRUCTION,
+            FilingSuggester.systemPrompt(FilingLanguage.EN),
+        )
+    }
+
+    @Test
+    fun `the UI language tag picks the title language`() {
+        listOf("zh-TW", "zh-Hant", "zh-Hant-TW", "zh-HK", "zh_TW", "zh-MO").forEach {
+            assertEquals(it, FilingLanguage.ZH_TW, FilingLanguage.forTag(it))
+        }
+        listOf("en", "en-US", "zh-CN", "zh-Hans", "zh-Hans-TW", "zh", "ja-JP", "").forEach {
+            assertEquals(it, FilingLanguage.EN, FilingLanguage.forTag(it))
+        }
     }
 
     @Test
     fun `the prompt asks for JSON in words`() {
-        val prompt = FilingSuggester.systemPrompt
+        val prompt = FilingSuggester.systemPrompt(FilingLanguage.EN)
         assertTrue(prompt.contains("\"isNew\": boolean"))
         assertTrue(prompt.contains("no code fences"))
     }
@@ -350,6 +410,41 @@ class FilingSuggesterTest {
         assertTrue(message.endsWith("Transcript:\n$HELLO_LINE"))
     }
 
+    /** The exact message every client sends, byte for byte. */
+    @Test
+    fun `the user message is context, title, folders, transcript in that order`() {
+        val message = FilingSuggester.userMessage(
+            "  $CLOCK_TITLE  ",
+            listOf(FilingFolder(ACME_ID, " $ACME "), FilingFolder("blank", "  "), FilingFolder("s", SALES, orgId = ORG_ID)),
+            HELLO_LINE,
+            meetingContext = "  Renewal with Acme  ",
+        )
+        assertEquals(
+            "Meeting context: Renewal with Acme\n\n" +
+                "The recording is currently called: $CLOCK_TITLE\n\n" +
+                "The user's existing folders:\n- $ACME\n\n" +
+                "Transcript:\n$HELLO_LINE",
+            message,
+        )
+    }
+
+    @Test
+    fun `no meeting context sends no context line`() {
+        val message = FilingSuggester.userMessage(CLOCK_TITLE, folders, HELLO_LINE, meetingContext = "   ")
+        assertTrue(message.startsWith(FilingPrompt.CURRENT_TITLE_PREFIX + CLOCK_TITLE + "\n\n"))
+        assertFalse(message.contains(FilingPrompt.MEETING_CONTEXT_PREFIX))
+    }
+
+    @Test
+    fun `no folders asks for exactly one new one`() {
+        assertEquals(
+            FilingPrompt.CURRENT_TITLE_PREFIX + FilingPrompt.UNTITLED + "\n\n" +
+                FilingPrompt.NO_FOLDERS + "\n\n" +
+                FilingPrompt.TRANSCRIPT_HEADER + "\n" + HELLO_LINE,
+            FilingSuggester.userMessage("", listOf(FilingFolder("s", SALES, orgId = ORG_ID)), HELLO_LINE),
+        )
+    }
+
     /** An untitled recording must not send an empty line the model reads as "blank on purpose". */
     @Test
     fun `a blank current title is spelled out`() {
@@ -360,11 +455,19 @@ class FilingSuggesterTest {
 
     @Test
     fun `the request uses the fast model and no response format`() {
-        val body = CloudChat.encode(FilingSuggester.request(CLOCK_TITLE, folders, HELLO_LINE))
+        val body = CloudChat.encode(FilingSuggester.request(CLOCK_TITLE, folders, HELLO_LINE, FilingLanguage.EN))
         val obj = Json.parseToJsonElement(body) as JsonObject
         assertEquals("parley-fast", obj["model"]?.jsonPrimitive?.content)
         assertEquals("snake_case, as the OpenAI shape wants", 512, obj["max_tokens"]?.jsonPrimitive?.int)
         assertNull("unverified against the worker; a rejected request costs the whole pass", obj["response_format"])
+        assertEquals(FilingPrompt.TEMPERATURE, obj["temperature"]?.jsonPrimitive?.content?.toDouble())
+    }
+
+    @Test
+    fun `the request carries the language and the meeting context`() {
+        val request = FilingSuggester.request(CLOCK_TITLE, folders, HELLO_LINE, FilingLanguage.ZH_TW, "Acme renewal")
+        assertEquals(FilingSuggester.systemPrompt(FilingLanguage.ZH_TW), request.messages[0].content)
+        assertTrue(request.messages[1].content.startsWith("Meeting context: Acme renewal\n\n"))
     }
 
     // ── the whole pass against a fake transport ──────────────────────────────
@@ -382,7 +485,7 @@ class FilingSuggesterTest {
         """{"choices":[{"message":{"role":"assistant","content":${Json.encodeToString(String.serializer(), content)}}}]}"""
 
     private fun suggestWith(chat: ChatCompletions, segments: List<TranscriptSegment> = listOf(segment("a", "Hello."))) =
-        runBlocking { FilingSuggester.suggest(segments, label, CLOCK_TITLE, folders, chat) }
+        runBlocking { FilingSuggester.suggest(segments, label, CLOCK_TITLE, folders, chat, FilingLanguage.EN) }
 
     @Test
     fun `suggest returns the gated title and resolved folders`() {
@@ -399,6 +502,12 @@ class FilingSuggesterTest {
     @Test
     fun `a rejected title does not sink the folders`() {
         val chat = FakeChat(chatReply("""{"title":"${"a".repeat(200)}","folders":[{"name":"Board"}]}"""))
+        assertEquals(FilingSuggestion("", listOf(suggestion(BOARD_ID, BOARD, ""))), suggestWith(chat))
+    }
+
+    @Test
+    fun `an unchanged title comes back empty and the folders still stand`() {
+        val chat = FakeChat(chatReply("""{"title":"$CLOCK_TITLE","folders":[{"name":"Board"}]}"""))
         assertEquals(FilingSuggestion("", listOf(suggestion(BOARD_ID, BOARD, ""))), suggestWith(chat))
     }
 

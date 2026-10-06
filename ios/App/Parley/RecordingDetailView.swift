@@ -1523,6 +1523,14 @@ struct RecordingDetailView: View {
                 ? try await app.cloud.recordingMeta(id: summary.id)
                 : try await app.cloud.orgRecordingMeta(orgId: orgId!, id: summary.id)
             meta = loaded
+            // The meta's title is the recording's name — the desktop treats it
+            // as the truth, and a rename lands there first. The row this screen
+            // was opened with can lag it, so the meta wins, and the Library's
+            // row is brought along with it.
+            if !loaded.title.isEmpty, loaded.title != displayTitle {
+                displayTitle = loaded.title
+                onTitleChange?(loaded.title)
+            }
             chooseFace(loaded)
             evaluateFeedbackPrompts(loaded)
         } catch {
@@ -1584,11 +1592,21 @@ struct RecordingDetailView: View {
             SampleRecordingStore.shared.setFolder(folderId)
         } else {
             do {
+                // `summary` is the row this screen was opened with, and the
+                // recording may have been renamed since (the filing card on
+                // this very screen, or the Mac). Pushing it would put the old
+                // title back in the library while the meta kept the new one,
+                // so the summary is rebuilt from the meta just read.
                 var fresh = try await app.cloud.recordingMeta(id: summary.id)
                 fresh.folderId = folderId
-                var row = summary
-                row.folderId = folderId
-                try await app.cloud.pushRecording(id: summary.id, summary: row, meta: fresh)
+                try await app.cloud.pushRecording(
+                    id: summary.id,
+                    summary: CloudRecordingSummary(projecting: fresh, fallback: summary),
+                    meta: fresh)
+                if !fresh.title.isEmpty, fresh.title != displayTitle {
+                    displayTitle = fresh.title
+                    onTitleChange?(fresh.title)
+                }
             } catch {
                 moveError = String(localized: "Move failed: \(error.localizedDescription)")
                 return

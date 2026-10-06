@@ -24,6 +24,7 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 
 /**
  * DTOs for the Parley cloud (`api.parley.tw`). Field names mirror the desktop's
@@ -330,6 +331,13 @@ class RecordingMeta(val raw: JsonObject) {
     fun speakerName(segment: TranscriptSegmentDto): String? =
         speakerNames[speakerKey(segment)]?.takeIf { it.isNotEmpty() }
 
+    /**
+     * What the meeting is about, in the user's words (`HistoryEntry.meetingContext`,
+     * written on the desktop before or after a meeting). "" when there is none.
+     * The filing pass sends it ahead of the transcript, as the desktop does.
+     */
+    val meetingContext: String get() = raw.stringOrNull("meetingContext").orEmpty()
+
     /** How many findings a desktop analysis has attached, for a summary row. */
     val findingsCount: Int get() = (raw["findings"] as? JsonArray)?.size ?: 0
 
@@ -456,6 +464,37 @@ class RecordingMeta(val raw: JsonObject) {
             if (title.isEmpty() && folders.isEmpty()) return null
             return FilingSuggestion(title = title, folders = folders)
         }
+
+    /**
+     * A copy carrying a freshly generated [suggestion] as the pending
+     * `filingSuggestion`, in the desktop's `FilingSuggestion` shape
+     * (`{ title, folders: [{ folderId, name, reason }] }`, `folderId: null` for a
+     * folder still to be created), and `filingSuggested: true` — "a pass has
+     * been spent here", so no other device runs a second one and proposes a
+     * second, different title. Every other field preserved verbatim.
+     */
+    fun withFilingSuggestion(suggestion: FilingSuggestion): RecordingMeta = RecordingMeta(
+        JsonObject(
+            LinkedHashMap(raw).apply {
+                put(FILING_SUGGESTED, JsonPrimitive(true))
+                put(
+                    FILING_SUGGESTION,
+                    buildJsonObject {
+                        put(TITLE, suggestion.title)
+                        putJsonArray("folders") {
+                            suggestion.folders.forEach { folder ->
+                                addJsonObject {
+                                    put("folderId", folder.folderId?.let(::JsonPrimitive) ?: JsonNull)
+                                    put("name", folder.name)
+                                    put("reason", folder.reason)
+                                }
+                            }
+                        }
+                    },
+                )
+            },
+        ),
+    )
 
     /**
      * A copy that says the filing offer has been answered, whichever way:

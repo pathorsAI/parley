@@ -2,9 +2,7 @@ package com.pathors.parley.filing
 
 import com.pathors.parley.cloud.CloudClient
 import com.pathors.parley.cloud.CloudFolder
-import com.pathors.parley.kit.FilingFolder
 import com.pathors.parley.kit.FilingFolderSuggestion
-import com.pathors.parley.kit.FilingSuggester
 import com.pathors.parley.kit.FilingSuggestion
 import com.pathors.parley.kit.TranscriptSegment
 import com.pathors.parley.library.LibraryFolders
@@ -196,8 +194,14 @@ data class FilingUiState(
  */
 class FilingSuggestionModel(
     private val cloud: CloudClient,
-    /** The label a segment's speaker is shown under, so the model reads what the user reads. */
-    private val speakerLabel: (TranscriptSegment) -> String,
+    /**
+     * The pass itself — its inputs (the stored transcript, speaker names,
+     * meeting context, UI language) and the write that persists what it
+     * produced. Shared with the import path, so both ask the same question.
+     * Null for a model that only presents a suggestion already waiting on the
+     * recording (the recording page), which never runs one.
+     */
+    private val pass: FilingPass? = null,
     /**
      * Told when a write put the recording in a folder — the getting-started
      * checklist's "filed", which iOS ticks from the same card.
@@ -242,7 +246,9 @@ class FilingSuggestionModel(
 
     /**
      * Run the pass for a recording [claim] accepted. [spoken] is the meeting's
-     * final transcript. Never throws: any failure is "no suggestion".
+     * final transcript as the screen holds it — read only if the uploaded meta
+     * somehow carries none, since the stored one is what every other device
+     * reads. Never throws: any failure is "no suggestion".
      */
     suspend fun run(recordingId: String, spoken: List<TranscriptSegment>) {
         val offered = try {
@@ -264,27 +270,20 @@ class FilingSuggestionModel(
     }
 
     private suspend fun suggest(recordingId: String, spoken: List<TranscriptSegment>): FilingUiState? {
-        // The meta rather than what the screen remembers: it is what the
-        // server holds — the title and folder the upload actually wrote — and
-        // it says whether another device has already spent a pass on this.
-        val meta = cloud.recordingMeta(recordingId)
-        if (meta.filingSuggested) return null
-        // Personal folders only: an org folder is not somewhere this recording
-        // can be moved to from here.
-        val folders = LibraryFolders.personalFolders(cloud.listFolders())
-        val proposal = FilingSuggester.suggest(
-            segments = spoken,
-            speakerLabel = speakerLabel,
-            currentTitle = meta.title,
-            folders = folders.map { FilingFolder(id = it.id, name = it.name, orgId = it.orgId) },
-            chat = cloud,
-        ) ?: return null
+        // The cloud's meta rather than what the screen remembers: it is what
+        // the server holds — the title and folder the upload actually wrote,
+        // the names typed for the speakers — and it says whether another
+        // device has already spent a pass on this. The pass persists what it
+        // produced before it returns, so the offer below is the same one the
+        // desktop and the recording page will see if this one goes unanswered.
+        val pass = this.pass ?: return null
+        val generated = pass.generate(recordingId, fallbackSegments = spoken) ?: return null
         return FilingUiState(
             phase = FilingPhase.OFFERING,
-            suggestion = proposal,
-            currentTitle = meta.title,
-            currentFolderId = LibraryFolders.liveFolderId(meta.folderId, folders),
-            existingFolders = folders,
+            suggestion = generated.suggestion,
+            currentTitle = generated.meta.title,
+            currentFolderId = LibraryFolders.liveFolderId(generated.meta.folderId, generated.folders),
+            existingFolders = generated.folders,
         )
     }
 

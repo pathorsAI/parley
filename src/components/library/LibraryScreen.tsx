@@ -353,6 +353,15 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
     async (id: string, title: string) => {
       const clean = title.trim();
       if (!clean) return;
+      // Same guard as `move` below, for the same reason: a cloud-only card has no
+      // local meta to rename, and a "stale" one would push its OLDER local meta
+      // (title, filing suggestion and all) over the newer cloud copy. Open it
+      // first — that pulls the latest — then rename.
+      const item = entries?.find((e) => e.id === id);
+      if (item && (item.sync === "cloud" || item.sync === "stale")) {
+        toast.message(t("history.rename.needsDownload"));
+        return;
+      }
       try {
         await renameHistoryEntry(id, clean);
         setEntries((prev) => prev?.map((e) => (e.id === id ? { ...e, title: clean } : e)) ?? null);
@@ -361,7 +370,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
         toast.error(t("history.renameFailed", { error: errText(e) }));
       }
     },
-    [t]
+    [entries, t]
   );
 
   /** File a card into another folder (or take it back to 還沒歸檔). A cloud-only

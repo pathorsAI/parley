@@ -476,6 +476,10 @@
     <string name="filing_skip">Skip suggestion</string>
     <string name="filing_write_failed">That didn\'t save. Try again.</string>
     <string name="filing_done">Done</string>
+    <!-- Not shown. The language the AI title suggestion is written in, which is
+         whatever language these resources resolved to (a BCP 47 tag read by
+         FilingLanguage.forTag) — the title follows the app, not the meeting. -->
+    <string name="filing_title_language">en</string>
 
     <!-- What's New. The announcement copy itself is not here: it is the
          repository's announcements/ folder, shared with iOS and the desktop.

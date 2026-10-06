@@ -30,6 +30,16 @@ final class AppState: NSObject, ObservableObject {
     /// get wrong.
     @Published private(set) var backfillRevision: Int = 0
 
+    /// Bumped when a screen other than the Library changes a recording the
+    /// Library lists — today, the record screen's filing card renaming or
+    /// filing the meeting that just ended. The Library tab stays alive behind
+    /// the tab bar with the rows it loaded, so without this it kept showing
+    /// the clock name after the rename had landed. A counter for the same
+    /// reason `backfillRevision` is one.
+    @Published private(set) var libraryRevision: Int = 0
+
+    func noteLibraryChanged() { libraryRevision += 1 }
+
     /// False only until the stored session has been read out of the Keychain —
     /// which is synchronous, so this is true within the first frame. The root
     /// view waits on it so a returning user never sees the sign-in wall flash by

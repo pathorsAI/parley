@@ -297,6 +297,16 @@ describe("restoredStudyStatuses", () => {
     expect(r.actionItemsStatus).toBe("done");
   });
 
+  it("filing runs once per recording: a saved flag or a pending suggestion means done", () => {
+    // `filingSuggested` is the same key the phones write into meta.json, so a
+    // recording a phone already filed comes down from the cloud as done too.
+    expect(restoredStudyStatuses({ ...base, filingSuggested: true }).filingStatus).toBe("done");
+    expect(
+      restoredStudyStatuses({ ...base, filingSuggestion: { title: "", folders: [] } }).filingStatus
+    ).toBe("done");
+    expect(restoredStudyStatuses({ ...base }).filingStatus).toBe("idle");
+  });
+
   it("in flight beats every saved state", () => {
     const r = restoredStudyStatuses(
       { ...base, analyzed: true, brief: "b", briefFailed: true, filingSuggested: true },

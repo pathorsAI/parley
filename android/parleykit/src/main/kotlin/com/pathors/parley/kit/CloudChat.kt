@@ -29,7 +29,7 @@ object CloudChat {
 
     /**
      * The request, in the OpenAI shape: `max_tokens` is snake_case on the wire.
-     * Deliberately no `response_format` — see [FilingSuggester.jsonInstruction].
+     * Deliberately no `response_format` — see [FilingSuggester.systemPrompt].
      */
     @Serializable
     data class Request(

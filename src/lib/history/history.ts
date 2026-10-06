@@ -31,6 +31,7 @@ import { withTimingRepaired, withoutEstimatedTiming } from "../replay/timing";
 import type {
   ActionItem,
   DefaultSaveLocation,
+  FilingSuggestion,
   TimelineEvent,
   TranscriptSegment,
 } from "../types";
@@ -113,10 +114,14 @@ export function snapshotAnalysis() {
     briefFailed: s.briefStatus === "error" && !s.brief,
     // Same for the filing suggestion: the upload's FIRST save happens while the
     // pass may already have landed, and a re-analysis overwrite must not drop a
-    // suggestion the user hasn't answered yet. The completion flag comes from the
-    // status for the same reason `analyzed` does — see HistoryEntry.filingSuggested.
+    // suggestion the user hasn't answered yet. The completion flag is asserted
+    // only while a suggestion is PENDING: a "done" stage with nothing pending is
+    // either a pass that offered nothing (deliberately never persisted, so other
+    // devices can still try — see filingRun) or one the user already answered,
+    // which persistFilingSuggestion writes itself. Either way the snapshot
+    // defers to what is on disk (mergeAnalysisSnapshot keeps meta's fields).
     filingSuggestion: s.filingSuggestion,
-    filingSuggested: s.filingStatus === "done",
+    filingSuggested: s.filingStatus === "done" && !!s.filingSuggestion,
     // The kind SHAPED those outputs, so it is part of them.
     meetingKind: s.meetingKind,
   };
@@ -641,9 +646,10 @@ export async function saveTranscriptToHistory(save: TranscriptImportSave): Promi
  * those, and each lands on disk by itself moments later (persistStageOutputs).
  * The snapshot's write can still arrive AFTER theirs (it is debounced), so a
  * null there means "not known yet", never "erase": it must not undo a sibling
- * stage that already saved. A filing answer the user gave (dismiss/accept: the
- * pass is done and the suggestion is null) is still copied, because then the
- * store's null IS the answer.
+ * stage that already saved. Filing fields are copied only when the snapshot
+ * carries a pending suggestion (filingSuggested); otherwise meta's stand — a
+ * user's dismiss/accept is already on disk via persistFilingSuggestion, and an
+ * empty pass is never persisted at all.
  */
 export function mergeAnalysisSnapshot(meta: HistoryEntry, analysis: AnalysisSnapshot): HistoryEntry {
   return {
@@ -874,11 +880,33 @@ export async function listHistory(): Promise<HistoryEntrySummary[]> {
   return summaries.sort((a, b) => b.createdAt - a.createdAt);
 }
 
-/** Rename an entry (patches the title in meta + summary). */
+/**
+ * A pending filing suggestion after the recording has been renamed: its title is
+ * answered, its folders are not. Nothing left → null. The in-memory twin of
+ * history.rs `apply_rename`; pure and exported for testing.
+ */
+export function clearSuggestedTitle(suggestion: FilingSuggestion | null): FilingSuggestion | null {
+  if (!suggestion) return null;
+  return suggestion.folders.length > 0 ? { ...suggestion, title: "" } : null;
+}
+
+/**
+ * Rename an entry (patches the title in meta + summary). EVERY rename — the
+ * replay titlebar, the library, MCP's rename_recording, the filing card — comes
+ * through here, and every one also retires the pending filing suggestion's
+ * title: the user has now named the recording, so a "suggested title" left
+ * beside it is a second, competing name. Rust clears it in the same meta.json
+ * write (history.rs `apply_rename`); this mirrors that into the store when the
+ * renamed entry is the one on screen, so the card drops its title row at once.
+ */
 export async function renameHistoryEntry(id: string, title: string): Promise<void> {
   if (!isTauri()) return;
   await withEntryWrite(id, () => invoke("rename_history_entry", { id, title: title.trim() }));
   log.info("history: entry renamed", { id });
+  const s = useStore.getState();
+  if (s.loadedHistoryId === id && s.filingSuggestion?.title) {
+    s.setFilingSuggestion(clearSuggestedTitle(s.filingSuggestion));
+  }
   // A rename is a content change → go through the same dirty→push→clear lifecycle
   // as save/re-analysis, so a failed cloud push is retried by the background sweep.
   pushToCloud(id);
