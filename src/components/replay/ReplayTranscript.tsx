@@ -373,13 +373,13 @@ export function ReplayTranscript({
                     ))}
                   {/* A paragraph, not a button: WebKit will not drag-select text inside a
                       <button>, so wrapping the line in one meant the transcript could be
-                      read but never highlighted and copied with ⌘C. The timestamp button
-                      beside it stays the keyboard seek; this click is the mouse one, and
-                      it steps aside when the mouse-up ends a selection so highlighting a
-                      line doesn't also jump the audio. */}
+                      read but never highlighted and copied with ⌘C. Seeking by keyboard
+                      goes through the timestamp button beside it; this is strictly the
+                      pointer gesture — a primary-button release that did not end up
+                      selecting text — so highlighting a line doesn't also jump the audio. */}
                   <p
-                    onClick={() => {
-                      if (isTextSelected(globalThis.getSelection())) return;
+                    onPointerUp={(e) => {
+                      if (e.button !== 0 || isTextSelected(globalThis.getSelection())) return;
                       seekToLine(seg.startMs);
                     }}
                     className={cn(
