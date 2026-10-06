@@ -469,6 +469,7 @@
     <string name="filing_skip">不用建議</string>
     <string name="filing_write_failed">沒有存成功，請再試一次。</string>
     <string name="filing_done">完成</string>
+    <string name="filing_title_language">zh-TW</string>
 
     <string name="whats_new_also">也改了</string>
     <string name="whats_new_copy_language">zh-Hant</string>

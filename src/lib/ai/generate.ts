@@ -96,15 +96,21 @@ export async function generateObjectResilient<OBJECT>(opts: {
   schema: z.ZodType<OBJECT>;
   system: string;
   prompt: string;
+  /** Sampling temperature. Omitted → the provider's default, which is what every
+   *  caller but the filing pass wants. */
+  temperature?: number;
 }) {
   const { settings, workload, schema, system, prompt } = opts;
+  // Spread only when set, so callers that never pass it send exactly what they
+  // sent before (some providers reject an explicit temperature on some models).
+  const sampling = opts.temperature === undefined ? {} : { temperature: opts.temperature };
   const provider = settings.llmProviders[workload];
   const providerOptions = getProviderOptions(settings, workload);
   const maxOutputTokens = maxOutputTokensFor(settings, workload);
   const tag = { provider, workload, model: settings.models[provider][workload] };
 
   try {
-    return await generateObject({ model: getModel(settings, workload), providerOptions, schema, system, prompt, maxOutputTokens });
+    return await generateObject({ model: getModel(settings, workload), providerOptions, schema, system, prompt, maxOutputTokens, ...sampling });
   } catch (err) {
     const info = PROVIDER_BY_ID[provider];
     const canFallback = info.kind === "openai-compatible" && (info.supportsStructuredOutputs ?? false);
@@ -123,6 +129,7 @@ export async function generateObjectResilient<OBJECT>(opts: {
         system,
         prompt,
         maxOutputTokens,
+        ...sampling,
       });
     } catch (error_) {
       logAiError("ai.generateObject json_object", tag, error_);
@@ -159,8 +166,11 @@ export async function streamObjectResilient<OBJECT>(opts: {
   /** Receives the deeply-partial object as it fills in. Omit for a one-shot
    *  answer with nothing to render mid-stream (e.g. a classification). */
   onPartial?: (partial: unknown) => void;
+  /** Sampling temperature; see generateObjectResilient. */
+  temperature?: number;
 }) {
-  const { settings, workload, schema, system, prompt, onPartial } = opts;
+  const { settings, workload, schema, system, prompt, onPartial, temperature } = opts;
+  const sampling = temperature === undefined ? {} : { temperature };
   const provider = settings.llmProviders[workload];
   const providerOptions = getProviderOptions(settings, workload);
   const forceJsonObject = PROVIDER_BY_ID[provider].kind === "openai-compatible";
@@ -175,12 +185,13 @@ export async function streamObjectResilient<OBJECT>(opts: {
       system,
       prompt,
       maxOutputTokens,
+      ...sampling,
     });
     for await (const partial of result.partialObjectStream) onPartial?.(partial);
     return { object: await result.object, usage: await result.usage };
   } catch (err) {
     logAiError("ai.streamObject (falling back to non-streamed)", tag, err);
-    const res = await generateObjectResilient({ settings, workload, schema, system, prompt });
+    const res = await generateObjectResilient({ settings, workload, schema, system, prompt, temperature });
     onPartial?.(res.object);
     return { object: res.object, usage: res.usage };
   }

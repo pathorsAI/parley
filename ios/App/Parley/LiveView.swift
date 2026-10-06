@@ -138,6 +138,10 @@ struct LiveView: View {
             // what takes the previous block down.
             .onChange(of: recorder.settled?.id) {
                 if let settled = recorder.settled {
+                    // A rename or a filing accepted on this card changes a
+                    // row the Library tab already has on screen; tell it, or
+                    // going over there shows the clock name it loaded first.
+                    filing.onApplied = { _, _, _ in app.noteLibraryChanged() }
                     filing.consider(settled, app: app)
                 } else {
                     filing.forget()

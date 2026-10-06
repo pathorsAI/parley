@@ -63,6 +63,23 @@ describe("FilingSuggestionCard", () => {
     expect(html).toContain("新增「泓昇科技」");
   });
 
+  it("renders a folders-only suggestion (title \"\") with no title row", () => {
+    // The shape a gated title or a rename leaves behind (renameHistoryEntry).
+    arrange({ ...suggestion, title: "" });
+    const html = render();
+    expect(html).toContain('id="filing-suggestion"');
+    expect(html).not.toContain("點一下可以改標題");
+    expect(html).toContain("新增「泓昇科技」");
+  });
+
+  it("shows nothing for a folders-only suggestion with no chip left to offer", () => {
+    arrange(
+      { title: "", folders: [{ folderId: "f-a", name: "既有 A", reason: "" }] },
+      { replayFolderId: "f-a" }
+    );
+    expect(render(false)).toBe("");
+  });
+
   it("shows nothing on a read-only org copy", () => {
     arrange(suggestion, { replayReadOnly: true });
     expect(render()).toBe("");

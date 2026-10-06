@@ -268,7 +268,7 @@ final class MeetingUploader {
                 continue
             }
             do {
-                _ = try await uploadCountingFailure(item, cloud: cloud, orgs: orgs)
+                _ = try await uploadCountingFailure(item, cloud: cloud, orgs: orgs, isRetry: true)
                 uploaded += 1
             } catch is CancellationError {
                 // The pass was torn down, not the upload refused. Stop without
@@ -314,10 +314,10 @@ final class MeetingUploader {
     /// of those happened to be the one that noticed. A cancelled pass is not a
     /// failure of the recording and is not counted.
     private static func uploadCountingFailure(
-        _ pending: PendingUpload, cloud: CloudClient, orgs: [CloudOrg]
+        _ pending: PendingUpload, cloud: CloudClient, orgs: [CloudOrg], isRetry: Bool = false
     ) async throws -> Outcome {
         do {
-            return try await upload(pending, cloud: cloud, orgs: orgs)
+            return try await upload(pending, cloud: cloud, orgs: orgs, isRetry: isRetry)
         } catch is CancellationError {
             throw CancellationError()
         } catch {
@@ -413,29 +413,60 @@ final class MeetingUploader {
         }
     }
 
+    /// - Parameter isRetry: this entry has been through the queue before, so
+    ///   an earlier attempt may already have pushed the recording — and the
+    ///   user may already have renamed, filed or had a suggestion written onto
+    ///   it since. See `existingMeta(for:cloud:)`.
     private static func upload(
         _ pending: PendingUpload,
         cloud: CloudClient,
-        orgs: [CloudOrg]
+        orgs: [CloudOrg],
+        isRetry: Bool = false
     ) async throws -> Outcome {
         let finals = pending.segments
         let personalFolderId = pending.defaultSave.isOrg ? nil : pending.defaultSave.folderId
-        let meta = buildMeta(pending: pending, finals: finals, folderId: personalFolderId)
-        let summary = buildSummary(pending: pending, finals: finals, folderId: personalFolderId)
         let audio = try Data(contentsOf: audioURL(for: pending.id))
+
+        // A retry that rebuilt the entry from the manifest used to push the
+        // clock name and the queued folder straight back over a recording that
+        // had moved on — renamed on the Mac, filed, its filing pass spent — and
+        // drop `filingSuggested` with them, so the desktop ran a second pass
+        // and synced a second title. When the recording is already there, the
+        // upload edits only what it owns (the transcript and the audio) inside
+        // the copy the cloud holds now.
+        let meta: RecordingMeta
+        let summary: CloudRecordingSummary
+        let fresh = buildSummary(pending: pending, finals: finals, folderId: personalFolderId)
+        if isRetry, var existing = try await existingMeta(for: pending.id, cloud: cloud) {
+            existing.replaceTranscript(segments: finals, durationMs: pending.durationMs)
+            if (existing.raw["audio"] as? String ?? "").isEmpty { existing.raw["audio"] = "audio.ogg" }
+            meta = existing
+            summary = CloudRecordingSummary(projecting: existing, fallback: fresh)
+        } else {
+            meta = buildMeta(pending: pending, finals: finals, folderId: personalFolderId)
+            summary = fresh
+        }
 
         try await cloud.uploadAudio(id: pending.id, ogg: audio)
         try await cloud.pushRecording(id: pending.id, summary: summary, meta: meta)
 
         var outcome = Outcome(
             recordingId: pending.id,
-            title: pending.displayTitle,
-            folderId: personalFolderId,
+            title: meta.title.isEmpty ? pending.displayTitle : meta.title,
+            folderId: pending.defaultSave.isOrg ? nil : meta.folderId,
             sharedToOrgName: nil)
         if pending.defaultSave.isOrg, let orgId = pending.defaultSave.orgId {
             try await cloud.shareRecording(id: pending.id, orgId: orgId, folderId: pending.defaultSave.folderId)
             outcome.sharedToOrgName =
                 orgs.first { $0.id == orgId }?.name ?? String(localized: "Organization")
+        } else if hasSpokenText(finals) {
+            // Name and file it: every door into a personal recording gets the
+            // filing pass — a live meeting, an import, a queued upload that
+            // finally synced — not only the one with a record screen open to
+            // show the card. The pass persists its answer into the meta, so
+            // the recording screen offers it whenever this is next opened; the
+            // record screen, when it is waiting, joins this same pass.
+            FilingPass.shared.start(id: pending.id, cloud: cloud)
         }
 
         // The cloud now holds everything, so the *queue's* copy has done its job
@@ -456,6 +487,36 @@ final class MeetingUploader {
             removePending(id: pending.id)
         }
         return outcome
+    }
+
+    /// Whether a transcript has anything in it for the filing pass to read.
+    private static func hasSpokenText(_ segments: [TranscriptSegment]) -> Bool {
+        segments.contains {
+            $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    /// The recording's meta as the cloud holds it now, or nil when there is
+    /// no such recording yet — the normal case for a queued upload whose
+    /// earlier attempts never got as far as the push.
+    ///
+    /// Only transport failures, 5xx and the answers somebody's later action
+    /// clears (401, 408, 425, 429) are thrown, and they leave the entry queued
+    /// exactly as a failed push would. Any other refusal of the read is taken
+    /// as "not there": the push that follows is the request whose answer
+    /// decides this entry's fate, and a read the server does not like must not
+    /// get an upload dead-lettered by `isTerminal`.
+    private static func existingMeta(for id: String, cloud: CloudClient) async throws
+        -> RecordingMeta?
+    {
+        do {
+            return try await cloud.recordingMeta(id: id)
+        } catch let error as CloudError
+            where error.status == 0 || ((400..<500).contains(error.status)
+                && ![401, 408, 425, 429].contains(error.status))
+        {
+            return nil
+        }
     }
 
     /// The end of an Ogg's life on this phone, for every path that reaches it:
@@ -668,24 +729,14 @@ final class MeetingUploader {
         /// actually completed spends the budget: a run that dies on a flat
         /// network has cost nothing and stays queued for free.
         var manualRetries: Int = 0
-        /// The recording's meta exactly as it already exists, JSON-encoded, so
-        /// the re-push can put the new transcript *into* it instead of building
-        /// a fresh entry over the top of somebody's speaker names and analysis.
-        /// See `RecordingMeta.replaceTranscript`.
-        ///
-        /// Optional, and nil for every automatic backfill: that one is queued
-        /// by the upload that created the recording seconds earlier, so there
-        /// is nothing on it yet to capture. It is **not** a licence to rebuild
-        /// the entry from this request — `runBackfill` re-reads the recording
-        /// from the cloud in that case, because by the time an automatic
-        /// backfill finally runs (a later launch, possibly days later) the user
-        /// may well have renamed and filed it, and `request.pending.title` is
-        /// still the clock name it was born with. A manifest written by an
-        /// older build has no key here either and takes the same path.
+        /// Legacy: the recording's meta and library row as they stood when a
+        /// manual re-transcription was queued. Still decoded so a manifest
+        /// written by an older build reads cleanly, but no longer written and
+        /// never pushed — a copy captured at queue time is out of date by the
+        /// time the run happens, and pushing it undid renames, moves and filing
+        /// answers made in between. `runBackfill` re-reads the recording from
+        /// the cloud on every path instead.
         var existingMeta: Data?
-        /// The summary the library is already showing, for the same reason:
-        /// `findingsCount` and the title belong to the recording, not to the
-        /// transcript being replaced. See `replacingTranscript`.
         var existingSummary: CloudRecordingSummary?
         /// When a run of this request last *started*, and how many have.
         ///
@@ -1032,54 +1083,47 @@ final class MeetingUploader {
         }
 
         let durationMs = max(request.pending.durationMs, Double(transcript.durationMs))
-        let meta: RecordingMeta
-        let summary: CloudRecordingSummary
-        if var existing = request.existingMeta.flatMap(decodeMeta),
-            let existingSummary = request.existingSummary
-        {
-            // A re-run of a recording that already has a life of its own: edit
-            // the transcript inside what is there rather than replacing it.
-            // `request.folderId` is not applied — the captured meta already
-            // carries the recording's own folder, and writing the request's
-            // copy over it would turn a re-transcription into a move.
-            existing.replaceTranscript(segments: transcript.segments, durationMs: durationMs)
-            meta = existing
-            summary = existingSummary.replacingTranscript(
-                segments: transcript.segments, durationMs: durationMs)
-        } else {
-            // The automatic path. It used to rebuild the entry out of
-            // `request.pending`, on the reasoning that the recording had been
-            // created seconds earlier by the upload that queued this and so had
-            // nothing on it worth keeping. That reasoning holds at the moment
-            // of queueing and stops holding immediately afterwards: this run
-            // happens on a *later* launch, and between the two the user may
-            // have renamed the recording, moved it, and had a filing suggestion
-            // accepted on it. Pushing the rebuilt entry put the clock name —
-            // "Meeting Sep 16, 3:20 PM" — back over the name they typed, along
-            // with the folder and `filingSuggested`. A rename undone hours
-            // later by a background job is silent data loss.
-            //
-            // So read the recording as it stands right now and edit the
-            // transcript inside it, exactly as the manual path does.
-            // `request.folderId` is not applied, for the same reason it is not
-            // applied above: the recording's own folder is the current one.
-            //
-            // A hard `try`: a fetch that failed would leave us holding only the
-            // stale copy, and quietly pushing that is the very thing this
-            // branch exists to stop. Better to leave the request queued and
-            // come back — the network that just failed here is the network the
-            // push below needs anyway.
-            var current = try await cloud.recordingMeta(id: id)
-            current.replaceTranscript(segments: transcript.segments, durationMs: durationMs)
-            meta = current
-            summary = repushSummary(
-                meta: current, fallback: request.pending, segments: transcript.segments)
-        }
+
+        // Read the recording as it stands right now and edit the transcript
+        // inside it — on both paths.
+        //
+        // The automatic path used to rebuild the entry out of
+        // `request.pending`, and the hand-triggered one used to edit the copy
+        // of the meta captured when the request was queued
+        // (`request.existingMeta`). Both copies go stale the moment they are
+        // taken: a transcription takes minutes and may run on a later launch,
+        // and in between the user may rename the recording, move it, or answer
+        // a filing suggestion on it — or the filing pass may write one. Pushing
+        // the old copy put the old name back over the new one, along with the
+        // folder and `filingSuggested`. A rename undone later by a background
+        // job is silent data loss.
+        //
+        // `request.folderId` is not applied either: the recording's own folder
+        // is the current one, and writing the request's copy over it would
+        // turn a re-transcription into a move.
+        //
+        // A hard `try`: a fetch that failed would leave us holding only the
+        // stale copy, and quietly pushing that is the very thing this exists
+        // to stop. Better to leave the request queued and come back — the
+        // network that just failed here is the network the push below needs
+        // anyway. A recording that is gone (a 4xx) is dead-lettered by
+        // `attemptBackfill` rather than resurrected by the push.
+        var meta = try await cloud.recordingMeta(id: id)
+        meta.replaceTranscript(segments: transcript.segments, durationMs: durationMs)
+        let summary = repushSummary(
+            meta: meta, fallback: request.pending, segments: transcript.segments)
 
         // Audio is already in the cloud and unchanged, so this is a metadata
         // push only — the recording keeps its id, its folder and its sharing.
         try await cloud.pushRecording(id: id, summary: summary, meta: meta)
         finishBackfill(id: id)
+
+        // A recording that went up with nothing to read — a crash-adopted Ogg,
+        // a live leg that never connected — had no filing pass at upload time.
+        // Now it has a transcript. The pass skips itself if one already ran.
+        if request.manualRetries == 0, !request.pending.defaultSave.isOrg {
+            FilingPass.shared.start(id: id, cloud: cloud)
+        }
     }
 
     /// The summary that goes up beside a re-pushed meta on the automatic path,
@@ -1109,13 +1153,6 @@ final class MeetingUploader {
             snippet: CloudRecordingSummary.snippet(of: segments),
             folderId: meta.folderId,
             updatedAt: nil)
-    }
-
-    private static func decodeMeta(_ data: Data) -> RecordingMeta? {
-        guard let raw = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return nil
-        }
-        return RecordingMeta(raw: raw)
     }
 
     // MARK: re-transcribing on request
@@ -1175,13 +1212,6 @@ final class MeetingUploader {
             source: summary.source.isEmpty ? "live" : summary.source,
             title: meta.title.isEmpty ? (summary.title.isEmpty ? nil : summary.title) : meta.title)
 
-        // Before the audio is touched, and with a hard `try` rather than a
-        // `try?`: a request that reached the queue without the meta it is
-        // preserving would fall through to the automatic path and rebuild the
-        // entry from the new transcript alone — wiping the analysis this whole
-        // detour exists to protect. Failing to queue is the better outcome.
-        let existingMeta = try JSONSerialization.data(withJSONObject: meta.raw)
-
         let destination = try backfillAudioURL(for: id)
         if FileManager.default.fileExists(atPath: destination.path) {
             try FileManager.default.removeItem(at: destination)
@@ -1196,9 +1226,7 @@ final class MeetingUploader {
         let request = BackfillRequest(
             pending: pending,
             folderId: folderId,
-            manualRetries: max(queued + 1, budget.nextAttempt(for: id)),
-            existingMeta: existingMeta,
-            existingSummary: summary)
+            manualRetries: max(queued + 1, budget.nextAttempt(for: id)))
         do {
             try JSONEncoder().encode(request).write(
                 to: backfillManifestURL(for: id), options: .atomic)

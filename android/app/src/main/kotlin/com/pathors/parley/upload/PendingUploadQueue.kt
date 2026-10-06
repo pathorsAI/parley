@@ -50,6 +50,14 @@ data class PendingUpload(
     val shareOrgId: String? = null,
     /** The folder inside [shareOrgId] the copy goes into; null = the org's root. */
     val shareFolderId: String? = null,
+    /**
+     * A meta push has been attempted for this recording, so the cloud may
+     * already hold it — and may hold a NEWER version of it (renamed, filed,
+     * offered a filing suggestion, analysed) by the time the upload is tried
+     * again. A retry then edits what the upload owns into the existing entry
+     * instead of pushing a rebuilt one over it. See `MeetingUploader.pushMeta`.
+     */
+    val pushAttempted: Boolean = false,
 )
 
 /**

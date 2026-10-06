@@ -45,8 +45,13 @@ import type { FilingSuggestion, FilingFolderSuggestion } from "../../lib/types";
  *  - A folder chip files there without renaming; "Choose another…" opens the
  *    filing bar's destination picker (`onPickAnother`).
  *  - The title is editable in place (click, type, Enter or click away; Esc
- *    cancels). That renames and nothing else — the edit becomes the
- *    suggestion's title, so the title row retires by the usual rule.
+ *    cancels). That renames and nothing else — and like EVERY rename
+ *    (renameHistoryEntry) it clears the suggestion's title on disk and in the
+ *    store, so the title row retires and only the folder chips stay on offer.
+ *
+ * A suggestion can arrive with title "" — the model's title failed the shared
+ * gates (ai/filing.ts gateFilingTitle), or a rename already answered it. That is
+ * a folders-only suggestion: no title row, and 採用建議 just files.
  *
  * The first time a card appears for a recording it springs in and types its
  * title — the suggestion should look like something that just happened. A
@@ -138,18 +143,16 @@ export function FilingSuggestionCard({
     (title: string) => {
       const clean = title.trim();
       if (!clean || clean === replayName.trim() || !loadedHistoryId) return;
-      // The edit becomes the suggestion, so "name === suggestion" keeps being
-      // the one test that retires the row.
-      const edited = !!suggestion && clean !== suggestedTitle;
-      if (edited) setFilingSuggestion({ ...suggestion, title: clean });
+      // Show the edit at once while the rename round-trips. The rename itself
+      // then clears the suggestion's title, on disk (one write with the new
+      // name) and in the store, so there is nothing more to persist here; with
+      // no chips left the card is spent, and the effect above persists the null.
+      if (suggestion && clean !== suggestedTitle) setFilingSuggestion({ ...suggestion, title: clean });
       const rename = async () => {
         const history = await import("../../lib/history/history");
         await history.renameHistoryEntry(loadedHistoryId, clean);
         renameReplay(clean);
         toast.success(t("study.filing.titleApplied"));
-        // Keep the edit across a reopen while chips are still on offer. With
-        // none left the card is spent, and the effect above persists the null.
-        if (edited && chips.length > 0) await history.persistFilingSuggestion();
       };
       // Kept synchronous so the handler can be passed to onClick directly: an
       // `async` callback would have to be discarded at the call site, and the
@@ -161,7 +164,7 @@ export function FilingSuggestionCard({
         );
       });
     },
-    [suggestion, suggestedTitle, replayName, loadedHistoryId, renameReplay, setFilingSuggestion, chips.length, t]
+    [suggestion, suggestedTitle, replayName, loadedHistoryId, renameReplay, setFilingSuggestion, t]
   );
 
   // Filing shows up in the bar immediately below, so the card has said all it
