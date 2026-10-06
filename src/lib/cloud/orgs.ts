@@ -10,10 +10,21 @@
 //   GET  /auth/organization/list-user-invitations                       → invitation[] (pending)
 //   POST /auth/organization/accept-invitation { invitationId }          → { invitation, member }
 //   GET  /auth/organization/list-members?organizationId=                → { members, total }
+//   GET  /auth/organization/list-invitations?organizationId=            → invitation[] (all states)
+//   POST /auth/organization/cancel-invitation { invitationId }
+//   POST /auth/organization/reject-invitation { invitationId }
+//   POST /auth/organization/remove-member     { memberIdOrEmail, organizationId }
+//   POST /auth/organization/update-member-role { memberId, role, organizationId }
+//   POST /auth/organization/leave             { organizationId }
+//   POST /auth/organization/update            { data: { name }, organizationId }
+//
+// Permissions are better-auth's default roles (see ./orgRoles for the mirror the
+// UI uses to hide what the server would refuse); the server is the authority.
 
 import { cloudFetch } from "./client";
 import { log } from "../log";
 import type { CloudInvitation, CloudOrg, CloudOrgMember } from "./types";
+import { isInvitationLive, type InvitableRole } from "./orgRoles";
 
 /** Slugify a name into a URL-safe, unique-ish org slug (better-auth requires one). */
 function toSlug(name: string): string {
@@ -54,19 +65,26 @@ export async function listMyOrgs(): Promise<CloudOrg[]> {
 }
 
 /**
- * Invite someone into an org by email. No email is sent (the backend has no mail
- * provider) — the invitee sees it in-app via {@link listMyInvitations} and accepts.
- * The invitee must sign in with that same (verified) Google email.
+ * Invite someone into an org by email, as a member or an admin (owners only come
+ * from a transfer). No email is sent (the backend has no mail provider) — the
+ * invitee sees it in-app via {@link listMyInvitations} and accepts. They must sign
+ * in with that same email. `resend` renews an existing pending invitation's
+ * 48-hour expiry instead of failing with "already invited".
  */
-export async function inviteToOrg(organizationId: string, email: string): Promise<void> {
+export async function inviteToOrg(
+  organizationId: string,
+  email: string,
+  role: InvitableRole = "member",
+  opts: { resend?: boolean } = {},
+): Promise<void> {
   await cloudFetch("/auth/organization/invite-member", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     // `role` is required (no default); pass the org id explicitly rather than
     // relying on the session's active org.
-    body: JSON.stringify({ email: email.trim(), role: "member", organizationId }),
+    body: JSON.stringify({ email: email.trim(), role, organizationId, resend: opts.resend ?? false }),
   });
-  log.info("cloud: invited member", { organizationId });
+  log.info("cloud: invited member", { organizationId, role, resend: !!opts.resend });
 }
 
 /** The signed-in user's own pending invitations (matched by their session email). */
@@ -74,7 +92,111 @@ export async function listMyInvitations(): Promise<CloudInvitation[]> {
   const res = await cloudFetch("/auth/organization/list-user-invitations");
   const data = (await res.json()) as CloudInvitation[] | { invitations?: CloudInvitation[] };
   const all = Array.isArray(data) ? data : (data.invitations ?? []);
-  return all.filter((i) => i.status === "pending");
+  // An expired invitation can't be accepted (the server 400s), so it isn't one.
+  return all.filter((i) => isInvitationLive(i));
+}
+
+/** Decline an invitation sent to the signed-in user. */
+export async function rejectInvitation(invitationId: string): Promise<void> {
+  await cloudFetch("/auth/organization/reject-invitation", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ invitationId }),
+  });
+  log.info("cloud: rejected invitation", { invitationId });
+}
+
+/**
+ * Invitations an org has sent that nobody has answered yet — still pending,
+ * including ones past their expiry (the UI offers to renew those). Any member may
+ * read this; cancelling is owner/admin-only.
+ */
+export async function listOrgInvitations(organizationId: string): Promise<CloudInvitation[]> {
+  const res = await cloudFetch(
+    `/auth/organization/list-invitations?organizationId=${encodeURIComponent(organizationId)}`,
+  );
+  const data = (await res.json()) as CloudInvitation[] | null;
+  return (Array.isArray(data) ? data : []).filter((i) => i.status === "pending");
+}
+
+/** Withdraw an invitation the org sent (owner/admin). */
+export async function cancelInvitation(invitationId: string): Promise<void> {
+  await cloudFetch("/auth/organization/cancel-invitation", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ invitationId }),
+  });
+  log.info("cloud: cancelled invitation", { invitationId });
+}
+
+/**
+ * Remove someone from an org (owner/admin; only an owner can remove an owner, and
+ * never the last one). Recordings they shared into the org stay there — a shared
+ * recording is the org's copy; their personal original is untouched.
+ */
+export async function removeMember(organizationId: string, memberId: string): Promise<void> {
+  await cloudFetch("/auth/organization/remove-member", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ memberIdOrEmail: memberId, organizationId }),
+  });
+  log.info("cloud: removed member", { organizationId, memberId });
+}
+
+/** Change a member's role. Only an owner may grant or take away "owner". */
+export async function updateMemberRole(
+  organizationId: string,
+  memberId: string,
+  role: string,
+): Promise<void> {
+  await cloudFetch("/auth/organization/update-member-role", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ memberId, role, organizationId }),
+  });
+  log.info("cloud: updated member role", { organizationId, memberId, role });
+}
+
+/**
+ * Hand an org to someone else: make them an owner, then step the caller down to
+ * admin. Two calls because better-auth allows several owners and has no transfer
+ * endpoint. If the second step fails the org simply has two owners — nothing is
+ * lost, and the caller can demote themselves from the roster — so this reports
+ * which step failed instead of trying to roll the first one back.
+ */
+export async function transferOwnership(
+  organizationId: string,
+  toMemberId: string,
+  selfMemberId: string,
+): Promise<{ demotedSelf: boolean }> {
+  await updateMemberRole(organizationId, toMemberId, "owner");
+  try {
+    await updateMemberRole(organizationId, selfMemberId, "admin");
+    return { demotedSelf: true };
+  } catch (error) {
+    log.warn("cloud: transfer kept a second owner", { organizationId, error: String(error) });
+    return { demotedSelf: false };
+  }
+}
+
+/** Leave an org. The server refuses the last owner (transfer first). */
+export async function leaveOrg(organizationId: string): Promise<void> {
+  await cloudFetch("/auth/organization/leave", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ organizationId }),
+  });
+  log.info("cloud: left org", { organizationId });
+}
+
+/** Rename an org (owner/admin). The slug is left alone — nothing user-facing reads it. */
+export async function renameOrg(organizationId: string, name: string): Promise<void> {
+  await cloudFetch("/auth/organization/update", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ data: { name: name.trim() }, organizationId }),
+  });
+  log.info("cloud: renamed org", { organizationId });
 }
 
 /** Accept a pending invitation → the user becomes a member of that org. */

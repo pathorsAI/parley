@@ -65,7 +65,11 @@ export interface CloudInvitation {
   email: string;
   role: string;
   status: string;
-  expiresAt?: number;
+  /** JSON date (ISO string) from the server; tolerate epoch ms too. Invitations
+   *  expire 48 hours after they are sent or renewed. */
+  expiresAt?: string | number;
+  createdAt?: string | number;
+  inviterId?: string;
 }
 
 /** A member of an org (for the org's member list). */
