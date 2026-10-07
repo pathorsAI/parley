@@ -195,8 +195,6 @@
     <string name="detail_error_network">Can\'t reach the cloud right now. Check your connection and open the recording again.</string>
     <string name="detail_error_not_found">This recording is no longer in the cloud.</string>
     <string name="detail_error_forbidden">You don\'t have access to this recording any more.</string>
-    <string name="detail_face_summary">Summary</string>
-    <string name="summary_highlights">Highlights %1$d</string>
     <string name="summary_speakers">Speakers</string>
     <string name="summary_empty">No summary yet.</string>
     <string name="summary_generate">Generate a summary with AI</string>
@@ -487,4 +485,87 @@
          the sheet speaks whatever language these resources resolved to. -->
     <string name="whats_new_also">Also</string>
     <string name="whats_new_copy_language">en</string>
+
+    <!-- The recording's report face and the study pipeline (study/StudyPass): the
+         generation chip, its menu, the sections and the delivery scorecard. The
+         desktop's wording (src/i18n/messages.ts study / studyGen / timeline /
+         actionItems / delivery). -->
+    <string name="detail_face_report">Report</string>
+    <string name="report_brief">Brief</string>
+    <string name="report_timeline">Timeline analysis</string>
+    <string name="report_delivery">Delivery</string>
+    <string name="report_brief_generating">Distilling this meeting…</string>
+    <string name="report_brief_queued">Queued — starts after the action items finish</string>
+    <string name="report_brief_error">Brief generation failed — retry from the analysis menu above</string>
+    <string name="report_actions_generating">Generating…</string>
+    <string name="report_actions_queued">Queued — starts after the analysis finishes</string>
+    <string name="report_actions_empty">No action items.</string>
+    <string name="report_actions_error">Action items could not be generated (%1$s)</string>
+    <string name="report_timeline_analyzing">Analyzing recording…</string>
+    <string name="report_timeline_queued">Queued</string>
+    <string name="report_timeline_empty">No findings yet</string>
+    <string name="report_timeline_error">Analysis failed (%1$s)</string>
+    <string name="report_timeline_count">%1$d findings</string>
+    <string name="report_side_them">They raised</string>
+    <string name="report_side_me">My issues</string>
+    <string name="report_category_decision">Decided</string>
+    <string name="report_category_open">Open</string>
+    <string name="report_category_fact">Fact</string>
+    <string name="report_resolved">Resolved</string>
+    <string name="report_resolved_how">Resolved by: %1$s</string>
+    <string name="report_severity_info">Info</string>
+    <string name="report_severity_warn">Warning</string>
+    <string name="report_severity_critical">Critical</string>
+    <string name="report_finding_at">Finding at %1$s: %2$s</string>
+    <string name="study_chip_running">Analyzing %1$d/%2$d</string>
+    <string name="study_chip_done">Analysis ready</string>
+    <string name="study_chip_failed">%1$d failed</string>
+    <string name="study_chip_idle">Not analyzed</string>
+    <string name="study_panel_title">This recording\'s analyses</string>
+    <string name="study_status_queued">Queued</string>
+    <string name="study_status_running">Generating</string>
+    <string name="study_status_done">Done</string>
+    <string name="study_status_error">Failed</string>
+    <string name="study_status_idle">Not generated</string>
+    <string name="study_regenerate">Regenerate</string>
+    <string name="study_regenerate_all">Regenerate all</string>
+    <string name="study_regenerate_all_hint">Re-runs the full analysis and overwrites every output (timeline, action items, brief, delivery). It uses your Parley AI credits.</string>
+    <string name="study_regenerate_all_confirm">Regenerate all</string>
+    <string name="study_cancel">Cancel</string>
+    <string name="study_failure_timeout">the model took too long</string>
+    <string name="study_failure_network">no connection</string>
+    <string name="study_failure_quota">Parley AI credits used up — wait for the reset</string>
+    <string name="study_failure_signed_out">your session expired — sign in again</string>
+    <string name="study_failure_server">the server returned an error</string>
+    <string name="study_failure_unreadable">the answer could not be read</string>
+    <string name="delivery_pace">Pace</string>
+    <string name="delivery_talk_share">Talk share</string>
+    <string name="delivery_filler_sounds">Filler sounds (um/uh)</string>
+    <string name="delivery_tone">Tone</string>
+    <string name="delivery_ai_read">AI read</string>
+    <string name="delivery_analyzing">Analyzing</string>
+    <string name="delivery_queued">Queued — starts after the analysis finishes</string>
+    <string name="delivery_none">Nothing to flag right now</string>
+    <string name="delivery_error">Delivery analysis unavailable</string>
+    <string name="delivery_tone_advisory">Inferred from transcript — advisory</string>
+    <string name="delivery_fillers">Fillers</string>
+    <string name="delivery_unit_syllables_per_min">syll/min</string>
+    <string name="delivery_unit_times">×</string>
+    <string name="delivery_filler_ok">Fine</string>
+    <string name="delivery_filler_frequent">Frequent</string>
+    <string name="delivery_pace_slow">Slow</string>
+    <string name="delivery_pace_comfortable">Comfortable</string>
+    <string name="delivery_pace_fast">Fast</string>
+    <string name="delivery_tone_neutral">Neutral</string>
+    <string name="delivery_tone_warm">Warm</string>
+    <string name="delivery_tone_firm">Firm</string>
+    <string name="delivery_tone_sharp">Sharp</string>
+    <string name="delivery_tone_aggressive">Aggressive</string>
+    <string name="delivery_tone_rude">Rude</string>
+    <string name="delivery_talk_high">High</string>
+    <string name="delivery_talk_balanced">Balanced</string>
+    <string name="delivery_talk_low">Low</string>
+    <string name="account_analysis_title">Analysis</string>
+    <string name="account_auto_study">Analyze recordings automatically</string>
+    <string name="account_auto_study_footnote">When on, opening a recording that has not been analyzed yet writes its timeline, action items, brief and delivery read with Parley AI (it uses your credits). When off, \"Regenerate\" in a recording\'s analysis menu still analyzes it on demand.</string>
 </resources>

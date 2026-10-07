@@ -223,7 +223,7 @@ private fun DemoNavigation(navController: NavHostController, container: AppConta
         navController.popBackStack(Route.HOME, inclusive = false)
         when (target.screen) {
             DemoMode.Screen.LIBRARY, DemoMode.Screen.ACCOUNT -> Unit
-            DemoMode.Screen.TRANSCRIPT, DemoMode.Screen.MOVE_TO_FOLDER ->
+            DemoMode.Screen.TRANSCRIPT, DemoMode.Screen.MOVE_TO_FOLDER, DemoMode.Screen.REPORT ->
                 navController.navigate(Route.recording(DemoMode.FEATURED_ID))
             DemoMode.Screen.MEETING -> navController.navigate(Route.MEETING)
             DemoMode.Screen.IMPORT -> navController.navigate(Route.IMPORT)
