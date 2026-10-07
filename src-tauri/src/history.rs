@@ -136,18 +136,7 @@ pub async fn save_remote_history_entry(
 ) -> Result<String, String> {
     // Fetch the audio first — bail (writing nothing) if it fails.
     let audio_bytes = match (audio_url, token) {
-        (Some(url), Some(token)) => {
-            let res = reqwest::Client::new()
-                .get(&url)
-                .bearer_auth(&token)
-                .send()
-                .await
-                .map_err(|e| e.to_string())?;
-            if !res.status().is_success() {
-                return Err(format!("audio download failed: {}", res.status()));
-            }
-            Some(res.bytes().await.map_err(|e| e.to_string())?)
-        }
+        (Some(url), Some(token)) => Some(fetch_cloud_audio(&url, &token).await?),
         _ => None,
     };
     let dir = history_dir(&app)?.join(safe_id(&id));
@@ -159,6 +148,57 @@ pub async fn save_remote_history_entry(
     std::fs::write(dir.join("meta.json"), meta_json).map_err(|e| e.to_string())?;
     log::info!("history: saved remote entry {}", dir.to_string_lossy());
     Ok(dir.to_string_lossy().into_owned())
+}
+
+/// The longest a cloud audio download may take end to end. Generous — an hour of
+/// Opus is ~10 MB — but finite: without it a stalled connection left the
+/// download (and the "downloading…" state the user sees) waiting forever.
+const AUDIO_DOWNLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+/// Giving up on a server that never accepts the connection takes far less.
+const AUDIO_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Fetch a cloud recording (bearer auth) and check that what came back is audio
+/// before anyone writes it as `audio.ogg`.
+async fn fetch_cloud_audio(url: &str, token: &str) -> Result<Vec<u8>, String> {
+    let client = reqwest::Client::builder()
+        .connect_timeout(AUDIO_CONNECT_TIMEOUT)
+        .timeout(AUDIO_DOWNLOAD_TIMEOUT)
+        .build()
+        .map_err(|e| e.to_string())?;
+    let res = client
+        .get(url)
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !res.status().is_success() {
+        return Err(format!("audio download failed: {}", res.status()));
+    }
+    let bytes = Vec::from(res.bytes().await.map_err(|e| e.to_string())?);
+    if !looks_like_audio(&bytes) {
+        log::warn!(
+            "history: audio download returned {} bytes that are not audio",
+            bytes.len()
+        );
+        return Err("audio download returned something that is not an Ogg file".into());
+    }
+    Ok(bytes)
+}
+
+/// Whether a downloaded body is a recording rather than, say, an HTML error page
+/// or a JSON error served with a 200. Recordings are Ogg (`OggS`) from every
+/// platform — except a desktop upload whose compression failed, which is kept
+/// (and synced) as a raw copy of the source under the same `audio.ogg` name, so
+/// the other common audio containers are accepted too.
+fn looks_like_audio(bytes: &[u8]) -> bool {
+    let at = |offset: usize, magic: &[u8]| bytes.get(offset..offset + magic.len()) == Some(magic);
+    at(0, b"OggS")
+        || (at(0, b"RIFF") && at(8, b"WAVE"))
+        || at(0, b"fLaC")
+        || at(0, b"ID3")
+        || at(4, b"ftyp") // MP4 / M4A
+        || at(0, &[0x1A, 0x45, 0xDF, 0xA3]) // Matroska / WebM
+        || (bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] & 0xE0 == 0xE0) // bare MPEG audio frame
 }
 
 /// Write the bundled onboarding sample's `audio.ogg` from bytes the webview
@@ -211,16 +251,7 @@ pub async fn download_remote_audio(
     url: String,
     token: String,
 ) -> Result<String, String> {
-    let res = reqwest::Client::new()
-        .get(&url)
-        .bearer_auth(&token)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !res.status().is_success() {
-        return Err(format!("audio download failed: {}", res.status()));
-    }
-    let bytes = res.bytes().await.map_err(|e| e.to_string())?;
+    let bytes = fetch_cloud_audio(&url, &token).await?;
     let dir = app
         .path()
         .app_cache_dir()
@@ -379,8 +410,21 @@ pub fn read_transcript_file(path: String) -> Result<TranscriptFile, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::apply_rename;
+    use super::{apply_rename, looks_like_audio};
     use serde_json::json;
+
+    #[test]
+    fn only_audio_bodies_are_kept_as_recordings() {
+        assert!(looks_like_audio(b"OggS\0\x02rest-of-page"));
+        assert!(looks_like_audio(b"RIFF\x24\0\0\0WAVEfmt "));
+        assert!(looks_like_audio(b"\0\0\0\x20ftypM4A "));
+        assert!(looks_like_audio(b"ID3\x04\0"));
+        // What a misrouted or failing download actually returns.
+        assert!(!looks_like_audio(b"<!DOCTYPE html><html>"));
+        assert!(!looks_like_audio(b"{\"error\":\"not found\"}"));
+        assert!(!looks_like_audio(b""));
+        assert!(!looks_like_audio(b"Ogg"));
+    }
 
     #[test]
     fn rename_sets_title() {
