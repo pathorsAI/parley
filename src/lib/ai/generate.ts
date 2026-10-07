@@ -147,6 +147,42 @@ export async function generateObjectResilient<OBJECT>(opts: {
   }
 }
 
+/** The inputs one `generateObject` attempt needs, minus the model. */
+type ObjectCall<OBJECT> = {
+  providerOptions: ReturnType<typeof getProviderOptions>;
+  schema: z.ZodType<OBJECT>;
+  system: string;
+  prompt: string;
+  maxOutputTokens: number | undefined;
+  abortSignal: AbortSignal;
+  temperature?: number;
+};
+
+type ObjectTag = { provider: string; workload: LlmWorkload; model: string };
+
+/** Salvage a drifted answer (logged under `what`), or null when there is none. */
+function salvageOrNull<OBJECT>(err: unknown, schema: z.ZodType<OBJECT>, tag: ObjectTag, what: string) {
+  const salvaged = salvageObject(err, schema);
+  if (salvaged) log.info(`ai.generateObject: salvaged drifted output${what}`, tag);
+  return salvaged;
+}
+
+/** The second attempt in json_object mode: the same call, a looser response format. */
+async function retryAsJsonObject<OBJECT>(
+  settings: Settings,
+  workload: LlmWorkload,
+  call: ObjectCall<OBJECT>,
+  tag: ObjectTag,
+) {
+  try {
+    return await generateObject({ model: getModel(settings, workload, { forceJsonObject: true }), ...call });
+  } catch (err) {
+    if (call.abortSignal.aborted) throw err;
+    logAiError("ai.generateObject json_object", tag, err);
+    return salvageOrNull(err, call.schema, tag, " (json_object)") ?? Promise.reject(err);
+  }
+}
+
 async function generateObjectWithFallback<OBJECT>(
   opts: {
     settings: Settings;
@@ -166,7 +202,7 @@ async function generateObjectWithFallback<OBJECT>(
   const providerOptions = getProviderOptions(settings, workload);
   const maxOutputTokens = maxOutputTokensFor(settings, workload);
   const tag = { provider, workload, model: settings.models[provider][workload] };
-  const call = { providerOptions, schema, system, prompt, maxOutputTokens, abortSignal, ...sampling };
+  const call: ObjectCall<OBJECT> = { providerOptions, schema, system, prompt, maxOutputTokens, abortSignal, ...sampling };
 
   try {
     return await generateObject({ model: getModel(settings, workload), ...call });
@@ -176,24 +212,10 @@ async function generateObjectWithFallback<OBJECT>(
     const info = PROVIDER_BY_ID[provider];
     const canFallback = info.kind === "openai-compatible" && (info.supportsStructuredOutputs ?? false);
     logAiError(canFallback ? "ai.generateObject json_schema (retrying json_object)" : "ai.generateObject", tag, err);
-    const salvaged = salvageObject(err, schema);
-    if (salvaged) {
-      log.info("ai.generateObject: salvaged drifted output", tag);
-      return salvaged;
-    }
+    const salvaged = salvageOrNull(err, schema, tag, "");
+    if (salvaged) return salvaged;
     if (!canFallback) throw err;
-    try {
-      return await generateObject({ model: getModel(settings, workload, { forceJsonObject: true }), ...call });
-    } catch (error_) {
-      if (abortSignal.aborted) throw error_;
-      logAiError("ai.generateObject json_object", tag, error_);
-      const salvaged2 = salvageObject(error_, schema);
-      if (salvaged2) {
-        log.info("ai.generateObject: salvaged drifted output (json_object)", tag);
-        return salvaged2;
-      }
-      throw error_;
-    }
+    return retryAsJsonObject(settings, workload, call, tag);
   }
 }
 

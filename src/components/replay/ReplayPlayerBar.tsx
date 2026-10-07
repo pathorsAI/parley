@@ -224,8 +224,7 @@ function AudioNotice({
   const text = audioMissing ? labels.audioMissing : labels.audioUnplayable;
   if (!text) return null;
   return (
-    <p
-      role="status"
+    <output
       className={cn(
         "mt-2 flex items-center gap-1.5 text-[11px]",
         audioMissing ? "text-muted-foreground" : "text-danger-foreground",
@@ -233,6 +232,6 @@ function AudioNotice({
     >
       <AlertTriangle className="size-3 shrink-0" />
       {text}
-    </p>
+    </output>
   );
 }

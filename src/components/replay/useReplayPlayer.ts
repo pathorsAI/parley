@@ -198,11 +198,16 @@ export function useReplayPlayer(durationMs: number, offsetMs = 0, source?: Repla
     if (!a) return;
     // Captured now: by the time the fallback is ready the element has stopped.
     const resume = wantsPlayRef.current;
-    void recovery.handleError(describeMediaError(a.error)).then((next) => {
-      if (!next) return;
-      resumeRef.current ||= resume;
-      setSrc(next);
-    });
+    recovery
+      .handleError(describeMediaError(a.error))
+      .then((next) => {
+        if (!next) return;
+        resumeRef.current ||= resume;
+        setSrc(next);
+      })
+      // handleError reports every failure itself and resolves null; this only
+      // keeps a thrown surprise out of the unhandled-rejection channel.
+      .catch((e: unknown) => log.error("replay: playback recovery threw", { error: String(e) }));
   }, [recovery]);
 
   // Align the audio element to the trim offset once metadata is available (a

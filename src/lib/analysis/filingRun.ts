@@ -2,7 +2,8 @@ import { useStore, isTrimmed, hasSpokenSegment } from "../store";
 import { hasProviderKey } from "../ai/settings";
 import { suggestFiling } from "../ai/filing";
 import { filingChoices, listLocalFolders } from "../history/folders";
-import { landStage, makeRunGuard } from "./runGuard";
+import { landStage, makeRunGuard, type RunHandle } from "./runGuard";
+import type { FilingSuggestion } from "../types";
 import { log } from "../log";
 
 /**
@@ -54,6 +55,22 @@ function alreadyAnswered(state: ReturnType<typeof useStore.getState>): boolean {
   return state.filingSuggestion != null;
 }
 
+/**
+ * Renamed while the pass ran: the user has named it, which answers the title
+ * half (the same rule renameHistoryEntry applies to a pending suggestion). Only
+ * checkable while the recording is still on screen; the folders stand — and
+ * with no folders left either, there is nothing to suggest.
+ */
+function withoutStaleTitle(
+  suggestion: FilingSuggestion | null,
+  titleAtStart: string,
+  run: RunHandle,
+): FilingSuggestion | null {
+  if (!suggestion?.title || !run.alive()) return suggestion;
+  if ((useStore.getState().replay?.name ?? "") === titleAtStart) return suggestion;
+  return suggestion.folders.length > 0 ? { ...suggestion, title: "" } : null;
+}
+
 export async function runFilingSuggestion(opts?: { force?: boolean }): Promise<void> {
   const state = useStore.getState();
   if (state.filingStatus === "running") return;
@@ -84,17 +101,7 @@ export async function runFilingSuggestion(opts?: { force?: boolean }): Promise<v
       currentTitle,
       signal: run.signal,
     });
-    // Renamed while the pass ran: the user has named it, which answers the title
-    // half (the same rule renameHistoryEntry applies to a pending suggestion).
-    // Only checkable while the recording is still on screen; the folders stand.
-    const now = useStore.getState();
-    if (
-      suggestion?.title &&
-      run.alive() &&
-      (now.replay?.name ?? "") !== currentTitle
-    ) {
-      suggestion = suggestion.folders.length > 0 ? { ...suggestion, title: "" } : null;
-    }
+    suggestion = withoutStaleTitle(suggestion, currentTitle, run);
     // A null suggestion — nothing usable (the title failed the gates and no
     // folder survived) or a failed call — is done for THIS session only: the
     // stage reads "done" so the scheduler leaves it alone, but nothing is
