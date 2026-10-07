@@ -352,6 +352,66 @@ class RecordingMeta(val raw: JsonObject) {
     val brief: String get() = raw.stringOrNull("brief").orEmpty().trim()
 
     /**
+     * The negotiation setup the desktop collects beside the context
+     * (`meetingBatna` / `meetingTarget` / `meetingFloor`), "" when absent. The
+     * study stages fold them into the context exactly as the desktop does.
+     */
+    val meetingBatna: String get() = raw.stringOrNull("meetingBatna").orEmpty()
+    val meetingTarget: String get() = raw.stringOrNull("meetingTarget").orEmpty()
+    val meetingFloor: String get() = raw.stringOrNull("meetingFloor").orEmpty()
+
+    /** What kind of meeting this was (`internal` / `sales` / `pricing` / `rivalry`), or null. */
+    val meetingKind: String? get() = raw.stringOrNull(MEETING_KIND)
+
+    /** True when the last brief generation failed and none has been saved since. */
+    val briefFailed: Boolean get() = raw.booleanOrNull(BRIEF_FAILED) ?: false
+
+    /** The raw delivery assessment, or null — read through `kit.DeliveryAssessment.fromJson`. */
+    val deliveryAssessment: JsonElement? get() = raw[DELIVERY_ASSESSMENT]?.takeIf { it !is JsonNull }
+
+    /** The desktop's acoustically measured speaking rate (syllables/sec), or null. */
+    val speechRateHz: Double? get() = raw.numberOrNull("speechRateHz")?.takeIf { it > 0.0 }
+
+    /**
+     * A copy carrying a findings pass: the findings and the kind they were read
+     * through — the desktop's `{ findings, meetingKind }` patch. `analyzed` is
+     * left alone: it means findings AND action items, and the action items are
+     * still to come.
+     */
+    fun withFindings(findings: JsonArray, meetingKind: String?): RecordingMeta = replacingAll(
+        FINDINGS to findings,
+        MEETING_KIND to (meetingKind?.let(::JsonPrimitive) ?: JsonNull),
+    )
+
+    /**
+     * A copy carrying an action-items pass, and `analyzed: true` — findings and
+     * action items both done, so no device runs either again on its own.
+     */
+    fun withActionItems(actionItems: JsonArray): RecordingMeta = replacingAll(
+        ACTION_ITEMS to actionItems,
+        ANALYZED to JsonPrimitive(true),
+    )
+
+    /** A copy carrying a brief, with any earlier failure cleared. */
+    fun withBrief(brief: String): RecordingMeta = replacingAll(
+        BRIEF to JsonPrimitive(brief),
+        BRIEF_FAILED to JsonPrimitive(false),
+    )
+
+    /**
+     * A copy that says the brief failed: restored as an error, so it is retried
+     * by hand rather than silently on every open. An existing brief is kept.
+     */
+    fun withBriefFailed(): RecordingMeta = replacing(BRIEF_FAILED, JsonPrimitive(true))
+
+    /** A copy carrying a delivery assessment. */
+    fun withDeliveryAssessment(assessment: JsonObject): RecordingMeta = replacing(DELIVERY_ASSESSMENT, assessment)
+
+    /** Several keys set (in place, when they already exist), the rest untouched. */
+    private fun replacingAll(vararg entries: Pair<String, JsonElement>): RecordingMeta =
+        RecordingMeta(JsonObject(LinkedHashMap(raw).apply { entries.forEach { (key, value) -> put(key, value) } }))
+
+    /**
      * A copy with one action item ticked or unticked, every other field — of
      * that item and of the entry — preserved verbatim. An item is matched by its
      * `id`, or by `action-{index}` when it has none, the same fallback the
@@ -522,6 +582,13 @@ class RecordingMeta(val raw: JsonObject) {
         private const val TITLE = "title"
         private const val FILING_SUGGESTED = "filingSuggested"
         private const val FILING_SUGGESTION = "filingSuggestion"
+        private const val FINDINGS = "findings"
+        private const val ACTION_ITEMS = "actionItems"
+        private const val ANALYZED = "analyzed"
+        private const val BRIEF = "brief"
+        private const val BRIEF_FAILED = "briefFailed"
+        private const val MEETING_KIND = "meetingKind"
+        private const val DELIVERY_ASSESSMENT = "deliveryAssessment"
 
         /**
          * The `segments` array as every Parley client writes it.

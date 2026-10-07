@@ -612,6 +612,27 @@ class CloudClient(
         return execute(request) { response -> bodyText(response) }
     }
 
+    /**
+     * [chatCompletion] for the study stages (`study/StudyPass`), which wait far
+     * longer than the shared client's 60-second read timeout allows: a
+     * findings pass or a brief over an hour-long meeting is one non-streamed
+     * answer that can take minutes, and nothing arrives on the socket until it
+     * is done. The stage's own coroutine timeout bounds the wait; this only
+     * stops the socket giving up first.
+     */
+    val studyChat: ChatCompletions = ChatCompletions { requestJson ->
+        val request = Request.Builder()
+            .url(url(*CloudChat.PATH.split('/').toTypedArray()))
+            .post(requestJson.toRequestBody(APPLICATION_JSON))
+        execute(request, client = studyHttp) { response -> bodyText(response) }
+    }
+
+    private val studyHttp: OkHttpClient by lazy {
+        http.newBuilder()
+            .readTimeout(STUDY_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            .build()
+    }
+
     // ── feedback ─────────────────────────────────────────────────────────────
 
     /**
@@ -724,6 +745,9 @@ class CloudClient(
 
         /** See [batchUploadHttp]. The same 300 seconds iOS allows. */
         private const val BATCH_UPLOAD_TIMEOUT_SECONDS = 300L
+
+        /** A hair past the longest study stage's own timeout (240 s), which is what really bounds it. */
+        private const val STUDY_READ_TIMEOUT_SECONDS = 260L
 
         private val APPLICATION_JSON = "application/json".toMediaType()
         private val AUDIO_OGG = "audio/ogg".toMediaType()
