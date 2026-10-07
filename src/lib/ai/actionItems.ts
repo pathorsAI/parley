@@ -6,6 +6,7 @@ import { recordLlmUsage } from "../usage/log";
 import { profileContext, outputLanguageInstruction } from "./profile";
 import { parseClockMs } from "./timeline";
 import { actionsIntro } from "../analysis/lens";
+import { fillPrompt, meetingContextBlock, STUDY } from "./studyPrompt";
 import type { AnalysisLens, ActionItem, Settings, TimelineEvent, TranscriptSegment } from "../types";
 
 // Strict json_schema: every property present, `.nullable()` not `.optional()`.
@@ -25,21 +26,13 @@ const itemSchema = z.object({
 // the parse fails. Keep schema key + prompt aligned (cf. timeline's "moments").
 const schema = z.object({ actions: z.array(itemSchema) });
 
+/** The system prompt for one lens — text in shared/prompts/study.json (`actionItems.*`). */
 function systemFor(lens: AnalysisLens): string {
-  const flavour =
-    lens === "decision"
-      ? `Produce the follow-ups this meeting generated — things someone agreed to do, decisions that need writing up or communicating, and open questions that need chasing before the next session. For each action:
-- text: the concrete next step, phrased as an action. It must stand on its own — carry the WHAT into this line rather than leaving it to a separate "why" field, but keep it to one readable sentence.`
-      : `Produce a short, concrete list of follow-up ACTIONS ME should take next — things to send, clarify, prepare, decide, or do differently next time. For each action:
-- text: the concrete next step, phrased as an action ME can do. It must stand on its own — carry the WHAT into this line rather than leaving it to a separate "why" field, but keep it to one readable sentence.`;
-
-  return `${actionsIntro(lens)}
-
-You are given the FINDINGS from the analysis (notable moments, each with an id) and the full timestamped transcript. ${flavour}
-- linkedEventId: the finding id it derives from when it maps to one, else null.
-- time: the [m:ss] it relates to (copy a real transcript timestamp), else null.
-
-Be selective — surface the actions that genuinely matter (typically 3-7), not busywork. Ground everything in what was actually said.`;
+  const A = STUDY.actionItems;
+  return fillPrompt(A.systemTemplate, {
+    intro: actionsIntro(lens),
+    flavour: lens === "decision" ? A.flavour.decision : A.flavour.default,
+  });
 }
 
 /** A (possibly half-streamed) raw action item — every field may be absent. */
@@ -82,14 +75,20 @@ export async function generateActionItems(opts: {
   const transcript = transcriptWithTimestamps(segments, names);
   if (!transcript.trim()) return [];
 
-  const ctx =
-    profileContext(settings) +
-    (meetingContext?.trim() ? `Meeting context: ${meetingContext.trim()}\n\n` : "");
+  const A = STUDY.actionItems;
+  const ctx = profileContext(settings) + meetingContextBlock(meetingContext);
   const findingsList = findings.length
     ? findings
-        .map((f) => `### id: ${f.id}\n[${f.side ?? f.category ?? "note"}] ${f.title}: ${f.detail}`)
+        .map((f) =>
+          fillPrompt(A.findingEntry, {
+            id: f.id,
+            tag: f.side ?? f.category ?? A.findingTagFallback,
+            title: f.title,
+            detail: f.detail,
+          })
+        )
         .join("\n\n")
-    : "(no findings)";
+    : A.noFindings;
 
   const byId = new Map(findings.map((f) => [f.id, f]));
   // Stable id per array index so streamed rows keep their identity as they fill in.
@@ -111,7 +110,7 @@ export async function generateActionItems(opts: {
     workload: "deep",
     schema,
     system: systemFor(lens) + JSON_MODE_INSTRUCTION + outputLanguageInstruction(settings),
-    prompt: `${ctx}Findings:\n${findingsList}\n\nFull transcript:\n${transcript}`,
+    prompt: `${ctx}${A.findingsHeader}\n${findingsList}\n\n${A.transcriptHeader}\n${transcript}`,
     onPartial: (p) => {
       if (!onPartial) return;
       const placed = placeItems((p as { actions?: (RawItem | undefined)[] }).actions);

@@ -6,22 +6,18 @@ import { recordLlmUsage } from "../usage/log";
 import { profileContext, outputLanguageInstruction } from "./profile";
 import { briefIntro, briefSections } from "../analysis/lens";
 import { log } from "../log";
+import { fillPrompt, meetingContextBlock, STUDY } from "./studyPrompt";
 import type { AnalysisLens, Evaluation, Settings, TodoItem, TranscriptSegment } from "../types";
 
 /**
  * The brief's system prompt for one lens. The SECTIONS are the lens's whole
  * point: meeting notes get 決議 / 未解 / 下次議程, a sales call gets pain and
  * qualification gaps, and only a real negotiation gets "what fell short" — which
- * used to be written for every recording regardless of what it was.
+ * used to be written for every recording regardless of what it was. Text:
+ * shared/prompts/study.json (`brief.*`).
  */
 function systemFor(lens: AnalysisLens): string {
-  return `${briefIntro(lens)}
-
-Write it in Markdown with exactly these sections:
-
-${briefSections(lens)}
-
-Each transcript line is prefixed with its [m:ss] start time. Cite those timestamps verbatim whenever you point at a specific moment so the reader can jump back to it. Ground everything in what was actually said. Skip filler and praise that isn't earned. If the transcript is too short to assess, say so plainly.`;
+  return fillPrompt(STUDY.brief.systemTemplate, { intro: briefIntro(lens), sections: briefSections(lens) });
 }
 
 /** Usage fields worth logging when a brief comes back empty — never content. */
@@ -76,16 +72,18 @@ export async function generatePostMeetingReport(opts: {
   const { settings, segments, evaluations, todos, names, meetingContext, lens = "decision", onDelta, signal } = opts;
 
   const transcript = transcriptWithTimestamps(segments, names);
-  const rubric = evaluations.map((e) => `- ${e.name}: ${e.prompt}`).join("\n");
-  const checklist = todos.map((t) => `- [${t.done ? "x" : " "}] ${t.text}`).join("\n");
-  const ctxLine = meetingContext?.trim() ? `Meeting context: ${meetingContext.trim()}\n\n` : "";
+  const B = STUDY.brief;
+  const rubric = evaluations.map((e) => fillPrompt(B.rubricEntry, { name: e.name, prompt: e.prompt })).join("\n");
+  const checklist = todos
+    .map((t) => fillPrompt(B.checklistEntry, { mark: t.done ? "x" : " ", text: t.text }))
+    .join("\n");
 
   const prompt =
     profileContext(settings) +
-    ctxLine +
-    (rubric ? `What mattered in this meeting (evaluation rubric):\n${rubric}\n\n` : "") +
-    (checklist ? `Agenda / checklist:\n${checklist}\n\n` : "") +
-    `Full transcript:\n${transcript || "(no speech was captured)"}`;
+    meetingContextBlock(meetingContext) +
+    (rubric ? `${B.rubricHeader}\n${rubric}\n\n` : "") +
+    (checklist ? `${B.checklistHeader}\n${checklist}\n\n` : "") +
+    `${B.transcriptHeader}\n${transcript || STUDY.noSpeech}`;
 
   const provider = settings.llmProviders.deep;
   const model = settings.models[provider].deep;

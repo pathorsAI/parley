@@ -6,6 +6,7 @@ import { recordLlmUsage } from "../usage/log";
 import { profileContext } from "./profile";
 import { MEETING_KINDS } from "../analysis/lens";
 import { log } from "../log";
+import { meetingContextBlock, STUDY } from "./studyPrompt";
 import type { MeetingKind, Settings, TranscriptSegment } from "../types";
 
 const schema = z.object({
@@ -13,15 +14,6 @@ const schema = z.object({
     .enum(["internal", "sales", "pricing", "rivalry"])
     .describe("Which of the four kinds this meeting is."),
 });
-
-const SYSTEM = `Classify a finished meeting transcript into EXACTLY ONE kind, so the right analysis can be run over it. Answer with the kind alone.
-
-- "internal": a working meeting among people ON THE SAME SIDE — a team discussion, design/product review, planning or roadmap session, project sync, retro, 1:1. Nobody is selling to anybody; the output is decisions and follow-ups. This is also where a meeting that fits NONE of the others belongs.
-- "sales": ME is selling to, or qualifying, a prospect or customer — discovery, demo, solution pitch, follow-up call. The other party is evaluating whether to buy. Commercial terms may come up, but the call is still about fit and value.
-- "pricing": the deal is already wanted by both sides and the conversation is about TERMS — price, discount, scope, payment, contract clauses, renewal. Concrete numbers are being pushed back and forth.
-- "rivalry": ME is across the table from a competitor, a rival, or a party whose interests genuinely conflict — carving up a market, a partnership between competitors, a dispute, a hard procurement standoff. Information leakage and non-committal wording matter more than closing.
-
-Judge the WHOLE conversation by what it was FOR, not by isolated words: one mention of a price inside a design review is still "internal", and a hard-fought discount conversation with an existing customer is "pricing", not "sales". When a sales call is genuinely dominated by haggling terms, prefer "pricing"; when you are torn between "internal" and anything else and the participants are plainly colleagues, choose "internal".`;
 
 /** Type guard for a model-supplied kind string. */
 function isKind(v: unknown): v is MeetingKind {
@@ -46,17 +38,15 @@ export async function detectMeetingKind(opts: {
   const transcript = transcriptWithTimestamps(segments, names);
   if (!transcript.trim()) return null;
 
-  const ctx =
-    profileContext(settings) +
-    (meetingContext?.trim() ? `Meeting context: ${meetingContext.trim()}\n\n` : "");
+  const ctx = profileContext(settings) + meetingContextBlock(meetingContext);
 
   try {
     const { object, usage } = await streamObjectResilient({
       settings,
       workload: "realtime",
       schema,
-      system: SYSTEM + JSON_MODE_INSTRUCTION,
-      prompt: `${ctx}Transcript:\n${transcript}`,
+      system: STUDY.meetingKind.system + JSON_MODE_INSTRUCTION,
+      prompt: `${ctx}${STUDY.meetingKind.transcriptHeader}\n${transcript}`,
     });
     void recordLlmUsage(settings, "realtime", "eval", usage);
     const kind = object.kind;
