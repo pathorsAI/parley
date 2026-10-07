@@ -50,8 +50,17 @@ sealed interface DictationState {
      *
      * [polished] only says which text this is, for the keyboard's own label; the
      * raw and the polished outcome are both perfectly good results.
+     *
+     * [reachedLimit] is true when the ten-minute cap stopped the microphone
+     * rather than the user — delivered exactly as a stop would have been, polish
+     * included, with a note the keyboard shows afterwards (iOS
+     * `DictationEnding.limitReached`). Only a note, never a failure.
      */
-    data class Done(val text: String, val polished: Boolean) : DictationState
+    data class Done(
+        val text: String,
+        val polished: Boolean,
+        val reachedLimit: Boolean = false,
+    ) : DictationState
 
     /**
      * Dictation ended badly. [partialText] is whatever had been heard before it
@@ -93,7 +102,7 @@ enum class DictationFailure {
  *
  * - **No relay reconnect ladder.** `MeetingSession` redials because a meeting is
  *   an hour long and its audio file is the irreplaceable artefact. A dictation is
- *   one utterance under a 120-second cap with no file behind it: if the socket
+ *   one utterance under a ten-minute cap with no file behind it: if the socket
  *   dies, finishing with the words already heard is both simpler and what the
  *   user wants, and they can press the key again.
  * - **No audio file, no upload, no library entry.** Nothing is encoded and
@@ -163,9 +172,12 @@ class DictationSession(
 
     @Volatile private var cancelled = false
 
+    /** Set when the cap, not the user, ended the dictation. See [startCap]. */
+    @Volatile private var reachedLimit = false
+
     /**
      * True once [finishUp] has been entered. The microphone flow completing and
-     * the 120-second cap firing can land together, and the relay may only be
+     * the ten-minute cap firing can land together, and the relay may only be
      * finalized once.
      */
     private val settling = AtomicBoolean(false)
@@ -378,7 +390,7 @@ class DictationSession(
     /** The one place [DictationState.Done] is published, guarded by [terminal]. */
     private fun publishDone(text: String, polished: Boolean) {
         if (!terminal.compareAndSet(false, true)) return
-        _state.value = DictationState.Done(text = text, polished = polished)
+        _state.value = DictationState.Done(text = text, polished = polished, reachedLimit = reachedLimit)
         teardown()
     }
 
@@ -441,17 +453,21 @@ class DictationSession(
     }
 
     /**
-     * The 120-second cap, matching iOS `DictationCoordinator.maxSeconds`.
+     * The ten-minute cap: iOS `MicActivityPolicy.dictationLimit` and the
+     * desktop's `HOSTED_VOICE_TYPING_MAX_SECONDS`, so hosted voice typing ends at
+     * the same moment on every platform.
      *
-     * It is not a limitation so much as the shape of the feature: one utterance
-     * into somebody's text field. It also bounds the foreground service, keeps
-     * the polish prompt short enough for `parley-fast`, and means a key left
-     * running in a pocket cannot meter audio all afternoon.
+     * It bounds the foreground service and means a key left running in a pocket
+     * cannot meter audio all afternoon. It is not silent: the keyboard counts the
+     * last 30 seconds down ([DictationCountdown]), and reaching it is an
+     * ordinary stop — the words are polished and committed — with a note
+     * ([DictationState.Done.reachedLimit]) saying why it ended.
      */
     private fun startCap() {
         capJob?.cancel()
         capJob = scope.launch {
             delay(MAX_DURATION_MS)
+            reachedLimit = true
             requestStop()
         }
     }
@@ -466,8 +482,8 @@ class DictationSession(
     companion object {
         private const val TAG = "DictationSession"
 
-        /** iOS `maxSeconds`. See [startCap]. */
-        const val MAX_DURATION_MS = 120_000L
+        /** Ten minutes, iOS `MicActivityPolicy.dictationLimit`. See [startCap]. */
+        const val MAX_DURATION_MS = 600_000L
 
         /** How long to wait for the relay's flushed tail before giving up on it. */
         private const val DRAIN_TIMEOUT_MS = 3_000L

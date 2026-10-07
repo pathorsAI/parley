@@ -33,7 +33,6 @@ import androidx.compose.ui.unit.dp
 import com.pathors.parley.R
 import com.pathors.parley.ui.theme.ParleyTextStyles
 import com.pathors.parley.ui.theme.ParleyTheme
-import kotlin.math.roundToInt
 
 /** Which part of a dictation the keyboard is drawing. */
 enum class DictationPhase { IDLE, CONNECTING, LISTENING, FINISHING }
@@ -62,6 +61,16 @@ enum class DictationBlock {
     MIC_PERMISSION,
 }
 
+/**
+ * Something about how the last dictation ended that is worth saying after the
+ * words have landed, but is not a failure: drawn in the status slot, in ink
+ * rather than the error red. iOS `DictationEnding`.
+ */
+enum class DictationNotice {
+    /** The ten-minute cap stopped the microphone. The words were still committed. */
+    LIMIT_REACHED,
+}
+
 /** Everything [VoiceKeyboard] draws, assembled by `ParleyInputMethodService`. */
 data class VoiceKeyboardState(
     val phase: DictationPhase = DictationPhase.IDLE,
@@ -70,6 +79,8 @@ data class VoiceKeyboardState(
     val block: DictationBlock? = null,
     /** The last dictation that ended badly, shown until the next tap. */
     val failure: DictationFailure? = null,
+    /** How the last dictation ended, when that is worth a line. Until the next tap. */
+    val notice: DictationNotice? = null,
 )
 
 /**
@@ -181,14 +192,25 @@ private fun TopRow(
             )
         }
     }
-    // Elapsed time replaces nothing and moves nothing: it is drawn in the same
-    // row height whether or not it is there.
+    // The clock replaces nothing and moves nothing: it is drawn in the same row
+    // height whether or not it is there. Elapsed time, quietly, for most of a
+    // dictation; in the last 30 seconds before the cap, the countdown in the
+    // recording red, because that is the moment the clock becomes news.
     Box(Modifier.fillMaxWidth().height(20.dp), contentAlignment = Alignment.Center) {
         if (state.phase == DictationPhase.LISTENING) {
+            val secondsLeft = DictationCountdown.secondsLeft(state.elapsedMs)
             Text(
-                text = remainingLabel(state.elapsedMs),
+                text = if (secondsLeft != null) {
+                    stringResource(R.string.ime_countdown, secondsLeft)
+                } else {
+                    elapsedLabel(state.elapsedMs)
+                },
                 style = MaterialTheme.typography.labelMedium,
-                color = ParleyTheme.colors.recording,
+                color = if (secondsLeft != null) {
+                    ParleyTheme.colors.recording
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
             )
         }
     }
@@ -202,6 +224,10 @@ private fun StatusLine(state: VoiceKeyboardState) {
 
         state.failure != null ->
             stringResource(failureMessage(state.failure)) to MaterialTheme.colorScheme.error
+
+        state.notice == DictationNotice.LIMIT_REACHED && state.phase == DictationPhase.IDLE ->
+            stringResource(R.string.ime_notice_limit_reached, DictationCountdown.limitMinutes()) to
+                MaterialTheme.colorScheme.onSurfaceVariant
 
         state.phase == DictationPhase.CONNECTING ->
             stringResource(R.string.ime_status_connecting) to
@@ -336,12 +362,11 @@ private fun DiscardKey(onClick: () -> Unit) {
     }
 }
 
-/** "1:42 left" — counts down, because the cap is the thing worth knowing. */
+/** "1:42" — how long this dictation has been listening. */
 @Composable
-private fun remainingLabel(elapsedMs: Long): String {
-    val remaining = (DictationSession.MAX_DURATION_MS - elapsedMs).coerceAtLeast(0L)
-    val seconds = (remaining / 1000.0).roundToInt()
-    return stringResource(R.string.ime_time_remaining, seconds / 60, seconds % 60)
+private fun elapsedLabel(elapsedMs: Long): String {
+    val seconds = (elapsedMs.coerceAtLeast(0L) / 1000L).toInt()
+    return stringResource(R.string.ime_time_elapsed, seconds / 60, seconds % 60)
 }
 
 private fun blockMessage(block: DictationBlock): Int = when (block) {

@@ -249,7 +249,7 @@ class ParleyInputMethodService :
             DictationService.requestStop(this)
             return
         }
-        uiState = uiState.copy(failure = null)
+        uiState = uiState.copy(failure = null, notice = null)
         DictationService.start(this)
         observeSession()
     }
@@ -323,14 +323,21 @@ class ParleyInputMethodService :
                 uiState = uiState.copy(phase = DictationPhase.CONNECTING)
 
             is DictationState.Listening ->
-                uiState = uiState.copy(phase = DictationPhase.LISTENING, failure = null)
+                uiState = uiState.copy(
+                    phase = DictationPhase.LISTENING,
+                    failure = null,
+                    notice = null,
+                )
 
             is DictationState.Finishing ->
                 uiState = uiState.copy(phase = DictationPhase.FINISHING)
 
             is DictationState.Done -> {
                 commit(state.text)
-                finish(failure = null)
+                finish(
+                    failure = null,
+                    notice = if (state.reachedLimit) DictationNotice.LIMIT_REACHED else null,
+                )
             }
 
             is DictationState.Failed -> {
@@ -376,12 +383,13 @@ class ParleyInputMethodService :
     }
 
     /** Let the session go and put the pane back to rest. */
-    private fun finish(failure: DictationFailure?) {
+    private fun finish(failure: DictationFailure?, notice: DictationNotice? = null) {
         uiState = uiState.copy(
             phase = DictationPhase.IDLE,
             level = 0f,
             elapsedMs = 0,
             failure = failure,
+            notice = notice,
         )
         DictationService.clear()
     }
