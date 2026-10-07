@@ -82,6 +82,29 @@ export function hostedLlmErrorCode(err: unknown, provider: string): "credits" | 
   return null;
 }
 
+/**
+ * Did this call fail because it ran out of time — our own deadline
+ * (ai/deadline.ts), an abort, or a transport-level timeout? Walks the SDK's
+ * `cause` chain like the classifiers above, since the abort reason usually sits
+ * under a wrapper. Same test as the connection check's (connectionTest.ts
+ * isAbort), so a timeout reads the same everywhere.
+ */
+export function isTimeoutError(err: unknown): boolean {
+  const seen = new Set<unknown>();
+  let cur: unknown = err;
+  let depth = 0;
+  while (cur && typeof cur === "object" && !seen.has(cur) && depth < 5) {
+    seen.add(cur);
+    const e = cur as Record<string, unknown>;
+    if (e.name === "AbortError" || e.name === "TimeoutError") return true;
+    const msg = typeof e.message === "string" ? e.message.toLowerCase() : "";
+    if (/\btimed out\b|\btimeout\b/.test(msg)) return true;
+    cur = e.cause;
+    depth++;
+  }
+  return false;
+}
+
 function parseJson(s: unknown): Record<string, unknown> | undefined {
   if (typeof s !== "string") return undefined;
   try {

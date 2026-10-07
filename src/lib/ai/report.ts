@@ -6,6 +6,15 @@ import { recordLlmUsage } from "../usage/log";
 import { profileContext, outputLanguageInstruction } from "./profile";
 import { briefIntro, briefSections } from "../analysis/lens";
 import { log } from "../log";
+import {
+  createDeadline,
+  rejectOnAbort,
+  STUDY_FALLBACK_DEADLINE_MS,
+  STUDY_HARD_DEADLINE_MS,
+  STUDY_STALL_MS,
+  untilAborted,
+  type Deadline,
+} from "./deadline";
 import type { AnalysisLens, Evaluation, Settings, TodoItem, TranscriptSegment } from "../types";
 
 /**
@@ -48,6 +57,45 @@ function recordUsage(settings: Settings, usage: LanguageModelUsage | undefined):
   });
 }
 
+function timedOut(deadline: Deadline): boolean {
+  const why = deadline.reason();
+  return why === "hard" || why === "stall";
+}
+
+/** The deadline's timeout error when it fired, else the original error. */
+function deadlineError(err: unknown, deadline: Deadline): unknown {
+  return timedOut(deadline) ? deadline.signal.reason : err;
+}
+
+/**
+ * The ONE non-streamed retry after an empty (or timed-out, empty) stream, under
+ * its own fresh ceiling. Throws when it comes back empty too.
+ */
+async function generateBriefOnce(
+  call: Omit<Parameters<typeof generateText>[0], "abortSignal">,
+  settings: Settings,
+  signal: AbortSignal | undefined,
+): Promise<string> {
+  const deadline = createDeadline({ hardMs: STUDY_FALLBACK_DEADLINE_MS, parent: signal });
+  try {
+    const res = await Promise.race([
+      generateText({ ...call, abortSignal: deadline.signal } as Parameters<typeof generateText>[0]),
+      rejectOnAbort(deadline.signal),
+    ]);
+    recordUsage(settings, res.usage);
+    if (!res.text.trim()) {
+      log.error("ai.report: empty again after retry", { finishReason: res.finishReason, ...usageFields(res.usage) });
+      throw new Error(`The model returned no brief text (finish reason: ${res.finishReason})`);
+    }
+    log.info("ai.report: recovered non-streamed", { finishReason: res.finishReason });
+    return res.text;
+  } catch (e) {
+    throw deadlineError(e, deadline);
+  } finally {
+    deadline.clear();
+  }
+}
+
 /**
  * Stream the brief through `onDelta` and return its full text.
  *
@@ -60,6 +108,11 @@ function recordUsage(settings: Settings, usage: LanguageModelUsage | undefined):
  * is logged with its finish reason + usage and retried ONCE non-streamed; if
  * that is empty too, this throws. A stream that errored after some text throws
  * as well, rather than passing a truncated brief off as complete.
+ *
+ * Bounded in time: the stream runs under a 4-minute ceiling and a 90-second
+ * stall timer (ai/deadline.ts), the non-streamed retry under its own 2-minute
+ * one, and `signal` cancels both. A stream that times out before writing a word
+ * gets the retry; one that times out mid-brief throws the timeout.
  */
 export async function generatePostMeetingReport(opts: {
   settings: Settings;
@@ -91,11 +144,14 @@ export async function generatePostMeetingReport(opts: {
   const model = settings.models[provider].deep;
   log.info("ai.report: start", { provider, model, lens, segments: segments.length });
 
+  // Bounded like every study pass (ai/deadline.ts): a hard ceiling, plus a
+  // stall timer every streamed chunk resets. `signal` (the run) is the parent,
+  // so a cancelled run aborts the request instead of letting it finish unseen.
+  const deadline = createDeadline({ hardMs: STUDY_HARD_DEADLINE_MS, stallMs: STUDY_STALL_MS, parent: signal });
   const call = {
     model: getModel(settings, "deep"),
     providerOptions: getProviderOptions(settings, "deep"),
     system: systemFor(lens) + outputLanguageInstruction(settings),
-    abortSignal: signal,
     prompt,
     // Reasoning models spend output tokens on hidden reasoning first; without
     // headroom they exhaust the budget before writing a word of the brief.
@@ -105,19 +161,33 @@ export async function generatePostMeetingReport(opts: {
   let full = "";
   try {
     let streamError: unknown = null;
-    const result = streamText({
-      ...call,
-      onError: ({ error }) => {
-        streamError = error;
-      },
-    });
-    for await (const delta of result.textStream) {
-      full += delta;
-      onDelta(delta);
+    let finishReason: FinishReason | undefined;
+    let usage: LanguageModelUsage | undefined;
+    try {
+      const result = streamText({
+        ...call,
+        abortSignal: deadline.signal,
+        onError: ({ error }) => {
+          streamError = error;
+        },
+      });
+      for await (const delta of untilAborted(result.textStream, deadline.signal)) {
+        deadline.touch();
+        full += delta;
+        onDelta(delta);
+      }
+      // An abort can also just END the text stream; that is not a finished brief.
+      deadline.signal.throwIfAborted();
+      finishReason = await settledOrUndefined(result.finishReason);
+      usage = await settledOrUndefined(result.usage);
+      recordUsage(settings, usage);
+    } catch (e) {
+      // Only our own deadline with NOTHING written falls through to the
+      // non-streamed retry below; a cancellation, or a timeout after part of the
+      // brief streamed, is a failure (a truncated brief is not a brief).
+      if (!timedOut(deadline) || full.trim()) throw deadlineError(e, deadline);
+      streamError = deadline.signal.reason;
     }
-    const finishReason: FinishReason | undefined = await settledOrUndefined(result.finishReason);
-    const usage = await settledOrUndefined(result.usage);
-    recordUsage(settings, usage);
 
     if (streamError && full.trim()) {
       log.warn("ai.report: stream failed mid-brief", { provider, model, chars: full.length, finishReason });
@@ -131,26 +201,16 @@ export async function generatePostMeetingReport(opts: {
         ...usageFields(usage),
         error: describeStreamError(streamError),
       });
-      const res = await generateText(call);
-      recordUsage(settings, res.usage);
-      if (!res.text.trim()) {
-        log.error("ai.report: empty again after retry", {
-          provider,
-          model,
-          finishReason: res.finishReason,
-          ...usageFields(res.usage),
-        });
-        throw new Error(`The model returned no brief text (finish reason: ${res.finishReason})`);
-      }
-      full = res.text;
+      full = await generateBriefOnce(call, settings, signal);
       onDelta(full);
-      log.info("ai.report: recovered non-streamed", { finishReason: res.finishReason });
     } else if (finishReason === "length") {
       log.warn("ai.report: brief hit the output-token cap", { provider, model, chars: full.length });
     }
   } catch (e) {
     log.error("ai.report: failed", { provider, model, error: String(e) });
     throw e;
+  } finally {
+    deadline.clear();
   }
   log.info("ai.report: ok", { chars: full.length });
   return full;
