@@ -28,11 +28,11 @@ import { useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useStore, hasSpokenSegment, type AsyncTaskStatus } from "../store";
 import { hasProviderKey } from "../ai/settings";
-import { runAnalysis } from "./engine";
-import { runActionItems } from "./actionItems";
-import { runBriefGeneration } from "./briefRun";
-import { runDeliveryAnalysis } from "./deliveryRun";
-import { runFilingSuggestion } from "./filingRun";
+import { cancelAnalysis, runAnalysis } from "./engine";
+import { cancelActionItems, runActionItems } from "./actionItems";
+import { cancelBriefGeneration, runBriefGeneration } from "./briefRun";
+import { cancelDeliveryAnalysis, runDeliveryAnalysis } from "./deliveryRun";
+import { cancelFilingSuggestion, runFilingSuggestion } from "./filingRun";
 import { persistReadOnlyStudyOutputs, saveUploadToHistory } from "../history/history";
 import { isSampleEntry } from "../onboarding/sample";
 import { log } from "../log";
@@ -175,6 +175,15 @@ const RUNNERS: Record<StudyStageKey, () => Promise<unknown> | void> = {
   filing: () => runFilingSuggestion(),
 };
 
+/** How a RUNNING stage is stopped before a manual restart (runGuard.cancel). */
+const CANCELLERS: Record<StudyStageKey, () => boolean> = {
+  findings: cancelAnalysis,
+  actions: cancelActionItems,
+  brief: cancelBriefGeneration,
+  delivery: cancelDeliveryAnalysis,
+  filing: cancelFilingSuggestion,
+};
+
 const STATUS_FIELD = {
   findings: "analysisStatus",
   actions: "actionItemsStatus",
@@ -184,10 +193,25 @@ const STATUS_FIELD = {
 } as const satisfies Record<StudyStageKey, keyof StoreState>;
 
 /**
+ * Stop a stage that reads "running" so it can be restarted: cancel its run
+ * (aborting the model call; whatever it still produces is dropped) and return.
+ * The caller resets the status. Also covers a "running" with no live run
+ * behind it — nothing to cancel, and the reset alone unsticks it.
+ */
+function cancelRunning(key: StudyStageKey): void {
+  const cancelled = CANCELLERS[key]();
+  log.info("study: restarting a running stage", { stage: key, cancelled });
+}
+
+/**
  * Manual regeneration = invalidation: reset the artifact's status to "idle"
- * and let the scheduler dispatch the re-run in dependency order. No-op while
- * that artifact streams (resetting mid-flight would fork a second pass; an
- * OLDER pass superseded this way is discarded by the runners' runGuard).
+ * and let the scheduler dispatch the re-run in dependency order.
+ *
+ * A stage that is still RUNNING is cancelled first and then restarted the same
+ * way — that is how a pass whose model call hung gets unstuck. The cancel and
+ * the reset happen in one synchronous step, so the runner's own lock (its
+ * status) sees "idle" exactly once and the scheduler starts exactly one new
+ * pass; the cancelled one is superseded and discarded by runGuard.
  *
  * Asking by hand also pins this recording as manually requested, so the button
  * still works when auto-analysis is off (otherwise the reset to "idle" would
@@ -195,12 +219,27 @@ const STATUS_FIELD = {
  */
 export function regenerateArtifact(key: StudyStageKey): void {
   const s = useStore.getState();
-  if (s[STATUS_FIELD[key]] === "running") return;
+  if (s[STATUS_FIELD[key]] === "running") cancelRunning(key);
   if (key === "findings") forceNextFindings = true;
   useStore.setState({
     [STATUS_FIELD[key]]: "idle",
     studyManualForId: s.replay?.id ?? null,
   } as Partial<StoreState>);
+}
+
+/** Resolves once the findings pass is no longer running (immediately if it isn't). */
+function findingsSettled(): Promise<void> {
+  return new Promise((resolve) => {
+    if (useStore.getState().analysisStatus !== "running") {
+      resolve();
+      return;
+    }
+    const unsubscribe = useStore.subscribe((s) => {
+      if (s.analysisStatus === "running") return;
+      unsubscribe();
+      resolve();
+    });
+  });
 }
 
 /**
@@ -210,20 +249,46 @@ export function regenerateArtifact(key: StudyStageKey): void {
  * pass must not wipe good outputs) and the same recording is still loaded
  * (pinned by replay id — loadedHistoryId is null for read-only/unsaved
  * sessions, so it can't tell two of those apart).
+ *
+ * A findings pass that is still running (hung, typically) is cancelled and
+ * replaced. Resetting its status to "idle" lets the scheduler start the
+ * replacement in the same tick — forced, via forceNextFindings — in which case
+ * the direct call below is a no-op and this waits for THAT pass to settle.
  */
 export async function reanalyzeAll(): Promise<void> {
   const startedFor = useStore.getState().replay?.id ?? null;
-  if (!startedFor) return;
+  if (!startedFor) {
+    log.warn("study: regenerate all ignored — no recording loaded");
+    return;
+  }
   // This one calls the findings runner directly instead of going through the
   // scheduler, so it has to honour the speaker-correction hold itself.
-  if (factsOf(useStore.getState()).diarizing) return;
+  if (factsOf(useStore.getState()).diarizing) {
+    log.info("study: regenerate all deferred — speakers are still being corrected");
+    return;
+  }
   // Pin BEFORE the pass: with auto-analysis off, the downstream invalidation
   // below would otherwise never be picked up by the scheduler.
   useStore.setState({ studyManualForId: startedFor });
+  if (useStore.getState().analysisStatus === "running") {
+    cancelRunning("findings");
+    forceNextFindings = true;
+    useStore.setState({ analysisStatus: "idle" });
+    // Not consumed when the scheduler did not dispatch (auto-analysis off, no
+    // key…): the direct call below is forced anyway.
+    forceNextFindings = false;
+  }
   await runAnalysis({ mode: "replay", force: true });
+  await findingsSettled();
   const s = useStore.getState();
-  if (s.analysisStatus !== "done") return;
-  if ((s.replay?.id ?? null) !== startedFor) return;
+  if ((s.replay?.id ?? null) !== startedFor) {
+    log.info("study: regenerate all — recording changed before findings settled");
+    return;
+  }
+  if (s.analysisStatus !== "done") {
+    log.warn("study: regenerate all stopped — findings did not complete", { status: s.analysisStatus });
+    return;
+  }
   useStore.setState({
     actionItemsStatus: "idle",
     brief: null,

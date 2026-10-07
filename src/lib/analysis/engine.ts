@@ -8,6 +8,8 @@ import { applyKindTemplate, evalsImpliedBy } from "./kindTemplate";
 import { readJsonCache, writeJsonCache, clearCacheByPrefix, ANALYSIS_CACHE_PREFIX } from "../cache";
 import { clearStudyCache } from "../history/studyCache";
 import { landStage, makeRunGuard } from "./runGuard";
+import { studyErrorMessage } from "./errorMessage";
+import { log } from "../log";
 import { translate } from "../../i18n";
 import { isTauri } from "../tauriEvents";
 import type {
@@ -119,18 +121,6 @@ function applyFindings(events: TimelineEvent[], kind: MeetingKind | null, evalSi
   useStore.setState({ analyzedEvalSig: evalSig });
 }
 
-/** The message the UI shows for a failed pass — hosted credit/auth exhaustion
- *  gets its own copy, everything else falls back to the raw provider error. */
-async function analysisErrorMessage(err: unknown, provider: string): Promise<string> {
-  const { describeAiError, hostedLlmErrorCode } = await import("../ai/errors");
-  const { translate } = await import("../../i18n/messages");
-  const code = hostedLlmErrorCode(err, provider);
-  const lang = useStore.getState().settings.language;
-  if (code === "credits") return translate(lang, "analysis.error.credits");
-  if (code === "auth") return translate(lang, "analysis.error.auth");
-  return describeAiError(err);
-}
-
 /**
  * WHICH KIND of meeting this is decides the analysis LENS — the finding fields
  * asked for and the brief's sections. Classify once per recording, on the cheap
@@ -154,13 +144,14 @@ async function resolveMeetingKind(args: {
   segments: TranscriptSegment[];
   meetingContext: string;
   alive: () => boolean;
+  signal: AbortSignal;
 }): Promise<MeetingKind | null> {
-  const { state, mode, segments, meetingContext, alive } = args;
+  const { state, mode, segments, meetingContext, alive, signal } = args;
   const { settings, speakerNames, meetingKind } = state;
   if (meetingKind !== null) return meetingKind;
   if (mode !== "replay" || !hasProviderKey(settings, "realtime")) return null;
 
-  const kind = await detectMeetingKind({ settings, segments, meetingContext, names: speakerNames });
+  const kind = await detectMeetingKind({ settings, segments, meetingContext, names: speakerNames, signal });
   if (!kind) return null;
   if (alive()) {
     useStore.getState().setMeetingKind(kind);
@@ -184,6 +175,13 @@ async function resolveMeetingKind(args: {
  * runGuard.landStage). A run superseded by a newer pass is discarded.
  */
 const analysisGuard = makeRunGuard("findings");
+
+/** Cancel the findings pass running for the recording on screen (see
+ *  RunGuard.cancel). The caller resets the status and starts the next pass. */
+export function cancelAnalysis(): boolean {
+  return analysisGuard.cancel();
+}
+
 export async function runAnalysis(opts?: {
   mode?: AnalysisMode;
   force?: boolean;
@@ -214,7 +212,14 @@ export async function runAnalysis(opts?: {
   state.setAnalysisStatus("running");
 
   try {
-    const kind = await resolveMeetingKind({ state, mode, segments, meetingContext, alive: run.alive });
+    const kind = await resolveMeetingKind({
+      state,
+      mode,
+      segments,
+      meetingContext,
+      alive: run.alive,
+      signal: run.signal,
+    });
     // A newer pass for this recording took over — its result is the one kept,
     // so don't spend the deep lane on one that would be dropped.
     if (run.superseded()) return;
@@ -249,6 +254,9 @@ export async function runAnalysis(opts?: {
         names: speakerNames,
         mode,
         lens,
+        // Regenerating while this pass still runs cancels it (runGuard.cancel),
+        // which aborts the request instead of letting it finish unseen.
+        signal: run.signal,
         // Stream findings into the store as they're generated so dots + rows appear
         // progressively instead of all at once when the whole pass finishes.
         onPartial: (partial) => {
@@ -268,10 +276,15 @@ export async function runAnalysis(opts?: {
       pushWhileLoaded: false,
     });
   } catch (err) {
-    console.error("[analysis]", err);
-    const message = await analysisErrorMessage(err, settings.llmProviders[workload]);
+    // console.error never reaches the log file; this is the line a "stuck on
+    // generating" report gets diagnosed from. A superseded (cancelled) pass is
+    // not a failure — it is dropped below.
+    if (run.superseded()) log.info("analysis: superseded pass ended", { error: String(err) });
+    else log.error("analysis: findings failed", { error: String(err) });
+    const message = await studyErrorMessage(err, settings.llmProviders[workload]);
     await landStage(run, {
       stage: "findings",
+      error: message,
       apply: () => {
         useStore.getState().setAnalysisError(message);
         useStore.getState().setAnalysisStatus("error");

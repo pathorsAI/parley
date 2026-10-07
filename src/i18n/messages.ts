@@ -953,6 +953,7 @@ export const zhTW = {
   "ask.error.auth": "（登入階段已過期，請重新登入）",
   "analysis.error.credits": "Parley AI 額度已用完 — 請等待下期重置，或到設定改用自己的金鑰",
   "analysis.error.auth": "登入階段已過期，請重新登入後再試",
+  "analysis.error.timeout": "分析逾時，模型沒有在時限內回應。請重新產生。",
   "ask.suggestion.next": "我下一步應該問什麼？",
   "ask.suggestion.agreed": "對方剛剛同意了什麼？",
   "ask.suggestion.unanswered": "有哪些我問了但沒被正面回答的問題？",
@@ -2248,6 +2249,7 @@ export const en = {
   "ask.suggestion.next": "What should I ask next?",
   "ask.suggestion.agreed": "What did they agree to?",
   "ask.suggestion.unanswered": "Which questions have not been answered directly?",
+  "analysis.error.timeout": "The analysis timed out — the model did not answer in time. Regenerate to try again.",
   "ask.suggestion.pushback": "What should I push back on now?",
   "ask.suggestion.summary": "Summarize the key points so far",
 

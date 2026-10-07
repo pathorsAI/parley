@@ -26,6 +26,11 @@ import { log } from "../log";
  */
 const guard = makeRunGuard("filing");
 
+/** Cancel the filing pass running for the recording on screen. */
+export function cancelFilingSuggestion(): boolean {
+  return guard.cancel();
+}
+
 // Recordings whose pass came back empty this session (replay and entry ids).
 // Not persisted (see the landing below), so reopening one restores "idle" — and
 // without this the same device would pay for the same empty answer on every
@@ -77,6 +82,7 @@ export async function runFilingSuggestion(opts?: { force?: boolean }): Promise<v
       // to file today's call into it would undo that decision for them.
       folders: filingChoices(listLocalFolders()).map((f) => ({ id: f.id, name: f.name })),
       currentTitle,
+      signal: run.signal,
     });
     // Renamed while the pass ran: the user has named it, which answers the title
     // half (the same rule renameHistoryEntry applies to a pending suggestion).
@@ -97,7 +103,10 @@ export async function runFilingSuggestion(opts?: { force?: boolean }): Promise<v
     // same rule holds on iOS and Android. A usable suggestion IS persisted with
     // the flag, so the recording never pays for the pass a second time
     // (HistoryEntry.filingSuggested).
-    if (!suggestion) rememberEmpty(state.replay?.id, run.target().entryId);
+    // A cancelled pass also comes back null (suggestFiling swallows the abort),
+    // but it was never answered — remembering it would make the restart that
+    // cancelled it decline to run.
+    if (!suggestion && !run.superseded()) rememberEmpty(state.replay?.id, run.target().entryId);
     await landStage(run, {
       stage: "filing",
       apply: () => {
@@ -108,9 +117,11 @@ export async function runFilingSuggestion(opts?: { force?: boolean }): Promise<v
       persistWhileLoaded: true,
     });
   } catch (e) {
-    log.error("filing: suggestion failed", { error: String(e) });
+    if (run.superseded()) log.info("filing: superseded pass ended", { error: String(e) });
+    else log.error("filing: suggestion failed", { error: String(e) });
     await landStage(run, {
       stage: "filing",
+      error: String(e),
       apply: () => useStore.getState().setFilingStatus("error"),
       patch: null,
     });
