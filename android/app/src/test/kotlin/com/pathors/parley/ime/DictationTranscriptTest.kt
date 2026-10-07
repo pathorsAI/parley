@@ -17,6 +17,13 @@ import org.junit.Test
  */
 class DictationTranscriptTest {
 
+    private companion object {
+        /** A settled run the relay has committed. */
+        const val SETTLED = "We should ship it"
+        /** The tentative tail still being recognised. */
+        const val TAIL = " tomorrow"
+    }
+
     private fun committed(id: String, text: String) = TranscriptSegment(
         id = id,
         source = "mix",
@@ -48,11 +55,11 @@ class DictationTranscriptTest {
     @Test
     fun `the tail is shown after the committed runs`() {
         val transcript = DictationTranscript()
-        transcript.accept(committed("mix-0", "We should ship it"))
-        transcript.accept(tail(" tomorrow"))
+        transcript.accept(committed("mix-0", SETTLED))
+        transcript.accept(tail(TAIL))
 
-        assertEquals("We should ship it tomorrow", transcript.live)
-        assertEquals("only the settled run is committed", "We should ship it", transcript.committed)
+        assertEquals("$SETTLED$TAIL", transcript.live)
+        assertEquals("only the settled run is committed", SETTLED, transcript.committed)
         assertFalse(transcript.isEmpty)
     }
 
@@ -62,9 +69,9 @@ class DictationTranscriptTest {
         val transcript = DictationTranscript()
         transcript.accept(committed("mix-0", "We should"))
         transcript.accept(committed("mix-0", "We should ship"))
-        transcript.accept(committed("mix-0", "We should ship it"))
+        transcript.accept(committed("mix-0", SETTLED))
 
-        assertEquals("We should ship it", transcript.live)
+        assertEquals(SETTLED, transcript.live)
     }
 
     /**
@@ -97,11 +104,11 @@ class DictationTranscriptTest {
     @Test
     fun `an empty tail clears the previous one`() {
         val transcript = DictationTranscript()
-        transcript.accept(committed("mix-0", "We should ship it"))
+        transcript.accept(committed("mix-0", SETTLED))
         transcript.accept(tail(" tomo"))
         transcript.accept(tail(""))
 
-        assertEquals("We should ship it", transcript.live)
+        assertEquals(SETTLED, transcript.live)
         assertEquals("", transcript.partial)
     }
 
@@ -114,13 +121,13 @@ class DictationTranscriptTest {
     @Test
     fun `folding the tail settles it`() {
         val transcript = DictationTranscript()
-        transcript.accept(committed("mix-0", "We should ship it"))
-        transcript.accept(tail(" tomorrow"))
+        transcript.accept(committed("mix-0", SETTLED))
+        transcript.accept(tail(TAIL))
         transcript.foldPartial()
 
-        assertEquals("We should ship it tomorrow", transcript.committed)
+        assertEquals("$SETTLED$TAIL", transcript.committed)
         assertEquals("", transcript.partial)
-        assertEquals("We should ship it tomorrow", transcript.live)
+        assertEquals("$SETTLED$TAIL", transcript.live)
     }
 
     /**
@@ -131,8 +138,8 @@ class DictationTranscriptTest {
     @Test
     fun `a folded tail survives a later revision of an earlier run`() {
         val transcript = DictationTranscript()
-        transcript.accept(committed("mix-0", "We should ship it"))
-        transcript.accept(tail(" tomorrow"))
+        transcript.accept(committed("mix-0", SETTLED))
+        transcript.accept(tail(TAIL))
         transcript.foldPartial()
         transcript.accept(committed("mix-0", "We should ship this"))
 
@@ -142,11 +149,11 @@ class DictationTranscriptTest {
     @Test
     fun `folding nothing changes nothing`() {
         val transcript = DictationTranscript()
-        transcript.accept(committed("mix-0", "We should ship it"))
+        transcript.accept(committed("mix-0", SETTLED))
         transcript.foldPartial()
         transcript.foldPartial()
 
-        assertEquals("We should ship it", transcript.committed)
+        assertEquals(SETTLED, transcript.committed)
     }
 
     @Test
@@ -176,8 +183,8 @@ class DictationTranscriptTest {
     @Test
     fun `reset forgets everything`() {
         val transcript = DictationTranscript()
-        transcript.accept(committed("mix-0", "We should ship it"))
-        transcript.accept(tail(" tomorrow"))
+        transcript.accept(committed("mix-0", SETTLED))
+        transcript.accept(tail(TAIL))
         transcript.reset()
 
         assertEquals("", transcript.live)
@@ -214,13 +221,13 @@ class DictationTranscriptTest {
         builder.pushFinal("ship it", speaker = 0, startMs = 200, endMs = 400)
         builder.emitCommitted()
         builder.emitTail("", speaker = 0, startMs = 400)
-        assertEquals("We should ship it", transcript.live)
+        assertEquals(SETTLED, transcript.live)
 
         builder.endpoint()
         builder.pushFinal(" Tomorrow.", speaker = 0, startMs = 400, endMs = 600)
         builder.emitCommitted()
 
         transcript.foldPartial()
-        assertEquals("We should ship it Tomorrow.", transcript.committed)
+        assertEquals("$SETTLED Tomorrow.", transcript.committed)
     }
 }

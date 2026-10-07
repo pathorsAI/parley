@@ -22,6 +22,12 @@ import org.junit.Test
  */
 class TranscriptPolisherTest {
 
+    private companion object {
+        const val RAW_SHIP = "um so I was thinking like we could maybe ship it tomorrow"
+        const val POLISHED_SHIP = "I was thinking we could ship it tomorrow."
+        const val RAW_SHIPPING = "um so I was thinking about shipping it"
+    }
+
     // MARK: shouldPolish
 
     @Test
@@ -44,8 +50,8 @@ class TranscriptPolisherTest {
     fun `accepts a plausible cleanup`() {
         assertTrue(
             TranscriptPolisher.accept(
-                raw = "um so I was thinking like we could maybe ship it tomorrow",
-                polished = "I was thinking we could ship it tomorrow.",
+                raw = RAW_SHIP,
+                polished = POLISHED_SHIP,
             ),
         )
     }
@@ -280,19 +286,19 @@ class TranscriptPolisherTest {
     @Test
     fun `polish returns the rewrite when it is acceptable`() = runBlocking {
         val polished = TranscriptPolisher.polish(
-            raw = "um so I was thinking like we could maybe ship it tomorrow",
-            chat = ChatCompletions { completion("I was thinking we could ship it tomorrow.") },
+            raw = RAW_SHIP,
+            chat = ChatCompletions { completion(POLISHED_SHIP) },
         )
-        assertEquals("I was thinking we could ship it tomorrow.", polished)
+        assertEquals(POLISHED_SHIP, polished)
     }
 
     @Test
     fun `polish trims what the model padded`() = runBlocking {
         val polished = TranscriptPolisher.polish(
-            raw = "um so I was thinking like we could maybe ship it tomorrow",
-            chat = ChatCompletions { completion("\n  I was thinking we could ship it tomorrow.\n") },
+            raw = RAW_SHIP,
+            chat = ChatCompletions { completion("\n  $POLISHED_SHIP\n") },
         )
-        assertEquals("I was thinking we could ship it tomorrow.", polished)
+        assertEquals(POLISHED_SHIP, polished)
     }
 
     /** The raw transcript is already in the user's field; a refusal is a no-op. */
@@ -318,13 +324,13 @@ class TranscriptPolisherTest {
     fun `polish returns null when the response is unusable`() = runBlocking {
         assertNull(
             TranscriptPolisher.polish(
-                raw = "um so I was thinking about shipping it",
+                raw = RAW_SHIPPING,
                 chat = ChatCompletions { """{"choices":[]}""" },
             ),
         )
         assertNull(
             TranscriptPolisher.polish(
-                raw = "um so I was thinking about shipping it",
+                raw = RAW_SHIPPING,
                 chat = ChatCompletions { "502 Bad Gateway" },
             ),
         )
@@ -338,7 +344,7 @@ class TranscriptPolisherTest {
     @Test(expected = IllegalStateException::class)
     fun `polish lets a transport failure through`(): Unit = runBlocking {
         TranscriptPolisher.polish(
-            raw = "um so I was thinking about shipping it",
+            raw = RAW_SHIPPING,
             chat = ChatCompletions { error("no network") },
         )
         Unit
@@ -348,7 +354,7 @@ class TranscriptPolisherTest {
     fun `polish sends the dictionary terms it was given`() = runBlocking {
         var sent: String? = null
         TranscriptPolisher.polish(
-            raw = "um so I was thinking about shipping it",
+            raw = RAW_SHIPPING,
             chat = ChatCompletions { body ->
                 sent = body
                 completion("I was thinking about shipping it.")
