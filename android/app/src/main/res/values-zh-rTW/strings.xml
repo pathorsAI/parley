@@ -473,4 +473,58 @@
 
     <string name="whats_new_also">也改了</string>
     <string name="whats_new_copy_language">zh-Hant</string>
+    <!-- Voice typing: the keyboard as the system lists it -->
+    <string name="ime_label">Parley 語音輸入</string>
+    <string name="ime_subtype_voice">語音輸入</string>
+
+    <!-- Voice typing: the keys -->
+    <string name="ime_switch_keyboard">切換到其他鍵盤</string>
+    <string name="ime_discard">捨棄剛才說的話</string>
+    <string name="ime_mic_start">開始語音輸入</string>
+    <string name="ime_mic_stop">結束語音輸入</string>
+
+    <!-- Voice typing: status -->
+    <string name="ime_status_ready">點一下開始說話</string>
+    <string name="ime_status_connecting">連線中…</string>
+    <string name="ime_status_listening">正在聽</string>
+    <string name="ime_status_finishing">正在整理你說的話…</string>
+    <string name="ime_time_remaining">剩 %1$d:%2$02d</string>
+
+    <!-- Voice typing: the standing hint under the key -->
+    <string name="ime_hint_default">你說的話會打進原本那個 App 的欄位裡。</string>
+    <string name="ime_hint_password">Parley 不會在密碼欄位裡輸入。</string>
+    <string name="ime_hint_permission">Parley 需要麥克風才聽得到你說話。</string>
+    <string name="ime_hint_no_field">請先點一個文字欄位。</string>
+
+    <!-- Voice typing: why the key is off -->
+    <string name="ime_blocked_password">密碼欄位不提供語音輸入</string>
+    <string name="ime_blocked_no_field">沒有選取任何文字欄位</string>
+    <string name="ime_blocked_permission">需要麥克風權限</string>
+
+    <!-- Voice typing: endings that went badly -->
+    <string name="ime_failure_signed_out">你已登出。請開啟 Parley 重新登入。</string>
+    <string name="ime_failure_mic_unavailable">麥克風目前無法使用，可能正在通話或被其他 App 佔用。</string>
+    <string name="ime_failure_quota">你的雲端轉錄額度已用完。</string>
+    <string name="ime_failure_relay">轉錄意外中斷，已聽到的內容都保留下來了。</string>
+    <string name="ime_failure_unknown">發生了一些問題。</string>
+
+    <!-- Voice typing: the microphone notification -->
+    <string name="ime_notification_channel_name">語音輸入</string>
+    <string name="ime_notification_channel_description">Parley 鍵盤正在聽的時候顯示。</string>
+    <string name="ime_notification_title">Parley 正在聽</string>
+    <string name="ime_notification_text">麥克風已開啟，用於語音輸入。</string>
+
+    <!-- Voice typing: settings -->
+    <string name="ime_settings_title">語音輸入</string>
+    <string name="ime_settings_intro">一個麥克風鍵，把你說的話打進任何 App。Parley 鍵盤沒有文字鍵 —— 要打字請切回你平常用的鍵盤。</string>
+    <string name="ime_settings_microphone">麥克風</string>
+    <string name="ime_settings_microphone_granted">Parley 可以使用麥克風。</string>
+    <string name="ime_settings_microphone_needed">語音輸入需要麥克風權限。鍵盤本身沒辦法自己要求，所以請在這裡授權。</string>
+    <string name="ime_settings_polish">整理我說的話</string>
+    <string name="ime_settings_polish_detail">你說完之後，Parley 會把逐字稿改寫成書面文字：去掉語助詞、補上標點，把口頭講的清單排成清單。這會把逐字稿送到你的 Parley 帳號。關掉就照原本聽到的內容輸入。</string>
+    <string name="ime_settings_enable">啟用這個鍵盤</string>
+    <string name="ime_settings_enable_detail">Android 要求你先在系統設定裡啟用鍵盤才能使用，啟用時它會顯示一段關於鍵盤可能會收集你輸入內容的警告。Parley 沒有文字鍵可以收集，不會讀取欄位裡原本的內容，在密碼欄位則完全停用。</string>
+    <string name="ime_settings_enable_action">開啟鍵盤設定</string>
+    <string name="ime_settings_privacy">它不會做的事</string>
+    <string name="ime_settings_privacy_detail">Parley 只會往你所在的欄位寫入。它不會讀取欄位裡原本的內容、不留任何紀錄，也沒有文字鍵可以記錄。麥克風只在你語音輸入的期間開啟、全程顯示通知，而且在密碼欄位永遠不會開啟。</string>
 </resources>

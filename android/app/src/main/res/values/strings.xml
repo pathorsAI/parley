@@ -487,4 +487,58 @@
          the sheet speaks whatever language these resources resolved to. -->
     <string name="whats_new_also">Also</string>
     <string name="whats_new_copy_language">en</string>
+    <!-- Voice typing: the keyboard as the system lists it -->
+    <string name="ime_label">Parley voice typing</string>
+    <string name="ime_subtype_voice">Voice typing</string>
+
+    <!-- Voice typing: the keys -->
+    <string name="ime_switch_keyboard">Switch to another keyboard</string>
+    <string name="ime_discard">Discard what you said</string>
+    <string name="ime_mic_start">Start dictating</string>
+    <string name="ime_mic_stop">Stop dictating</string>
+
+    <!-- Voice typing: status -->
+    <string name="ime_status_ready">Tap to speak</string>
+    <string name="ime_status_connecting">Connecting…</string>
+    <string name="ime_status_listening">Listening</string>
+    <string name="ime_status_finishing">Tidying up what you said…</string>
+    <string name="ime_time_remaining">%1$d:%2$02d left</string>
+
+    <!-- Voice typing: the standing hint under the key -->
+    <string name="ime_hint_default">Your words go into the app you were typing in.</string>
+    <string name="ime_hint_password">Parley never dictates into a password field.</string>
+    <string name="ime_hint_permission">Parley needs the microphone to hear you.</string>
+    <string name="ime_hint_no_field">Tap a text field first.</string>
+
+    <!-- Voice typing: why the key is off -->
+    <string name="ime_blocked_password">Dictation is off in password fields</string>
+    <string name="ime_blocked_no_field">No text field is selected</string>
+    <string name="ime_blocked_permission">Microphone access needed</string>
+
+    <!-- Voice typing: endings that went badly -->
+    <string name="ime_failure_signed_out">You are signed out. Open Parley and sign in.</string>
+    <string name="ime_failure_mic_unavailable">The microphone isn\'t available — a call or another app may be using it.</string>
+    <string name="ime_failure_quota">Your hosted transcription quota is used up.</string>
+    <string name="ime_failure_relay">Transcription stopped unexpectedly. Whatever was heard was kept.</string>
+    <string name="ime_failure_unknown">Something went wrong.</string>
+
+    <!-- Voice typing: the microphone notification -->
+    <string name="ime_notification_channel_name">Voice typing</string>
+    <string name="ime_notification_channel_description">Shows while the Parley keyboard is listening.</string>
+    <string name="ime_notification_title">Parley is listening</string>
+    <string name="ime_notification_text">The microphone is open for voice typing.</string>
+
+    <!-- Voice typing: settings -->
+    <string name="ime_settings_title">Voice typing</string>
+    <string name="ime_settings_intro">A microphone key that types what you say into any app. Parley\'s keyboard has no letter keys — switch back to your usual keyboard to type.</string>
+    <string name="ime_settings_microphone">Microphone</string>
+    <string name="ime_settings_microphone_granted">Parley can use the microphone.</string>
+    <string name="ime_settings_microphone_needed">Voice typing needs microphone access. A keyboard can\'t ask for it itself, so grant it here.</string>
+    <string name="ime_settings_polish">Clean up what I said</string>
+    <string name="ime_settings_polish_detail">When you stop speaking, Parley rewrites the transcript into written text: filler removed, punctuation added, and a spoken list laid out as a list. This sends the transcript to your Parley account. Turn it off to type exactly what was heard.</string>
+    <string name="ime_settings_enable">Turn the keyboard on</string>
+    <string name="ime_settings_enable_detail">Android needs you to enable a keyboard in system settings before it can be used, and it shows a warning there about keyboards collecting what you type. Parley has no letter keys to collect, never reads what is already in a field, and switches itself off completely in password fields.</string>
+    <string name="ime_settings_enable_action">Open keyboard settings</string>
+    <string name="ime_settings_privacy">What it doesn\'t do</string>
+    <string name="ime_settings_privacy_detail">Parley only writes into the field you are in. It never reads what is already there, keeps no record of it, and has no letter keys to log. The microphone opens only while you are dictating, shows a notification the whole time, and never opens in a password field.</string>
 </resources>
