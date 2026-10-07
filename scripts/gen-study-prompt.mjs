@@ -36,12 +36,15 @@ const str = (name, v) => `    const val ${name}: String = ${kt(v)}`;
 const int = (name, v) => `    const val ${name}: Int = ${v}`;
 const list = (items, indent) => items.map((s) => `${indent}${kt(s)},`).join("\n");
 const stringList = (name, items) => `    val ${name}: List<String> = listOf(\n${list(items, "        ")}\n    )`;
-const byLens = (name, obj) =>
-  `    /** Keyed by lens: ${LENSES.join(", ")}. */\n    val ${name}: Map<String, String> = mapOf(\n${LENSES.map(
-    (l) => `        "${l}" to ${kt(obj[l])},`,
-  ).join("\n")}\n    )`;
-const stringMap = (name, entries) =>
-  `    val ${name}: Map<String, String> = mapOf(\n${entries.map(([k, v]) => `        ${kt(k)} to ${kt(v)},`).join("\n")}\n    )`;
+const byLens = (name, obj) => {
+  const entries = LENSES.map((l) => `        "${l}" to ${kt(obj[l])},`).join("\n");
+  const doc = `    /** Keyed by lens: ${LENSES.join(", ")}. */`;
+  return `${doc}\n    val ${name}: Map<String, String> = mapOf(\n${entries}\n    )`;
+};
+const stringMap = (name, entries) => {
+  const body = entries.map(([k, v]) => `        ${kt(k)} to ${kt(v)},`).join("\n");
+  return `    val ${name}: Map<String, String> = mapOf(\n${body}\n    )`;
+};
 
 export function renderKotlin(p) {
   const evals = Object.entries(p.evals).map(

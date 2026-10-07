@@ -99,13 +99,9 @@ object StudyMapping {
         if (lens.hasSides && side == null) return null
         if (lens.hasCategories && category == null) return null
 
-        val parsed = parseClockMs(raw.rawString("time")) ?: return null
-        if (parsed < 0 || (maxMs != null && parsed > maxMs + MAX_OVERSHOOT_MS)) return null
-        val atMs = snapToSegment(parsed, segments)
+        val atMs = placedAtMs(raw, segments, maxMs) ?: return null
 
-        val matched = (raw["evalIds"] as? JsonArray).orEmpty()
-            .mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content?.trim() }
-            .filter { it.isNotEmpty() && it in validEvalIds }
+        val matched = matchedEvalIds(raw, validEvalIds)
         val isEval = raw.rawString("source") == "eval" && matched.isNotEmpty()
         val resolution = raw.rawString("resolution")?.trim().orEmpty()
         val resolvedFlag = (raw["resolved"] as? JsonPrimitive)?.takeIf { !it.isString }?.booleanOrNull
@@ -121,10 +117,27 @@ object StudyMapping {
             evalIds = if (isEval) matched else null,
             title = title,
             detail = detail,
-            resolved = if (resolved) true else null,
+            resolved = true.takeIf { resolved },
             resolution = if (resolved) resolution else null,
         )
     }
+
+    /**
+     * Where a raw moment lands on the timeline, snapped to the nearest line
+     * start, or null when it has no usable time — none, negative, or more than
+     * five seconds past the last line.
+     */
+    private fun placedAtMs(raw: JsonObject, segments: List<TranscriptSegment>, maxMs: Long?): Long? {
+        val parsed = parseClockMs(raw.rawString("time")) ?: return null
+        if (parsed < 0 || (maxMs != null && parsed > maxMs + MAX_OVERSHOOT_MS)) return null
+        return snapToSegment(parsed, segments)
+    }
+
+    /** The eval ids a moment cites that are actually configured, trimmed, in order. */
+    private fun matchedEvalIds(raw: JsonObject, validEvalIds: Set<String>): List<String> =
+        (raw["evalIds"] as? JsonArray).orEmpty()
+            .mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content?.trim() }
+            .filter { it.isNotEmpty() && it in validEvalIds }
 
     /**
      * Every placeable moment in a findings reply, in time order (a stable sort,

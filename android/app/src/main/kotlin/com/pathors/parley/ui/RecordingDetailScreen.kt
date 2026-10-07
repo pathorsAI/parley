@@ -1140,6 +1140,37 @@ private fun FaceSwitcher(face: DetailFace, onFaceChange: (DetailFace) -> Unit) {
  * plays on, and the turn's own tap is one tap away for anyone who wants to hear
  * it.
  */
+/**
+ * The turn a moment at [ms] belongs to, with the audio sent there when the
+ * recording can seek; -1 when the transcript has no turn for it. The scroll is
+ * the caller's: a recording whose audio is not on the phone cannot seek, and
+ * the jump must still land on the words.
+ */
+private fun landOnTurn(ms: Long, starts: List<Long>, playback: PlaybackState, player: PlayerActions): Int {
+    val turn = TranscriptAnchor.turnIndex(ms, starts)
+    if (turn >= 0 && playback.isSeekable) player.jumpTo(TranscriptAnchor.seekMs(ms, starts))
+    return turn
+}
+
+/** What the report page can do, wired to the recording's player and summary hooks. */
+private fun reportActions(
+    summary: SummaryHooks,
+    playback: PlaybackState,
+    player: PlayerActions,
+    canGenerate: Boolean,
+    jump: (Long) -> Unit,
+) = ReportActions(
+    canTickActionItems = summary.canTickActionItems,
+    canGenerate = canGenerate,
+    jump = jump,
+    seek = { ms -> if (playback.isSeekable) player.jumpTo(ms) },
+    tickActionItem = summary.tickActionItem,
+    generate = summary.generate,
+    regenerate = summary.regenerate,
+    regenerateAll = summary.regenerateAll,
+    openStudyMenu = DemoMode.navigation.value?.report == DemoMode.ReportScenario.MENU,
+)
+
 @Composable
 private fun DetailBody(
     meta: RecordingMeta,
@@ -1237,9 +1268,8 @@ private fun DetailBody(
     // phone cannot seek, and the jump must still land on the words.
     val jump: (Long) -> Unit = { ms ->
         onFaceChange(DetailFace.TRANSCRIPT)
-        val turn = TranscriptAnchor.turnIndex(ms, starts)
+        val turn = landOnTurn(ms, starts, playback, player)
         if (turn >= 0) {
-            if (playback.isSeekable) player.jumpTo(TranscriptAnchor.seekMs(ms, starts))
             followsAudio = false
             jumpRequest = JumpRequest(turn = turn, serial = jumpRequest.serial + 1)
             lit.light(segments[turn].id)
@@ -1266,17 +1296,7 @@ private fun DetailBody(
                 speakers = speakers,
                 segments = kitSegments,
                 listState = summaryList,
-                actions = ReportActions(
-                    canTickActionItems = summary.canTickActionItems,
-                    canGenerate = segments.isNotEmpty(),
-                    jump = jump,
-                    seek = { ms -> if (playback.isSeekable) player.jumpTo(ms) },
-                    tickActionItem = summary.tickActionItem,
-                    generate = summary.generate,
-                    regenerate = summary.regenerate,
-                    regenerateAll = summary.regenerateAll,
-                    openStudyMenu = DemoMode.navigation.value?.report == DemoMode.ReportScenario.MENU,
-                ),
+                actions = reportActions(summary, playback, player, canGenerate = segments.isNotEmpty(), jump = jump),
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),

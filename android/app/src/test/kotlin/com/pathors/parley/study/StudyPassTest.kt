@@ -38,6 +38,11 @@ import org.junit.Test
  */
 class StudyPassTest {
 
+    private companion object {
+        /** The brief the fake model answers with. */
+        const val BRIEF_MARKDOWN = "## Outcome\nPrice held [1:05]."
+    }
+
     private val id = "rec-1"
 
     private fun baseMeta(extra: JsonObject = JsonObject(emptyMap())): RecordingMeta = RecordingMeta(
@@ -99,7 +104,7 @@ class StudyPassTest {
                 """{"moments":[{"time":"[0:08]","side":"them","severity":"warn","source":"eval","evalIds":["zopa"],"title":"Seat gap","detail":"Forty against eighty."}]}"""
             },
             "actions" to { """{"actions":[{"text":"Send the revised quote","linkedEventId":null,"time":"1:05"}]}""" },
-            "brief" to { "## Outcome\nPrice held [1:05]." },
+            "brief" to { BRIEF_MARKDOWN },
             "delivery" to {
                 """{"tone":"firm","tone_evidence":"hold the price","filler_level":"ok","filler_examples":[],"filler_note":"","pace":"comfortable","summary":"Steady."}"""
             },
@@ -178,7 +183,7 @@ class StudyPassTest {
         val action = raw["actionItems"]!!.jsonArray.single().jsonObject
         assertEquals(65_000L, action["atMs"]!!.jsonPrimitive.content.toLong())
         assertTrue(raw["analyzed"]!!.jsonPrimitive.boolean)
-        assertEquals("## Outcome\nPrice held [1:05].", raw["brief"]!!.jsonPrimitive.content)
+        assertEquals(BRIEF_MARKDOWN, raw["brief"]!!.jsonPrimitive.content)
         assertFalse(raw["briefFailed"]!!.jsonPrimitive.boolean)
         assertEquals("firm", raw["deliveryAssessment"]!!.jsonObject["tone"]!!.jsonPrimitive.content)
         // Fields the phone knows nothing about survive every write.
@@ -392,7 +397,7 @@ class StudyPassTest {
         assertEquals(listOf("findings"), model.asked)
         assertEquals(StageStatus.ERROR, pass.statuses()[StudyArtifact.FINDINGS])
         assertEquals(StageStatus.DONE, pass.statuses()[StudyArtifact.BRIEF])
-        assertEquals("## Outcome\nPrice held [1:05].", cloud.meta.raw["brief"]!!.jsonPrimitive.content)
+        assertEquals(BRIEF_MARKDOWN, cloud.meta.raw["brief"]!!.jsonPrimitive.content)
     }
 
     @Test
