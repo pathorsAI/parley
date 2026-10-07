@@ -24,6 +24,10 @@ com.pathors.parley
     AnnouncementStore.kt which What's New announcements this phone has seen
                          (DataStore `parley_announcements`)
     WhatsNewPresenter.kt when the What's New sheet may come up
+  study/
+    StudyPass.kt         the study pipeline (findings, action items, brief,
+                         delivery) on the hosted model, one per process
+    StudySettings.kt     "Analyze recordings automatically" (DataStore `parley_study`)
   ui/
     ParleyRoot.kt        sign-in wall, NavHost, the SAF picker; the recording
                          route's `guided` argument; OpenFor
@@ -52,9 +56,12 @@ com.pathors.parley
     WhatsNewSheet.kt     the What's New bottom sheet and its host on the library
     MeetingHaptics.kt    the four recording beats (start, stop, discard, mic lost)
     ImportScreen.kt      progress + phase label + cancel; the failure / partial endings
-    RecordingDetail*.kt  player, Summary | Transcript pages, transcript search,
+    RecordingDetail*.kt  player, Report | Transcript pages, transcript search,
                          re-transcribe, move to folder (personal recordings)
-    RecordingSummaryPage.kt brief, action items, highlights, speakers
+    RecordingReportPage.kt the report: analysis chip, brief, action items,
+                         timeline analysis, delivery scorecard, speakers
+    ReportSections.kt    the generation chip and its menu, the timeline strip,
+                         the delivery scorecard
     FilingSuggestionCard.kt the filing suggestion: editable title, folder chips,
                          "Choose another…", Accept / Skip, and its motion
     Format.kt            duration/clock/date/speaker-label formatting
@@ -397,25 +404,36 @@ shared with iOS and the desktop and copied into the APK's assets at build time
   resources the app resolved (`whats_new_copy_language`), so the sheet never
   speaks a different language from the screen under it. No hero registry yet.
 
-## The recording page: Summary | Transcript
+## The recording page: Report | Transcript
 
-A port of iOS #450 (`docs/design/ios-recording-page.md`). Under the pinned
-player, a segmented control switches two pages; only the one that is up is
-composed, but both `LazyListState`s live in `DetailBody`, so each keeps its
-scroll position.
+A port of iOS #450 (`docs/design/ios-recording-page.md`), whose Summary page
+became the **Report** when Android started running the study stages itself
+(below). Under the pinned player, a segmented control switches two pages;
+only the one that is up is composed, but both `LazyListState`s live in
+`DetailBody`, so each keeps its scroll position.
 
-- **Which page.** Summary when the recording has any analysis (a brief, a
-  finding or an action item — `UiState.hasAnalysis`), Transcript otherwise.
-  Chosen once on the first load (`initialFace`), saved across rotation, never
-  flipped by a reload. `parley://demo/transcript` stays on the transcript.
-- **Summary** (`RecordingSummaryPage.kt`): the brief through parleykit's
-  `BriefMarkup` (bold runs, `[m:ss]` links), action items (ticking only on the
-  sample — `SampleRecordingStore.Entry.doneActionItems`; a cloud recording shows
-  its ticks and takes none), highlights (2dp ink rule, title, detail,
-  `m:ss →`), and speakers in order of first appearance. With no analysis:
-  "No summary yet." and "Generate a summary with AI", which is the Share-to-AI
-  hand-off.
-- **Jumps.** Every timestamp on the summary switches to the transcript, seeks
+- **Which page.** Report when the recording has any analysis (a brief, a
+  finding, an action item or a delivery read — `UiState.hasAnalysis`) or the
+  study is about to analyse it, Transcript otherwise. Chosen once on the first
+  load (`initialFace`), saved across rotation, never flipped by a reload.
+  `parley://demo/transcript` stays on the transcript.
+- **Report** (`RecordingReportPage.kt`), the desktop's report tab in its
+  order: the generation chip (personal recordings), the brief (重點) through
+  parleykit's `BriefMarkup` (bold runs, `[m:ss]` links), action items (後續行動;
+  ticking only on the sample — `SampleRecordingStore.Entry.doneActionItems`; a
+  cloud recording shows its ticks and takes none), the timeline analysis
+  (時間軸分析: a strip across the recording with a dot per finding in its
+  severity's colour — a tap plays it without leaving the page — then the list
+  with severity, side / category and "Resolved by …" where the lens has them),
+  the delivery scorecard (評分: pace, talk share, filler sounds, tone tiles
+  and the AI read, the desktop's `DeliveryScorecard`), and speakers in order
+  of first appearance. Which sections are drawn is `ReportLayout` (tested):
+  with the study running here, a section whose artifact is queued, generating
+  or failed says so in the desktop's words ("Queued — starts after the action
+  items finish"); without it (the sample, an org recording) only sections
+  with content show. With no analysis and no way to make one: "No summary
+  yet." and "Generate a summary with AI", the Share-to-AI hand-off.
+- **Jumps.** Every timestamp on the report switches to the transcript, seeks
   (`jumpTo`), scrolls the turn to the upper third and washes it for 2 s. The
   turn is `TranscriptAnchor`'s — a brief's `[0:08]` names the turn that starts
   at 8.9 s.
@@ -448,6 +466,58 @@ scroll position.
   refusal on its own. A failure line never sits beside the spinner, and only a
   live run disables "Transcribe again" — a queued request can be asked for
   again.
+
+## The study: findings, action items, brief, delivery
+
+`study/StudyPass` is the desktop's study pipeline (`src/lib/analysis/studyPipeline.ts`)
+on the phone: when a personal, cloud-synced recording is opened and has not
+been analysed, it runs the four report stages on the hosted model and writes
+the results into the recording's meta in the desktop's fields
+(`api-cloud.md` › "The study fields Android writes"), so the desktop, iOS and
+Android read one shape. Never the sample, an organization's recording or a
+screenshot run.
+
+- **Order.** `findings ──done──▶ action items ──settled──▶ brief`, and
+  `findings ──done──▶ delivery`. The topology, the "queued" display and the
+  restore-from-meta rules (`restoredStudyStatuses`: `analyzed` or findings →
+  findings done, `analyzed` or action items → action items done,
+  `deliveryAssessment` → done, `brief` → done, `briefFailed` → error) are
+  parleykit's pure `StudyPipeline`, unit-tested with the desktop's cases.
+- **Prompts.** `shared/prompts/study.json` is the single source for every
+  study prompt and the built-in evaluation presets; the desktop imports it,
+  Android compiles the generated `kit/StudyPrompts.kt`
+  (`node scripts/gen-study-prompt.mjs`; `tests/studyPromptCopy.test.ts` fails
+  when it is stale). `kit/StudyPromptBuilder` assembles the pieces in the
+  desktop's order, and `StudyPromptsGoldenTest` checks it against
+  `shared/prompts/study.golden.json` — the prompts the desktop really builds
+  for fixed inputs. The phone sends no `response_format`: it appends the JSON
+  shape in words (`phone.schema`) and reads the first JSON object out of the
+  reply (`kit/StudyMapping`, the desktop's mapping rules: clock parsing,
+  snapping to a transcript line, the `maxMs + 5000` drop, eval ids checked
+  against the configured set).
+- **Models and limits.** `parley-fast` for the meeting kind and delivery,
+  `parley-smart` for findings, action items and the brief — the desktop's
+  realtime / deep lanes. 240 s per call for findings and the brief, 120 s for
+  the others (`withTimeoutOrNull`), over `CloudClient.studyChat`, whose socket
+  read timeout is longer than the shared client's 60 s.
+- **Spend once, persist at once, back off.** Each stage re-reads the meta and
+  adopts a result already there (unless regenerated by hand), asks the model,
+  then writes through `editRecordingIf`, which re-reads again and declines when
+  the field changed meanwhile — another device's result is kept. A failure or
+  timeout is `ERROR` with a `StudyFailure` code; only a failed brief is
+  persisted (`briefFailed`), as on the desktop.
+- **The chip** (`ReportSections.kt` › `StudyChip`, the desktop's
+  `StudyGenerationChip`): "Analyzing n/4", "Analysis ready", "n failed" or "Not
+  analyzed"; its menu lists the four artifacts with their status and a
+  regenerate each, and "Regenerate all" behind a confirmation (findings first,
+  everything downstream only if that pass succeeded). Locked while a stage runs.
+- **The switch.** Account sheet › Analysis › "Analyze recordings
+  automatically" (`StudySettings`, default on — the desktop's
+  `autoStudyAnalysis`). Off: nothing runs until somebody regenerates by hand.
+- **Delivery on a phone recording.** Segments are `mix`, so there is no
+  measured `speechRateHz` (pace reads "—" with the model's label), no talk
+  share and zero filler sounds — exactly what the desktop shows for the same
+  recording; tone and the summary come from the model.
 
 ## The filing suggestion card
 
@@ -526,6 +596,9 @@ adb shell am start -a android.intent.action.VIEW -d "'parley://demo/library'"
 | `parley://demo/checklist-partial` | The checklist two of four done, the sample loaded above the fixtures |
 | `parley://demo/sample` | The sample recording's detail screen — real bundled audio, it plays |
 | `parley://demo/share-menu` | The same with the `⋯` menu open (Share to AI, Copy with analysis prompt) |
+| `parley://demo/report` | The featured recording on its report face, every artifact done |
+| `parley://demo/report-analyzing` | The same mid-pipeline: action items and delivery generating, the brief queued |
+| `parley://demo/report-menu` | The report with the analysis menu open |
 | `parley://demo/off` | Leave demo mode |
 
 The fixtures include two personal folders, one organization ("Sales team",
