@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Download, Loader2, Pause, Play, Scissors } from "lucide-react";
+import { AlertTriangle, Check, Download, Loader2, Pause, Play, Scissors } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { formatClock, type ReplayTrim } from "../../lib/store";
@@ -10,6 +10,9 @@ import type { ReplayPlayer } from "./useReplayPlayer";
 interface ReplayPlayerBarProps {
   durationMs: number;
   player: ReplayPlayer;
+  /** No audio file on this computer: say so instead of a play button that
+   *  can't do anything. */
+  audioMissing?: boolean;
   /** Save the recording's audio to a user-chosen folder (Tauri only; omit to hide). */
   onExport?: () => void;
   /** Localized strings (resolved by the parent via the replay i18n shim). */
@@ -27,6 +30,12 @@ interface ReplayPlayerBarProps {
     trimNote: string;
     trimStart: string;
     trimEnd: string;
+    /** "No audio file for this recording on this computer". */
+    audioMissing: string;
+    /** Shown while the decode fallback runs. */
+    audioRepairing: string;
+    /** "This recording's audio cannot be played (…)", already filled in; "" when it can. */
+    audioUnplayable: string;
   };
 }
 
@@ -40,7 +49,13 @@ interface ReplayPlayerBarProps {
  * outside is removed. Re-uploading the original restores it (cached). The draft
  * lives locally until Apply, so nothing happens until you confirm.
  */
-export function ReplayPlayerBar({ durationMs, player, onExport, labels }: Readonly<ReplayPlayerBarProps>) {
+export function ReplayPlayerBar({
+  durationMs,
+  player,
+  audioMissing = false,
+  onExport,
+  labels,
+}: Readonly<ReplayPlayerBarProps>) {
   const [trimOpen, setTrimOpen] = useState(false);
   const [draft, setDraft] = useState<ReplayTrim | null>(null);
   const [trimming, setTrimming] = useState(false);
@@ -73,15 +88,24 @@ export function ReplayPlayerBar({ durationMs, player, onExport, labels }: Readon
     <div className="shrink-0 border-b">
       <div className="px-4 pb-3 pt-3">
         <div className="flex items-center gap-3">
-          <Button
-            variant="outline"
-            size="icon-sm"
-            onClick={player.toggle}
-            aria-label={player.playing ? labels.pause : labels.play}
-            title={player.playing ? labels.pause : labels.play}
-          >
-            {player.playing ? <Pause className="size-4" /> : <Play className="size-4" />}
-          </Button>
+          {audioMissing ? (
+            <span
+              className="flex size-8 shrink-0 items-center justify-center text-muted-foreground"
+              title={labels.audioMissing}
+            >
+              <AlertTriangle className="size-4" />
+            </span>
+          ) : (
+            <Button
+              variant="outline"
+              size="icon-sm"
+              onClick={player.toggle}
+              aria-label={player.playing ? labels.pause : labels.play}
+              title={player.playing ? labels.pause : labels.play}
+            >
+              {player.playing ? <Pause className="size-4" /> : <Play className="size-4" />}
+            </Button>
+          )}
 
           <span className="w-10 shrink-0 text-right text-[11px] tabular-nums text-muted-foreground">
             {formatClock(player.playheadMs)}
@@ -129,6 +153,14 @@ export function ReplayPlayerBar({ durationMs, player, onExport, labels }: Readon
             <Scissors className="size-4" />
           </Button>
 
+          {/* Decoding the recording to WAV because the webview couldn't play it. */}
+          {player.repairing && (
+            <span className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
+              <Loader2 className="size-3 animate-spin" />
+              {labels.audioRepairing}
+            </span>
+          )}
+
           {/* Trim re-encode progress (the destructive cut runs in the background). */}
           {trimming && (
             <span className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
@@ -137,6 +169,8 @@ export function ReplayPlayerBar({ durationMs, player, onExport, labels }: Readon
             </span>
           )}
         </div>
+
+        <AudioNotice audioMissing={audioMissing} labels={labels} />
 
         {trimOpen && (
           <>
@@ -178,5 +212,27 @@ export function ReplayPlayerBar({ durationMs, player, onExport, labels }: Readon
         )}
       </div>
     </div>
+  );
+}
+
+/** Why the recording won't play, under the transport row — missing on this
+ *  computer, or a file neither the webview nor the decode fallback could play. */
+function AudioNotice({
+  audioMissing,
+  labels,
+}: Readonly<{ audioMissing: boolean; labels: ReplayPlayerBarProps["labels"] }>) {
+  const text = audioMissing ? labels.audioMissing : labels.audioUnplayable;
+  if (!text) return null;
+  return (
+    <p
+      role="status"
+      className={cn(
+        "mt-2 flex items-center gap-1.5 text-[11px]",
+        audioMissing ? "text-muted-foreground" : "text-danger-foreground",
+      )}
+    >
+      <AlertTriangle className="size-3 shrink-0" />
+      {text}
+    </p>
   );
 }

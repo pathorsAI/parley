@@ -17,7 +17,7 @@
 //! upload.
 
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
@@ -102,6 +102,64 @@ pub fn decode_to_16k_mono(input: &Path) -> Result<Vec<f32>> {
     let mut resampler = LinearResampler::new(decoded.sample_rate, TARGET_RATE);
     resampler.process(&decoded.samples, &mut pcm16);
     Ok(pcm16.into_iter().map(|s| s as f32 / 32768.0).collect())
+}
+
+/// Decode `input` (anything [`decode_to_16k_mono`] reads: the app's Ogg/Opus
+/// via libopus, everything else via symphonia) and write it to `out` as a plain
+/// 16 kHz mono 16-bit PCM WAV.
+///
+/// The playback fallback: a webview that cannot decode a recording (an older
+/// WebKit without Ogg/Opus, an odd container) can always play PCM WAV. Written
+/// to a sibling `.part` file and renamed into place, so a reader never sees a
+/// half-written file under the final name.
+pub fn transcode_to_wav_16k_mono(input: &Path, out: &Path) -> Result<()> {
+    let samples = decode_to_16k_mono(input)?;
+    let part = out.with_extension("wav.part");
+    write_wav_16k_mono(&samples, &part)?;
+    std::fs::rename(&part, out).with_context(|| format!("rename {}", part.display()))?;
+    Ok(())
+}
+
+/// Write `samples` (16 kHz mono, `f32` in [-1, 1]) as a 16-bit PCM WAV file.
+pub(crate) fn write_wav_16k_mono(samples: &[f32], out: &Path) -> Result<()> {
+    let data_len = samples
+        .len()
+        .checked_mul(2)
+        .and_then(|n| u32::try_from(n).ok())
+        .filter(|n| *n <= u32::MAX - 36)
+        .ok_or_else(|| anyhow!("audio is too long for a WAV file"))?;
+    let file = File::create(out).with_context(|| format!("create {}", out.display()))?;
+    let mut w = BufWriter::new(file);
+    w.write_all(&wav_header(TARGET_RATE, 1, data_len))?;
+    for &s in samples {
+        // The inverse of decode_to_16k_mono's i16 → f32 mapping (÷ 32768).
+        let v = (s * 32768.0).round().clamp(-32768.0, 32767.0) as i16;
+        w.write_all(&v.to_le_bytes())?;
+    }
+    w.flush().context("flush WAV")?;
+    Ok(())
+}
+
+/// The 44-byte canonical RIFF/WAVE header for 16-bit PCM.
+fn wav_header(sample_rate: u32, channels: u16, data_len: u32) -> [u8; 44] {
+    const BITS: u16 = 16;
+    let block_align = channels * (BITS / 8);
+    let byte_rate = sample_rate * u32::from(block_align);
+    let mut h = [0u8; 44];
+    h[0..4].copy_from_slice(b"RIFF");
+    h[4..8].copy_from_slice(&(36 + data_len).to_le_bytes());
+    h[8..12].copy_from_slice(b"WAVE");
+    h[12..16].copy_from_slice(b"fmt ");
+    h[16..20].copy_from_slice(&16u32.to_le_bytes()); // fmt chunk size
+    h[20..22].copy_from_slice(&1u16.to_le_bytes()); // PCM
+    h[22..24].copy_from_slice(&channels.to_le_bytes());
+    h[24..28].copy_from_slice(&sample_rate.to_le_bytes());
+    h[28..32].copy_from_slice(&byte_rate.to_le_bytes());
+    h[32..34].copy_from_slice(&block_align.to_le_bytes());
+    h[34..36].copy_from_slice(&BITS.to_le_bytes());
+    h[36..40].copy_from_slice(b"data");
+    h[40..44].copy_from_slice(&data_len.to_le_bytes());
+    h
 }
 
 /// Sniff whether `input` is an Ogg stream carrying Opus: the `OggS` capture
@@ -361,6 +419,106 @@ mod tests {
 
     fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         haystack.windows(needle.len()).position(|w| w == needle)
+    }
+
+    /// One second of a 440 Hz tone at 16 kHz, as i16 PCM.
+    fn sine_16k(secs: usize) -> Vec<i16> {
+        (0..TARGET_RATE as usize * secs)
+            .map(|i| {
+                let t = i as f32 / TARGET_RATE as f32;
+                ((t * 440.0 * std::f32::consts::TAU).sin() * 12_000.0) as i16
+            })
+            .collect()
+    }
+
+    /// Assert `bytes` is a canonical 16 kHz mono 16-bit PCM WAV and return its
+    /// sample count.
+    fn assert_wav_16k_mono(bytes: &[u8]) -> usize {
+        let u16_at = |i: usize| u16::from_le_bytes([bytes[i], bytes[i + 1]]);
+        let u32_at =
+            |i: usize| u32::from_le_bytes([bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]]);
+        assert_eq!(&bytes[0..4], b"RIFF");
+        assert_eq!(u32_at(4) as usize, bytes.len() - 8, "RIFF size");
+        assert_eq!(&bytes[8..16], b"WAVEfmt ");
+        assert_eq!(u32_at(16), 16, "fmt chunk size");
+        assert_eq!(u16_at(20), 1, "PCM");
+        assert_eq!(u16_at(22), 1, "mono");
+        assert_eq!(u32_at(24), 16_000, "sample rate");
+        assert_eq!(u32_at(28), 32_000, "byte rate");
+        assert_eq!(u16_at(32), 2, "block align");
+        assert_eq!(u16_at(34), 16, "bits per sample");
+        assert_eq!(&bytes[36..40], b"data");
+        let data_len = u32_at(40) as usize;
+        assert_eq!(data_len, bytes.len() - 44, "data size");
+        data_len / 2
+    }
+
+    /// The playback fallback's round trip: the app's own Ogg/Opus (as a live
+    /// meeting writes it) decodes to a valid WAV of the same length.
+    #[test]
+    fn ogg_opus_transcodes_to_a_valid_16k_mono_wav() {
+        let dir = std::env::temp_dir();
+        let ogg = dir.join(format!("parley-test-{}.ogg", uuid::Uuid::new_v4()));
+        let wav = dir.join(format!("parley-test-{}.wav", uuid::Uuid::new_v4()));
+        encode_opus_ogg(&sine_16k(2), &ogg).expect("encode");
+
+        transcode_to_wav_16k_mono(&ogg, &wav).expect("transcode");
+        let bytes = std::fs::read(&wav).unwrap();
+        let samples = assert_wav_16k_mono(&bytes);
+        // Two seconds, give or take the codec's pre-skip and final-frame padding.
+        assert!(
+            (31_000..=33_000).contains(&samples),
+            "got {samples} samples"
+        );
+        // Not silence: the tone survived the round trip.
+        let peak = (44..bytes.len() - 1)
+            .step_by(2)
+            .map(|i| i16::from_le_bytes([bytes[i], bytes[i + 1]]).unsigned_abs())
+            .max()
+            .unwrap();
+        assert!(peak > 4_000, "peak {peak}");
+        assert!(
+            !wav.with_extension("wav.part").exists(),
+            "no leftover part file"
+        );
+
+        let _ = std::fs::remove_file(&ogg);
+        let _ = std::fs::remove_file(&wav);
+    }
+
+    /// Anything symphonia reads takes the other decode path — a WAV in, here.
+    #[test]
+    fn symphonia_input_transcodes_to_wav_too() {
+        let dir = std::env::temp_dir();
+        let src = dir.join(format!("parley-test-src-{}.wav", uuid::Uuid::new_v4()));
+        let out = dir.join(format!("parley-test-out-{}.wav", uuid::Uuid::new_v4()));
+        let pcm: Vec<f32> = sine_16k(1)
+            .iter()
+            .map(|&s| f32::from(s) / 32768.0)
+            .collect();
+        write_wav_16k_mono(&pcm, &src).expect("write source wav");
+        assert_eq!(assert_wav_16k_mono(&std::fs::read(&src).unwrap()), 16_000);
+
+        transcode_to_wav_16k_mono(&src, &out).expect("transcode");
+        let samples = assert_wav_16k_mono(&std::fs::read(&out).unwrap());
+        assert!(
+            (15_900..=16_100).contains(&samples),
+            "got {samples} samples"
+        );
+
+        let _ = std::fs::remove_file(&src);
+        let _ = std::fs::remove_file(&out);
+    }
+
+    #[test]
+    fn transcode_rejects_a_file_that_is_not_audio() {
+        let dir = std::env::temp_dir();
+        let src = dir.join(format!("parley-test-{}.ogg", uuid::Uuid::new_v4()));
+        let out = dir.join(format!("parley-test-{}.wav", uuid::Uuid::new_v4()));
+        std::fs::write(&src, b"<html>Not Found</html>").unwrap();
+        assert!(transcode_to_wav_16k_mono(&src, &out).is_err());
+        assert!(!out.exists());
+        let _ = std::fs::remove_file(&src);
     }
 
     /// Synthesize a WAV with ffmpeg, compress it, and validate the output with
