@@ -1,8 +1,9 @@
 # The app layer — screens, sessions, service
 
 What sits on top of the four documented layers (`api-parleykit.md`,
-`api-cloud.md`, `api-audio.md`): the Compose UI, the two capture *sessions*, and
-the foreground service that keeps a live meeting alive.
+`api-cloud.md`, `api-audio.md`): the Compose UI, the two capture *sessions*,
+the foreground service that keeps a live meeting alive, and the voice-typing
+keyboard.
 
 ```
 com.pathors.parley
@@ -12,6 +13,20 @@ com.pathors.parley
     MeetingService.kt    foreground service (type=microphone) + its notification
     MeetingSession.kt    live capture: mic → encoder + relay → segments → upload
     ImportSession.kt     imported file: decoder → encoder + relay → … → upload
+  ime/                   the voice-typing keyboard — see "The keyboard" below
+    ParleyInputMethodService.kt the input method: one microphone key, composing
+                         text while listening, commit on Done, switch-back key
+    VoiceKeyboard.kt     the Compose pane (status, clock / countdown, mic key,
+                         discard), and the state it draws
+    DictationService.kt  foreground service (type=microphone) for one dictation
+    DictationSession.kt  one dictation: mic → relay → polish → settled text
+    DictationTranscript.kt folds relay segments into one dictated string (pure)
+    DictationCountdown.kt the ten-minute cap's last-30-seconds countdown (pure)
+    InputFieldGuard.kt   refuses password fields and fields that take no text (pure)
+    VoiceTypingSettings.kt cleanup on/off and "keyboard used"
+                         (DataStore `parley_voice_typing`)
+    VoiceTypingSettingsActivity.kt the keyboard's settings screen; the only place
+                         on this path that can ask for RECORD_AUDIO
   library/
     LibraryFolders.kt    folder pages, the orphan→Unfiled rule, scope fallback (pure)
     SaveDestination.kt   personal / personal folder / org / org folder, and its tag form
@@ -200,6 +215,58 @@ clock.
 An import runs without a service: it is a foreground task the user is watching,
 and its temporary files live in `cacheDir`, so a killed process leaves nothing
 behind.
+
+## The keyboard (voice typing)
+
+`ime/` is a **voice-only** input method: one microphone key that types what the
+user says into whichever app has focus. No letter layouts — Android users keep
+Gboard for typing, and the switch key hands typing straight back
+(`switchToNextInputMethod(false)`). Declared in the manifest as a
+`BIND_INPUT_METHOD` service with `res/xml/method.xml` (one voice subtype and the
+settings activity).
+
+The lifecycle of one dictation:
+
+```
+ParleyInputMethodService.onMicClick
+  └─▶ DictationService.start            foreground (type=microphone) first …
+        └─▶ DictationSession.start      … then the microphone
+              MicCapture ──PCM──▶ SttRelayClient (?feature=voice_typing)
+                                    └─▶ segments ─▶ DictationTranscript.live
+                                                     └─▶ setComposingText (live, underlined)
+            stop (key / cap / keyboard hidden / notification)
+              └─▶ relay finish + drain ─▶ fold the tail
+                    └─▶ TranscriptPolisher via CloudClient.chatCompletion
+                          (if on, ≥ 8 chars, 6 s budget; any failure keeps the raw text)
+                          └─▶ DictationState.Done ─▶ commitText ─▶ DictationService.clear
+```
+
+- **Why a foreground service.** An input method is never the top app, and
+  since Android 11 a process that is not the top app and holds no
+  microphone-typed foreground service is fed silence by `AudioRecord`.
+  `DictationService` starts under the platform's "current input method"
+  exemption from the background-start ban, posts its notification, and only
+  then constructs the session. It follows `MeetingService`'s `startForeground`
+  contract. `activeSession` is process-scoped so a dictation survives the input
+  view being recreated as focus moves.
+- **Endings.** `Done` commits the text (the polished text replaces the raw
+  composing text in one edit); `Failed` commits what was heard rather than
+  snatching it back; `Cancelled` (the discard key, or focus moving to a field
+  that refuses dictation) drops the composing text. Hiding the keyboard is a
+  stop, not a cancel.
+- **The cap.** Ten minutes (`DictationSession.MAX_DURATION_MS`), the same as
+  iOS and the desktop. The strip shows elapsed time, then "Stops in N s" for
+  the last 30 seconds (`DictationCountdown`); reaching it is an ordinary stop
+  with a "limit reached" note afterwards.
+- **No reconnect, no file.** A dropped relay ends the dictation with what was
+  heard. Nothing is encoded, uploaded or added to the library.
+- **Password fields.** `InputFieldGuard` decides; the key is drawn dark *and*
+  `onMicClick` refuses, because the drawn state is a frame old.
+- **Permission.** An input method has no Activity, so a tap without
+  `RECORD_AUDIO` opens `VoiceTypingSettingsActivity`, which asks.
+- **"Keyboard used".** The first `onStartInputView` sets a flag in
+  `VoiceTypingSettings`; `AnnouncementStore` reads it so `keyboard`-audience
+  What's New announcements can show on Android.
 
 ## Navigation and state
 
@@ -555,6 +622,11 @@ switch with `adb shell cmd locale set-app-locales com.pathors.parley --locales
 zh-TW`.
 
 ## Known gaps
+
+- **The keyboard is behind iOS.** No personal dictionary (the polisher takes
+  protected terms, but every call passes none), cleanup is on/off rather than
+  iOS's off / tidy / concise, no dictation history, and no relay reconnect
+  mid-dictation.
 
 - **No raw-PCM fallback** when a device has no Opus encoder
   (`OpusEncodeException.EncoderUnavailable`): the recording fails instead. See

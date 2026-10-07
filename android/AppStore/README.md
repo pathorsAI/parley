@@ -77,8 +77,22 @@ was months of work away from submitting, long after it had shipped:
 - **Screenshots** — done. Android has demo mode (`screenshot/DemoMode.kt`), so
   they no longer need a seeded account.
 
-What is genuinely outstanding is one thing, and it is not a blocker:
-`website/index.html` still has no Android section (see below).
+What is genuinely outstanding for the release that ships the voice-typing
+keyboard — all of it human work in Play Console, none of it something this
+repository can do:
+
+- **Re-shoot the foreground-service video so it shows voice typing**, upload
+  it unlisted and paste the URL into the declaration, together with the
+  two-paragraph justification. The filed video shows meeting recording only.
+  A blocker for that release. [`fgs-declaration.md`](fgs-declaration.md).
+- **Update the Data safety form** for dictation audio and the optional
+  cleanup pass. [`data-safety.md`](data-safety.md).
+- **Change the title and short description** to the keyboard-era copy in
+  [`listing-en.md`](listing-en.md) and [`listing-zh-TW.md`](listing-zh-TW.md)
+  in the same rollout, not before: they promise dictation.
+
+And one that is not a blocker: `website/index.html` still has no Android
+section (see below).
 
 ## After approval
 
