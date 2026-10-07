@@ -62,10 +62,33 @@ class VoiceTypingSettings(context: Context) {
         store.edit { prefs -> prefs[POLISH_ENABLED] = enabled }
     }
 
+    /**
+     * Whether the Parley keyboard has ever been shown on this phone — the
+     * Android side of an announcement's `keyboard` audience (iOS records the
+     * same thing from its keyboard extension). Set by
+     * `ParleyInputMethodService.onStartInputView`, read by
+     * `onboarding/AnnouncementStore`. Never cleared: once someone has met the
+     * keyboard, news about it is addressed to them.
+     *
+     * A file that cannot be read says "not used", which only delays a sheet.
+     */
+    val keyboardUsed: Flow<Boolean> = store.data
+        .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
+        .map { prefs -> prefs[KEYBOARD_USED] ?: false }
+
+    suspend fun keyboardUsedNow(): Boolean = keyboardUsed.first()
+
+    /** Record that the keyboard has been shown. Writes only the first time. */
+    suspend fun markKeyboardUsed() {
+        if (keyboardUsedNow()) return
+        store.edit { prefs -> prefs[KEYBOARD_USED] = true }
+    }
+
     companion object {
         /** On, matching iOS. See [polishEnabled]. */
         const val DEFAULT_POLISH_ENABLED = true
 
         private val POLISH_ENABLED = booleanPreferencesKey("polish-enabled")
+        private val KEYBOARD_USED = booleanPreferencesKey("keyboard-used")
     }
 }

@@ -376,9 +376,11 @@ shared with iOS and the desktop and copied into the APK's assets at build time
 `announcements/README.md` for the schema.
 
 - **Which.** parleykit's `AnnouncementGate`: `ships.android` set and at most
-  the running `versionName` (numeric by component), audience met (Android has
-  no keyboard, so a `keyboard` announcement never shows), newest only with the
-  older ones retired alongside it, and never one already seen.
+  the running `versionName` (numeric by component), audience met (a
+  `keyboard` announcement waits until the voice-typing keyboard has been shown
+  on this phone — `VoiceTypingSettings.keyboardUsed`, set by
+  `ParleyInputMethodService.onStartInputView`), newest only with the older
+  ones retired alongside it, and never one already seen.
   `AnnouncementCatalogTest` checks the real folder against the schema.
 - **Who never sees one.** A fresh install: `AnnouncementStore` marks everything
   seen on its first launch unless a session was already stored — the same

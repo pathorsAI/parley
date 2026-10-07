@@ -71,6 +71,13 @@ class AnnouncementStore(
     hadStoredSession: suspend () -> Boolean,
     /** The running build's `versionName`. */
     private val appVersion: String,
+    /**
+     * Whether the Parley keyboard has been used on this phone
+     * (`ime/VoiceTypingSettings.keyboardUsed`). Asked on every [decide], so a
+     * keyboard announcement waiting for it shows on the first foreground after
+     * the keyboard is picked up.
+     */
+    private val keyboardUsed: suspend () -> Boolean = { false },
 ) {
 
     private val mutex = Mutex()
@@ -108,7 +115,10 @@ class AnnouncementStore(
     suspend fun decide(): AnnouncementGate.Decision {
         initialized.await()
         val state = mutex.withLock { read() } ?: return AnnouncementGate.Decision.NOTHING
-        return AnnouncementGate.decide(announcements.await(), state, appVersion)
+        val usedKeyboard = runCatching { keyboardUsed() }
+            .onFailure { if (it is CancellationException) throw it }
+            .getOrDefault(false)
+        return AnnouncementGate.decide(announcements.await(), state, appVersion, usedKeyboard)
     }
 
     /** Never show [ids] on this phone again. */

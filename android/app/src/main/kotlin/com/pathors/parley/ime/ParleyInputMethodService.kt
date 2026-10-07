@@ -105,6 +105,9 @@ class ParleyInputMethodService :
      */
     private var currentInputType: Int? = null
 
+    /** Whether this instance has recorded that the keyboard was used. */
+    private var keyboardUseRecorded = false
+
     // ── lifecycle ────────────────────────────────────────────────────────────
 
     override fun onCreate() {
@@ -171,6 +174,7 @@ class ParleyInputMethodService :
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
         currentInputType = info?.inputType
+        recordKeyboardUse()
 
         // A dictation in flight when focus moves to a field that refuses one is
         // cancelled, not committed: the words were meant for the previous field,
@@ -220,6 +224,19 @@ class ParleyInputMethodService :
         store.clear()
         scope.cancel()
         super.onDestroy()
+    }
+
+    /**
+     * The first time the pane is shown, remember that this phone has met the
+     * keyboard, so What's New announcements for keyboard users can show
+     * ([VoiceTypingSettings.keyboardUsed]). Once per instance is enough: the
+     * write itself is a no-op after the first.
+     */
+    private fun recordKeyboardUse() {
+        if (keyboardUseRecorded) return
+        keyboardUseRecorded = true
+        val settings = VoiceTypingSettings(this)
+        scope.launch { runCatching { settings.markKeyboardUsed() } }
     }
 
     // ── the keys ─────────────────────────────────────────────────────────────
