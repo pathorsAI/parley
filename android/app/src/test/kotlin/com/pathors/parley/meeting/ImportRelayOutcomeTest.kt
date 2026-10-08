@@ -51,9 +51,9 @@ class ImportRelayOutcomeTest {
     }
 
     @Test
-    fun `a vendor-side 401 frame is not the user's session`() {
-        // In-band codes belong to the transcription vendor; httpStatus stays null.
-        val verdict = classify(SttRelayEvent.Error("relay error 401: bad key"))
+    fun `an in-band error frame is not the user's session`() {
+        // In-band codes describe the stream, not the sign-in; httpStatus stays null.
+        val verdict = classify(SttRelayEvent.Error("relay error upstream_unavailable: unavailable"))
         assertTrue(verdict is ImportRelayVerdict.Degraded)
     }
 

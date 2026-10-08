@@ -99,6 +99,11 @@ class ParleyClientHeaderTest {
                 object : WebSocketListener() {
                     override fun onOpen(webSocket: WebSocket, response: Response) = Unit
 
+                    // `connect()` resolves on `ready`, sent once the start frame lands.
+                    override fun onMessage(webSocket: WebSocket, text: String) {
+                        webSocket.send("""{"type":"ready","session_id":"s"}""")
+                    }
+
                     // Answer the client's close the way the relay does. Without
                     // the echo the server side never finishes closing, and
                     // `server.shutdown()` in tearDown gives up waiting on it.
@@ -111,7 +116,7 @@ class ParleyClientHeaderTest {
         val relay = SttRelayClient(
             SttRelayClient.Options(
                 bearerToken = "cloud-token",
-                relayUrl = server.url("/stt/stream").toString(),
+                relayUrl = server.url("/stt/v2/stream").toString(),
             ),
         )
         try {

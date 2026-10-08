@@ -557,22 +557,26 @@ class CloudClient(
 
     /**
      * `POST /stt/batch` — create a job from already-compressed audio; the
-     * response is the job id.
+     * response is the job id. Options travel as Parley's own query parameters:
+     * `diarization`, `languages` (comma-separated) and `terms` (repeated).
      *
-     * The hints parameter is omitted entirely when empty so the cloud
-     * auto-detects, rather than being handed an empty list to interpret.
+     * `languages` is omitted entirely when empty so the cloud auto-detects,
+     * rather than being handed an empty list to interpret.
      */
     override suspend fun startBatchJob(
         audio: File,
         diarization: Boolean,
         languageHints: List<String>,
+        terms: List<String>,
     ): String {
         val url = url("stt", "batch").newBuilder()
             .addQueryParameter("diarization", if (diarization) "1" else "0")
             .apply {
                 if (languageHints.isNotEmpty()) {
-                    addQueryParameter("language_hints", languageHints.joinToString(","))
+                    addQueryParameter("languages", languageHints.joinToString(","))
                 }
+                // Repeated rather than comma-joined: a term may not contain a comma.
+                terms.filter { it.isNotBlank() && ',' !in it }.forEach { addQueryParameter("terms", it) }
             }
             .build()
         val request = Request.Builder().url(url).post(audio.asRequestBody(OCTET_STREAM))
@@ -589,7 +593,11 @@ class CloudClient(
     override suspend fun batchTranscript(id: String): BatchTranscriptResponse =
         CloudJson.decodeFromString(
             BatchTranscriptResponse.serializer(),
-            getText(url("stt", "batch", id, "transcript")),
+            getText(
+                url("stt", "batch", id, "transcript").newBuilder()
+                    .addQueryParameter("format", "parley")
+                    .build()
+            ),
         )
 
     /**

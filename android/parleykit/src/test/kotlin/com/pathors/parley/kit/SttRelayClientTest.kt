@@ -5,6 +5,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import okhttp3.Response
@@ -20,12 +21,14 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+private const val FINALIZED_FRAME = """{"type":"finalized"}"""
+
 /**
- * Relay session behavior against a MockWebServer standing in for
- * `wss://api.parley.tw/stt/stream`. The Swift suite has no equivalent (URLSession
- * has no in-process WebSocket fake), so these cover the wire contract the Swift
- * client only documented: the bearer + `?feature=` handshake, the keyless config
- * frame, finalize-without-close, and the terminal event mapping.
+ * Session behavior against a MockWebServer standing in for
+ * `wss://api.parley.tw/stt/v2/stream`. The Swift suite has no equivalent
+ * (URLSession has no in-process WebSocket fake), so these cover the wire
+ * contract: the bearer + `?feature=` handshake, the start frame, `ready` as
+ * "connected", end-without-close, and the terminal event mapping.
  */
 class SttRelayClientTest {
     private val server = MockWebServer()
@@ -53,6 +56,10 @@ class SttRelayClientTest {
 
                         override fun onMessage(webSocket: WebSocket, text: String) {
                             textFrames.put(text)
+                            // Accept the start frame the way the service does.
+                            if (text.contains("\"type\":\"start\"")) {
+                                webSocket.send("""{"type":"ready","session_id":"test-session"}""")
+                            }
                         }
 
                         override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
@@ -94,20 +101,33 @@ class SttRelayClientTest {
     }
 
     @Test
-    fun handshakeCarriesBearerAndFeatureAndKeylessConfig(): Unit = runBlocking {
+    fun handshakeCarriesBearerAndFeatureAndStartFrame(): Unit = runBlocking {
         enqueueUpgrade()
         val relay = newClient(feature = SttRelayClient.Feature.VOICE_TYPING, languageHints = listOf("zh", "en"))
         relay.connect()
 
         val request = server.takeRequest(5, TimeUnit.SECONDS)
         assertNotNull(request)
-        assertEquals("/stt/stream?feature=voice_typing", request!!.path)
+        // A v1-style URL is moved to the v2 path.
+        assertEquals("/stt/v2/stream?feature=voice_typing", request!!.path)
         assertEquals("Bearer cloud-token", request.getHeader("Authorization"))
 
-        val config = take(textFrames)
-        assertFalse("relay mode must not send a vendor key field", config.contains("api_key"))
-        assertTrue(config.contains("\"audio_format\":\"pcm_s16le\""))
-        assertTrue(config.contains("\"language_hints\":[\"zh\",\"en\"]"))
+        val start = take(textFrames)
+        assertTrue(start.startsWith("{\"type\":\"start\""))
+        assertTrue(start.contains("\"audio\":{\"encoding\":\"pcm_s16le\",\"sample_rate\":16000,\"channels\":1}"))
+        assertTrue(start.contains("\"languages\":[\"zh\",\"en\"]"))
+        assertTrue(start.contains("\"diarization\":true"))
+        assertTrue(start.contains("\"endpointing\":true"))
+        assertFalse("no terms, no hints", start.contains("hints"))
+    }
+
+    @Test
+    fun connectResolvesOnReady(): Unit = runBlocking {
+        enqueueUpgrade()
+        val relay = newClient()
+        withTimeout(5_000) { relay.connect() }
+        assertEquals("test-session", relay.sessionId)
+        assertFalse(relay.isTerminated)
     }
 
     @Test
@@ -115,10 +135,10 @@ class SttRelayClientTest {
         enqueueUpgrade()
         val relay = newClient()
         relay.connect()
-        take(textFrames) // config
+        take(textFrames) // start
 
         serverSocket.await().send(
-            """{"tokens":[{"text":"Deal.","is_final":true,"start_ms":0,"end_ms":400,"speaker":"2"}]}"""
+            """{"type":"transcript","tokens":[{"text":"Deal.","final":true,"start_ms":0,"end_ms":400,"speaker":2}]}"""
         )
 
         val event = withTimeout(5_000) { relay.events.first() }
@@ -134,7 +154,7 @@ class SttRelayClientTest {
         enqueueUpgrade()
         val relay = newClient()
         relay.connect()
-        take(textFrames) // config
+        take(textFrames) // start
 
         relay.sendPcm(shortArrayOf(0x0102, -2))
 
@@ -148,7 +168,7 @@ class SttRelayClientTest {
         enqueueUpgrade()
         val relay = newClient()
         relay.connect()
-        take(textFrames) // config
+        take(textFrames) // start
 
         relay.enqueuePcm(shortArrayOf(0x0102, -2))
 
@@ -187,33 +207,119 @@ class SttRelayClientTest {
     }
 
     @Test
-    fun finishSendsFinalizeAndLeavesTheSocketOpen(): Unit = runBlocking {
+    fun finishSendsEndAndLeavesTheSocketOpen(): Unit = runBlocking {
         enqueueUpgrade()
         val relay = newClient()
         relay.connect()
-        take(textFrames) // config
+        take(textFrames) // start
 
         relay.finish()
 
-        assertEquals(SonioxProtocol.FINALIZE_FRAME, take(textFrames))
-        // The relay must be free to flush the tail: closing here would truncate
-        // the last utterance.
+        assertEquals(ParleyStreamProtocol.END_FRAME, take(textFrames))
+        // The service must be free to flush the tail: closing here would
+        // truncate the last utterance.
         Thread.sleep(200)
-        assertFalse("finalize must not close the socket", serverSawClose.get())
+        assertFalse("end must not close the socket", serverSawClose.get())
         assertFalse(relay.isTerminated)
     }
 
     @Test
-    fun finishedMarkerEndsTheStream(): Unit = runBlocking {
+    fun requestFinalizeSendsFinalizeAndKeepsStreaming(): Unit = runBlocking {
         enqueueUpgrade()
         val relay = newClient()
         relay.connect()
-        take(textFrames) // config
+        take(textFrames) // start
 
-        serverSocket.await().send("""{"tokens":[{"text":"<fin>","is_final":true}],"finished":true}""")
+        relay.requestFinalize()
+        assertEquals(ParleyStreamProtocol.FINALIZE_FRAME, take(textFrames))
 
-        val closed = withTimeout(5_000) { relay.events.first { it is SttRelayEvent.Closed } }
-        assertEquals("finished", (closed as SttRelayEvent.Closed).reason)
+        relay.enqueuePcm(shortArrayOf(1))
+        assertNotNull("audio may continue after finalize", binaryFrames.poll(5, TimeUnit.SECONDS))
+        assertFalse(relay.isTerminated)
+    }
+
+    @Test
+    fun tailThenDoneEndsTheStream(): Unit = runBlocking {
+        enqueueUpgrade()
+        val relay = newClient()
+        relay.connect()
+        take(textFrames) // start
+        relay.finish()
+        take(textFrames) // end
+
+        val socket = serverSocket.await()
+        socket.send("""{"type":"transcript","tokens":[{"text":"Bye.","final":true,"start_ms":0,"end_ms":300,"speaker":1}]}""")
+        socket.send(FINALIZED_FRAME)
+        socket.send("""{"type":"done"}""")
+
+        val events = withTimeout(5_000) { relay.events.toList() }
+        val committed = events.filterIsInstance<SttRelayEvent.Segment>().map { it.segment }.filter { it.isFinal }
+        assertEquals("Bye.", committed.last().text)
+        assertEquals(SttRelayEvent.Closed("finished"), events.last())
+        assertTrue(relay.isTerminated)
+    }
+
+    @Test
+    fun endYieldsFinalizedTwiceThenDoneAndTheFlowCompletes(): Unit = runBlocking {
+        enqueueUpgrade()
+        val relay = newClient()
+        relay.connect()
+        take(textFrames) // start
+        relay.requestFinalize()
+        take(textFrames) // finalize
+        relay.finish()
+        take(textFrames) // end
+
+        val socket = serverSocket.await()
+        socket.send(FINALIZED_FRAME)
+        socket.send(FINALIZED_FRAME)
+        socket.send("""{"type":"done"}""")
+        socket.close(1000, "done")
+
+        // A collector that joins (rather than polling isTerminated) must return.
+        val events = withTimeout(5_000) { relay.events.toList() }
+        assertEquals(listOf<SttRelayEvent>(SttRelayEvent.Closed("finished")), events)
+    }
+
+    @Test
+    fun upstreamUnavailableRightAfterTheUpgradeIsAnErrorAndUnblocksConnect(): Unit = runBlocking {
+        // The recognizer cannot be reached: the upgrade succeeds, no `ready`,
+        // then an error frame and close 1011.
+        server.enqueue(
+            MockResponse().withWebSocketUpgrade(
+                object : WebSocketListener() {
+                    override fun onMessage(webSocket: WebSocket, text: String) {
+                        webSocket.send(
+                            """{"type":"error","code":"upstream_unavailable","message":"Transcription is unavailable."}"""
+                        )
+                        webSocket.close(1011, "upstream_unavailable")
+                    }
+
+                    override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                        webSocket.close(1000, null)
+                    }
+                }
+            )
+        )
+        val relay = newClient()
+        withTimeout(5_000) { relay.connect() }
+
+        val events = withTimeout(5_000) { relay.events.toList() }
+        assertEquals(1, events.size)
+        val error = events.single() as SttRelayEvent.Error
+        assertEquals("relay error upstream_unavailable: Transcription is unavailable.", error.message)
+        assertEquals(null, error.httpStatus)
+        assertTrue(relay.isTerminated)
+    }
+
+    @Test
+    fun rejectedUpgradeWith426IsAnErrorWithItsStatus(): Unit = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(426).setBody("Upgrade Required"))
+        val relay = newClient()
+        relay.connect()
+
+        val event = withTimeout(5_000) { relay.events.first() }
+        assertEquals(426, (event as SttRelayEvent.Error).httpStatus)
     }
 
     @Test
@@ -221,7 +327,7 @@ class SttRelayClientTest {
         enqueueUpgrade()
         val relay = newClient()
         relay.connect()
-        take(textFrames) // config
+        take(textFrames) // start
 
         serverSocket.await().close(1000, "drained")
 
@@ -234,13 +340,16 @@ class SttRelayClientTest {
         enqueueUpgrade()
         val relay = newClient()
         relay.connect()
-        take(textFrames) // config
+        take(textFrames) // start
 
-        serverSocket.await().send("""{"error_code":402,"error_message":"quota_exhausted"}""")
+        serverSocket.await().send("""{"type":"error","code":"quota_exceeded","message":"Quota exhausted."}""")
 
         val event = withTimeout(5_000) { relay.events.first() }
         assertTrue(event is SttRelayEvent.QuotaExceeded)
-        assertEquals("relay error 402: quota_exhausted", (event as SttRelayEvent.QuotaExceeded).message)
+        assertEquals(
+            "relay error quota_exceeded: Quota exhausted.",
+            (event as SttRelayEvent.QuotaExceeded).message,
+        )
     }
 
     @Test
@@ -248,15 +357,33 @@ class SttRelayClientTest {
         enqueueUpgrade()
         val relay = newClient()
         relay.connect()
-        take(textFrames) // config
+        take(textFrames) // start
 
-        serverSocket.await().send("""{"error_code":500,"error_message":"upstream exploded"}""")
+        serverSocket.await().send(
+            """{"type":"error","code":"upstream_unavailable","message":"Transcription is unavailable."}"""
+        )
 
         val event = withTimeout(5_000) { relay.events.first() }
         assertTrue(event is SttRelayEvent.Error)
-        assertEquals("relay error 500: upstream exploded", (event as SttRelayEvent.Error).message)
-        // A vendor-side code is not the relay's verdict on the caller's session.
+        assertEquals(
+            "relay error upstream_unavailable: Transcription is unavailable.",
+            (event as SttRelayEvent.Error).message,
+        )
+        // A stream error is not a verdict on the caller's sign-in.
         assertEquals(null, event.httpStatus)
+    }
+
+    @Test
+    fun quotaCloseWithoutAnErrorFrameStillReadsAsQuota(): Unit = runBlocking {
+        enqueueUpgrade()
+        val relay = newClient()
+        relay.connect()
+        take(textFrames) // start
+
+        serverSocket.await().close(4402, "quota_exceeded")
+
+        val event = withTimeout(5_000) { relay.events.first() }
+        assertTrue(event is SttRelayEvent.QuotaExceeded)
     }
 
     @Test

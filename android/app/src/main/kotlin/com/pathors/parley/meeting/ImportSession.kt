@@ -216,7 +216,7 @@ class ImportSession(
      */
     @Volatile private var relayVerdict: ImportRelayVerdict = ImportRelayVerdict.Healthy
 
-    /** Set just before `finalize` goes out; a close after it is the normal end. */
+    /** Set just before `end` goes out; a close after it is the normal end. */
     @Volatile private var finishSent = false
     private var transcribedMs = 0L
     private var durationMs = -1L
@@ -349,7 +349,7 @@ class ImportSession(
     }
 
     /**
-     * Sends `finalize` and waits for the relay to flush what it still holds.
+     * Sends `end` and waits for the relay to flush what it still holds.
      *
      * @return false when the relay ended the import meanwhile and [state]
      *   already says why.

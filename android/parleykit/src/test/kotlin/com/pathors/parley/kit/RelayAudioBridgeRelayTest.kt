@@ -83,7 +83,7 @@ class RelayAudioBridgeRelayTest {
         SttRelayClient(
             SttRelayClient.Options(
                 bearerToken = "cloud-token",
-                relayUrl = server.url("/stt/stream").toString(),
+                relayUrl = server.url("/stt/v2/stream").toString(),
                 idPrefix = if (leg == 0) null else "${SttRelayClient.SOURCE}@$leg",
                 timeOffsetMs = timeOffsetMs,
             )
@@ -101,7 +101,7 @@ class RelayAudioBridgeRelayTest {
         bridge.attach { legA }
         repeat(20) { bridge.send(chunk(1)) } // two seconds
         legA.open()
-        serverA.text.poll(5, TimeUnit.SECONDS) // config
+        serverA.text.poll(5, TimeUnit.SECONDS) // start
         repeat(20) { assertEquals(1, serverA.nextMarker()) }
 
         // The relay drops the socket.
@@ -116,15 +116,15 @@ class RelayAudioBridgeRelayTest {
         val legB = bridge.attach { offsetMs -> newClient(leg = 1, timeOffsetMs = offsetMs) }!!
         bridge.send(chunk(3)) // live again
         legB.open()
-        serverB.text.poll(5, TimeUnit.SECONDS) // config
+        serverB.text.poll(5, TimeUnit.SECONDS) // start
 
         repeat(30) { assertEquals("the gap goes out first", 2, serverB.nextMarker()) }
         assertEquals("then the audio that followed it", 3, serverB.nextMarker())
 
-        // Soniox numbers the new session from zero; the leg's offset puts its
+        // The service numbers the new session from zero; the leg's offset puts its
         // first word at the two-second mark, where the gap began.
         serverB.socket.await().send(
-            """{"tokens":[{"text":"Still here.","is_final":true,"start_ms":0,"end_ms":600,"speaker":"1"}]}"""
+            """{"type":"transcript","tokens":[{"text":"Still here.","final":true,"start_ms":0,"end_ms":600,"speaker":1}]}"""
         )
         val segment = (withTimeout(5_000) { legB.events.first() } as SttRelayEvent.Segment).segment
         assertEquals("mix@1-0", segment.id)

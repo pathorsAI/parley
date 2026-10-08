@@ -23,8 +23,8 @@
   its own side-slide track between panels to achieve the same thing.
 
   The subtype is deliberately not locale-pinned. Parley sends the relay
-  `language_hints = ["zh", "en"]` for every dictation (DictationSession) and the
-  provider detects which is being spoken, so declaring a locale per subtype would
+  `languages = ["zh", "en"]` for every dictation (DictationSession) and the
+  recognizer detects which is being spoken, so declaring a locale per subtype would
   advertise a choice the pipeline does not actually make — and would put two
   indistinguishable Parley rows in the user's keyboard switcher.
 -->
