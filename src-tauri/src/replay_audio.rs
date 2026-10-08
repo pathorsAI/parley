@@ -111,13 +111,26 @@ pub fn decode_to_16k_mono(input: &Path) -> Result<Vec<f32>> {
 /// The playback fallback: a webview that cannot decode a recording (an older
 /// WebKit without Ogg/Opus, an odd container) can always play PCM WAV. Written
 /// to a sibling `.part` file and renamed into place, so a reader never sees a
-/// half-written file under the final name.
+/// half-written file under the final name. The `.part` name is unique per call
+/// (`<out>.<uuid>.part`), so two decodes into the same `out` never write — or
+/// rename — each other's file.
 pub fn transcode_to_wav_16k_mono(input: &Path, out: &Path) -> Result<()> {
     let samples = decode_to_16k_mono(input)?;
-    let part = out.with_extension("wav.part");
-    write_wav_16k_mono(&samples, &part)?;
-    std::fs::rename(&part, out).with_context(|| format!("rename {}", part.display()))?;
-    Ok(())
+    let part = part_path(out);
+    let written = write_wav_16k_mono(&samples, &part).and_then(|()| {
+        std::fs::rename(&part, out).with_context(|| format!("rename {}", part.display()))
+    });
+    if written.is_err() {
+        let _ = std::fs::remove_file(&part);
+    }
+    written
+}
+
+/// A fresh temp name next to `out` for one write: `<name>.<uuid>.part`.
+fn part_path(out: &Path) -> PathBuf {
+    let mut name = out.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".{}.part", uuid::Uuid::new_v4().simple()));
+    out.with_file_name(name)
 }
 
 /// Write `samples` (16 kHz mono, `f32` in [-1, 1]) as a 16-bit PCM WAV file.
@@ -477,10 +490,16 @@ mod tests {
             .max()
             .unwrap();
         assert!(peak > 4_000, "peak {peak}");
-        assert!(
-            !wav.with_extension("wav.part").exists(),
-            "no leftover part file"
-        );
+        let wav_name = wav.file_name().unwrap().to_string_lossy().into_owned();
+        let leftovers = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                name.starts_with(&wav_name) && name.ends_with(".part")
+            })
+            .count();
+        assert_eq!(leftovers, 0, "no leftover part file");
 
         let _ = std::fs::remove_file(&ogg);
         let _ = std::fs::remove_file(&wav);
@@ -508,6 +527,19 @@ mod tests {
 
         let _ = std::fs::remove_file(&src);
         let _ = std::fs::remove_file(&out);
+    }
+
+    #[test]
+    fn every_write_gets_its_own_part_file() {
+        let out = std::env::temp_dir().join("parley-test-out.wav");
+        let (a, b) = (part_path(&out), part_path(&out));
+        assert_ne!(a, b, "two decodes into one output never share a .part");
+        for part in [a, b] {
+            assert_eq!(part.parent(), out.parent());
+            let name = part.file_name().unwrap().to_string_lossy().into_owned();
+            assert!(name.starts_with("parley-test-out.wav."), "{name}");
+            assert_eq!(part.extension().and_then(|e| e.to_str()), Some("part"));
+        }
     }
 
     #[test]
