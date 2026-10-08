@@ -58,10 +58,11 @@ depend on a personal identity.
 
 ## Notes to the reviewer
 
-> Parley is a microphone-based recorder for meetings you have in person, plus a
-> transcriber for audio files you already have. It does **not** record phone
-> calls and does not capture the audio of other apps — it uses the device
-> microphone only, through `AudioRecord`.
+> Parley is a microphone-based recorder for meetings you have in person, a
+> transcriber for audio files you already have, and a voice-only keyboard that
+> dictates into other apps. It does **not** record phone calls and does not
+> capture the audio of other apps — it uses the device microphone only, through
+> `AudioRecord`.
 >
 > **To test recording:** from the library, tap "Record a meeting". The app asks
 > for microphone permission; allow it. Speak near the device — the transcript
@@ -83,6 +84,49 @@ depend on a personal identity.
 > a short sample clip can be hosted and linked here so the reviewer can
 > download one.
 >
+> **To test voice typing (the Parley keyboard):** it is off until you turn it
+> on, because Android requires the user to enable an input method themselves.
+>
+> 1. Open **Settings → System → Languages & input → On-screen keyboard →
+>    Manage keyboards** and switch **Parley** on. Android will show its own
+>    warning about what a keyboard could collect; accept it. (What this
+>    keyboard actually does and does not read is described below.)
+> 2. Open any app with a text field — Notes, a browser, a search box. Tap into
+>    the field, then press the keyboard-switch key in the navigation bar and
+>    choose **Parley**.
+> 3. Tap the **microphone key**. The first time, the keyboard asks for
+>    microphone permission by sending you to the **Parley voice typing
+>    settings** screen, and the grant happens there. This is not a bug: an
+>    input method has no Activity of its own and so cannot request a runtime
+>    permission directly, so the settings screen is where Android will accept
+>    the grant. Allow microphone access, then go back to your text field.
+> 4. Tap the microphone key and speak. The words appear in the field as they
+>    are recognized, produced by the same hosted transcription service as the
+>    meeting recorder, over the same encrypted connection and the same account.
+>    Tap the key again to stop. A dictation also stops itself after ten
+>    minutes; the keyboard counts the last 30 seconds down first.
+>
+> **The keyboard is voice-only — there is one key, and it is the microphone.**
+> There is no QWERTY layout, no Zhuyin/Bopomofo layout, no numbers, symbols
+> or emoji. This
+> is deliberate, not an unfinished screen: you keep whichever keyboard you
+> already use for typing and switch to Parley to dictate. The keyboard-switch
+> key returns you to your previous keyboard
+> (`switchToNextInputMethod(false)`).
+>
+> **The keyboard refuses password fields.** With Parley active, tap into any
+> app's password field — a sign-in screen, a Wi-Fi password prompt. The
+> microphone key is disabled and says why, and no audio can be captured. This
+> is worth checking, because it is the claim we make about the keyboard that
+> matters most.
+>
+> **Voice typing also uses the `microphone` foreground service**, for the
+> seconds the microphone is open: pull down the notification shade while
+> dictating and you will see an ongoing notification with a Stop action, which
+> disappears when the dictation ends. Nothing dictated is saved — it is
+> streamed, transcribed, typed into your field, and gone. No entry appears in
+> the Parley library.
+>
 > **If the network drops**, a finished recording is kept on the device and
 > listed under "Waiting to upload" in the library, with an "Upload now" action;
 > it also uploads itself when connectivity returns. Nothing is lost.
@@ -90,24 +134,80 @@ depend on a personal identity.
 > This version has no audio playback — a saved recording opens as a transcript,
 > which is what the store listing says.
 
+## Why a meeting-recording app ships a keyboard
+
+The question a reviewer is entitled to ask about this release, answered
+honestly rather than with a feature list.
+
+Parley is a speech product, not a recorder that happens to transcribe. Turning
+speech into text for the account is the whole of what the backend does, and
+meeting recording is one way in. Dictation is the other, and it is already
+shipping on the other two platforms: the desktop app has voice typing, and the
+iOS app ships it as a keyboard extension (`ios/Keyboard/`, advertised in
+`ios/AppStore/review-notes.md`). Android was the platform without it.
+
+On Android the input-method API is the *only* way to put dictated text into
+another app's text field. There is no share sheet for "insert text here", no
+accessibility route that is not a much broader grant, and no reason a user
+should have to dictate in Parley and paste. So the keyboard is not a second
+product bolted on — it is the same hosted speech pipeline as the meeting
+recorder, billed to the same account (`?feature=voice_typing` against the same
+relay), reached through the same sign-in, and it ships as an input method
+because that is the API Android provides for it.
+
+What it deliberately is **not**: a keyboard. There is one key, a microphone.
+Parley is not trying to replace Gboard, and a user who enables it keeps their
+existing keyboard for typing — which is also why the reviewer should not expect
+letters and should not read their absence as a broken screen.
+
+The privacy story is in [`data-safety.md`](data-safety.md), under
+"What the keyboard does not collect": the input method only ever *writes* to
+the field, never reads it, and refuses to open the microphone in a password
+field at all.
+
 ## Foreground service permissions declaration (`microphone`)
 
 The manifest declares `FOREGROUND_SERVICE_MICROPHONE` and
-`android:foregroundServiceType="microphone"` on `MeetingService`. Play Console →
-App content → **Foreground service permissions** therefore requires a written
-justification *and* a video showing the feature in use. Without the video the
-declaration is rejected and the release cannot roll out.
+`android:foregroundServiceType="microphone"` on **two** services now:
+`MeetingService` for meeting recording and `ime/DictationService.kt` for the
+keyboard's voice typing. Play Console → App content → **Foreground service
+permissions** therefore requires a written justification *and* a video showing
+the feature in use. Without the video the declaration is rejected and the
+release cannot roll out.
 
-**Justification to enter:**
+**Justification to enter** — both paragraphs, because one permission now has
+two users:
 
-> Parley records in-person meetings. Recording is started explicitly by the user
-> and must survive the app going to the background or the screen turning off —
+> **Recording a meeting.** Parley records in-person meetings. Recording is
+> started explicitly by the user and must survive the app going to the
+> background or the screen turning off —
 > a meeting is longer than the user's attention on the phone, and without a
 > microphone foreground service Android feeds a backgrounded app silence. The
 > service runs only for the duration of a recording the user started, shows a
 > persistent notification with a running timer and a stop action for its whole
 > lifetime, and stops itself when the user ends the meeting. No audio is
 > captured at any other time.
+
+> **Voice typing.** Parley also ships a voice-only input method: a keyboard
+> whose single key is a microphone, which types what the user says into
+> whichever app they are already using. While that key is open the app has to
+> record, and an input method is never the top app — the app being typed into
+> is. Android feeds a process that is not the top app silence from
+> `AudioRecord` unless a microphone foreground service is running, so without
+> this service voice typing would record nothing. The service starts only when
+> the user taps the microphone key, runs only while the user is dictating —
+> usually seconds, and never more than ten minutes, after which it stops itself
+> with a 30-second countdown on the keyboard — shows an ongoing notification
+> with a stop action for its whole lifetime, and stops itself when the
+> dictation finishes, when the keyboard is hidden, or when the user taps stop. It
+> captures nothing while the keyboard is merely on screen, it never reads the
+> text the user is typing into, and it refuses to open the microphone at all in
+> a password field.
+
+Starting that service from an input method is allowed by a documented
+exemption from Android 12's background foreground-service-start restrictions —
+"your app is the current input method" — and by nothing else;
+[`fgs-declaration.md`](fgs-declaration.md) has the full answer.
 
 **The video has been captured**: [`assets/fgs-demo-video.mp4`](assets/fgs-demo-video.mp4),
 30.4 s, one continuous take, showing the library → the user starting a
@@ -122,9 +222,15 @@ as an unlisted YouTube video on 2026-08-19:
 nothing invented, is what belongs in the declaration —
 [`fgs-declaration.md`](fgs-declaration.md) is where it is recorded.
 
-⚠️ It shows meeting recording only. Play reviews the declaration against the
-**permission**, so the release that ships voice typing — a second user of
-`RECORD_AUDIO` — needs a take covering both features before it rolls out.
+**TODO (human): re-shoot the video to show voice typing.** The take above
+was captured before `DictationService` existed, so it demonstrates only one of
+the two users of `RECORD_AUDIO`. Play reviews the declaration against the
+**permission**, so a demonstration covering voice typing — preferably one
+re-shoot covering both features, since the form holds a single URL — has to be
+recorded, uploaded and pasted into the declaration before the release that
+ships the keyboard rolls out. That is a person with a phone and a YouTube
+account, not something the repository can do. The beats it needs are sketched
+in [`fgs-declaration.md`](fgs-declaration.md); no URL for it exists yet.
 
 The full field-by-field answer sheet — which service type, why a foreground
 service rather than a background job, what is real in the video and what is
@@ -150,6 +256,20 @@ a real account on screen), and the video is **silent**, because
   everyone agreed?" before recording; that was dropped on 2026-09-29 because
   getting the room's permission is the user's call, as with any recorder, and
   the privacy policy tells them to. Do not tell a reviewer there is one.
+- **The OS's own keyboard warning.** Worth being straight about because it is the first thing a reviewer enabling
+  the keyboard will see: when the user switches on *any* third-party input
+  method, Android shows a warning that it "may be able to collect all the text
+  you type, including personal data like passwords and credit card numbers".
+  **We cannot reword it, suppress it, or answer a form field about it** — it is
+  OS behavior applied to every IME on the platform, not a policy question, and
+  Android has no per-keyboard capability grant equivalent to iOS's Full Access
+  that an app could decline. The only place it can be pre-empted is the app's
+  own onboarding, which is where the explanation belongs. What makes our answer
+  to that warning *true* rather than reassuring is written down and testable:
+  the keyboard only writes to the field and never reads it, and it refuses
+  password fields outright — see "What the keyboard does not collect" in
+  [`data-safety.md`](data-safety.md), and the password-field check in the notes
+  above.
 - **Ads:** none. **In-app purchases:** none in this build. **Target audience:**
   general/adult, not child-directed. **Content rating:** the IARC
   questionnaire has nothing to declare beyond user-generated content that is
