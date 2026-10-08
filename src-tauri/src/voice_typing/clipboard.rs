@@ -20,7 +20,10 @@
 //! the injection) or none would land (Windows' hidden tray window in front,
 //! see [`paste_block`]) the clipboard IS the delivery: the text goes there as
 //! an ordinary copy and stays, and the overlay names the paste key. Explicit
-//! copies (the overlay's Copy, Esc's Undo) are never restored over.
+//! copies (the overlay's Copy, Esc's Undo) are never restored over. Nor is a
+//! paste into a remote-desktop or virtual-machine window
+//! ([`reads_clipboard_late`]): those read the clipboard whenever their sync
+//! gets to it, so the dictation goes up as an ordinary copy and stays.
 //!
 //! Split like ax_observe: the bookkeeping here is platform-neutral and tested
 //! against a fake clipboard; `macos` and `windows` only read and write the
@@ -53,8 +56,9 @@ pub(super) use self::other::SystemPasteboard;
 /// OLD clipboard into their document — far worse than a late restore, whose
 /// only cost is that a paste of their own inside this window still gets the
 /// dictation. A second covers a busy app with room to spare and is over
-/// before most people would paste again.
-const CLIPBOARD_RESTORE_DELAY: Duration = Duration::from_millis(1000);
+/// before most people would paste again; half a second more covers an app
+/// that is slower still to get to the paste.
+const CLIPBOARD_RESTORE_DELAY: Duration = Duration::from_millis(1500);
 
 /// The waits before trying a failed restore again. A restore fails when the
 /// clipboard cannot be taken — on Windows, another process holding it open
@@ -84,6 +88,10 @@ const SNAPSHOT_TIME_BUDGET: Duration = Duration::from_millis(150);
 #[cfg(any(target_os = "macos", target_os = "windows", test))]
 const SNAPSHOT_BYTE_BUDGET: usize = 64 << 20;
 
+/// What [`Pasteboard::save_and_write_transient`] did: the snapshot, when one
+/// was asked for, and the write.
+pub(super) type SavedAndWritten<S> = (Option<Result<S, String>>, Result<(), String>);
+
 /// The clipboard operations an insert needs: the system clipboard on each
 /// platform, a fake in the tests.
 pub(super) trait Pasteboard {
@@ -98,6 +106,21 @@ pub(super) trait Pasteboard {
     /// Replace the clipboard with `text`, marked so clipboard managers and
     /// the OS clipboard history skip it: it is only there for the paste.
     fn write_transient(&mut self, text: &str) -> Result<(), String>;
+
+    /// [`snapshot`](Self::snapshot) (when `save`), then
+    /// [`write_transient`](Self::write_transient), whatever the snapshot
+    /// came to. A platform whose clipboard is a lock (Windows) does both under
+    /// one hold of it, so no other process can copy between the save and the
+    /// write — a copy that landed there would be overwritten and never come
+    /// back.
+    fn save_and_write_transient(
+        &mut self,
+        save: bool,
+        text: &str,
+    ) -> SavedAndWritten<Self::Snapshot> {
+        let saved = save.then(|| self.snapshot());
+        (saved, self.write_transient(text))
+    }
 
     /// Replace the clipboard with `text` as an ordinary copy.
     fn write_plain(&mut self, text: &str) -> Result<(), String>;
@@ -289,14 +312,80 @@ pub(super) struct Inserted {
     pub restore: Option<u64>,
 }
 
+/// Remote-desktop and virtual-machine clients, by macOS bundle id (a prefix,
+/// lower-cased) — the app a dictation is pasted into when the field is on
+/// another machine.
+const LATE_READER_BUNDLE_PREFIXES: [&str; 13] = [
+    "com.microsoft.rdc",         // Microsoft Remote Desktop / Windows App
+    "com.parallels.",            // Parallels Desktop
+    "com.vmware.",               // VMware Fusion
+    "org.virtualbox.",           // VirtualBox
+    "com.utmapp.",               // UTM
+    "com.citrix.",               // Citrix Workspace / Viewer
+    "com.teamviewer.",           // TeamViewer
+    "com.philandro.anydesk",     // AnyDesk
+    "com.realvnc.",              // RealVNC Viewer
+    "com.apple.screensharing",   // Screen Sharing (VNC)
+    "com.google.chrome.app.",    // Chrome apps, Chrome Remote Desktop's included
+    "com.jumpdesktop.",          // Jump Desktop
+    "com.p5sys.jump",            // Jump Desktop (older id)
+];
+
+/// The same clients on Windows, by executable name (lower-cased).
+const LATE_READER_EXES: [&str; 17] = [
+    "mstsc.exe",        // Remote Desktop Connection
+    "msrdc.exe",        // Remote Desktop client / Windows App sessions
+    "msrdcw.exe",       // Remote Desktop client
+    "windows365.exe",   // Windows App
+    "vmconnect.exe",    // Hyper-V
+    "vmware.exe",       // VMware Workstation
+    "vmplayer.exe",     // VMware Player
+    "virtualbox.exe",   // VirtualBox
+    "virtualboxvm.exe", // VirtualBox VM window
+    "cdviewer.exe",     // Citrix Workspace
+    "wfica32.exe",      // Citrix ICA client
+    "teamviewer.exe",   // TeamViewer
+    "anydesk.exe",      // AnyDesk
+    "vncviewer.exe",    // RealVNC / TigerVNC
+    "tvnviewer.exe",    // TightVNC
+    "remoting_desktop.exe", // Chrome Remote Desktop
+    "parsecd.exe",      // Parsec
+];
+
+/// Whether the app a paste goes to (`insert_text`'s frontmost app: a macOS
+/// bundle id, or a Windows executable name) reads the clipboard late: a
+/// remote-desktop or virtual-machine client, which forwards the clipboard to
+/// the other machine when its own sync gets to it — after the paste chord
+/// has gone through, sometimes seconds later. The restore would hand those
+/// the user's OLD clipboard to paste, so for them the dictation is not
+/// borrowed: it goes up as an ordinary copy (a transient one could be
+/// skipped by the very sync that has to carry it) and stays, as when no
+/// paste can go out. Matched leniently ("vnc" anywhere, "chromoting"), since
+/// a missed client costs a wrong paste and a false match only a clipboard
+/// that keeps the dictation.
+pub(super) fn reads_clipboard_late(app: &str) -> bool {
+    let app = app.to_ascii_lowercase();
+    LATE_READER_EXES.contains(&app.as_str())
+        || LATE_READER_BUNDLE_PREFIXES
+            .iter()
+            .any(|prefix| app.starts_with(prefix))
+        || app.contains("vnc")
+        || app.contains("chromoting")
+        || app.contains("remotedesktop")
+}
+
 /// Put `text` into the focused field through the clipboard, via `paste`
 /// (which posts the chord and says whether it went out). Runs with the ledger
 /// locked, so neither the restore timer nor an explicit copy can interleave.
+/// `reads_late`: the target is a remote-desktop or VM client (see
+/// [`reads_clipboard_late`]), so the dictation is pasted and left on the
+/// clipboard.
 pub(super) fn insert<P: Pasteboard>(
     ledger: &mut RestoreLedger<P::Snapshot>,
     pb: &mut P,
     text: &str,
     blocked: Option<Blocked>,
+    reads_late: bool,
     paste: impl FnOnce() -> bool,
 ) -> Result<Inserted, String> {
     // Whatever happens next replaces the clipboard, so a restore still
@@ -310,6 +399,16 @@ pub(super) fn insert<P: Pasteboard>(
             restore: None,
         });
     }
+    if reads_late {
+        log::info!(
+            "voice-typing: pasting into a remote or virtual machine; the dictation stays on the clipboard"
+        );
+        pb.write_plain(text)?;
+        return Ok(Inserted {
+            pasted: paste(),
+            restore: None,
+        });
+    }
     // While the clipboard still holds the last dictation, that restore's
     // snapshot is exactly what this one has to give back too: saving the
     // clipboard now would save the last dictation's text, and two quick
@@ -318,11 +417,14 @@ pub(super) fn insert<P: Pasteboard>(
     // is theirs, and it is what gets saved and given back.
     let earlier =
         earlier.and_then(|(snapshot, mark)| (pb.change_mark() == mark).then_some(snapshot));
-    let snapshot = match earlier {
-        Some(snapshot) => Some(snapshot),
-        None => save(pb),
+    let started = Instant::now();
+    let (saved, written) = pb.save_and_write_transient(earlier.is_none(), text);
+    let snapshot = match (earlier, saved) {
+        (Some(snapshot), _) => Some(snapshot),
+        (None, Some(saved)) => keep_snapshot(saved, started.elapsed()),
+        (None, None) => None,
     };
-    if let Err(e) = pb.write_transient(text) {
+    if let Err(e) = written {
         // The write can fail after clearing the clipboard: put back what we
         // can before reporting it — unless something wrote to it since.
         if let Some(snapshot) = &snapshot {
@@ -356,12 +458,9 @@ pub(super) fn insert<P: Pasteboard>(
     })
 }
 
-/// Save the clipboard for an insert; None when it cannot be (unreadable, or
-/// over the snapshot budget).
-fn save<P: Pasteboard>(pb: &mut P) -> Option<P::Snapshot> {
-    let started = Instant::now();
-    let saved = pb.snapshot();
-    let took = started.elapsed();
+/// The clipboard as an insert saved it; None when it could not be (unreadable,
+/// or over the snapshot budget). `took`: the save and the write together.
+fn keep_snapshot<S>(saved: Result<S, String>, took: Duration) -> Option<S> {
     if took >= SLOW_SNAPSHOT {
         log::info!(
             "voice-typing: saving the clipboard took {}ms",
@@ -672,37 +771,48 @@ fn is_concealed<'a>(mut types: impl Iterator<Item = &'a str>) -> bool {
     types.any(|t| t == CONCEALED_TYPE)
 }
 
+/// The pasteboard types a snapshot reads: what a paste somewhere else
+/// actually uses — text, rich text, HTML, a picture, files and links.
+#[cfg(any(target_os = "macos", test))]
+const SAVED_TYPES: [&str; 9] = [
+    "public.utf8-plain-text",
+    "public.utf16-external-plain-text",
+    "public.rtf",
+    "public.html",
+    "public.png",
+    "public.tiff",
+    "public.file-url",
+    "public.url",
+    "com.apple.flat-rtfd",
+];
+
 /// Whether a snapshot reads `ty` from a pasteboard item carrying `item`'s
-/// types. Each read can make the app that copied it render that type now, so
-/// the ones that come back on their own, or not at all, are skipped:
+/// types.
 ///
-/// - `dyn.…` types and pre-UTI names ("NSStringPboardType", "Apple PNG
-///   pasteboard type", "CorePasteboardFlavorType 0x…") are aliases the
-///   pasteboard derives from the real UTI, which is saved — or an app's own
-///   pre-UTI flavours (Office's OLE ones), which only that app reads.
-/// - File-promise bookkeeping: reading it asks the owner to write the file
-///   out, and once restored it would promise a file nobody delivers.
-/// - A PDF or TIFF picture of something the item also carries as PNG or as
-///   plain text, the two an owner renders most expensively. Next to a PNG it
-///   is the same picture again. Next to text it is a picture OF the text — an
-///   Excel or Numbers range, a selection in a document — which its owner
-///   renders on the spot, for seconds on a big range, and which would
-///   otherwise eat the whole SNAPSHOT_TIME_BUDGET in one uninterruptible
-///   read. The trade-off: such a copy comes back as text and rich text, and
-///   no longer pastes as a picture into an app that only takes pictures. HTML
-///   or RTF alone does not count as text here: a browser's image copy is a
-///   TIFF with an HTML `<img>` tag beside it, and the TIFF is the picture.
-///   Nor does this help when HTML or an app's native format is the slow read.
+/// An allow-list, because the snapshot runs on the main thread and a read
+/// cannot be interrupted: reading a type the copying app only promised makes
+/// it render that type there and then, and an app's own types (Office's,
+/// Excel's native sheet, a design tool's document) are exactly the ones it
+/// renders slowly — one such read could hold every window and the paste for
+/// seconds, whatever the time budget says. So `dyn.…` aliases, pre-UTI names,
+/// file-promise bookkeeping, PDF and every app-private type are skipped, and
+/// such a copy comes back as the plain formats it also carries.
+///
+/// TIFF only when the item has neither a PNG (the same picture again) nor
+/// plain text: then it is a picture OF that text — an Excel or Numbers range,
+/// a selection in a document — which its owner renders on the spot, for
+/// seconds on a big range. Such a copy comes back as text and rich text, and
+/// no longer pastes as a picture into an app that only takes pictures. HTML or
+/// RTF alone does not count as text here: a browser's image copy is a TIFF
+/// with an HTML `<img>` tag beside it, and the TIFF is the picture.
 #[cfg(any(target_os = "macos", test))]
 fn is_saved_type(ty: &str, item: &[&str]) -> bool {
-    let alias = ty.starts_with("dyn.") || ty.contains(' ') || !ty.contains('.');
-    let promise = ty.starts_with("com.apple.pasteboard.promised-")
-        || ty == "com.apple.NSFilePromiseItemMetaData";
-    let picture = matches!(ty, "com.adobe.pdf" | "public.tiff")
-        && item
+    if ty == "public.tiff" {
+        return !item
             .iter()
             .any(|t| matches!(*t, "public.png" | "public.utf8-plain-text"));
-    !(alias || promise || picture)
+    }
+    SAVED_TYPES.contains(&ty)
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -745,7 +855,8 @@ mod tests {
 
     use super::{
         copy, insert, is_concealed, is_saved_format, is_saved_type, paste_block, plan_snapshot,
-        restore_due, Blocked, Foreground, Inserted, Pasteboard, RestoreLedger, RestoreOutcome,
+        reads_clipboard_late, restore_due, Blocked, Foreground, Inserted, Pasteboard,
+        RestoreLedger, RestoreOutcome,
         SnapshotBudget, SnapshotPlan, CF_DIB, CF_DIBV5, CF_HDROP, CF_LOCALE, CF_TEXT,
         CF_UNICODETEXT, EXCLUDE_FROM_MONITORS, PARLEY_TRANSIENT, SNAPSHOT_BYTE_BUDGET,
         SNAPSHOT_TIME_BUDGET,
@@ -759,6 +870,8 @@ mod tests {
         transient: bool,
         mark: i64,
         fail_snapshot: bool,
+        /// How many snapshots were taken.
+        snapshots: u32,
         fail_write: bool,
         /// How many restores fail to take the clipboard before one gets it.
         fail_restores: u32,
@@ -787,6 +900,7 @@ mod tests {
         type Snapshot = String;
 
         fn snapshot(&mut self) -> Result<String, String> {
+            self.snapshots += 1;
             if self.fail_snapshot {
                 return Err("snapshot failed".into());
             }
@@ -847,7 +961,7 @@ mod tests {
         let mut board = Board::holding("https://example.com");
         let mut posted = false;
 
-        let done = insert(&mut ledger, &mut board, "你好", None, || {
+        let done = insert(&mut ledger, &mut board, "你好", None, false, || {
             posted = true;
             true
         })
@@ -872,8 +986,8 @@ mod tests {
     fn a_second_insert_reuses_the_first_snapshot_and_supersedes_its_restore() {
         let mut ledger = RestoreLedger::default();
         let mut board = Board::holding("the user's link");
-        let first = insert(&mut ledger, &mut board, "第一句", None, || true).unwrap();
-        let second = insert(&mut ledger, &mut board, "第二句", None, || true).unwrap();
+        let first = insert(&mut ledger, &mut board, "第一句", None, false, || true).unwrap();
+        let second = insert(&mut ledger, &mut board, "第二句", None, false, || true).unwrap();
         let (first, second) = (first.restore.unwrap(), second.restore.unwrap());
 
         // The first restore must not put the user's link back under the
@@ -902,10 +1016,10 @@ mod tests {
     fn a_copy_made_between_two_inserts_is_what_the_second_gives_back() {
         let mut ledger = RestoreLedger::default();
         let mut board = Board::holding("the user's link");
-        let first = insert(&mut ledger, &mut board, "第一句", None, || true).unwrap();
+        let first = insert(&mut ledger, &mut board, "第一句", None, false, || true).unwrap();
         // ⌘X in the document while the next dictation is still on its way.
         board.copied_elsewhere("the cut word");
-        let second = insert(&mut ledger, &mut board, "第二句", None, || true).unwrap();
+        let second = insert(&mut ledger, &mut board, "第二句", None, false, || true).unwrap();
 
         assert_eq!(
             restore_due(&mut ledger, &mut board, first.restore.unwrap()),
@@ -924,7 +1038,7 @@ mod tests {
     fn an_explicit_copy_calls_off_a_pending_restore() {
         let mut ledger = RestoreLedger::default();
         let mut board = Board::holding("old");
-        let done = insert(&mut ledger, &mut board, "說的話", None, || true).unwrap();
+        let done = insert(&mut ledger, &mut board, "說的話", None, false, || true).unwrap();
 
         copy(&mut ledger, &mut board, "說的話").unwrap();
         assert!(!board.transient);
@@ -935,7 +1049,7 @@ mod tests {
         assert_eq!(board.text, "說的話");
 
         // The copy is the user's clipboard now: the next insert saves it.
-        let next = insert(&mut ledger, &mut board, "下一句", None, || true).unwrap();
+        let next = insert(&mut ledger, &mut board, "下一句", None, false, || true).unwrap();
         restore_due(&mut ledger, &mut board, next.restore.unwrap());
         assert_eq!(board.text, "說的話");
     }
@@ -944,7 +1058,7 @@ mod tests {
     fn a_copy_made_after_the_paste_is_never_restored_over() {
         let mut ledger = RestoreLedger::default();
         let mut board = Board::holding("old");
-        let done = insert(&mut ledger, &mut board, "dictated", None, || true).unwrap();
+        let done = insert(&mut ledger, &mut board, "dictated", None, false, || true).unwrap();
 
         board.copied_elsewhere("copied during the second");
         assert_eq!(
@@ -954,7 +1068,7 @@ mod tests {
         assert_eq!(board.text, "copied during the second");
 
         // Nothing is left pending: the next insert saves the new copy.
-        let next = insert(&mut ledger, &mut board, "again", None, || true).unwrap();
+        let next = insert(&mut ledger, &mut board, "again", None, false, || true).unwrap();
         restore_due(&mut ledger, &mut board, next.restore.unwrap());
         assert_eq!(board.text, "copied during the second");
     }
@@ -963,7 +1077,7 @@ mod tests {
     fn a_copy_landing_while_the_restore_takes_the_clipboard_is_kept() {
         let mut ledger = RestoreLedger::default();
         let mut board = Board::holding("old");
-        let done = insert(&mut ledger, &mut board, "dictated", None, || true).unwrap();
+        let done = insert(&mut ledger, &mut board, "dictated", None, false, || true).unwrap();
 
         // The mark was still ours when the timer fired; the copy lands while
         // the restore waits for the clipboard.
@@ -980,7 +1094,7 @@ mod tests {
     fn a_failed_restore_stays_pending_and_a_retry_gives_the_clipboard_back() {
         let mut ledger = RestoreLedger::default();
         let mut board = Board::holding("the user's image");
-        let generation = insert(&mut ledger, &mut board, "dictated", None, || true)
+        let generation = insert(&mut ledger, &mut board, "dictated", None, false, || true)
             .unwrap()
             .restore
             .unwrap();
@@ -1004,7 +1118,7 @@ mod tests {
     fn a_failed_restore_is_not_retried_over_a_later_copy_or_insert() {
         let mut ledger = RestoreLedger::default();
         let mut board = Board::holding("the user's link");
-        let first = insert(&mut ledger, &mut board, "第一句", None, || true)
+        let first = insert(&mut ledger, &mut board, "第一句", None, false, || true)
             .unwrap()
             .restore
             .unwrap();
@@ -1016,7 +1130,7 @@ mod tests {
 
         // The next dictation takes the pending restore over: the clipboard
         // still holds the first one, so the link is what it gives back.
-        let second = insert(&mut ledger, &mut board, "第二句", None, || true)
+        let second = insert(&mut ledger, &mut board, "第二句", None, false, || true)
             .unwrap()
             .restore
             .unwrap();
@@ -1044,7 +1158,7 @@ mod tests {
     fn a_restore_given_up_on_is_dropped() {
         let mut ledger = RestoreLedger::default();
         let mut board = Board::holding("old");
-        let generation = insert(&mut ledger, &mut board, "dictated", None, || true)
+        let generation = insert(&mut ledger, &mut board, "dictated", None, false, || true)
             .unwrap()
             .restore
             .unwrap();
@@ -1069,9 +1183,9 @@ mod tests {
             let mut ledger = RestoreLedger::default();
             let mut board = Board::holding("old");
             // A restore pending from an earlier dictation…
-            let earlier = insert(&mut ledger, &mut board, "earlier", None, || true).unwrap();
+            let earlier = insert(&mut ledger, &mut board, "earlier", None, false, || true).unwrap();
 
-            let done = insert(&mut ledger, &mut board, "dictated", Some(why), || {
+            let done = insert(&mut ledger, &mut board, "dictated", Some(why), false, || {
                 panic!("no paste may be posted")
             })
             .unwrap();
@@ -1137,7 +1251,7 @@ mod tests {
     fn a_refused_paste_leaves_the_text_as_a_plain_copy_with_nothing_pending() {
         let mut ledger = RestoreLedger::default();
         let mut board = Board::holding("old");
-        let done = insert(&mut ledger, &mut board, "dictated", None, || false).unwrap();
+        let done = insert(&mut ledger, &mut board, "dictated", None, false, || false).unwrap();
         assert_eq!(done, not_pasted());
         assert_eq!(board.text, "dictated");
         assert!(!board.transient);
@@ -1149,7 +1263,7 @@ mod tests {
         let mut ledger = RestoreLedger::default();
         let mut board = Board::holding("old");
         board.fail_snapshot = true;
-        let done = insert(&mut ledger, &mut board, "dictated", None, || true).unwrap();
+        let done = insert(&mut ledger, &mut board, "dictated", None, false, || true).unwrap();
         assert_eq!(
             done,
             Inserted {
@@ -1165,7 +1279,7 @@ mod tests {
         let mut ledger = RestoreLedger::default();
         let mut board = Board::holding("old");
         board.fail_write = true;
-        let result = insert(&mut ledger, &mut board, "dictated", None, || {
+        let result = insert(&mut ledger, &mut board, "dictated", None, false, || {
             panic!("no paste may be posted")
         });
         assert!(result.is_err());
@@ -1317,15 +1431,11 @@ mod tests {
     }
 
     #[test]
-    fn mac_snapshots_skip_aliases_promises_and_duplicate_pictures() {
+    fn mac_snapshots_read_only_the_allow_listed_types() {
         let image = ["public.tiff", "public.png", "public.html"];
         assert!(is_saved_type("public.png", &image));
         assert!(is_saved_type("public.html", &image));
         assert!(!is_saved_type("public.tiff", &image));
-        assert!(!is_saved_type(
-            "com.adobe.pdf",
-            &["com.adobe.pdf", "public.png"]
-        ));
         // An Excel or Numbers range: the picture of the cells is skipped,
         // the cells' text and rich text are saved.
         let range = [
@@ -1334,23 +1444,18 @@ mod tests {
             "public.rtf",
             "com.adobe.pdf",
             "public.tiff",
+            "com.microsoft.Excel.sheet",
         ];
-        for ty in ["com.adobe.pdf", "public.tiff"] {
+        for ty in ["com.adobe.pdf", "public.tiff", "com.microsoft.Excel.sheet"] {
             assert!(!is_saved_type(ty, &range), "{ty}");
         }
         for ty in ["public.utf8-plain-text", "public.html", "public.rtf"] {
             assert!(is_saved_type(ty, &range), "{ty}");
         }
-        // Without a PNG or text, the TIFF or PDF is the picture, and is kept
-        // — also next to a browser's HTML `<img>` tag or rich text.
-        for item in [
-            &["com.adobe.pdf", "public.tiff"][..],
-            &["public.tiff", "public.html"][..],
-            &["com.adobe.pdf", "public.rtf"][..],
-        ] {
-            for &ty in item {
-                assert!(is_saved_type(ty, item), "{ty} in {item:?}");
-            }
+        // Without a PNG or text, the TIFF is the picture, and is kept — also
+        // next to a browser's HTML `<img>` tag or rich text.
+        for item in [&["public.tiff"][..], &["public.tiff", "public.html"][..]] {
+            assert!(is_saved_type("public.tiff", item), "{item:?}");
         }
 
         for ty in [
@@ -1362,17 +1467,84 @@ mod tests {
             "com.apple.pasteboard.promised-file-url",
             "com.apple.pasteboard.promised-file-content-type",
             "com.apple.NSFilePromiseItemMetaData",
+            "com.adobe.pdf",
+            "com.microsoft.Excel.sheet",
+            "com.figma.document",
+            "org.nspasteboard.TransientType",
         ] {
             assert!(!is_saved_type(ty, &[ty]), "{ty}");
         }
         for ty in [
-            "public.file-url",
             "public.utf8-plain-text",
+            "public.utf16-external-plain-text",
+            "public.rtf",
+            "public.html",
+            "public.png",
+            "public.file-url",
+            "public.url",
             "com.apple.flat-rtfd",
-            "com.microsoft.Excel.sheet",
-            "org.nspasteboard.TransientType",
         ] {
             assert!(is_saved_type(ty, &[ty]), "{ty}");
         }
+    }
+
+    #[test]
+    fn remote_desktop_and_vm_clients_read_the_clipboard_late() {
+        for app in [
+            "com.microsoft.rdc.macos",
+            "com.parallels.desktop.console",
+            "com.vmware.fusion",
+            "org.virtualbox.app.VirtualBoxVM",
+            "com.utmapp.UTM",
+            "com.citrix.receiver.icaviewer.mac",
+            "com.teamviewer.TeamViewer",
+            "com.philandro.anydesk",
+            "com.realvnc.vncviewer",
+            "com.apple.ScreenSharing",
+            "mstsc.exe",
+            "MSTSC.EXE",
+            "msrdc.exe",
+            "vmconnect.exe",
+            "vmware.exe",
+            "VirtualBoxVM.exe",
+            "CDViewer.exe",
+            "TeamViewer.exe",
+            "AnyDesk.exe",
+            "vncviewer.exe",
+            "tvnviewer.exe",
+        ] {
+            assert!(reads_clipboard_late(app), "{app}");
+        }
+        for app in [
+            "com.apple.Notes",
+            "com.tinyspeck.slackmacgap",
+            "com.microsoft.Word",
+            "com.google.Chrome",
+            "notepad.exe",
+            "WINWORD.EXE",
+            "chrome.exe",
+        ] {
+            assert!(!reads_clipboard_late(app), "{app}");
+        }
+    }
+
+    /// A remote or VM window reads the clipboard when its sync gets to it, so
+    /// the restore would hand it the old clipboard: the dictation goes up as
+    /// an ordinary copy, is pasted, and stays.
+    #[test]
+    fn a_paste_into_a_remote_session_leaves_the_dictation_on_the_clipboard() {
+        let mut ledger = RestoreLedger::default();
+        let mut board = Board::holding("https://example.com");
+        let done = insert(&mut ledger, &mut board, "遠端", None, true, || true).unwrap();
+        assert_eq!(
+            done,
+            Inserted {
+                pasted: true,
+                restore: None
+            }
+        );
+        assert_eq!(board.text, "遠端");
+        assert!(!board.transient, "the remote sync must not skip it");
+        assert_eq!(board.snapshots, 0, "nothing to save when nothing is restored");
     }
 }

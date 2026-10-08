@@ -27,8 +27,8 @@ use windows::Win32::System::Memory::{
 };
 
 use super::{
-    plan_snapshot, Pasteboard, SnapshotBudget, SnapshotPlan, CF_UNICODETEXT, EXCLUDE_FROM_MONITORS,
-    PARLEY_TRANSIENT,
+    plan_snapshot, Pasteboard, SavedAndWritten, SnapshotBudget, SnapshotPlan, CF_UNICODETEXT,
+    EXCLUDE_FROM_MONITORS, PARLEY_TRANSIENT,
 };
 
 /// `OpenClipboard` does not queue: it fails outright while another process
@@ -58,8 +58,9 @@ pub struct Snapshot {
     /// the clipboard listed them.
     formats: Vec<(u32, Vec<u8>)>,
     /// It is a dictation Parley left on the clipboard (a restore that failed,
-    /// a clipboard too slow to save): it goes back up with TRANSIENT_MARKERS,
-    /// as the write that put it there did, and stays out of the history.
+    /// a clipboard too slow to save). Every restore goes back up with
+    /// TRANSIENT_MARKERS now; this one would even with nothing else to put
+    /// back.
     transient: bool,
 }
 
@@ -75,41 +76,24 @@ impl Pasteboard for SystemPasteboard {
     /// short, but it stops the reads after one that took too long.
     fn snapshot(&mut self) -> Result<Snapshot, String> {
         let _open = Open::new()?;
-        // Planned from the formats' ids and names, before a single byte is
-        // read: a password manager's secret is not ours to hold.
-        let listed = listed_formats();
-        let (formats, transient) =
-            match plan_snapshot(listed.iter().map(|(f, name)| (*f, name.as_deref()))) {
-                SnapshotPlan::Concealed => {
-                    log::info!(
-                        "voice-typing: the clipboard is marked private; it is cleared, not restored"
-                    );
-                    return Ok(Snapshot::default());
-                }
-                SnapshotPlan::Read { formats, transient } => (formats, transient),
-            };
-        let mut budget = SnapshotBudget::start();
-        let mut saved = Vec::with_capacity(formats.len());
-        for format in formats {
-            budget.before_read()?;
-            // SAFETY: the clipboard is open on this thread and `format` is
-            // one it just listed as a memory-block format.
-            if let Some(bytes) = unsafe { read_block(format, &mut budget) }? {
-                saved.push((format, bytes));
-            }
-        }
-        Ok(Snapshot {
-            formats: saved,
-            transient,
-        })
+        snapshot_open()
     }
 
     fn write_transient(&mut self, text: &str) -> Result<(), String> {
         let _open = Open::new()?;
-        empty()?;
-        publish(CF_UNICODETEXT, &utf16_bytes(text))?;
-        publish_markers();
-        Ok(())
+        write_transient_open(text)
+    }
+
+    /// Under ONE hold of the clipboard: between two opens another process
+    /// could copy, and the write would then replace that copy, which the
+    /// restore never gives back (it saved the clipboard from before it).
+    fn save_and_write_transient(&mut self, save: bool, text: &str) -> SavedAndWritten<Snapshot> {
+        let _open = match Open::new() {
+            Ok(open) => open,
+            Err(e) => return (save.then(|| Err(e.clone())), Err(e)),
+        };
+        let saved = save.then(snapshot_open);
+        (saved, write_transient_open(text))
     }
 
     /// Publish `text` on the clipboard as `CF_UNICODETEXT`.
@@ -142,11 +126,58 @@ impl Pasteboard for SystemPasteboard {
                 log::warn!("voice-typing: clipboard format {format:#x} not restored: {e}");
             }
         }
-        if snapshot.transient {
+        // What goes back is what the user copied before: Win+V's history and
+        // the cloud clipboard already have it from then, and clipboard
+        // monitors already saw it. Unmarked, the restore read as a fresh copy
+        // and listed it again after every dictation. (Our own marker goes up
+        // too, so the next snapshot does not take the exclusion for a
+        // password manager's.) An empty snapshot is a cleared clipboard.
+        if snapshot.transient || !snapshot.formats.is_empty() {
             publish_markers();
         }
         Ok(true)
     }
+}
+
+/// [`SystemPasteboard::snapshot`]'s work, with the clipboard already open on
+/// this thread.
+fn snapshot_open() -> Result<Snapshot, String> {
+    // Planned from the formats' ids and names, before a single byte is
+    // read: a password manager's secret is not ours to hold.
+    let listed = listed_formats();
+    let (formats, transient) =
+        match plan_snapshot(listed.iter().map(|(f, name)| (*f, name.as_deref()))) {
+            SnapshotPlan::Concealed => {
+                log::info!(
+                    "voice-typing: the clipboard is marked private; it is cleared, not restored"
+                );
+                return Ok(Snapshot::default());
+            }
+            SnapshotPlan::Read { formats, transient } => (formats, transient),
+        };
+    let mut budget = SnapshotBudget::start();
+    let mut saved = Vec::with_capacity(formats.len());
+    for format in formats {
+        budget.before_read()?;
+        // SAFETY: the clipboard is open on this thread and `format` is
+        // one it just listed as a memory-block format.
+        if let Some(bytes) = unsafe { read_block(format, &mut budget) }? {
+            saved.push((format, bytes));
+        }
+    }
+    Ok(Snapshot {
+        formats: saved,
+        transient,
+    })
+}
+
+/// Write `text` as the transient dictation, with the clipboard already open
+/// on this thread.
+fn write_transient_open(text: &str) -> Result<(), String> {
+    empty()?;
+    publish(CF_UNICODETEXT, &utf16_bytes(text))?;
+    publish_markers();
+    Ok(())
 }
 
 /// The open clipboard, closed again when this drops.

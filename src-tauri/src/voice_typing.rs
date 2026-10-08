@@ -650,12 +650,18 @@ fn insert_now(app: &AppHandle, text: &str) -> Result<PasteResult, String> {
     // it afterward could name the wrong app.
     let app_bundle_id = imp::frontmost_bundle_id();
     let blocked = clipboard::paste_block(imp::accessibility_trusted(false), imp::foreground());
+    // A remote-desktop or VM client reads the clipboard after the paste, on
+    // its own schedule: no restore for it (see `reads_clipboard_late`).
+    let reads_late = app_bundle_id
+        .as_deref()
+        .is_some_and(clipboard::reads_clipboard_late);
     let state = app.state::<ClipboardState>();
     let done = clipboard::insert(
         &mut state.lock(),
         &mut SystemPasteboard,
         text,
         blocked,
+        reads_late,
         imp::paste_to_frontmost,
     )?;
     if let Some(generation) = done.restore {

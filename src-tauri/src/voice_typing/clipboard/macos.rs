@@ -44,9 +44,9 @@ impl Pasteboard for SystemPasteboard {
     /// Best effort by nature: reading a type makes the app that copied it
     /// produce that data now if it only promised it, and a promise its owner
     /// does not keep (it quit; a file promise) has nothing to save. So only
-    /// the types worth it are read (`is_saved_type`), within a
-    /// [`SnapshotBudget`]: this runs on the main thread, and every window and
-    /// the paste wait for it.
+    /// an allow-list of plain types is read (`is_saved_type`), within a
+    /// [`SnapshotBudget`]: this runs on the main thread, every window and the
+    /// paste wait for it, and a read already running cannot be cut short.
     fn snapshot(&mut self) -> Result<Snapshot, String> {
         autoreleasepool(|| unsafe {
             let pb = general()?;
@@ -141,11 +141,23 @@ impl Pasteboard for SystemPasteboard {
     /// NSPasteboard has no lock to hold across the check, so `changeCount`
     /// is compared right before the write clears it, on the main thread: a
     /// copy from another app would have to land between those two calls.
+    ///
+    /// The restored contents go up marked auto-generated and current-host-only:
+    /// they are what the user copied before, which clipboard managers already
+    /// recorded and Universal Clipboard already carried when they copied it.
+    /// Unmarked, the restore read as a fresh copy, and a clipboard manager
+    /// listed the same entry again after every dictation.
     fn restore_if_unchanged(&mut self, snapshot: &Snapshot, mark: i64) -> Result<bool, String> {
-        let items = snapshot.iter().map(|item| {
-            item.iter()
+        let items = snapshot.iter().enumerate().map(|(i, item)| {
+            let mut entries: Vec<(&str, &[u8])> = item
+                .iter()
                 .map(|(ty, data)| (ty.as_str(), data.as_slice()))
-                .collect::<Vec<_>>()
+                .collect();
+            // The marker is a type on the pasteboard, so one item carries it.
+            if i == 0 {
+                entries.push((AUTO_GENERATED, &[][..]));
+            }
+            entries
         });
         autoreleasepool(|| unsafe {
             let pb = general()?;
@@ -153,7 +165,7 @@ impl Pasteboard for SystemPasteboard {
             if count as i64 != mark {
                 return Ok(false);
             }
-            write(pb, items, 0).map(|()| true)
+            write(pb, items, CURRENT_HOST_ONLY).map(|()| true)
         })
     }
 }
