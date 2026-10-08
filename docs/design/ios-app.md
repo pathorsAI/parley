@@ -26,7 +26,7 @@ iOS 版不是「把桌機塞進手機」。它是補上另一半的會議形態�
 | # | 決策 | 內容 |
 |---|------|------|
 | D1 | 技術路線 | ✅拍板 **Native SwiftUI 新 app**，不走 Tauri iOS。理由：背景錄音/鎖屏/中斷處理/Live Activity/耳機控制都是原生最穩；手機 UI 也不需要跟桌機 900px 三欄設計打架。代價是 AI 邏輯無法直接複用（見 D2 如何把代價壓到最小） |
-| D2 | 分析分工 | ✅拍板 **手機偏向會議轉錄，複雜分析在桌機跑**。手機只跑「一個 live 迴圈」；report / action items / brief / delivery / 情報板抽取五個 DAG 節點（[`studyPipeline.ts`](../../src/lib/analysis/studyPipeline.ts)）完全不移植，由桌機開啟該場會議時自動跑完回寫雲端 |
+| D2 | 分析分工 | ✅拍板 **手機偏向會議轉錄，複雜分析在桌機跑**。手機只跑「一個 live 迴圈」；report / action items / brief / delivery / 情報板抽取五個 DAG 節點（[`studyPipeline.ts`](../../src/lib/analysis/studyPipeline.ts)）完全不移植，由桌機開啟該場會議時自動跑完回寫雲端。**Note:** Android now runs these study stages itself (findings, action items, brief, delivery — `android/app/src/main/kotlin/com/pathors/parley/study/StudyPass.kt`, prompts shared through `shared/prompts/study.json`); iOS still does not. |
 | D3 | v1 範圍 | ✅拍板 含 **live coach feed**，但限縮為「findings 那一層」：45s 一次的 live 提醒（複用 [`ai/timeline.ts`](../../src/lib/ai/timeline.ts) 的 `SYSTEM_INTRO_LIVE` + `eventSchema` + eval templates）。**不含**情報板 slot 抽取、不含事後五節點 |
 | D4 | 手機 UI 形態 | 提案 直接落實 stage-bundles S22「呼吸版 / second-attention」：一行狀態 + 一個 intervention + 可下拉的逐字稿。手機本來只能瞄一眼，這反而是設計上最誠實的螢幕 |
 | D5 | 開源與 repo | ✅拍板 iOS app **開源**，放**本 repo `ios/`（monorepo）**。本 repo 早已是多產物形態（`website/`、`virtual-mic/`、`mcp/` 與桌機同居），iOS 延續慣例；sync 合約文件與兩個實作者同 repo、issue 一處追蹤。邊界不變：**cloud 仍留在 parley-internal**。iOS release 用獨立 tag namespace（`ios-v*`）與獨立 workflow，不碰現有 `release.yml` |

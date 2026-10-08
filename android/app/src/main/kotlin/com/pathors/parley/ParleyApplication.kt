@@ -11,6 +11,8 @@ import com.pathors.parley.auth.AuthManager
 import com.pathors.parley.auth.SignInError
 import com.pathors.parley.cloud.CloudClient
 import com.pathors.parley.filing.FilingPass
+import com.pathors.parley.study.StudyPass
+import com.pathors.parley.study.StudySettings
 import com.pathors.parley.filing.SampleFilingTarget
 import com.pathors.parley.feedback.DiagnosticsCollector
 import com.pathors.parley.feedback.FeedbackCenter
@@ -133,6 +135,22 @@ class AppContainer(private val app: Application) {
      * app's UI language and string table.
      */
     val filingPass: FilingPass = FilingPass.create(app, cloud)
+
+    /** "Analyse recordings automatically" — read by [study], toggled in the account sheet. */
+    val studySettings: StudySettings = StudySettings(app)
+
+    /**
+     * The study pipeline (findings, action items, brief, delivery) the
+     * recording page runs on a personal recording that has not been analysed
+     * yet. One per process, so a pass that outlives the screen still lands.
+     */
+    val study: StudyPass = StudyPass.create(
+        context = app,
+        cloud = cloud,
+        scope = appScope,
+        settings = studySettings,
+        canSpend = { !DemoMode.isActive && auth.currentToken() != null },
+    )
 
     /** Exposed as well as wrapped: the home screen lists what is still waiting. */
     val uploadQueue: PendingUploadQueue = PendingUploadQueue.default(app)

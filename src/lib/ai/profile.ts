@@ -1,4 +1,5 @@
 import type { Settings } from "../types";
+import { fillPrompt, STUDY } from "./studyPrompt";
 
 /** Just the "who am I" facts, with no transcript-attribution instruction. */
 function profileFacts(settings: Settings): string {
@@ -37,13 +38,9 @@ export function profileContext(settings: Settings): string {
  * language, independent of the transcript's language — so a user who set the UI
  * to 繁中 doesn't get an English debrief. Append to the system prompt of analysis
  * outputs (debrief / evaluations / timeline). Verbatim transcript quotes stay in
- * their original language.
+ * their original language. Text: shared/prompts/study.json (`outputLanguage`).
  */
 export function outputLanguageInstruction(settings: Settings): string {
-  const lang = settings.language === "zh-TW" ? "Traditional Chinese (繁體中文)" : "English";
-  return (
-    `\n\nWrite ALL of your prose output (summaries, titles, explanations, advice) in ${lang}, ` +
-    `regardless of the language spoken in the transcript. Keep any VERBATIM quotes you cite from ` +
-    `the transcript in their original language.`
-  );
+  const { template, names } = STUDY.outputLanguage;
+  return fillPrompt(template, { language: names[settings.language === "zh-TW" ? "zh-TW" : "en"] });
 }
