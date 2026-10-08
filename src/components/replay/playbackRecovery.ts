@@ -67,6 +67,12 @@ export interface PlaybackRecovery {
    * from the fallback itself is final.
    */
   handleError(error: PlaybackError): Promise<string | null>;
+  /**
+   * The player moved on to another recording. A decode still in flight must
+   * not land on the new one: from now on no state is reported and a pending
+   * {@link handleError} resolves null.
+   */
+  dispose(): void;
 }
 
 export function createPlaybackRecovery(opts: {
@@ -80,9 +86,14 @@ export function createPlaybackRecovery(opts: {
 }): PlaybackRecovery {
   const { audioPath, audioSrc, onState, prepare = prepareFallbackSrc } = opts;
   let tried = false;
+  let disposed = false;
+  const report = (state: PlaybackState) => {
+    if (!disposed) onState(state);
+  };
 
   return {
     async handleError(error) {
+      if (disposed) return null;
       log.error("replay: audio element error", {
         code: error.code,
         error: error.message,
@@ -90,21 +101,28 @@ export function createPlaybackRecovery(opts: {
         fallback: tried,
       });
       if (tried || !audioPath || !isDecodeFailure(error.code)) {
-        onState({ kind: "failed", error });
+        report({ kind: "failed", error });
         return null;
       }
       tried = true;
-      onState({ kind: "repairing" });
+      report({ kind: "repairing" });
       try {
         const src = await prepare(audioPath);
+        if (disposed) {
+          log.info("replay: dropped a fallback for a recording no longer shown", { audioPath });
+          return null;
+        }
         log.info("replay: switched to the decoded WAV fallback", { audioPath });
-        onState({ kind: "ok" });
+        report({ kind: "ok" });
         return src;
       } catch (e) {
         log.error("replay: playback fallback failed", { audioPath, error: String(e) });
-        onState({ kind: "failed", error: { code: error.code, message: `${error.message} — ${String(e)}` } });
+        report({ kind: "failed", error: { code: error.code, message: `${error.message} — ${String(e)}` } });
         return null;
       }
+    },
+    dispose() {
+      disposed = true;
     },
   };
 }

@@ -5,6 +5,7 @@ import {
   createPlaybackRecovery,
   describeMediaError,
   type PlaybackError,
+  type PlaybackRecovery,
   type PlaybackState,
 } from "./playbackRecovery";
 
@@ -85,26 +86,43 @@ export function useReplayPlayer(durationMs: number, offsetMs = 0, source?: Repla
 
   const audioSrc = source?.audioSrc ?? "";
   const audioPath = source?.audioPath ?? "";
-  const [src, setSrc] = useState(audioSrc);
-  const [playback, setPlayback] = useState<PlaybackState>({ kind: "ok" });
-  // A new recording starts over: its own src, no error, a fresh fallback try.
-  const [shownSrc, setShownSrc] = useState(audioSrc);
-  if (shownSrc !== audioSrc) {
-    setShownSrc(audioSrc);
-    setSrc(audioSrc);
-    setPlayback({ kind: "ok" });
-  }
-  const recovery = useMemo(
-    () => createPlaybackRecovery({ audioPath, audioSrc, onState: setPlayback }),
-    [audioPath, audioSrc],
-  );
+  // One recovery per recording: a new recording starts over with its own src,
+  // no error and a fresh fallback try. The fallback src and the playback state
+  // are tagged with the recovery that produced them and only count while it is
+  // still the current one, so a decode for A that lands after switching to B
+  // can neither play A's audio on B nor show A's notice there.
+  const [fallback, setFallback] = useState<{ owner: PlaybackRecovery; src: string } | null>(null);
+  const [reported, setReported] = useState<{ owner: PlaybackRecovery; state: PlaybackState } | null>(null);
+  const recovery = useMemo(() => {
+    const r: PlaybackRecovery = createPlaybackRecovery({
+      audioPath,
+      audioSrc,
+      onState: (state) => setReported({ owner: r, state }),
+    });
+    return r;
+  }, [audioPath, audioSrc]);
+  const src = fallback?.owner === recovery ? fallback.src : audioSrc;
+  const playback: PlaybackState = reported?.owner === recovery ? reported.state : { kind: "ok" };
   // The user asked to play (and hasn't paused since): resume after a src swap.
   const wantsPlayRef = useRef(false);
-  const resumeRef = useRef(false);
+  // Resume once the fallback loads — tagged like the fallback, so a press
+  // meant for one recording never starts another.
+  const resumeRef = useRef<PlaybackRecovery | null>(null);
   const repairingRef = useRef(false);
   useEffect(() => {
     repairingRef.current = playback.kind === "repairing";
   }, [playback]);
+  // Moving to another recording: stop the previous one's recovery and forget
+  // its play intent. Disposed here rather than in a cleanup, which StrictMode
+  // runs on the live recovery too.
+  const previousRecoveryRef = useRef(recovery);
+  useEffect(() => {
+    if (previousRecoveryRef.current === recovery) return;
+    previousRecoveryRef.current.dispose();
+    previousRecoveryRef.current = recovery;
+    wantsPlayRef.current = false;
+    resumeRef.current = null;
+  }, [recovery]);
 
   const clamp = useCallback(
     (ms: number) => Math.max(0, Math.min(ms, durationMs || ms)),
@@ -131,7 +149,7 @@ export function useReplayPlayer(durationMs: number, offsetMs = 0, source?: Repla
     if (!a) return;
     // The fallback is still decoding: remember the press, play when it lands.
     if (repairingRef.current) {
-      resumeRef.current = !resumeRef.current;
+      resumeRef.current = resumeRef.current ? null : recovery;
       return;
     }
     if (a.paused) {
@@ -152,7 +170,7 @@ export function useReplayPlayer(durationMs: number, offsetMs = 0, source?: Repla
       wantsPlayRef.current = false;
       a.pause();
     }
-  }, [durationMs, playheadMs, offsetMs, setPlayhead]);
+  }, [durationMs, playheadMs, offsetMs, setPlayhead, recovery]);
 
   const beginScrub = useCallback(() => {
     scrubbingRef.current = true;
@@ -201,9 +219,10 @@ export function useReplayPlayer(durationMs: number, offsetMs = 0, source?: Repla
     recovery
       .handleError(describeMediaError(a.error))
       .then((next) => {
+        // Null as well when the player moved on to another recording meanwhile.
         if (!next) return;
-        resumeRef.current ||= resume;
-        setSrc(next);
+        if (resume) resumeRef.current = recovery;
+        setFallback({ owner: recovery, src: next });
       })
       // handleError reports every failure itself and resolves null; this only
       // keeps a thrown surprise out of the unhandled-rejection channel.
@@ -218,11 +237,12 @@ export function useReplayPlayer(durationMs: number, offsetMs = 0, source?: Repla
     const a = audioRef.current;
     if (!a) return;
     a.currentTime = (playheadMs + offsetMs) / 1000;
-    if (resumeRef.current) {
-      resumeRef.current = false;
+    const resume = resumeRef.current === recovery;
+    resumeRef.current = null;
+    if (resume) {
       a.play().catch((error) => log.error("replay: resuming on the fallback failed", { error: String(error) }));
     }
-  }, [playheadMs, offsetMs]);
+  }, [playheadMs, offsetMs, recovery]);
 
   // If the playhead is moved externally (e.g. a jump from elsewhere, or a trim
   // shifting the offset) while paused, keep the audio element aligned so pressing

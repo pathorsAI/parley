@@ -97,4 +97,38 @@ describe("createPlaybackRecovery", () => {
     expect(invoke).not.toHaveBeenCalled();
     expect(states[states.length - 1]?.kind).toBe("failed");
   });
+
+  it("drops a fallback that lands after the player moved to another recording", async () => {
+    let finish: (wav: string) => void = () => {};
+    invoke.mockImplementation(() => new Promise((resolve) => (finish = resolve)));
+    const { recovery, states } = arrange();
+    const pending = recovery.handleError({ code: 3, message: "MEDIA_ERR_DECODE" });
+    // A → B while A's decode is still running.
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalled());
+    recovery.dispose();
+    finish(WAV);
+    expect(await pending).toBeNull();
+    // Only the "repairing" reported before the switch; nothing after it.
+    expect(states).toEqual([{ kind: "repairing" }]);
+  });
+
+  it("drops a failure that lands after the player moved on", async () => {
+    let fail: (e: unknown) => void = () => {};
+    invoke.mockImplementation(() => new Promise((_, reject) => (fail = reject)));
+    const { recovery, states } = arrange();
+    const pending = recovery.handleError({ code: 4, message: "MEDIA_ERR_SRC_NOT_SUPPORTED" });
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalled());
+    recovery.dispose();
+    fail("could not decode the audio");
+    expect(await pending).toBeNull();
+    expect(states).toEqual([{ kind: "repairing" }]);
+  });
+
+  it("ignores errors once disposed", async () => {
+    const { recovery, states } = arrange();
+    recovery.dispose();
+    expect(await recovery.handleError({ code: 3, message: "MEDIA_ERR_DECODE" })).toBeNull();
+    expect(invoke).not.toHaveBeenCalled();
+    expect(states).toEqual([]);
+  });
 });
