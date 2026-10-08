@@ -87,8 +87,11 @@ export async function analyzeDelivery(opts: {
   measuredRateHz?: number | null;
   /** "live" trims to recent speech + cheaper prompt; "post" uses the whole call. */
   mode?: "live" | "post";
+  /** Cancels the pass (the run was superseded). The call also has its own
+   *  deadline — see generateObjectResilient. */
+  signal?: AbortSignal;
 }): Promise<DeliveryAssessment | null> {
-  const { settings, segments, names, prosody, measuredRateHz, mode = "live" } = opts;
+  const { settings, segments, names, prosody, measuredRateHz, mode = "live", signal } = opts;
   const finals = segments.filter((s) => s.isFinal && s.text.trim());
   if (finals.length === 0) return null;
 
@@ -123,6 +126,7 @@ export async function analyzeDelivery(opts: {
     schema,
     system: SYSTEM(mode === "live") + outputLanguageInstruction(settings),
     prompt: `${ctx}${label}:\n${transcript}`,
+    signal,
   });
   void recordLlmUsage(settings, "realtime", "delivery", usage);
 

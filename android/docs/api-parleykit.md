@@ -136,9 +136,10 @@ class SttRelayClient(options: Options) : PcmSink {
   completes `events`. Always call it if you did not reach a terminal event.
 
 `feature` is billing attribution (parley-internal#29). The relay only records
-`meeting`, `voice_typing`, `realtime`; anything else is stored unattributed. (iOS
-passes `"dictation"` for the keyboard, which the relay does *not* recognize — use
-`Feature.VOICE_TYPING` on Android.)
+`meeting`, `voice_typing`, `realtime`; anything else is stored unattributed.
+Voice typing sends `voice_typing` on every platform — iOS
+`DictationCoordinator`, the desktop's voice-typing session, and Android's
+keyboard (`ime/DictationSession`, `Feature.VOICE_TYPING`).
 
 ### `SttRelayEvent`
 

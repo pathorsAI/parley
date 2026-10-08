@@ -4,6 +4,7 @@ import { generatePostMeetingReport } from "../ai/report";
 import { lensOf } from "./lens";
 import { landStage, makeRunGuard } from "./runGuard";
 import { log } from "../log";
+import { studyErrorMessage } from "./errorMessage";
 
 /**
  * Generate the study brief (重點 debrief) into the store and persist it onto the
@@ -23,6 +24,12 @@ import { log } from "../log";
  * runGuard).
  */
 const guard = makeRunGuard("brief");
+
+/** Cancel the brief pass running for the recording on screen. */
+export function cancelBriefGeneration(): boolean {
+  return guard.cancel();
+}
+
 export async function runBriefGeneration(opts?: { force?: boolean }): Promise<void> {
   const state = useStore.getState();
   if (state.briefStatus === "running") return;
@@ -34,6 +41,7 @@ export async function runBriefGeneration(opts?: { force?: boolean }): Promise<vo
 
   const run = guard.begin();
   state.setBrief("");
+  useStore.setState({ briefError: null });
   state.setBriefStatus("running");
   // The run keeps the whole text itself: if the user leaves and comes back
   // mid-stream, the store was reset in between, so appending would lose the
@@ -49,6 +57,8 @@ export async function runBriefGeneration(opts?: { force?: boolean }): Promise<vo
       names: state.speakerNames,
       meetingContext: meetingBriefText(state),
       lens: lensOf(state.meetingKind),
+      // Cancelling the run (regenerate while it streams) aborts the request.
+      signal: run.signal,
       onDelta: (chunk) => {
         text += chunk;
         if (run.alive()) useStore.getState().setBrief(text);
@@ -65,12 +75,16 @@ export async function runBriefGeneration(opts?: { force?: boolean }): Promise<vo
       persistWhileLoaded: true,
     });
   } catch (e) {
-    log.error("brief: generation failed", { error: String(e) });
+    if (run.superseded()) log.info("brief: superseded pass ended", { error: String(e) });
+    else log.error("brief: generation failed", { error: String(e) });
+    const message = await studyErrorMessage(e, state.settings.llmProviders.deep);
     await landStage(run, {
       stage: "brief",
+      error: message,
       apply: () => {
         // Don't leave a truncated stream on screen under the error.
         useStore.getState().setBrief(null);
+        useStore.setState({ briefError: message });
         useStore.getState().setBriefStatus("error");
       },
       patch: { briefFailed: true },

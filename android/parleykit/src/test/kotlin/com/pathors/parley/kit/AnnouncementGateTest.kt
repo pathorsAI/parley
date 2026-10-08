@@ -1,13 +1,14 @@
 package com.pathors.parley.kit
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
  * iOS `AnnouncementGateTests`, case for case, with Android's version
- * (`ships.android`) and Android's audiences (no keyboard).
+ * (`ships.android`) and Android's audiences (the keyboard once it has been used).
  */
 class AnnouncementGateTest {
 
@@ -31,7 +32,8 @@ class AnnouncementGateTest {
         announcements: List<Announcement>,
         state: AnnouncementState = AnnouncementState(),
         appVersion: String,
-    ) = AnnouncementGate.decide(announcements, state, appVersion)
+        keyboardUsed: Boolean = false,
+    ) = AnnouncementGate.decide(announcements, state, appVersion, keyboardUsed)
 
     // first launch
 
@@ -123,10 +125,43 @@ class AnnouncementGateTest {
     // audience
 
     @Test
-    fun `a keyboard announcement never shows on Android`() {
+    fun `a keyboard announcement waits while the keyboard has not been used`() {
         val bundled = listOf(item("kb", android = "1.16", audience = AnnouncementAudience.Keyboard))
 
         assertEquals(AnnouncementGate.Decision.NOTHING, decide(bundled, appVersion = "1.16"))
+    }
+
+    @Test
+    fun `a keyboard announcement shows once the keyboard has been used`() {
+        val bundled = listOf(item("kb", android = "1.16", audience = AnnouncementAudience.Keyboard))
+
+        val decision = decide(bundled, appVersion = "1.16", keyboardUsed = true)
+
+        assertEquals("kb", decision.show?.id)
+        assertEquals(setOf("kb"), decision.retire)
+    }
+
+    @Test
+    fun `a keyboard announcement left waiting is still there when the keyboard is picked up`() {
+        val bundled = listOf(
+            item(OLDER_FOR_ALL, android = "1.15"),
+            item(NEWER_KEYBOARD, android = "1.16", audience = AnnouncementAudience.Keyboard),
+        )
+        // Before the keyboard: the older one shows and is retired on its own.
+        val before = decide(bundled, appVersion = "1.16")
+        assertEquals(OLDER_FOR_ALL, before.show?.id)
+
+        val after = decide(bundled, AnnouncementState(before.retire), "1.16", keyboardUsed = true)
+
+        assertEquals(NEWER_KEYBOARD, after.show?.id)
+    }
+
+    @Test
+    fun `an unknown audience stays unmet even with the keyboard used`() {
+        assertFalse(
+            AnnouncementGate.audienceMet(AnnouncementAudience.Unknown("watch"), keyboardUsed = true),
+        )
+        assertTrue(AnnouncementGate.audienceMet(AnnouncementAudience.All, keyboardUsed = false))
     }
 
     @Test
