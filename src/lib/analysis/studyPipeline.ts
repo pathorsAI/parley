@@ -227,6 +227,9 @@ export function regenerateArtifact(key: StudyStageKey): void {
   } as Partial<StoreState>);
 }
 
+/** The stages "regenerate all" invalidates once the fresh findings land. */
+const DOWNSTREAM = ["actions", "brief", "delivery"] as const satisfies readonly StudyStageKey[];
+
 /** Resolves once the findings pass is no longer running (immediately if it isn't). */
 function findingsSettled(): Promise<void> {
   return new Promise((resolve) => {
@@ -288,6 +291,14 @@ export async function reanalyzeAll(): Promise<void> {
   if (s.analysisStatus !== "done") {
     log.warn("study: regenerate all stopped — findings did not complete", { status: s.analysisStatus });
     return;
+  }
+  // Downstream runs still in flight were started against the OLD findings.
+  // Cancel them in the same synchronous step as the reset: one that is not
+  // superseded by a replacement (the new brief waits for new action items)
+  // would otherwise land "done" with stale output, persist it, and keep the
+  // scheduler from ever dispatching the fresh pass.
+  for (const key of DOWNSTREAM) {
+    if (CANCELLERS[key]()) log.info("study: regenerate all cancelled a running stage", { stage: key });
   }
   useStore.setState({
     actionItemsStatus: "idle",

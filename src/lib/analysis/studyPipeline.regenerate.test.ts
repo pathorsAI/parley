@@ -123,6 +123,43 @@ describe("reanalyzeAll", () => {
     expect(useStore.getState().actionItemsStatus).toBe("idle");
   });
 
+  it("cancels downstream runs still in flight before re-queueing them", async () => {
+    show("A");
+    // A brief (and action items) hung against the old findings: without the
+    // cancel, the brief would land "done" with stale text and never re-run.
+    useStore.setState({ actionItemsStatus: "running", briefStatus: "running", deliveryStatus: "done" });
+    runners.runAnalysis.mockImplementation(async () => {
+      useStore.setState({ analysisStatus: "done" });
+    });
+    const order: string[] = [];
+    runners.cancelBriefGeneration.mockImplementationOnce(() => {
+      order.push(`cancel brief while ${useStore.getState().briefStatus}`);
+      return true;
+    });
+    await reanalyzeAll();
+    expect(runners.cancelActionItems).toHaveBeenCalledTimes(1);
+    expect(runners.cancelBriefGeneration).toHaveBeenCalledTimes(1);
+    expect(runners.cancelDeliveryAnalysis).toHaveBeenCalledTimes(1);
+    expect(runners.cancelFilingSuggestion).not.toHaveBeenCalled();
+    // Cancelled before the reset, so the stale run is superseded first.
+    expect(order).toEqual(["cancel brief while running"]);
+    const s = useStore.getState();
+    expect(s.actionItemsStatus).toBe("idle");
+    expect(s.briefStatus).toBe("idle");
+    expect(s.deliveryStatus).toBe("idle");
+  });
+
+  it("leaves downstream runs alone when the fresh findings did not complete", async () => {
+    show("A");
+    useStore.setState({ briefStatus: "running" });
+    runners.runAnalysis.mockImplementation(async () => {
+      useStore.setState({ analysisStatus: "error" });
+    });
+    await reanalyzeAll();
+    expect(runners.cancelBriefGeneration).not.toHaveBeenCalled();
+    expect(useStore.getState().briefStatus).toBe("running");
+  });
+
   it("says why it did nothing when no recording is loaded", async () => {
     await reanalyzeAll();
     expect(runners.runAnalysis).not.toHaveBeenCalled();
