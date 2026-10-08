@@ -85,8 +85,7 @@ Existing upload / poll / transcript routes stay. v2 changes:
 
 ## Implementation clarifications (binding for clients)
 
-Decided while implementing the server (parley-internal `apps/cloud/src/sttV2.ts`,
-`stt.ts`). Where the text above was silent or ambiguous, this is what the server does.
+Decided while implementing the server. Where the text above was silent or ambiguous, this is what the server does.
 
 **Connecting**
 - Rejections before the WebSocket upgrade are plain HTTP, exactly as in v1, because
@@ -148,7 +147,7 @@ Decided while implementing the server (parley-internal `apps/cloud/src/sttV2.ts`
 
 ## Rollout
 
-1. parley-internal: ship v2 alongside v1, deploy.
+1. Server: ship v2 alongside v1, deploy.
 2. Clients (desktop macOS/Windows, iOS ParleyKit, Android parleykit): hosted mode
    switches to v2 through a dedicated `parley` protocol adapter; BYOK vendor adapters
    stay as they are. Remove every code comment/doc in the public repo that says
