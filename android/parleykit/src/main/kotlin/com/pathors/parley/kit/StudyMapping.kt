@@ -39,7 +39,7 @@ object StudyMapping {
 
     // Any number of leading digits: a meeting past 100 minutes is cited as
     // "[102:30]", which a two-digit cap would read as 2:30.
-    private val CLOCK = Regex("""(\d+):(\d{2})(?::(\d{2}))?""")
+    private val CLOCK = Regex("""(\d{1,4}):(\d{2})(?::(\d{2}))?""")
 
     /** A model-cited "[m:ss]" / "m:ss" / "h:mm:ss", in milliseconds; null when there is none. */
     fun parseClockMs(raw: String?): Long? {

@@ -2,6 +2,8 @@ package com.pathors.parley.cloud
 
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -17,6 +19,7 @@ import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Test
 
@@ -43,6 +46,10 @@ class RecordingMetaLocksTest {
      * the lock both edits read here before either pushes, which is the race.
      */
     private val bothRead = CountDownLatch(2)
+    private val reads = AtomicInteger(0)
+
+    /** Whether the first read was still in flight when the second one arrived. */
+    private val firstReadOverlapped = AtomicBoolean(false)
 
     @After
     fun tearDown() {
@@ -55,8 +62,10 @@ class RecordingMetaLocksTest {
             override fun dispatch(request: RecordedRequest): MockResponse = when (request.method) {
                 "GET" -> {
                     val snapshot = stored
+                    val first = reads.getAndIncrement() == 0
                     bothRead.countDown()
-                    bothRead.await(READ_WAIT_MS, TimeUnit.MILLISECONDS)
+                    val sawOther = bothRead.await(READ_WAIT_MS, TimeUnit.MILLISECONDS)
+                    if (first) firstReadOverlapped.set(sawOther)
                     MockResponse().setResponseCode(200).setBody(snapshot.toString())
                 }
                 else -> {
@@ -80,6 +89,7 @@ class RecordingMetaLocksTest {
         assertNotNull("the delivery read was not erased by the brief", meta.deliveryAssessment)
         assertEquals("firm", meta.deliveryAssessment!!.jsonObject["tone"]!!.jsonPrimitive.content)
         assertEquals(4, server.requestCount)
+        assertFalse("the two read-modify-writes overlapped", firstReadOverlapped.get())
     }
 
     private companion object {
