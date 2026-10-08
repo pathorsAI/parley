@@ -60,7 +60,7 @@ object ImportRelayOutcome {
     /**
      * Classify one relay event.
      *
-     * @param finishSent whether the import has already sent `finalize`. After
+     * @param finishSent whether the import has already sent `end`. After
      *   that, the relay closing the socket is the normal end of the stream;
      *   before it, a close means the transcript stopped partway.
      */

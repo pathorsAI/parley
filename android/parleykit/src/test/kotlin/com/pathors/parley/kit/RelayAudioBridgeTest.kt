@@ -279,7 +279,7 @@ class RelayAudioBridgeTest {
 
     private companion object {
         /** One second of audio at the pipeline's fixed 16 kHz. */
-        const val SECOND_OF_SAMPLES = SonioxProtocol.SAMPLE_RATE
+        const val SECOND_OF_SAMPLES = ParleyStreamProtocol.SAMPLE_RATE
 
         /**
          * A chunk of s16le PCM whose first sample carries [marker], so

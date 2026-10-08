@@ -46,7 +46,7 @@ class CloudClientBatchTest {
         assertEquals("job-42", id)
         val request = server.takeRequest()
         assertEquals("POST", request.method)
-        assertEquals("/stt/batch?diarization=1&language_hints=zh%2Cen", request.path)
+        assertEquals("/stt/batch?diarization=1&languages=zh%2Cen", request.path)
         assertEquals("Bearer session-token", request.getHeader("Authorization"))
         assertEquals("application/octet-stream", request.getHeader("Content-Type"))
         assertEquals(64L, request.bodySize)
@@ -84,15 +84,16 @@ class CloudClientBatchTest {
     fun `a transcript comes back with its tokens`() = runBlocking {
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(
-                """{"tokens":[{"text":"Hi","startMs":0,"endMs":400,"speaker":"1"}]}""",
+                """{"tokens":[{"text":"Hi","start_ms":0,"end_ms":400,"speaker":1}]}""",
             ),
         )
 
         val transcript = client().batchTranscript("job-42")
 
-        assertEquals("/stt/batch/job-42/transcript", server.takeRequest().path)
+        assertEquals("/stt/batch/job-42/transcript?format=parley", server.takeRequest().path)
         assertEquals(1, transcript.tokens.size)
         assertEquals(1, transcript.tokens[0].speaker)
+        assertEquals(400L, transcript.tokens[0].endMs)
     }
 
     @Test

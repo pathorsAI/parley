@@ -21,7 +21,7 @@ fun interface PcmSink {
  * them while there is none**. The Kotlin port of iOS
  * `ParleyKit/Sources/ParleyKit/RelayAudioBridge.swift`.
  *
- * A relay session cannot be resumed: the socket carries one Soniox session,
+ * A relay session cannot be resumed: the socket carries one transcription session,
  * and a dropped socket means a fresh leg with its own clock starting at zero
  * (which is what [SttRelayClient.Options.idPrefix] and
  * [SttRelayClient.Options.timeOffsetMs] are for). The gap between the two legs
@@ -79,7 +79,7 @@ fun interface PcmSink {
 class RelayAudioBridge(
     /** How much audio to keep for the next leg while there is none. */
     val holdLimitMs: Long = DEFAULT_HOLD_LIMIT_MS,
-    private val sampleRate: Int = SonioxProtocol.SAMPLE_RATE,
+    private val sampleRate: Int = ParleyStreamProtocol.SAMPLE_RATE,
 ) {
     init {
         require(holdLimitMs >= 0) { "holdLimitMs must not be negative (got $holdLimitMs)" }

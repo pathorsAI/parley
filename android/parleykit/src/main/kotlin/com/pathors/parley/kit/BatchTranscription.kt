@@ -45,12 +45,13 @@ import kotlinx.serialization.json.intOrNull
 // ── wire shapes ──────────────────────────────────────────────────────────────
 
 /**
- * One token from the cloud transcript.
+ * One token from the cloud transcript (`?format=parley`: `text`, `start_ms`,
+ * `end_ms`, `speaker`, plus optional fields this client ignores).
  *
- * The decoding is permissive on purpose: the upstream vendor omits `speaker` on
- * control and spacing tokens, and sends it as a string in some responses and a
- * number in others (see `SpeakerId` in `replay.rs`), so a token that decoded
- * strictly would decode nothing at all.
+ * The decoding is permissive on purpose: `speaker` is absent without
+ * diarization and may be absent on spacing tokens, and older responses wrote it
+ * as a string rather than a number (see `SpeakerId` in `replay.rs`), so a token
+ * that decoded strictly would decode nothing at all.
  */
 @Serializable(with = BatchTokenSerializer::class)
 data class BatchToken(
@@ -84,10 +85,10 @@ internal object BatchTokenSerializer : KSerializer<BatchToken> {
             "BatchToken is only ever decoded from JSON"
         }
         val obj = input.decodeJsonElement() as? JsonObject ?: JsonObject(emptyMap())
-        // The cloud passes the vendor's tokens through untouched, so timing is
-        // snake_case on the wire (`start_ms`, what `replay.rs` reads). Reading
-        // `startMs` alone decoded every token at 0 and synced batch-transcribed
-        // recordings with every line at 00:00 (#576); camelCase stays a fallback.
+        // Timing is snake_case on the wire (`start_ms`, what `replay.rs` reads).
+        // Reading `startMs` alone decoded every token at 0 and synced
+        // batch-transcribed recordings with every line at 00:00 (#576);
+        // camelCase stays a fallback.
         return BatchToken(
             text = (obj["text"] as? JsonPrimitive)?.takeIf { it.isString }?.content.orEmpty(),
             startMs = obj.millis("start_ms") ?: obj.millis("startMs") ?: 0,
@@ -111,7 +112,7 @@ internal object BatchTokenSerializer : KSerializer<BatchToken> {
     }
 
     /**
-     * A timestamp the provider may write as an integer or as a fractional
+     * A timestamp the server may write as an integer or as a fractional
      * number of milliseconds. Anything that is not a number at all reads as
      * null (the caller then tries the other spelling, and finally 0) rather than
      * failing the whole response — one unparseable token must not cost the
@@ -135,7 +136,11 @@ internal object BatchTokenSerializer : KSerializer<BatchToken> {
     }
 }
 
-/** `GET /stt/batch/{id}/transcript`. */
+/**
+ * `GET /stt/batch/{id}/transcript?format=parley` — Parley's own token shape, the
+ * same as streaming minus `final`, already script-converted and free of control
+ * tokens.
+ */
 @Serializable
 data class BatchTranscriptResponse(
     val tokens: List<BatchToken> = emptyList(),
@@ -143,7 +148,7 @@ data class BatchTranscriptResponse(
 
 /**
  * A job's state as the cloud reports it. [status] is left as the raw string
- * rather than an enum: the cloud normalizes several upstream vocabularies into
+ * rather than an enum: the cloud normalizes its job states into
  * `queued` / `processing` / `completed` / `error`, and a value we don't know yet
  * has to read as "still working", not as a decode failure.
  *
@@ -219,7 +224,7 @@ sealed class BatchTranscriptionException(message: String) : Exception(message) {
 
 /**
  * Group a flat token stream into speaker runs. A change of speaker closes the
- * current run and starts a new one; whitespace is preserved as the provider
+ * current run and starts a new one; whitespace is preserved as the server
  * supplies it. Empty / whitespace-only runs are dropped.
  *
  * Port of `group_tokens` in `src-tauri/src/replay.rs` — behaviour must match it
@@ -238,9 +243,6 @@ fun groupBatchTokens(tokens: List<BatchToken>, source: String): List<TranscriptS
     var curEnd = 0L
 
     for (token in tokens) {
-        // Skip control / endpoint markers that some models emit.
-        if (token.text == "<end>" || token.text == "<fin>") continue
-
         // Tokens without a speaker (e.g. some punctuation/spacing tokens) should
         // stay in the CURRENT speaker's run — snapping them to speaker 0 would
         // close the run and fragment the transcript into spurious extra speakers.
@@ -312,7 +314,7 @@ class BatchTranscriber(
     ): BatchTranscriptionResult {
         val jobId = service.startBatchJob(audio, diarization, languageHints)
 
-        // The cloud normalizes upstream states into the four handled here, so a
+        // The cloud normalizes job states into the four handled here, so a
         // status we don't recognize is treated as "still working" rather than a
         // hard failure.
         var reportedDurationMs: Long? = null

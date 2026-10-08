@@ -11,8 +11,8 @@ package com.pathors.parley.kit
  *
  * ## Why the application keepalive does not detect it
  *
- * The Soniox keepalive ([SonioxProtocol.KEEPALIVE_INTERVAL_MS], 2 s) exists to
- * stop the *provider* timing an idle session out. It travels end to end and is
+ * The application keepalive ([ParleyStreamProtocol.KEEPALIVE_INTERVAL_MS], 2 s)
+ * exists to stop the *service* timing an idle session out. It travels end to end and is
  * never answered, so sending it into a dead socket looks exactly like sending it
  * into a live one. A WebSocket **ping** is different: the peer's stack answers
  * it whether or not anyone is speaking, so the absence of pongs is a signal.

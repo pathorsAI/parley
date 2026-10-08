@@ -31,17 +31,17 @@ sealed interface SttRelayEvent {
     /** A committed run or the tentative tail — upsert by [TranscriptSegment.id]. */
     data class Segment(val segment: TranscriptSegment) : SttRelayEvent
 
-    /** Stream ended: normally (`finished`/server close after finalize) or not. */
+    /** Stream ended: normally (`done`, or the server closing after `end`) or not. */
     data class Closed(val reason: String) : SttRelayEvent
 
     /**
-     * The stream died — in-band Soniox error frame, or a rejected handshake.
+     * The stream died — an in-band `error` frame, or a rejected handshake.
      *
      * [httpStatus] is set only for a rejected handshake, where it is the HTTP
-     * status the relay answered the upgrade with (401 unauthorized, 429
-     * too_many_sessions, …). It is null for an in-band error frame: that code is
-     * the transcription vendor's, not the relay's verdict on the caller, so a
-     * vendor-side 401 must never read as "your session is dead".
+     * status the service answered the upgrade with (401 unauthorized, 429
+     * too_many_sessions, …). It is null for an in-band error frame: those codes
+     * describe the stream (`upstream_unavailable`, `idle_timeout`, …), not the
+     * caller's sign-in, so they must never read as "your session is dead".
      */
     data class Error(val message: String, val httpStatus: Int? = null) : SttRelayEvent {
         /** The relay refused this session's token: the caller has to sign in again. */
@@ -61,33 +61,33 @@ sealed interface SttRelayEvent {
 }
 
 /**
- * WebSocket client for Parley's hosted STT relay
- * (`wss://api.parley.tw/stt/stream`), speaking the Soniox wire protocol with the
- * vendor key omitted — the relay injects it. Mirrors the desktop's relay-mode
- * behavior in `src-tauri/src/transcription/soniox.rs` and the iOS
- * `SttRelayClient.swift`:
+ * WebSocket client for Parley's hosted streaming transcription, speaking
+ * Parley's own stream protocol v2 (`wss://api.parley.tw/stt/v2/stream`, see
+ * [ParleyStreamProtocol]):
  *
  * - `Authorization: Bearer <cloud session token>` on the handshake
  * - `?feature=` query param for billing attribution (parley-internal#29)
- * - first frame is the Soniox config (no `api_key` — the relay injects it)
- * - `{"type":"keepalive"}` every 2 s (Soniox 408s idle connections)
+ * - first frame is `start`: audio format, languages, diarization, endpointing
+ *   and hint terms
+ * - `{"type":"keepalive"}` every 2 s, so an idle session is not timed out
  * - binary frames are 16 kHz mono s16le PCM
- * - on stop: send `{"type":"finalize"}` and — critically — do NOT close the
- *   socket. The relay must forward the finalize to Soniox and stream the
- *   flushed tail back; closing now would truncate the last utterance. The relay
- *   closes once Soniox finishes.
+ * - `ready` from the server is "connected" — [awaitOpen] resolves on it
+ * - on stop: send `{"type":"end"}` and — critically — do NOT close the socket.
+ *   The service finalizes, streams the flushed tail back, sends `done` and then
+ *   closes; closing first would truncate the last utterance.
  *
- * Terminal events, matching the Swift client's strings:
- * - Soniox `finished` marker → `Closed("finished")`
+ * Terminal events:
+ * - `done` → `Closed("finished")`
  * - server close → `Closed("close code=<code> <reason>")`
- * - in-band error frame → `Error("relay error <code>: <message>")`
+ * - `error` frame → `Error("relay error <code>: <message>")`, or
+ *   [SttRelayEvent.QuotaExceeded] for `quota_exceeded`
  *
- * Two Android-only additions, because OkHttp exposes what `URLSessionWebSocketTask`
- * hid: a failed HTTP handshake is reported with its status (the relay answers
+ * A failed HTTP handshake is reported with its status (the service answers
  * 401 unauthorized / 402 quota_exhausted / 429 too_many_sessions before the
  * upgrade), and the quota cases are raised as [SttRelayEvent.QuotaExceeded]
- * rather than a generic error — HTTP 402 on the handshake, in-band `error_code`
- * 402, and the relay's mid-session hard cut (close 1011 "quota cap reached").
+ * rather than a generic error — HTTP 402 on the handshake, the
+ * `quota_exceeded` error frame, and close code 4402 (the same verdict when the
+ * frame itself was lost).
  *
  * One session per instance: after a terminal event the client is spent. Events
  * are delivered through a single-consumer [Flow] backed by an unbounded channel,
@@ -114,10 +114,15 @@ class SttRelayClient(private val options: Options) : PcmSink {
 
     /**
      * @property bearerToken cloud session token for the `Authorization` header.
-     * @property relayUrl `wss://`/`ws://` (or `https://`/`http://`) relay endpoint.
-     * @property model advisory model name; the relay forces the real model server-side.
-     * @property languageHints e.g. `listOf("zh", "en")`; also decides the relay's
-     *   Simplified→Traditional rewrite pass.
+     * @property relayUrl `wss://`/`ws://` (or `https://`/`http://`) stream
+     *   endpoint. A URL still pointing at the v1 path (`/stt/stream`) is moved
+     *   to `/stt/v2/stream`; see [streamUrl].
+     * @property languageHints sent as the start frame's `languages`, e.g.
+     *   `listOf("zh", "en")`; also decides the server's Simplified→Traditional
+     *   rewrite pass.
+     * @property diarization ask the service to label speakers.
+     * @property endpointing ask the service to mark utterance ends (`endpoint`).
+     * @property hintTerms words the recognizer should favor (names, jargon).
      * @property feature billing attribution — one of [Feature]. Anything else is
      *   recorded as unattributed by the relay.
      * @property idPrefix stem for committed segment ids, defaulting to the
@@ -129,11 +134,13 @@ class SttRelayClient(private val options: Options) : PcmSink {
     data class Options(
         val bearerToken: String,
         val relayUrl: String = SttRelayClient.DEFAULT_RELAY_URL,
-        val model: String = SttRelayClient.DEFAULT_MODEL,
         val languageHints: List<String>? = null,
         val feature: String = SttRelayClient.Feature.MEETING,
         val idPrefix: String? = null,
         val timeOffsetMs: Long = 0,
+        val diarization: Boolean = true,
+        val endpointing: Boolean = true,
+        val hintTerms: List<String> = emptyList(),
     )
 
     /** Billing attribution tags the relay recognizes (`?feature=`). */
@@ -149,10 +156,9 @@ class SttRelayClient(private val options: Options) : PcmSink {
             // Protocol pings *in addition to* the application keepalive below,
             // not instead of it — they answer different questions:
             //
-            //  - `{"type":"keepalive"}` every 2 s keeps the traffic the relay
-            //    and Soniox expect flowing, so the provider does not 408 an
-            //    idle session. It is never answered, so it says nothing about
-            //    the socket.
+            //  - `{"type":"keepalive"}` every 2 s keeps the session from being
+            //    timed out as idle. It is never answered, so it says nothing
+            //    about the socket.
             //  - A WebSocket ping is answered by the peer's stack, and is the
             //    only thing that notices a half-open connection.
             //
@@ -197,26 +203,29 @@ class SttRelayClient(private val options: Options) : PcmSink {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     @Volatile private var webSocket: WebSocket? = null
-    @Volatile private var parser: SonioxStreamParser? = null
+    @Volatile private var parser: ParleyStreamParser? = null
     @Volatile private var keepaliveJob: Job? = null
     @Volatile private var writerJob: Job? = null
     @Volatile private var openSignal: CompletableDeferred<Unit>? = null
 
-    private val finalizeSent = AtomicBoolean(false)
+    private val endSent = AtomicBoolean(false)
     private val terminated = AtomicBoolean(false)
 
     /** True once the session has ended (closed, errored, or cancelled). */
     val isTerminated: Boolean
         get() = terminated.get()
 
+    /** The service's id for this session, once `ready` has arrived. Diagnostics only. */
+    val sessionId: String? get() = parser?.sessionId
+
     /**
-     * Open the socket and queue the config frame. Returns immediately — the
+     * Open the socket and queue the start frame. Returns immediately — the
      * handshake is still in flight.
      *
      * [enqueuePcm] may be called before *or* the moment this returns: audio sits
      * in the outbound queue until the writer starts, and OkHttp then buffers
-     * frames until the upgrade completes and writes them in order, so the config
-     * frame is guaranteed to reach the relay ahead of any audio. That is what
+     * frames until the upgrade completes and writes them in order, so the start
+     * frame is guaranteed to reach the service ahead of any audio. That is what
      * lets a caller open the microphone and the socket at the same time instead
      * of making the person holding the phone wait out a round trip before their
      * first word is recorded.
@@ -236,7 +245,7 @@ class SttRelayClient(private val options: Options) : PcmSink {
                 .build()
 
         parser =
-            SonioxStreamParser(
+            ParleyStreamParser(
                 source = SOURCE,
                 idPrefix = options.idPrefix ?: SOURCE,
                 timeOffsetMs = options.timeOffsetMs,
@@ -245,19 +254,15 @@ class SttRelayClient(private val options: Options) : PcmSink {
         openSignal = CompletableDeferred()
         webSocket = client.newWebSocket(request, RelayListener())
 
-        // Relay mode: api_key stays null; the relay injects the master key.
-        val config =
-            SonioxProtocol.Config(
-                apiKey = null,
-                model = options.model,
-                languageHints = options.languageHints,
-            )
-        webSocket?.send(SonioxProtocol.encodeConfig(config))
+        webSocket?.send(ParleyStreamProtocol.encodeStart(startFrame(options)))
         startKeepalive()
         startWriter()
     }
 
-    /** Suspend until the handshake resolves, one way or the other. */
+    /**
+     * Suspend until the session is live (`ready` arrived) or has ended, one way
+     * or the other.
+     */
     suspend fun awaitOpen() {
         openSignal?.await()
     }
@@ -291,7 +296,7 @@ class SttRelayClient(private val options: Options) : PcmSink {
 
     /** [enqueuePcm] for samples that have not been packed to bytes yet. */
     fun enqueuePcm(samples: ShortArray) {
-        enqueuePcm(SonioxProtocol.pcmToLeBytes(samples))
+        enqueuePcm(ParleyStreamProtocol.pcmToLeBytes(samples))
     }
 
     /**
@@ -317,28 +322,39 @@ class SttRelayClient(private val options: Options) : PcmSink {
 
     /** [sendPcm] for samples that have not been packed to bytes yet. */
     suspend fun sendPcm(samples: ShortArray) {
-        sendPcm(SonioxProtocol.pcmToLeBytes(samples))
+        sendPcm(ParleyStreamProtocol.pcmToLeBytes(samples))
     }
 
     /**
-     * Input drained: send finalize and let the relay drain the tail. The socket
-     * stays open until the server closes it (or `finished` arrives). Idempotent.
+     * Input drained: send `end` and let the service flush the tail. The socket
+     * stays open until `done` arrives or the server closes it. Idempotent.
      *
-     * The queued audio is flushed first — a finalize that overtakes the last few
-     * seconds of speech makes the relay flush a tail that is missing them. The
+     * The queued audio is flushed first — an `end` that overtakes the last few
+     * seconds of speech makes the service flush a tail that is missing them. The
      * wait is bounded because a dead socket must not be able to hold up the end
-     * of a meeting; past the bound the writer is dropped and the finalize goes
-     * out regardless, which matches what iOS does with its `drainTimeout`.
+     * of a meeting; past the bound the writer is dropped and `end` goes out
+     * regardless, which matches what iOS does with its `drainTimeout`.
      */
     suspend fun finish() {
         val ws = webSocket ?: return
-        if (!finalizeSent.compareAndSet(false, true)) return
+        if (!endSent.compareAndSet(false, true)) return
         keepaliveJob?.cancel()
         outbound.close()
         val drained = withTimeoutOrNull(DRAIN_TIMEOUT_MS) { writerJob?.join(); true } ?: false
         if (!drained) writerJob?.cancel()
-        ws.send(SonioxProtocol.FINALIZE_FRAME)
+        ws.send(ParleyStreamProtocol.END_FRAME)
         // Deliberately no close() here — see the class doc.
+    }
+
+    /**
+     * Ask the service to finalize everything received so far without ending the
+     * stream: the remaining tokens come back final, followed by `finalized`,
+     * which closes the open utterance. Audio may keep flowing. A no-op before
+     * [open] and after [finish].
+     */
+    fun requestFinalize() {
+        if (terminated.get() || endSent.get()) return
+        webSocket?.send(ParleyStreamProtocol.FINALIZE_FRAME)
     }
 
     /**
@@ -361,25 +377,7 @@ class SttRelayClient(private val options: Options) : PcmSink {
 
     // MARK: internals
 
-    /**
-     * Mirrors the Swift client, which *replaces* the query with a single
-     * `feature` item rather than appending to whatever the URL carried.
-     */
-    private fun buildUrl(): HttpUrl {
-        val raw = options.relayUrl
-        val normalized =
-            when {
-                raw.startsWith("wss://", ignoreCase = true) -> "https://" + raw.substring(6)
-                raw.startsWith("ws://", ignoreCase = true) -> "http://" + raw.substring(5)
-                else -> raw
-            }
-        return normalized
-            .toHttpUrl()
-            .newBuilder()
-            .query(null)
-            .addQueryParameter("feature", options.feature)
-            .build()
-    }
+    private fun buildUrl(): HttpUrl = streamUrl(options.relayUrl, options.feature)
 
     private fun emit(event: SttRelayEvent) {
         eventChannel.trySend(event)
@@ -413,10 +411,10 @@ class SttRelayClient(private val options: Options) : PcmSink {
         keepaliveJob =
             scope.launch {
                 while (isActive) {
-                    delay(SonioxProtocol.KEEPALIVE_INTERVAL_MS)
-                    if (terminated.get() || finalizeSent.get()) break
+                    delay(ParleyStreamProtocol.KEEPALIVE_INTERVAL_MS)
+                    if (terminated.get() || endSent.get()) break
                     val ws = webSocket ?: break
-                    ws.send(SonioxProtocol.KEEPALIVE_FRAME)
+                    ws.send(ParleyStreamProtocol.KEEPALIVE_FRAME)
                 }
             }
     }
@@ -435,31 +433,27 @@ class SttRelayClient(private val options: Options) : PcmSink {
     private fun handlePayload(payload: String) {
         if (terminated.get()) return
         val active = parser ?: return
-        try {
-            active.process(payload)
-        } catch (e: SonioxStreamError) {
-            val message = "relay error ${e.code}: ${e.message}"
-            terminate(
-                if (e.code == HTTP_PAYMENT_REQUIRED) SttRelayEvent.QuotaExceeded(message)
-                else SttRelayEvent.Error(message)
-            )
-            webSocket?.cancel()
-            return
-        }
-        if (active.finished) {
-            terminate(SttRelayEvent.Closed("finished"))
-            webSocket?.cancel()
+        val message =
+            try {
+                active.process(payload)
+            } catch (e: ParleyStreamError) {
+                terminate(errorEvent(e))
+                webSocket?.cancel()
+                return
+            }
+        when (message) {
+            is ParleyStreamProtocol.ServerMessage.Ready -> openSignal?.complete(Unit)
+            ParleyStreamProtocol.ServerMessage.Done -> {
+                terminate(SttRelayEvent.Closed(CLOSED_FINISHED))
+                // The service closes with 1000 right after `done`; answer in kind.
+                webSocket?.close(NORMAL_CLOSURE, null)
+            }
+            else -> Unit
         }
     }
 
-    private fun closeEvent(code: Int, reason: String): SttRelayEvent {
-        val text = "close code=$code $reason"
-        return if (code == CLOSE_CODE_INTERNAL && reason.contains("quota", ignoreCase = true)) {
-            SttRelayEvent.QuotaExceeded(text)
-        } else {
-            SttRelayEvent.Closed(text)
-        }
-    }
+    private fun closeEvent(code: Int, reason: String): SttRelayEvent =
+        streamCloseEvent(code, reason)
 
     private fun failureEvent(t: Throwable, response: okhttp3.Response?): SttRelayEvent {
         if (response == null) {
@@ -476,9 +470,9 @@ class SttRelayClient(private val options: Options) : PcmSink {
     }
 
     private inner class RelayListener : WebSocketListener() {
-        override fun onOpen(webSocket: WebSocket, response: okhttp3.Response) {
-            openSignal?.complete(Unit)
-        }
+        // The upgrade alone is not "connected": [awaitOpen] waits for `ready`,
+        // which the service sends once the start frame is accepted.
+        override fun onOpen(webSocket: WebSocket, response: okhttp3.Response) = Unit
 
         override fun onMessage(webSocket: WebSocket, text: String) {
             handlePayload(text)
@@ -503,10 +497,12 @@ class SttRelayClient(private val options: Options) : PcmSink {
     }
 
     companion object {
-        const val DEFAULT_RELAY_URL = "wss://api.parley.tw/stt/stream"
-        const val DEFAULT_MODEL = "stt-rt-v5"
+        const val DEFAULT_RELAY_URL = "wss://api.parley.tw/stt/v2/stream"
 
-        /** A phone has one mic; speaker identity comes from provider diarization. */
+        /** The terminal `Closed` reason for a stream that ended with `done`. */
+        const val CLOSED_FINISHED = "finished"
+
+        /** A phone has one mic; speaker identity comes from server-side diarization. */
         const val SOURCE = "mix"
 
         /**
@@ -529,14 +525,76 @@ class SttRelayClient(private val options: Options) : PcmSink {
 
         /**
          * How long [finish] waits for queued audio to reach the wire before
-         * sending the finalize frame anyway.
+         * sending the `end` frame anyway.
          */
         private const val DRAIN_TIMEOUT_MS = 3_000L
 
         private const val BACKPRESSURE_POLL_MS = 10L
         private const val CONNECT_TIMEOUT_SECONDS = 15L
         private const val NORMAL_CLOSURE = 1000
-        private const val CLOSE_CODE_INTERNAL = 1011
         private const val HTTP_PAYMENT_REQUIRED = 402
+
+        private const val V1_STREAM_PATH = "/stt/stream"
+        private const val V2_STREAM_PATH = "/stt/v2/stream"
+
+        /**
+         * The upgrade URL for [relayUrl]: `ws(s)://` becomes `http(s)://` for
+         * OkHttp, a v1 stream path (`…/stt/stream`) is moved to the v2 one
+         * (`…/stt/v2/stream`), and the query is *replaced* with a single
+         * `feature` item rather than appended to — the same as the Swift client.
+         */
+        fun streamUrl(relayUrl: String, feature: String): HttpUrl {
+            val normalized =
+                when {
+                    relayUrl.startsWith("wss://", ignoreCase = true) -> "https://" + relayUrl.substring(6)
+                    relayUrl.startsWith("ws://", ignoreCase = true) -> "http://" + relayUrl.substring(5)
+                    else -> relayUrl
+                }
+            val url = normalized.toHttpUrl()
+            val path = url.encodedPath.trimEnd('/')
+            val builder = url.newBuilder().query(null).addQueryParameter("feature", feature)
+            if (path.endsWith(V1_STREAM_PATH)) {
+                builder.encodedPath(path.removeSuffix(V1_STREAM_PATH) + V2_STREAM_PATH)
+            }
+            return builder.build()
+        }
+
+        /** The `start` frame for [options]. */
+        fun startFrame(options: Options): ParleyStreamProtocol.Start =
+            ParleyStreamProtocol.Start(
+                languages = options.languageHints?.takeIf { it.isNotEmpty() },
+                diarization = options.diarization,
+                endpointing = options.endpointing,
+                hints = options.hintTerms
+                    .takeIf { it.isNotEmpty() }
+                    ?.let { ParleyStreamProtocol.Hints(it) },
+            )
+
+        /**
+         * The terminal event for an `error` frame. `quota_exceeded` is its own
+         * event so the UI can route to an upgrade prompt.
+         */
+        fun errorEvent(error: ParleyStreamError): SttRelayEvent {
+            val message = "relay error ${error.code}: ${error.message}"
+            return if (error.code == ParleyStreamProtocol.ErrorCode.QUOTA_EXCEEDED) {
+                SttRelayEvent.QuotaExceeded(message)
+            } else {
+                SttRelayEvent.Error(message)
+            }
+        }
+
+        /**
+         * The terminal event for a server close. Normally an `error` or `done`
+         * frame has already decided it; this only matters when the frame never
+         * arrived, and then 4402 still means "out of quota".
+         */
+        fun streamCloseEvent(code: Int, reason: String): SttRelayEvent {
+            val text = "close code=$code $reason"
+            return if (code == ParleyStreamProtocol.CloseCode.QUOTA_EXCEEDED) {
+                SttRelayEvent.QuotaExceeded(text)
+            } else {
+                SttRelayEvent.Closed(text)
+            }
+        }
     }
 }

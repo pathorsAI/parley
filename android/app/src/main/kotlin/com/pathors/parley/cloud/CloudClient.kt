@@ -553,10 +553,11 @@ class CloudClient(
 
     /**
      * `POST /stt/batch` — create a job from already-compressed audio; the
-     * response is the job id.
+     * response is the job id. Options travel as Parley's own query parameters:
+     * `diarization` and `languages` (comma-separated).
      *
-     * The hints parameter is omitted entirely when empty so the cloud
-     * auto-detects, rather than being handed an empty list to interpret.
+     * `languages` is omitted entirely when empty so the cloud auto-detects,
+     * rather than being handed an empty list to interpret.
      */
     override suspend fun startBatchJob(
         audio: File,
@@ -567,7 +568,7 @@ class CloudClient(
             .addQueryParameter("diarization", if (diarization) "1" else "0")
             .apply {
                 if (languageHints.isNotEmpty()) {
-                    addQueryParameter("language_hints", languageHints.joinToString(","))
+                    addQueryParameter("languages", languageHints.joinToString(","))
                 }
             }
             .build()
@@ -585,7 +586,11 @@ class CloudClient(
     override suspend fun batchTranscript(id: String): BatchTranscriptResponse =
         CloudJson.decodeFromString(
             BatchTranscriptResponse.serializer(),
-            getText(url("stt", "batch", id, "transcript")),
+            getText(
+                url("stt", "batch", id, "transcript").newBuilder()
+                    .addQueryParameter("format", "parley")
+                    .build()
+            ),
         )
 
     /**

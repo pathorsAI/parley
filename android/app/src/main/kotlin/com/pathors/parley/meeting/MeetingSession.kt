@@ -468,7 +468,7 @@ class MeetingSession(
             // this used to, told the user the transcript had ended when it was
             // about to come back.
             is SttRelayEvent.Error -> scheduleReconnect()
-            // A close after finalize is the normal end of the stream.
+            // A close after `end` is the normal end of the stream.
             is SttRelayEvent.Closed -> if (!finishRequested) scheduleReconnect()
         }
     }

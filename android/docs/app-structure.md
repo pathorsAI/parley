@@ -158,7 +158,7 @@ because the user still holds the source file:
 |---|---|---|
 | out of quota (`QuotaExceeded`) | stops, deletes its partial Ogg | `Failed(QUOTA_EXHAUSTED)` — iOS's quota copy |
 | handshake 401 (`Error.isUnauthorized`) | stops, deletes its partial Ogg | `Failed(SESSION_EXPIRED)` + "Sign in again", which clears the dead token |
-| any other error, a close before `finalize`, a tail that never arrives | keeps decoding, uploads the full audio with the partial transcript | `Finished(transcript = COMPLETES_IN_BACKGROUND)` when the transcript's coverage means the uploader queues a backfill; plain "Done" otherwise |
+| any other error, a close before `end`, a tail that never arrives | keeps decoding, uploads the full audio with the partial transcript | `Finished(transcript = COMPLETES_IN_BACKGROUND)` when the transcript's coverage means the uploader queues a backfill; plain "Done" otherwise |
 
 Only a clean `Finished` closes the screen by itself; one still waiting to upload,
 or with a transcript being redone, stays up until it is dismissed. An upload the
