@@ -9,9 +9,8 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::common::{
-    clean_vocabulary, connect_with_headers, drive_session, ensure_crypto_provider, note_connected,
-    with_connect_timeout, LevelMeter, SegmentBuilder, Timeline, TranscribeConfig, LEVEL_EVENT,
-    TRANSCRIPT_EVENT,
+    clean_vocabulary, drive_session, ensure_crypto_provider, note_connected, with_connect_timeout,
+    LevelMeter, SegmentBuilder, Timeline, TranscribeConfig, LEVEL_EVENT, TRANSCRIPT_EVENT,
 };
 use super::ws::{self, Next, OnClose, Pump, Ws, WsRead, WsWrite};
 use crate::audio::resample::pcm_to_le_bytes;
@@ -26,10 +25,7 @@ const TOKEN_FIN: &str = "<fin>";
 
 #[derive(Serialize)]
 struct SonioxConfig<'a> {
-    /// Omitted in hosted "parley" relay mode — the relay injects the master key
-    /// server-side, so the Soniox key never rides in the client's config frame.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    api_key: Option<&'a str>,
+    api_key: &'a str,
     model: &'a str,
     audio_format: &'a str,
     sample_rate: u32,
@@ -39,8 +35,7 @@ struct SonioxConfig<'a> {
     enable_endpoint_detection: bool,
     enable_speaker_diarization: bool,
     /// Custom vocabulary biasing. Omitted entirely when the phrase dictionary is
-    /// empty so the config frame stays byte-identical to what it was before —
-    /// including through the hosted relay, which forwards this same frame.
+    /// empty so the config frame stays byte-identical to what it was before.
     #[serde(skip_serializing_if = "Option::is_none")]
     context: Option<SonioxContext>,
 }
@@ -91,26 +86,17 @@ struct SonioxResponse {
     finished: bool,
 }
 
-/// Open the session's socket. Hosted "parley" relay (config.relay_endpoint set):
-/// connect to the cloud WSS with a Bearer token instead of the vendor with an
-/// api_key. Otherwise BYOK: straight to Soniox. Both yield the same Soniox wire
-/// protocol. Either dial is bounded by `common::CONNECT_TIMEOUT`.
-async fn open_socket(config: &TranscribeConfig) -> Result<Ws> {
-    let Some(relay_url) = &config.relay_endpoint else {
-        ensure_crypto_provider();
-        let (ws, _) = with_connect_timeout(async {
-            tokio_tungstenite::connect_async(SONIOX_WS_URL)
-                .await
-                .map_err(|e| anyhow!("connect failed: {e}"))
-        })
-        .await?;
-        return Ok(ws);
-    };
-    connect_with_headers(
-        relay_url,
-        &[("Authorization", format!("Bearer {}", config.api_key))],
-    )
-    .await
+/// Open the session's socket, straight to Soniox with the user's own key (it
+/// rides in the config frame). Bounded by `common::CONNECT_TIMEOUT`.
+async fn open_socket() -> Result<Ws> {
+    ensure_crypto_provider();
+    let (ws, _) = with_connect_timeout(async {
+        tokio_tungstenite::connect_async(SONIOX_WS_URL)
+            .await
+            .map_err(|e| anyhow!("connect failed: {e}"))
+    })
+    .await?;
+    Ok(ws)
 }
 
 /// The opening config frame Soniox expects.
@@ -121,12 +107,7 @@ fn wire_config(config: &TranscribeConfig) -> SonioxConfig<'_> {
         Some(config.language_hints.clone())
     };
     SonioxConfig {
-        // Relay mode omits the key (the relay injects it); BYOK sends it.
-        api_key: if config.relay_endpoint.is_some() {
-            None
-        } else {
-            Some(config.api_key.as_str())
-        },
+        api_key: &config.api_key,
         model: &config.model,
         audio_format: "pcm_s16le",
         sample_rate: TARGET_SAMPLE_RATE,
@@ -145,7 +126,6 @@ async fn forward_audio(
     meter: LevelMeter,
     pcm_rx: UnboundedReceiver<Vec<i16>>,
     source: &'static str,
-    is_relay: bool,
 ) -> bool {
     let pump = Pump {
         // Soniox closes with a 408 if it doesn't see traffic regularly; mirror
@@ -155,14 +135,9 @@ async fn forward_audio(
             "{\"type\":\"keepalive\"}",
         )),
         finish: Some("{\"type\":\"finalize\"}"),
-        // BYOK: close our write half so Soniox flushes the final tokens to our
-        // still-open read half and then ends. In hosted RELAY mode, do NOT close
-        // here — the relay must forward this finalize to Soniox and stream the
-        // flushed tail BACK to us first; closing now would make the relay's
-        // server socket fire 'close' and stop relaying, truncating the last
-        // utterance. The relay closes the socket once Soniox finishes, which ends
-        // the read loop below (it also breaks on Soniox's `finished` marker).
-        close: !is_relay,
+        // Close our write half so Soniox flushes the final tokens to our
+        // still-open read half and then ends.
+        close: true,
     };
 
     let mut total: u64 = 0;
@@ -259,7 +234,7 @@ pub async fn run_session(
     source: &'static str,
     pcm_rx: UnboundedReceiver<Vec<i16>>,
 ) -> Result<()> {
-    let ws = open_socket(&config).await?;
+    let ws = open_socket().await?;
     let (mut write, read) = ws.split();
 
     write
@@ -275,11 +250,10 @@ pub async fn run_session(
     note_connected(&app, source, config.leg);
 
     let meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT).enabled(config.level_events);
-    let is_relay = config.relay_endpoint.is_some();
 
     drive_session(
         "soniox",
-        forward_audio(write, meter, pcm_rx, source, is_relay),
+        forward_audio(write, meter, pcm_rx, source),
         read_transcripts(app, source, config.timeline(), read),
     )
     .await

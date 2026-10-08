@@ -48,12 +48,13 @@ export const STT_PROVIDERS: SttProviderInfo[] = [
   { id: "assemblyai", label: "AssemblyAI", diarization: false, supportsFileUpload: true, apiKeyField: "assemblyaiApiKey", keyPlaceholder: "…", icon: "/providers/assemblyai.png" },
   { ...fromLlm("openai"), diarization: false, supportsFileUpload: true },
   { ...fromLlm("gemini"), diarization: false, supportsFileUpload: false },
-  // Hosted account mode: audio goes through Parley Cloud to Soniox (which
-  // diarizes), so no vendor is exposed and no key field is used — auth is the
-  // signed-in cloud session (see sttApiKey). Borrows the Parley brand from the
-  // LLM registry. The picker only offers it in the cloud build when signed in.
-  // Both tenses are hosted: live audio over the `/stt/stream` relay, uploaded
-  // recordings over the `/stt/batch` endpoint (see sttRelayUrl / sttBatchUrl).
+  // Hosted account mode: audio goes to Parley Cloud, which transcribes (and
+  // diarizes) it, so no key field is used — auth is the signed-in cloud session
+  // (see sttApiKey). Borrows the Parley brand from the LLM registry. The picker
+  // only offers it in the cloud build when signed in. Both tenses are hosted and
+  // speak Parley's own protocol (docs/design/stt-protocol.md): live audio over
+  // `/stt/v2/stream`, uploaded recordings over `/stt/batch` (see sttRelayUrl /
+  // sttBatchUrl).
   {
     id: "parley",
     label: PROVIDER_BY_ID["parley"].label,
@@ -85,9 +86,9 @@ export function sttApiKey(settings: Settings, id: SttProviderId): string {
 }
 
 /**
- * The STT relay endpoint for a provider: hosted "parley" streams audio through
+ * The STT relay endpoint for a provider: hosted "parley" streams audio to
  * Parley Cloud (a `wss://` URL, authenticated with the session token from
- * `sttApiKey`), so the vendor key never lives on the client. BYOK providers
+ * `sttApiKey`), so no provider key lives on the client. BYOK providers
  * connect straight to their vendor — no relay. Every streaming start command
  * (meeting AND voice typing) must pass this alongside the key.
  *
@@ -101,15 +102,15 @@ export function sttRelayUrl(
   feature: "meeting" | "voice_typing" | "realtime",
 ): string | undefined {
   return id === "parley"
-    ? `${CLOUD_URL.replace(/^http/, "ws")}/stt/stream?feature=${feature}`
+    ? `${CLOUD_URL.replace(/^http/, "ws")}/stt/v2/stream?feature=${feature}`
     : undefined;
 }
 
 /**
  * The BATCH (uploaded recording) endpoint for a provider — the replay path's
  * counterpart to {@link sttRelayUrl}. Hosted "parley" POSTs the audio to Parley
- * Cloud, which drives Soniox's async API with the master key server-side, so the
- * vendor key never lives on the client. BYOK providers address their vendor from
+ * Cloud, which transcribes it server-side, so no provider key lives on the
+ * client. BYOK providers address their vendor from
  * the Rust adapter itself and have no batch URL. `transcribe_file` must be passed
  * this alongside the credential from `sttApiKey`, or the hosted arm refuses.
  */

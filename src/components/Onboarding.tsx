@@ -453,7 +453,7 @@ function AccountStep() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {/* Hosted "parley" STT (relayed to Soniox) shows only in the
+                {/* Hosted "parley" STT (Parley Cloud) shows only in the
                     official build once signed in. */}
                 {STT_PROVIDERS.filter((p) => p.id !== "parley" || (CLOUD_ENABLED && !!cloudAuth)).map((p) => (
                   <SelectItem key={p.id} value={p.id}>

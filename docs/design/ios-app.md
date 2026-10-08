@@ -31,7 +31,7 @@ iOS 版不是「把桌機塞進手機」。它是補上另一半的會議形態�
 | D4 | 手機 UI 形態 | 提案 直接落實 stage-bundles S22「呼吸版 / second-attention」：一行狀態 + 一個 intervention + 可下拉的逐字稿。手機本來只能瞄一眼，這反而是設計上最誠實的螢幕 |
 | D5 | 開源與 repo | ✅拍板 iOS app **開源**，放**本 repo `ios/`（monorepo）**。本 repo 早已是多產物形態（`website/`、`virtual-mic/`、`mcp/` 與桌機同居），iOS 延續慣例；sync 合約文件與兩個實作者同 repo、issue 一處追蹤。邊界不變：**cloud 仍留在 parley-internal**。iOS release 用獨立 tag namespace（`ios-v*`）與獨立 workflow，不碰現有 `release.yml` |
 | D6 | 憑證與設定同步 | 提案 **API key 不上雲**（安全理由見 §9.1）。手機預設用 hosted provider（登入即可用，本來就不需要 key）；BYOK 在手機自行輸入存 **Keychain**。上雲的只有非機密設定：model 選擇、語言、eval templates、scenario bundles |
-| D7 | me/them 判定 | 提案 iOS 全程走 `"mix"` 單一 STT session（Soniox diarization 已預設開啟）。「誰是我」用**錄前 3 秒 enrollment 或錄後在逐字稿上點一下指定**，同場自動套用。不在 v1 做聲紋跨場身分 |
+| D7 | me/them 判定 | 提案 iOS 全程走 `"mix"` 單一 STT session（hosted diarization 已預設開啟）。「誰是我」用**錄前 3 秒 enrollment 或錄後在逐字稿上點一下指定**，同場自動套用。不在 v1 做聲紋跨場身分 |
 | D8 | 音檔格式 | 提案 維持 **Ogg/Opus 16k mono**，與桌機 [`replay_audio.rs`](../../src-tauri/src/replay_audio.rs) 及 `PUT /recordings/:id/audio` 的 `audio/ogg` 契約一致，避免雲端多一條轉檔路徑 |
 | D9 | 落檔策略 | 提案 **邊錄邊寫檔**，不學桌機把整場 PCM 常駐記憶體（`RecorderBuf`，16kHz×2B = 115MB/hr）——手機會被 jetsam 殺掉 |
 | D10 | 商業模式 | 待拍板（§9.2）建議 v1 **不在 app 內販售**，只讓已有帳號登入使用免費/既有額度，避開 IAP 抽成與審核風險 |
@@ -52,7 +52,7 @@ iOS 版不是「把桌機塞進手機」。它是補上另一半的會議形態�
 
 ### 3.2 這件事往上傳染到 me/them
 
-桌機有兩條天然分離的聲道，所以非 diarizing provider 也能開兩個 session 標 `"me"`/`"them"`（[`commands.rs:471`](../../src-tauri/src/commands.rs:471)）。iPhone 只有一條，只能走既有的 diarizing 拓撲：單一 session 標 `"mix"`，speaker 整數由 Soniox 給（[`commands.rs:386`](../../src-tauri/src/commands.rs:386)、[`soniox.rs:233`](../../src-tauri/src/transcription/soniox.rs:233)）。
+桌機有兩條天然分離的聲道，所以非 diarizing provider 也能開兩個 session 標 `"me"`/`"them"`（[`commands.rs:471`](../../src-tauri/src/commands.rs:471)）。iPhone 只有一條，只能走既有的 diarizing 拓撲：單一 session 標 `"mix"`，speaker 整數由 hosted 服務給（[`commands.rs:386`](../../src-tauri/src/commands.rs:386)、[`parley.rs`](../../src-tauri/src/transcription/parley.rs)）。
 
 **已知地雷**：[`intel/extract.ts:107`](../../src/lib/intel/extract.ts:107) 用 `s.source === "me" ? "我" : "對方"` 組 prompt，`"mix"` 全部被標成「對方」——連使用者自己講的話。桌機 diarizing 模式今天就有這個 bug，iOS 每一場都會踩。**列為 Phase 0 前置修復**。
 
@@ -67,7 +67,7 @@ iOS 版不是「把桌機塞進手機」。它是補上另一半的會議形態�
  ┌──────────────────┐        ┌─────────────────────┐        ┌────────────────────┐
  │ AVAudioEngine    │        │                     │        │                    │
  │  16k mono i16    │──WS───▶│ /stt/stream (DO)    │        │                    │
- │ SegmentBuilder   │◀──────│  → Soniox stt-rt-v5 │        │                    │
+ │ SegmentBuilder   │◀──────│  → recognizer       │        │                    │
  │ live findings ───┼──HTTP─▶│ /v1/chat/completions│        │                    │
  │ (45s, 一個 prompt)│        │                     │        │                    │
  │ Opus/Ogg 落檔    │──PUT──▶│ R2 audio (presigned)│        │                    │
@@ -117,7 +117,7 @@ live findings 需要 eval templates 才有判準；scenario/stage bundles 決定
 
 1. **feature 歸因**：server 已讀 `X-Parley-Feature` 與 `?feature=`，但**兩端都沒送**，所有 hosted 用量落到 `other`/`meeting`。手機上線後成本歸因會完全瞎掉——先讓 client 送
 2. **STT stale session reconciler**：`stt.ts:56-59` 自己標了 TODO，`reconciled` 狀態預留但**沒有 cron**。手機被系統殺掉時 DO 可能來不及 `settle()`，留下 `open` 的 `stt_session` 佔用配額（且併發上限只有 4）——手機場景會頻繁觸發，必須補 cron sweeper
-3. **免費額度重算**：現在免費 20h/月 STT（Soniox $0.002/min ≈ $2.4/月）。手機把「錄音」的門檻從「開筆電」降到「按一下」，時數會數倍成長，額度與定價要重新算
+3. **免費額度重算**：現在免費 20h/月 STT。手機把「錄音」的門檻從「開筆電」降到「按一下」，時數會數倍成長，額度與定價要重新算
 
 ## 6. iOS 端模組（Swift）
 
@@ -125,8 +125,8 @@ live findings 需要 eval templates 才有判準；scenario/stage bundles 決定
 |---|---|---|
 | `AudioCapture` | AVAudioEngine → 16k mono i16（對齊 `TARGET_SAMPLE_RATE`）；`.record` + `UIBackgroundModes: audio`；中斷/路由變更/鎖屏 | 中 |
 | `Recorder` | 邊錄邊寫檔（D9），結束後編 Opus/Ogg（libopus SPM）符合 `audio/ogg` 契約 | 中——libopus on iOS 要驗證 |
-| `SttRelayClient` | WS → `wss://api.parley.tw/stt/stream`，Bearer session token；config frame 照 [`soniox.rs:25`](../../src-tauri/src/transcription/soniox.rs:25) 但省略 `api_key`；`{"type":"keepalive"}` 每 2s、`{"type":"finalize"}` 收尾；**relay 模式絕不關 write half**（否則最後一句被截斷） | 中 |
-| `SegmentBuilder` | 移植 [`common.rs:242`](../../src-tauri/src/transcription/common.rs:242)：speaker-run 累積、同 id 重發 final、`{source}-tail` 的 partial、`<end>`/`<fin>` 驅動 endpoint | **高——最容易出錯，必須有 unit test** |
+| `SttRelayClient` | WS → `wss://api.parley.tw/stt/v2/stream`，Bearer session token；協定見 [`stt-protocol.md`](stt-protocol.md)（`start` frame、`{"type":"keepalive"}`、`{"type":"end"}` 收尾後讀到 `done`），桌機實作見 [`parley.rs`](../../src-tauri/src/transcription/parley.rs) | 中 |
+| `SegmentBuilder` | 移植 [`common.rs:242`](../../src-tauri/src/transcription/common.rs:242)：speaker-run 累積、同 id 重發 final、`{source}-tail` 的 partial、`endpoint`/`finalized` frame 驅動 endpoint | **高——最容易出錯，必須有 unit test** |
 | `SpeakerIdentity` | mix 模式下指定「誰是我」（D7） | 低 |
 | `LiveCoach` | 45s 一次打 `/v1/chat/completions`，複用 timeline live prompt + eval schema | 中 |
 | `SyncClient` | delta pull、presigned 上傳、離線重試佇列 | 中 |

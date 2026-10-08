@@ -11,7 +11,7 @@ export type Source = "me" | "them" | "mix";
 export type SttProviderId = "soniox" | "deepgram" | "assemblyai" | "openai" | "gemini" | "parley";
 
 /**
- * A single transcript segment from a Soniox realtime session.
+ * A single transcript segment from a realtime transcription session.
  * Non-final segments are mutated in place as new tokens arrive; once `isFinal`
  * is true the text is locked and the segment is considered settled.
  */
