@@ -243,6 +243,64 @@ final class FilingSuggesterTests: XCTestCase {
             "the transcript alone is enough to establish the script")
     }
 
+    /// The gate is per character, from the shared list: 说 is let through only
+    /// when the transcript as sent already has 说 — another Simplified
+    /// character elsewhere in the meeting does not vouch for it — while 台 and
+    /// 后, which Traditional text uses too, are never grounds for rejection.
+    func testSimplifiedIsJudgedPerCharacterFromTheSharedList() {
+        XCTAssertTrue(FilingPrompt.simplifiedOnlyChars.contains("说"))
+        XCTAssertFalse(FilingPrompt.simplifiedOnlyChars.contains("台"))
+        XCTAssertFalse(FilingPrompt.simplifiedOnlyChars.contains("后"))
+
+        XCTAssertFalse(
+            FilingSuggester.acceptTitle(
+                "客户说明会", currentTitle: "會議 9/7", transcript: "[0:00] [Speaker A] 我們來談報價。"))
+        XCTAssertFalse(
+            FilingSuggester.acceptTitle(
+                "客户说明会", currentTitle: "會議 9/7", transcript: "[0:00] [Speaker A] 时间到了。"),
+            "a different Simplified character in the transcript does not vouch for 说")
+        XCTAssertTrue(
+            FilingSuggester.acceptTitle(
+                "说明", currentTitle: "會議 9/7", transcript: "[0:00] [Speaker A] 我来说一下。"))
+        XCTAssertTrue(
+            FilingSuggester.acceptTitle(
+                "说明", currentTitle: "说明会 草稿", transcript: "[0:00] [Speaker A] 我們開始。"),
+            "the current title counts as well")
+
+        XCTAssertTrue(
+            FilingSuggester.acceptTitle(
+                "台北後續 台灣 之后", currentTitle: "會議 9/7",
+                transcript: "[0:00] [Speaker A] 我們開始。"))
+    }
+
+    /// The model returning the name the recording already has is it following
+    /// the "return it UNCHANGED" rule. There is nothing to offer, so the title
+    /// half resolves to "" rather than a card proposing a no-op rename.
+    func testRejectsATitleEqualToTheCurrentOne() {
+        XCTAssertFalse(
+            FilingSuggester.acceptTitle(
+                "Acme renewal terms", currentTitle: " Acme renewal terms ", transcript: "y"))
+        XCTAssertFalse(
+            FilingSuggester.acceptTitle(
+                "  Acme renewal terms\n", currentTitle: "Acme renewal terms", transcript: "y"))
+    }
+
+    /// The length cap is in code points too, so an 80-character CJK title
+    /// passes and 81 does not, on every platform alike.
+    func testTheTitleCapCountsCodePoints() {
+        XCTAssertEqual(FilingPrompt.maxTitleCharacters, 80)
+        XCTAssertTrue(
+            FilingSuggester.acceptTitle(
+                String(repeating: "會", count: 80), currentTitle: "x", transcript: "會"))
+        XCTAssertFalse(
+            FilingSuggester.acceptTitle(
+                String(repeating: "會", count: 81), currentTitle: "x", transcript: "會"))
+        // 12 family emoji: 12 graphemes, 84 code points.
+        XCTAssertFalse(
+            FilingSuggester.acceptTitle(
+                String(repeating: "👨‍👩‍👧‍👦", count: 12), currentTitle: "x", transcript: "y"))
+    }
+
     // MARK: the transcript we send
 
     private func segment(
@@ -288,13 +346,43 @@ final class FilingSuggesterTests: XCTestCase {
             + String(repeating: "y", count: 20_000) + "THE DECISION"
         let capped = FilingSuggester.capped(long)
 
-        XCTAssertLessThanOrEqual(
-            capped.count,
-            FilingSuggester.maximumTranscriptCharacters + FilingSuggester.elisionMarker.count)
+        XCTAssertEqual(
+            capped.unicodeScalars.count,
+            FilingPrompt.maxTranscriptCharacters + FilingPrompt.elisionMarker.unicodeScalars.count)
         XCTAssertTrue(capped.hasPrefix("xxx"))
         XCTAssertTrue(capped.hasSuffix("THE DECISION"))
-        XCTAssertTrue(capped.contains(FilingSuggester.elisionMarker))
+        XCTAssertTrue(capped.contains(FilingPrompt.elisionMarker))
         XCTAssertFalse(capped.contains("MIDDLE"))
+    }
+
+    /// The cap counts Unicode code points, not grapheme clusters — what the
+    /// desktop (`Array.from`) and Android (`codePointCount`) count — so all
+    /// three cut a transcript at the same place. A family emoji is one
+    /// grapheme and seven code points; counting graphemes would let seven
+    /// times as much of it through.
+    func testTheCapCountsCodePointsAndSplitsTwoThirdsToTheHead() {
+        let family = "👨‍👩‍👧‍👦"
+        XCTAssertEqual(family.count, 1)
+        XCTAssertEqual(family.unicodeScalars.count, 7)
+
+        let max = FilingPrompt.maxTranscriptCharacters
+        let headCount = max * FilingPrompt.headShareNumerator / FilingPrompt.headShareDenominator
+        XCTAssertEqual(headCount, 16_000)
+        let tailCount = max - headCount
+
+        // 4_000 families = 28_000 code points but only 4_000 graphemes.
+        let long = String(repeating: family, count: 4_000)
+        let capped = FilingSuggester.capped(long)
+        XCTAssertNotEqual(capped, long, "over the limit in code points, though not in graphemes")
+        let parts = capped.components(separatedBy: FilingPrompt.elisionMarker)
+        XCTAssertEqual(parts.count, 2)
+        XCTAssertEqual(parts[0].unicodeScalars.count, headCount)
+        XCTAssertEqual(parts[1].unicodeScalars.count, tailCount)
+
+        // Exactly at the limit is sent whole.
+        let cjk = String(repeating: "會", count: max)
+        XCTAssertEqual(FilingSuggester.capped(cjk), cjk)
+        XCTAssertNotEqual(FilingSuggester.capped(cjk + "議"), cjk + "議")
     }
 
     func testAShortTranscriptIsSentWhole() {
@@ -304,55 +392,126 @@ final class FilingSuggesterTests: XCTestCase {
 
     // MARK: the prompt and the request
 
-    /// The desktop and the phone file the same person's recordings into the same
-    /// registry, so the rules travel verbatim. If a rule is dropped here the two
-    /// platforms start disagreeing about where a meeting belongs, with no test
-    /// failing anywhere else.
-    func testThePromptCarriesTheDesktopsFilingRules() {
-        let prompt = FilingSuggester.systemPrompt
+    /// Every piece of the system message comes out of the shared prompt
+    /// (`shared/prompts/filing.json` → `FilingPrompt`), in the one order all
+    /// three platforms use: rules, language, JSON shape.
+    func testTheSystemPromptIsTheSharedRulesThenLanguageThenJSON() {
+        XCTAssertEqual(
+            FilingSuggester.systemPrompt(language: .traditionalChinese),
+            FilingPrompt.rules + FilingPrompt.languageInstructionZhTW + FilingPrompt.jsonInstruction)
+        XCTAssertEqual(
+            FilingSuggester.systemPrompt(language: .english),
+            FilingPrompt.rules + FilingPrompt.languageInstructionEn + FilingPrompt.jsonInstruction)
+    }
+
+    func testThePromptCarriesTheSharedFilingRules() {
+        let prompt = FilingSuggester.systemPrompt(language: .english)
         XCTAssertTrue(prompt.contains("No date and no time."))
         XCTAssertTrue(prompt.contains("Copy an existing folder's name EXACTLY"))
         XCTAssertTrue(prompt.contains("AT MOST ONE candidate"))
-        XCTAssertTrue(prompt.contains("2-3 candidates ordered best-first"))
-    }
-
-    func testThePromptAsksForJSONInWords() {
-        let prompt = FilingSuggester.systemPrompt
         XCTAssertTrue(prompt.contains("\"isNew\": boolean"))
         XCTAssertTrue(prompt.contains("no code fences"))
     }
 
-    func testTheUserMessageNamesTheCurrentTitleTheMenuAndTheTranscript() {
+    /// The title follows the app's UI language, resolved the way the rest of
+    /// the app resolves it: any `zh` localization is Traditional Chinese.
+    func testTheLanguageFollowsTheUILocalization() {
+        XCTAssertEqual(FilingSuggester.Language(localization: "zh-Hant"), .traditionalChinese)
+        XCTAssertEqual(FilingSuggester.Language(localization: "zh-Hant-TW"), .traditionalChinese)
+        XCTAssertEqual(FilingSuggester.Language(localization: "zh-TW"), .traditionalChinese)
+        XCTAssertEqual(FilingSuggester.Language(localization: "en"), .english)
+        XCTAssertEqual(FilingSuggester.Language(localization: "ja"), .english)
+    }
+
+    /// The user message, byte for byte: context, current title, folder menu,
+    /// transcript — the order the desktop and Android send.
+    func testTheUserMessageWithMeetingContext() {
         let message = FilingSuggester.userMessage(
-            currentTitle: "  Meeting Sep 7, 3:20 PM  ", folders: folders,
-            transcript: "[0:00] [Speaker 1] Hello.")
-        XCTAssertTrue(message.contains("currently called: Meeting Sep 7, 3:20 PM"))
-        XCTAssertTrue(message.contains("- Hiring"))
-        XCTAssertTrue(message.hasSuffix("Transcript:\n[0:00] [Speaker 1] Hello."))
+            meetingContext: "  Renewal call with Acme  ",
+            currentTitle: "  Meeting Sep 7, 3:20 PM  ",
+            folders: [folder("f-acme", " Acme Corp "), folder("f-blank", "   "),
+                folder("f-s", "Sales", orgId: "org-1"), folder("f-ops", "Ops")],
+            transcript: "[0:00] [Speaker A] Hello.")
+        XCTAssertEqual(
+            message,
+            FilingPrompt.meetingContextPrefix + "Renewal call with Acme\n\n"
+                + FilingPrompt.currentTitlePrefix + "Meeting Sep 7, 3:20 PM\n\n"
+                + FilingPrompt.foldersHeader + "\n- Acme Corp\n- Ops\n\n"
+                + FilingPrompt.transcriptHeader + "\n[0:00] [Speaker A] Hello.")
     }
 
-    /// An untitled recording must not send an empty line the model reads as "the
-    /// title is blank on purpose".
-    func testABlankCurrentTitleIsSpelledOut() {
-        XCTAssertTrue(
-            FilingSuggester.userMessage(currentTitle: "   ", folders: [], transcript: "x")
-                .contains("currently called: (untitled)"))
+    func testTheUserMessageWithoutContextLeavesTheLineOut() {
+        let message = FilingSuggester.userMessage(
+            meetingContext: "   ", currentTitle: "Standup", folders: [folder("f-ops", "Ops")],
+            transcript: "x")
+        XCTAssertEqual(
+            message,
+            FilingPrompt.currentTitlePrefix + "Standup\n\n"
+                + FilingPrompt.foldersHeader + "\n- Ops\n\n"
+                + FilingPrompt.transcriptHeader + "\nx")
     }
 
-    func testTheRequestUsesTheFastModelAndNoResponseFormat() throws {
-        let body = try JSONEncoder().encode(
-            CloudChat.Request(
-                model: FilingSuggester.model, temperature: 0.2, maxTokens: 512,
-                messages: [
-                    .init(role: "system", content: FilingSuggester.systemPrompt),
-                    .init(role: "user", content: "…"),
-                ]))
+    /// No folders (or only org ones, which the user cannot file into): the model
+    /// is told to propose exactly one, and an untitled recording is spelled out
+    /// rather than sent as an empty line.
+    func testTheUserMessageWithNoFoldersAndNoTitle() {
+        let message = FilingSuggester.userMessage(
+            meetingContext: "", currentTitle: "   ",
+            folders: [folder("f-s", "Sales", orgId: "org-1")], transcript: "x")
+        XCTAssertEqual(
+            message,
+            FilingPrompt.currentTitlePrefix + FilingPrompt.untitled + "\n\n"
+                + FilingPrompt.noFolders + "\n\n"
+                + FilingPrompt.transcriptHeader + "\nx")
+    }
+
+    func testTheRequestReadsModelTemperatureAndTokensFromTheSharedPrompt() throws {
+        let request = FilingSuggester.request(
+            meetingContext: "", currentTitle: "t", folders: [], transcript: "x",
+            language: .traditionalChinese)
+        let body = try JSONEncoder().encode(request)
         let obj = try XCTUnwrap(try JSONSerialization.jsonObject(with: body) as? [String: Any])
-        XCTAssertEqual(obj["model"] as? String, "parley-fast")
-        XCTAssertEqual(obj["max_tokens"] as? Int, 512, "snake_case, as the OpenAI shape wants")
+        XCTAssertEqual(obj["model"] as? String, FilingPrompt.model)
+        XCTAssertEqual(obj["temperature"] as? Double, FilingPrompt.temperature)
+        XCTAssertEqual(obj["max_tokens"] as? Int, FilingPrompt.maxTokens, "snake_case, as the OpenAI shape wants")
         XCTAssertNil(
             obj["response_format"],
             "unverified against the worker; a rejected request costs the whole pass")
+        let messages = try XCTUnwrap(obj["messages"] as? [[String: Any]])
+        XCTAssertEqual(messages.map { $0["role"] as? String }, ["system", "user"])
+        XCTAssertEqual(
+            messages[0]["content"] as? String,
+            FilingSuggester.systemPrompt(language: .traditionalChinese))
+        XCTAssertEqual(
+            messages[1]["content"] as? String,
+            FilingSuggester.userMessage(
+                meetingContext: "", currentTitle: "t", folders: [], transcript: "x"))
+    }
+
+    // MARK: gating the whole answer
+
+    func testAnUnchangedTitleIsDroppedButTheFoldersSurvive() throws {
+        let payload = try XCTUnwrap(FilingSuggester.parse(
+            #"{"title":" Acme renewal ","folders":[{"name":"Acme Corp","isNew":false,"reason":"customer"}]}"#))
+        let gated = FilingSuggester.gate(
+            payload, currentTitle: "Acme renewal", folders: folders, transcript: "x")
+        XCTAssertEqual(gated?.title, "")
+        XCTAssertEqual(gated?.folders.map(\.folderId), ["f-acme"])
+    }
+
+    func testNothingLeftStandingIsNoSuggestion() throws {
+        let payload = try XCTUnwrap(FilingSuggester.parse(#"{"title":"Acme renewal","folders":[]}"#))
+        XCTAssertNil(
+            FilingSuggester.gate(payload, currentTitle: "Acme renewal", folders: folders, transcript: "x"))
+    }
+
+    // MARK: the meta the pass reads
+
+    func testMeetingContextIsReadFromTheMeta() {
+        XCTAssertEqual(
+            RecordingMeta(raw: ["meetingContext": "Acme renewal"]).meetingContext, "Acme renewal")
+        XCTAssertEqual(RecordingMeta(raw: [:]).meetingContext, "")
+        XCTAssertEqual(RecordingMeta(raw: ["meetingContext": NSNull()]).meetingContext, "")
     }
 
     // MARK: the flag the desktop reads

@@ -10,6 +10,7 @@ Lives in the main repo as `ios/` alongside the desktop app, `android/`, and `web
 - `SonioxProtocol` + `SonioxStreamParser` — the Soniox realtime wire protocol as spoken through Parley's hosted STT relay (`wss://api.parley.tw/stt/stream`): config frame without vendor key, `keepalive`/`finalize` control frames, `<end>`/`<fin>` endpoint markers, error frames
 - `SttRelayClient` — `URLSessionWebSocketTask` relay session honoring the drain rule (never close the socket after `finalize`; the relay flushes the tail first)
 - `EditDiff` + `Lexicon`/`LexiconStore` + `LexiconCapture` — the personal dictionary the voice keyboard learns from post-dictation corrections (the phone's counterpart to the desktop's `src/lib/dictionary/`). See [`../docs/design/ios-voice-keyboard.md`](../docs/design/ios-voice-keyboard.md)
+- `SnippetStore` / `SnippetValidation` / `RevertOffer` — the keyboard's 常用資訊 (saved info) and its format hints, and the strip's 「換回原文」 chip; see "The strip slot and saved info" in the keyboard's design doc. `RetiredClipboard` sweeps what 1.30's removed clipboard history left in the App Group
 - `ZhuyinSyllable` / `ZhuyinDachen` / `ZhuyinComposer` / `ZhuyinDictionary` — 傳統注音 input for the keyboard's 注音 pane: the 大千 layout, slot-based syllable composition, and frequency-ordered single-character candidates
 
 Design doc: [`../docs/design/ios-app.md`](../docs/design/ios-app.md). Cloud prerequisites are tracked in parley-internal (Phase 0 epic).

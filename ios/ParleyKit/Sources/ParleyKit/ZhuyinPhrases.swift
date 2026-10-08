@@ -15,8 +15,17 @@ import Foundation
 /// Rank is the file's order and nothing else — `scripts/gen-zhuyin-phrases.mjs`
 /// scores every row (a damped corpus count, plus how ordinary the phrase's
 /// characters are, plus a floor under everyday words a news corpus barely
-/// contains) and writes them in that order, so this class carries no scores and
-/// does no sorting.
+/// contains) and writes them in that order, so the bar does no sorting.
+///
+/// **Each row also carries that score as a log10 probability** (`Match.score`),
+/// on McBopomofo's scale and against the same normaliser as the dictionary's
+/// character scores. The bar never reads it. It is for `ZhuyinComposer.best`,
+/// whose lattice has to weigh a phrase against the characters that would spell
+/// it — a question rank cannot answer, because rank only compares phrases with
+/// each other. Within one length it is monotone in rank, so the first exact
+/// match of a span is also its highest-scoring one, and the walk and the bar
+/// never disagree about which phrase answers a span. A `Float` beside the rank
+/// fills what was padding in the row, so a row is still 32 bytes.
 ///
 /// **Loaded lazily, never twice at once, and dropped under pressure**, like
 /// `ZhuyinDictionary` and for the same reason: this runs inside a keyboard
@@ -54,11 +63,15 @@ public final class ZhuyinPhrases {
         /// How many typed syllables had to be forgiven a wrong symbol for this to
         /// match — 0 for an exact match, at most one per syllable compared.
         public let errors: Int
+        /// The row's log10 probability, for the lattice. The bar's order is
+        /// rank, never this.
+        public let score: Float
 
-        public init(phrase: String, span: Int, errors: Int = 0) {
+        public init(phrase: String, span: Int, errors: Int = 0, score: Float = 0) {
             self.phrase = phrase
             self.span = span
             self.errors = errors
+            self.score = score
         }
     }
 
@@ -79,11 +92,12 @@ public final class ZhuyinPhrases {
         Bundle.module.url(forResource: "zhuyin-phrases", withExtension: "txt")
     }
 
-    /// One row. 24 bytes of fields in a 32-byte stride, and no heap of its own
-    /// for any phrase of four BMP characters or fewer — Swift keeps a string of
-    /// up to 15 UTF-8 bytes inline, and a CJK character is three. The reading it
-    /// replaced was 20-odd bytes of 注音, always past that, so every row used to
-    /// own a heap allocation it no longer does.
+    /// One row. 32 bytes — the phrase, the packed reading, the rank and the
+    /// score, the last filling what used to be the stride's padding — and no
+    /// heap of its own for any phrase of four BMP characters or fewer: Swift
+    /// keeps a string of up to 15 UTF-8 bytes inline, and a CJK character is
+    /// three. The reading it replaced was 20-odd bytes of 注音, always past that,
+    /// so every row used to own a heap allocation it no longer does.
     struct Entry {
         let phrase: String
         /// Syllable `i` packed (`ZhuyinSyllable.packed`) in bits `16i..<16i+16`.
@@ -94,12 +108,26 @@ public final class ZhuyinPhrases {
         /// lookup reads more than one bucket: each bucket is in file order, but
         /// forgiven matches drawn from several must be merged back into it.
         let rank: UInt32
+        /// The row's log10 probability (`Match.score`).
+        let score: Float
 
         /// Parse one row. `nil` for anything a lookup could never answer with —
         /// fewer than two syllables or more than four, one that does not parse,
         /// or a phrase whose character count is not its syllable count (one
         /// character is one syllable, which is what `pick` relies on).
-        init?(phrase: String, reading: Substring, rank: UInt32) {
+        ///
+        /// `reading` is everything after the phrase's tab: the syllables, and
+        /// then, after a second tab, the score. A row with no score column — a
+        /// fixture, or a resource from before the column — scores `fallback`.
+        init?(phrase: String, reading columns: Substring, rank: UInt32, fallback: Float? = nil) {
+            var reading = columns
+            var score = fallback ?? Self.score(forRank: rank)
+            if let tab = columns.firstIndex(of: "\t") {
+                reading = columns[columns.startIndex..<tab]
+                if let parsed = Self.parseScore(columns[columns.index(after: tab)...]) {
+                    score = parsed
+                }
+            }
             var packed: UInt64 = 0
             var count = 0
             for part in reading.split(separator: " ", omittingEmptySubsequences: true) {
@@ -112,6 +140,56 @@ public final class ZhuyinPhrases {
             self.phrase = phrase
             self.reading = packed
             self.rank = rank
+            self.score = score
+        }
+
+        /// What a row with no score column is worth: about a common phrase
+        /// (台灣 is −2.2, 你好 −3.1), falling a hair with rank so a fixture's
+        /// order still decides between two of one length. Above two
+        /// `ZhuyinDictionary.defaultScore` characters, so in a fixture a phrase
+        /// beats the characters that would spell it — what every test written
+        /// before scores expected of `best`.
+        static func score(forRank rank: UInt32) -> Float {
+            -3 - Float(min(rank, 1_000)) * 0.001
+        }
+
+        /// A score as the generator writes it — `-3.07` — read without going
+        /// through `Float(String)`, which would allocate a string per row on the
+        /// parse that already dominates a warm. `nil` for anything else.
+        static func parseScore(_ text: Substring) -> Float? {
+            var negative = false
+            var whole: Int = 0
+            var fraction: Int = 0
+            var scale: Int = 1
+            var seenDigit = false
+            var inFraction = false
+            for byte in text.utf8 {
+                switch byte {
+                case UInt8(ascii: "-") where !seenDigit && !negative && !inFraction:
+                    negative = true
+                case UInt8(ascii: "."):
+                    guard !inFraction else { return nil }
+                    inFraction = true
+                case UInt8(ascii: "0")...UInt8(ascii: "9"):
+                    seenDigit = true
+                    let digit = Int(byte - UInt8(ascii: "0"))
+                    if inFraction {
+                        guard scale < 1_000_000 else { continue }
+                        fraction = fraction * 10 + digit
+                        scale *= 10
+                    } else {
+                        guard whole < 1_000_000 else { return nil }
+                        whole = whole * 10 + digit
+                    }
+                case UInt8(ascii: "\r"):
+                    continue
+                default:
+                    return nil
+                }
+            }
+            guard seenDigit else { return nil }
+            let value = Float(whole) + Float(fraction) / Float(scale)
+            return negative ? -value : value
         }
 
         /// The syllable count, which is also the character count.
@@ -158,11 +236,24 @@ public final class ZhuyinPhrases {
     private(set) var parseCount = 0
 
     /// Build from rows given directly. This is how tests get a fixture whose
-    /// order they control, rather than one the corpus decides.
+    /// order they control, rather than one the corpus decides. Each row scores
+    /// what its rank says (`Entry.score(forRank:)`).
     public init(entries: [(phrase: String, reading: String)]) {
         index = Self.indexed(
             entries.enumerated().compactMap { rank, row in
                 Entry(phrase: row.phrase, reading: row.reading[...], rank: UInt32(rank))
+            })
+    }
+
+    /// Build from rows with scores of their own, for the tests that are about
+    /// the lattice weighing a phrase against characters — where the numbers,
+    /// not the order, are the point.
+    public init(scoredEntries: [(phrase: String, reading: String, score: Float)]) {
+        index = Self.indexed(
+            scoredEntries.enumerated().compactMap { rank, row in
+                Entry(
+                    phrase: row.phrase, reading: row.reading[...], rank: UInt32(rank),
+                    fallback: row.score)
             })
     }
 
@@ -277,7 +368,7 @@ public final class ZhuyinPhrases {
             guard Self.errors(of: entry, against: patterns) == 0 else { continue }
             guard seen.insert(entry.phrase).inserted else { continue }
             let span = entry.span
-            let match = Match(phrase: entry.phrase, span: span)
+            let match = Match(phrase: entry.phrase, span: span, score: entry.score)
             if span == typed.count {
                 exact.append(match)
                 // Nothing below the first group can reach the bar any more.
@@ -328,6 +419,33 @@ public final class ZhuyinPhrases {
         }
         out += picked
         return out
+    }
+
+    /// The best phrase that covers **exactly** these syllables — all of them
+    /// and no more — with nothing forgiven, or `nil`. The lattice's question
+    /// for one span: `matches` answers a bigger one (longer predictions, shorter
+    /// prefixes, forgiven rows) and this is asked up to a dozen times a
+    /// refresh, so it reads only the typed key's bucket and stops at the first
+    /// row that fits. File order is rank order and the score is monotone in
+    /// rank within a length, so that first row is the span's best.
+    public func exactCover(_ window: [ZhuyinSyllable]) -> Match? {
+        guard (2...4).contains(window.count), let first = Self.leading(window[0]),
+            let second = Self.leading(window[1])
+        else { return nil }
+        let patterns = window.map { Pattern($0, fuzzy: false) }
+        for entry in load()[String([first, second])] ?? [] where entry.span == window.count {
+            guard Self.errors(of: entry, against: patterns) == 0 else { continue }
+            return Match(phrase: entry.phrase, span: entry.span, score: entry.score)
+        }
+        return nil
+    }
+
+    /// The best phrase covering exactly these syllables that needed a wrong
+    /// symbol forgiven: fewest errors first, then rank — the order `matches`
+    /// already ranks its forgiving half in, read from it.
+    public func forgivenCover(_ window: [ZhuyinSyllable]) -> Match? {
+        guard (2...4).contains(window.count) else { return nil }
+        return matches(window).first { $0.span == window.count && $0.errors > 0 }
     }
 
     // MARK: matching
@@ -416,7 +534,10 @@ public final class ZhuyinPhrases {
             for order in capacity < .max ? orders : orders.sorted() where out.count < limit {
                 let entry = buckets[Int(order >> 16 & 0xFFFF)][Int(order & 0xFFFF)]
                 guard seen.insert(entry.phrase).inserted else { continue }
-                out.append(Match(phrase: entry.phrase, span: entry.span, errors: Int(order >> 60)))
+                out.append(
+                    Match(
+                        phrase: entry.phrase, span: entry.span, errors: Int(order >> 60),
+                        score: entry.score))
             }
             return out
         }

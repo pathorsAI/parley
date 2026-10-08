@@ -8,7 +8,7 @@ import { runAnalysis } from "../lib/analysis/engine";
 import { saveUploadToHistory } from "../lib/history/history";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
-import { DestinationPicker } from "./DestinationPicker";
+import { DestinationField } from "./DestinationSheet";
 import { Input } from "@/components/ui/input";
 import { MeetingContextField } from "./MeetingContextField";
 import { ReplayTranscript } from "./replay/ReplayTranscript";
@@ -339,10 +339,13 @@ export function IngestWizard() {
                   so picking the destination here is all the filing this needs. */}
               <div className="flex flex-col gap-1.5">
                 <span className="text-[11px] text-muted-foreground">{t("owner.label")}</span>
-                <DestinationPicker
+                <DestinationField
                   gateOnSync
+                  verb="save"
+                  title={t("dest.title.save")}
                   value={destination}
                   mode={orgShare?.mode ?? null}
+                  fresh={meetingFolderId === null && !orgShare}
                   onChange={pickDestination}
                 />
               </div>

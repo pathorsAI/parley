@@ -222,6 +222,41 @@ public final class DictationHistoryStore: @unchecked Sendable {
         return kept
     }
 
+    /// Rewrite one entry's text with a correction the user made from the
+    /// history ("Fix this word"), by the same matching rule the personal
+    /// dictionary applies (`Lexicon.substitute`). Returns the history after the
+    /// write.
+    ///
+    /// **The original words are kept.** `rawText` is what the user actually
+    /// said, before the polish; correcting the entry is about the words they
+    /// meant, which is a different question, so `rawText` is never touched —
+    /// and for an entry that had none, because the text *was* the raw
+    /// transcript, the text as it was becomes `rawText`, so "Show original"
+    /// still has the uncorrected words to show. An entry the correction does
+    /// not occur in is left exactly as it was. Not gated on the history
+    /// switch: that decides whether new dictations are kept, not whether kept
+    /// ones can be edited.
+    @discardableResult
+    public func correct(id: UUID, original: String, replacement: String) -> [DictationHistoryEntry] {
+        lock.lock()
+        defer { lock.unlock() }
+        var entries = read()
+        if let i = entries.firstIndex(where: { $0.id == id }) {
+            let before = entries[i].text
+            let (after, hits) = Lexicon.substitute(original, with: replacement, in: before)
+            if hits > 0, after != before {
+                if entries[i].rawText == nil { entries[i].rawText = before }
+                entries[i].text = after
+                // The normalisation `init` applies: no `rawText` that says the
+                // same thing as `text`.
+                if entries[i].rawText == after { entries[i].rawText = nil }
+            }
+        }
+        let kept = prune(entries)
+        write(kept)
+        return kept
+    }
+
     /// "Clear all": the file goes, not just its contents.
     public func clearAll() {
         lock.lock()

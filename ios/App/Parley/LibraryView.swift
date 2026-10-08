@@ -129,6 +129,9 @@ struct LibraryView: View {
                 prompt: section == .meetings
                     ? Text("Search titles and snippets") : Text("Search voice typing"))
             .task(id: "\(scope ?? "personal")-\(app.signedIn)") { await load() }
+            // A recording renamed or filed from another tab (the record
+            // screen's filing card): reload, so the row shows the new name.
+            .onChange(of: app.libraryRevision) { _, _ in Task { await load() } }
             // `parley://demo/transcript` pushes the demo recording, so the
             // transcript frame is captured through the real navigation stack
             // (back chevron and all) rather than as a detached view.
@@ -924,11 +927,15 @@ struct LibraryView: View {
                 try await app.cloud.moveOrgRecordingToFolder(
                     orgId: orgId, id: rec.id, folderId: folderId)
             } else {
+                // The row this list holds can be older than the recording —
+                // renamed on the record screen or on the Mac since the list
+                // loaded — so the summary is rebuilt from the meta just read,
+                // never carried over from `rec`.
                 var meta = try await app.cloud.recordingMeta(id: rec.id)
                 meta.folderId = folderId
-                var summary = rec
-                summary.folderId = folderId
-                try await app.cloud.pushRecording(id: rec.id, summary: summary, meta: meta)
+                try await app.cloud.pushRecording(
+                    id: rec.id, summary: CloudRecordingSummary(projecting: meta, fallback: rec),
+                    meta: meta)
             }
             if folderId != nil { gettingStarted.mark(.filed) }
             await load()

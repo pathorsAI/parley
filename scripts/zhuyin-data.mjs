@@ -47,8 +47,21 @@ export const SYMBOLS = new Set([...INITIALS, ...MEDIALS, ...FINALS, ...TONES]);
 /// Fetch the McBopomofo data files at one pinned commit — see
 /// `resource-data.mjs` for why the download is pinned rather than taken from a
 /// branch.
+///
+/// `MCBOPOMOFO_COMMIT=<sha>` skips resolving the branch and builds from that
+/// commit instead. The 注音 resources are read together at runtime — the
+/// lattice adds a phrase's score to its characters' — so they must come from
+/// one commit; rebuilding one of them after upstream has moved would mix two.
+/// Pass the commit the committed headers name unless the point of the run is
+/// to take a new upstream, and then rebuild all three.
 export function downloadData(files, prefix) {
-  return downloadPinned({ repo: REPO, branch: BRANCH, files, prefix });
+  return downloadPinned({
+    repo: REPO,
+    branch: BRANCH,
+    commit: process.env.MCBOPOMOFO_COMMIT,
+    files,
+    prefix,
+  });
 }
 
 /// The provenance block both 注音 headers end with, with this repository bound.
@@ -105,4 +118,40 @@ export function wellFormed(reading) {
 export function compare(a, b) {
   if (a < b) return -1;
   return a > b ? 1 : 0;
+}
+
+/// McBopomofo's length bonus: a phrase one character longer counts as if the
+/// corpus had seen it 2.7 times as often. Their `frequency_builder.py` (MIT)
+/// scales every count by `FSCALE ** (length - 1)` before normalising, because a
+/// raw count under-rates long phrases against the single characters that could
+/// spell them — each of those characters is counted every time it appears in
+/// *any* word. Kept at their value so the lattice weighs a phrase against its
+/// characters the way their walk does.
+export const FSCALE = 2.7;
+
+/// The normaliser every log-probability is taken against: the sum of every
+/// `phrase.occ` count, single characters included, each scaled by `FSCALE` for
+/// its length — exactly `norm` in McBopomofo's `frequency_builder.py`. One
+/// normaliser for both tables is what makes a phrase's score and the sum of its
+/// characters' scores comparable, which is the whole question a lattice asks.
+export function corpusNorm(frequency) {
+  let norm = 0;
+  for (const [phrase, count] of frequency) {
+    norm += FSCALE ** ([...phrase].length - 1) * count;
+  }
+  return norm;
+}
+
+/// `log10(FSCALE^(length-1) * count / norm)`, McBopomofo's unigram score. A
+/// count below one is taken as one half, as theirs is, so a word the corpus
+/// never saw still has a finite score rather than minus infinity.
+export function log10Probability(count, length, norm) {
+  return Math.log10((FSCALE ** (length - 1) * Math.max(count, 0.5)) / norm);
+}
+
+/// A score as the resources write it: two decimals of a log10. That is 2% in
+/// probability — far finer than anything the lattice decides on — and it keeps
+/// the column to five or six bytes a row.
+export function formatScore(score) {
+  return score.toFixed(2);
 }

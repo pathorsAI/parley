@@ -62,6 +62,10 @@ public actor SttRelayClient {
         /// Advisory model name; the relay forces the real model server-side.
         public var model: String
         public var languageHints: [String]?
+        /// Terms to bias recognition toward, best first — sent as Soniox's
+        /// `context.terms` after `SonioxProtocol.context(for:)` cleans and caps
+        /// them. Empty sends no `context` at all.
+        public var vocabulary: [String]
         /// Billing attribution (`?feature=`) — parley-internal#29.
         public var feature: String
         /// Stem for committed segment ids, defaulting to the source (`mix`).
@@ -75,13 +79,14 @@ public actor SttRelayClient {
         public init(
             relayURL: URL = URL(string: "wss://api.parley.tw/stt/stream")!,
             bearerToken: String, model: String = "stt-rt-v5",
-            languageHints: [String]? = nil, feature: String = "meeting",
-            idPrefix: String? = nil, timeOffsetMs: UInt64 = 0
+            languageHints: [String]? = nil, vocabulary: [String] = [],
+            feature: String = "meeting", idPrefix: String? = nil, timeOffsetMs: UInt64 = 0
         ) {
             self.relayURL = relayURL
             self.bearerToken = bearerToken
             self.model = model
             self.languageHints = languageHints
+            self.vocabulary = vocabulary
             self.feature = feature
             self.idPrefix = idPrefix
             self.timeOffsetMs = timeOffsetMs
@@ -167,7 +172,8 @@ public actor SttRelayClient {
 
         // Relay mode: api_key stays nil; the relay injects the master key.
         let config = SonioxProtocol.Config(
-            apiKey: nil, model: options.model, languageHints: options.languageHints)
+            apiKey: nil, model: options.model, languageHints: options.languageHints,
+            context: SonioxProtocol.context(for: options.vocabulary))
         let encoder = JSONEncoder()
         let frame = String(data: try encoder.encode(config), encoding: .utf8)!
         try await task.send(.string(frame))

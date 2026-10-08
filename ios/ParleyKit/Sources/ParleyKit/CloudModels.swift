@@ -378,6 +378,40 @@ extension RecordingMeta {
 }
 
 extension CloudRecordingSummary {
+    /// The library row, rebuilt from the meta it is being pushed beside — the
+    /// way the desktop derives its summary from the entry on every save.
+    ///
+    /// Every push of a recording goes through here so that the two halves can
+    /// never disagree: the library lists the summary and the report reads the
+    /// meta, and a summary carried over from an older read (a library row, a
+    /// detail screen's `let`, a request queued days ago) is what put an old
+    /// title back in the list over a rename that had already landed in the
+    /// meta. Callers fetch the meta fresh, change what they own, and push it
+    /// with this.
+    ///
+    /// `fallback` only fills what a meta too sparse to describe itself cannot
+    /// — an id, a title, a creation time — and says whether the audio is in
+    /// the cloud when the meta does not. The folder is the meta's, always,
+    /// nil included: a fallback folder would turn a push into a move.
+    public init(projecting meta: RecordingMeta, fallback: CloudRecordingSummary? = nil) {
+        let finals = meta.segments.filter { $0.isFinal }
+        let audio = (meta.raw["audio"] as? String ?? "").trimmingCharacters(in: .whitespaces)
+        self.init(
+            id: meta.id.isEmpty ? (fallback?.id ?? "") : meta.id,
+            title: meta.title.isEmpty ? (fallback?.title ?? "") : meta.title,
+            source: (meta.raw["source"] as? String) ?? fallback?.source ?? "live",
+            createdAt: meta.createdAt > 0 ? meta.createdAt : (fallback?.createdAt ?? 0),
+            durationMs: max(meta.durationMs, fallback?.durationMs ?? 0),
+            speakerCount: Self.speakerCount(of: finals),
+            findingsCount: (meta.raw["findings"] as? [Any])?.count ?? 0,
+            actionItemsCount: (meta.raw["actionItems"] as? [Any])?.count ?? 0,
+            hasAudio: !audio.isEmpty || (fallback?.hasAudio ?? false),
+            snippet: Self.snippet(of: finals),
+            folderId: meta.folderId,
+            // Server push time is the server's to set.
+            updatedAt: nil)
+    }
+
     /// How many people the transcript accounts for. A transcript with turns in
     /// it always has at least one speaker, even when every turn came back
     /// unattributed.

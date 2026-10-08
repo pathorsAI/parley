@@ -6,35 +6,26 @@ import {
   CloudCheck,
   CloudDownload,
   CloudOff,
-  Folder,
-  FolderClosed,
   FolderInput,
   ListChecks,
   Loader2,
   Mic,
   Pencil,
   RefreshCw,
-  Share2,
   Sparkles,
   Trash2,
   Upload,
   Users,
-  UsersRound,
   Volume2,
-  X,
 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useI18n } from "../../i18n";
-import { Button } from "@/components/ui/button";
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuLabel,
   ContextMenuSeparator,
-  ContextMenuSub,
-  ContextMenuSubContent,
-  ContextMenuSubTrigger,
   ContextMenuTrigger,
   openMenuFromKeyboard,
   preventFocusRestore,
@@ -124,301 +115,44 @@ function cardCapabilities(
   };
 }
 
-/** Where a card can be filed: the scope's folders, plus taking it back out of
- *  one. Shared so the toolbar popover and the right-click submenu can't drift
- *  into naming the same destination two different things. */
-function moveTargets(
-  t: ReturnType<typeof useI18n>["t"],
-  folders: LocalFolder[]
-): { id: string | null; name: string }[] {
-  return [
-    { id: null, name: t("history.move.rootOption") },
-    ...folders.map((f) => ({ id: f.id, name: f.name })),
-  ];
-}
-
-/** Shared scrim + popover chrome for the two card menus. */
-function MenuShell({
-  title,
-  onClose,
-  children,
-}: Readonly<{ title: string; onClose: () => void; children: React.ReactNode }>) {
-  const { t } = useI18n();
-  return (
-    <>
-      <button
-        type="button"
-        aria-label={t("common.cancel")}
-        className="fixed inset-0 z-30"
-        onClick={(ev) => {
-          ev.stopPropagation();
-          onClose();
-        }}
-        onKeyDown={(ev) => {
-          if (ev.key === "Enter" || ev.key === " " || ev.key === "Escape") {
-            ev.preventDefault();
-            ev.stopPropagation();
-            onClose();
-          }
-        }}
-      />
-      {/* stopPropagation: the popover floats inside a clickable card — menu
-          interactions must not bubble into the card's own open handler. */}
-      <div
-        role="menu"
-        aria-label={title}
-        // -1: programmatically focusable (the interactive role requires it);
-        // the menu items themselves are the tab stops.
-        tabIndex={-1}
-        className="absolute right-0 top-7 z-40 max-h-64 min-w-40 overflow-y-auto rounded-md border bg-popover p-1 shadow-md"
-        onClick={(ev) => ev.stopPropagation()}
-        onKeyDown={(ev) => ev.stopPropagation()}
-      >
-        <div className="px-2 py-1 text-[11px] font-semibold text-muted-foreground">
-          {title}
-        </div>
-        {children}
-      </div>
-    </>
-  );
-}
-
-function MoveMenu({
-  folders,
-  currentFolderId,
-  onMove,
-}: Readonly<{
-  folders: LocalFolder[];
-  currentFolderId: string | null;
-  onMove: (folderId: string | null) => void;
-}>) {
-  const { t } = useI18n();
-  const [open, setOpen] = useState(false);
-  const options = moveTargets(t, folders);
-  return (
-    <div className="relative">
-      <button
-        type="button"
-        aria-label={t("history.move.button")}
-        title={t("history.move.button")}
-        onClick={(ev) => {
-          ev.stopPropagation();
-          setOpen((v) => !v);
-        }}
-        className="grid size-6 place-items-center rounded-md bg-background/70 text-muted-foreground backdrop-blur transition-colors hover:bg-muted hover:text-foreground"
-      >
-        <FolderInput className="size-3.5" />
-      </button>
-      {open && (
-        <MenuShell title={t("history.move.menuTitle")} onClose={() => setOpen(false)}>
-          {options.map((o) => {
-            const current = (currentFolderId ?? null) === o.id;
-            return (
-              <button
-                key={o.id ?? "__root"}
-                type="button"
-                disabled={current}
-                onClick={(ev) => {
-                  ev.stopPropagation();
-                  setOpen(false);
-                  onMove(o.id);
-                }}
-                className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-xs hover:bg-muted disabled:opacity-60 disabled:hover:bg-transparent"
-              >
-                {o.id === null ? (
-                  <FolderClosed className="size-3 shrink-0" />
-                ) : (
-                  <Folder className="size-3 shrink-0" />
-                )}
-                <span className="truncate">{o.name}</span>
-                {current && <Check className="ml-auto size-3 shrink-0" />}
-              </button>
-            );
-          })}
-        </MenuShell>
-      )}
-    </div>
-  );
-}
-
 /**
- * Pick an org FOLDER to hand this recording to; the copy-or-move choice follows.
- *
- * Each org lists its own folders under it, because dropping every shared
- * recording at the org root just moved the filing problem across the boundary —
- * the folders were right there in the sidebar, and the only way into one was to
- * share first and re-file afterwards.
- */
-function ShareMenu({
-  orgs,
-  orgFolders,
-  sharing,
-  onPick,
-}: Readonly<{
-  orgs: CloudOrg[];
-  /** Shared folders per org id; a missing entry just means "not loaded yet". */
-  orgFolders: Record<string, LocalFolder[]>;
-  sharing: boolean;
-  onPick: (org: CloudOrg, folderId: string | null) => void;
-}>) {
-  const { t } = useI18n();
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="relative">
-      <button
-        type="button"
-        aria-label={t("history.share.button")}
-        title={t("history.share.button")}
-        disabled={sharing}
-        onClick={(ev) => {
-          ev.stopPropagation();
-          setOpen((v) => !v);
-        }}
-        className="grid size-6 place-items-center rounded-md bg-background/70 text-muted-foreground backdrop-blur transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
-      >
-        {sharing ? <Loader2 className="size-3.5 animate-spin" /> : <Share2 className="size-3.5" />}
-      </button>
-      {open && (
-        <MenuShell title={t("history.share.menuTitle")} onClose={() => setOpen(false)}>
-          {orgs.map((o) => (
-            <div key={o.id}>
-              <button
-                type="button"
-                onClick={(ev) => {
-                  ev.stopPropagation();
-                  setOpen(false);
-                  onPick(o, null);
-                }}
-                className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-xs hover:bg-muted"
-              >
-                <UsersRound className="size-3 shrink-0" />
-                <span className="truncate">{o.name}</span>
-                <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
-                  {t("history.move.rootLabel")}
-                </span>
-              </button>
-              {(orgFolders[o.id] ?? []).map((f) => (
-                <button
-                  key={f.id}
-                  type="button"
-                  onClick={(ev) => {
-                    ev.stopPropagation();
-                    setOpen(false);
-                    onPick(o, f.id);
-                  }}
-                  className="flex w-full items-center gap-1.5 rounded py-1 pl-6 pr-2 text-left text-xs hover:bg-muted"
-                >
-                  <Folder className="size-3 shrink-0" />
-                  <span className="truncate">{f.name}</span>
-                </button>
-              ))}
-            </div>
-          ))}
-        </MenuShell>
-      )}
-    </div>
-  );
-}
-
-/** Copy (leave the personal one) or move (hand it over) into an org. */
-export function MoveDialog({
-  orgName,
-  target,
-  onCopy,
-  onMove,
-  onCancel,
-}: Readonly<{
-  orgName: string;
-  target: string;
-  onCopy: () => void;
-  onMove: () => void;
-  onCancel: () => void;
-}>) {
-  const { t } = useI18n();
-  return (
-    // z-[100]: this is raised from the library grid, from inside a Sheet
-    // (z-[91]) and from the import modals (z-[70]) — it has to clear all three.
-    <div className="fixed inset-0 z-[100] grid place-items-center p-6">
-      {/* The scrim is a SIBLING of the panel, not its parent: a real <button>
-          cannot wrap the panel's own buttons, and this way a click on the panel
-          never has to be stopped from reaching the scrim. */}
-      <button
-        type="button"
-        aria-label={t("history.move.cancel")}
-        className="absolute inset-0 bg-black/40"
-        onClick={onCancel}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") {
-            e.preventDefault();
-            onCancel();
-          }
-        }}
-      />
-      <div className="relative w-full max-w-sm rounded-lg border bg-popover p-4 shadow-lg">
-        <div className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
-          <UsersRound className="size-4 text-muted-foreground" />
-          {t("history.move.title", { org: orgName })}
-        </div>
-        <p className="mb-4 text-xs leading-relaxed text-muted-foreground">
-          {t("history.move.body", { target })}
-        </p>
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" size="sm" onClick={onCancel}>
-            <X className="mr-1 size-3.5" />
-            {t("history.move.cancel")}
-          </Button>
-          <Button variant="outline" size="sm" onClick={onCopy}>
-            {t("history.move.copy")}
-          </Button>
-          <Button size="sm" onClick={onMove}>
-            {t("history.move.move")}
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/**
- * The hover toolbar: move, share, rename, delete.
+ * The hover toolbar: file, rename, delete.
  *
  * Exported because the all-recordings timeline (#330) offers exactly the same
- * four actions on a row — filing something you just found is the whole point of
- * a view that spans every folder. Only the placement differs, which is what
+ * actions on a row — filing something you just found is the whole point of a
+ * view that spans every folder. Only the placement differs, which is what
  * `className` is for: a card pins it to the top-right corner, a row sits it in
  * the flow at the end of the line.
+ *
+ * Filing is ONE button: a folder in Personal and a folder in an org are the
+ * same question, answered in the destination sheet (#577). It used to be two
+ * menus — move (personal folders) and share (orgs), then a copy-or-move dialog.
  */
 export function CardActions({
-  entry,
   className = "absolute right-2 top-2 z-10 flex items-center gap-0.5 opacity-0 transition group-hover:opacity-100",
   isOrgContext,
   isCloudOnly,
   canShare,
-  orgs,
-  orgFolders,
   busy,
-  sharing,
+  filing,
   folders,
   onDelete,
   onRenameStart,
-  onShare,
-  onMove,
+  onFile,
 }: Readonly<{
-  entry: HistoryCardItem;
   /** Where the toolbar sits. Defaults to a card's top-right corner. */
   className?: string;
   isOrgContext: boolean;
   isCloudOnly: boolean;
+  /** An org exists to file into. */
   canShare: boolean;
-  orgs: CloudOrg[];
-  orgFolders: Record<string, LocalFolder[]>;
   busy: boolean;
-  sharing: boolean;
+  /** A handoff to an org is in flight. */
+  filing: boolean;
   folders: LocalFolder[];
   onDelete: () => void;
   onRenameStart: () => void;
-  onShare: (org: CloudOrg, folderId: string | null) => void;
-  onMove: (folderId: string | null) => void;
+  onFile: () => void;
 }>) {
   const { t } = useI18n();
   const { canMove, canRename } = cardCapabilities({
@@ -429,11 +163,20 @@ export function CardActions({
   const deleteLabel = isOrgContext ? t("history.org.remove") : t("history.delete");
   return (
     <div className={className}>
-      {canMove && (
-        <MoveMenu folders={folders} currentFolderId={entry.folderId ?? null} onMove={onMove} />
-      )}
-      {canShare && (
-        <ShareMenu orgs={orgs} orgFolders={orgFolders} sharing={sharing} onPick={onShare} />
+      {(canMove || canShare) && (
+        <button
+          type="button"
+          aria-label={t("library.menu.move")}
+          title={t("library.menu.move")}
+          disabled={filing}
+          onClick={(ev) => {
+            ev.stopPropagation();
+            onFile();
+          }}
+          className="grid size-6 place-items-center rounded-md bg-background/70 text-muted-foreground backdrop-blur transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
+        >
+          {filing ? <Loader2 className="size-3.5 animate-spin" /> : <FolderInput className="size-3.5" />}
+        </button>
       )}
       {canRename && (
         <button
@@ -472,7 +215,6 @@ export function LibraryCard({
   signedIn,
   isOrgContext,
   orgs,
-  orgFolders,
   busy,
   downloading,
   sharing,
@@ -480,26 +222,24 @@ export function LibraryCard({
   onOpen,
   onDelete,
   onRename,
-  onShare,
-  onMove,
+  onFile,
 }: Readonly<{
   entry: HistoryCardItem;
   locale: string;
   signedIn: boolean;
   isOrgContext: boolean;
   orgs: CloudOrg[];
-  /** Each org's shared folders, so sharing can name one directly. */
-  orgFolders: Record<string, LocalFolder[]>;
   busy: boolean;
   downloading: boolean;
+  /** A handoff to an org is in flight. */
   sharing: boolean;
   /** The open scope's folders — one customer, one folder. */
   folders: LocalFolder[];
   onOpen: () => void;
   onDelete: () => void;
   onRename: (title: string) => void;
-  onShare: (org: CloudOrg, folderId: string | null) => void;
-  onMove: (folderId: string | null) => void;
+  /** Open the destination sheet for this card. */
+  onFile: () => void;
 }>) {
   const { t } = useI18n();
   const isLive = entry.source === "live";
@@ -519,6 +259,7 @@ export function LibraryCard({
   // and steal focus back off the name input.
   const editingRef = useRef(editing);
   editingRef.current = editing;
+  const handingOffRef = useRef(false);
 
   function startEdit() {
     setDraft(entry.title);
@@ -620,19 +361,15 @@ export function LibraryCard({
     >
       {!editing && (
         <CardActions
-          entry={entry}
           isOrgContext={isOrgContext}
           isCloudOnly={isCloudOnly}
           canShare={canShare}
-          orgs={orgs}
-          orgFolders={orgFolders}
           busy={busy}
-          sharing={sharing}
+          filing={sharing}
           folders={folders}
           onDelete={onDelete}
           onRenameStart={startEdit}
-          onShare={onShare}
-          onMove={onMove}
+          onFile={onFile}
         />
       )}
 
@@ -669,8 +406,7 @@ export function LibraryCard({
 
   // A second way to reach the toolbar's own actions, not a second set of them —
   // one that does not depend on noticing icons that only appear on hover, and
-  // that a keyboard can summon at all. Share is the one omission: picking an org
-  // and then answering copy-or-move is a flow, not a menu item.
+  // that a keyboard can summon at all.
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>{card}</ContextMenuTrigger>
@@ -680,6 +416,10 @@ export function LibraryCard({
           // Closing without renaming should leave the keyboard where it was, and
           // Radix's own restore aims at the trigger — a plain <div>, which
           // cannot take focus, so it would drop to the body instead.
+          if (handingOffRef.current) {
+            handingOffRef.current = false;
+            return;
+          }
           if (!editingRef.current) openRef.current?.focus();
         }}
       >
@@ -695,33 +435,17 @@ export function LibraryCard({
             {t("library.menu.rename")}
           </ContextMenuItem>
         )}
-        {canMove && (
-          <ContextMenuSub>
-            <ContextMenuSubTrigger>
-              <FolderInput className="size-3.5" />
-              {t("library.menu.move")}
-            </ContextMenuSubTrigger>
-            <ContextMenuSubContent>
-              {moveTargets(t, folders).map((target) => {
-                const current = (entry.folderId ?? null) === target.id;
-                return (
-                  <ContextMenuItem
-                    key={target.id ?? "__root"}
-                    disabled={current}
-                    onSelect={() => onMove(target.id)}
-                  >
-                    {target.id === null ? (
-                      <FolderClosed className="size-3.5" />
-                    ) : (
-                      <Folder className="size-3.5" />
-                    )}
-                    <span className="truncate">{target.name}</span>
-                    {current && <Check className="ml-auto size-3.5" />}
-                  </ContextMenuItem>
-                );
-              })}
-            </ContextMenuSubContent>
-          </ContextMenuSub>
+        {(canMove || canShare) && (
+          <ContextMenuItem
+            onSelect={() => {
+              // The sheet takes focus; don't pull it back to the card.
+              handingOffRef.current = true;
+              onFile();
+            }}
+          >
+            <FolderInput className="size-3.5" />
+            {t("library.menu.move")}
+          </ContextMenuItem>
         )}
         <ContextMenuSeparator />
         {/* No confirmation, deliberately: deleting a recording never had one —

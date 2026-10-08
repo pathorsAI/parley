@@ -1,6 +1,40 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Custom": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Custom"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自訂"
+          }
+        }
+      }
+    },
+    "Email": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Email"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Email"
+          }
+        }
+      }
+    },
     "End Standby": {
       "extractionState": "manual",
       "localizations": {
@@ -14,6 +48,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "結束待命"
+          }
+        }
+      }
+    },
+    "Home address": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Home address"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "住家地址"
           }
         }
       }
@@ -48,6 +99,74 @@
           "stringUnit": {
             "state": "translated",
             "value": "雲端轉錄失敗（HTTP %lld）：%@"
+          }
+        }
+      }
+    },
+    "Landline": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Landline"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "市話"
+          }
+        }
+      }
+    },
+    "Mobile": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mobile"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "手機"
+          }
+        }
+      }
+    },
+    "Name": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Name"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "姓名"
+          }
+        }
+      }
+    },
+    "National ID number": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "National ID number"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "身分證字號"
           }
         }
       }
@@ -116,6 +235,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "講者 %@"
+          }
+        }
+      }
+    },
+    "Tax ID number": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tax ID number"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "統一編號"
           }
         }
       }
@@ -201,6 +337,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "轉錄等待逾時。"
+          }
+        }
+      }
+    },
+    "Work address": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Work address"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "公司地址"
           }
         }
       }

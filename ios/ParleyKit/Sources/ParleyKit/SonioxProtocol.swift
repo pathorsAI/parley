@@ -21,19 +21,61 @@ public enum SonioxProtocol {
     /// `TARGET_SAMPLE_RATE` and the relay's metering (32 000 bytes/second).
     public static let sampleRate: UInt32 = 16_000
 
+    /// How many terms ride in `context.terms` — the desktop's
+    /// `VOCABULARY_LIMIT` (`src/lib/dictionary/index.ts`). Providers cap the
+    /// list, and past a couple hundred terms the hint stops helping and starts
+    /// costing latency; the callers order their terms by priority, so the cut
+    /// keeps the ones that matter.
+    public static let vocabularyLimit = 200
+
+    /// Soniox's recognition-context object: the domain terms to bias toward.
+    /// Mirrors `SonioxContext` in `src-tauri/src/transcription/soniox.rs`.
+    public struct Context: Encodable, Equatable, Sendable {
+        public var terms: [String]
+
+        public init(terms: [String]) {
+            self.terms = terms
+        }
+    }
+
+    /// Normalize a vocabulary before it goes on the wire: trim each term, drop
+    /// the empties, de-duplicate preserving order, and cap at
+    /// `vocabularyLimit`. The desktop's `clean_vocabulary`
+    /// (`transcription/common.rs`) plus the cap its `vocabularyTerms()` applies
+    /// before the list reaches Rust.
+    public static func cleanVocabulary(_ vocabulary: [String]) -> [String] {
+        var seen = Set<String>()
+        var out: [String] = []
+        for raw in vocabulary {
+            let term = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !term.isEmpty, seen.insert(term).inserted else { continue }
+            out.append(term)
+            if out.count == vocabularyLimit { break }
+        }
+        return out
+    }
+
+    /// The `context` field for a vocabulary — `nil` when there is nothing to
+    /// bias toward, so the frame stays byte-identical to what it was before
+    /// the field existed. The desktop's `context_for`.
+    public static func context(for vocabulary: [String]) -> Context? {
+        let terms = cleanVocabulary(vocabulary)
+        return terms.isEmpty ? nil : Context(terms: terms)
+    }
+
     /// First frame on the socket. In relay mode `apiKey` stays nil — the relay
     /// injects the master key server-side and forces the model, so neither
     /// secret nor model choice rides in the client frame.
     ///
-    /// **No recognition context here, deliberately.** Soniox's config frame
-    /// takes a `context.terms` list to bias vocabulary, and the desktop fills it
-    /// from the phrase dictionary (`src-tauri/src/transcription/soniox.rs`). The
-    /// phone's personal dictionary has the terms ready
-    /// (`LexiconStore.recognitionTerms`) and does not send them: whether the
-    /// hosted relay forwards a `context` from an iOS client is not something
-    /// this side can establish, and a config frame the relay rejects costs the
-    /// user dictation altogether. Adding the field is the known follow-up —
-    /// see `docs/design/ios-voice-keyboard.md`.
+    /// **`context` carries the personal dictionary**, exactly as the desktop's
+    /// frame does (`src-tauri/src/transcription/soniox.rs`): the user's own
+    /// words (`LexiconStore.recognitionTerms` — never contact names), cleaned
+    /// and capped by `context(for:)`, and omitted entirely when there are none. The
+    /// hosted relay forwards every field it does not itself rewrite unchanged
+    /// — it only injects the key and forces the model (parley-internal
+    /// `apps/cloud/src/stt.ts`) — which is what the desktop has relied on
+    /// since its dictionary shipped, so the phone sends the same shape through
+    /// the same relay.
     public struct Config: Encodable {
         public var apiKey: String?
         public var model: String
@@ -43,11 +85,18 @@ public enum SonioxProtocol {
         public var languageHints: [String]?
         public var enableEndpointDetection = true
         public var enableSpeakerDiarization = true
+        /// Custom vocabulary biasing. `nil` is left out of the frame
+        /// altogether (synthesised `Encodable` skips a `nil` optional).
+        public var context: Context?
 
-        public init(apiKey: String? = nil, model: String, languageHints: [String]? = nil) {
+        public init(
+            apiKey: String? = nil, model: String, languageHints: [String]? = nil,
+            context: Context? = nil
+        ) {
             self.apiKey = apiKey
             self.model = model
             self.languageHints = languageHints
+            self.context = context
         }
 
         enum CodingKeys: String, CodingKey {
@@ -59,6 +108,7 @@ public enum SonioxProtocol {
             case languageHints = "language_hints"
             case enableEndpointDetection = "enable_endpoint_detection"
             case enableSpeakerDiarization = "enable_speaker_diarization"
+            case context
         }
     }
 

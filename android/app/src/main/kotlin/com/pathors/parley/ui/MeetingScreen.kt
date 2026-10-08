@@ -554,7 +554,7 @@ private fun rememberFiling(
 ): FilingSuggestionViewModel {
     val context = LocalContext.current
     val filing: FilingSuggestionViewModel = viewModel(
-        factory = FilingSuggestionViewModel.factory(context.parleyContainer, context),
+        factory = FilingSuggestionViewModel.factory(context.parleyContainer),
     )
     LaunchedEffect(demoFiling) {
         if (demoFiling != null) {

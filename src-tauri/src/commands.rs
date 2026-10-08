@@ -273,6 +273,10 @@ pub fn start_meeting(
         diarization,
         relay_endpoint: relay_endpoint.clone(),
         vocabulary: vocabulary.clone(),
+        // The first leg; run_metered_session numbers and offsets the redials.
+        leg: 0,
+        time_offset_ms: 0,
+        level_events: true,
     };
 
     // Diarizing providers separate speakers themselves, so mix mic + system
@@ -330,6 +334,8 @@ pub fn start_meeting(
                         None,
                         Some(meeting_paused.clone()),
                         None,
+                        // Redial a dropped connection; the recording never stops for it.
+                        true,
                     ));
                 }
                 // If one capture failed, transcribe + record whichever started.
@@ -346,6 +352,8 @@ pub fn start_meeting(
                         None,
                         Some(meeting_paused.clone()),
                         None,
+                        // Redial a dropped connection; the recording never stops for it.
+                        true,
                     ));
                 }
                 (None, Some(b)) => {
@@ -361,6 +369,8 @@ pub fn start_meeting(
                         None,
                         Some(meeting_paused.clone()),
                         None,
+                        // Redial a dropped connection; the recording never stops for it.
+                        true,
                     ));
                 }
                 // No capture at all: handled by the shared no-capture tail
@@ -386,6 +396,8 @@ pub fn start_meeting(
                     None,
                     Some(meeting_paused.clone()),
                     None,
+                    // Redial a dropped connection; the recording never stops for it.
+                    true,
                 ));
             }
             if let Ok(rx) = spawn_capture(&coord, MicUser::Meeting, sys, gate.clone(), "them") {
@@ -402,6 +414,8 @@ pub fn start_meeting(
                     None,
                     Some(meeting_paused.clone()),
                     None,
+                    // Redial a dropped connection; the recording never stops for it.
+                    true,
                 ));
             }
         }
@@ -432,6 +446,8 @@ pub fn start_meeting(
                 None,
                 Some(meeting_paused.clone()),
                 None,
+                // Redial a dropped connection; the recording never stops for it.
+                true,
             );
             state.tasks.lock().unwrap().push(task);
         }

@@ -26,7 +26,7 @@ data as used for tracking.
 | Contact Info → Name | Yes | Yes | App Functionality | Account display name from registration or social sign-in. |
 | Contact Info → Email Address | Yes | Yes | App Functionality | Account login and support contact. |
 | User Content → Audio Data | Yes | Yes | App Functionality | User-initiated meeting recordings, and audio files the user chooses to import for transcription; retained for synced history. |
-| User Content → Other User Content | Yes | Yes | App Functionality | Transcripts, titles, folders, meeting metadata, and organization placement. |
+| User Content → Other User Content | Yes | Yes | App Functionality | Transcripts, titles, folders, meeting metadata, and organization placement; and, while signed in, the personal dictionary (terms the user added and corrections confirmed twice — see below). |
 | Identifiers → User ID | Yes | Yes | App Functionality | Account and session association for cloud sync and authorization. |
 | Usage Data → Product Interaction | Yes | Yes | App Functionality | Hosted STT/LLM usage counters used to enforce included quotas. |
 | Diagnostics → Crash Data | Yes | Yes | App Functionality | MetricKit crash and hang diagnostics (call stacks, exception or signal, app and OS version, device model), sent **automatically by default** on the launch after a crash. The user can turn this off in Settings › Feedback & diagnostics; it is then asked about once per crash. Linked to the account when the user is signed in (the report carries the session token); sent anonymously otherwise. |
@@ -47,9 +47,10 @@ still needs no extra data type, and the reason is worth being able to state:
 
 - The keyboard never opens a network connection. It writes a session handle into
   the App Group and opens the containing app; the app records and transcribes.
-- It does not read the document context, retain what the user types, or keep any
-  typing history — including dictation history, which only the app keeps (see
-  below). Its only writes to the text field are the finished transcript,
+- It does not read the document context or keep any typing history —
+  including dictation history, which only the app keeps (see below). The one
+  thing it retains from typing is the 注音 pane's record of picked candidates,
+  on the device only (see *注音 learning does not add a row*). Its only writes to the text field are the finished transcript,
   a space, a newline, and backspace.
 - The dictation audio and its transcript are already covered above under
   **User Content → Audio Data** and **Other User Content**: same account, same
@@ -78,6 +79,21 @@ Data that never leaves the device is not "collected" in App Store terms. The
 dictation audio and transcript *in transit* are already covered above. If this
 history ever syncs to the account, it becomes **User Content → Other User
 Content** and this section has to go.
+
+## The personal dictionary syncs with the account
+
+Signed in, the app keeps the personal dictionary in step with the account
+(`GET`/`PUT /v1/dictionary`), so the desktop and the phone spell the same words.
+That is covered by **User Content → Other User Content** above; it adds no row.
+Exactly what goes up, and what never does:
+
+- **Sent:** the terms the user typed into the dictionary screen, and corrections
+  that are confirmed — seen twice, or entered by hand. Each as the right spelling
+  plus the misheard forms that get rewritten into it.
+- **Never sent:** corrections still being learned (seen once).
+- Only the app syncs. The keyboard extension still opens no network connection;
+  what it learns goes up on the app's next sync.
+- Logs carry counts, never words. Deleting the account deletes the server copy.
 
 ## Crash reports and in-app feedback
 
@@ -114,3 +130,26 @@ network returns, or after sign-in. Deleting the app deletes them.
 with Apple’s `CA92.1` reason. It intentionally does not duplicate the App
 Store privacy label: the manifest reports required-reason APIs, while the
 App Privacy questionnaire reports the data practices above.
+
+## 注音 learning does not add a row
+
+Since the 注音 pane learns from the candidates the user picks (see the design
+doc's *Learning from picks*), the keyboard keeps a small record of typed
+content: for each lesson, the two words committed before a word, its 注音
+reading, the word the keyboard offered and the word the user picked instead. It
+adds no collected data type, because none of it is collected:
+
+- It is stored **on the device only**: `zhuyin-memory.json` in the App Group
+  container, so that Settings › Keyboards › Reset Zhuyin learning can clear
+  it. It is never sent anywhere — the keyboard opens no network connection.
+- It is written only with Full Access, which is what gives the keyboard the App
+  Group at all; without it the record lives in the keyboard's process and is
+  gone when the process ends.
+- It is bounded and ages out: at most 500 entries, each forgotten after a few
+  weeks unused.
+
+The section above — *The keyboard extension does not add a row* — said the
+keyboard does not retain what the user types. That is now true of everything
+but this record, and the sentence there is qualified to point here. If the
+record is ever synced or uploaded, it becomes **User Content → Other User
+Content** and this section has to go.

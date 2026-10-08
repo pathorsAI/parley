@@ -946,7 +946,7 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   return (
     <header
       data-tauri-drag-region
-      className={`relative flex h-[52px] shrink-0 items-center justify-between border-b bg-background ${padLeft} ${padRight}`}
+      className={`relative grid h-[52px] shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(max-content,1fr)] items-center gap-3 border-b bg-background ${padLeft} ${padRight}`}
     >
       {/* macOS traffic lights: native sizing/colours, glyphs reveal on hover of
           the whole cluster (not per-button), and the trio dims to grey when the
@@ -1017,8 +1017,11 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
       {/* Titlebar-center switcher — two tenses, one slot: live shows the
           posture switch (coach/transcript); a loaded recording swaps in the
           study tabs (report/replay) plus the analysis-status
-          chip (the ONE generation surface for the whole study tense). */}
-      <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-2">
+          chip (the ONE generation surface for the whole study tense).
+          A grid column, not an absolutely-centred overlay: equal side tracks
+          keep it centred, and a long breadcrumb truncates in its own track
+          instead of sliding underneath the tabs. */}
+      <div className="flex items-center gap-2">
         <CenterSwitcher
           mode={appMode}
           studyTab={studyTab}
@@ -1030,7 +1033,7 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
         {studyMode && <StudyGenerationChip />}
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 justify-self-end">
         <PrimaryAction
           mode={appMode}
           meetingActive={meetingActive}

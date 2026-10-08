@@ -72,8 +72,15 @@ jobs:
             cp "${notes_file}" "${body_file}"
           elif [[ -n "${fallback_notes}" ]]; then
             printf '%s\n' "${fallback_notes}" > "${body_file}"
-          else
-            printf 'Release %s\n' "${tag}" > "${body_file}"
+          fi
+
+          # A release with no notes is not a release anyone can use: the
+          # Releases page and the in-app updater both show this text. This used
+          # to fall back to "Release <tag>", which is empty in everything but
+          # name. Fail before any build is spent instead.
+          if [[ ! -s "${body_file}" ]] || ! grep -q '[^[:space:]]' "${body_file}"; then
+            echo "::error title=Release notes are empty::Write ${notes_file} (bun run release does this from --message / --notes-file), or pass release_notes when dispatching."
+            exit 1
           fi
 
           {

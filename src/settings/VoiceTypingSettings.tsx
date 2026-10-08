@@ -16,6 +16,7 @@ import type {
   VoiceTypingShortcut,
 } from "../lib/types";
 import { Button } from "@/components/ui/button";
+import { InfoTip } from "@/components/ui/info-tip";
 
 /** The polish styles in the order the picker shows them, with their name and
  *  the one line saying what each does to the words. */
@@ -268,7 +269,7 @@ function describeTrigger(
  * rather than letting the feature look self-teaching everywhere.
  */
 export const VoiceTypingSettings = () => {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const settings = useStore((s) => s.settings);
   const updateSettings = useStore((s) => s.updateSettings);
   const [status, setStatus] = useState<HotkeyStatus | null>(null);
@@ -417,8 +418,8 @@ export const VoiceTypingSettings = () => {
   // nothing happens.
   const polishHasProvider = hasProviderKey(settings, "realtime");
   const polishStyle = settings.voiceTypingPolishStyle;
-  const polishOption =
-    POLISH_STYLE_OPTIONS.find((o) => o.style === polishStyle) ?? POLISH_STYLE_OPTIONS[1];
+  // "Label: what it does" lines for the hover explanations.
+  const sep = language === "zh-TW" ? "：" : ": ";
 
   // Guidance renders as single inline lines (no nested boxes) and only when
   // actionable — the default state is just the recorder, the chips and one
@@ -437,9 +438,9 @@ export const VoiceTypingSettings = () => {
       <div className="flex flex-col gap-1.5">
         <div className="flex items-center justify-between gap-3">
           <span className="flex flex-col gap-0.5">
-            <span className="text-sm font-medium">{t("settings.voiceTyping.pushToTalk")}</span>
-            <span className="text-[11px] text-muted-foreground">
-              {t("settings.voiceTyping.hint")}
+            <span className="flex items-center gap-1.5 text-sm font-medium">
+              {t("settings.voiceTyping.pushToTalk")}
+              <InfoTip label={t("settings.info")}>{t("settings.voiceTyping.hint")}</InfoTip>
             </span>
           </span>
           <Button
@@ -458,8 +459,12 @@ export const VoiceTypingSettings = () => {
       <div className="flex flex-col gap-1.5">
         <div className="flex items-center justify-between gap-3">
           <span className="flex flex-col gap-0.5">
-            <span className="text-sm font-medium">{t("settings.voiceTyping.polish")}</span>
-            <span className="text-[11px] text-muted-foreground">{t(polishOption.hint)}</span>
+            <span className="flex items-center gap-1.5 text-sm font-medium">
+              {t("settings.voiceTyping.polish")}
+              <InfoTip label={t("settings.info")}>
+                {POLISH_STYLE_OPTIONS.map((o) => `${t(o.label)}${sep}${t(o.hint)}`).join("\n")}
+              </InfoTip>
+            </span>
           </span>
           <div className="flex shrink-0 gap-1.5" role="radiogroup">
             {POLISH_STYLE_OPTIONS.map((o) => (
@@ -486,8 +491,11 @@ export const VoiceTypingSettings = () => {
 
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-[11px] font-medium text-muted-foreground">
+          <span className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
             {t("settings.voiceTyping.mode")}
+            <InfoTip label={t("settings.info")}>
+              {`${t("settings.voiceTyping.mode.hold")}${sep}${t("settings.voiceTyping.mode.holdHint")}\n${t("settings.voiceTyping.mode.toggle")}${sep}${t("settings.voiceTyping.mode.toggleHint")}`}
+            </InfoTip>
           </span>
           <div className="flex shrink-0 gap-1.5">
             {(["hold", "toggle"] as const).map((m) => (
@@ -507,19 +515,13 @@ export const VoiceTypingSettings = () => {
             ))}
           </div>
         </div>
-        <p className="text-[11px] text-muted-foreground">
-          {t(
-            mode === "toggle"
-              ? "settings.voiceTyping.mode.toggleHint"
-              : "settings.voiceTyping.mode.holdHint",
-          )}
-        </p>
       </div>
 
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-[11px] font-medium text-muted-foreground">
+          <span className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
             {t("settings.voiceTyping.shortcut")}
+            <InfoTip label={t("settings.info")}>{t(recorderHelpKey)}</InfoTip>
           </span>
           <span
             className={`flex shrink-0 items-center gap-1 text-[11px] font-medium ${
@@ -610,9 +612,11 @@ export const VoiceTypingSettings = () => {
           </div>
         </div>
 
-        <p className="text-[11px] text-muted-foreground">
-          {recording ? t("settings.voiceTyping.recorder.cancelHint") : t(recorderHelpKey)}
-        </p>
+        {recording && (
+          <p className="text-[11px] text-muted-foreground">
+            {t("settings.voiceTyping.recorder.cancelHint")}
+          </p>
+        )}
         {recordHint && (
           <p className="text-[11px] font-medium text-warning-foreground">
             {t(recordHint)}
@@ -661,8 +665,9 @@ export const VoiceTypingSettings = () => {
           </p>
         )}
         {fnListenOnly && (
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
-            {t("settings.voiceTyping.fnListenOnly")}{" "}
+          <p className="flex flex-wrap items-center gap-x-1.5 text-[11px] text-muted-foreground">
+            {t("settings.voiceTyping.fnListenOnlyShort")}
+            <InfoTip label={t("settings.info")}>{t("settings.voiceTyping.fnListenOnly")}</InfoTip>
             <button
               type="button"
               className="font-medium text-foreground underline underline-offset-2"

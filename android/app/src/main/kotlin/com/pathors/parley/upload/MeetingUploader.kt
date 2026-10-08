@@ -337,6 +337,7 @@ class MeetingUploader(
             retireAudio(item.id, audio)
         }
         withContext(Dispatchers.IO) { queue.remove(item.id) }
+        pushesAttempted -= item.id
         return sharedTo
     }
 
@@ -350,6 +351,7 @@ class MeetingUploader(
         return when (dispositionOf(e)) {
             UploadFailureDisposition.DROP -> {
                 withContext(Dispatchers.IO) { queue.remove(item.id) }
+                pushesAttempted -= item.id
                 tally.discarded++
                 tally.refused[item.id] = e
                 noteAttempt(item.id, null)
@@ -439,8 +441,58 @@ class MeetingUploader(
      */
     private suspend fun upload(pending: PendingUpload, audio: File): String? {
         cloud.uploadAudio(pending.id, audio)
-        cloud.pushRecording(pending.id, buildSummary(pending), buildMeta(pending))
+        pushMeta(pending)
         return pending.shareOrgId?.takeIf { shareIfAsked(pending) }
+    }
+
+    /**
+     * Recordings whose meta push has been attempted in this process — the
+     * in-memory half of [PendingUpload.pushAttempted], for a retry within the
+     * same pass. Only touched under [drainMutex].
+     */
+    private val pushesAttempted = mutableSetOf<String>()
+
+    /**
+     * The `{ summary, meta }` push, safe to repeat.
+     *
+     * The first attempt pushes the entry built from the queue ([buildMeta]):
+     * nothing else can exist yet. Any later one — a retry after a share that
+     * failed, a response lost on the way back, a process killed between the
+     * push and the queue's cleanup — may find the recording already in the
+     * cloud and already changed there: renamed, filed, offered a filing
+     * suggestion, analysed on the desktop. Pushing the rebuilt entry over that
+     * would put the clock title back. So a retry re-reads the existing meta and
+     * only fills in what the upload owns and the entry lacks (see
+     * [fillUploadInto]); a recording the cloud does not have (404) is pushed
+     * fresh, as on the first attempt.
+     *
+     * Whether a push was attempted is written to the manifest before it goes
+     * out, so the answer survives the process.
+     */
+    private suspend fun pushMeta(pending: PendingUpload) {
+        if (pending.pushAttempted || pending.id in pushesAttempted) {
+            try {
+                cloud.editRecording(pending.id) { existing -> fillUploadInto(existing, pending) }
+                return
+            } catch (e: CloudException) {
+                if (!e.isNotFound) throw e
+            }
+        } else {
+            markPushAttempted(pending)
+        }
+        cloud.pushRecording(pending.id, buildSummary(pending), buildMeta(pending))
+    }
+
+    /** Best-effort: a mark that failed costs one stale-but-harmless retry path, never the upload. */
+    private suspend fun markPushAttempted(pending: PendingUpload) {
+        pushesAttempted += pending.id
+        withContext(Dispatchers.IO) {
+            runCatching {
+                if (queue.manifestFile(pending.id).exists()) {
+                    queue.writeManifest(pending.copy(pushAttempted = true))
+                }
+            }
+        }
     }
 
     /**
@@ -576,6 +628,25 @@ class MeetingUploader(
                 pending.folderId?.let { put("folderId", it) }
             }
         )
+
+        /**
+         * The entry a repeated upload pushes when the cloud already has one:
+         * [existing], with only what the upload owns filled in where it is
+         * missing. Every key [buildMeta] would write goes in only when
+         * [existing] lacks it — so a title, a folder (an explicit
+         * `"folderId": null` included: that is somebody un-filing it), speaker
+         * names, a filing suggestion or flag, and analysis all stay as the
+         * cloud has them — and the transcript goes in only when the existing
+         * one is empty. The duration is the longer of the two.
+         */
+        fun fillUploadInto(existing: RecordingMeta, pending: PendingUpload): RecordingMeta {
+            val uploaded = buildMeta(pending).raw
+            val merged = LinkedHashMap(existing.raw)
+            uploaded.forEach { (key, value) -> if (!merged.containsKey(key)) merged[key] = value }
+            if (existing.segments.isEmpty()) merged["segments"] = uploaded.getValue("segments")
+            merged["durationMs"] = msPrimitive(maxOf(existing.durationMs, pending.durationMs))
+            return RecordingMeta(JsonObject(merged))
+        }
 
         /**
          * The library card pushed as `summary`. Identical to iOS

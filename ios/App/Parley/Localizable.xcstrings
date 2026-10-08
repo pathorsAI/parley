@@ -19,6 +19,57 @@
         }
       }
     },
+    "%lld d ago" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld d ago"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 天前"
+          }
+        }
+      }
+    },
+    "%lld hr ago" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld hr ago"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 小時前"
+          }
+        }
+      }
+    },
+    "%lld min ago" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld min ago"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 分鐘前"
+          }
+        }
+      }
+    },
     "%lld of %lld" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -207,6 +258,23 @@
         }
       }
     },
+    "A tax ID number is usually eight digits. You can still save it." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A tax ID number is usually eight digits. You can still save it."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "統一編號通常是八位數字，仍可儲存。"
+          }
+        }
+      }
+    },
     "AI credits" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -338,6 +406,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "加入名字或術語"
+          }
+        }
+      }
+    },
+    "Add correction" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add correction"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新增更正"
           }
         }
       }
@@ -1193,6 +1278,40 @@
         }
       }
     },
+    "Couldn't sync. Parley will try again on its own." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't sync. Parley will try again on its own."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暫時無法同步，Parley 稍後會自動再試。"
+          }
+        }
+      }
+    },
+    "Couldn't sync. Parley will try again on its own. Last synced %@." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't sync. Parley will try again on its own. Last synced %@."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暫時無法同步，Parley 稍後會自動再試。上次同步：%@。"
+          }
+        }
+      }
+    },
     "Create" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1342,6 +1461,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "要刪除這筆紀錄嗎？"
+          }
+        }
+      }
+    },
+    "Delete this saved info?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete this saved info?"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "要刪除這筆常用資訊嗎？"
           }
         }
       }
@@ -1652,6 +1788,23 @@
         }
       }
     },
+    "Edit saved info" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Edit saved info"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "編輯常用資訊"
+          }
+        }
+      }
+    },
     "Edit the title" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1925,6 +2078,23 @@
         }
       }
     },
+    "Fix a word" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fix a word"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "修正用詞"
+          }
+        }
+      }
+    },
     "Fix a word right after dictating it and Parley learns how you say it. What it has learned is in the personal dictionary, where you can also add names it should get right." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1938,6 +2108,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "聽寫完馬上把字改對，Parley 就會記住你的說法。學到的東西都在個人詞庫裡，你也可以在那裡加上該念對的名字。"
+          }
+        }
+      }
+    },
+    "Fix this word" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fix this word"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "修正這個詞"
           }
         }
       }
@@ -2023,6 +2210,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已交給 AI"
+          }
+        }
+      }
+    },
+    "Heard as" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Heard as"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "聽成"
           }
         }
       }
@@ -2332,6 +2536,23 @@
         }
       }
     },
+    "Kind" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kind"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "類型"
+          }
+        }
+      }
+    },
     "LIVE" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2345,6 +2566,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "現場"
+          }
+        }
+      }
+    },
+    "Label" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Label"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "名稱"
+          }
+        }
+      }
+    },
+    "Label (required)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Label (required)"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "名稱（必填）"
           }
         }
       }
@@ -2941,19 +3196,19 @@
         }
       }
     },
-    "Names, jargon, and anything else you say often. Parley keeps them so it can prefer your spelling — this list is yours to keep even where transcription can't yet be biased toward it." : {
+    "Names, jargon, and anything else you say often. Parley listens for them when you dictate and keeps your spelling." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Names, jargon, and anything else you say often. Parley keeps them so it can prefer your spelling — this list is yours to keep even where transcription can't yet be biased toward it."
+            "value" : "Names, jargon, and anything else you say often. Parley listens for them when you dictate and keeps your spelling."
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "名字、行話，還有任何你常講的詞。Parley 會留著，好照你的寫法來寫——即使目前還無法讓辨識偏向這份清單，它仍然是你的。"
+            "value" : "名字、行話，還有任何你常講的詞。聽寫時 Parley 會優先辨識這些詞，並照你的寫法來寫。"
           }
         }
       }
@@ -2988,6 +3243,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "新增資料夾…"
+          }
+        }
+      }
+    },
+    "New saved info" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New saved info"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新增常用資訊"
           }
         }
       }
@@ -3226,6 +3498,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "還沒學到任何東西。"
+          }
+        }
+      }
+    },
+    "Nothing saved yet." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nothing saved yet."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "還沒有儲存任何資訊。"
           }
         }
       }
@@ -3647,6 +3936,23 @@
         }
       }
     },
+    "Parley changes it to this from your next dictation, and listens for it when you speak." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Parley changes it to this from your next dictation, and listens for it when you speak."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "從下一次聽寫開始，Parley 會自動改成這樣，辨識時也會優先聽這個詞。"
+          }
+        }
+      }
+    },
     "Parley closed unexpectedly last time" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3715,19 +4021,19 @@
         }
       }
     },
-    "Parley forgets every correction it has learned and every term you added. It starts learning again from your next dictation." : {
+    "Parley forgets every correction it has learned and every term you added — here and, while you're signed in, on your other devices. It starts learning again from your next dictation." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Parley forgets every correction it has learned and every term you added. It starts learning again from your next dictation."
+            "value" : "Parley forgets every correction it has learned and every term you added — here and, while you're signed in, on your other devices. It starts learning again from your next dictation."
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Parley 會忘掉學到的每一項更正，以及你加入的每一個詞，並從下一次聽寫重新開始學。"
+            "value" : "Parley 會忘掉學到的每一項更正，以及你加入的每一個詞；登入時，你其他裝置上的也會一併清除。之後從下一次聽寫重新開始學。"
           }
         }
       }
@@ -4726,6 +5032,57 @@
         }
       }
     },
+    "Reset" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reset"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重置"
+          }
+        }
+      }
+    },
+    "Reset Zhuyin learning" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reset Zhuyin learning"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重置注音學習"
+          }
+        }
+      }
+    },
+    "Reset Zhuyin learning?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reset Zhuyin learning?"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "要重置注音學習嗎？"
+          }
+        }
+      }
+    },
     "Resize controls" : {
       "comment" : "Accessibility label for the grabber that resizes the recording controls panel",
       "extractionState" : "manual",
@@ -4774,6 +5131,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "範例"
+          }
+        }
+      }
+    },
+    "Save" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Save"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "儲存"
+          }
+        }
+      }
+    },
+    "Saved info" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Saved info"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "常用資訊"
           }
         }
       }
@@ -5214,6 +5605,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "分享到組織（複製）"
+          }
+        }
+      }
+    },
+    "Should be" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Should be"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "應該是"
           }
         }
       }
@@ -5916,6 +6324,23 @@
         }
       }
     },
+    "Synced · %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Synced · %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已同步 · %@"
+          }
+        }
+      }
+    },
     "Synced, and shared to “%@”" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5929,6 +6354,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已同步，並分享到「%@」"
+          }
+        }
+      }
+    },
+    "Syncing…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Syncing…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "同步中…"
           }
         }
       }
@@ -5963,6 +6405,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "點任一句，音訊會跳到那個時間。試試看。"
+          }
+        }
+      }
+    },
+    "Tap the card button on the Parley keyboard's top row, then tap one to type it. Email, phone and address fields also suggest the matching one on the top row. Everything here stays on this phone." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tap the card button on the Parley keyboard's top row, then tap one to type it. Email, phone and address fields also suggest the matching one on the top row. Everything here stays on this phone."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "點 Parley 鍵盤上方列的名片按鈕，再點想輸入的資訊。遇到 Email、電話和地址欄位時，上方列也會建議對應的資訊。這裡的資料只存在這支手機上。"
           }
         }
       }
@@ -6085,6 +6544,23 @@
         }
       }
     },
+    "The Bopomofo keyboard forgets every word it learned from the candidates you picked, and suggests in its original order again." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The Bopomofo keyboard forgets every word it learned from the candidates you picked, and suggests in its original order again."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "注音鍵盤會忘記從你點選的候選字學到的所有用字，候選順序恢復預設。"
+          }
+        }
+      }
+    },
     "The app version, device, and recent error log are attached. Never your recordings or transcripts." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6132,6 +6608,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "連線不穩，登入沒有完成。請確認網路後再試一次。"
+          }
+        }
+      }
+    },
+    "The correction can't contain what was heard, or it would keep growing every time it's applied." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The correction can't contain what was heard, or it would keep growing every time it's applied."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「應該是」不能包含「聽成」的內容，否則每次套用都會越改越長。"
+          }
+        }
+      }
+    },
+    "The keyboard shows this masked, like A1••••••89, and types the whole number when you tap it. It is never copied to the clipboard." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The keyboard shows this masked, like A1••••••89, and types the whole number when you tap it. It is never copied to the clipboard."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "鍵盤上會以遮罩顯示（例如 A1••••••89），點一下才會輸入完整號碼。它永遠不會被複製到剪貼簿。"
           }
         }
       }
@@ -6337,6 +6847,74 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "不支援這台裝置的麥克風格式。"
+          }
+        }
+      }
+    },
+    "This doesn't look like a Taiwan ID number (one letter and nine digits). You can still save it." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This doesn't look like a Taiwan ID number (one letter and nine digits). You can still save it."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這看起來不像身分證字號（一個英文字母加九個數字），仍可儲存。"
+          }
+        }
+      }
+    },
+    "This doesn't look like a mobile number, such as 0912-345-678. You can still save it." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This doesn't look like a mobile number, such as 0912-345-678. You can still save it."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這看起來不像手機號碼（例如 0912-345-678），仍可儲存。"
+          }
+        }
+      }
+    },
+    "This doesn't look like a phone number. You can still save it." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This doesn't look like a phone number. You can still save it."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這看起來不像電話號碼，仍可儲存。"
+          }
+        }
+      }
+    },
+    "This doesn't look like an email address. You can still save it." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This doesn't look like an email address. You can still save it."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這看起來不像 Email 地址，仍可儲存。"
           }
         }
       }
@@ -6642,6 +7220,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "用量（本期）"
+          }
+        }
+      }
+    },
+    "Use at least two characters, so one character isn't changed everywhere it appears." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use at least two characters, so one character isn't changed everywhere it appears."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請至少輸入兩個字，以免單一個字在每個出現的地方都被改掉。"
+          }
+        }
+      }
+    },
+    "Value" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Value"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "內容"
           }
         }
       }
@@ -7190,6 +7802,23 @@
         }
       }
     },
+    "Your name, phone numbers, addresses and ID numbers, one tap away on the Parley keyboard. They stay on this phone." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your name, phone numbers, addresses and ID numbers, one tap away on the Parley keyboard. They stay on this phone."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "姓名、電話、地址和證號，在 Parley 鍵盤上點一下就能輸入。資料只存在這支手機上。"
+          }
+        }
+      }
+    },
     "Your recordings load automatically once the network is back." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7304,6 +7933,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "小時"
+          }
+        }
+      }
+    },
+    "just now" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "just now"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "剛剛"
           }
         }
       }

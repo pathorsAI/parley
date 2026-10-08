@@ -53,7 +53,10 @@ final class ZhuyinPackedTests: XCTestCase {
             ZhuyinSyllableTests.bundledReadings().map { $0.hasPrefix("~") ? String($0.dropFirst()) : $0 })
         if let url = ZhuyinPhrases.bundledURL, let text = try? String(contentsOf: url, encoding: .utf8) {
             for line in text.split(separator: "\n") where !line.hasPrefix("#") {
-                guard let reading = line.split(separator: "\t").last else { continue }
+                // phrase, reading, score: the reading is the middle column.
+                let columns = line.split(separator: "\t")
+                guard columns.count >= 2 else { continue }
+                let reading = columns[1]
                 for syllable in reading.split(separator: " ") { readings.insert(String(syllable)) }
             }
         }

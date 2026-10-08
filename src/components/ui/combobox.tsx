@@ -123,6 +123,11 @@ export function Combobox({
 
   return (
     <PopoverPrimitive.Root
+      // Modal: the popover is portaled to <body>, so inside a Sheet (a modal
+      // Radix Dialog) it sits outside the dialog's scroll lock, which then
+      // cancels every wheel event over the list — the list cannot scroll. A
+      // modal popover takes its own lock on top of the stack and scrolls.
+      modal
       open={open}
       onOpenChange={(o) => {
         setOpen(o);

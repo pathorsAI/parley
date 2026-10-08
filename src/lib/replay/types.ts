@@ -35,4 +35,9 @@ export interface ReplaySession {
    *  the post-call pace read, anchored to the audio rather than the transcript.
    *  Set by ingest (from Rust) and restored from history; absent/0 when unknown. */
   speechRateHz?: number | null;
+  /** True when the saved transcript carried no timing (every line 0 → 0 — a
+   *  phone batch transcription before #576) and `segments` hold an ESTIMATE laid
+   *  over the recording instead. The replay screen says so, and saving writes
+   *  the untimed transcript back rather than the guess (see replay/timing). */
+  timingEstimated?: boolean;
 }

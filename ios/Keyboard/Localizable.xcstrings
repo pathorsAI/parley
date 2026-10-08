@@ -1,6 +1,23 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Add in Parley": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add in Parley"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "到 Parley 新增"
+          }
+        }
+      }
+    },
     "At sign": {
       "extractionState": "manual",
       "localizations": {
@@ -31,6 +48,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "注音鍵盤"
+          }
+        }
+      }
+    },
+    "Cancel": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancel"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "取消"
           }
         }
       }
@@ -237,6 +271,23 @@
         }
       }
     },
+    "Don't suggest this": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Don't suggest this"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不要再建議"
+          }
+        }
+      }
+    },
     "Done": {
       "extractionState": "manual",
       "localizations": {
@@ -250,6 +301,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "完成"
+          }
+        }
+      }
+    },
+    "Edit in Parley": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Edit in Parley"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "到 Parley 編輯"
           }
         }
       }
@@ -339,6 +407,23 @@
         }
       }
     },
+    "Hidden": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hidden"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已隱藏"
+          }
+        }
+      }
+    },
     "Insert without polishing": {
       "extractionState": "manual",
       "localizations": {
@@ -352,6 +437,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "跳過潤飾，直接插入"
+          }
+        }
+      }
+    },
+    "Inserts this text.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Inserts this text."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "輸入這段文字。"
           }
         }
       }
@@ -441,6 +543,40 @@
         }
       }
     },
+    "Next-phrase suggestions": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Next-phrase suggestions"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "聯想詞"
+          }
+        }
+      }
+    },
+    "No saved info yet. Add your name, phone numbers and addresses in Parley.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No saved info yet. Add your name, phone numbers and addresses in Parley."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "還沒有常用資訊。可到 Parley 新增姓名、電話和地址。"
+          }
+        }
+      }
+    },
     "Open Parley to set up voice typing": {
       "localizations": {
         "en": {
@@ -503,6 +639,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "重新連線中…可以繼續說"
+          }
+        }
+      }
+    },
+    "Replaces the polished text with what you said.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Replaces the polished text with what you said."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "以你實際說的內容取代潤飾後的文字。"
+          }
+        }
+      }
+    },
+    "Saved info": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saved info"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "常用資訊"
           }
         }
       }
@@ -815,6 +985,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "三聲"
+          }
+        }
+      }
+    },
+    "Use original": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use original"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "換回原文"
           }
         }
       }

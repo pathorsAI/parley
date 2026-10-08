@@ -542,8 +542,8 @@ class RecordingDetailViewModel(
         FilingCardController(
             model = FilingSuggestionModel(
                 cloud = container.cloud,
-                // Only the meeting screen runs a pass; this one presents.
-                speakerLabel = { "" },
+                // No pass: the meeting screen and the import run one, and
+                // persist it; this page presents what they left on the meta.
                 onFiled = { container.gettingStarted.mark(GettingStartedStep.FILED) },
                 createFolder = if (DemoMode.isActive) {
                     { name -> demoFolder(name) }

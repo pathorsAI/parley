@@ -18,8 +18,8 @@
  * The org model here is an explicit COPY — sharing never removes anything from
  * the personal library (see ../cloud/sync). "move" is the same copy followed by
  * deleting the personal original, which is what the library grid's
- * `moveRecordingToOrg` already does. The user is asked which one they meant,
- * rather than the picker guessing.
+ * `moveRecordingToOrg` already does. The destination sheet moves by default
+ * and keeps the copy only when its "keep a copy in Personal" box is ticked.
  */
 export type OrgHandoffMode = "copy" | "move";
 

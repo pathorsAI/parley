@@ -209,9 +209,6 @@ export function DictionarySettings() {
 
   return (
     <>
-      <p className="text-[11px] leading-relaxed text-muted-foreground">
-        {t("settings.dictionary.intro")}
-      </p>
       <SyncStatusLine />
 
       <div className="flex flex-col gap-2">
@@ -272,10 +269,6 @@ export function DictionarySettings() {
           {t("settings.dictionary.limitNote", { limit: VOCABULARY_LIMIT })}
         </p>
       )}
-
-      <p className="max-w-md rounded-md border bg-muted/40 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
-        {t("settings.dictionary.privacy")}
-      </p>
     </>
   );
 }

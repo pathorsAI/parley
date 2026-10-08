@@ -1,0 +1,28 @@
+{
+  "id": "2026-10-keyboard-clipboard",
+  "ships": {
+    "ios": "1.30",
+    "android": null,
+    "desktop": null
+  },
+  "audience": "keyboard",
+  "cta": {
+    "ios": null
+  },
+  "copy": {
+    "zh-Hant": {
+      "badge": "1.30 更新",
+      "title": "常用資訊，點一下就輸入",
+      "body": "鍵盤右側的名片按鈕收著你的地址、電話、Email、身分證字號，一點就輸入；遇到這類欄位，鍵盤上方也會直接建議，全部只存在手機上。注音會記得你選過的字，選完還會建議下一個詞。",
+      "also": "語音潤飾多了「精簡」，不滿意可「換回原文」；語音紀錄可以「修正這個詞」；長按空白鍵移動游標。",
+      "button": "好"
+    },
+    "en": {
+      "badge": "New in 1.30",
+      "title": "Your saved info, one tap away",
+      "body": "The card button on the right of the keys keeps your addresses, phone numbers, email and ID number one tap away, and matching fields get a suggestion right above the keys, all on your phone. Bopomofo remembers the words you pick and suggests what comes next.",
+      "also": "Voice typing gains a Concise style and Use original; fix a misheard word from your history; hold the space bar to move the cursor.",
+      "button": "Got it"
+    }
+  }
+}

@@ -39,6 +39,9 @@ struct SettingsView: View {
     @AppStorage(DictationHistoryStore.enabledKey) private var keepDictationHistory = true
     @ObservedObject private var dictationHistory = DictationHistory.shared
     @State private var showClearHistoryConfirmation = false
+    /// Pushes 常用資訊 when the keyboard's saved-info panel links to it.
+    @State private var showSavedInfo = false
+    @State private var showResetZhuyinConfirmation = false
     @State private var personalFolders: [CloudFolder] = []
     @State private var orgFolders: [String: [CloudFolder]] = [:]
     @State private var showDeleteConfirmation = false
@@ -82,6 +85,9 @@ struct SettingsView: View {
                         dictationHistorySection
                     }
                     keyboardsSection
+                    // Outside the account gate, like the keyboards: 常用資訊
+                    // needs no account.
+                    savedInfoSection
                     appearanceSection
                     languageSection
                     // Outside every gate: a report can be sent signed out —
@@ -119,6 +125,14 @@ struct SettingsView: View {
                 // Settings is a page of short rows; the default height packs
                 // them tighter than anything else in the app.
                 .environment(\.defaultMinListRowHeight, 48)
+                // The keyboard's saved-info panel linking here
+                // (`SettingsLinkInbox`). Taken, so it is acted on once.
+                .onReceive(SettingsLinkInbox.shared.$request) { request in
+                    guard request != nil, let link = SettingsLinkInbox.shared.take() else { return }
+                    switch link {
+                    case .snippets: showSavedInfo = true
+                    }
+                }
                 #if DEBUG
                     .onReceive(ScreenshotDemo.shared.$focusKeyboardSection) { focus in
                         // .center, not .top: scrollTo ignores the navigation
@@ -137,6 +151,7 @@ struct SettingsView: View {
                 #endif
             }
             .navigationTitle("Settings")
+            .navigationDestination(isPresented: $showSavedInfo) { SavedInfoView() }
             .task { await loadFolders() }
             .task { findStuckUpload() }
             .onChange(of: app.pendingUploadCount) { _, count in
@@ -696,6 +711,28 @@ struct SettingsView: View {
                     // the same rule delivered as a telling-off.
                     .disabled(enabled == [keyboard])
             }
+            // Here rather than beside the personal dictionary's clear, which
+            // sits behind the account gate: the 注音 pane learns with no account
+            // and no Full Access, so its reset has to be reachable without
+            // them too. Always shown — the app cannot see whether a keyboard
+            // without Full Access learned anything, and a reset of nothing is
+            // harmless.
+            Button("Reset Zhuyin learning", role: .destructive) {
+                showResetZhuyinConfirmation = true
+            }
+            .confirmationDialog(
+                "Reset Zhuyin learning?", isPresented: $showResetZhuyinConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Reset", role: .destructive) {
+                    // Deletes the file and bumps the App Group counter, so a
+                    // keyboard holding the old memory drops it instead of
+                    // writing it back.
+                    ZhuyinMemory.requestReset()
+                }
+            } message: {
+                Text("The Bopomofo keyboard forgets every word it learned from the candidates you picked, and suggests in its original order again.")
+            }
         } header: {
             sectionHeader("Keyboards")
         } footer: {
@@ -723,6 +760,23 @@ struct SettingsView: View {
         switch keyboard {
         case .english: return "English keyboard"
         case .zhuyin: return "Bopomofo keyboard"
+        }
+    }
+
+    // MARK: saved info
+
+    /// The way to 常用資訊 — the name, phone numbers, addresses and IDs the
+    /// keyboard types with one tap. Its own section, outside the account gate,
+    /// because it needs neither an account nor the network.
+    private var savedInfoSection: some View {
+        Section {
+            NavigationLink {
+                SavedInfoView()
+            } label: {
+                Label("Saved info", systemImage: "person.text.rectangle")
+            }
+        } footer: {
+            sectionFooter("Your name, phone numbers, addresses and ID numbers, one tap away on the Parley keyboard. They stay on this phone.")
         }
     }
 
