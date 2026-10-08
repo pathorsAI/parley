@@ -359,7 +359,7 @@ class DictationSession(
                 fail(DictationFailure.RELAY_ERROR, event.message)
             }
 
-            // After a finalize this is the relay signing off, and `finishUp` is
+            // After `end` this is the relay signing off, and `finishUp` is
             // already running. Any other time the socket dropped under us, and
             // we finish with what we have rather than redial — see the class doc.
             is SttRelayEvent.Closed -> if (!stopRequested) {
@@ -373,7 +373,7 @@ class DictationSession(
      * Settle the text: drain the relay, fold the tentative tail in, then polish.
      *
      * Guarded by [settling] because the microphone flow completing and the cap
-     * firing can arrive together, and the finalize must only be sent once.
+     * firing can arrive together, and `end` must only be sent once.
      */
     private suspend fun finishUp() {
         if (terminal.get()) return
@@ -382,7 +382,7 @@ class DictationSession(
         tickerJob?.cancel()
         capJob?.cancel()
 
-        // finish() sends the finalize frame and deliberately leaves the socket
+        // finish() sends `end` and deliberately leaves the socket
         // open so the relay can stream the flushed tail back; closing now would
         // truncate the last utterance. Bounded, because a dead socket must not be
         // able to hold the keyboard hostage.
