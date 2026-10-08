@@ -38,7 +38,7 @@
 
 #![allow(unexpected_cfgs)]
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use serde::Serialize;
@@ -257,16 +257,61 @@ fn cancel_shortcuts_for(id: &str, windows: bool) -> Vec<Shortcut> {
     out
 }
 
+/// Bumped by every arm request, repeats included: a press re-arms Esc while
+/// an earlier dictation may still hold it, and the backstop below must not
+/// take a claim made after the session it watches ended.
+static CANCEL_ARM_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// How long after a voice-typing session task ends Esc may still be claimed.
+/// The host keeps it through the delivery — the polish round trip (at most
+/// 4 s) and the insert — and gives it back before the paste; past this the
+/// host is not coming back to it (its delivery threw before the disarm, or
+/// the main webview died).
+pub(crate) const CANCEL_BACKSTOP_DELAY: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Arm or disarm Esc for cancelling the current dictation (host.ts). Sync on
 /// purpose, like [`set_voice_typing_shortcut`]: it runs on the main thread,
 /// where the plugin's registration runs inline. A repeat of the current state
 /// does nothing, so the frontend keeps no mirror of it.
 #[tauri::command]
 pub fn set_voice_typing_cancel_armed(app: AppHandle, armed: bool) {
+    if armed {
+        CANCEL_ARM_SEQ.fetch_add(1, Ordering::SeqCst);
+    }
     if CANCEL_ARMED.swap(armed, Ordering::SeqCst) == armed {
         return;
     }
     apply_cancel_shortcuts(&app);
+}
+
+/// The backstop for a host that never disarms: a voice-typing session task
+/// ended, so [`CANCEL_BACKSTOP_DELAY`] later Esc is handed back to the app in
+/// front — unless it was armed again in the meantime (a newer press) or
+/// `still_current` says a newer session has started. Logged, because it means
+/// the host lost track of its own claim.
+pub(crate) fn release_cancel_after_session(
+    app: &AppHandle,
+    still_current: impl FnOnce(&AppHandle) -> bool + Send + 'static,
+) {
+    let seq = CANCEL_ARM_SEQ.load(Ordering::SeqCst);
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(CANCEL_BACKSTOP_DELAY).await;
+        if !backstop_should_release(seq) || !still_current(&app) {
+            return;
+        }
+        log::warn!(
+            "voice-typing: Esc still claimed {CANCEL_BACKSTOP_DELAY:?} after the session ended; releasing it"
+        );
+        let main = app.clone();
+        // The plugin's registration wants the main thread (see above).
+        let _ = app.run_on_main_thread(move || set_voice_typing_cancel_armed(main, false));
+    });
+}
+
+/// Whether Esc is still claimed by nothing newer than arm request `seq`.
+fn backstop_should_release(seq: u64) -> bool {
+    CANCEL_ARMED.load(Ordering::SeqCst) && CANCEL_ARM_SEQ.load(Ordering::SeqCst) == seq
 }
 
 /// Bring the registered Esc shortcuts in line with [`CANCEL_ARMED`] and the
@@ -883,6 +928,23 @@ mod tests {
     #[test]
     fn the_boot_default_parses_to_a_combo() {
         assert!(parse_combo(BOOT_DEFAULT_ID).is_some());
+    }
+
+    /// The Esc backstop takes back only a claim nothing renewed: a press after
+    /// the session ended arms again, and that claim is the new dictation's.
+    /// (The only test touching these globals, so it cannot race another.)
+    #[test]
+    fn the_esc_backstop_leaves_a_renewed_claim_alone() {
+        CANCEL_ARMED.store(true, Ordering::SeqCst);
+        let seq = CANCEL_ARM_SEQ.load(Ordering::SeqCst);
+        assert!(backstop_should_release(seq));
+        // A newer press armed it again (a repeat of the armed state included).
+        CANCEL_ARM_SEQ.fetch_add(1, Ordering::SeqCst);
+        assert!(!backstop_should_release(seq));
+        // Already handed back: nothing to do.
+        let seq = CANCEL_ARM_SEQ.load(Ordering::SeqCst);
+        CANCEL_ARMED.store(false, Ordering::SeqCst);
+        assert!(!backstop_should_release(seq));
     }
 
     fn esc(mods: Option<Modifiers>) -> Shortcut {

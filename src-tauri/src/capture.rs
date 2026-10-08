@@ -486,6 +486,9 @@ pub fn run_metered_session(
 ) -> tauri::async_runtime::JoinHandle<()> {
     let app = app.clone();
     tauri::async_runtime::spawn(transcription::common::SESSION.scope(session, async move {
+        // Voice typing only: however this task ends, Esc must not stay
+        // claimed for it (see `voice_typing::SessionEndGuard`).
+        let _esc_backstop = session.map(|s| crate::voice_typing::SessionEndGuard::new(&app, s));
         let failure = Failure {
             app: &app,
             label,

@@ -855,6 +855,23 @@ describe("voice-typing host: Esc cancels, Undo copies", () => {
     expect(armed()).toEqual([true, false]);
   });
 
+  /** The regression: a delivery that threw before its insert (here the
+   *  polish) skipped the disarm, and Esc stayed claimed in every app. */
+  it("disarms Esc even when the delivery throws before the insert", async () => {
+    mocks.polish.on = true;
+    mocks.polish.run.mockRejectedValue(new Error("boom"));
+    await key(true);
+    await key(false);
+    finish(1, "0", "會出錯的");
+    await tick();
+    expect(inserted()).toEqual([]);
+    expect(mocks.log.error).toHaveBeenCalledWith(
+      "voice-typing: delivery failed",
+      expect.objectContaining({ error: "Error: boom" }),
+    );
+    expect(armed()).toEqual([true, false]);
+  });
+
   it("a new press drops a cancelled dictation still on offer and starts fresh", async () => {
     await key(true);
     segment(1, "0", "舊的", true);

@@ -781,6 +781,23 @@ async function polishForPaste(
 /** Polish, insert and record one settled dictation, then tell the overlay
  *  what was delivered. Runs on `deliveryChain`, one at a time. */
 async function deliver(d: Delivery): Promise<void> {
+  try {
+    await deliverSettled(d);
+  } finally {
+    // However the delivery ended, a throw before the insert included, this
+    // dictation can no longer be cancelled: give Esc back to the app in front
+    // unless a newer press has claimed it. Without this, a failure between
+    // the settle and the insert left Esc swallowed in every app until the
+    // next dictation's delivery (Rust also releases it a while after the
+    // session ends, for a host that never gets here at all).
+    if (cancellable === d.myGen) {
+      cancellable = null;
+      armCancel(false);
+    }
+  }
+}
+
+async function deliverSettled(d: Delivery): Promise<void> {
   // Settled dictations only exist after a press, which already waited for
   // this — but the report below reads the dictionary cache, so say so here.
   await whenDictionaryReady();

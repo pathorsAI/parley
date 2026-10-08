@@ -150,6 +150,11 @@ impl VoiceTypingState {
         (vt.session, vt.cutoff.clone(), vt.mic_gate.clone())
     }
 
+    /// The current session id.
+    fn current(&self) -> u64 {
+        self.0.lock().unwrap().session
+    }
+
     fn abort_if_current(&self, session: u64) {
         let vt = self.0.lock().unwrap();
         if vt.session == session {
@@ -157,6 +162,37 @@ impl VoiceTypingState {
                 task.abort();
             }
         }
+    }
+}
+
+/// Held by a voice-typing session task (see `capture::run_metered_session`)
+/// and dropped when the task ends, normally or aborted. Hands Esc back if the
+/// host still has it claimed for this dictation a while later
+/// (`hotkey::release_cancel_after_session`): a host that threw before its own
+/// disarm, or a main webview that died, must not leave Esc swallowed in every
+/// app.
+pub(crate) struct SessionEndGuard {
+    app: AppHandle,
+    session: u64,
+}
+
+impl SessionEndGuard {
+    pub(crate) fn new(app: &AppHandle, session: u64) -> Self {
+        Self {
+            app: app.clone(),
+            session,
+        }
+    }
+}
+
+impl Drop for SessionEndGuard {
+    fn drop(&mut self) {
+        let session = self.session;
+        crate::hotkey::release_cancel_after_session(&self.app, move |app| {
+            // A newer press owns Esc from its start; leave its claim alone.
+            app.try_state::<VoiceTypingState>()
+                .is_some_and(|state| state.current() == session)
+        });
     }
 }
 
