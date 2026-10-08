@@ -372,6 +372,7 @@ class SttRelayClient(private val options: Options) : PcmSink {
         if (terminated.compareAndSet(false, true)) {
             eventChannel.close()
         }
+        openSignal?.complete(Unit)
         scope.cancel()
     }
 

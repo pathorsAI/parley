@@ -354,7 +354,9 @@ class DictationSession(
                 fail(DictationFailure.QUOTA_EXCEEDED, event.message)
             }
 
-            is SttRelayEvent.Error -> {
+            // After `end`, `finishUp` is already settling on what arrived; a late
+            // error (the relay giving up on the tail) must not fail the polish.
+            is SttRelayEvent.Error -> if (!stopRequested) {
                 mic.stop()
                 fail(DictationFailure.RELAY_ERROR, event.message)
             }
