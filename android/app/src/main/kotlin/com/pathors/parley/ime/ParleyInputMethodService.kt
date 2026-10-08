@@ -29,6 +29,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
@@ -379,24 +380,31 @@ class ParleyInputMethodService :
                     DictationService.clear(only = session)
                     return@collectLatest
                 }
-                launch {
-                    session.text.collect { text ->
-                        // Re-checked on every write: the field can change under
-                        // a running collector, and a finished session's text is
-                        // already committed.
-                        if (fieldGate.owns(session.ownerToken) && !session.state.value.isTerminal()) {
-                            showComposing(text)
-                        }
+                watch(session)
+            }
+        }
+    }
+
+    /** One owned session's text, level, timer and state, until the next replaces it. */
+    private suspend fun watch(session: DictationSession) {
+        coroutineScope {
+            launch {
+                session.text.collect { text ->
+                    // Re-checked on every write: the field can change under
+                    // a running collector, and a finished session's text is
+                    // already committed.
+                    if (fieldGate.owns(session.ownerToken) && !session.state.value.isTerminal()) {
+                        showComposing(text)
                     }
                 }
-                launch { session.level.collect { uiState = uiState.copy(level = it) } }
-                launch { session.elapsedMs.collect { uiState = uiState.copy(elapsedMs = it) } }
-                session.state.collect { state ->
-                    if (fieldGate.owns(session.ownerToken)) {
-                        onSessionState(state)
-                    } else if (state.isTerminal()) {
-                        DictationService.clear(only = session)
-                    }
+            }
+            launch { session.level.collect { uiState = uiState.copy(level = it) } }
+            launch { session.elapsedMs.collect { uiState = uiState.copy(elapsedMs = it) } }
+            session.state.collect { state ->
+                if (fieldGate.owns(session.ownerToken)) {
+                    onSessionState(state)
+                } else if (state.isTerminal()) {
+                    DictationService.clear(only = session)
                 }
             }
         }
