@@ -161,7 +161,7 @@ pub async fn run_session(
         "[gemini:{source}] connected, model={model} (diarization unsupported → speaker 0), leg={}",
         config.leg
     );
-    note_connected(&app, source, config.leg);
+    note_connected(&app, source, config.leg, false);
 
     let mime = format!("audio/pcm;rate={}", TARGET_SAMPLE_RATE);
     let meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT).enabled(config.level_events);

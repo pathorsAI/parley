@@ -19,8 +19,10 @@ use crate::audio::TARGET_SAMPLE_RATE;
 
 const SONIOX_WS_URL: &str = "wss://stt-rt.soniox.com/transcribe-websocket";
 
-/// Soniox endpoint markers. `<end>` closes an utterance; `<fin>` is the final
-/// token emitted when the whole stream ends.
+/// Soniox control tokens. `<end>` closes an utterance (endpoint detection);
+/// `<fin>` acknowledges our `{"type":"finalize"}`: every token for the audio
+/// sent before it has been returned as final. End of stream is the response's
+/// `finished` flag, which Soniox only sends after an empty end-of-audio frame.
 const TOKEN_END: &str = "<end>";
 const TOKEN_FIN: &str = "<fin>";
 
@@ -160,8 +162,8 @@ async fn forward_audio(
         // here — the relay must forward this finalize to Soniox and stream the
         // flushed tail BACK to us first; closing now would make the relay's
         // server socket fire 'close' and stop relaying, truncating the last
-        // utterance. The relay closes the socket once Soniox finishes, which ends
-        // the read loop below (it also breaks on Soniox's `finished` marker).
+        // utterance. Nor is the socket closed for us after the finalize, so the
+        // read loop ends on the `<fin>` that answers it (see `ends_stream`).
         close: !is_relay,
     };
 
@@ -212,6 +214,16 @@ fn apply_tokens(builder: &mut SegmentBuilder, tokens: &[SonioxToken]) -> bool {
     endpoint
 }
 
+/// Whether this response ends the stream for us: Soniox's `finished`, or the
+/// `<fin>` acknowledging our closing finalize. Every token for audio sent
+/// before the finalize is final by then and nothing more will come. A socket
+/// that is not closed afterwards used to leave the session waiting for
+/// stop_voice_typing's 8 s abort — which skipped `stt://closed` and
+/// `usage://stt`.
+fn ends_stream(resp: &SonioxResponse) -> bool {
+    resp.finished || resp.tokens.iter().any(|t| t.text == TOKEN_FIN)
+}
+
 /// Read tokens → speaker-runs via the shared SegmentBuilder. Resolves to Err on
 /// an in-band error frame (e.g. a rejected api key) so the caller's error
 /// surface fires — the session is dead from that point, and returning Ok would
@@ -238,14 +250,19 @@ async fn read_transcripts(
             return Err(anyhow!("server error {code}: {detail}"));
         }
 
+        // Decided before the tokens are applied, but acted on after: the
+        // response that carries `<fin>` also carries the last finals, which
+        // must be emitted (and committed by the endpoint) before we stop.
+        let done = ends_stream(&resp);
         if apply_tokens(&mut builder, &resp.tokens) {
             builder.endpoint();
         }
-        Ok(if resp.finished {
-            Next::Stop
-        } else {
-            Next::Continue
-        })
+        if done && !resp.finished {
+            // Confirms in the field that the finalize was acknowledged; without
+            // this line the session ends on DRAIN_READ_GRACE instead.
+            log::info!("[soniox:{source}] finalize acknowledged; ending the stream");
+        }
+        Ok(if done { Next::Stop } else { Next::Continue })
     })
     .await
 }
@@ -259,20 +276,30 @@ pub async fn run_session(
     source: &'static str,
     pcm_rx: UnboundedReceiver<Vec<i16>>,
 ) -> Result<()> {
+    let connecting = std::time::Instant::now();
     let ws = open_socket(&config).await?;
     let (mut write, read) = ws.split();
 
     write
         .send(Message::Text(serde_json::to_string(&wire_config(&config))?))
         .await?;
-    eprintln!(
-        "[soniox:{source}] connected, model={}, diarization={}, vocabulary={}, leg={}",
+    // To parley.log (an `eprintln!` never got there), so a "my name is ignored"
+    // report can be checked against what actually went on the wire: the COUNT
+    // of terms sent after cleaning, never the terms themselves (user data).
+    // The connect time is the other half of a short dictation's wait: no token
+    // can come back before it.
+    log::info!(
+        "[soniox:{source}] connected in {}ms, model={}, diarization={}, relay={}, vocabulary={}, leg={}",
+        connecting.elapsed().as_millis(),
         config.model,
         config.diarization,
-        config.vocabulary.len(),
+        config.relay_endpoint.is_some(),
+        clean_vocabulary(&config.vocabulary).len(),
         config.leg
     );
-    note_connected(&app, source, config.leg);
+    // The closing finalize is answered with `<fin>`, which ends the stream;
+    // see `ends_stream`.
+    note_connected(&app, source, config.leg, true);
 
     let meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT).enabled(config.level_events);
     let is_relay = config.relay_endpoint.is_some();
@@ -283,4 +310,95 @@ pub async fn run_session(
         read_transcripts(app, source, config.timeline(), read),
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn config(relay: Option<&str>, vocabulary: &[&str]) -> TranscribeConfig {
+        TranscribeConfig {
+            api_key: "sk-test".to_string(),
+            model: "stt-rt-v3".to_string(),
+            language_hints: vec!["zh".to_string(), "en".to_string()],
+            diarization: false,
+            vocabulary: vocabulary.iter().map(|t| t.to_string()).collect(),
+            relay_endpoint: relay.map(str::to_string),
+            leg: 0,
+            time_offset_ms: 0,
+            level_events: true,
+        }
+    }
+
+    #[test]
+    fn relay_frame_carries_cleaned_terms_and_no_key() {
+        let cfg = config(Some("wss://example/stt"), &[" 名字 ", "Parley", "Parley"]);
+        let frame = serde_json::to_value(wire_config(&cfg)).unwrap();
+        // The relay injects the key server-side; it must never ride in the frame.
+        assert!(frame.get("api_key").is_none());
+        assert_eq!(frame["context"]["terms"], json!(["名字", "Parley"]));
+    }
+
+    #[test]
+    fn byok_frame_carries_the_key() {
+        let cfg = config(None, &["Parley"]);
+        let frame = serde_json::to_value(wire_config(&cfg)).unwrap();
+        assert_eq!(frame["api_key"], json!("sk-test"));
+        assert_eq!(frame["context"]["terms"], json!(["Parley"]));
+    }
+
+    fn response(raw: serde_json::Value) -> SonioxResponse {
+        serde_json::from_value(raw).unwrap()
+    }
+
+    #[test]
+    fn plain_finals_do_not_end_the_stream() {
+        let resp = response(json!({
+            "tokens": [
+                { "text": "你好", "is_final": true, "start_ms": 0, "end_ms": 300 },
+                { "text": "嗎", "is_final": false, "start_ms": 300, "end_ms": 400 }
+            ]
+        }));
+        assert!(!ends_stream(&resp));
+    }
+
+    #[test]
+    fn an_endpoint_does_not_end_the_stream() {
+        let resp = response(json!({
+            "tokens": [
+                { "text": "你好。", "is_final": true },
+                { "text": "<end>", "is_final": true }
+            ]
+        }));
+        assert!(!ends_stream(&resp));
+    }
+
+    /// A socket nobody closes ends here: on the finalize's answer.
+    #[test]
+    fn the_finalize_acknowledgement_ends_the_stream() {
+        let resp = response(json!({
+            "tokens": [
+                { "text": "明天見", "is_final": true, "start_ms": 900, "end_ms": 1300 },
+                { "text": "<fin>", "is_final": true }
+            ]
+        }));
+        assert!(ends_stream(&resp));
+    }
+
+    #[test]
+    fn finished_ends_the_stream() {
+        let resp = response(json!({ "tokens": [], "finished": true }));
+        assert!(ends_stream(&resp));
+    }
+
+    #[test]
+    fn empty_vocabulary_omits_context() {
+        let cfg = config(Some("wss://example/stt"), &["  ", ""]);
+        let frame = serde_json::to_value(wire_config(&cfg)).unwrap();
+        assert!(frame.get("context").is_none());
+        let cfg = config(None, &[]);
+        let frame = serde_json::to_value(wire_config(&cfg)).unwrap();
+        assert!(frame.get("context").is_none());
+    }
 }

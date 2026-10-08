@@ -8,6 +8,8 @@
 //! Diarization is optional: adapters that can't tell speakers apart simply pass
 //! `speaker = 0` for everything, which the UI renders as a single speaker.
 
+use std::time::Duration;
+
 use anyhow::{anyhow, Result};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
@@ -39,10 +41,12 @@ pub const VOICE_TYPING_SOURCE: &str = "voice-typing";
 pub const TRANSCRIPTION_STATE_EVENT: &str = "meeting://transcription";
 
 /// How long a provider handshake (TCP + TLS + websocket upgrade) may take.
-/// A healthy one completes in well under a second; without a bound, a dial
-/// into a dead network waits on the OS, which can take minutes — long past
-/// the hold buffer that keeps the meeting's words for the next leg.
-pub const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+/// A healthy one completes in well under a second, though the hosted relay
+/// usually takes about two and has been seen at six and a half; without a
+/// bound, a dial into a dead network waits on the OS, which can take minutes —
+/// long past the hold buffer that keeps the meeting's words for the next leg,
+/// and long past any dictation the user is waiting on.
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
 tokio::task_local! {
     /// The voice-typing session the current task belongs to, set by
@@ -75,6 +79,17 @@ pub fn session_for(source: &str) -> Option<u64> {
     }
     session
 }
+
+/// Emitted once per session when its socket is open and the opening config has
+/// gone out: audio captured since the press (buffered while the handshake ran)
+/// is on its way to the recognizer from here, so nothing can come back before
+/// it. The voice-typing host times its wait for the final answer from the later
+/// of this and the release — the hosted relay takes two seconds or more to
+/// accept a connection, and a short dictation is often released before that.
+/// `acksFinalize`: the provider answers the closing finalize with an explicit
+/// end of stream, so the host waits for that close rather than guessing from
+/// silence.
+pub const CONNECTED_EVENT: &str = "stt://connected";
 
 /// rustls 0.23 requires a process-wide default CryptoProvider before any TLS
 /// handshake; installing it lazily (once) avoids a panic in the ws task.
@@ -251,13 +266,25 @@ pub fn emit_segment(
     );
 }
 
-/// Tell the meeting UI a leg's handshake completed and transcription is live
-/// (`meeting://transcription`, state `live`) — what drops its "reconnecting"
-/// banner — and confirm the leg to its bridge, which can now let go of its
-/// copies of the audio fed to the leg. Adapters call it right after their
-/// handshake (and opening config frame, where the protocol has one). Voice
-/// typing has no such surface and no bridge.
-pub fn note_connected(app: &AppHandle, source: &str, leg: u32) {
+/// A leg's handshake completed (and its opening config frame went out, where
+/// the protocol has one). Adapters call it right after that, once per leg:
+/// - it emits [`CONNECTED_EVENT`] (`stt://connected`), which the voice-typing
+///   host times its wait for the final answer from; `acks_finalize` says the
+///   provider answers the closing finalize with an explicit end of stream;
+/// - it confirms the leg to its bridge, which can now let go of its copies of
+///   the audio fed to the leg (meetings only; voice typing has no bridge);
+/// - it tells the meeting UI transcription is live (`meeting://transcription`,
+///   state `live`), which drops its "reconnecting" banner. Voice typing has no
+///   such surface.
+pub fn note_connected(app: &AppHandle, source: &str, leg: u32, acks_finalize: bool) {
+    let _ = app.emit(
+        CONNECTED_EVENT,
+        serde_json::json!({
+            "source": source,
+            "session": session_for(source),
+            "acksFinalize": acks_finalize,
+        }),
+    );
     let _ = BRIDGE.try_with(|bridge| {
         if let Some(bridge) = bridge {
             bridge.confirm();
@@ -278,7 +305,15 @@ pub fn note_connected(app: &AppHandle, source: &str, leg: u32) {
 pub async fn with_connect_timeout<T>(
     connect: impl std::future::Future<Output = Result<T>>,
 ) -> Result<T> {
-    match tokio::time::timeout(CONNECT_TIMEOUT, connect).await {
+    connect_within(CONNECT_TIMEOUT, connect).await
+}
+
+/// [`with_connect_timeout`] with the bound as a parameter, for tests.
+async fn connect_within<T>(
+    limit: Duration,
+    connect: impl std::future::Future<Output = Result<T>>,
+) -> Result<T> {
+    match tokio::time::timeout(limit, connect).await {
         Ok(result) => result,
         Err(_elapsed) => Err(anyhow!("connect timed out")),
     }
@@ -317,6 +352,19 @@ pub async fn connect_with_headers(
     Ok(ws)
 }
 
+/// After a normal stop, how long the read half may take to answer the closing
+/// handshake before the session ends anyway, counted from the drain (the
+/// forward half sent its last audio). The abort backstops count from the cut
+/// instead. `voice_typing::FLUSH_ABORT_GRACE` is built from this grace and
+/// [`CONNECT_TIMEOUT`], so a dictation always ends here, in a normal return
+/// (`stt://closed` fired), however late its socket connected. Meetings'
+/// `teardown_meeting` still aborts 8 s after the cut: when the socket is
+/// connected by then, the drain follows the cut at once and this grace ends
+/// the session first; a connect that finishes more than about a second after
+/// the cut pushes the drain, and this grace, past that abort — the usage
+/// report survives it (capture.rs, `UsageReport`), the close does not.
+pub const DRAIN_READ_GRACE: Duration = Duration::from_secs(7);
+
 /// Drive a realtime session's two halves to completion and classify the
 /// outcome. Every adapter hands over:
 /// - `forward`: pumps PCM to the socket; resolves `true` when it drained its
@@ -330,8 +378,25 @@ pub async fn connect_with_headers(
 /// mid-session disconnect is indistinguishable from successful silence
 /// (frozen level meter, no transcript, no event; see `run_metered_session`'s
 /// error surface). A normal stop instead awaits the read half so the
-/// provider's final-token flush is delivered before the session resolves.
+/// provider's final-token flush is delivered before the session resolves —
+/// for at most [`DRAIN_READ_GRACE`]: the flush is the provider's answer to the
+/// closing handshake, and one that never comes must not keep the session (and
+/// its socket) alive until something aborts it.
 pub async fn drive_session<F, R>(provider: &'static str, forward: F, read_loop: R) -> Result<()>
+where
+    F: std::future::Future<Output = bool>,
+    R: std::future::Future<Output = Result<()>>,
+{
+    drive_session_with(provider, forward, read_loop, DRAIN_READ_GRACE).await
+}
+
+/// [`drive_session`] with the post-drain grace as a parameter, for tests.
+async fn drive_session_with<F, R>(
+    provider: &'static str,
+    forward: F,
+    read_loop: R,
+    grace: Duration,
+) -> Result<()>
 where
     F: std::future::Future<Output = bool>,
     R: std::future::Future<Output = Result<()>>,
@@ -342,8 +407,18 @@ where
         drained = &mut forward => {
             if drained {
                 // Normal stop: wait for the final flush. A terminal in-band
-                // error during the flush still surfaces.
-                read_loop.await
+                // error during the flush still surfaces; a flush that never
+                // ends is cut after `grace` and counts as a normal end, since
+                // every token it did deliver has already been emitted.
+                match tokio::time::timeout(grace, read_loop).await {
+                    Ok(result) => result,
+                    Err(_elapsed) => {
+                        log::warn!(
+                            "{provider}: final flush not acknowledged within {grace:?}; ending the session"
+                        );
+                        Ok(())
+                    }
+                }
             } else {
                 // A send failed, so the socket is gone. Give the read half a
                 // short grace to deliver the server's explanation (an in-band
@@ -351,7 +426,7 @@ where
                 // a half-dead connection can leave the read side hanging far
                 // longer than the failure took.
                 let death = || anyhow!("{provider} stream died mid-session (send failed)");
-                match tokio::time::timeout(std::time::Duration::from_secs(5), read_loop).await {
+                match tokio::time::timeout(Duration::from_secs(5), read_loop).await {
                     Ok(read_result) => {
                         read_result?;
                         Err(death())
@@ -571,6 +646,24 @@ impl SegmentBuilder {
 mod tests {
     use super::*;
 
+    /// A connect that never answers fails the session (so the host shows an
+    /// error and stops waiting) instead of parking it until the OS gives up.
+    #[tokio::test]
+    async fn a_connect_that_never_answers_times_out() {
+        let limit = Duration::from_millis(20);
+        let started = std::time::Instant::now();
+        let r: Result<()> = connect_within(limit, std::future::pending()).await;
+        assert_eq!(r.unwrap_err().to_string(), "connect timed out");
+        assert!(started.elapsed() >= limit);
+    }
+
+    #[tokio::test]
+    async fn a_connect_error_passes_through_the_timeout() {
+        let r: Result<()> =
+            with_connect_timeout(async { Err(anyhow!("connect failed: HTTP 402")) }).await;
+        assert_eq!(r.unwrap_err().to_string(), "connect failed: HTTP 402");
+    }
+
     #[test]
     fn clean_vocabulary_trims_drops_empties_and_dedupes_in_order() {
         let raw = vec![
@@ -581,6 +674,53 @@ mod tests {
             "Parley".to_string(),
         ];
         assert_eq!(clean_vocabulary(&raw), vec!["Parley", "派勒"]);
+    }
+
+    /// A relay that neither closes nor acknowledges the finalize used to park
+    /// the session on its read half until an 8 s abort skipped usage and close.
+    #[tokio::test]
+    async fn a_flush_that_never_ends_is_cut_after_the_grace_as_a_normal_end() {
+        let grace = Duration::from_millis(30);
+        let started = std::time::Instant::now();
+        let result = drive_session_with(
+            "test",
+            async { true },
+            futures_util::future::pending::<Result<()>>(),
+            grace,
+        )
+        .await;
+        assert!(result.is_ok());
+        let took = started.elapsed();
+        assert!(took >= grace, "returned after {took:?}");
+        assert!(took < Duration::from_secs(2), "returned after {took:?}");
+    }
+
+    #[tokio::test]
+    async fn an_error_during_the_flush_still_surfaces() {
+        let result = drive_session_with(
+            "test",
+            async { true },
+            async {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                Err(anyhow!("server error 401: bad key"))
+            },
+            Duration::from_secs(5),
+        )
+        .await;
+        assert!(result.unwrap_err().to_string().contains("401"));
+    }
+
+    #[tokio::test]
+    async fn a_read_loop_that_ends_while_audio_flows_is_a_failure() {
+        let result = drive_session_with(
+            "test",
+            futures_util::future::pending::<bool>(),
+            async { Ok(()) },
+            Duration::from_secs(5),
+        )
+        .await;
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("ended mid-session"), "{error}");
     }
 
     #[test]

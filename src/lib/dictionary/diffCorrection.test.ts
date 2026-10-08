@@ -139,6 +139,86 @@ describe("detectCorrection", () => {
   });
 });
 
+describe("detectCorrection on CJK terms", () => {
+  /** Fixing one character of a name used to learn that one character (名 →
+   *  明), which then rewrote every 名 in every later dictation. A known term
+   *  covering the edit widens the pair to the whole term. */
+  it("widens a one-character fix to the anchoring term", () => {
+    expect(detectCorrection("我是王小名", "我是王小明", "我是王小名", ["王小明"])).toEqual({
+      from: "王小名",
+      to: "王小明",
+    });
+  });
+
+  it("learns an anchored term even when it is most of a short paste", () => {
+    // 2 of 4 characters is over the rewrite ratio; the anchor proves it is a
+    // term fix all the same.
+    expect(detectCorrection("我是小名", "我是小明", "我是小名", ["小明"])).toEqual({
+      from: "小名",
+      to: "小明",
+    });
+  });
+
+  it("prefers the longest anchor that covers the edit", () => {
+    const inserted = "明天跟王小名開會討論下一季的規劃";
+    const fixed = "明天跟王小明開會討論下一季的規劃";
+    expect(detectCorrection(inserted, fixed, inserted, ["小明", "王小明"])).toEqual({
+      from: "王小名",
+      to: "王小明",
+    });
+  });
+
+  it("refuses a single CJK character without an anchor", () => {
+    expect(detectCorrection("我是小名", "我是小明", "我是小名")).toBeNull();
+    const inserted = "明天跟王小名開會討論下一季的規劃";
+    const fixed = "明天跟王小明開會討論下一季的規劃";
+    expect(detectCorrection(inserted, fixed, inserted)).toBeNull();
+  });
+
+  it("refuses a one-character CJK → digit edit", () => {
+    const inserted = "這次比賽他拿到第一名真的很厲害";
+    const fixed = "這次比賽他拿到第1名真的很厲害";
+    expect(detectCorrection(inserted, fixed, inserted)).toBeNull();
+  });
+
+  /** The right answer here is a learnable pair, so wrongly taking either
+   *  anchor changes it: 王小明 would widen it to 王小明 → 王小明 (null), 說拍
+   *  to 說派 → 說拍. A same-length fix with only a far-away anchor could not
+   *  tell: both sides of any widening slice the same shared text. */
+  it("ignores an anchor that does not cover the edit", () => {
+    const inserted = "王小明說派斯科技很好";
+    const fixed = "王小明說拍思科技很好";
+    // 王小明 sits outside the edit; 說拍 overlaps only its first character.
+    expect(detectCorrection(inserted, fixed, inserted, ["王小明", "說拍"])).toEqual({
+      from: "派斯",
+      to: "拍思",
+    });
+  });
+
+  it("does not turn a deletion next to a term into a fix of that term", () => {
+    const inserted = "王小明很好的同事們";
+    const cut = "王小明好的同事們";
+    expect(detectCorrection(inserted, cut, inserted, ["王小明"])).toBeNull();
+  });
+
+  it("refuses an anchored pair whose misheard side is one character", () => {
+    // Inserting 小 into 明 widens to 明 → 小明, and 明 is what would be
+    // rewritten everywhere.
+    const inserted = "我跟明一起去吃飯然後回家";
+    const fixed = "我跟小明一起去吃飯然後回家";
+    expect(detectCorrection(inserted, fixed, inserted, ["小明"])).toBeNull();
+  });
+
+  it("still learns the zh → ASCII homophone with anchors on hand", () => {
+    const inserted = "今天跟派勒的團隊開會，討論語音輸入";
+    const fixed = "今天跟Parley的團隊開會，討論語音輸入";
+    expect(detectCorrection(inserted, fixed, inserted, ["Parley", "王小明"])).toEqual({
+      from: "派勒",
+      to: "Parley",
+    });
+  });
+});
+
 describe("applyReplacements", () => {
   it("replaces a zh variant anywhere in the text (no word boundaries)", () => {
     const entries = [entry("Parley", ["派勒"])];
@@ -179,5 +259,40 @@ describe("applyReplacements", () => {
 
   it("is a no-op with an empty dictionary", () => {
     expect(applyReplacements("我們用派勒開會", [])).toBe("我們用派勒開會");
+  });
+
+  /** A phrase that contains its own variant used to grow text that was already
+   *  right: 派斯科技 → 派斯科技科技. */
+  it("leaves a phrase that contains its variant alone, and rewrites a lone variant", () => {
+    const entries = [entry("派斯科技", ["派斯"])];
+    expect(applyReplacements("派斯科技", entries)).toBe("派斯科技");
+    expect(applyReplacements("我在派斯上班", entries)).toBe("我在派斯科技上班");
+    expect(applyReplacements("派斯科技和派斯", entries)).toBe("派斯科技和派斯科技");
+  });
+
+  it("is idempotent", () => {
+    const entries = [entry("派斯科技", ["派斯"]), entry("Parley Cloud", ["parley"])];
+    for (const text of ["派斯科技和派斯", "ask parley about Parley Cloud", "parley cloud"]) {
+      const once = applyReplacements(text, entries);
+      expect(applyReplacements(once, entries)).toBe(once);
+    }
+  });
+
+  it("matches the containing phrase case-insensitively for an ASCII variant", () => {
+    const entries = [entry("Parley Cloud", ["parley"])];
+    expect(applyReplacements("parley cloud", entries)).toBe("parley cloud");
+    expect(applyReplacements("ask parley today", entries)).toBe("ask Parley Cloud today");
+  });
+
+  it("keeps the word boundary next to a masked phrase", () => {
+    // "Cloudparley" is one word: the variant must not match inside it just
+    // because the phrase beside it was masked.
+    const entries = [entry("Parley Cloud", ["parley"])];
+    expect(applyReplacements("Parley Cloudparley", entries)).toBe("Parley Cloudparley");
+  });
+
+  it("still applies a case-only pair", () => {
+    const entries = [entry("Parley", ["parley"])];
+    expect(applyReplacements("ask parley later", entries)).toBe("ask Parley later");
   });
 });

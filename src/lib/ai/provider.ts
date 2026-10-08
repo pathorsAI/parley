@@ -5,6 +5,7 @@ import type { LlmWorkload, Settings } from "../types";
 import { PROVIDER_BY_ID, isReasoningModel, normalizeBaseUrl, type ProviderInfo } from "./providers";
 import { cloudToken, CLOUD_URL } from "../cloud/client";
 import { CLOUD_ENABLED } from "../flags";
+import { webviewFetch } from "./webviewFetch";
 import { STUDY } from "./studyPrompt";
 
 export { isReasoningModel } from "./providers";
@@ -28,6 +29,19 @@ export const JSON_MODE_INSTRUCTION: string = STUDY.jsonModeInstruction;
  * Anthropic is called directly from the webview, so it needs the
  * `anthropic-dangerous-direct-browser-access` header to satisfy CORS — fine for
  * a local desktop app where the key lives in app settings, not a public site.
+ *
+ * Every client is built with {@link webviewFetch}, which strips the SDK's own
+ * `user-agent` header. WebKit (the macOS webview) sends a script-set
+ * User-Agent and lists it in the CORS preflight, so any endpoint with a fixed
+ * header allow-list — Parley Cloud's, or a self-hosted gateway's — refuses the
+ * preflight and fetch fails as a bare `TypeError: Load failed`. That is how
+ * every hosted call (polish, Ask, analysis) failed on the Mac while the same
+ * request passes from Windows, whose Chromium webview drops the header itself.
+ * Anthropic, Groq and OpenRouter allow the header anyway; nothing is lost there.
+ *
+ * Do not add custom headers here without checking the endpoint's CORS
+ * allow-list first: an `X-Parley-Feature`, say, is not on Parley Cloud's and
+ * would break the preflight in exactly the same way.
  */
 export function getModel(
   settings: Settings,
@@ -65,6 +79,7 @@ export function getModel(
     const anthropic = createAnthropic({
       apiKey,
       headers: { "anthropic-dangerous-direct-browser-access": "true" },
+      fetch: webviewFetch,
     });
     return anthropic(modelId);
   }
@@ -90,6 +105,7 @@ export function getModel(
       baseURL: `${CLOUD_URL}/v1`,
       apiKey: token,
       supportsStructuredOutputs: opts?.forceJsonObject ? false : info.supportsStructuredOutputs ?? false,
+      fetch: webviewFetch,
     });
     return parley.chatModel(modelId);
   }
@@ -104,6 +120,7 @@ export function getModel(
     // true → response_format json_schema (schema ENFORCED); false → json_object
     // (valid JSON only). Off for Ollama, whose /v1 ignores the json_schema shape.
     supportsStructuredOutputs: opts?.forceJsonObject ? false : info.supportsStructuredOutputs ?? false,
+    fetch: webviewFetch,
   });
   return client.chatModel(modelId);
 }

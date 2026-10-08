@@ -18,7 +18,11 @@
 //!   long as it stays held;
 //! - any other key pressed while dictating turns the hold into a chord
 //!   (RightCtrl+C is a copy, not a dictation): dictation stops right there and
-//!   the eventual release of the trigger does nothing.
+//!   the eventual release of the trigger does nothing;
+//! - except Esc while the frontend has the cancel armed: that is
+//!   [`Action::Cancel`] instead of a stop, and the hook swallows the Esc (a
+//!   Ctrl+Esc would open Start). The trigger's release is silent, as for any
+//!   chord.
 //!
 //! **AltGr.** On keyboard layouts that have an AltGr key (German, French,
 //! Polish, …) the right Alt key is AltGr, and Windows reports every AltGr
@@ -41,6 +45,8 @@ pub const VK_LMENU: u32 = 0xA4;
 pub const VK_RMENU: u32 = 0xA5;
 pub const VK_LWIN: u32 = 0x5B;
 pub const VK_RWIN: u32 = 0x5C;
+/// `VK_ESCAPE`: cancels an armed dictation (see [`Action::Cancel`]).
+pub const VK_ESCAPE: u32 = 0x1B;
 
 /// Every modifier whose being held turns a trigger press into a chord. The
 /// index of a key in this list is its bit in [`ModifierPtt::held`].
@@ -113,6 +119,9 @@ pub struct KeyEvent {
 pub enum Action {
     Start,
     Stop,
+    /// End the dictation WITHOUT delivering it (Esc while armed). The hook
+    /// swallows this key, and the trigger's release that follows is silent.
+    Cancel,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -133,6 +142,8 @@ pub struct ModifierPtt {
     /// Bitset over [`MODIFIER_VKS`]: the non-trigger modifiers currently held.
     held: u8,
     phase: Phase,
+    /// The frontend has a dictation it can cancel (`CANCEL_ARMED`).
+    cancel_armed: bool,
 }
 
 fn modifier_bit(vk: u32) -> Option<u8> {
@@ -156,6 +167,12 @@ impl ModifierPtt {
         if let Some(bit) = trigger.and_then(|t| modifier_bit(t.vk())) {
             self.held &= !bit;
         }
+    }
+
+    /// Whether an Esc during the hold cancels it ([`Action::Cancel`]) rather
+    /// than ending it as a chord. The hook refreshes it on every key.
+    pub fn set_cancel_armed(&mut self, armed: bool) {
+        self.cancel_armed = armed;
     }
 
     /// Forget everything about held keys — used when the hook is re-armed
@@ -214,6 +231,9 @@ impl ModifierPtt {
             return None;
         }
         self.phase = Phase::Chord;
+        if self.cancel_armed && ev.vk == VK_ESCAPE {
+            return Some(Action::Cancel);
+        }
         Some(Action::Stop)
     }
 
@@ -500,6 +520,80 @@ mod tests {
         m.on_key(down(VK_LSHIFT), os_agrees);
         assert_eq!(m.reset(), None);
         assert_eq!(m.on_key(down(VK_RCONTROL), os_agrees), Some(Action::Start));
+    }
+
+    fn armed(trigger: Trigger) -> ModifierPtt {
+        let mut m = machine(trigger);
+        m.set_cancel_armed(true);
+        m
+    }
+
+    #[test]
+    fn escape_cancels_an_armed_hold_and_its_release_is_silent() {
+        let mut m = armed(Trigger::RightCtrl);
+        assert_eq!(
+            feed(
+                &mut m,
+                &[
+                    down(VK_RCONTROL),
+                    down(VK_ESCAPE),
+                    up(VK_ESCAPE),
+                    up(VK_RCONTROL)
+                ]
+            ),
+            [Some(Action::Start), Some(Action::Cancel), None, None]
+        );
+        // Nothing left running for a re-arm after sleep to stop.
+        assert_eq!(m.reset(), None);
+    }
+
+    #[test]
+    fn escape_without_an_armed_cancel_is_an_ordinary_chord() {
+        let mut m = machine(Trigger::RightCtrl);
+        assert_eq!(
+            feed(&mut m, &[down(VK_RCONTROL), down(VK_ESCAPE)]),
+            [Some(Action::Start), Some(Action::Stop)]
+        );
+    }
+
+    #[test]
+    fn escape_while_idle_is_just_a_key() {
+        let mut m = armed(Trigger::RightAlt);
+        assert_eq!(
+            feed(&mut m, &[down(VK_ESCAPE), up(VK_ESCAPE)]),
+            [None, None]
+        );
+    }
+
+    #[test]
+    fn escape_under_a_chorded_trigger_is_not_a_cancel() {
+        // Shift+RightCtrl is a chord, never a dictation, so there is nothing
+        // for Esc to cancel.
+        let mut m = armed(Trigger::RightCtrl);
+        assert_eq!(
+            feed(
+                &mut m,
+                &[down(VK_LSHIFT), down(VK_RCONTROL), down(VK_ESCAPE)]
+            ),
+            [None, None, None]
+        );
+    }
+
+    #[test]
+    fn a_second_escape_after_the_cancel_does_nothing() {
+        let mut m = armed(Trigger::RightCtrl);
+        assert_eq!(
+            feed(
+                &mut m,
+                &[
+                    down(VK_RCONTROL),
+                    down(VK_ESCAPE),
+                    up(VK_ESCAPE),
+                    down(VK_ESCAPE)
+                ]
+            ),
+            [Some(Action::Start), Some(Action::Cancel), None, None]
+        );
     }
 
     #[test]

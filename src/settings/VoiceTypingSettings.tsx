@@ -8,6 +8,7 @@ import { isTauri } from "../lib/tauriEvents";
 import { broadcastSettings } from "../lib/settingsSync";
 import { log } from "../lib/log";
 import { hasProviderKey } from "../lib/ai/settings";
+import { CANCEL_UNDO_MS } from "../lib/voiceTyping/cancel";
 import { isModifierId, modifierIdsFor, shortcutCaps } from "../lib/voiceTyping/caps";
 import { loneModifierRelease, MODIFIER_CODES } from "../lib/voiceTyping/recorder";
 import type {
@@ -440,7 +441,11 @@ export const VoiceTypingSettings = () => {
           <span className="flex flex-col gap-0.5">
             <span className="flex items-center gap-1.5 text-sm font-medium">
               {t("settings.voiceTyping.pushToTalk")}
-              <InfoTip label={t("settings.info")}>{t("settings.voiceTyping.hint")}</InfoTip>
+              <InfoTip label={t("settings.info")}>
+                {`${t("settings.voiceTyping.hint")}\n${t("settings.voiceTyping.cancelHint", {
+                  seconds: CANCEL_UNDO_MS / 1000,
+                })}`}
+              </InfoTip>
             </span>
           </span>
           <Button
