@@ -15,7 +15,7 @@ import Foundation
 /// - **`userInput == documentText`** is a contact's name (or a Text
 ///   Replacement phrase saved without a shortcut — the two cannot be told
 ///   apart). These are **dropped, unread**. Anything the dictionary holds
-///   leaves the phone — recognition terms go to the relay and Soniox, and into
+///   leaves the phone — recognition terms go to the transcription service, and into
 ///   the polish prompt — and contact names do not leave the phone. Not kept in
 ///   memory either: there is no use for them that stays on the device and is
 ///   worth holding a list of people in a keyboard for.

@@ -19,7 +19,7 @@ import Foundation
 /// ## Why the clock cannot be "how long since a token"
 ///
 /// The obvious measure — time since the last transcript message — is wrong,
-/// and quietly so. Soniox emits tokens when there is speech; a room that goes
+/// and quietly so. The service emits tokens when there is speech; a room that goes
 /// quiet for a minute is a room that produces no messages for a minute. A
 /// deadline on transcript traffic alone would kill a perfectly healthy socket
 /// every time somebody stopped talking, and the reconnect it triggered would
@@ -45,9 +45,10 @@ public struct RelayLiveness: Sendable, Equatable {
 
     /// How often to ask the socket to prove it is there.
     ///
-    /// Separate from the Soniox application keepalive (`SonioxProtocol
-    /// .keepaliveInterval`, 2 s), which exists to stop the *provider* timing
-    /// the session out for being idle and is never answered. This one is a
+    /// Separate from the protocol's application keepalive
+    /// (`ParleyStreamProtocol.keepaliveInterval`, 2 s), which exists to stop
+    /// the *service* timing the session out for being idle and is never
+    /// answered. This one is a
     /// WebSocket ping, and a live peer must answer it.
     public var pingInterval: Duration
 

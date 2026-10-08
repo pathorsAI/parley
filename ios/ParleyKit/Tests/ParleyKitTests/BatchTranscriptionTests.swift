@@ -52,23 +52,6 @@ final class BatchTranscriptionTests: XCTestCase {
         XCTAssertEqual(segments[0].endMs, 800)
     }
 
-    func testControlTokensAreSkipped() {
-        // `<fin>` here claims speaker 2. If it were not skipped outright it
-        // would close the run and invent a second speaker.
-        let segments = groupBatchTokens(
-            [
-                tok("Hello", 1, 0, 300),
-                tok("<end>", nil, 300, 300),
-                tok("<fin>", 2, 300, 300),
-                tok(" world", 1, 300, 600),
-            ], source: "mix")
-
-        XCTAssertEqual(segments.count, 1)
-        XCTAssertEqual(segments[0].speaker, 1)
-        XCTAssertEqual(segments[0].text, "Hello world")
-        XCTAssertEqual(segments[0].endMs, 600)
-    }
-
     func testSpeakerlessTokenStaysInTheCurrentRun() {
         // Snapping a speakerless token to 0 would close speaker 1's run and
         // fragment one utterance into three segments.
@@ -268,13 +251,13 @@ final class BatchTranscriptionTests: XCTestCase {
             service: fake, pollInterval: .milliseconds(1), maxPolls: 4)
 
         _ = try await transcriber.transcribe(
-            audio: Data(count: 7), diarization: false, languageHints: ["zh", "en"])
+            audio: Data(count: 7), diarization: false, languages: ["zh", "en"])
 
         let starts = await fake.starts
         XCTAssertEqual(starts.count, 1)
         XCTAssertEqual(starts[0].byteCount, 7)
         XCTAssertFalse(starts[0].diarization)
-        XCTAssertEqual(starts[0].languageHints, ["zh", "en"])
+        XCTAssertEqual(starts[0].languages, ["zh", "en"])
     }
 
     func testJobErrorThrowsTheServersMessage() async throws {
@@ -432,7 +415,8 @@ private actor FakeBatchService: BatchTranscriptionService {
     struct StartRecord: Equatable, Sendable {
         let byteCount: Int
         let diarization: Bool
-        let languageHints: [String]
+        let languages: [String]
+        let terms: [String]
     }
 
     private let statuses: [BatchJobStatus]
@@ -459,12 +443,13 @@ private actor FakeBatchService: BatchTranscriptionService {
         self.deletesSucceed = deletesSucceed
     }
 
-    func startBatchJob(audio: Data, diarization: Bool, languageHints: [String]) async throws
-        -> String
-    {
+    func startBatchJob(
+        audio: Data, diarization: Bool, languages: [String], terms: [String]
+    ) async throws -> String {
         starts.append(
             StartRecord(
-                byteCount: audio.count, diarization: diarization, languageHints: languageHints))
+                byteCount: audio.count, diarization: diarization, languages: languages,
+                terms: terms))
         return jobID
     }
 

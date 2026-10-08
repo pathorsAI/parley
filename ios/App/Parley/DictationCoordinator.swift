@@ -97,7 +97,7 @@ final class DictationCoordinator: ObservableObject {
     /// microphone-window section below.
     private var capture: AudioCapture?
     private var opening: Task<AudioCapture?, Never>?
-    private var relay: SttRelayClient?
+    private var relay: ParleyStreamClient?
     /// Bumped for every `AudioCapture` this object opens. Statuses carry the
     /// capture they came from, for exactly the reason relay events carry their
     /// leg (see `handle(_:from:)`): a status is a hop to the main actor, and a
@@ -303,10 +303,10 @@ final class DictationCoordinator: ObservableObject {
     private nonisolated static let polishBudget = Duration.seconds(6)
 
     /// How long `stop` waits for the relay to take the finalize. The client
-    /// bounds `finish()` itself now (`SttRelayClient.finishBudget`); this is
+    /// bounds `finish()` itself now (`ParleyStreamClient.finishBudget`); this is
     /// the same bound again from the side that cannot afford to be wrong
     /// about it, because everything after ⏹ is queued behind this await.
-    private static let drainBudget = SttRelayClient.finishBudget + .milliseconds(500)
+    private static let drainBudget = ParleyStreamClient.finishBudget + .milliseconds(500)
 
     /// The longest a session may stay `finishing`: the drain, then the polish,
     /// plus a margin. Past it `finishingOverdue` settles the raw words.
@@ -593,6 +593,16 @@ final class DictationCoordinator: ObservableObject {
             guard owns(owner) else { return }
             relay = nil
             audio.discard()
+            if (error as? ParleyStreamClient.Rejected)?.isQuotaExceeded == true {
+                // Refused before the socket opened, for the one reason a
+                // retry cannot fix.
+                fail(
+                    String(
+                        localized:
+                            "You're out of transcription quota. Dictation works again once it resets."
+                    ), .quotaExhausted)
+                return
+            }
             // A connection failure, so the microphone that just opened is
             // kept — handed to the window, or held for 30 s — and the retry
             // the copy asks for is served in place. See `fail`.
@@ -705,7 +715,7 @@ final class DictationCoordinator: ObservableObject {
     /// anything else is billed unattributed).
     ///
     /// A relay session cannot be resumed, so a reconnect is a new leg with its
-    /// own Soniox session — hence the per-leg id prefix and the offset, which
+    /// own recognition session — hence the per-leg id prefix and the offset, which
     /// keep the second leg's segments from overwriting the first's.
     ///
     /// Every leg is prefixed, including the first. It used to be
@@ -718,12 +728,12 @@ final class DictationCoordinator: ObservableObject {
     /// prefix, and nothing outside this object reads the shape of a dictation
     /// segment id — so the format is this file's to choose.
     ///
-    /// The personal dictionary rides in the config frame as Soniox's
-    /// `context.terms` (see `SonioxProtocol.Config`), read per leg so a word
+    /// The personal dictionary rides in the `start` frame as `hints.terms`
+    /// (see `ParleyStreamProtocol.Start`), read per leg so a word
     /// learned or added since the last session is already in it. One small
     /// file read on the way to the socket, not on any audio path.
-    private func makeRelay(token: String, leg: Int, timeOffsetMs: UInt64) -> SttRelayClient {
-        SttRelayClient(
+    private func makeRelay(token: String, leg: Int, timeOffsetMs: UInt64) -> ParleyStreamClient {
+        ParleyStreamClient(
             options: .init(
                 bearerToken: token, vocabulary: LexiconStore.recognitionTerms(),
                 feature: "voice_typing",
@@ -1202,6 +1212,19 @@ final class DictationCoordinator: ObservableObject {
             publishLive(.listening)
         } catch {
             guard leg == targetLeg, active, !finishRequested else { return }
+            if (error as? ParleyStreamClient.Rejected)?.isQuotaExceeded == true {
+                // The quota ran out between legs: redialling is refused the
+                // same way, so end on what had settled and say why.
+                client.cancel()
+                relay = nil
+                foldPartialIn()
+                fail(
+                    String(
+                        localized:
+                            "You're out of transcription quota. Dictation works again once it resets."
+                    ), .quotaExhausted)
+                return
+            }
             audio.hold()
             scheduleReconnect()
         }

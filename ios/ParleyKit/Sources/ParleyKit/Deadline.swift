@@ -7,7 +7,7 @@ import Foundation
 /// work is something that ignores cancellation, such as awaiting an
 /// unstructured `Task`'s `value` or a socket send that is stuck in the network
 /// stack: a task group always waits for *every* child before it returns,
-/// cancelled or not. That is exactly how `SttRelayClient.finish()` used to wait
+/// cancelled or not. That is exactly how `ParleyStreamClient.finish()` used to wait
 /// on a writer blocked by a stalled socket for as long as the socket stayed
 /// stalled, with its three-second "timeout" in place the whole time, and how a
 /// dictation stopped in a network dead spot stayed `finishing` — polish wave

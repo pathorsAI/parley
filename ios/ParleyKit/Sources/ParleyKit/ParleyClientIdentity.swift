@@ -17,7 +17,7 @@ import Foundation
 ///
 /// There are exactly two places in this package that build a request to
 /// `api.parley.tw` — `CloudClient.makeRequest` and the relay's WebSocket
-/// handshake in `SttRelayClient.start` — and both get their `URLRequest` from
+/// handshake in `ParleyStreamClient.start` — and both get their `URLRequest` from
 /// `request(url:)`. A third call site added later that builds its own
 /// `URLRequest(url:)` would silently ship requests the server cannot attribute,
 /// so the rule for this package is: requests to the cloud start here.

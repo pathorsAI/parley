@@ -11,7 +11,7 @@ import Foundation
 /// failure it most needs to catch.
 ///
 /// A relay socket can go half-open — the peer is gone, but nothing errors and
-/// nothing closes, so `SttRelayClient` keeps accepting chunks and the bridge
+/// nothing closes, so `ParleyStreamClient` keeps accepting chunks and the bridge
 /// keeps believing it has a live sink. Send-side accounting would mark that
 /// entire stretch **covered** while not one word of it was ever transcribed.
 /// The silent death is precisely the case a send-side measure cannot see.
