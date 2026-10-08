@@ -11,6 +11,7 @@ import org.junit.Test
 
 /** The id the parser gives its one tentative segment, for the `"mix"` prefix. */
 private const val MIX_TAIL_ID = "mix-tail"
+private const val FINALIZED_FRAME = """{"type":"finalized"}"""
 
 /**
  * Frame encoding and decoding for Parley's stream protocol v2, and how the
@@ -103,7 +104,7 @@ class ParleyStreamParserTest {
         )
         assertEquals(
             ParleyStreamProtocol.ServerMessage.Finalized,
-            ParleyStreamProtocol.decode("""{"type":"finalized"}"""),
+            ParleyStreamProtocol.decode(FINALIZED_FRAME),
         )
         assertEquals(
             ParleyStreamProtocol.ServerMessage.Done,
@@ -211,7 +212,7 @@ class ParleyStreamParserTest {
         parser.process(
             """{"type":"transcript","tokens":[{"text":"One.","final":true,"start_ms":0,"end_ms":400}]}"""
         )
-        parser.process("""{"type":"finalized"}""")
+        parser.process(FINALIZED_FRAME)
         parser.process(
             """{"type":"transcript","tokens":[{"text":"Two.","final":true,"start_ms":500,"end_ms":900}]}"""
         )
@@ -288,8 +289,8 @@ class ParleyStreamParserTest {
         parser.process(
             """{"type":"transcript","tokens":[{"text":"One.","final":true,"start_ms":0,"end_ms":400}]}"""
         )
-        parser.process("""{"type":"finalized"}""")
-        parser.process("""{"type":"finalized"}""")
+        parser.process(FINALIZED_FRAME)
+        parser.process(FINALIZED_FRAME)
         parser.process(
             """{"type":"transcript","tokens":[{"text":"Two.","final":true,"start_ms":500,"end_ms":900}]}"""
         )

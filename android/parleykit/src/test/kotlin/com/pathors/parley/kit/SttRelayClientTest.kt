@@ -21,6 +21,8 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+private const val FINALIZED_FRAME = """{"type":"finalized"}"""
+
 /**
  * Session behavior against a MockWebServer standing in for
  * `wss://api.parley.tw/stt/v2/stream`. The Swift suite has no equivalent
@@ -247,7 +249,7 @@ class SttRelayClientTest {
 
         val socket = serverSocket.await()
         socket.send("""{"type":"transcript","tokens":[{"text":"Bye.","final":true,"start_ms":0,"end_ms":300,"speaker":1}]}""")
-        socket.send("""{"type":"finalized"}""")
+        socket.send(FINALIZED_FRAME)
         socket.send("""{"type":"done"}""")
 
         val events = withTimeout(5_000) { relay.events.toList() }
@@ -269,8 +271,8 @@ class SttRelayClientTest {
         take(textFrames) // end
 
         val socket = serverSocket.await()
-        socket.send("""{"type":"finalized"}""")
-        socket.send("""{"type":"finalized"}""")
+        socket.send(FINALIZED_FRAME)
+        socket.send(FINALIZED_FRAME)
         socket.send("""{"type":"done"}""")
         socket.close(1000, "done")
 
