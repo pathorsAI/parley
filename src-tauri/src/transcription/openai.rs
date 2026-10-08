@@ -15,8 +15,8 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::common::{
-    clean_vocabulary, connect_with_headers, drive_session, emit_connected, LevelMeter,
-    SegmentBuilder, TranscribeConfig, LEVEL_EVENT, TRANSCRIPT_EVENT,
+    clean_vocabulary, connect_with_headers, drive_session, note_connected, LevelMeter,
+    SegmentBuilder, Timeline, TranscribeConfig, LEVEL_EVENT, TRANSCRIPT_EVENT,
 };
 use super::ws::{self, Next, OnClose, Pump, WsRead, WsWrite};
 use crate::audio::resample::pcm_to_le_bytes;
@@ -130,8 +130,13 @@ fn apply_event(
 
 /// Parse server events into transcript segments until the socket ends or a
 /// terminal error event arrives.
-async fn read_transcripts(app: AppHandle, source: &'static str, read: WsRead) -> Result<()> {
-    let mut builder = SegmentBuilder::new(app, source, TRANSCRIPT_EVENT);
+async fn read_transcripts(
+    app: AppHandle,
+    source: &'static str,
+    timeline: Timeline,
+    read: WsRead,
+) -> Result<()> {
+    let mut builder = SegmentBuilder::new(app, source, TRANSCRIPT_EVENT, timeline);
     let mut interim = String::new();
     ws::read_frames("openai", source, read, OnClose::Stop, |payload| {
         let Ok(ev) = serde_json::from_str::<OaiEvent>(payload) else {
@@ -168,15 +173,18 @@ pub async fn run_session(
     };
     let setup = setup_frame(&config, model);
     write.send(Message::Text(setup.to_string())).await?;
-    eprintln!("[openai:{source}] connected, model={model} (diarization unsupported → speaker 0)");
+    eprintln!(
+        "[openai:{source}] connected, model={model} (diarization unsupported → speaker 0), leg={}",
+        config.leg
+    );
+    note_connected(&app, source, config.leg, false);
 
-    emit_connected(&app, source, false);
-    let meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT);
+    let meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT).enabled(config.level_events);
 
     drive_session(
         "openai",
         forward_audio(write, meter, pcm_rx),
-        read_transcripts(app, source, read),
+        read_transcripts(app, source, config.timeline(), read),
     )
     .await
 }

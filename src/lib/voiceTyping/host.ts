@@ -43,7 +43,7 @@ import {
 } from "./overlay";
 import { SessionOwner, SessionTranscript, type Segment, type SessionEvent } from "./transcript";
 import { settleVerdict, type SettleReason } from "./settle";
-import { appendVoiceEntry } from "./history";
+import { appendVoiceEntry, type PolishedStyle } from "./history";
 import {
   canPolish,
   polishSkipReason,
@@ -742,7 +742,7 @@ async function polishForPaste(
   raw: string,
   myGen: number,
   opts: { signal?: AbortSignal; recovering?: boolean; gateText?: string } = {},
-): Promise<{ text: string; outcome: PolishOutcome }> {
+): Promise<{ text: string; outcome: PolishOutcome; polishStyle?: PolishedStyle }> {
   const { signal, recovering = false, gateText = raw } = opts;
   const settings = useStore.getState().settings;
   // Checked here as well as in polish.ts so the overlay is never told
@@ -750,6 +750,9 @@ async function polishForPaste(
   if (!canPolish(settings)) return { text: raw, outcome: "off" };
   const skip = polishSkipReason(raw, gateText);
   if (skip) return { text: raw, outcome: skip };
+  // Read once, before the round trip: the history records the style that
+  // produced the text even if the setting changes while the request is out.
+  const style = settings.voiceTypingPolishStyle;
   // Only claim the overlay while it is still ours to claim; a press during the
   // round trip owns it from here (the gen check in `deliver` is the same guard
   // for the "done" tail). A cancelled dictation's overlay is its Undo, which
@@ -771,7 +774,8 @@ async function polishForPaste(
   // "preserve" line does not catch. Run the same deterministic pass over it
   // (idempotent, so a term that is already right stays right). Unpolished text
   // goes out exactly as the overlay showed it.
-  return { text: text === null ? raw : applyReplacements(text), outcome };
+  if (text === null || style === "off") return { text: raw, outcome };
+  return { text: applyReplacements(text), outcome, polishStyle: style };
 }
 
 /** Polish, insert and record one settled dictation, then tell the overlay
@@ -802,13 +806,18 @@ async function deliver(d: Delivery): Promise<void> {
    *  paste something that isn't there. */
   let pasted = true;
   let outcome: PolishOutcome = "off";
+  /** The style that produced `text`, when it is the polish. */
+  let polishStyle: PolishedStyle | undefined;
   if (raw) {
     // Esc during the round trip abandons it (outcome "cancelled", not a
     // failure) — the user is no longer waiting on this text.
     const ctl = new AbortController();
     polishing = { gen: d.myGen, ctl };
     try {
-      ({ text, outcome } = await polishForPaste(raw, d.myGen, { signal: ctl.signal, gateText }));
+      ({ text, outcome, polishStyle } = await polishForPaste(raw, d.myGen, {
+        signal: ctl.signal,
+        gateText,
+      }));
     } finally {
       if (polishing?.ctl === ctl) polishing = null;
     }
@@ -867,7 +876,7 @@ async function deliver(d: Delivery): Promise<void> {
       log.error("voice-typing: insert failed", { error: String(e) });
     }
     lastInserted = { gen: d.myGen, text };
-    appendVoiceEntry(text, appBundleId).catch((error) =>
+    appendVoiceEntry(text, appBundleId, polishStyle).catch((error) =>
       log.warn("voice-typing: append history failed", { error: String(error) }),
     );
   }
@@ -1042,8 +1051,13 @@ async function deliverRecovered(
 ): Promise<void> {
   let out = text;
   let outcome: PolishOutcome = "off";
+  let polishStyle: PolishedStyle | undefined;
   if (text && !polished) {
-    ({ text: out, outcome } = await polishForPaste(text, g, { recovering: true, gateText }));
+    ({
+      text: out,
+      outcome,
+      polishStyle,
+    } = await polishForPaste(text, g, { recovering: true, gateText }));
   }
   if (out) {
     try {
@@ -1051,7 +1065,7 @@ async function deliverRecovered(
     } catch (e) {
       log.error("voice-typing: recovered copy failed", { error: String(e) });
     }
-    appendVoiceEntry(out, null).catch((error) =>
+    appendVoiceEntry(out, null, polishStyle).catch((error) =>
       log.warn("voice-typing: append history failed", { error: String(error) }),
     );
     log.info("voice-typing: recovered to clipboard", { chars: out.length });

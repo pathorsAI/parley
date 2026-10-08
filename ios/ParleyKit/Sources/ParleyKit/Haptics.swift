@@ -38,6 +38,7 @@
     /// | one hard tick — `.rigid` | thrown away; nothing follows |
     /// | level, tight — `.heavy` → `.heavy`, 60 ms | the microphone was taken away from you |
     /// | one soft tick — `.light` | copied; nothing in the document changed |
+    /// | detents — `selectionChanged`, one per caret step | the caret is moving under a held space bar |
     ///
     /// The two tight patterns are each other played backwards, which is the
     /// point: a stop is the undoing of the start that opened it, and that is
@@ -57,6 +58,12 @@
     ///
     /// The sixth is not about the microphone at all, and is shaped to say so:
     /// one beat, and the quietest one there is. See `dictationCopied`.
+    ///
+    /// The seventh is not a beat but a texture: the space bar held down as a
+    /// trackpad, where every character the caret crosses is a detent under the
+    /// finger. It opens with the sixth's soft tick, which is honest — nothing
+    /// in the document changes when the keys go blank either. See
+    /// `caretSteeringStarted` and `caretStepped`.
     ///
     /// ## Where this lives
     ///
@@ -111,6 +118,7 @@
         nonisolated(unsafe) private static let heavy = UIImpactFeedbackGenerator(style: .heavy)
         nonisolated(unsafe) private static let finish = UINotificationFeedbackGenerator()
         nonisolated(unsafe) private static let discard = UIImpactFeedbackGenerator(style: .rigid)
+        nonisolated(unsafe) private static let detent = UISelectionFeedbackGenerator()
 
         /// The gap inside the two tight patterns — the rise that opens a
         /// microphone and the fall that closes one. Short enough that the two
@@ -447,6 +455,31 @@
         /// Two names, one beat — the name is for the call site, the shared body
         /// is what stops them drifting.
         public static func recordingDiscarded() { dictationDiscarded() }
+
+        /// The space bar was held still long enough to become a trackpad: the
+        /// sixth shape's soft `.light` tick, as the other keys go blank.
+        ///
+        /// It warms the detent generator at the same time, because the first
+        /// step follows within a fraction of a second and a cold Taptic Engine
+        /// would drop or delay exactly that one — the step that tells the user
+        /// the drag has taken.
+        public static func caretSteeringStarted() {
+            light.impactOccurred()
+            detent.prepare()
+        }
+
+        /// The caret moved under the held space bar: the system's selection
+        /// detent, the same one a picker wheel clicks through.
+        ///
+        /// One per touch sample that moved the caret, not one per character in
+        /// it: a fast flick can cross several characters between two samples,
+        /// and detents a few milliseconds apart are felt as one anyway — the
+        /// generator coalesces them. Re-prepared every time so the next one is
+        /// as prompt as this one was.
+        public static func caretStepped() {
+            detent.selectionChanged()
+            detent.prepare()
+        }
 
         /// The second half of a two-beat pattern.
         ///

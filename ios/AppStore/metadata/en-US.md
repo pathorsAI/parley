@@ -83,6 +83,24 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.30
+
+The Parley keyboard now saves you a lot of trips out to other apps.
+
+Your saved info is one tap away. The card button on the right of the keys keeps your name, phone numbers, addresses, email and ID number, and email, phone and address fields suggest the matching one right above the keys. Your ID number shows only its first and last two characters. All of this stays on your phone.
+
+Bopomofo remembers what you pick: choose the same word twice after the same words and it comes first next time, and touching and holding a candidate lets you say Don't suggest this. When you type several syllables at once it now weighs the whole phrase before choosing, and after you pick, the bar suggests what usually comes next. What it learns stays on your phone and can be reset in Settings.
+
+Voice typing has a new Concise style. Besides removing filler and fixing slips, it drops verbal tics and small talk and writes the shortest sentences that keep your meaning. The previous behaviour is now called Tidy and is still the default. If a polished result is not what you wanted, tap Use original above the keys.
+
+Misheard words are easier to teach: select text in your dictation history and choose Fix this word — one fix is enough. Your personal dictionary now helps recognition directly and syncs with Parley on your computer.
+
+Also: touch and hold the space bar to move the cursor, and the Text Replacement shortcuts you set up in iOS Settings now work in the Parley keyboard.
+
+Recordings the phone re-transcribed, filled in after a gap, or imported from a file keep their timing again, so highlights made from them on your computer no longer all land at 00:00; re-transcribe an affected recording once to fix it.
+
+Also since the last release on the App Store: start recording from the lock screen. Touch and hold the lock screen, tap Customize, and put Parley's Record in place of the flashlight or camera button; the same control works from Control Center and the Action button, and you can ask Siri to "Record with Parley". And tapping Start recording now starts right away, without first asking you to confirm that everyone has agreed. As with any recorder, getting the consent of the people in the room, as the law where you are requires, is up to you.
+
 ## What's New — 1.29
 
 Start recording from the lock screen. Touch and hold the lock screen, tap Customize, and put Parley's Record in place of the flashlight or camera button. Press it, unlock, and Parley opens already recording. The same control works from Control Center and the Action button, there is a lock screen widget that does the same, and you can ask Siri to "Record with Parley".

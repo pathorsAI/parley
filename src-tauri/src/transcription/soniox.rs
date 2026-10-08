@@ -9,8 +9,8 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::common::{
-    clean_vocabulary, connect_with_headers, drive_session, emit_connected, ensure_crypto_provider,
-    with_connect_timeout, LevelMeter, SegmentBuilder, TranscribeConfig, LEVEL_EVENT,
+    clean_vocabulary, connect_with_headers, drive_session, ensure_crypto_provider, note_connected,
+    with_connect_timeout, LevelMeter, SegmentBuilder, Timeline, TranscribeConfig, LEVEL_EVENT,
     TRANSCRIPT_EVENT,
 };
 use super::ws::{self, Next, OnClose, Pump, Ws, WsRead, WsWrite};
@@ -96,7 +96,7 @@ struct SonioxResponse {
 /// Open the session's socket. Hosted "parley" relay (config.relay_endpoint set):
 /// connect to the cloud WSS with a Bearer token instead of the vendor with an
 /// api_key. Otherwise BYOK: straight to Soniox. Both yield the same Soniox wire
-/// protocol.
+/// protocol. Either dial is bounded by `common::CONNECT_TIMEOUT`.
 async fn open_socket(config: &TranscribeConfig) -> Result<Ws> {
     let Some(relay_url) = &config.relay_endpoint else {
         ensure_crypto_provider();
@@ -229,8 +229,13 @@ fn ends_stream(resp: &SonioxResponse) -> bool {
 /// an in-band error frame (e.g. a rejected api key) so the caller's error
 /// surface fires — the session is dead from that point, and returning Ok would
 /// leave the UI listening to nothing.
-async fn read_transcripts(app: AppHandle, source: &'static str, read: WsRead) -> Result<()> {
-    let mut builder = SegmentBuilder::new(app, source, TRANSCRIPT_EVENT);
+async fn read_transcripts(
+    app: AppHandle,
+    source: &'static str,
+    timeline: Timeline,
+    read: WsRead,
+) -> Result<()> {
+    let mut builder = SegmentBuilder::new(app, source, TRANSCRIPT_EVENT, timeline);
     ws::read_frames("soniox", source, read, OnClose::Stop, |payload| {
         let resp: SonioxResponse = match serde_json::from_str(payload) {
             Ok(r) => r,
@@ -285,25 +290,25 @@ pub async fn run_session(
     // The connect time is the other half of a short dictation's wait: no token
     // can come back before it, and through the relay it is two hops.
     log::info!(
-        "[soniox:{source}] connected in {}ms, model={}, diarization={}, relay={}, vocabulary={}",
+        "[soniox:{source}] connected in {}ms, model={}, diarization={}, relay={}, vocabulary={}, leg={}",
         connecting.elapsed().as_millis(),
         config.model,
         config.diarization,
         config.relay_endpoint.is_some(),
-        clean_vocabulary(&config.vocabulary).len()
+        clean_vocabulary(&config.vocabulary).len(),
+        config.leg
     );
-
     // Soniox answers the closing finalize with `<fin>` (both modes), which
     // ends the stream; see `ends_stream`.
-    emit_connected(&app, source, true);
+    note_connected(&app, source, config.leg, true);
 
-    let meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT);
+    let meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT).enabled(config.level_events);
     let is_relay = config.relay_endpoint.is_some();
 
     drive_session(
         "soniox",
         forward_audio(write, meter, pcm_rx, source, is_relay),
-        read_transcripts(app, source, read),
+        read_transcripts(app, source, config.timeline(), read),
     )
     .await
 }
@@ -321,6 +326,9 @@ mod tests {
             diarization: false,
             vocabulary: vocabulary.iter().map(|t| t.to_string()).collect(),
             relay_endpoint: relay.map(str::to_string),
+            leg: 0,
+            time_offset_ms: 0,
+            level_events: true,
         }
     }
 

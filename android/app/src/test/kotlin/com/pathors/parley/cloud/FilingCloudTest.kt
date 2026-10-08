@@ -2,6 +2,7 @@ package com.pathors.parley.cloud
 
 import com.pathors.parley.kit.FilingFolder
 import com.pathors.parley.kit.FilingFolderSuggestion
+import com.pathors.parley.kit.FilingLanguage
 import com.pathors.parley.kit.FilingSuggester
 import com.pathors.parley.kit.FilingSuggestion
 import com.pathors.parley.kit.TranscriptSegment
@@ -53,6 +54,7 @@ class FilingCloudTest {
             currentTitle = CLOCK_TITLE,
             folders = listOf(FilingFolder("f-acme", "Acme Corp")),
             chat = cloud,
+            language = FilingLanguage.EN,
         )
     }
 

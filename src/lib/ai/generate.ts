@@ -4,6 +4,19 @@ import { getModel, getProviderOptions } from "./provider";
 import { isReasoningModel, PROVIDER_BY_ID } from "./providers";
 import { logAiError } from "./errors";
 import { log } from "../log";
+import {
+  createDeadline,
+  ONE_SHOT_DEADLINE_MS,
+  rejectOnAbort,
+  untilAborted,
+  STUDY_FALLBACK_DEADLINE_MS,
+  STUDY_FIRST_OUTPUT_MS,
+  STUDY_HARD_DEADLINE_MS,
+  STUDY_STALL_MS,
+  type Deadline,
+} from "./deadline";
+
+export { STUDY_HARD_DEADLINE_MS, STUDY_STALL_MS } from "./deadline";
 import type { LlmWorkload, Settings } from "../types";
 
 /**
@@ -78,6 +91,17 @@ function salvageObject<OBJECT>(
 }
 
 /**
+ * The error a call that gave up should surface: its deadline's own timeout
+ * error when the deadline fired (however the SDK wrapped the abort, so
+ * isTimeoutError and the "timed out" copy apply), else the original error — a
+ * parent abort (the run was cancelled) included, which the runner drops.
+ */
+function deadlineError(err: unknown, deadline: Deadline): unknown {
+  const why = deadline.reason();
+  return why === "hard" || why === "stall" ? deadline.signal.reason : err;
+}
+
+/**
  * `generateObject` with a structured-output fallback. Some OpenAI-compatible
  * endpoints advertise json_schema (response_format strict) but intermittently
  * reject their own output with HTTP 400 `json_validate_failed` and an EMPTY
@@ -89,6 +113,11 @@ function salvageObject<OBJECT>(
  *
  * Providers using native tool mode (Anthropic) or already on json_object
  * (Ollama) don't have a stricter mode to fall back from, so they just rethrow.
+ *
+ * The whole call — fallback included — runs under a deadline (`hardMs`,
+ * default {@link ONE_SHOT_DEADLINE_MS}) hanging off the caller's `signal`, so a
+ * provider that never answers fails with a timeout instead of pinning the
+ * caller forever, and cancelling the caller aborts the request.
  */
 export async function generateObjectResilient<OBJECT>(opts: {
   settings: Settings;
@@ -96,43 +125,98 @@ export async function generateObjectResilient<OBJECT>(opts: {
   schema: z.ZodType<OBJECT>;
   system: string;
   prompt: string;
+  /** Sampling temperature. Omitted → the provider's default, which is what every
+   *  caller but the filing pass wants. */
+  temperature?: number;
+  /** Cancels the call. Its abort is passed through untouched (no retry). */
+  signal?: AbortSignal;
+  /** Ceiling on the whole call. Default {@link ONE_SHOT_DEADLINE_MS}. */
+  hardMs?: number;
 }) {
+  const deadline = createDeadline({ hardMs: opts.hardMs ?? ONE_SHOT_DEADLINE_MS, parent: opts.signal });
+  try {
+    // Raced against the deadline as well as handed to the SDK: the abort is what
+    // cancels the request, the race is what guarantees this returns.
+    return await Promise.race([
+      generateObjectWithFallback(opts, deadline.signal),
+      rejectOnAbort(deadline.signal),
+    ]);
+  } catch (err) {
+    throw deadlineError(err, deadline);
+  } finally {
+    deadline.clear();
+  }
+}
+
+/** The inputs one `generateObject` attempt needs, minus the model. */
+type ObjectCall<OBJECT> = {
+  providerOptions: ReturnType<typeof getProviderOptions>;
+  schema: z.ZodType<OBJECT>;
+  system: string;
+  prompt: string;
+  maxOutputTokens: number | undefined;
+  abortSignal: AbortSignal;
+  temperature?: number;
+};
+
+type ObjectTag = { provider: string; workload: LlmWorkload; model: string };
+
+/** Salvage a drifted answer (logged under `what`), or null when there is none. */
+function salvageOrNull<OBJECT>(err: unknown, schema: z.ZodType<OBJECT>, tag: ObjectTag, what: string) {
+  const salvaged = salvageObject(err, schema);
+  if (salvaged) log.info(`ai.generateObject: salvaged drifted output${what}`, tag);
+  return salvaged;
+}
+
+/** The second attempt in json_object mode: the same call, a looser response format. */
+async function retryAsJsonObject<OBJECT>(
+  settings: Settings,
+  workload: LlmWorkload,
+  call: ObjectCall<OBJECT>,
+  tag: ObjectTag,
+) {
+  try {
+    return await generateObject({ model: getModel(settings, workload, { forceJsonObject: true }), ...call });
+  } catch (err) {
+    if (call.abortSignal.aborted) throw err;
+    logAiError("ai.generateObject json_object", tag, err);
+    return salvageOrNull(err, call.schema, tag, " (json_object)") ?? Promise.reject(err);
+  }
+}
+
+async function generateObjectWithFallback<OBJECT>(
+  opts: {
+    settings: Settings;
+    workload: LlmWorkload;
+    schema: z.ZodType<OBJECT>;
+    system: string;
+    prompt: string;
+    temperature?: number;
+  },
+  abortSignal: AbortSignal,
+) {
   const { settings, workload, schema, system, prompt } = opts;
+  // Spread only when set, so callers that never pass it send exactly what they
+  // sent before (some providers reject an explicit temperature on some models).
+  const sampling = opts.temperature === undefined ? {} : { temperature: opts.temperature };
   const provider = settings.llmProviders[workload];
   const providerOptions = getProviderOptions(settings, workload);
   const maxOutputTokens = maxOutputTokensFor(settings, workload);
   const tag = { provider, workload, model: settings.models[provider][workload] };
+  const call: ObjectCall<OBJECT> = { providerOptions, schema, system, prompt, maxOutputTokens, abortSignal, ...sampling };
 
   try {
-    return await generateObject({ model: getModel(settings, workload), providerOptions, schema, system, prompt, maxOutputTokens });
+    return await generateObject({ model: getModel(settings, workload), ...call });
   } catch (err) {
+    // Out of time or cancelled: nothing to salvage, and no time for a retry.
+    if (abortSignal.aborted) throw err;
     const info = PROVIDER_BY_ID[provider];
     const canFallback = info.kind === "openai-compatible" && (info.supportsStructuredOutputs ?? false);
     logAiError(canFallback ? "ai.generateObject json_schema (retrying json_object)" : "ai.generateObject", tag, err);
-    const salvaged = salvageObject(err, schema);
-    if (salvaged) {
-      log.info("ai.generateObject: salvaged drifted output", tag);
-      return salvaged;
-    }
+    const salvaged = salvageOrNull(err, schema, tag, "");
+    if (salvaged) return salvaged;
     if (!canFallback) throw err;
-    try {
-      return await generateObject({
-        model: getModel(settings, workload, { forceJsonObject: true }),
-        providerOptions,
-        schema,
-        system,
-        prompt,
-        maxOutputTokens,
-      });
-    } catch (error_) {
-      logAiError("ai.generateObject json_object", tag, error_);
-      const salvaged2 = salvageObject(error_, schema);
-      if (salvaged2) {
-        log.info("ai.generateObject: salvaged drifted output (json_object)", tag);
-        return salvaged2;
-      }
-      throw error_;
-    }
+    return retryAsJsonObject(settings, workload, call, tag);
   }
 }
 
@@ -147,6 +231,22 @@ export async function generateObjectResilient<OBJECT>(opts: {
  * stream errors, we fall back to ONE non-streamed resilient object and emit it as
  * a single final partial — so a flaky stream still yields a result.
  *
+ * Bounded in time, always: the stream runs under a deadline — `hardMs` overall
+ * (default {@link STUDY_HARD_DEADLINE_MS}), `firstOutputMs` for the first
+ * partial (default {@link STUDY_FIRST_OUTPUT_MS}) and `stallMs` between later
+ * ones (default {@link STUDY_STALL_MS}) — hanging off the caller's `signal`.
+ * Whether the stream failed or OUR deadline fired, the fallback gets one try
+ * under a fresh {@link STUDY_FALLBACK_DEADLINE_MS} (one-shot) ceiling, then its
+ * error is thrown. When the CALLER's signal aborts (the run was cancelled)
+ * nothing is retried.
+ *
+ * Also guards an AI SDK trap: `streamObject().object` only settles on the
+ * provider's finish chunk. A request that fails before the stream starts (an
+ * HTTP error after the SDK's retries, a dropped connection) ends the partial
+ * stream quietly, reports the error only to `onError`, and leaves `object`
+ * pending forever — which is how a study stage used to sit at "generating" for
+ * good. The captured error is rethrown instead.
+ *
  * `onPartial` receives the raw (deeply-partial) object shape; callers map only
  * the fully-formed elements into their domain type.
  */
@@ -159,15 +259,33 @@ export async function streamObjectResilient<OBJECT>(opts: {
   /** Receives the deeply-partial object as it fills in. Omit for a one-shot
    *  answer with nothing to render mid-stream (e.g. a classification). */
   onPartial?: (partial: unknown) => void;
+  /** Sampling temperature; see generateObjectResilient. */
+  temperature?: number;
+  /** Cancels the call, fallback included. */
+  signal?: AbortSignal;
+  /** Ceiling on the streamed attempt. Default {@link STUDY_HARD_DEADLINE_MS}. */
+  hardMs?: number;
+  /** Longest wait for the first partial. Default {@link STUDY_FIRST_OUTPUT_MS}. */
+  firstOutputMs?: number;
+  /** Longest gap between partials after the first. Default {@link STUDY_STALL_MS}. */
+  stallMs?: number;
 }) {
-  const { settings, workload, schema, system, prompt, onPartial } = opts;
+  const { settings, workload, schema, system, prompt, onPartial, temperature, signal } = opts;
+  const sampling = temperature === undefined ? {} : { temperature };
   const provider = settings.llmProviders[workload];
   const providerOptions = getProviderOptions(settings, workload);
   const forceJsonObject = PROVIDER_BY_ID[provider].kind === "openai-compatible";
   const maxOutputTokens = maxOutputTokensFor(settings, workload);
   const tag = { provider, workload, model: settings.models[provider][workload] };
+  const deadline = createDeadline({
+    hardMs: opts.hardMs ?? STUDY_HARD_DEADLINE_MS,
+    stallMs: opts.stallMs ?? STUDY_STALL_MS,
+    firstOutputMs: opts.firstOutputMs ?? STUDY_FIRST_OUTPUT_MS,
+    parent: signal,
+  });
 
   try {
+    let streamError: unknown = null;
     const result = streamObject({
       model: getModel(settings, workload, { forceJsonObject }),
       providerOptions,
@@ -175,13 +293,46 @@ export async function streamObjectResilient<OBJECT>(opts: {
       system,
       prompt,
       maxOutputTokens,
+      abortSignal: deadline.signal,
+      onError: ({ error }) => {
+        streamError ??= error;
+      },
+      ...sampling,
     });
-    for await (const partial of result.partialObjectStream) onPartial?.(partial);
-    return { object: await result.object, usage: await result.usage };
+    for await (const partial of untilAborted(result.partialObjectStream, deadline.signal)) {
+      deadline.touch();
+      onPartial?.(partial);
+    }
+    // The stream has closed. If the finish chunk arrived, `object` has already
+    // settled and wins the race (it is listed first); if it never will, the
+    // captured stream error or the deadline ends the wait.
+    const stops: Promise<never>[] = [rejectOnAbort(deadline.signal)];
+    if (streamError !== null) stops.push(Promise.reject(streamError as Error));
+    const object = await Promise.race([result.object, ...stops]);
+    return { object, usage: await result.usage };
   } catch (err) {
-    logAiError("ai.streamObject (falling back to non-streamed)", tag, err);
-    const res = await generateObjectResilient({ settings, workload, schema, system, prompt });
+    const why = deadline.reason();
+    // Cancelled by the caller: no fallback, no error log — the run is dropped.
+    if (why === "parent") throw err;
+    const timedOut = why === "hard" || why === "stall";
+    logAiError(
+      timedOut ? `ai.streamObject (${why} deadline; falling back to non-streamed)` : "ai.streamObject (falling back to non-streamed)",
+      tag,
+      deadlineError(err, deadline),
+    );
+    const res = await generateObjectResilient({
+      settings,
+      workload,
+      schema,
+      system,
+      prompt,
+      temperature,
+      signal,
+      hardMs: STUDY_FALLBACK_DEADLINE_MS,
+    });
     onPartial?.(res.object);
     return { object: res.object, usage: res.usage };
+  } finally {
+    deadline.clear();
   }
 }

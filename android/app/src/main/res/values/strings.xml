@@ -195,8 +195,6 @@
     <string name="detail_error_network">Can\'t reach the cloud right now. Check your connection and open the recording again.</string>
     <string name="detail_error_not_found">This recording is no longer in the cloud.</string>
     <string name="detail_error_forbidden">You don\'t have access to this recording any more.</string>
-    <string name="detail_face_summary">Summary</string>
-    <string name="summary_highlights">Highlights %1$d</string>
     <string name="summary_speakers">Speakers</string>
     <string name="summary_empty">No summary yet.</string>
     <string name="summary_generate">Generate a summary with AI</string>
@@ -476,6 +474,10 @@
     <string name="filing_skip">Skip suggestion</string>
     <string name="filing_write_failed">That didn\'t save. Try again.</string>
     <string name="filing_done">Done</string>
+    <!-- Not shown. The language the AI title suggestion is written in, which is
+         whatever language these resources resolved to (a BCP 47 tag read by
+         FilingLanguage.forTag) — the title follows the app, not the meeting. -->
+    <string name="filing_title_language">en</string>
 
     <!-- What's New. The announcement copy itself is not here: it is the
          repository's announcements/ folder, shared with iOS and the desktop.
@@ -483,4 +485,144 @@
          the sheet speaks whatever language these resources resolved to. -->
     <string name="whats_new_also">Also</string>
     <string name="whats_new_copy_language">en</string>
+
+    <!-- The recording's report face and the study pipeline (study/StudyPass): the
+         generation chip, its menu, the sections and the delivery scorecard. The
+         desktop's wording (src/i18n/messages.ts study / studyGen / timeline /
+         actionItems / delivery). -->
+    <string name="detail_face_report">Report</string>
+    <string name="report_brief">Brief</string>
+    <string name="report_timeline">Timeline analysis</string>
+    <string name="report_delivery">Delivery</string>
+    <string name="report_brief_generating">Distilling this meeting…</string>
+    <string name="report_brief_queued">Queued — starts after the action items finish</string>
+    <string name="report_brief_error">Brief generation failed — retry from the analysis menu above</string>
+    <string name="report_actions_generating">Generating…</string>
+    <string name="report_actions_queued">Queued — starts after the analysis finishes</string>
+    <string name="report_actions_empty">No action items.</string>
+    <string name="report_actions_error">Action items could not be generated (%1$s)</string>
+    <string name="report_timeline_analyzing">Analyzing recording…</string>
+    <string name="report_timeline_queued">Queued</string>
+    <string name="report_timeline_empty">No findings yet</string>
+    <string name="report_timeline_error">Analysis failed (%1$s)</string>
+    <string name="report_timeline_count">%1$d findings</string>
+    <string name="report_side_them">They raised</string>
+    <string name="report_side_me">My issues</string>
+    <string name="report_category_decision">Decided</string>
+    <string name="report_category_open">Open</string>
+    <string name="report_category_fact">Fact</string>
+    <string name="report_resolved">Resolved</string>
+    <string name="report_resolved_how">Resolved by: %1$s</string>
+    <string name="report_severity_info">Info</string>
+    <string name="report_severity_warn">Warning</string>
+    <string name="report_severity_critical">Critical</string>
+    <string name="report_finding_at">Finding at %1$s: %2$s</string>
+    <string name="study_chip_running">Analyzing %1$d/%2$d</string>
+    <string name="study_chip_done">Analysis ready</string>
+    <string name="study_chip_failed">%1$d failed</string>
+    <string name="study_chip_idle">Not analyzed</string>
+    <string name="study_panel_title">This recording\'s analyses</string>
+    <string name="study_status_queued">Queued</string>
+    <string name="study_status_running">Generating</string>
+    <string name="study_status_done">Done</string>
+    <string name="study_status_error">Failed</string>
+    <string name="study_status_idle">Not generated</string>
+    <string name="study_regenerate">Regenerate</string>
+    <string name="study_regenerate_all">Regenerate all</string>
+    <string name="study_regenerate_all_hint">Re-runs the full analysis and overwrites every output (timeline, action items, brief, delivery). It uses your Parley AI credits.</string>
+    <string name="study_regenerate_all_confirm">Regenerate all</string>
+    <string name="study_cancel">Cancel</string>
+    <string name="study_failure_timeout">the model took too long</string>
+    <string name="study_failure_network">no connection</string>
+    <string name="study_failure_quota">Parley AI credits used up — wait for the reset</string>
+    <string name="study_failure_signed_out">your session expired — sign in again</string>
+    <string name="study_failure_server">the server returned an error</string>
+    <string name="study_failure_unreadable">the answer could not be read</string>
+    <string name="delivery_pace">Pace</string>
+    <string name="delivery_talk_share">Talk share</string>
+    <string name="delivery_filler_sounds">Filler sounds (um/uh)</string>
+    <string name="delivery_tone">Tone</string>
+    <string name="delivery_ai_read">AI read</string>
+    <string name="delivery_analyzing">Analyzing</string>
+    <string name="delivery_queued">Queued — starts after the analysis finishes</string>
+    <string name="delivery_none">Nothing to flag right now</string>
+    <string name="delivery_error">Delivery analysis unavailable</string>
+    <string name="delivery_tone_advisory">Inferred from transcript — advisory</string>
+    <string name="delivery_fillers">Fillers</string>
+    <string name="delivery_unit_syllables_per_min">syll/min</string>
+    <string name="delivery_unit_times">×</string>
+    <string name="delivery_filler_ok">Fine</string>
+    <string name="delivery_filler_frequent">Frequent</string>
+    <string name="delivery_pace_slow">Slow</string>
+    <string name="delivery_pace_comfortable">Comfortable</string>
+    <string name="delivery_pace_fast">Fast</string>
+    <string name="delivery_tone_neutral">Neutral</string>
+    <string name="delivery_tone_warm">Warm</string>
+    <string name="delivery_tone_firm">Firm</string>
+    <string name="delivery_tone_sharp">Sharp</string>
+    <string name="delivery_tone_aggressive">Aggressive</string>
+    <string name="delivery_tone_rude">Rude</string>
+    <string name="delivery_talk_high">High</string>
+    <string name="delivery_talk_balanced">Balanced</string>
+    <string name="delivery_talk_low">Low</string>
+    <string name="account_analysis_title">Analysis</string>
+    <string name="account_auto_study">Analyze recordings automatically</string>
+    <string name="account_auto_study_footnote">When on, opening a recording that has not been analyzed yet writes its timeline, action items, brief and delivery read with Parley AI (it uses your credits). When off, \"Regenerate\" in a recording\'s analysis menu still analyzes it on demand.</string>
+
+    <!-- Voice typing: the keyboard as the system lists it -->
+    <string name="ime_label">Parley voice typing</string>
+    <string name="ime_subtype_voice">Voice typing</string>
+
+    <!-- Voice typing: the keys -->
+    <string name="ime_switch_keyboard">Switch to another keyboard</string>
+    <string name="ime_discard">Discard what you said</string>
+    <string name="ime_mic_start">Start dictating</string>
+    <string name="ime_mic_stop">Stop dictating</string>
+
+    <!-- Voice typing: status -->
+    <string name="ime_status_ready">Tap to speak</string>
+    <string name="ime_status_connecting">Connecting…</string>
+    <string name="ime_status_listening">Listening</string>
+    <string name="ime_status_finishing">Tidying up what you said…</string>
+    <string name="ime_time_elapsed">%1$d:%2$02d</string>
+    <string name="ime_countdown">Stops in %1$d s</string>
+    <string name="ime_notice_limit_reached">Single dictation limit reached (%1$d min)</string>
+
+    <!-- Voice typing: the standing hint under the key -->
+    <string name="ime_hint_default">Your words go into the app you were typing in.</string>
+    <string name="ime_hint_password">Parley never dictates into a password field.</string>
+    <string name="ime_hint_permission">Parley needs the microphone to hear you.</string>
+    <string name="ime_hint_no_field">Tap a text field first.</string>
+
+    <!-- Voice typing: why the key is off -->
+    <string name="ime_blocked_password">Dictation is off in password fields</string>
+    <string name="ime_blocked_no_field">No text field is selected</string>
+    <string name="ime_blocked_permission">Microphone access needed</string>
+
+    <!-- Voice typing: endings that went badly -->
+    <string name="ime_failure_signed_out">You are signed out. Open Parley and sign in.</string>
+    <string name="ime_failure_mic_unavailable">The microphone isn\'t available — a call or another app may be using it.</string>
+    <string name="ime_failure_quota">Your hosted transcription quota is used up.</string>
+    <string name="ime_failure_relay">Transcription stopped unexpectedly. Whatever was heard was kept.</string>
+    <string name="ime_failure_unknown">Something went wrong.</string>
+
+    <!-- Voice typing: the microphone notification -->
+    <string name="ime_notification_channel_name">Voice typing</string>
+    <string name="ime_notification_channel_description">Shows while the Parley keyboard is listening.</string>
+    <string name="ime_notification_title">Parley is listening</string>
+    <string name="ime_notification_text">The microphone is open for voice typing.</string>
+
+    <!-- Voice typing: settings -->
+    <string name="ime_settings_title">Voice typing</string>
+    <string name="ime_settings_intro">A microphone key that types what you say into any app. Parley\'s keyboard has no letter keys — switch back to your usual keyboard to type.</string>
+    <string name="ime_settings_microphone">Microphone</string>
+    <string name="ime_settings_microphone_granted">Parley can use the microphone.</string>
+    <string name="ime_settings_microphone_needed">Voice typing needs microphone access. A keyboard can\'t ask for it itself, so grant it here.</string>
+    <string name="ime_settings_polish">Clean up what I said</string>
+    <string name="ime_settings_polish_detail">When you stop speaking, Parley rewrites the transcript into written text: filler removed, punctuation added, and a spoken list laid out as a list. This sends the transcript to your Parley account. Turn it off to type exactly what was heard.</string>
+    <string name="ime_settings_enable">Turn the keyboard on</string>
+    <string name="ime_settings_enable_detail">Android needs you to enable a keyboard in system settings before it can be used, and it shows a warning there about keyboards collecting what you type. Parley has no letter keys to collect, never reads what is already in a field, and switches itself off completely in password fields.</string>
+    <string name="ime_settings_enable_action">Open keyboard settings</string>
+    <string name="ime_settings_privacy">What it doesn\'t do</string>
+    <string name="ime_settings_privacy_detail">Parley only writes into the field you are in. It never reads what is already there, keeps no record of it, and has no letter keys to log. The microphone opens only while you are dictating, shows a notification the whole time, and never opens in a password field.</string>
 </resources>

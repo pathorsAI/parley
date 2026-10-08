@@ -6,6 +6,7 @@ import { PROVIDER_BY_ID, isReasoningModel, normalizeBaseUrl, type ProviderInfo }
 import { cloudToken, CLOUD_URL } from "../cloud/client";
 import { CLOUD_ENABLED } from "../flags";
 import { webviewFetch } from "./webviewFetch";
+import { STUDY } from "./studyPrompt";
 
 export { isReasoningModel } from "./providers";
 
@@ -15,11 +16,10 @@ export { isReasoningModel } from "./providers";
  * appear somewhere in the messages, or the request 400s with
  * "'messages' must contain the word 'json'…". Append this to the system prompt of
  * every `generateObject` call. Harmless for providers that use tool mode (e.g.
- * Anthropic), so it's safe to apply unconditionally.
+ * Anthropic), so it's safe to apply unconditionally. The text lives in
+ * shared/prompts/study.json (`jsonModeInstruction`), shared with Android.
  */
-export const JSON_MODE_INSTRUCTION =
-  "\n\nReturn your answer strictly as a single JSON object matching the provided schema. " +
-  "Use the schema's property names EXACTLY (verbatim) — do not rename, translate, or add top-level keys.";
+export const JSON_MODE_INSTRUCTION: string = STUDY.jsonModeInstruction;
 
 /**
  * Resolve a Vercel AI SDK model for one workload lane (#131): "realtime"
@@ -55,11 +55,18 @@ export function getModel(
      * {@link generateObjectResilient}.
      */
     forceJsonObject?: boolean;
+    /**
+     * Use this model id instead of the lane's configured one, on the lane's
+     * provider. For a caller that needs a specific hosted alias for one request
+     * (voice typing's concise polish → `parley-concise`); `undefined` keeps the
+     * lane's model.
+     */
+    modelId?: string;
   }
 ): LanguageModel {
   const provider = settings.llmProviders[workload];
   const info = PROVIDER_BY_ID[provider];
-  const modelId = settings.models[provider][workload];
+  const modelId = opts?.modelId ?? settings.models[provider][workload];
   // TRIM. A key pasted from a browser or a password manager routinely carries a
   // leading/trailing space or newline. `hasProviderKey` trims before deciding
   // the key "exists", so every pre-flight gate said yes and the request then

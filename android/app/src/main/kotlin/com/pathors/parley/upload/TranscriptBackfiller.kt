@@ -2,7 +2,9 @@ package com.pathors.parley.upload
 
 import android.content.Context
 import com.pathors.parley.cloud.CloudClient
+import com.pathors.parley.cloud.CloudException
 import com.pathors.parley.cloud.RecordingMeta
+import com.pathors.parley.cloud.RecordingMetaLocks
 import com.pathors.parley.cloud.RecordingSource
 import com.pathors.parley.cloud.RecordingSummary
 import com.pathors.parley.cloud.toDtos
@@ -201,9 +203,11 @@ class TranscriptBackfiller(
      * in org scope) because only the personal endpoints can be re-pushed from
      * the phone at all.
      *
-     * @param meta the recording's full entry as the cloud holds it. Required,
-     *   not optional: the run edits the new transcript into exactly this, so
-     *   the analysis this whole detour exists to protect survives it.
+     * @param meta the recording's full entry as the cloud holds it, for the
+     *   request's id, title and fallback transcript. The run itself re-reads
+     *   the entry before it pushes and edits the new transcript into THAT, so
+     *   a rename, a move or a filing answer made while the job ran survives
+     *   it along with the analysis.
      * @param summary the library card, when the caller has one. A detail screen
      *   fetches only the meta, so null derives it via [RecordingSummary.fromMeta]
      *   rather than making every caller find one.
@@ -353,54 +357,52 @@ class TranscriptBackfiller(
 
         val segments = transcript.segments.toDtos()
         val durationMs = maxOf(request.pending.durationMs, transcript.durationMs.toDouble())
-        val existingMeta = request.existingRecordingMeta()
-        val existingSummary = request.existingSummary
 
-        val meta: RecordingMeta
-        val summary: RecordingSummary
-        if (existingMeta != null && existingSummary != null) {
-            // A re-run of a recording that already has a life of its own: edit
-            // the transcript inside what is there rather than replacing it.
-            // `request.folderId` is not applied — the captured meta already
-            // carries the recording's own folder, and writing the request's copy
-            // over it would turn a re-transcription into a move.
-            meta = existingMeta.replacingTranscript(segments, durationMs)
-            summary = existingSummary.replacingTranscript(segments, durationMs)
-        } else {
-            // The automatic path. It used to rebuild the entry out of
-            // `request.pending`, on the reasoning that the recording had been
-            // created seconds earlier by the upload that queued this and so had
-            // nothing on it worth keeping. That holds at the moment of queueing
-            // and stops holding immediately afterwards: the batch job takes
-            // minutes and the run may happen on a later launch, and in between
-            // the user may have renamed the recording, moved it, and answered a
-            // filing suggestion on it. Pushing the rebuilt entry put the clock
-            // name back over the name they typed, along with the folder and
-            // `filingSuggested` — a rename undone later by a background job is
-            // silent data loss. (iOS fixed the same thing in 1.14.)
-            //
-            // So read the recording as it stands right now and edit the
-            // transcript inside it, exactly as the manual path does.
-            // `request.folderId` is not applied: the recording's own folder is
-            // the current one.
-            //
-            // Not wrapped: a fetch that failed would leave only the stale copy
-            // to push, which is the very thing this branch exists to stop. The
-            // request stays queued, and the network that just failed here is
-            // the network the push below needs anyway.
-            meta = cloud.recordingMeta(id).replacingTranscript(segments, durationMs)
-            summary = repushSummary(meta, request.pending)
+        // Read the recording as it stands right now and edit the transcript
+        // inside it — on BOTH paths.
+        //
+        // The batch job takes minutes and the run may happen on a later launch,
+        // and in between the user may have renamed the recording, moved it, and
+        // answered (or been offered) a filing suggestion on it; a desktop may
+        // have analysed it. The automatic path used to rebuild the entry out of
+        // `request.pending`, and the manual one pushed the copy of the meta it
+        // captured when the re-transcription was *asked for*: either way the
+        // push put an old name back over the one the user typed, along with the
+        // old folder, `filingSuggested`/`filingSuggestion` and analysis — a
+        // rename undone later by a background job is silent data loss. (iOS
+        // fixed the same thing in 1.14.) `request.existingMeta` stays in the
+        // manifest for older builds; it is no longer pushed. `request.folderId`
+        // is not applied either: the recording's own folder is the current one.
+        //
+        // Not wrapped in a fallback: a fetch that failed would leave only the
+        // stale copy to push, which is the very thing this exists to stop. The
+        // request stays queued, and the network that just failed here is the
+        // network the push below needs anyway — except for a recording that is
+        // gone (404), which a push would resurrect, and which is finished
+        // instead.
+        //
+        // The read and the push hold the recording's meta lock, so a study
+        // stage or a rename landing meanwhile on this phone is read here
+        // rather than pushed over.
+        RecordingMetaLocks.withLock<Unit>(id) {
+            val current = try {
+                cloud.recordingMeta(id)
+            } catch (e: CloudException) {
+                if (!e.isNotFound) throw e
+                return@withLock
+            }
+            val meta = current.replacingTranscript(segments, durationMs)
+            val summary = repushSummary(meta, request.pending)
+
+            // Audio is already in the cloud and unchanged, so this is a metadata
+            // push only.
+            cloud.pushRecording(id, summary, meta)
         }
-
-        // Audio is already in the cloud and unchanged, so this is a metadata
-        // push only.
-        cloud.pushRecording(id, summary, meta)
         finish(id, audio)
     }
 
     /**
-     * The summary that goes up beside a re-pushed meta on the automatic path,
-     * derived from that meta rather than from the queued request: every field
+     * The summary that goes up beside a re-pushed meta, derived from that meta rather than from the queued request: every field
      * except the ones the transcript speaks for is a fact the *recording* owns
      * — its name, its folder, how much analysis is on it — and the request is
      * out of date about all of them by the time the run happens. [fallback]

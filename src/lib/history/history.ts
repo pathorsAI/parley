@@ -27,9 +27,11 @@ import { qualifiesForRediarization, rediarizeSegments } from "../speakers/postDi
 import { translate } from "../../i18n/messages";
 import { markGettingStarted } from "../onboarding/gettingStarted";
 import type { ReplaySession } from "../replay/types";
+import { withTimingRepaired, withoutEstimatedTiming } from "../replay/timing";
 import type {
   ActionItem,
   DefaultSaveLocation,
+  FilingSuggestion,
   TimelineEvent,
   TranscriptSegment,
 } from "../types";
@@ -79,11 +81,14 @@ export function buildSummary(entry: HistoryEntry): HistoryEntrySummary {
   };
 }
 
-/** Snapshot the analysis-related slice of the store into a partial entry. */
-function snapshotAnalysis() {
+/** Snapshot the analysis-related slice of the store into a partial entry.
+ *  Exported for testing. */
+export function snapshotAnalysis() {
   const s = useStore.getState();
   return {
-    segments: s.segments,
+    // An estimated timeline is a display aid, not data: the entry keeps the
+    // untimed transcript it came with (see replay/timing).
+    segments: s.replay?.timingEstimated ? withoutEstimatedTiming(s.segments) : s.segments,
     speakerNames: s.speakerNames,
     findings: s.findings,
     actionItems: s.actionItems,
@@ -109,10 +114,14 @@ function snapshotAnalysis() {
     briefFailed: s.briefStatus === "error" && !s.brief,
     // Same for the filing suggestion: the upload's FIRST save happens while the
     // pass may already have landed, and a re-analysis overwrite must not drop a
-    // suggestion the user hasn't answered yet. The completion flag comes from the
-    // status for the same reason `analyzed` does — see HistoryEntry.filingSuggested.
+    // suggestion the user hasn't answered yet. The completion flag is asserted
+    // only while a suggestion is PENDING: a "done" stage with nothing pending is
+    // either a pass that offered nothing (deliberately never persisted, so other
+    // devices can still try — see filingRun) or one the user already answered,
+    // which persistFilingSuggestion writes itself. Either way the snapshot
+    // defers to what is on disk (mergeAnalysisSnapshot keeps meta's fields).
     filingSuggestion: s.filingSuggestion,
-    filingSuggested: s.filingStatus === "done",
+    filingSuggested: s.filingStatus === "done" && !!s.filingSuggestion,
     // The kind SHAPED those outputs, so it is part of them.
     meetingKind: s.meetingKind,
   };
@@ -136,9 +145,18 @@ async function measureRecordingRate(path: string): Promise<number | null> {
 /** The analysis slice captured by {@link snapshotAnalysis} (passed to a deferred save). */
 export type AnalysisSnapshot = ReturnType<typeof snapshotAnalysis>;
 
-/** Whether the current transcript has any spoken content worth saving. */
-function hasSpokenTranscript(): boolean {
-  return hasSpokenSegment(useStore.getState().segments);
+/**
+ * Keep a finished live meeting's recording, or discard it? Discard only the
+ * accidental Start/Stop — nothing transcribed AND the transcription link never
+ * dropped. A meeting whose link went down at any point is kept even with no
+ * transcript at all (#570): with the network gone, the recording may be the
+ * only copy of what was said, and an empty transcript there means "not
+ * transcribed", not "nothing happened". Pure + exported for testing.
+ */
+export function shouldKeepLiveRecording(
+  s: Pick<ReturnType<typeof useStore.getState>, "segments" | "transcriptionDropped">,
+): boolean {
+  return hasSpokenSegment(s.segments) || s.transcriptionDropped;
 }
 
 // ── Per-entry write serialization ───────────────────────────────────────────
@@ -317,14 +335,16 @@ let uploadSaveInFlight: Promise<unknown> | null = null;
 
 /**
  * Auto-save a finished LIVE meeting once Rust reports the encoded recording.
- * No-op when the meeting produced no transcript (e.g. started + stopped at once).
+ * No-op when the meeting produced no transcript (e.g. started + stopped at once)
+ * — unless its transcription dropped, see {@link shouldKeepLiveRecording}.
  */
 export async function saveLiveToHistory(audioTempPath: string, durationMs: number): Promise<void> {
   if (!isTauri()) return;
-  if (!hasSpokenTranscript()) {
-    // Nothing was transcribed — almost certainly an accidental Start/Stop. Don't
-    // save a history entry, and discard the encoded temp recording so it doesn't
-    // orphan in the temp dir (an entry would normally consume it on save).
+  if (!shouldKeepLiveRecording(useStore.getState())) {
+    // Nothing was transcribed and the link never dropped — almost certainly an
+    // accidental Start/Stop. Don't save a history entry, and discard the encoded
+    // temp recording so it doesn't orphan in the temp dir (an entry would
+    // normally consume it on save).
     log.info("history: live save skipped (no transcript)");
     await invoke("discard_recording", { path: audioTempPath }).catch((error) =>
       log.warn("history: discard empty live recording failed", {
@@ -332,9 +352,19 @@ export async function saveLiveToHistory(audioTempPath: string, durationMs: numbe
         error: String(error),
       }),
     );
+    leaveStoppedCockpit("meeting.notSaved.noTranscript");
     return;
   }
   const s = useStore.getState();
+  if (s.transcriptionDropped) {
+    // Saved past the empty-transcript gate, or saved with a transcript that
+    // has a hole in it — either way worth one line when a user asks where part
+    // of their meeting went.
+    log.info("history: live save after a transcription drop", {
+      spoken: hasSpokenSegment(s.segments),
+      segments: s.segments.length,
+    });
+  }
   const createdAt = s.meetingStartedAt ?? Date.now();
   const dateLabel = new Date(createdAt).toLocaleString(localeOf());
   // Mic-only measured pace (issue #22): prefer the whole-session articulation rate
@@ -616,9 +646,10 @@ export async function saveTranscriptToHistory(save: TranscriptImportSave): Promi
  * those, and each lands on disk by itself moments later (persistStageOutputs).
  * The snapshot's write can still arrive AFTER theirs (it is debounced), so a
  * null there means "not known yet", never "erase": it must not undo a sibling
- * stage that already saved. A filing answer the user gave (dismiss/accept: the
- * pass is done and the suggestion is null) is still copied, because then the
- * store's null IS the answer.
+ * stage that already saved. Filing fields are copied only when the snapshot
+ * carries a pending suggestion (filingSuggested); otherwise meta's stand — a
+ * user's dismiss/accept is already on disk via persistFilingSuggestion, and an
+ * empty pass is never persisted at all.
  */
 export function mergeAnalysisSnapshot(meta: HistoryEntry, analysis: AnalysisSnapshot): HistoryEntry {
   return {
@@ -849,11 +880,33 @@ export async function listHistory(): Promise<HistoryEntrySummary[]> {
   return summaries.sort((a, b) => b.createdAt - a.createdAt);
 }
 
-/** Rename an entry (patches the title in meta + summary). */
+/**
+ * A pending filing suggestion after the recording has been renamed: its title is
+ * answered, its folders are not. Nothing left → null. The in-memory twin of
+ * history.rs `apply_rename`; pure and exported for testing.
+ */
+export function clearSuggestedTitle(suggestion: FilingSuggestion | null): FilingSuggestion | null {
+  if (!suggestion) return null;
+  return suggestion.folders.length > 0 ? { ...suggestion, title: "" } : null;
+}
+
+/**
+ * Rename an entry (patches the title in meta + summary). EVERY rename — the
+ * replay titlebar, the library, MCP's rename_recording, the filing card — comes
+ * through here, and every one also retires the pending filing suggestion's
+ * title: the user has now named the recording, so a "suggested title" left
+ * beside it is a second, competing name. Rust clears it in the same meta.json
+ * write (history.rs `apply_rename`); this mirrors that into the store when the
+ * renamed entry is the one on screen, so the card drops its title row at once.
+ */
 export async function renameHistoryEntry(id: string, title: string): Promise<void> {
   if (!isTauri()) return;
   await withEntryWrite(id, () => invoke("rename_history_entry", { id, title: title.trim() }));
   log.info("history: entry renamed", { id });
+  const s = useStore.getState();
+  if (s.loadedHistoryId === id && s.filingSuggestion?.title) {
+    s.setFilingSuggestion(clearSuggestedTitle(s.filingSuggestion));
+  }
   // A rename is a content change → go through the same dirty→push→clear lifecycle
   // as save/re-analysis, so a failed cloud push is retried by the background sweep.
   pushToCloud(id);
@@ -1124,6 +1177,36 @@ interface HistoryReadResult {
 }
 
 /**
+ * The replay session for a saved entry. A transcript that synced with no timing
+ * at all (#576) gets an estimated timeline here, at the one place every opened
+ * recording passes through, so the transcript, seek, findings and brief all
+ * read the same clock. Pure + exported for testing.
+ */
+export function replaySessionFor(meta: HistoryEntry, audioPath: string, audioSrc: string): ReplaySession {
+  const { segments, estimated } = withTimingRepaired(meta.segments ?? [], meta.durationMs);
+  if (estimated) {
+    log.info("history: transcript has no timing; estimating it", {
+      id: meta.id,
+      segments: segments.length,
+      durationMs: meta.durationMs,
+    });
+  }
+  return {
+    id: meta.id,
+    name: meta.title,
+    audioPath,
+    audioSrc,
+    durationMs: meta.durationMs,
+    audioOffsetMs: 0,
+    createdAt: meta.createdAt,
+    segments,
+    speakerNames: meta.speakerNames,
+    speechRateHz: meta.speechRateHz ?? null,
+    ...(estimated ? { timingEstimated: true } : {}),
+  };
+}
+
+/**
  * Read a saved entry and load it into the replay UI (restoring its analysis), then
  * focus the main window. Called by the main-window listener on `history://open`.
  */
@@ -1134,19 +1217,8 @@ export async function loadHistoryEntry(id: string): Promise<void> {
   await entryWritesSettled(id);
   const { meta, audioPath } = await invoke<HistoryReadResult>("read_history_entry", { id });
   const audioSrc = audioPath ? convertFileSrc(audioPath) : "";
-  const session: ReplaySession = {
-    id: meta.id,
-    name: meta.title,
-    audioPath: audioPath ?? "",
-    audioSrc,
-    durationMs: meta.durationMs,
-    audioOffsetMs: 0,
-    createdAt: meta.createdAt,
-    segments: meta.segments,
-    speakerNames: meta.speakerNames,
-    speechRateHz: meta.speechRateHz ?? null,
-  };
-  useStore.getState().loadHistory(meta, session);
+  const session = replaySessionFor(meta, audioPath ?? "", audioSrc);
+  useStore.getState().loadHistory({ ...meta, segments: session.segments }, session);
   log.info("history: entry loaded", { id, hasAudio: !!audioPath });
   if (isTauri()) {
     try {
@@ -1203,19 +1275,8 @@ export async function loadOrgEntry(orgId: string, id: string): Promise<void> {
     });
   }
   const audioSrc = audioPath ? convertFileSrc(audioPath) : "";
-  const session: ReplaySession = {
-    id: meta.id,
-    name: meta.title,
-    audioPath,
-    audioSrc,
-    durationMs: meta.durationMs,
-    audioOffsetMs: 0,
-    createdAt: meta.createdAt,
-    segments: meta.segments,
-    speakerNames: meta.speakerNames,
-    speechRateHz: meta.speechRateHz ?? null,
-  };
-  useStore.getState().loadHistory(meta, session, { readOnly: true });
+  const session = replaySessionFor(meta, audioPath, audioSrc);
+  useStore.getState().loadHistory({ ...meta, segments: session.segments }, session, { readOnly: true });
   log.info("history: org entry loaded", { orgId, id, hasAudio: !!audioPath });
   if (isTauri()) {
     try {
@@ -1233,6 +1294,20 @@ export async function loadOrgEntry(orgId: string, id: string): Promise<void> {
 // call and needs no `history://open` round trip. What remains here is the
 // broadcast that a saved entry CHANGED, which several surfaces still listen to.
 
+/**
+ * A stopped meeting that produced no report — too short for Rust to keep, or
+ * nothing transcribed — has nowhere to go but its own cockpit, which is a dead
+ * screen once the meeting is over (and, before the cockpit hold, a four-column
+ * one). Go Home and say why, unless the user has already moved on: started
+ * another meeting, or opened something else while the stop settled.
+ */
+export function leaveStoppedCockpit(reasonKey: "meeting.notSaved.tooShort" | "meeting.notSaved.noTranscript"): void {
+  const s = useStore.getState();
+  if (s.appMode !== "live" || isMeetingActive(s.meetingStatus)) return;
+  s.openHome();
+  toast.message(translate(s.settings.language, reasonKey));
+}
+
 /** Main-window listener: auto-save the meeting once Rust finishes encoding it,
  *  and release the titlebar "finalizing" state. saveLiveToHistory clears it
  *  itself the moment the report opens (its speaker correction and org share
@@ -1243,10 +1318,19 @@ export async function listenForRecordingSaved(): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
   const unlistenSaved = await listen<{ path: string; durationMs: number }>(RECORDING_SAVED_EVENT, (e) => {
     saveLiveToHistory(e.payload.path, e.payload.durationMs)
-      .catch((err) => log.error("history: live save failed", { error: String(err) }))
+      .catch((err) => {
+        log.error("history: live save failed", { error: String(err) });
+        // Stay on the cockpit (its transcript is the only copy left on screen)
+        // but say so — a failed save used to look exactly like a slow one.
+        const lang = useStore.getState().settings.language;
+        toast.error(translate(lang, "meeting.notSaved.failed", { error: String(err) }));
+      })
       .finally(clearFinalizing);
   });
-  const unlistenDiscarded = await listen(RECORDING_DISCARDED_EVENT, clearFinalizing);
+  const unlistenDiscarded = await listen(RECORDING_DISCARDED_EVENT, () => {
+    clearFinalizing();
+    leaveStoppedCockpit("meeting.notSaved.tooShort");
+  });
   return () => {
     unlistenSaved();
     unlistenDiscarded();

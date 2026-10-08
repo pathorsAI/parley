@@ -20,6 +20,7 @@ import type {
   TimelineEvent,
   TodoItem,
   TranscriptSegment,
+  VoiceTypingPolishStyle,
 } from "./types";
 import type { ReplaySession } from "./replay/types";
 import type { CloudAuth } from "./cloud/types";
@@ -162,6 +163,29 @@ export function migrateVoiceTypingShortcut(
   return MAC_ONLY_SHORTCUTS.has(saved) ? DEFAULT_VOICE_TYPING_SHORTCUT : saved;
 }
 
+const POLISH_STYLES: readonly VoiceTypingPolishStyle[] = ["off", "tidy", "concise"];
+
+/**
+ * The polish style a persisted settings blob amounts to.
+ *
+ * The on/off `voiceTypingPolish` switch became a three-way style. A recognised
+ * `voiceTypingPolishStyle` wins; without one the old switch decides — off stays
+ * off, and on (or never set, which defaulted to on) becomes `tidy`, which is
+ * exactly what "on" used to do. Mirrors iOS's `PolishStyle.resolve`.
+ *
+ * Exported for tests.
+ */
+export function migrateVoiceTypingPolishStyle(saved: {
+  voiceTypingPolishStyle?: unknown;
+  voiceTypingPolish?: unknown;
+}): VoiceTypingPolishStyle {
+  const style = saved.voiceTypingPolishStyle;
+  if (typeof style === "string" && (POLISH_STYLES as readonly string[]).includes(style)) {
+    return style as VoiceTypingPolishStyle;
+  }
+  return saved.voiceTypingPolish === false ? "off" : "tidy";
+}
+
 /** Every one-time hint id. Existing users are migrated with all of them seen. */
 export const ALL_HINT_IDS: readonly HintId[] = [
   "report.filing",
@@ -216,8 +240,7 @@ const DEFAULT_SETTINGS: Settings = {
   voiceTypingEnabled: true,
   voiceTypingShortcut: DEFAULT_VOICE_TYPING_SHORTCUT,
   voiceTypingMode: "hold",
-  voiceTypingPolish: true,
-  voiceTypingPolishStyle: "proofread",
+  voiceTypingPolishStyle: "tidy",
   evaluations: defaultEvalDefs(tDefault),
   evalTemplates: buildPresetEvalTemplates(tDefault),
   todoTemplates: buildPresetTodoTemplates(tDefault),
@@ -299,6 +322,7 @@ export type AppMode = "home" | "live" | "study" | "library";
 export type SettingsCategory =
   | "basic"
   | "account"
+  | "organizations"
   | "provider"
   | "transcription"
   // The phrase dictionary is NOT part of Settings state: it lives in its own
@@ -340,6 +364,26 @@ const CLEARED_PREP_SLICE = {
 /** Lifecycle status of an async pass (analysis, delivery assessment, action items). */
 export type AsyncTaskStatus = "idle" | "running" | "done" | "error";
 
+/** Health of the live meeting's link to the transcription service, as the
+ *  backend reports it on `meeting://transcription` (see tauriEvents). */
+export type TranscriptionLink = "live" | "reconnecting";
+
+/**
+ * The transcription link back at rest: live, nothing redialling. Applied on
+ * start, stop and cancel — a stopped meeting must not keep showing the
+ * reconnecting banner (the backend stops redialling with the meeting), and the
+ * next one starts clean. `transcriptionDropped` is NOT part of it: stop keeps
+ * that flag for the save that follows, and only startMeeting/cancelMeeting
+ * clear it.
+ */
+const CLEARED_TRANSCRIPTION_LINK: Pick<
+  ParleyState,
+  "transcriptionLink" | "transcriptionReconnectingSources"
+> = {
+  transcriptionLink: "live",
+  transcriptionReconnectingSources: [],
+};
+
 /**
  * Every analysis/study output slice, cleared as ONE unit. enterReplay,
  * loadHistory (as the base under its restores), exitReplay and startMeeting all
@@ -361,8 +405,10 @@ const CLEARED_STUDY_SLICE: Pick<
   | "actionItemsError"
   | "deliveryAssessment"
   | "deliveryStatus"
+  | "deliveryError"
   | "brief"
   | "briefStatus"
+  | "briefError"
   | "filingSuggestion"
   | "filingStatus"
   | "meetingKind"
@@ -379,8 +425,10 @@ const CLEARED_STUDY_SLICE: Pick<
   actionItemsError: null,
   deliveryAssessment: null,
   deliveryStatus: "idle",
+  deliveryError: null,
   brief: null,
   briefStatus: "idle",
+  briefError: null,
   filingSuggestion: null,
   filingStatus: "idle",
   meetingKind: null,
@@ -579,6 +627,9 @@ interface ParleyState {
    *  persisted onto the loaded entry so reopening never regenerates it. */
   brief: string | null;
   briefStatus: AsyncTaskStatus;
+  /** Why the last brief pass failed (this session only — a failure restored
+   *  from disk has no message). Shown by the generation chip. */
+  briefError: string | null;
   setBrief: (brief: string | null) => void;
   /** What kind of meeting the loaded recording is — detected once by the
    *  analysis pass and overridable from the report page. It picks the analysis
@@ -636,6 +687,30 @@ interface ParleyState {
   systemAudioWarning: boolean;
   setSystemAudioWarning: (on: boolean) => void;
 
+  /** The live transcript's connection, for THIS meeting (#570). A dropped
+   *  transcription socket no longer ends the meeting: the backend keeps the
+   *  microphone recording and redials with backoff, so a network blip is a
+   *  pause in the live transcript, never the end of a recording. "reconnecting"
+   *  drives the live screen's non-dismissable banner and clears by itself once
+   *  every leg that dropped has reported back in. */
+  transcriptionLink: TranscriptionLink;
+  /** The link went to "reconnecting" at least once this meeting. Sticky until
+   *  the next startMeeting (or a cancel) — stopping keeps it, because the save that runs
+   *  AFTER stop reads it: a meeting whose transcription was interrupted is
+   *  saved even with no transcript, since the recording may be the only copy
+   *  of what was said (history.shouldKeepLiveRecording). */
+  transcriptionDropped: boolean;
+  /** Which sources ("mix", or "me"/"them" when two sessions run) are currently
+   *  redialling. The link is reconnecting while ANY is; it reads live again
+   *  only once each of them has reported live. */
+  transcriptionReconnectingSources: string[];
+  /** Fold one `meeting://transcription` report into the three fields above.
+   *  Ignored outside an active meeting (a stray event racing stop_meeting's
+   *  teardown must not raise the banner over a finished call), and a "live"
+   *  from a source that never reported reconnecting — every leg's FIRST
+   *  handshake also reports live — is a no-op. */
+  reportTranscriptionLink: (source: string, state: TranscriptionLink) => void;
+
   /** Auto-run the analysis on an interval while recording (LIVE; default off). */
   autoAnalyze: boolean;
   autoAnalyzeSec: number;
@@ -670,6 +745,8 @@ interface ParleyState {
   deliveryAssessment: DeliveryAssessment | null;
   /** Mainly for REPLAY: drives the post-call delivery section's spinner. */
   deliveryStatus: AsyncTaskStatus;
+  /** Why the last REPLAY delivery pass failed, for the generation chip. */
+  deliveryError: string | null;
   setDeliveryAssessment: (a: DeliveryAssessment | null) => void;
   setDeliveryStatus: (s: ParleyState["deliveryStatus"]) => void;
 
@@ -801,7 +878,12 @@ interface ParleyState {
  * persisted state (runs after {@link migratePersistedState}). Exported for tests.
  */
 export function mergePersistedState(persisted: unknown, current: ParleyState): ParleyState {
-  const p = (persisted as { settings?: Partial<Settings> } | undefined)?.settings ?? {};
+  const persistedSettings =
+    (persisted as { settings?: Partial<Settings> & { voiceTypingPolish?: unknown } } | undefined)
+      ?.settings ?? {};
+  // The retired on/off polish switch is read once, below, and not carried
+  // forward into the live settings.
+  const { voiceTypingPolish: legacyPolish, ...p } = persistedSettings;
   // Template shapes changed over time; fall back to defaults if the
   // persisted value is an old shape (e.g. todoTemplates used to be string[]).
   const validTodoTpls =
@@ -843,6 +925,11 @@ export function mergePersistedState(persisted: unknown, current: ParleyState): P
       // persisted state is stale default, not intent — see
       // migrateVoiceTypingShortcut.
       voiceTypingShortcut: migrateVoiceTypingShortcut(p.voiceTypingShortcut),
+      // The on/off switch became a style: off → off, on → tidy.
+      voiceTypingPolishStyle: migrateVoiceTypingPolishStyle({
+        voiceTypingPolishStyle: p.voiceTypingPolishStyle,
+        voiceTypingPolish: legacyPolish,
+      }),
       llmProviders,
       // Per-provider models, legacy {ask,eval} roles already remapped;
       // providers missing from persisted state keep their defaults.
@@ -908,6 +995,7 @@ export const useStore = create<ParleyState>()(
       deliveryNudge: null,
       deliveryAssessment: null,
       deliveryStatus: "idle",
+      deliveryError: null,
       actionItems: [],
       actionItemsStatus: "idle",
       actionItemsError: null,
@@ -1088,6 +1176,7 @@ export const useStore = create<ParleyState>()(
   setStudyTab: (tab) => set({ studyTab: tab }),
   brief: null,
   briefStatus: "idle",
+  briefError: null,
   setBrief: (brief) => set({ brief }),
   setMeetingKind: (meetingKind) => set({ meetingKind }),
   appendBrief: (chunk) => set((s) => ({ brief: (s.brief ?? "") + chunk })),
@@ -1192,6 +1281,27 @@ export const useStore = create<ParleyState>()(
   clearDeliveryNudge: () => set({ deliveryNudge: null }),
   systemAudioWarning: false,
   setSystemAudioWarning: (systemAudioWarning) => set({ systemAudioWarning }),
+  ...CLEARED_TRANSCRIPTION_LINK,
+  transcriptionDropped: false,
+  reportTranscriptionLink: (source, linkState) =>
+    set((state) => {
+      if (!isMeetingActive(state.meetingStatus)) return {};
+      const pending = state.transcriptionReconnectingSources;
+      if (linkState === "reconnecting") {
+        return {
+          transcriptionLink: "reconnecting",
+          transcriptionDropped: true,
+          // Re-reported on every redial attempt while offline: keep one entry.
+          transcriptionReconnectingSources: pending.includes(source) ? pending : [...pending, source],
+        };
+      }
+      if (!pending.includes(source)) return {};
+      const rest = pending.filter((s) => s !== source);
+      return {
+        transcriptionReconnectingSources: rest,
+        transcriptionLink: rest.length === 0 ? "live" : "reconnecting",
+      };
+    }),
   setDeliveryAssessment: (a) => set({ deliveryAssessment: a }),
   setDeliveryStatus: (s) => set({ deliveryStatus: s }),
 
@@ -1250,6 +1360,8 @@ export const useStore = create<ParleyState>()(
       filledPauseCounted: {},
       deliveryNudge: null,
       systemAudioWarning: false,
+      ...CLEARED_TRANSCRIPTION_LINK,
+      transcriptionDropped: false,
     });
   },
 
@@ -1291,6 +1403,9 @@ export const useStore = create<ParleyState>()(
       filledPauseCount: 0,
       filledPauseCounted: {},
       deliveryNudge: null,
+      // A cancelled meeting saves nothing, so nothing downstream reads these.
+      ...CLEARED_TRANSCRIPTION_LINK,
+      transcriptionDropped: false,
     });
   },
 
@@ -1318,6 +1433,10 @@ export const useStore = create<ParleyState>()(
       meetingPausedAt: null,
       prosody: null,
       deliveryNudge: null,
+      // The backend stops redialling with the meeting, so a banner left up
+      // here would never clear. `transcriptionDropped` stays: the save that
+      // runs after stop reads it.
+      ...CLEARED_TRANSCRIPTION_LINK,
     });
   },
 

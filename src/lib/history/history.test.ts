@@ -1,19 +1,27 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 
 // history.ts pulls in `log` (whose Tauri-less path touches `window`); we only
 // exercise the pure `buildSummary` here, so stub the side-channel to a no-op.
 vi.mock("../log", () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
+vi.mock("sonner", () => ({
+  toast: Object.assign(vi.fn(), { message: vi.fn(), error: vi.fn(), success: vi.fn() }),
+}));
 
 import {
   applyCorrectedSpeakers,
   buildSummary,
+  leaveStoppedCockpit,
   mergeAnalysisSnapshot,
   mergeStageOutputs,
+  replaySessionFor,
+  shouldKeepLiveRecording,
+  snapshotAnalysis,
   type AnalysisSnapshot,
 } from "./history";
-import { speakerKey } from "../store";
+import { speakerKey, useStore } from "../store";
+import { toast } from "sonner";
 import type { HistoryEntry } from "./types";
 import type { DeliveryAssessment } from "../types";
 import { seg } from "../test/fixtures";
@@ -157,6 +165,26 @@ describe("mergeStageOutputs (one stage's result onto a saved entry)", () => {
   });
 });
 
+describe("snapshotAnalysis — filing fields", () => {
+  const pending = { title: "T", folders: [{ folderId: "f", name: "F", reason: "" }] };
+  afterEach(() => useStore.setState({ filingStatus: "idle", filingSuggestion: null }));
+
+  it("asserts filingSuggested only while a suggestion is pending", () => {
+    useStore.setState({ filingStatus: "done", filingSuggestion: pending });
+    expect(snapshotAnalysis().filingSuggested).toBe(true);
+  });
+
+  it("never persists an empty pass (or an answered one) as suggested — disk decides", () => {
+    // An empty pass is done in memory only, so another device can still try;
+    // an answered one was already written by persistFilingSuggestion.
+    useStore.setState({ filingStatus: "done", filingSuggestion: null });
+    expect(snapshotAnalysis().filingSuggested).toBe(false);
+    const saved = entry({ filingSuggestion: null, filingSuggested: true });
+    expect(mergeAnalysisSnapshot(saved, snapshotAnalysis()).filingSuggested).toBe(true);
+    expect(mergeAnalysisSnapshot(entry(), snapshotAnalysis()).filingSuggested).toBeUndefined();
+  });
+});
+
 describe("mergeAnalysisSnapshot (the completed-pipeline overwrite)", () => {
   function snap(over: Partial<AnalysisSnapshot> = {}): AnalysisSnapshot {
     return {
@@ -198,10 +226,11 @@ describe("mergeAnalysisSnapshot (the completed-pipeline overwrite)", () => {
     expect(next.filingSuggestion).toEqual({ title: "T", folders: [] });
   });
 
-  it("a filing answer the user gave (done, suggestion null) is copied", () => {
+  it("a snapshot carrying a pending suggestion overwrites the saved one", () => {
     const saved = entry({ filingSuggestion: { title: "T", folders: [] }, filingSuggested: true });
-    const next = mergeAnalysisSnapshot(saved, snap({ filingSuggested: true, filingSuggestion: null }));
-    expect(next.filingSuggestion).toBeNull();
+    const pending = { title: "U", folders: [{ folderId: "f", name: "F", reason: "" }] };
+    const next = mergeAnalysisSnapshot(saved, snap({ filingSuggested: true, filingSuggestion: pending }));
+    expect(next.filingSuggestion).toEqual(pending);
   });
 
   it("keeps a recorded brief failure unless a brief is now present", () => {
@@ -246,5 +275,91 @@ describe("applyCorrectedSpeakers (folding the background speaker correction in)"
     expect(applyCorrectedSpeakers(extra, before)).toBe(extra);
     const moved = applyCorrectedSpeakers(extra, [seg({ id: "mix-0", source: "mix", speaker: 3 })]);
     expect(moved.map((s) => s.speaker)).toEqual([3, 1, 2, 1]);
+  });
+});
+
+describe("shouldKeepLiveRecording (the live save's keep/discard gate)", () => {
+  const spoken = [seg({ id: "a", text: "hello" })];
+
+  it("discards the accidental Start/Stop: nothing spoken, link never dropped", () => {
+    expect(shouldKeepLiveRecording({ segments: [], transcriptionDropped: false })).toBe(false);
+    // Interim-only or blank lines are not spoken content either.
+    expect(
+      shouldKeepLiveRecording({
+        segments: [seg({ id: "i", text: "hel", isFinal: false }), seg({ id: "b", text: "  " })],
+        transcriptionDropped: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps a meeting with a spoken transcript", () => {
+    expect(shouldKeepLiveRecording({ segments: spoken, transcriptionDropped: false })).toBe(true);
+    expect(shouldKeepLiveRecording({ segments: spoken, transcriptionDropped: true })).toBe(true);
+  });
+
+  it("keeps a transcript-less recording when the link dropped (#570) — it may be the only copy", () => {
+    expect(shouldKeepLiveRecording({ segments: [], transcriptionDropped: true })).toBe(true);
+  });
+});
+
+describe("leaveStoppedCockpit (a meeting that ended without a report)", () => {
+  it("leaves the stopped cockpit for Home and says why", () => {
+    vi.mocked(toast.message).mockClear();
+    useStore.setState({ appMode: "live", meetingStatus: "stopped" });
+    leaveStoppedCockpit("meeting.notSaved.tooShort");
+    expect(useStore.getState().appMode).toBe("home");
+    expect(toast.message).toHaveBeenCalledTimes(1);
+  });
+
+  it("does nothing once the user has moved on or started another meeting", () => {
+    vi.mocked(toast.message).mockClear();
+    useStore.setState({ appMode: "library", meetingStatus: "stopped" });
+    leaveStoppedCockpit("meeting.notSaved.noTranscript");
+    expect(useStore.getState().appMode).toBe("library");
+
+    useStore.setState({ appMode: "live", meetingStatus: "recording" });
+    leaveStoppedCockpit("meeting.notSaved.noTranscript");
+    expect(useStore.getState().appMode).toBe("live");
+    expect(toast.message).not.toHaveBeenCalled();
+  });
+});
+
+describe("a transcript that synced with no timing (#576)", () => {
+  // A phone batch transcription before the fix: every line stamped 0 → 0.
+  const untimed = [
+    seg({ id: "mix-0", source: "mix", speaker: 1, text: "你好，今天討論報價", startMs: 0, endMs: 0 }),
+    seg({ id: "mix-1", source: "mix", speaker: 2, text: "好的，我們先看數字", startMs: 0, endMs: 0 }),
+    seg({ id: "mix-2", source: "mix", speaker: 1, text: "那就這樣決定", startMs: 0, endMs: 0 }),
+  ];
+
+  it("opens with an estimated timeline spread over the recording, flagged as estimated", () => {
+    const session = replaySessionFor(entry({ segments: untimed, durationMs: 90_000 }), "/a.ogg", "asset://a");
+    expect(session.timingEstimated).toBe(true);
+    const starts = session.segments.map((s) => s.startMs);
+    expect(starts[0]).toBe(0);
+    expect(starts[1]).toBeGreaterThan(0);
+    expect(starts[2]).toBeGreaterThan(starts[1]);
+    expect(session.segments[2].endMs).toBe(90_000);
+  });
+
+  it("opens a timed transcript exactly as saved", () => {
+    const timed = [seg({ id: "a", startMs: 0, endMs: 800 }), seg({ id: "b", startMs: 1000, endMs: 2000 })];
+    const session = replaySessionFor(entry({ segments: timed }), "", "");
+    expect(session.timingEstimated).toBeUndefined();
+    expect(session.segments).toBe(timed);
+  });
+
+  it("saves the untimed transcript back, never the estimate", () => {
+    const session = replaySessionFor(entry({ segments: untimed, durationMs: 90_000 }), "", "");
+    useStore.setState({ replay: session, segments: session.segments });
+    try {
+      expect(snapshotAnalysis().segments).toEqual(untimed);
+      // A transcript with real timing is saved as it is.
+      const timed = [seg({ id: "a", startMs: 0, endMs: 800 }), seg({ id: "b", startMs: 1000, endMs: 2000 })];
+      useStore.setState({ replay: { ...session, timingEstimated: undefined }, segments: timed });
+      expect(snapshotAnalysis().segments).toBe(timed);
+    } finally {
+      useStore.setState({ replay: null, segments: [] });
+    }
   });
 });

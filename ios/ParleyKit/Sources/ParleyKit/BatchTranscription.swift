@@ -30,15 +30,25 @@ public struct BatchToken: Decodable, Equatable, Sendable {
         self.speaker = speaker
     }
 
+    /// The cloud hands back the vendor's tokens untouched, so the timing keys are
+    /// snake_case on the wire (`start_ms`, exactly what `replay.rs` reads). This
+    /// decoder used to read `startMs`, which is never sent: every token fell back
+    /// to 0, so every batch-transcribed recording — an import, or a meeting whose
+    /// live transcript was backfilled — synced with all of its lines at 00:00
+    /// (issue #576). The camelCase spelling is still accepted as a fallback.
     enum CodingKeys: String, CodingKey {
-        case text, startMs, endMs, speaker
+        case text, speaker
+        case startMs = "start_ms"
+        case endMs = "end_ms"
+        case camelStartMs = "startMs"
+        case camelEndMs = "endMs"
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
-        startMs = try c.decodeIfPresent(UInt64.self, forKey: .startMs) ?? 0
-        endMs = try c.decodeIfPresent(UInt64.self, forKey: .endMs) ?? 0
+        startMs = Self.millis(c, .startMs) ?? Self.millis(c, .camelStartMs) ?? 0
+        endMs = Self.millis(c, .endMs) ?? Self.millis(c, .camelEndMs) ?? 0
         // `decode` rather than `decodeIfPresent`: an absent key and a key of the
         // wrong type both need to fall through, and only the last fall-through
         // means "no speaker".
@@ -52,6 +62,20 @@ public struct BatchToken: Decodable, Equatable, Sendable {
         } else {
             speaker = nil
         }
+    }
+
+    /// A timestamp the provider may write as an integer or as a fractional
+    /// number of milliseconds; `nil` when the key is absent or not a number, so
+    /// the caller can try the other spelling. One odd token must not fail the
+    /// whole response.
+    private static func millis(
+        _ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys
+    ) -> UInt64? {
+        if let n = try? c.decode(UInt64.self, forKey: key) { return n }
+        if let d = try? c.decode(Double.self, forKey: key), d.isFinite, d >= 0 {
+            return UInt64(d)
+        }
+        return nil
     }
 }
 

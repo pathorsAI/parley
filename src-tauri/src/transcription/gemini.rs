@@ -15,8 +15,8 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::common::{
-    clean_vocabulary, connect_with_headers, drive_session, emit_connected, LevelMeter,
-    SegmentBuilder, TranscribeConfig, LEVEL_EVENT, TRANSCRIPT_EVENT,
+    clean_vocabulary, connect_with_headers, drive_session, note_connected, LevelMeter,
+    SegmentBuilder, Timeline, TranscribeConfig, LEVEL_EVENT, TRANSCRIPT_EVENT,
 };
 use super::ws::{self, Next, OnClose, Pump, WsRead, WsWrite};
 use crate::audio::resample::pcm_to_le_bytes;
@@ -118,8 +118,13 @@ fn apply_message(builder: &mut SegmentBuilder, interim: &mut String, m: GeminiMe
 /// Gemini Live signals terminal errors (bad key, quota, invalid setup) by
 /// closing with an abnormal code + reason rather than an in-band message, so an
 /// abnormal close is the failure — a normal close (1000) follows our own.
-async fn read_transcripts(app: AppHandle, source: &'static str, read: WsRead) -> Result<()> {
-    let mut builder = SegmentBuilder::new(app, source, TRANSCRIPT_EVENT);
+async fn read_transcripts(
+    app: AppHandle,
+    source: &'static str,
+    timeline: Timeline,
+    read: WsRead,
+) -> Result<()> {
+    let mut builder = SegmentBuilder::new(app, source, TRANSCRIPT_EVENT, timeline);
     let mut interim = String::new();
     ws::read_frames("gemini", source, read, OnClose::FailIfAbnormal, |payload| {
         if let Ok(m) = serde_json::from_str::<GeminiMessage>(payload) {
@@ -152,16 +157,19 @@ pub async fn run_session(
     };
     let setup = setup_frame(&model_path, &clean_vocabulary(&config.vocabulary));
     write.send(Message::Text(setup.to_string())).await?;
-    eprintln!("[gemini:{source}] connected, model={model} (diarization unsupported → speaker 0)");
+    eprintln!(
+        "[gemini:{source}] connected, model={model} (diarization unsupported → speaker 0), leg={}",
+        config.leg
+    );
+    note_connected(&app, source, config.leg, false);
 
     let mime = format!("audio/pcm;rate={}", TARGET_SAMPLE_RATE);
-    emit_connected(&app, source, false);
-    let meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT);
+    let meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT).enabled(config.level_events);
 
     drive_session(
         "gemini",
         forward_audio(write, meter, mime, pcm_rx),
-        read_transcripts(app, source, read),
+        read_transcripts(app, source, config.timeline(), read),
     )
     .await
 }

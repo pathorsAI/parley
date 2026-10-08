@@ -35,7 +35,6 @@ export function RecordingTimeline({
   locale,
   signedIn,
   orgs,
-  orgFolders,
   busyId,
   downloadingId,
   sharingId,
@@ -43,14 +42,12 @@ export function RecordingTimeline({
   onOpen,
   onDelete,
   onRename,
-  onShare,
-  onMove,
+  onFile,
 }: Readonly<{
   entries: HistoryCardItem[];
   locale: string;
   signedIn: boolean;
   orgs: CloudOrg[];
-  orgFolders: Record<string, LocalFolder[]>;
   busyId: string | null;
   downloadingId: string | null;
   sharingId: string | null;
@@ -59,8 +56,8 @@ export function RecordingTimeline({
   onOpen: (entry: HistoryCardItem) => void;
   onDelete: (entry: HistoryCardItem) => void;
   onRename: (id: string, title: string) => void;
-  onShare: (entry: HistoryCardItem, org: CloudOrg, folderId: string | null) => void;
-  onMove: (entry: HistoryCardItem, folderId: string | null) => void;
+  /** Open the destination sheet for a row. */
+  onFile: (entry: HistoryCardItem) => void;
 }>) {
   const { t } = useI18n();
   // Grouped against the render's own clock. Recomputing when the list changes is
@@ -86,7 +83,6 @@ export function RecordingTimeline({
               locale={locale}
               signedIn={signedIn}
               orgs={orgs}
-              orgFolders={orgFolders}
               folders={folders}
               folderLabel={folderName(entry.folderId)}
               busy={busyId === entry.id}
@@ -95,8 +91,7 @@ export function RecordingTimeline({
               onOpen={() => onOpen(entry)}
               onDelete={() => onDelete(entry)}
               onRename={(title) => onRename(entry.id, title)}
-              onShare={(org, folderId) => onShare(entry, org, folderId)}
-              onMove={(folderId) => onMove(entry, folderId)}
+              onFile={() => onFile(entry)}
             />
           ))}
         </section>
@@ -146,7 +141,6 @@ function TimelineRow({
   locale,
   signedIn,
   orgs,
-  orgFolders,
   folders,
   folderLabel,
   busy,
@@ -155,15 +149,13 @@ function TimelineRow({
   onOpen,
   onDelete,
   onRename,
-  onShare,
-  onMove,
+  onFile,
 }: Readonly<{
   entry: HistoryCardItem;
   bucket: TimelineBucket;
   locale: string;
   signedIn: boolean;
   orgs: CloudOrg[];
-  orgFolders: Record<string, LocalFolder[]>;
   folders: LocalFolder[];
   /** The folder this recording is filed in, or undefined for 還沒歸檔. */
   folderLabel: string | undefined;
@@ -173,8 +165,7 @@ function TimelineRow({
   onOpen: () => void;
   onDelete: () => void;
   onRename: (title: string) => void;
-  onShare: (org: CloudOrg, folderId: string | null) => void;
-  onMove: (folderId: string | null) => void;
+  onFile: () => void;
 }>) {
   const { t } = useI18n();
   const isCloudOnly = entry.sync === "cloud";
@@ -303,20 +294,16 @@ function TimelineRow({
 
       {!editing && (
         <CardActions
-          entry={entry}
           className="flex shrink-0 items-center gap-0.5 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100"
           isOrgContext={false}
           isCloudOnly={isCloudOnly}
           canShare={canShare}
-          orgs={orgs}
-          orgFolders={orgFolders}
           busy={busy}
-          sharing={sharing}
+          filing={sharing}
           folders={folders}
           onDelete={onDelete}
           onRenameStart={startEdit}
-          onShare={onShare}
-          onMove={onMove}
+          onFile={onFile}
         />
       )}
     </div>

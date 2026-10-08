@@ -5,7 +5,7 @@ import { log } from "../log";
 import { openSettings } from "../nav/settings";
 import { navigateTo } from "../nav/navigate";
 import { isMeetingActive, useStore } from "../store";
-import { finalizingHold, toggleSidebar, toggleSidebarPeek } from "../shell/sidebar";
+import { cockpitHold, toggleSidebar, toggleSidebarPeek } from "../shell/sidebar";
 import { zoomIn, zoomOut, zoomReset } from "../zoom";
 import { toggleShortcutSheet } from "./sheet";
 import {
@@ -74,16 +74,15 @@ const HANDLERS: Partial<Record<CommandId, () => void>> = {
     if (!s.replay || isMeetingActive(s.meetingStatus)) return;
     s.showReplay();
   },
-  // During a finalizing hold (End pressed, report not open yet) the tree is
+  // During the cockpit hold (meeting stopped, its cockpit still up) the tree is
   // held back so the layout changes once; ⌘B then peeks for this hold only and
   // leaves the saved preference alone. Otherwise — including a RUNNING meeting,
   // where the tree stays hidden whatever the preference says — it is the plain
   // persisted toggle it has always been.
   "view.toggleSidebar": () => {
     const s = useStore.getState();
-    const hold = finalizingHold({
+    const hold = cockpitHold({
       meetingActive: isMeetingActive(s.meetingStatus),
-      finalizing: s.isFinalizingMeeting,
       liveRoute: s.appMode === "live",
     });
     if (hold) toggleSidebarPeek();

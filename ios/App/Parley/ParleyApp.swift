@@ -24,9 +24,19 @@ struct ParleyApp: App {
         // announcement seen on its first launch, and it can only tell a fresh
         // install from an update before this launch could have signed in.
         _ = AnnouncementStore.shared
+        // Before Settings can bind its picker: the old "Polish with AI" switch
+        // becomes a style (off → off, on → tidy), written once under the new key.
+        PolishStyle.migrateLegacySetting()
+        // 1.30's clipboard history and paste chip are gone; the file of copied
+        // text and the settings they left in the App Group are swept here and
+        // on the keyboard's next load. See `RetiredClipboard`.
+        RetiredClipboard.remove()
         // As early as the app has: MetricKit hands the previous run's crash to
         // a subscriber as soon as it is added. See `FeedbackCenter.start`.
         FeedbackCenter.shared.start()
+        // Before anything in this process can write the lexicon, so every
+        // edit made here schedules a dictionary sync.
+        DictionarySyncModel.shared.start()
     }
 
     var body: some Scene {
@@ -56,6 +66,10 @@ struct ParleyApp: App {
                     WhatsNewPresenter.shared.noteOpenedByURL()
                     if let session = DictationChannel.session(fromStart: url) {
                         Task { await dictation.begin(session: session) }
+                    } else if let link = SettingsLink(url: url) {
+                        // The keyboard's saved-info panel, linking to
+                        // Settings › 常用資訊. See `SettingsLinkInbox`.
+                        SettingsLinkInbox.shared.post(link)
                     } else if QuickRecord.isRequest(url) {
                         // The lock-screen control, the lock-screen widget or
                         // the Siri shortcut. The Record tab picks it up; see
@@ -88,6 +102,9 @@ struct ParleyApp: App {
                     // the next attempt different.
                     MicActivityController.shared.appBecameActive()
                     Task { await app.refreshFeatureFlags() }
+                    // Throttled inside. Also how corrections the keyboard
+                    // learned in its own process reach the account.
+                    DictionarySyncModel.shared.foregrounded()
                     // The line that turns "dead until force-quit" into
                     // "recovers by itself". `UIBackgroundModes` here is `audio`
                     // only, so a re-transcription — minutes of work on an hour
@@ -168,6 +185,9 @@ struct MainTabs: View {
         // A lock-screen "start recording" lands on the Record tab whatever tab
         // was up when the app was last left.
         .onReceive(QuickRecordInbox.shared.$requestedAt) { if $0 != nil { router.tab = .record } }
+        // The keyboard's saved-info panel linking into Settings; the page itself
+        // is pushed by `SettingsView`, which takes the request.
+        .onReceive(SettingsLinkInbox.shared.$request) { if $0 != nil { router.tab = .settings } }
         // Once, after an update, when nothing else is going on — see
         // `WhatsNewPresenter` for what "nothing" has to mean.
         .whatsNewSheet()

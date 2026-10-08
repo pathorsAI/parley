@@ -10,6 +10,9 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import com.pathors.parley.auth.AuthManager
 import com.pathors.parley.auth.SignInError
 import com.pathors.parley.cloud.CloudClient
+import com.pathors.parley.filing.FilingPass
+import com.pathors.parley.study.StudyPass
+import com.pathors.parley.study.StudySettings
 import com.pathors.parley.filing.SampleFilingTarget
 import com.pathors.parley.feedback.DiagnosticsCollector
 import com.pathors.parley.feedback.FeedbackCenter
@@ -21,6 +24,7 @@ import com.pathors.parley.feedback.SyncFailureLedger
 import com.pathors.parley.feedback.UncaughtCrashRecorder
 import com.pathors.parley.kit.ParleyClientHeader
 import com.pathors.parley.library.SaveLocationStore
+import com.pathors.parley.ime.VoiceTypingSettings
 import com.pathors.parley.meeting.ImportSession
 import com.pathors.parley.meeting.MeetingService
 import com.pathors.parley.meeting.MeetingSession
@@ -125,6 +129,29 @@ class AppContainer(private val app: Application) {
     /** Bearer-authenticated, and a 401 clears the stored session from one place. */
     val cloud: CloudClient = auth.cloudClient()
 
+    /**
+     * The filing pass (AI title + folder suggestion) every door into a
+     * recording runs — the live meeting screen and an import — with the
+     * app's UI language and string table.
+     */
+    val filingPass: FilingPass = FilingPass.create(app, cloud)
+
+    /** "Analyse recordings automatically" — read by [study], toggled in the account sheet. */
+    val studySettings: StudySettings = StudySettings(app)
+
+    /**
+     * The study pipeline (findings, action items, brief, delivery) the
+     * recording page runs on a personal recording that has not been analysed
+     * yet. One per process, so a pass that outlives the screen still lands.
+     */
+    val study: StudyPass = StudyPass.create(
+        context = app,
+        cloud = cloud,
+        scope = appScope,
+        settings = studySettings,
+        canSpend = { !DemoMode.isActive && auth.currentToken() != null },
+    )
+
     /** Exposed as well as wrapped: the home screen lists what is still waiting. */
     val uploadQueue: PendingUploadQueue = PendingUploadQueue.default(app)
 
@@ -179,6 +206,7 @@ class AppContainer(private val app: Application) {
         bundled = { AnnouncementStore.loadBundled(app) },
         hadStoredSession = { auth.currentToken() != null },
         appVersion = BuildConfig.VERSION_NAME,
+        keyboardUsed = { VoiceTypingSettings(app).keyboardUsedNow() },
     )
 
     /**
@@ -456,6 +484,19 @@ class AppContainer(private val app: Application) {
         }
     }
 
+    /**
+     * Run the filing pass for a recording nobody is looking at yet (an import
+     * that just landed) and leave the suggestion on its meta, where the
+     * recording page offers it. On the app's scope, so leaving the import
+     * screen does not cancel it. Never throws.
+     */
+    fun suggestFilingInBackground(recordingId: String) {
+        appScope.launch {
+            if (DemoMode.isActive) return@launch
+            filingPass.generateInBackground(recordingId)
+        }
+    }
+
     /** Build the session a [com.pathors.parley.meeting.MeetingService] will host. */
     fun newMeetingSession(context: Context, title: String): MeetingSession =
         MeetingSession(
@@ -478,6 +519,7 @@ class AppContainer(private val app: Application) {
             title = title,
             drainBackfills = ::drainPendingBackfills,
             defaultDestination = saveLocation::current,
+            runFilingPass = ::suggestFilingInBackground,
         )
         _activeImport.value = session
         session.start()

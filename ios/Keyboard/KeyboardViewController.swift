@@ -78,6 +78,12 @@ final class KeyboardViewController: UIInputViewController {
     /// session is a leftover from a previous dictation and is ignored.
     private var session = ""
     private var insertedCount = 0
+    /// Whether an `insertText` from this controller can reach the user's field
+    /// right now: the keyboard is on screen and its host is the active app.
+    /// Set in `viewWillAppear` and on the host becoming active, cleared in
+    /// `viewWillDisappear` and on the host resigning — see `drainDownlink` for
+    /// why the transcript waits for it.
+    private var canDeliver = false
     /// A session the user threw away with ✕.
     ///
     /// The app answers a cancel by publishing `cancelled`, which inserts
@@ -92,6 +98,14 @@ final class KeyboardViewController: UIInputViewController {
     /// Everything it does lives in `KeyboardLexiconWatch`; this class only tells
     /// it when the text landed and when the editing is over.
     private let lexicon = KeyboardLexiconWatch()
+    /// Text Replacement shortcuts, read once per process — see
+    /// `KeyboardSystemLexicon`.
+    private let systemLexicon = KeyboardSystemLexicon()
+    /// The strip's transient chips and the saved-info panel — see
+    /// `KeyboardStripSlot`.
+    /// Lazy only because it holds this controller weakly and cannot be built
+    /// before `self` exists.
+    private(set) lazy var stripSlot = KeyboardStripSlot(bridge: bridge, controller: self)
     private var host: UIHostingController<KeyboardRootView>?
     /// A canvas behind the SwiftUI root, shown only when the system's would
     /// disagree with the caps. See `needsOwnBackdrop`.
@@ -101,7 +115,13 @@ final class KeyboardViewController: UIInputViewController {
     /// 傳統注音 input for the 注音 pane. Cheap to hold: the dictionary behind it
     /// does not touch its resource until the first syllable is finalized, so a
     /// keyboard that only ever dictates never pays for it.
-    private var zhuyin = ZhuyinComposer(dictionary: .bundled, phrases: ZhuyinPhrases.bundled)
+    ///
+    /// It learns from the candidates the user picks (`ZhuyinMemory.keyboard`,
+    /// shared by every controller this process makes, like the tables) and
+    /// offers what usually comes next after a pick (`ZhuyinAssociations`).
+    private var zhuyin = ZhuyinComposer(
+        dictionary: .bundled, phrases: ZhuyinPhrases.bundled, memory: .keyboard,
+        associations: .bundled)
     /// The marked text this keyboard has sent and the host has not confirmed,
     /// and whether this field's host shows marked text at all. A mirror
     /// because the proxy cannot read marked text back.
@@ -256,7 +276,12 @@ final class KeyboardViewController: UIInputViewController {
         // lands beats a hitch at the highest footprint a parse reaches.
         ZhuyinDictionary.bundled.parsesOnLookup = false
         ZhuyinPhrases.bundled.parsesOnLookup = false
+        ZhuyinAssociations.bundled.parsesOnLookup = false
         EnglishWords.bundled.parsesOnLookup = false
+        // What the 注音 pane learns is written to the App Group only with Full
+        // Access — without it there is no App Group to write to — and kept for
+        // the life of this process otherwise.
+        ZhuyinMemory.keyboard.persists = hasFullAccess
         // `setPane(notify: false)` deliberately skips `paneDidChange`, so a
         // keyboard that opens straight onto a typing pane — which is what every
         // keyboard without Full Access does, onto English or onto 注音 — has to
@@ -338,7 +363,22 @@ final class KeyboardViewController: UIInputViewController {
             self.styleDidChange(from: previous)
         }
 
+        // Selector-based, so they are dropped with the controller. See
+        // `hostWillResignActive`.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(hostWillResignActive),
+            name: .NSExtensionHostWillResignActive, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(hostDidBecomeActive),
+            name: .NSExtensionHostDidBecomeActive, object: nil)
+
         armChannelObservers()
+        // 1.30's clipboard history and paste chip left a file of copied text
+        // and a few settings in the App Group; nothing reads them any more.
+        // The app sweeps them on launch too — whichever runs first wins, and
+        // the other finds nothing. Full Access only: without it the container
+        // cannot be opened, and the next load with it will do this.
+        if hasFullAccess { RetiredClipboard.remove() }
     }
 
     /// Subscribe to the five notes the app sends, once Full Access allows it.
@@ -401,6 +441,10 @@ final class KeyboardViewController: UIInputViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         bridge.hasFullAccess = hasFullAccess
+        // Full Access can change while the process lives, and Settings may have
+        // reset the 注音 learning since the keyboard was last up.
+        ZhuyinMemory.keyboard.persists = hasFullAccess
+        ZhuyinMemory.keyboard.honourReset()
         // And act on it, rather than only displaying it. See there for why
         // `viewDidLoad` alone was the wrong place to decide this once.
         armChannelObservers()
@@ -416,7 +460,10 @@ final class KeyboardViewController: UIInputViewController {
         // The field may be a different one, with a different word half-typed in
         // front of the cursor, so both the user's terms and the bar are re-read
         // rather than carried over.
-        lexiconTerms = WordSuggestions.LexiconTerms(LexiconStore.recognitionTerms())
+        lexiconTerms = WordSuggestions.LexiconTerms(LexiconStore.suggestionTerms())
+        systemLexicon.load(from: self) { [weak self] in
+            self?.refreshSuggestions()
+        }
         refreshSuggestions()
         // The tail belongs to the field it was dictated into. Coming back to a
         // *different* field it would read as text that is already there, so it
@@ -440,6 +487,12 @@ final class KeyboardViewController: UIInputViewController {
         // all: a keyboard coming back mid-sentence should find the button
         // already the right size rather than growing into it.
         readMicLevel()
+        // Before the drain: an appearance clears the last field's revert chip,
+        // and a dictation the drain lands now offers a fresh one.
+        stripSlot.appeared()
+        // On screen again, so a transcript that finished while the keyboard was
+        // away is typed by the drain below rather than left waiting.
+        canDeliver = true
         drainDownlink()
         // Warm the Taptic Engine while the keyboard is coming up, so the thump
         // lands with the first press on the record button rather than a beat
@@ -470,8 +523,28 @@ final class KeyboardViewController: UIInputViewController {
         // that session's microphone is open and its audio is being held, which
         // is precisely the thing the user is walking away from.
         if hasFullAccess, bridge.listening { Haptics.dictationContinuesInBackground() }
-        lexicon.harvest(context: textDocumentProxy.documentContextBeforeInput)
+        lexicon.harvest(textDocumentProxy)
         leaveComposition()
+        stripSlot.disappeared()
+        // A pick a moment ago may still be waiting on its debounce, and this
+        // may be the last chance the process gets. The write itself is off
+        // the main thread.
+        ZhuyinMemory.keyboard.flush()
+        canDeliver = false
+    }
+
+    /// The host app leaving the foreground — most often because the mic tap
+    /// jumped to Parley — does not always take the keyboard's view down with
+    /// it, so it closes delivery too. Coming back reopens it and drains, for a
+    /// keyboard that is shown again without a fresh `viewWillAppear`.
+    @objc private func hostWillResignActive() {
+        canDeliver = false
+    }
+
+    @objc private func hostDidBecomeActive() {
+        guard viewIfLoaded?.window != nil else { return }
+        canDeliver = true
+        drainDownlink()
     }
 
     /// A field that asks for a dark keyboard gets one — see `isDark`. The field
@@ -489,6 +562,9 @@ final class KeyboardViewController: UIInputViewController {
         // a tap in the field, an autofill, the host rewriting its own text — so
         // the word in front of it is re-read rather than assumed.
         refreshSuggestions()
+        // Whether the cursor is still after the dictation, and what the field
+        // asks for — see `KeyboardStripSlot`.
+        stripSlot.textChanged()
     }
 
     override func selectionDidChange(_ textInput: UITextInput?) {
@@ -497,6 +573,7 @@ final class KeyboardViewController: UIInputViewController {
         // The caret moved: whether the next letter starts a sentence is a
         // question about where it is now.
         refreshShift()
+        stripSlot.selectionChanged()
     }
 
     /// The constraint measures the whole input view, but the content is pinned
@@ -535,6 +612,7 @@ final class KeyboardViewController: UIInputViewController {
         applyHeight(animated: true)
         warmTables()
         refreshSuggestions()
+        stripSlot.paneChanged()
     }
 
     /// Start loading the tables the current pane types against, off the main
@@ -565,6 +643,11 @@ final class KeyboardViewController: UIInputViewController {
         case .zhuyin:
             ZhuyinDictionary.bundled.warm { [weak self] in self?.zhuyinTablesLanded() }
             ZhuyinPhrases.bundled.warm { [weak self] in self?.zhuyinTablesLanded() }
+            // The memory changes what the bar puts first, so its landing
+            // re-answers the pending syllables like a table's. The associations
+            // are only asked after a pick, so nothing waits on them.
+            ZhuyinMemory.keyboard.warm { [weak self] in self?.zhuyinTablesLanded() }
+            ZhuyinAssociations.bundled.warm()
         case .english:
             EnglishWords.bundled.warm { [weak self] in self?.refreshSuggestions() }
         case .voice:
@@ -599,6 +682,12 @@ final class KeyboardViewController: UIInputViewController {
         if bridge.pane != .zhuyin {
             ZhuyinPhrases.bundled.unload()
             dropped.append("phrases")
+        }
+        // Only asked after a pick, so it is idle unless its suggestions are on
+        // screen this moment; the next pick warms it again.
+        if bridge.pane != .zhuyin || bridge.zhuyin.associations.isEmpty {
+            ZhuyinAssociations.bundled.unload()
+            dropped.append("associations")
         }
         if bridge.pane != .english {
             EnglishWords.bundled.unload()
@@ -728,7 +817,8 @@ final class KeyboardViewController: UIInputViewController {
         guard hasFullAccess else { return }
         // A new session ends the last one's editing window: anything the user
         // was going to fix, they have finished fixing.
-        lexicon.harvest(context: textDocumentProxy.documentContextBeforeInput)
+        lexicon.harvest(textDocumentProxy)
+        stripSlot.sessionStarted()
         session = UUID().uuidString
         insertedCount = 0
         sessionStartedAt = Date()
@@ -1347,10 +1437,29 @@ final class KeyboardViewController: UIInputViewController {
         // empty string — a keyboard that died delivering words is the one
         // failure this path cannot afford. Past the end already means "all of
         // it landed" and inserts nothing, as it always did.
+        //
+        // And only while `canDeliver`. The mark is written the moment
+        // `insertText` returns, and the proxy says nothing about whether the
+        // words arrived — so a `done` drained while the keyboard was away
+        // (stopped from Parley, the Live Activity or the lock screen while the
+        // host sat in the background) was typed into nowhere and then marked
+        // as landed, and the keyboard that came back only offered the copy.
+        // Waiting leaves the mark untouched; the drain in `viewWillAppear` or
+        // `hostDidBecomeActive` types it once the field can take it.
         let committed = Array(d.committed)
         let landed = min(max(insertedCount, 0), committed.count)
-        if d.state == .done, committed.count > landed {
-            typeOutsideComposition(String(committed[landed...]))
+        if d.state == .done, committed.count > landed, canDeliver {
+            let inserted = String(committed[landed...])
+            typeOutsideComposition(inserted)
+            // The dictated text is all in the field now, so this is the picture
+            // any later edit gets compared against — taken here, by the
+            // insertion, rather than by the `.done` below, which every later
+            // drain repeats over a field the user may already have fixed.
+            lexicon.noteInserted(textDocumentProxy)
+            // The polish can be undone only when this one insertion is the
+            // whole transcript — which, since dictation inserts once at `done`,
+            // is every time but a keyboard relaunched mid-delivery.
+            stripSlot.dictationInserted(inserted, raw: landed == 0 ? d.revertibleRaw : nil)
             insertedCount = committed.count
             var up = DictationChannel.readUplink() ?? .init(session: session)
             up.insertedCount = insertedCount
@@ -1437,9 +1546,6 @@ final class KeyboardViewController: UIInputViewController {
             // The words are in the field. The wave eases off them rather than
             // stopping mid-crest; the button is already back to the microphone.
             leaveFinishing(settled: true)
-            // The dictated text is all in the field now, so this is the picture
-            // any later edit gets compared against.
-            lexicon.noteInserted(context: textDocumentProxy.documentContextBeforeInput)
             // The tail stays: the last thing said is worth still being able to
             // read once the button has gone quiet.
         case .cancelled:
@@ -1680,9 +1786,48 @@ final class KeyboardViewController: UIInputViewController {
     /// cursor. So the keys call this, and the words stay on screen as they
     /// always have — only the copy target goes.
     private func keyPressed() {
+        stripSlot.keyPressed()
+        // Any key is an answer to the "Don't suggest this" prompt: not now.
+        if bridge.forgetPrompt != nil { bridge.forgetPrompt = nil }
         guard bridge.copyableText != nil else { return }
         copyClosedSession = session
         offerCopy(nil)
+    }
+
+    // MARK: text from the strip and the saved-info panel (called by `KeyboardStripSlot`)
+
+    /// Put a 常用資訊 value from a field chip or the saved-info panel in the
+    /// field. Typed exactly like a key — after any pending 注音 reading, never
+    /// through the system pasteboard.
+    ///
+    /// The lexicon watch is harvested first. It compares the field against the
+    /// dictation that last landed to learn corrections, and text arriving from
+    /// here is not a correction — it may be an ID number, which must never
+    /// reach the dictionary. Harvesting ends that watch with whatever the user
+    /// had already fixed, before the inserted text can be part of it.
+    func insertFromStrip(_ text: String) {
+        keyPressed()
+        lexicon.harvest(textDocumentProxy)
+        typeOutsideComposition(text)
+        refreshSuggestions()
+    }
+
+    /// 「↩︎ 換回原文」: take the polished dictation back out and put the raw
+    /// words in. `count` is one `deleteBackward()` per grapheme — see
+    /// `pickSuggestion` for why that is the unit.
+    ///
+    /// The lexicon watch is moved to the raw words: they are now the dictation
+    /// the user may go on to fix, and leaving the polished text as the picture
+    /// would teach the dictionary every rewrite the polish made, as if the user
+    /// had typed them in reverse. The same insertion-tied, two-sided snapshot
+    /// the dictation's own insertion takes, replacing it — this is the raw
+    /// words' insertion.
+    func replaceDictation(deleting count: Int, with raw: String) {
+        keyPressed()
+        for _ in 0..<max(count, 0) { textDocumentProxy.deleteBackward() }
+        textDocumentProxy.insertText(raw)
+        lexicon.noteInserted(textDocumentProxy)
+        refreshSuggestions()
     }
 
     /// Open the container app from the extension. The classic responder-chain
@@ -1717,9 +1862,44 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     /// The user picked a character out of the candidate bar.
+    ///
+    /// Not while the "Don't suggest this" prompt is up: the finger that held
+    /// a candidate to open it lifts on that candidate, and the lift is a tap to
+    /// SwiftUI. Swallowing it is what keeps a long press from also committing.
     func zhuyinPick(_ candidate: String) {
+        guard bridge.forgetPrompt == nil else { return }
         keyPressed()
         apply(zhuyin.pick(candidate))
+    }
+
+    /// The user tapped an associated phrase (聯想詞): it lands, and the strip
+    /// offers what follows it in turn.
+    func zhuyinPickAssociation(_ continuation: String) {
+        guard bridge.forgetPrompt == nil else { return }
+        keyPressed()
+        apply(zhuyin.pickAssociation(continuation))
+    }
+
+    /// A candidate was held. If the keyboard learned it — and only then, so
+    /// the prompt never offers to forget what was never learned — ask whether
+    /// to stop suggesting it.
+    func zhuyinHoldCandidate(_ candidate: String) {
+        guard ZhuyinMemory.keyboard.produces(candidate) else { return }
+        bridge.forgetPrompt = candidate
+    }
+
+    /// "Don't suggest this": every lesson that produces the candidate goes, and
+    /// the bar is answered again without them. Nothing else is demoted.
+    func zhuyinForget(_ candidate: String) {
+        ZhuyinMemory.keyboard.forget(candidate)
+        bridge.forgetPrompt = nil
+        zhuyin.refresh()
+        publishComposition()
+    }
+
+    /// The prompt's ✕.
+    func dismissForgetPrompt() {
+        bridge.forgetPrompt = nil
     }
 
     /// Do whatever the composer asked for, then republish what it is holding.
@@ -1769,7 +1949,8 @@ final class KeyboardViewController: UIInputViewController {
             marks.sent(reading)
         }
         let next = KeyboardBridge.ZhuyinStrip(
-            composition: marks.usesMarkedText ? "" : reading, candidates: zhuyin.candidates)
+            composition: marks.usesMarkedText ? "" : reading, candidates: zhuyin.candidates,
+            associations: zhuyin.associations)
         if bridge.zhuyin != next { bridge.zhuyin = next }
         // The candidate grid is about a reading; once the buffer is committed or
         // cleared there is nothing left in it to choose, and the keys come back.
@@ -1802,6 +1983,8 @@ final class KeyboardViewController: UIInputViewController {
             if !zhuyin.reading.isEmpty { strandComposition() }
             marks.fieldChanged()
             zhuyin.clear()
+            // The words before the caret were the other field's.
+            zhuyin.resetContext()
             publishComposition()
             repairStrandedReading()
             return
@@ -1824,6 +2007,7 @@ final class KeyboardViewController: UIInputViewController {
         if marks.usesMarkedText { textDocumentProxy.unmarkText() }
         marks.reset()
         zhuyin.clear()
+        zhuyin.resetContext()
         publishComposition()
     }
 
@@ -1862,6 +2046,7 @@ final class KeyboardViewController: UIInputViewController {
         }
         marks.reset()
         zhuyin.clear()
+        zhuyin.resetContext()
         publishComposition()
     }
 
@@ -1910,6 +2095,7 @@ final class KeyboardViewController: UIInputViewController {
     private func returnToField() {
         settleCheck?.cancel()
         zhuyin.clear()
+        zhuyin.resetContext()
         marks.fieldChanged()
         currentField = fieldID
         if !repairStrandedReading() { removeLingeringMark() }
@@ -1931,9 +2117,14 @@ final class KeyboardViewController: UIInputViewController {
 
     /// Text that does not come from the composer ends the composition first,
     /// so it lands after the reading rather than replacing it.
+    ///
+    /// The text stands between whatever was committed before it and whatever
+    /// comes next, so the composer's `context` starts over after it — a word
+    /// after 「，」 is not learned against the words before the comma.
     private func typeOutsideComposition(_ text: String) {
         apply(zhuyin.confirm())
         textDocumentProxy.insertText(text)
+        zhuyin.resetContext()
     }
 
     // MARK: English word suggestions
@@ -1959,12 +2150,15 @@ final class KeyboardViewController: UIInputViewController {
         // Shift is decided from the same read; see `refreshShift`.
         refreshShift(context: context)
         let partial = WordSuggestions.partialWord(before: context)
+        let words =
+            partial.isEmpty
+            ? WordSuggestions.predictions(after: context, in: EnglishWords.bundled)
+            : WordSuggestions.suggestions(
+                for: partial, in: EnglishWords.bundled, lexicon: lexiconTerms)
+        // A Text Replacement shortcut in front of the cursor puts its
+        // expansion first. Offered, never applied: see `TextReplacements`.
         publishSuggestions(
-            partial: partial,
-            suggestions: partial.isEmpty
-                ? WordSuggestions.predictions(after: context, in: EnglishWords.bundled)
-                : WordSuggestions.suggestions(
-                    for: partial, in: EnglishWords.bundled, lexicon: lexiconTerms))
+            partial: partial, suggestions: systemLexicon.lead(words, before: context))
     }
 
     /// One assignment, and only on a real change: a keystroke that changed
@@ -1992,12 +2186,18 @@ final class KeyboardViewController: UIInputViewController {
     ///
     /// The suggestion already carries the case the partial asked for, so it is
     /// inserted as it is shown.
+    ///
+    /// A Text Replacement expansion takes back the shortcut it stands for
+    /// rather than the partial word — the two differ for a shortcut that is
+    /// not letters ("@@") or follows a bracket — so "omw" becomes "On my way!"
+    /// and nothing of the shortcut is left behind.
     func pickSuggestion(_ word: String) {
         // Empty right after a space, where the bar holds predictions: the tap
         // then deletes nothing and only inserts.
-        let partial = bridge.english.partialWord
+        let partial = systemLexicon.expansion(for: word)?.typed ?? bridge.english.partialWord
         keyPressed()
         apply(zhuyin.confirm())
+        zhuyin.resetContext()
         for _ in 0..<partial.count { textDocumentProxy.deleteBackward() }
         textDocumentProxy.insertText(word + " ")
         refreshSuggestions()
@@ -2131,6 +2331,29 @@ final class KeyboardViewController: UIInputViewController {
         keyPressed()
         typeSpace()
         refreshSuggestions()
+    }
+
+    /// Whether a held space bar may turn into a trackpad (`SpaceKey`). Not
+    /// while a 注音 reading is pending: there space is the first tone or the
+    /// confirm key, the reading is marked text the caret cannot leave without
+    /// the host committing or dropping it, and the hold falls back to an
+    /// ordinary press so letting go still does what space does.
+    var spaceCanSteerCaret: Bool { zhuyin.reading.isEmpty }
+
+    /// The text either side of the caret, read once when the space bar becomes
+    /// a trackpad — see `CaretWalk` for why only once.
+    func caretContext() -> (before: String?, after: String?) {
+        (textDocumentProxy.documentContextBeforeInput, textDocumentProxy.documentContextAfterInput)
+    }
+
+    /// Move the caret `offset` UTF-16 code units — what
+    /// `adjustTextPosition(byCharacterOffset:)` counts in, despite its name.
+    /// Everything that depends on where the caret is — shift, the suggestion
+    /// bar — follows from the host's `selectionDidChange` and `textDidChange`,
+    /// as it does when the user taps somewhere else in the field.
+    func moveCaret(by offset: Int) {
+        guard offset != 0 else { return }
+        textDocumentProxy.adjustTextPosition(byCharacterOffset: offset)
     }
 
     /// The body of `insertSpace`, split out only so its three exits all pass
@@ -2370,6 +2593,9 @@ final class KeyboardBridge: ObservableObject {
         var composition: String
         /// What the front of the composition could be, most likely first.
         var candidates: [String]
+        /// What usually follows the candidate just picked (聯想詞), shown while
+        /// nothing is pending. Empty the moment any other key lands.
+        var associations: [String] = []
 
         /// Something to show for 注音. Neither half pending is what puts the
         /// wordmark back.
@@ -2377,6 +2603,10 @@ final class KeyboardBridge: ObservableObject {
     }
 
     @Published var zhuyin = ZhuyinStrip(composition: "", candidates: [])
+    /// The candidate a long press asked to forget, while the strip asks
+    /// "Don't suggest this?". Only ever a candidate the keyboard learned — see
+    /// `KeyboardViewController.zhuyinHoldCandidate`.
+    @Published var forgetPrompt: String?
     /// The candidate grid is open over the 注音 keys. The strip's ⌄ toggles it;
     /// the controller closes it when the composition empties, which is why it
     /// lives here rather than in the view.
@@ -2398,6 +2628,28 @@ final class KeyboardBridge: ObservableObject {
     }
 
     @Published var english = EnglishStrip(partialWord: "", suggestions: [])
+
+    /// What the strip's transient slot — the wordmark's place — offers, if
+    /// anything. Decided by `KeyboardStripSlot`, which documents the order.
+    enum StripChip: Equatable {
+        /// 「↩︎ 換回原文」: swap the polished dictation for the raw words.
+        case revert
+        /// The 常用資訊 this field asks for.
+        case fields([FieldChip])
+    }
+
+    /// One 常用資訊 suggestion on the strip. `text` is what is drawn — masked
+    /// for a sensitive kind; a tap inserts the stored value by id.
+    struct FieldChip: Equatable, Identifiable {
+        var id: UUID
+        var kind: SnippetKind
+        var text: String
+    }
+
+    @Published var stripChip: StripChip?
+    /// The saved-info panel's content while it is open over the keys; `nil`
+    /// while it is closed, which is also when none of it is in memory.
+    @Published var savedInfoPanel: SavedInfoPanelContent?
 
     /// What the host field wants the return key to say. It never changes what
     /// the key does.
@@ -2469,14 +2721,42 @@ final class KeyboardBridge: ObservableObject {
     func space() { controller?.insertSpace() }
     func newline() { controller?.insertReturn() }
 
+    // The space bar's trackpad — see `SpaceKey`.
+
+    /// Whether the space bar is steering the caret. Not `@Published`: see
+    /// `SpaceCursorModel`.
+    let spaceCursor = SpaceCursorModel()
+    /// Whether a held space bar may become a trackpad now.
+    var spaceCanSteerCaret: Bool { controller?.spaceCanSteerCaret ?? false }
+    /// The text either side of the caret, as the host shares it.
+    func caretContext() -> (before: String?, after: String?) {
+        controller?.caretContext() ?? (nil, nil)
+    }
+    /// Move the caret by `offset` UTF-16 code units — see `CaretWalk`.
+    func moveCaret(by offset: Int) { controller?.moveCaret(by: offset) }
+
     // 注音. The composer that answers these lives in the controller, so the
     // view never holds input state of its own.
     func zhuyinSymbol(_ symbol: Character) { controller?.zhuyinSymbol(symbol) }
     func zhuyinTone(_ tone: ZhuyinTone) { controller?.zhuyinTone(tone) }
     func pickCandidate(_ candidate: String) { controller?.zhuyinPick(candidate) }
+    func pickAssociation(_ continuation: String) {
+        controller?.zhuyinPickAssociation(continuation)
+    }
+    func holdCandidate(_ candidate: String) { controller?.zhuyinHoldCandidate(candidate) }
+    func forgetCandidate(_ candidate: String) { controller?.zhuyinForget(candidate) }
+    func dismissForgetPrompt() { controller?.dismissForgetPrompt() }
 
     /// The user tapped a word in the English suggestion bar.
     func pickSuggestion(_ word: String) { controller?.pickSuggestion(word) }
+
+    // The strip's chips and the saved-info panel. Everything they do lives in
+    // `KeyboardStripSlot`; these only route the taps.
+    func useOriginal() { controller?.stripSlot.useOriginal() }
+    func insertFieldSnippet(_ id: UUID) { controller?.stripSlot.insertFieldSnippet(id) }
+    func toggleSavedInfo() { controller?.stripSlot.togglePanel() }
+    func closeSavedInfo() { controller?.stripSlot.closePanel() }
+    func pickSnippet(_ id: UUID) { controller?.stripSlot.pickSnippet(id) }
 }
 
 /// Best-effort resolution of the app the keyboard is typing into, for the app's

@@ -1,3 +1,4 @@
+import CryptoKit
 import XCTest
 
 @testable import ParleyKit
@@ -321,6 +322,128 @@ final class TranscriptPolisherTests: XCTestCase {
         let prompt = TranscriptPolisher.systemPrompt(protecting: terms)
         XCTAssertTrue(prompt.contains("term30"))
         XCTAssertFalse(prompt.contains("term31"), "the dictionary grows; the prompt must not")
+    }
+
+    // MARK: the concise style
+
+    func testEachStyleSendsItsOwnModel() {
+        XCTAssertEqual(TranscriptPolisher.model(for: .tidy), "parley-fast")
+        XCTAssertEqual(TranscriptPolisher.model(for: .concise), "parley-concise")
+    }
+
+    /// Concise changes the model and the prompt and nothing else about the
+    /// request: same temperature, same output cap, same message shape.
+    func testConciseRequestDiffersOnlyInModelAndPrompt() throws {
+        func encoded(_ style: PolishStyle) throws -> [String: Any] {
+            let body = try JSONEncoder().encode(
+                TranscriptPolisher.request(raw: "hello there", protectedTerms: ["Cerana"], style: style))
+            return try XCTUnwrap(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        }
+        let tidy = try encoded(.tidy)
+        let concise = try encoded(.concise)
+
+        XCTAssertEqual(tidy["model"] as? String, "parley-fast")
+        XCTAssertEqual(concise["model"] as? String, "parley-concise")
+        XCTAssertEqual(concise["temperature"] as? Double, 0.2)
+        XCTAssertEqual(concise["temperature"] as? Double, tidy["temperature"] as? Double)
+        XCTAssertEqual(concise["max_tokens"] as? Int, tidy["max_tokens"] as? Int)
+
+        let messages = try XCTUnwrap(concise["messages"] as? [[String: String]])
+        XCTAssertEqual(messages.map { $0["role"] }, ["system", "user"])
+        XCTAssertEqual(
+            messages[0]["content"],
+            TranscriptPolisher.conciseSystemPrompt
+                + "\nPreserve these user-dictionary terms exactly as written: Cerana")
+        XCTAssertEqual(messages[1]["content"], "hello there")
+    }
+
+    func testConcisePromptCarriesTheDictionaryTheSameWay() {
+        XCTAssertEqual(
+            TranscriptPolisher.systemPrompt(protecting: [], style: .concise),
+            TranscriptPolisher.conciseSystemPrompt)
+        let prompt = TranscriptPolisher.systemPrompt(protecting: ["Cerana", "派斯科技"], style: .concise)
+        XCTAssertTrue(prompt.hasPrefix(TranscriptPolisher.conciseSystemPrompt))
+        XCTAssertTrue(prompt.contains("Cerana、派斯科技"))
+        let many = TranscriptPolisher.systemPrompt(
+            protecting: (1...40).map { "term\($0)" }, style: .concise)
+        XCTAssertTrue(many.contains("term30"))
+        XCTAssertFalse(many.contains("term31"))
+    }
+
+    /// Concise is asked to cut, so it may come back much shorter than tidy may:
+    /// down to 0.15× rather than 0.3×. The ceiling does not move.
+    func testConciseAcceptsAShorterReplyThanTidy() {
+        let raw = String(repeating: "嗯", count: 100)
+        let fifth = String(repeating: "好", count: 20)  // 0.2×
+        XCTAssertEqual(TranscriptPolisher.verdict(raw: raw, polished: fifth, style: .tidy), .rejectedLength)
+        XCTAssertEqual(TranscriptPolisher.verdict(raw: raw, polished: fifth, style: .concise), .polished)
+        XCTAssertTrue(TranscriptPolisher.accept(raw: raw, polished: fifth, style: .concise))
+    }
+
+    func testConciseLengthBandEdges() {
+        let raw = String(repeating: "嗯", count: 100)
+        func verdict(_ count: Int) -> PolishOutcome {
+            TranscriptPolisher.verdict(
+                raw: raw, polished: String(repeating: "好", count: count), style: .concise)
+        }
+        XCTAssertEqual(verdict(15), .polished, "0.15× is the floor, inclusive")
+        XCTAssertEqual(verdict(14), .rejectedLength)
+        XCTAssertEqual(verdict(200), .polished, "2.0× is the ceiling, inclusive")
+        XCTAssertEqual(verdict(201), .rejectedLength)
+        XCTAssertEqual(
+            TranscriptPolisher.verdict(raw: raw, polished: "", style: .concise), .rejectedLength)
+    }
+
+    func testTidyBandIsUnchanged() {
+        XCTAssertEqual(TranscriptPolisher.minimumLengthRatio(for: .tidy), 0.3)
+        XCTAssertEqual(TranscriptPolisher.minimumLengthRatio(for: .concise), 0.15)
+        XCTAssertEqual(TranscriptPolisher.maximumLengthRatio, 2.0)
+    }
+
+    func testConciseStillRejectsNewSimplifiedChinese() {
+        XCTAssertEqual(
+            TranscriptPolisher.verdict(
+                raw: "我們說好的時間到了，明天早上再確認一次", polished: "我们说好的时间到了。", style: .concise),
+            .rejectedScript)
+    }
+
+    func testAConciseReplyIsJudgedByTheConciseBand() {
+        let raw = String(repeating: "嗯", count: 100)
+        let reply = completion(String(repeating: "好", count: 20))
+        XCTAssertEqual(TranscriptPolisher.result(raw: raw, reply: reply, style: .tidy).outcome, .rejectedLength)
+        XCTAssertEqual(TranscriptPolisher.result(raw: raw, reply: reply, style: .concise).outcome, .polished)
+    }
+
+    /// `.off` never reaches the network, even if someone asks.
+    func testOffSendsNothing() async {
+        let cloud = stubbedCloud { _ in
+            XCTFail("off must not send a request")
+            return (200, Data())
+        }
+        let result = await TranscriptPolisher.polishOutcome(
+            raw: "so uh we should probably call them back", cloud: cloud, style: .off)
+        XCTAssertEqual(result, .unpolished(.off))
+    }
+
+    // MARK: prompt parity with the desktop
+
+    /// Both prompts are kept word-for-word identical to the desktop's
+    /// (`POLISH_SYSTEM_PROMPT` and `CONCISE_SYSTEM_PROMPT` in
+    /// `src/lib/voiceTyping/polish.ts`), and the desktop's test pins the same
+    /// two hashes. Changing a prompt means changing it on both platforms and
+    /// updating the hash on both sides — a change on one side alone fails here
+    /// or there.
+    func testPromptsMatchTheDesktopByHash() {
+        XCTAssertEqual(
+            sha256(TranscriptPolisher.systemPrompt),
+            "ee2cec9aa0736c6725e83b738989c99a81f7ed901dc4e9b8b9e17c1ae6bb02b5")
+        XCTAssertEqual(
+            sha256(TranscriptPolisher.conciseSystemPrompt),
+            "9546fed2dfa5029253c6f30f5b6a51a2f27c161e68e1270fb08c55cf11909f35")
+    }
+
+    private func sha256(_ s: String) -> String {
+        SHA256.hash(data: Data(s.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 }
 

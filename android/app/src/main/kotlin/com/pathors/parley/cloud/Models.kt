@@ -24,6 +24,7 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 
 /**
  * DTOs for the Parley cloud (`api.parley.tw`). Field names mirror the desktop's
@@ -330,6 +331,13 @@ class RecordingMeta(val raw: JsonObject) {
     fun speakerName(segment: TranscriptSegmentDto): String? =
         speakerNames[speakerKey(segment)]?.takeIf { it.isNotEmpty() }
 
+    /**
+     * What the meeting is about, in the user's words (`HistoryEntry.meetingContext`,
+     * written on the desktop before or after a meeting). "" when there is none.
+     * The filing pass sends it ahead of the transcript, as the desktop does.
+     */
+    val meetingContext: String get() = raw.stringOrNull("meetingContext").orEmpty()
+
     /** How many findings a desktop analysis has attached, for a summary row. */
     val findingsCount: Int get() = (raw["findings"] as? JsonArray)?.size ?: 0
 
@@ -342,6 +350,70 @@ class RecordingMeta(val raw: JsonObject) {
      * there is none.
      */
     val brief: String get() = raw.stringOrNull("brief").orEmpty().trim()
+
+    /**
+     * The negotiation setup the desktop collects beside the context
+     * (`meetingBatna` / `meetingTarget` / `meetingFloor`), "" when absent. The
+     * study stages fold them into the context exactly as the desktop does.
+     */
+    val meetingBatna: String get() = raw.stringOrNull("meetingBatna").orEmpty()
+    val meetingTarget: String get() = raw.stringOrNull("meetingTarget").orEmpty()
+    val meetingFloor: String get() = raw.stringOrNull("meetingFloor").orEmpty()
+
+    /** What kind of meeting this was (`internal` / `sales` / `pricing` / `rivalry`), or null. */
+    val meetingKind: String? get() = raw.stringOrNull(MEETING_KIND)
+
+    /** True when the last brief generation failed and none has been saved since. */
+    val briefFailed: Boolean get() = raw.booleanOrNull(BRIEF_FAILED) ?: false
+
+    /** The raw delivery assessment, or null — read through `kit.DeliveryAssessment.fromJson`. */
+    val deliveryAssessment: JsonElement? get() = raw[DELIVERY_ASSESSMENT]?.takeIf { it !is JsonNull }
+
+    /** The desktop's acoustically measured speaking rate (syllables/sec), or null. */
+    val speechRateHz: Double? get() = raw.numberOrNull("speechRateHz")?.takeIf { it > 0.0 }
+
+    /**
+     * A copy carrying a findings pass: the findings and the kind they were read
+     * through — the desktop's `{ findings, meetingKind }` patch. `analyzed` is
+     * left alone: it means findings AND action items, and the action items are
+     * still to come. A null kind (detection failed) leaves the stored one
+     * alone, as the desktop's `mergeStageOutputs` does: a kind somebody set on
+     * another device while this pass ran is not erased by a failed guess.
+     */
+    fun withFindings(findings: JsonArray, meetingKind: String?): RecordingMeta =
+        if (meetingKind == null) {
+            replacing(FINDINGS, findings)
+        } else {
+            replacingAll(FINDINGS to findings, MEETING_KIND to JsonPrimitive(meetingKind))
+        }
+
+    /**
+     * A copy carrying an action-items pass, and `analyzed: true` — findings and
+     * action items both done, so no device runs either again on its own.
+     */
+    fun withActionItems(actionItems: JsonArray): RecordingMeta = replacingAll(
+        ACTION_ITEMS to actionItems,
+        ANALYZED to JsonPrimitive(true),
+    )
+
+    /** A copy carrying a brief, with any earlier failure cleared. */
+    fun withBrief(brief: String): RecordingMeta = replacingAll(
+        BRIEF to JsonPrimitive(brief),
+        BRIEF_FAILED to JsonPrimitive(false),
+    )
+
+    /**
+     * A copy that says the brief failed: restored as an error, so it is retried
+     * by hand rather than silently on every open. An existing brief is kept.
+     */
+    fun withBriefFailed(): RecordingMeta = replacing(BRIEF_FAILED, JsonPrimitive(true))
+
+    /** A copy carrying a delivery assessment. */
+    fun withDeliveryAssessment(assessment: JsonObject): RecordingMeta = replacing(DELIVERY_ASSESSMENT, assessment)
+
+    /** Several keys set (in place, when they already exist), the rest untouched. */
+    private fun replacingAll(vararg entries: Pair<String, JsonElement>): RecordingMeta =
+        RecordingMeta(JsonObject(LinkedHashMap(raw).apply { entries.forEach { (key, value) -> put(key, value) } }))
 
     /**
      * A copy with one action item ticked or unticked, every other field — of
@@ -458,6 +530,37 @@ class RecordingMeta(val raw: JsonObject) {
         }
 
     /**
+     * A copy carrying a freshly generated [suggestion] as the pending
+     * `filingSuggestion`, in the desktop's `FilingSuggestion` shape
+     * (`{ title, folders: [{ folderId, name, reason }] }`, `folderId: null` for a
+     * folder still to be created), and `filingSuggested: true` — "a pass has
+     * been spent here", so no other device runs a second one and proposes a
+     * second, different title. Every other field preserved verbatim.
+     */
+    fun withFilingSuggestion(suggestion: FilingSuggestion): RecordingMeta = RecordingMeta(
+        JsonObject(
+            LinkedHashMap(raw).apply {
+                put(FILING_SUGGESTED, JsonPrimitive(true))
+                put(
+                    FILING_SUGGESTION,
+                    buildJsonObject {
+                        put(TITLE, suggestion.title)
+                        putJsonArray("folders") {
+                            suggestion.folders.forEach { folder ->
+                                addJsonObject {
+                                    put("folderId", folder.folderId?.let(::JsonPrimitive) ?: JsonNull)
+                                    put("name", folder.name)
+                                    put("reason", folder.reason)
+                                }
+                            }
+                        }
+                    },
+                )
+            },
+        ),
+    )
+
+    /**
      * A copy that says the filing offer has been answered, whichever way:
      * `filingSuggested: true` (the desktop's "a pass has been spent here") and
      * `filingSuggestion: null` (the desktop reads a non-null one as still
@@ -483,6 +586,13 @@ class RecordingMeta(val raw: JsonObject) {
         private const val TITLE = "title"
         private const val FILING_SUGGESTED = "filingSuggested"
         private const val FILING_SUGGESTION = "filingSuggestion"
+        private const val FINDINGS = "findings"
+        private const val ACTION_ITEMS = "actionItems"
+        private const val ANALYZED = "analyzed"
+        private const val BRIEF = "brief"
+        private const val BRIEF_FAILED = "briefFailed"
+        private const val MEETING_KIND = "meetingKind"
+        private const val DELIVERY_ASSESSMENT = "deliveryAssessment"
 
         /**
          * The `segments` array as every Parley client writes it.

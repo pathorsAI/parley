@@ -6,8 +6,11 @@
 //! the file has to stay the source of truth. That's also why this panel
 //! re-reads on the dictionary's broadcast — an entry added by an external tool
 //! (or by the correction bubble in another window) shows up here on focus.
+//!
+//! Cloud sync runs in the main window (lib/cloud/dictionarySync); this panel only
+//! shows its status line, read from the status it leaves in localStorage.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { useI18n } from "../i18n";
 import { log } from "../lib/log";
@@ -21,6 +24,15 @@ import {
   VOCABULARY_LIMIT,
   type DictionaryEntry,
 } from "../lib/dictionary";
+import {
+  readDictionarySyncStatus,
+  STATUS_EVENT,
+  STATUS_KEY,
+  type DictionarySyncStatus,
+} from "../lib/cloud/dictionarySync";
+import { CLOUD_ENABLED } from "../lib/flags";
+import { useStore } from "../lib/store";
+import type { TranslationKey } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -94,6 +106,74 @@ function EntryRow({
   );
 }
 
+/** The sync status, live across windows: the main window writes it, the
+ *  `storage` event carries it here. Kept as the raw string so the snapshot is
+ *  stable between renders. */
+function subscribeStatus(onChange: () => void): () => void {
+  const onStorage = (e: StorageEvent) => {
+    if (e.key === STATUS_KEY) onChange();
+  };
+  globalThis.addEventListener("storage", onStorage);
+  globalThis.addEventListener(STATUS_EVENT, onChange);
+  return () => {
+    globalThis.removeEventListener("storage", onStorage);
+    globalThis.removeEventListener(STATUS_EVENT, onChange);
+  };
+}
+
+function statusSnapshot(): string {
+  return JSON.stringify(readDictionarySyncStatus());
+}
+
+function ago(t: (key: TranslationKey, vars?: Record<string, string | number>) => string, at: number, now: number): string {
+  const m = Math.floor(Math.max(0, now - at) / 60_000);
+  if (m < 1) return t("settings.dictionary.sync.justNow");
+  if (m < 60) return t("settings.dictionary.sync.minutesAgo", { n: m });
+  const h = Math.floor(m / 60);
+  if (h < 24) return t("settings.dictionary.sync.hoursAgo", { n: h });
+  return t("settings.dictionary.sync.daysAgo", { n: Math.floor(h / 24) });
+}
+
+/** "已同步 · 剛剛" — shown only while cloud sync is actually on. */
+function SyncStatusLine() {
+  const { t } = useI18n();
+  // Same gate as syncEnabled(), as a selector so sign-in/out and the sync toggle
+  // re-render this line (the store is shared across windows).
+  const enabled = useStore((s) => CLOUD_ENABLED && !!s.cloudAuth && s.settings.syncEnabled);
+  const raw = useSyncExternalStore(subscribeStatus, statusSnapshot);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, []);
+  if (!enabled) return null;
+  const status = JSON.parse(raw) as DictionarySyncStatus | null;
+  if (!status) return null;
+
+  let text: string;
+  let error = false;
+  if (status.state === "error") {
+    error = true;
+    text = status.lastSyncedAt
+      ? t("settings.dictionary.sync.errorSince", { when: ago(t, status.lastSyncedAt, now) })
+      : t("settings.dictionary.sync.error");
+  } else if (status.lastSyncedAt) {
+    // A background re-sync keeps showing the last success rather than flickering.
+    text = t("settings.dictionary.sync.synced", { when: ago(t, status.lastSyncedAt, now) });
+  } else {
+    text = t("settings.dictionary.sync.syncing");
+  }
+  return (
+    <p
+      className={`text-[11px] ${error ? "text-destructive" : "text-muted-foreground"}`}
+      role="status"
+      aria-live="polite"
+    >
+      {text}
+    </p>
+  );
+}
+
 export function DictionarySettings() {
   const { t } = useI18n();
   const [entries, setEntries] = useState<DictionaryEntry[]>(() => listEntries());
@@ -129,9 +209,7 @@ export function DictionarySettings() {
 
   return (
     <>
-      <p className="text-[11px] leading-relaxed text-muted-foreground">
-        {t("settings.dictionary.intro")}
-      </p>
+      <SyncStatusLine />
 
       <div className="flex flex-col gap-2">
         {entries.map((e) => (
@@ -191,10 +269,6 @@ export function DictionarySettings() {
           {t("settings.dictionary.limitNote", { limit: VOCABULARY_LIMIT })}
         </p>
       )}
-
-      <p className="max-w-md rounded-md border bg-muted/40 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
-        {t("settings.dictionary.privacy")}
-      </p>
     </>
   );
 }

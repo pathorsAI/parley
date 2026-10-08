@@ -42,79 +42,71 @@ public struct FilingSuggestion: Equatable, Sendable {
 /// nothing the model says is used before it has been through `acceptTitle` and
 /// `resolveFolders`.
 public enum FilingSuggester {
-    /// The same alias the dictation rewrite uses. This is one short label off an
-    /// already-transcribed conversation, not an analysis, so it rides the cheap
-    /// fast lane — exactly as the desktop puts it on the "realtime" workload.
-    static let model = "parley-fast"
-
-    /// The standing instruction, kept word-for-word in sync with the desktop's
-    /// `SYSTEM` (`src/lib/ai/filing.ts`): both platforms file the same person's
-    /// recordings into the same folder registry, and drift between them shows
-    /// up as the phone and the Mac disagreeing about where a meeting belongs.
-    static let filingRules = """
-        Given a finished meeting transcript, decide what the recording should be CALLED and where it should be FILED. Both doors into a recording name it badly — a live meeting arrives as "即時會議 · <date>" and an upload arrives as its file name — so this is usually the first honest title the recording gets.
-
-        TITLE
-        - Say what the meeting was ABOUT and, where it is clear, WITH WHOM: a company or a person plus the topic or the decision reached.
-        - No date and no time. The library card already shows those, so spending the title on them wastes the only line the user reads.
-        - No filler as the subject: "meeting", "recording", "call", "討論" and the like describe every recording in the library and therefore identify none of them. A title that would fit any meeting is a failed title.
-        - Keep it short — roughly 10-24 characters of CJK, or about 4-8 English words.
-        - If the current title is already specific and accurate, return it UNCHANGED. Churn for its own sake makes the library harder to trust, not easier.
-
-        FOLDERS
-        - The user's existing folders are listed below. Strongly prefer them. One folder is typically one customer/company or one ongoing workstream, so ask which of those this conversation belongs to.
-        - Return 2-3 candidates ordered best-first. If only one is genuinely defensible, return one — a padded list is worse than a short one.
-        - Copy an existing folder's name EXACTLY (character for character) when you mean that folder, and set isNew to false.
-        - AT MOST ONE candidate may be a folder that does not exist yet (isNew: true), and only when no existing folder honestly fits. A new folder per meeting would grow the registry faster than the user can prune it.
-        - reason is ONE short clause saying why the folder fits — it is shown as a tooltip, not read as prose.
-        """
-
-    /// The desktop gets its JSON out of the provider's schema-constrained JSON
-    /// mode; here the shape has to be asked for in words.
+    /// The UI language the title and the reasons are written in.
     ///
-    /// Deliberately NOT an OpenAI `response_format` parameter: we have not
-    /// verified that the worker in front of the model passes it through, and a
-    /// request rejected for an unknown field costs the whole pass — while a
-    /// model that answers in prose costs nothing, because `parse` shrugs and
-    /// the recording keeps its name. `resolveFolders` has to survive a
-    /// disobedient model anyway, so the constraints are stated here and
-    /// ENFORCED there.
-    static let jsonInstruction = """
+    /// Not the transcript's language: the title is shown in the library next to
+    /// every other title, so it follows the app the user is reading, exactly as
+    /// the desktop's does. Resolved the way the rest of the app resolves its UI
+    /// language (`Bundle.main.preferredLocalizations.first`, see
+    /// `Announcement.copy(forLocalization:)`): any `zh` localization is the
+    /// Traditional one — the app ships no Simplified — and everything else is
+    /// English.
+    public enum Language: Equatable, Sendable {
+        case traditionalChinese
+        case english
 
+        public init(localization: String) {
+            self = localization.hasPrefix("zh") ? .traditionalChinese : .english
+        }
 
-        Return your answer strictly as a single JSON object and nothing else — no preamble, no explanation, no code fences. Use these property names EXACTLY (verbatim): {"title": string, "folders": [{"name": string, "isNew": boolean, "reason": string}]}.
-        """
+        /// The app's own UI language, as the app bundle resolves it.
+        public static var current: Language {
+            Language(localization: Bundle.main.preferredLocalizations.first ?? "en")
+        }
 
-    static var systemPrompt: String { filingRules + jsonInstruction }
+        var instruction: String {
+            switch self {
+            case .traditionalChinese: return FilingPrompt.languageInstructionZhTW
+            case .english: return FilingPrompt.languageInstructionEn
+            }
+        }
+    }
 
-    /// A title longer than this is not a title. The prompt asks for 4-8 English
-    /// words or 10-24 CJK characters; the cap is loose enough to let a long but
-    /// honest title through and tight enough to catch the failure this gate is
-    /// really for — a model that answered with a sentence, or with the meeting's
-    /// summary, where a label was asked for. The library shows one line.
-    static let maximumTitleCharacters = 80
-
-    /// How much transcript travels with the request.
+    /// The standing instruction: the shared rules, the language the answer is
+    /// written in, and the JSON shape asked for in words. Every piece comes out
+    /// of `FilingPrompt` (generated from `shared/prompts/filing.json`), which the
+    /// desktop and Android read too — drift between the platforms shows up as
+    /// the phone and the Mac disagreeing about what a meeting is called.
     ///
-    /// The dictation rewrite this pass is modelled on never had to think about
-    /// length: dictation is capped at ten minutes. A meeting is not — an hour of
-    /// conversation is comfortably past any context window we can afford on the
-    /// fast lane, and an over-long request is not a worse suggestion, it is a
-    /// rejected request and no suggestion at all.
-    ///
-    /// So a long transcript is sent as its head and its tail with the middle
-    /// elided, rather than truncated. Truncation keeps the opening — which
-    /// frames what the meeting is and who is in it, and is most of what the
-    /// title needs — but throws away the close, which is where the decision, the
-    /// next step and the customer's name-drop usually are. Both ends earn their
-    /// place; the middle is the part a title can most afford to lose.
-    static let maximumTranscriptCharacters = 24_000
-
-    /// Marked, not silent: the model should know it is reading an excerpt so it
-    /// does not conclude the meeting simply stopped mid-sentence.
-    static let elisionMarker = "\n\n[… transcript trimmed …]\n\n"
+    /// The JSON shape is asked for in words rather than with an OpenAI
+    /// `response_format`: we have not verified that the worker in front of the
+    /// model passes it through, and a request rejected for an unknown field
+    /// costs the whole pass — while a model that answers in prose costs
+    /// nothing, because `parse` shrugs and the recording keeps its name.
+    static func systemPrompt(language: Language) -> String {
+        FilingPrompt.rules + language.instruction + FilingPrompt.jsonInstruction
+    }
 
     // MARK: the call
+
+    /// Run the pass over a recording's meta as it stands in the cloud: its
+    /// transcript, the speaker names somebody gave it, its meeting context and
+    /// the name it carries now.
+    public static func suggest(
+        meta: RecordingMeta,
+        folders: [CloudFolder],
+        language: Language,
+        cloud: CloudClient
+    ) async throws -> FilingSuggestion? {
+        try await suggest(
+            segments: meta.segments,
+            speakerNames: meta.speakerNames,
+            meetingContext: meta.meetingContext,
+            currentTitle: meta.title,
+            folders: folders,
+            language: language,
+            cloud: cloud)
+    }
 
     /// Ask for a title and 2-3 folders for a finished recording.
     ///
@@ -125,8 +117,10 @@ public enum FilingSuggester {
     public static func suggest(
         segments: [TranscriptSegment],
         speakerNames: [String: String],
+        meetingContext: String,
         currentTitle: String,
         folders: [CloudFolder],
+        language: Language,
         cloud: CloudClient
     ) async throws -> FilingSuggestion? {
         let transcript = transcript(segments, speakerNames: speakerNames)
@@ -134,44 +128,66 @@ public enum FilingSuggester {
         let excerpt = capped(transcript)
 
         let body = try JSONEncoder().encode(
-            CloudChat.Request(
-                model: model,
-                temperature: 0.2,
-                maxTokens: 512,
-                messages: [
-                    .init(role: "system", content: systemPrompt),
-                    .init(
-                        role: "user",
-                        content: userMessage(
-                            currentTitle: currentTitle, folders: folders, transcript: excerpt)),
-                ]))
+            request(
+                meetingContext: meetingContext, currentTitle: currentTitle, folders: folders,
+                transcript: excerpt, language: language))
         let data = try await cloud.postJSON(CloudChat.path, body: body)
         guard let content = CloudChat.content(from: data), let payload = parse(content) else {
             return nil
         }
+        return gate(payload, currentTitle: currentTitle, folders: folders, transcript: excerpt)
+    }
 
+    /// The whole request, as it goes on the wire. `transcript` is the already
+    /// rendered and capped excerpt.
+    static func request(
+        meetingContext: String, currentTitle: String, folders: [CloudFolder],
+        transcript: String, language: Language
+    ) -> CloudChat.Request {
+        CloudChat.Request(
+            model: FilingPrompt.model,
+            temperature: FilingPrompt.temperature,
+            maxTokens: FilingPrompt.maxTokens,
+            messages: [
+                .init(role: "system", content: systemPrompt(language: language)),
+                .init(
+                    role: "user",
+                    content: userMessage(
+                        meetingContext: meetingContext, currentTitle: currentTitle,
+                        folders: folders, transcript: transcript)),
+            ])
+    }
+
+    /// What survives of the model's answer. A title we will not use does not
+    /// sink the folder suggestions with it: the two halves of this pass fail
+    /// independently, and half an answer is still worth showing. Nothing left
+    /// standing is the same as no answer.
+    static func gate(
+        _ payload: RawSuggestion, currentTitle: String, folders: [CloudFolder], transcript: String
+    ) -> FilingSuggestion? {
         let resolved = resolveFolders(payload.folders, folders: folders)
         let candidate = payload.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        // A title we will not use does not sink the folder suggestions with it:
-        // the two halves of this pass fail independently, and half an answer is
-        // still worth showing. Nothing left standing is the same as no answer.
         let title =
-            acceptTitle(candidate, currentTitle: currentTitle, transcript: excerpt)
+            acceptTitle(candidate, currentTitle: currentTitle, transcript: transcript)
             ? candidate : ""
         if title.isEmpty, resolved.isEmpty { return nil }
         return FilingSuggestion(title: title, folders: resolved)
     }
 
-    /// The context block, mirroring the desktop's prompt: what the recording is
-    /// called now (so the model can decline to rename it), the menu of existing
-    /// homes, then the conversation.
+    /// The context block, in the order every platform sends it: the meeting
+    /// context the user wrote (when there is one), what the recording is called
+    /// now (so the model can decline to rename it), the menu of existing homes,
+    /// then the conversation.
     static func userMessage(
-        currentTitle: String, folders: [CloudFolder], transcript: String
+        meetingContext: String, currentTitle: String, folders: [CloudFolder], transcript: String
     ) -> String {
+        let context = meetingContext.trimmingCharacters(in: .whitespacesAndNewlines)
         let named = currentTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        return "The recording is currently called: \(named.isEmpty ? "(untitled)" : named)\n\n"
+        return (context.isEmpty ? "" : FilingPrompt.meetingContextPrefix + context + "\n\n")
+            + FilingPrompt.currentTitlePrefix + (named.isEmpty ? FilingPrompt.untitled : named)
+            + "\n\n"
             + folderMenu(folders)
-            + "Transcript:\n\(transcript)"
+            + FilingPrompt.transcriptHeader + "\n" + transcript
     }
 
     /// Render the folder registry as the model's menu of existing homes.
@@ -180,11 +196,10 @@ public enum FilingSuggester {
             .map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         if names.isEmpty {
-            return "The user has NO folders yet, so every suggestion would have to be created — "
-                + "return exactly ONE folder, with isNew: true.\n\n"
+            return FilingPrompt.noFolders + "\n\n"
         }
-        return "The user's existing folders:\n" + names.map { "- \($0)" }.joined(separator: "\n")
-            + "\n\n"
+        return FilingPrompt.foldersHeader + "\n"
+            + names.map { "- \($0)" }.joined(separator: "\n") + "\n\n"
     }
 
     /// Filing is a personal-library action: a recording on the phone lives in
@@ -227,16 +242,31 @@ public enum FilingSuggester {
         return "\(seconds / 60):\(String(format: "%02d", seconds % 60))"
     }
 
-    /// Head + tail, with the middle marked as removed. See
-    /// `maximumTranscriptCharacters` for why the middle is the part that goes.
+    /// Head + tail, with the middle marked as removed.
+    ///
+    /// An hour of conversation is comfortably past any context window we can
+    /// afford on the fast lane, and an over-long request is not a worse
+    /// suggestion, it is a rejected request and no suggestion at all. So a long
+    /// transcript is sent as its head and its tail with the middle elided,
+    /// rather than truncated: the opening frames what the meeting is and who is
+    /// in it, the close carries the decision and the next step. The split
+    /// (two thirds to the head) and the limit come from `FilingPrompt`.
+    ///
+    /// Counted in Unicode code points (`unicodeScalars`), not grapheme
+    /// clusters: that is what a JavaScript `Array.from` and a Kotlin
+    /// `codePointCount` count, so all three platforms cut the same transcript
+    /// at the same place.
     static func capped(_ transcript: String) -> String {
-        guard transcript.count > maximumTranscriptCharacters else { return transcript }
-        // Two thirds to the opening, one third to the close: the opening has to
-        // carry who is in the room and what this is, which is most of a title,
-        // while the close only has to carry how it ended.
-        let head = maximumTranscriptCharacters * 2 / 3
-        let tail = maximumTranscriptCharacters - head
-        return String(transcript.prefix(head)) + elisionMarker + String(transcript.suffix(tail))
+        let scalars = Array(transcript.unicodeScalars)
+        let limit = FilingPrompt.maxTranscriptCharacters
+        guard scalars.count > limit else { return transcript }
+        let head = limit * FilingPrompt.headShareNumerator / FilingPrompt.headShareDenominator
+        let tail = limit - head
+        var out = String.UnicodeScalarView()
+        out.append(contentsOf: scalars[0..<head])
+        var end = String.UnicodeScalarView()
+        end.append(contentsOf: scalars[(scalars.count - tail)...])
+        return String(out) + FilingPrompt.elisionMarker + String(end)
     }
 
     // MARK: what came back
@@ -331,7 +361,9 @@ public enum FilingSuggester {
 
     /// Whether `candidate` is a title we are willing to put in front of the
     /// user. The same discipline as `TranscriptPolisher.accept`: the model is
-    /// not trusted to have followed the prompt.
+    /// not trusted to have followed the prompt. Rejected: empty, longer than
+    /// `FilingPrompt.maxTitleCharacters` code points, identical to the current
+    /// title, or a newly introduced Simplified script.
     ///
     /// `transcript` is not read for content — only to answer "was this
     /// conversation already in Simplified Chinese", so that a user whose
@@ -342,19 +374,43 @@ public enum FilingSuggester {
     ) -> Bool {
         let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
-        guard trimmed.count <= maximumTitleCharacters else { return false }
+        // Code points, like the transcript cap, so the three platforms agree on
+        // where "too long" starts. A title longer than this is not a title: it
+        // is a model that answered with a sentence, or with the summary.
+        guard trimmed.unicodeScalars.count <= FilingPrompt.maxTitleCharacters else { return false }
+        // The model handing back the name the recording already has is it
+        // following the "return it UNCHANGED" rule — there is nothing to offer.
+        guard trimmed != currentTitle.trimmingCharacters(in: .whitespacesAndNewlines) else {
+            return false
+        }
 
         // Simplified drift: renaming a Traditional Chinese meeting into
         // Simplified is the failure that looks like success — the suggestion
         // reads fine and the user accepts it before noticing the script
-        // changed. Only a NEWLY introduced simplified character counts.
-        if TranscriptPolisher.containsSimplifiedChinese(trimmed),
-            !TranscriptPolisher.containsSimplifiedChinese(currentTitle),
-            !TranscriptPolisher.containsSimplifiedChinese(transcript)
-        {
+        // changed. Judged per character against the shared list
+        // (`FilingPrompt.simplifiedOnlyChars`, the same rule the desktop and
+        // Android apply): a Simplified-only character is rejected unless the
+        // current title or the transcript as sent already contains that very
+        // character — a meeting conducted in Simplified keeps its own script,
+        // and nothing else is let in with it.
+        if introducesSimplified(trimmed, currentTitle: currentTitle, transcript: transcript) {
             return false
         }
         return true
+    }
+
+    /// The shared Simplified-only characters, as a set of code points.
+    static let simplifiedOnly = Set(FilingPrompt.simplifiedOnlyChars.unicodeScalars)
+
+    /// Whether `title` carries a Simplified-only character that neither the
+    /// current title nor the transcript (as sent, after capping) contains.
+    static func introducesSimplified(_ title: String, currentTitle: String, transcript: String)
+        -> Bool
+    {
+        let candidates = Set(title.unicodeScalars).intersection(simplifiedOnly)
+        guard !candidates.isEmpty else { return false }
+        let seen = Set(currentTitle.unicodeScalars).union(transcript.unicodeScalars)
+        return !candidates.isSubset(of: seen)
     }
 
     /// Turn the model's raw folder picks into suggestions the UI can act on.

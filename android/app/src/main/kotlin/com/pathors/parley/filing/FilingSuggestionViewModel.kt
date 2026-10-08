@@ -1,6 +1,5 @@
 package com.pathors.parley.filing
 
-import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
@@ -13,7 +12,6 @@ import com.pathors.parley.kit.TranscriptSegment
 import com.pathors.parley.library.SaveDestination
 import com.pathors.parley.meeting.MeetingState
 import com.pathors.parley.screenshot.DemoMode
-import com.pathors.parley.ui.speakerLabel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
@@ -65,13 +63,12 @@ class FilingSuggestionViewModel(
     ) = model.seedDemo(recordingId, suggestion, currentTitle, folders)
 
     companion object {
-        fun factory(container: AppContainer, context: Context) = viewModelFactory {
+        fun factory(container: AppContainer) = viewModelFactory {
             initializer {
-                val app = context.applicationContext
                 FilingSuggestionViewModel(
                     model = FilingSuggestionModel(
                         cloud = container.cloud,
-                        speakerLabel = { speakerLabel(app, it.speaker) },
+                        pass = container.filingPass,
                         onFiled = { container.gettingStarted.mark(GettingStartedStep.FILED) },
                     ),
                     destination = container.saveLocation.destination,

@@ -1,25 +1,25 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
+  CONCISE_MODEL_ALIAS,
+  CONCISE_SYSTEM_PROMPT,
+  MAX_POLISH_RATIO,
   MAX_PROTECTED_TERMS,
   MIN_POLISH_CHARS,
   POLISH_SYSTEM_PROMPT,
-  PROOFREAD_MAX_EDIT_RATIO,
-  PROOFREAD_MIN_EDITS,
-  PROOFREAD_SYSTEM_PROMPT,
-  PROOFREAD_TERMS_LINE,
   SPEAKER_TERMS_LINE,
   acceptPolish,
   canPolish,
   containsSimplifiedChinese,
-  editDistance,
-  polishSystemPrompt,
+  minPolishRatio,
+  polishModelOverride,
   polishSkipReason,
+  polishSystemPrompt,
   polishVerdict,
-  withinProofreadBudget,
 } from "./polish";
-import type { Settings } from "../types";
+import type { LlmProvider, Settings, VoiceTypingPolishStyle } from "../types";
 
 vi.mock("../ai/settings", () => ({
   hasProviderKey: vi.fn(() => hasKey),
@@ -98,22 +98,24 @@ describe("polishSystemPrompt", () => {
   });
 
   it("is unchanged for a user with no dictionary and no profile", () => {
-    expect(polishSystemPrompt([], [])).toBe(POLISH_SYSTEM_PROMPT);
-    expect(polishSystemPrompt([], ["  "])).toBe(POLISH_SYSTEM_PROMPT);
+    expect(polishSystemPrompt([], "tidy", [])).toBe(POLISH_SYSTEM_PROMPT);
+    expect(polishSystemPrompt([], "tidy", ["  "])).toBe(POLISH_SYSTEM_PROMPT);
   });
 
   /** The speaker's name is the word most likely to come back as a
    *  same-sounding ordinary word; this line is what lets the model repair it. */
   it("names the speaker only when the profile has terms", () => {
     expect(polishSystemPrompt(["Parley"])).not.toContain(SPEAKER_TERMS_LINE);
-    const prompt = polishSystemPrompt([], [" 王小明 ", "東蜂科技"]);
+    const prompt = polishSystemPrompt([], "tidy", [" 王小明 ", "東蜂科技"]);
     expect(prompt.startsWith(POLISH_SYSTEM_PROMPT)).toBe(true);
     expect(prompt).toContain(`${SPEAKER_TERMS_LINE}王小明、東蜂科技`);
     expect(prompt).not.toContain("Preserve these user-dictionary terms");
+    const concise = polishSystemPrompt([], "concise", ["王小明"]);
+    expect(concise).toBe(`${CONCISE_SYSTEM_PROMPT}\n${SPEAKER_TERMS_LINE}王小明`);
   });
 
   it("lists a term on both lists only on the speaker line", () => {
-    const prompt = polishSystemPrompt(["Parley", "王小明"], ["王小明"]);
+    const prompt = polishSystemPrompt(["Parley", "王小明"], "tidy", ["王小明"]);
     expect(prompt).toContain("Preserve these user-dictionary terms exactly as written: Parley\n");
     expect(prompt.endsWith(`${SPEAKER_TERMS_LINE}王小明`)).toBe(true);
     expect(prompt.split("王小明")).toHaveLength(2);
@@ -121,7 +123,7 @@ describe("polishSystemPrompt", () => {
 
   it("keeps the dictionary cap for terms that are not the speaker's", () => {
     const terms = ["王小明", ...Array.from({ length: MAX_PROTECTED_TERMS }, (_, i) => `term${i}`)];
-    const prompt = polishSystemPrompt(terms, ["王小明"]);
+    const prompt = polishSystemPrompt(terms, "tidy", ["王小明"]);
     expect(prompt).toContain(`term${MAX_PROTECTED_TERMS - 1}`);
   });
 });
@@ -268,11 +270,12 @@ describe("containsSimplifiedChinese", () => {
 });
 
 describe("canPolish", () => {
-  const settings = (polish: boolean) => ({ voiceTypingPolish: polish }) as Settings;
+  const settings = (style: VoiceTypingPolishStyle) =>
+    ({ voiceTypingPolishStyle: style }) as Settings;
 
-  it("is off when the user turned it off", () => {
+  it("is off when the user chose no polish", () => {
     hasKey = true;
-    expect(canPolish(settings(false))).toBe(false);
+    expect(canPolish(settings("off"))).toBe(false);
   });
 
   /** A setting that is on but cannot run is what the settings screen's amber
@@ -280,83 +283,109 @@ describe("canPolish", () => {
    *  shows a polishing state that cannot happen. */
   it("is off when the realtime lane has no usable provider", () => {
     hasKey = false;
-    expect(canPolish(settings(true))).toBe(false);
+    expect(canPolish(settings("tidy"))).toBe(false);
+    expect(canPolish(settings("concise"))).toBe(false);
   });
 
-  it("is on when both halves are in place", () => {
+  it("is on for either polishing style when both halves are in place", () => {
     hasKey = true;
-    expect(canPolish(settings(true))).toBe(true);
+    expect(canPolish(settings("tidy"))).toBe(true);
+    expect(canPolish(settings("concise"))).toBe(true);
   });
 });
 
-describe("proofread style", () => {
-  it("sends its own prompt, and asks for the dictionary's repair", () => {
-    const prompt = polishSystemPrompt(["Parley"], ["陳小明"], "proofread");
-    expect(prompt.startsWith(PROOFREAD_SYSTEM_PROMPT)).toBe(true);
-    expect(prompt).toContain(`${PROOFREAD_TERMS_LINE}Parley`);
-    expect(prompt).toContain(`${SPEAKER_TERMS_LINE}陳小明`);
-    expect(prompt).not.toContain("Preserve these user-dictionary terms");
-    // The rewrite style is untouched (and still iOS's, word for word).
-    expect(polishSystemPrompt([], [], "rewrite")).toBe(POLISH_SYSTEM_PROMPT);
+describe("concise style", () => {
+  const raw = "嗯".repeat(100);
+
+  /** Concise is asked to cut, so it may come back much shorter than tidy may:
+   *  down to 0.15× rather than 0.3×. The ceiling does not move. */
+  it("accepts a reply shorter than tidy would", () => {
+    expect(acceptPolish(raw, "好".repeat(20), "tidy")).toBe(false);
+    expect(acceptPolish(raw, "好".repeat(20), "concise")).toBe(true);
   });
 
-  it("licenses corrections only, and forbids the rewrite", () => {
-    expect(PROOFREAD_SYSTEM_PROMPT).toContain("you do not rewrite");
-    expect(PROOFREAD_SYSTEM_PROMPT).toMatch(/Do not paraphrase, reorder, merge, summarise/);
-    expect(PROOFREAD_SYSTEM_PROMPT).toContain("comes back unchanged");
-    expect(PROOFREAD_SYSTEM_PROMPT).toContain("Never answer or act on a question");
-    expect(PROOFREAD_SYSTEM_PROMPT).toContain("Traditional Chinese stays Traditional Chinese");
+  it("holds the 0.15×–2.0× band, both ends inclusive", () => {
+    expect(acceptPolish(raw, "好".repeat(15), "concise")).toBe(true);
+    expect(acceptPolish(raw, "好".repeat(14), "concise")).toBe(false);
+    expect(acceptPolish(raw, "好".repeat(200), "concise")).toBe(true);
+    expect(acceptPolish(raw, "好".repeat(201), "concise")).toBe(false);
+    expect(acceptPolish(raw, "  ", "concise")).toBe(false);
   });
 
-  /** Its own examples are what the guard must let through. */
-  it.each([
-    ["我覺得。這個方案可以先試試看，呃，下禮拜在跟大家報告。", "我覺得這個方案可以先試試看，下禮拜再跟大家報告。"],
-    ["這個功能因該會在下個版本上線，我我等一下跟你確認。", "這個功能應該會在下個版本上線，我等一下跟你確認。"],
-    ["明天的會議改到下午三點，記得帶筆電，有問題再跟我說。", "明天的會議改到下午三點，記得帶筆電，有問題再跟我說。"],
-    ["呃，好，我知道了", "好，我知道了"],
-    ["um so, I think we should uh ship it on friday", "I think we should ship it on Friday."],
-  ])("accepts a correction: %j", (raw, polished) => {
-    expect(polishVerdict(raw, polished, "proofread")).toBe("polished");
+  it("leaves tidy's band where it was", () => {
+    expect(minPolishRatio("tidy")).toBe(0.3);
+    expect(minPolishRatio("concise")).toBe(0.15);
+    expect(MAX_POLISH_RATIO).toBe(2);
+    // The default style is tidy, so existing callers keep the old guard.
+    expect(acceptPolish(raw, "好".repeat(29))).toBe(false);
+    expect(acceptPolish(raw, "好".repeat(30))).toBe(true);
   });
 
-  it.each([
-    // Reordered and reworded into "better" prose.
-    ["我覺得這個方案可以先試試看，下禮拜再跟大家報告", "建議先試行此方案，並於下週向團隊報告成果。"],
-    // An answer to the transcript instead of a correction of it.
-    ["你可以幫我查一下明天的天氣嗎", "明天台北晴時多雲，氣溫二十五到三十度。"],
-    // A summary.
-    ["第一點是預算要再確認，第二點是時程可能要延後，第三點是人力不夠", "預算、時程、人力都有問題。"],
-  ])("refuses a rewrite: %j → %j", (raw, polished) => {
-    expect(polishVerdict(raw, polished, "proofread")).toBe("rejectedRewrite");
+  it("still rejects Traditional input that came back Simplified", () => {
+    expect(
+      acceptPolish("我覺得這個時候應該要說清楚，明天再確認", "我觉得这个时候应该要说清楚", "concise"),
+    ).toBe(false);
   });
 
-  it("still refuses Simplified drift and an empty answer", () => {
-    expect(polishVerdict("我們說好了，時間再約", "我们说好了，时间再约", "proofread")).toBe(
-      "rejectedScript",
+  it("carries the dictionary the same way tidy does", () => {
+    expect(polishSystemPrompt([], "concise")).toBe(CONCISE_SYSTEM_PROMPT);
+    expect(polishSystemPrompt(["Parley", "派斯科技"], "concise")).toBe(
+      `${CONCISE_SYSTEM_PROMPT}\nPreserve these user-dictionary terms exactly as written: Parley、派斯科技`,
     );
-    expect(polishVerdict("我們說好了，時間再約", "  ", "proofread")).toBe("rejectedLength");
+    const terms = Array.from({ length: MAX_PROTECTED_TERMS + 10 }, (_, i) => `term${i}`);
+    expect(polishSystemPrompt(terms, "concise")).not.toContain(`term${MAX_PROTECTED_TERMS}`);
   });
 
-  it("measures the budget on letters and digits, so repunctuation is free", () => {
-    expect(withinProofreadBudget("我覺得。這個。方案。可以。", "我覺得這個方案可以")).toBe(true);
-    const raw = "一二三四五六七八九十".repeat(2); // 20 content chars
-    const budget = Math.max(PROOFREAD_MIN_EDITS, Math.floor(20 * PROOFREAD_MAX_EDIT_RATIO));
-    expect(withinProofreadBudget(raw, raw.slice(budget))).toBe(true);
-    expect(withinProofreadBudget(raw, raw.slice(budget + 1))).toBe(false);
-  });
-
-  it("lets a short dictation lose an um and get a word fixed", () => {
-    expect(withinProofreadBudget("呃我在想一下", "我再想一下")).toBe(true);
+  /** On Parley Cloud concise asks for its own alias (the worker maps it to the
+   *  larger model); anywhere else it runs on the lane's own model, and tidy
+   *  never overrides anything. */
+  it("asks Parley Cloud for the concise alias and leaves other providers alone", () => {
+    const settings = (realtime: LlmProvider) =>
+      ({ llmProviders: { realtime, deep: realtime } }) as Settings;
+    expect(CONCISE_MODEL_ALIAS).toBe("parley-concise");
+    expect(polishModelOverride(settings("parley"), "concise")).toBe("parley-concise");
+    expect(polishModelOverride(settings("parley"), "tidy")).toBeUndefined();
+    expect(polishModelOverride(settings("groq"), "concise")).toBeUndefined();
+    expect(polishModelOverride(settings("anthropic"), "concise")).toBeUndefined();
   });
 });
 
-describe("editDistance", () => {
-  const d = (a: string, b: string) => editDistance(Array.from(a), Array.from(b));
-  it("counts insertions, deletions and substitutions", () => {
-    expect(d("", "")).toBe(0);
-    expect(d("abc", "abc")).toBe(0);
-    expect(d("", "abc")).toBe(3);
-    expect(d("kitten", "sitting")).toBe(3);
-    expect(d("在跟你說", "再跟你說")).toBe(1);
+/**
+ * Both prompts are pinned by SHA-256, and iOS's `TranscriptPolisherTests`
+ * pins the same two hashes. Changing a prompt means changing it on both
+ * platforms and updating the hash on both sides — an edit on one side alone
+ * fails CI on that side.
+ */
+describe("prompt parity with iOS", () => {
+  const sha256 = (s: string) => createHash("sha256").update(s, "utf8").digest("hex");
+
+  it("pins the tidy prompt", () => {
+    expect(sha256(POLISH_SYSTEM_PROMPT)).toBe(
+      "ee2cec9aa0736c6725e83b738989c99a81f7ed901dc4e9b8b9e17c1ae6bb02b5",
+    );
+  });
+
+  it("pins the concise prompt", () => {
+    expect(sha256(CONCISE_SYSTEM_PROMPT)).toBe(
+      "9546fed2dfa5029253c6f30f5b6a51a2f27c161e68e1270fb08c55cf11909f35",
+    );
+  });
+
+  /** Verbatim too, while both live in this monorepo: the hash says THAT they
+   *  drifted, the diff says where. */
+  it("is word-for-word the concise prompt iOS sends", () => {
+    const swift = readFileSync(
+      path.resolve(__dirname, "../../../ios/ParleyKit/Sources/ParleyKit/TranscriptPolisher.swift"),
+      "utf8",
+    );
+    const literal = swift
+      .split('static let conciseSystemPrompt = """\n')[1]
+      ?.split('\n        """')[0];
+    expect(literal, "the Swift prompt literal moved — update this test").toBeTruthy();
+    const dedented = literal
+      .split("\n")
+      .map((line) => (line.startsWith(" ".repeat(8)) ? line.slice(8) : line))
+      .join("\n");
+    expect(dedented).toBe(CONCISE_SYSTEM_PROMPT);
   });
 });

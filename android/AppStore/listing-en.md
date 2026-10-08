@@ -6,7 +6,7 @@ are Parley's two markets: this copy is a peer of
 [`listing-zh-TW.md`](listing-zh-TW.md), not its source.
 
 Character limits below are Google Play's, and every field is under them (title
-24/30, short description 71/80, full description ~3,430/4,000, release notes
+28/30, short description 72/80, full description ~3,530/4,000, release notes
 430/500). Keep the punctuation as written — the em dashes are deliberate.
 
 The full description is hard-wrapped here so it diffs cleanly. **Play renders
@@ -16,8 +16,8 @@ paragraph.
 
 | Field | Limit | Value |
 | --- | --- | --- |
-| App name (title) | 30 | `Parley: Meeting Recorder` |
-| Short description | 80 | `Live meeting transcripts as people speak. Or import audio you already have.` |
+| App name (title) | 30 | `Parley: Dictation & Meetings` |
+| Short description | 80 | `Type by talking in any app. Live transcripts of the meetings you sit in.` |
 | Full description | 4,000 | below |
 | Category | — | Productivity |
 | Contact email | — | contact@pathors.com |
@@ -34,6 +34,15 @@ say it, labelled by speaker — so what you walk out with is a record you can
 quote, not a thirty-minute audio file and a blank memory.
 
 Sign in and you get 20 hours of transcription free. No API keys to bring.
+
+Type by talking, in any app
+
+Switch to the Parley keyboard in any text field — a message, an email, a note —
+and tap the microphone. Your words appear in the field as you say them, and when
+you stop, Parley tidies them into written text: filler gone, punctuation in, a
+spoken list laid out as a list. The keyboard is one microphone key; one tap hands
+typing back to your usual keyboard. It never reads what is already in the field,
+and it switches itself off in password fields.
 
 Record the room
 
@@ -75,15 +84,17 @@ Also in the app
 
 What it records, and what it doesn't
 
-It records the room you are in, through your phone's own microphone — not phone
-calls, and not audio from other apps. For online meetings use the desktop app,
+It records the room you are in, and what you dictate into the Parley keyboard,
+through your phone's own microphone — not phone calls, and not audio from other
+apps. For online meetings use the desktop app,
 which captures system audio properly. There is no player in this version yet:
 opening a recording shows you the transcript. Folders and organisation sharing
 live on desktop and iPhone for now.
 
 Your data
 
-Nothing is recorded until you press record, and Parley is built for meetings
+Nothing is recorded until you press record or the keyboard's microphone key —
+dictation is typed into your field and not kept as a recording — and Parley is built for meetings
 everyone in the room knows about — it is a note-taker, not a bug. Audio and
 transcripts travel over an encrypted connection to your account and are used to
 transcribe and sync; they are not sold and not advertised against. You can
@@ -103,11 +114,14 @@ and upload themselves once you are back.
 
 ## Notes on the choices here
 
-- **The title is not the iOS name.** iOS ships as `Parley: Dictation &
-  Meetings` because it has the Parley Voice keyboard. Android has no keyboard
-  extension, so promising dictation here would be a false claim in the one
-  field a store user always reads. `Parley: Meeting Recorder` keeps the brand
-  first and buys the two words people search.
+- **The title is the iOS name.** `Parley: Dictation & Meetings` — Android
+  now ships the voice-typing keyboard (`ime/ParleyInputMethodService`), so
+  dictation is a claim the app backs, and the two stores can carry one name.
+  Until the keyboard shipped the title was `Parley: Meeting Recorder`, because
+  promising dictation without one would have been a false claim in the one
+  field a store user always reads. The keyboard is voice-only (one microphone
+  key, no letter layouts), and the copy says so rather than implying a full
+  keyboard like the iPhone's.
 - **The import section is deliberately prominent.** It is the one thing this
   app does that the iPhone app does not (`android/README.md`,
   `ImportSession`), and it is the reason someone with an existing pile of audio

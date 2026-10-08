@@ -218,6 +218,18 @@ export function VoiceTypingHistory({ locale }: Readonly<{ locale: string }>) {
               )}
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="text-[11px] text-muted-foreground">{fmt.format(e.ts)}</span>
+                {/* Which polish produced the text; tidy is the default, so only
+                    concise names its style. Raw pastes and older lines carry
+                    no style and get no label. */}
+                {e.polishStyle && (
+                  <span className="text-[11px] text-primary">
+                    {t(
+                      e.polishStyle === "concise"
+                        ? "history.voiceTyping.polishedConcise"
+                        : "history.voiceTyping.polished",
+                    )}
+                  </span>
+                )}
                 {e.appBundleId && (
                   <span className="rounded bg-muted px-1.5 py-px text-[10px] text-muted-foreground">
                     {e.appBundleId}

@@ -120,6 +120,8 @@ import com.pathors.parley.playback.PlaybackBarActions
 import com.pathors.parley.playback.PlaybackState
 import com.pathors.parley.playback.rateLabel
 import com.pathors.parley.screenshot.DemoMode
+import com.pathors.parley.kit.StudyArtifact
+import com.pathors.parley.study.RecordingStudy
 import com.pathors.parley.ui.theme.ParleyTextStyles
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -129,14 +131,16 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * A synced recording, read and played back: two pages under one pinned player
- * — **Summary** (what the meeting came to: brief, action items, highlights,
- * speakers; [RecordingSummaryPage]) and **Transcript** (what was said, and
- * nothing else). iOS `RecordingDetailView` since #450; see
- * `docs/design/ios-recording-page.md`.
+ * — **Report** (what the meeting came to: the analysis chip, brief, action
+ * items, timeline analysis, delivery scorecard, speakers;
+ * [RecordingReportPage]) and **Transcript** (what was said, and nothing else).
+ * iOS `RecordingDetailView` since #450; see `docs/design/ios-recording-page.md`.
  *
- * The analysis is whatever the desktop (or the sample's script) left on the
- * recording — the phone never runs that pipeline itself. With none, the summary
- * page says so and offers the Share-to-AI hand-off instead.
+ * On a personal recording the analysis is the study pipeline's
+ * (`study/StudyPass`): whatever the desktop or another phone already wrote,
+ * and what this phone generates when nothing has been yet. On the sample and
+ * an organization's recording it is whatever the recording carries; with
+ * none, the report says so and offers the Share-to-AI hand-off instead.
  *
  * Playback is pinned above the scroll rather than placed in it: a scrubber that
  * scrolled away would make "go back thirty seconds" a two-gesture operation on
@@ -162,6 +166,8 @@ fun RecordingDetailScreen(
         key = "$recordingId@${orgId.orEmpty()}",
     )
     val state by viewModel.state.collectAsState()
+    val study by viewModel.study.collectAsState()
+    val studyKnown by viewModel.studyKnown.collectAsState()
     val playback by viewModel.playbackState.collectAsState()
     val retranscribe by viewModel.retranscribe.collectAsState()
     val filing by viewModel.filing.collectAsState()
@@ -178,19 +184,24 @@ fun RecordingDetailScreen(
 
     // Which page is up: chosen once, when the recording first loads (see
     // [initialFace]), and the reader's after that — a reload never flips it.
-    // Saveable, so a rotation keeps the page too.
+    // Saveable, so a rotation keeps the page too. Chosen only once the study
+    // for THIS visit is known: before that an unanalysed recording would lock
+    // onto the transcript although the study is about to run. Until then the
+    // page shown is provisional and follows what the meta already holds.
     var chosenFace by rememberSaveable { mutableStateOf<DetailFace?>(null) }
     val face = chosenFace ?: state.meta?.let {
         initialFace(
-            hasAnalysis = state.hasAnalysis,
+            // A recording the study is about to analyse opens on the report,
+            // where the chip and the sections say what is coming.
+            hasAnalysis = state.hasAnalysis || study?.progress?.active == true,
             forceTranscript = DemoMode.navigation.value?.screen == DemoMode.Screen.TRANSCRIPT,
         )
     }
-    LaunchedEffect(face) {
-        if (chosenFace == null && face != null) chosenFace = face
+    LaunchedEffect(face, studyKnown) {
+        if (chosenFace == null && face != null && studyKnown) chosenFace = face
         // Search belongs to the transcript; leaving it closes the field, which
         // also clears the query.
-        if (face == DetailFace.SUMMARY) searching = false
+        if (face == DetailFace.REPORT) searching = false
     }
 
     // What the screen renders, and therefore what "copy the transcript" means
@@ -234,7 +245,7 @@ fun RecordingDetailScreen(
             DetailTopBar(meta = state.meta, onBack = onBack) {
                 DetailToolbarActions(
                     menu = menu,
-                    // Absent on the summary: what it searches is the
+                    // Absent on the report: what it searches is the
                     // transcript, and the field would open over a page it
                     // cannot find anything on.
                     showsSearch = face == DetailFace.TRANSCRIPT,
@@ -578,8 +589,11 @@ private fun DetailContent(
                         canTickActionItems = viewModel.canTickActionItems,
                         tickActionItem = viewModel::tickActionItem,
                         generate = generate,
+                        regenerate = viewModel::regenerate,
+                        regenerateAll = viewModel::regenerateAll,
                     )
                 },
+                study = viewModel.study.collectAsState().value,
                 emptyTranscript = emptyTranscriptSlot(viewModel, prompts, retranscribe),
             )
         }
@@ -1042,10 +1056,10 @@ private const val INTENT_DELAY_MS = 600L
  * Which of the two pages is up — iOS `RecordingDetailView.Face`. See
  * `docs/design/ios-recording-page.md`.
  */
-enum class DetailFace { SUMMARY, TRANSCRIPT }
+enum class DetailFace { REPORT, TRANSCRIPT }
 
 /**
- * The page a recording opens on: the summary when there is any analysis to
+ * The page a recording opens on: the report when there is any analysis to
  * show (a brief, a finding or an action item), the transcript otherwise.
  * Chosen once, when the recording first loads — after that the page is the
  * reader's, and a reload must not flip it out from under them.
@@ -1054,10 +1068,10 @@ enum class DetailFace { SUMMARY, TRANSCRIPT }
  * store listing, as iOS keeps its `transcript` route on the transcript.
  */
 internal fun initialFace(hasAnalysis: Boolean, forceTranscript: Boolean = false): DetailFace =
-    if (hasAnalysis && !forceTranscript) DetailFace.SUMMARY else DetailFace.TRANSCRIPT
+    if (hasAnalysis && !forceTranscript) DetailFace.REPORT else DetailFace.TRANSCRIPT
 
 /**
- * Summary | Transcript. The segmented control, because two mutually exclusive
+ * Report | Transcript. The segmented control, because two mutually exclusive
  * views of one thing is exactly what it is for, and it reads as that without a
  * word of explanation. Pinned under the player, so switching never needs a
  * scroll back to the top.
@@ -1082,7 +1096,7 @@ private fun FaceSwitcher(face: DetailFace, onFaceChange: (DetailFace) -> Unit) {
                     Text(
                         stringResource(
                             when (option) {
-                                DetailFace.SUMMARY -> R.string.detail_face_summary
+                                DetailFace.REPORT -> R.string.detail_face_report
                                 DetailFace.TRANSCRIPT -> R.string.detail_transcript
                             },
                         ),
@@ -1100,12 +1114,12 @@ private fun FaceSwitcher(face: DetailFace, onFaceChange: (DetailFace) -> Unit) {
  *
  * Only the page that is up is composed, but both scroll states live here, so
  * each page keeps its own scroll position: the reader who jumps from a
- * highlight into the transcript and comes back finds the summary where they
+ * highlight into the transcript and comes back finds the report where they
  * left it. (iOS stacks both and hides one; composing one is the cheaper way
  * to the same behaviour on Android, where a hidden `LazyColumn` would still
  * lay out.)
  *
- * **Jumping.** Every timestamp on the summary — a brief link, an action item, a
+ * **Jumping.** Every timestamp on the report — a brief link, an action item, a
  * highlight — switches to the transcript, seeks there, scrolls the turn to the
  * upper third and washes it in the tint for about two seconds. The target turn
  * is [TranscriptAnchor]'s: a brief writes `[0:08]` for a turn that starts at
@@ -1130,6 +1144,37 @@ private fun FaceSwitcher(face: DetailFace, onFaceChange: (DetailFace) -> Unit) {
  * plays on, and the turn's own tap is one tap away for anyone who wants to hear
  * it.
  */
+/**
+ * The turn a moment at [ms] belongs to, with the audio sent there when the
+ * recording can seek; -1 when the transcript has no turn for it. The scroll is
+ * the caller's: a recording whose audio is not on the phone cannot seek, and
+ * the jump must still land on the words.
+ */
+private fun landOnTurn(ms: Long, starts: List<Long>, playback: PlaybackState, player: PlayerActions): Int {
+    val turn = TranscriptAnchor.turnIndex(ms, starts)
+    if (turn >= 0 && playback.isSeekable) player.jumpTo(TranscriptAnchor.seekMs(ms, starts))
+    return turn
+}
+
+/** What the report page can do, wired to the recording's player and summary hooks. */
+private fun reportActions(
+    summary: SummaryHooks,
+    playback: PlaybackState,
+    player: PlayerActions,
+    canGenerate: Boolean,
+    jump: (Long) -> Unit,
+) = ReportActions(
+    canTickActionItems = summary.canTickActionItems,
+    canGenerate = canGenerate,
+    jump = jump,
+    seek = { ms -> if (playback.isSeekable) player.jumpTo(ms) },
+    tickActionItem = summary.tickActionItem,
+    generate = summary.generate,
+    regenerate = summary.regenerate,
+    regenerateAll = summary.regenerateAll,
+    openStudyMenu = DemoMode.navigation.value?.report == DemoMode.ReportScenario.MENU,
+)
+
 @Composable
 private fun DetailBody(
     meta: RecordingMeta,
@@ -1138,6 +1183,8 @@ private fun DetailBody(
     playback: PlaybackState,
     player: PlayerActions,
     summary: SummaryHooks,
+    /** The study pipeline for this recording, or null where the phone does not run it. */
+    study: RecordingStudy?,
     /** What the transcript page shows when it has no turns, when that is more than one line. */
     emptyTranscript: (@Composable () -> Unit)? = null,
 ) {
@@ -1150,6 +1197,9 @@ private fun DetailBody(
     val summaryList = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val segments = remember(meta) { meta.segments.filter { it.isFinal } }
+    val kitSegments = remember(segments) {
+        segments.map { TranscriptSegment(it.id, it.source, it.speaker, it.text, it.isFinal, it.startMs, it.endMs) }
+    }
     val starts = remember(segments) { segments.map { it.startMs } }
     val labels = remember(meta, segments) {
         segments.map { speakerLabel(context, it, meta.speakerName(it)) }
@@ -1216,15 +1266,14 @@ private fun DetailBody(
         }
     }
 
-    // A moment in the summary, taken to the transcript: switch pages, send the
+    // A moment in the report, taken to the transcript: switch pages, send the
     // audio there, scroll the turn into view and light it. The scroll is asked
     // for separately from the seek because a recording whose audio is not on the
     // phone cannot seek, and the jump must still land on the words.
     val jump: (Long) -> Unit = { ms ->
         onFaceChange(DetailFace.TRANSCRIPT)
-        val turn = TranscriptAnchor.turnIndex(ms, starts)
+        val turn = landOnTurn(ms, starts, playback, player)
         if (turn >= 0) {
-            if (playback.isSeekable) player.jumpTo(TranscriptAnchor.seekMs(ms, starts))
             followsAudio = false
             jumpRequest = JumpRequest(turn = turn, serial = jumpRequest.serial + 1)
             lit.light(segments[turn].id)
@@ -1235,7 +1284,7 @@ private fun DetailBody(
         FaceSwitcher(face = face, onFaceChange = onFaceChange)
         // Under the switch rather than over the player: searching is a thing you
         // do *to the transcript*, so it belongs next to the transcript, and it
-        // is not offered on the summary at all.
+        // is not offered on the report at all.
         if (searching && onTranscript) {
             SearchField(
                 query = query,
@@ -1245,17 +1294,13 @@ private fun DetailBody(
             )
         }
         when (face) {
-            DetailFace.SUMMARY -> RecordingSummaryPage(
+            DetailFace.REPORT -> RecordingReportPage(
                 state = state,
+                study = study,
                 speakers = speakers,
+                segments = kitSegments,
                 listState = summaryList,
-                actions = SummaryActions(
-                    canTickActionItems = summary.canTickActionItems,
-                    canGenerate = segments.isNotEmpty(),
-                    jump = jump,
-                    tickActionItem = summary.tickActionItem,
-                    generate = summary.generate,
-                ),
+                actions = reportActions(summary, playback, player, canGenerate = segments.isNotEmpty(), jump = jump),
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
@@ -1317,18 +1362,20 @@ private class PageControl(
 /** The two things the transcript asks of the player. */
 @Immutable
 private class PlayerActions(
-    /** A seek asked for from the text — a turn, a timecode, a 💡 line, a summary link. */
+    /** A seek asked for from the text — a turn, a timecode, a 💡 line, a report link. */
     val jumpTo: (Long) -> Unit,
     /** An edge of the transcript is held (2×), or let go. */
     val holdTwoX: (Boolean) -> Unit,
 )
 
-/** What the summary page can do beyond jumping, handed down from the screen. */
+/** What the report page can do beyond jumping, handed down from the screen. */
 @Immutable
 private class SummaryHooks(
     val canTickActionItems: Boolean,
     val tickActionItem: (id: String, done: Boolean) -> Unit,
     val generate: () -> Unit,
+    val regenerate: (StudyArtifact) -> Unit,
+    val regenerateAll: () -> Unit,
 )
 
 /**
@@ -1484,7 +1531,7 @@ private fun FollowPlayheadEffects(
 }
 
 /**
- * A jump from the summary, scrolled to once the transcript is on screen.
+ * A jump from the report, scrolled to once the transcript is on screen.
  * Unanimated: the page has just changed under the reader, and a scroll
  * animating on top of that reads as the page sliding about.
  */
@@ -1700,7 +1747,7 @@ private fun TwoXPill(modifier: Modifier = Modifier) {
 /**
  * The scroll itself: one continuous column, the way the desktop reads a
  * transcript — turn after turn separated by whitespace. No header, no cards:
- * the title is in the top bar, the analysis is on the summary page, and here it
+ * the title is in the top bar, the analysis is on the report page, and here it
  * appears only as a 💡 line under the turn a finding starts in.
  *
  * Turn *n* is item *n*, which is what [TranscriptScroll] scrolls by; the one
@@ -1880,7 +1927,7 @@ private fun stepHit(current: Int, delta: Int, total: Int): Int? {
  * the list (see [TranscriptList]).
  *
  * The one place the anchor is applied, so following the playhead, a seek, a
- * jump from the summary and walking search hits cannot drift apart about where
+ * jump from the report and walking search hits cannot drift apart about where
  * "here" is on screen.
  */
 @Stable
@@ -2100,7 +2147,7 @@ private fun FindingNote(finding: FindingRow, onTap: () -> Unit) {
 
 /**
  * The colour behind a turn: the tap's quick flash (in fast and out slow), and
- * the softer, longer wash a jump from the summary leaves.
+ * the softer, longer wash a jump from the report leaves.
  *
  * The flash is the whole acknowledgement of a tap: a tap on a paragraph produces
  * no other visible change when the audio is already near it, and without one

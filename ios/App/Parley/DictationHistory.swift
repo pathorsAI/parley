@@ -35,12 +35,13 @@ final class DictationHistory: ObservableObject {
     func record(
         text: String, startedAt: Date, source: DictationHistoryEntry.Source,
         hostBundleID: String?, rawText: String? = nil, polish: PolishOutcome? = nil,
-        ending: DictationEnding? = nil
+        polishStyle: PolishStyle? = nil, ending: DictationEnding? = nil
     ) {
         let ms = max(0, Int(Date().timeIntervalSince(startedAt) * 1000))
         let entry = DictationHistoryEntry(
             text: text, startedAt: startedAt, durationMs: ms, source: source,
-            hostBundleID: hostBundleID, rawText: rawText, polish: polish, ending: ending)
+            hostBundleID: hostBundleID, rawText: rawText, polish: polish,
+            polishStyle: polishStyle, ending: ending)
         if let kept = store.append(entry) { entries = kept }
     }
 
@@ -57,6 +58,22 @@ final class DictationHistory: ObservableObject {
             entries = store.load()
         }
     #endif
+
+    /// "Fix this word" on an entry: teach the dictionary the pair, already
+    /// confirmed, and rewrite the entry with it. Returns whether the pair was
+    /// stored — the sheet only offers pairs the dictionary accepts, so `false`
+    /// is a file that could not be written (no App Group), in which case the
+    /// entry is left alone too rather than showing a fix that was not learned.
+    @discardableResult
+    func correct(_ id: UUID?, original: String, replacement: String) -> Bool {
+        guard LexiconStore.recordConfirmed(original: original, replacement: replacement) else {
+            return false
+        }
+        if let id {
+            entries = store.correct(id: id, original: original, replacement: replacement)
+        }
+        return true
+    }
 
     func delete(_ id: UUID) {
         entries = store.remove(id: id)
@@ -98,9 +115,15 @@ final class DictationHistory: ObservableObject {
     /// question ("was this polished, and if not, why not") rather than
     /// explaining the pipeline. The reasons are worded as the user would put
     /// them, not as the code does: "you skipped it", not "skipped by user".
-    static func polishLabel(_ outcome: PolishOutcome) -> String {
+    ///
+    /// A polished entry names the style only when it was concise: tidy is the
+    /// default and what every older entry was, so "Polished" alone already
+    /// means it, and only the style that cuts words needs saying.
+    static func polishLabel(_ outcome: PolishOutcome, style: PolishStyle? = nil) -> String {
         switch outcome {
-        case .polished: String(localized: "Polished")
+        case .polished:
+            style == .concise
+                ? String(localized: "Polished · Concise") : String(localized: "Polished")
         case .tooShort: String(localized: "Original · too short")
         case .off: String(localized: "Original · polish is off")
         case .skipped: String(localized: "Original · you skipped it")

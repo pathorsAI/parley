@@ -10,6 +10,7 @@ mod hotkey;
 mod mcp;
 mod menu;
 mod permissions;
+mod playback;
 mod replay;
 mod replay_audio;
 mod transcription;
@@ -245,6 +246,7 @@ pub fn run() {
             history::delete_history_entry,
             history::read_transcript_file,
             history::write_sample_audio,
+            playback::prepare_playback_fallback,
             diarize::download_diarize_model,
             diarize::diarize_model_status,
             mcp::get_mcp_server_info,

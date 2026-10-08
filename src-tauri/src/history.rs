@@ -136,18 +136,7 @@ pub async fn save_remote_history_entry(
 ) -> Result<String, String> {
     // Fetch the audio first — bail (writing nothing) if it fails.
     let audio_bytes = match (audio_url, token) {
-        (Some(url), Some(token)) => {
-            let res = reqwest::Client::new()
-                .get(&url)
-                .bearer_auth(&token)
-                .send()
-                .await
-                .map_err(|e| e.to_string())?;
-            if !res.status().is_success() {
-                return Err(format!("audio download failed: {}", res.status()));
-            }
-            Some(res.bytes().await.map_err(|e| e.to_string())?)
-        }
+        (Some(url), Some(token)) => Some(fetch_cloud_audio(&url, &token).await?),
         _ => None,
     };
     let dir = history_dir(&app)?.join(safe_id(&id));
@@ -159,6 +148,77 @@ pub async fn save_remote_history_entry(
     std::fs::write(dir.join("meta.json"), meta_json).map_err(|e| e.to_string())?;
     log::info!("history: saved remote entry {}", dir.to_string_lossy());
     Ok(dir.to_string_lossy().into_owned())
+}
+
+/// The longest a cloud audio download may take end to end. Generous — an hour of
+/// Opus is ~10 MB — but finite: without it a stalled connection left the
+/// download (and the "downloading…" state the user sees) waiting forever.
+const AUDIO_DOWNLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+/// Giving up on a server that never accepts the connection takes far less.
+const AUDIO_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Fetch a cloud recording (bearer auth) and check that what came back is audio
+/// before anyone writes it as `audio.ogg`.
+async fn fetch_cloud_audio(url: &str, token: &str) -> Result<Vec<u8>, String> {
+    let client = reqwest::Client::builder()
+        .connect_timeout(AUDIO_CONNECT_TIMEOUT)
+        .timeout(AUDIO_DOWNLOAD_TIMEOUT)
+        .build()
+        .map_err(|e| e.to_string())?;
+    let res = client
+        .get(url)
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !res.status().is_success() {
+        return Err(format!("audio download failed: {}", res.status()));
+    }
+    let content_type = res
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let bytes = Vec::from(res.bytes().await.map_err(|e| e.to_string())?);
+    if !looks_like_audio(&bytes, content_type.as_deref()) {
+        log::warn!(
+            "history: audio download returned {} bytes that are not audio (content-type {:?})",
+            bytes.len(),
+            content_type
+        );
+        return Err("audio download returned an error page instead of the recording".into());
+    }
+    Ok(bytes)
+}
+
+/// Whether a downloaded body can be a recording rather than, say, an HTML error
+/// page or a JSON error served with a 200. Recordings are Ogg from every
+/// platform — except a desktop upload whose compression failed, which is kept
+/// (and synced) as a raw copy of the source under the same `audio.ogg` name, and
+/// that can be any container the importer accepts (WMA/ASF, AIFF, CAF, …).
+/// Listing audio magics would refuse whichever one was missed and leave that
+/// entry unsyncable everywhere else, so this rejects what an error looks like
+/// instead: an empty body, a text/JSON content type, or a body that opens (after
+/// an optional BOM and whitespace) like markup or JSON. No audio container
+/// starts with `<`, `{` or `[`.
+fn looks_like_audio(bytes: &[u8], content_type: Option<&str>) -> bool {
+    if bytes.is_empty() {
+        return false;
+    }
+    if let Some(ct) = content_type {
+        let mime = ct
+            .split(';')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase();
+        if mime.starts_with("text/") || mime == "application/json" || mime.ends_with("+json") {
+            return false;
+        }
+    }
+    let body = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
+    let first = body.iter().find(|b| !b.is_ascii_whitespace());
+    !matches!(first, Some(b'<' | b'{' | b'['))
 }
 
 /// Write the bundled onboarding sample's `audio.ogg` from bytes the webview
@@ -211,16 +271,7 @@ pub async fn download_remote_audio(
     url: String,
     token: String,
 ) -> Result<String, String> {
-    let res = reqwest::Client::new()
-        .get(&url)
-        .bearer_auth(&token)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !res.status().is_success() {
-        return Err(format!("audio download failed: {}", res.status()));
-    }
-    let bytes = res.bytes().await.map_err(|e| e.to_string())?;
+    let bytes = fetch_cloud_audio(&url, &token).await?;
     let dir = app
         .path()
         .app_cache_dir()
@@ -278,7 +329,8 @@ pub fn read_history_entry(app: AppHandle, id: String) -> Result<HistoryRead, Str
 }
 
 /// Rename an entry: patch `title` in both `meta.json` and `summary.json` (leaving
-/// the recording + analysis untouched).
+/// the recording + analysis untouched), and retire the pending filing
+/// suggestion's title in the same write (see [`apply_rename`]).
 #[tauri::command]
 pub fn rename_history_entry(app: AppHandle, id: String, title: String) -> Result<(), String> {
     let dir = history_dir(&app)?.join(safe_id(&id));
@@ -286,14 +338,45 @@ pub fn rename_history_entry(app: AppHandle, id: String, title: String) -> Result
         let path = dir.join(file);
         let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
         let mut value: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
-        if let Some(obj) = value.as_object_mut() {
-            obj.insert("title".into(), serde_json::Value::String(title.clone()));
-        }
+        apply_rename(&mut value, &title);
         let out = serde_json::to_string(&value).map_err(|e| e.to_string())?;
         std::fs::write(&path, out).map_err(|e| e.to_string())?;
     }
     log::info!("history: renamed entry {id}");
     Ok(())
+}
+
+/// The JSON side of a rename. Sets `title` and, when the entry carries a pending
+/// `filingSuggestion`, clears that suggestion's title: whatever the user (or an
+/// MCP client) just named the recording answers the title half of the
+/// suggestion, and leaving the old proposal in place is how one recording came
+/// to show two titles — its name, and a stale "suggested title" beside it on
+/// every device the meta syncs to. The folder half is still unanswered, so it
+/// stays; with no folders left there is nothing pending and the suggestion
+/// becomes null. `filingSuggested` is untouched, so the pass never re-runs.
+///
+/// Done here rather than by the caller so the title and the cleared suggestion
+/// land in ONE write — and one cloud push — instead of two racing ones.
+fn apply_rename(value: &mut serde_json::Value, title: &str) {
+    let Some(obj) = value.as_object_mut() else {
+        return;
+    };
+    obj.insert("title".into(), serde_json::Value::String(title.to_owned()));
+    let Some(suggestion) = obj.get_mut("filingSuggestion") else {
+        return;
+    };
+    let Some(pending) = suggestion.as_object_mut() else {
+        return; // null (already answered) or junk — nothing pending to retire
+    };
+    let has_folders = pending
+        .get("folders")
+        .and_then(|f| f.as_array())
+        .is_some_and(|f| !f.is_empty());
+    if has_folders {
+        pending.insert("title".into(), serde_json::Value::String(String::new()));
+    } else {
+        *suggestion = serde_json::Value::Null;
+    }
 }
 
 /// Delete an entry's folder and everything in it.
@@ -343,4 +426,90 @@ pub fn read_transcript_file(path: String) -> Result<TranscriptFile, String> {
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as f64);
     Ok(TranscriptFile { text, modified_ms })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{apply_rename, looks_like_audio};
+    use serde_json::json;
+
+    #[test]
+    fn only_audio_bodies_are_kept_as_recordings() {
+        let audio: &[&[u8]] = &[
+            b"OggS\0\x02rest-of-page",
+            b"RIFF\x24\0\0\0WAVEfmt ",
+            b"\0\0\0\x20ftypM4A ",
+            b"ID3\x04\0",
+            // WMA (ASF header GUID) — an allowed upload kept as a raw copy.
+            &[0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11, 0xA6, 0xD9],
+            b"FORM\0\0\x10\0AIFFCOMM", // AIFF
+            b"caff\0\x01\0\0desc",     // Core Audio Format
+        ];
+        for body in audio {
+            assert!(looks_like_audio(body, None), "{body:?}");
+            assert!(
+                looks_like_audio(body, Some("application/octet-stream")),
+                "{body:?}"
+            );
+            assert!(looks_like_audio(body, Some("audio/ogg")), "{body:?}");
+        }
+        // What a misrouted or failing download actually returns.
+        assert!(!looks_like_audio(b"<!DOCTYPE html><html>", None));
+        assert!(!looks_like_audio(b"{\"error\":\"not found\"}", None));
+        assert!(!looks_like_audio(b"[{\"error\":1}]", None));
+        assert!(!looks_like_audio(b"\xEF\xBB\xBF\r\n  <html>", None));
+        assert!(!looks_like_audio(b"\n\t{\"message\":\"denied\"}", None));
+        assert!(!looks_like_audio(b"", None));
+        // Said outright by the server, whatever the body starts with.
+        assert!(!looks_like_audio(
+            b"Not Found",
+            Some("text/plain; charset=utf-8")
+        ));
+        assert!(!looks_like_audio(b"OggS", Some("text/html")));
+        assert!(!looks_like_audio(b"OggS", Some("Application/JSON")));
+        assert!(!looks_like_audio(b"OggS", Some("application/problem+json")));
+    }
+
+    #[test]
+    fn rename_sets_title() {
+        let mut v = json!({ "title": "old", "id": "a" });
+        apply_rename(&mut v, "new");
+        assert_eq!(v, json!({ "title": "new", "id": "a" }));
+    }
+
+    #[test]
+    fn rename_clears_pending_title_but_keeps_folders() {
+        let folders = json!([{ "folderId": null, "name": "Acme", "reason": "customer" }]);
+        let mut v = json!({
+            "title": "會議 10/6",
+            "filingSuggested": true,
+            "filingSuggestion": { "title": "Acme 需求訪談", "folders": folders.clone() },
+        });
+        apply_rename(&mut v, "Acme kickoff");
+        assert_eq!(v["title"], "Acme kickoff");
+        assert_eq!(v["filingSuggestion"], json!({ "title": "", "folders": folders }));
+        assert_eq!(v["filingSuggested"], true);
+    }
+
+    #[test]
+    fn rename_drops_a_suggestion_left_with_nothing() {
+        let mut v = json!({ "title": "x", "filingSuggestion": { "title": "y", "folders": [] } });
+        apply_rename(&mut v, "z");
+        assert_eq!(v["filingSuggestion"], serde_json::Value::Null);
+
+        let mut v = json!({ "title": "x", "filingSuggestion": { "title": "y" } });
+        apply_rename(&mut v, "z");
+        assert_eq!(v["filingSuggestion"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn rename_leaves_an_answered_or_absent_suggestion_alone() {
+        let mut v = json!({ "title": "x", "filingSuggestion": null });
+        apply_rename(&mut v, "z");
+        assert_eq!(v, json!({ "title": "z", "filingSuggestion": null }));
+
+        let mut v = json!({ "title": "x" });
+        apply_rename(&mut v, "z");
+        assert_eq!(v, json!({ "title": "z" }));
+    }
 }

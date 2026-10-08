@@ -5,6 +5,9 @@ import com.pathors.parley.cloud.CloudFolder
 import com.pathors.parley.cloud.CloudJson
 import com.pathors.parley.cloud.RecordingMeta
 import com.pathors.parley.kit.FilingFolderSuggestion
+import com.pathors.parley.kit.FilingLanguage
+import com.pathors.parley.kit.FilingPrompt
+import com.pathors.parley.kit.FilingSuggester
 import com.pathors.parley.kit.TranscriptSegment
 import com.pathors.parley.library.SaveDestination
 import com.pathors.parley.meeting.MeetingState
@@ -12,12 +15,16 @@ import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -60,10 +67,25 @@ class FilingSuggestionModelTest {
     private val pushes = CopyOnWriteArrayList<JsonObject>()
     private val paths = CopyOnWriteArrayList<String>()
 
+    /** The chat request bodies, as sent. */
+    private val chats = CopyOnWriteArrayList<JsonObject>()
+
+    /** Run when the model is asked — another device acting while it thinks. */
+    @Volatile
+    private var duringChat: () -> Unit = {}
+
+    @Volatile
+    private var language = FilingLanguage.EN
+
     private val model by lazy {
+        val cloud = CloudClient(baseUrl = server.url("/").toString(), tokenProvider = { "session-token" })
         FilingSuggestionModel(
-            cloud = CloudClient(baseUrl = server.url("/").toString(), tokenProvider = { "session-token" }),
-            speakerLabel = { "Speaker ${it.speaker}" },
+            cloud = cloud,
+            pass = FilingPass(
+                cloud = cloud,
+                fallbackSpeakerLabel = { _, speaker -> "Speaker $speaker" },
+                language = { language },
+            ),
         )
     }
 
@@ -77,7 +99,11 @@ class FilingSuggestionModelTest {
                     path == "/recordings/$RECORDING/meta" -> ok(stored.toString())
                     path == "/folders" && request.method == "GET" -> ok(FOLDERS_JSON)
                     path == "/folders" -> ok("{}")
-                    path == "/v1/chat/completions" -> ok(chatResponse(answer))
+                    path == "/v1/chat/completions" -> {
+                        chats += CloudJson.parseToJsonElement(request.body.readUtf8()).jsonObject
+                        duringChat()
+                        ok(chatResponse(answer))
+                    }
                     path == "/recordings/$RECORDING" -> push(request)
                     else -> MockResponse().setResponseCode(404)
                 }
@@ -186,6 +212,112 @@ class FilingSuggestionModelTest {
         assertEquals("no model call spent on it", 0, count(CHAT))
     }
 
+    // ── generate once, persist immediately ───────────────────────────────────
+
+    /**
+     * An offer nobody answers must not leave the recording looking untouched,
+     * or the desktop runs a pass of its own and syncs a second, different
+     * title back.
+     */
+    @Test
+    fun `the offer is written to the recording before it is shown`() {
+        offer()
+
+        assertEquals(FilingPhase.OFFERING, state.phase)
+        assertEquals(1, pushes.size)
+        val meta = lastMeta()
+        assertTrue(meta.filingSuggested)
+        assertEquals(SUGGESTION, meta.filingSuggestion)
+        assertEquals(
+            "the desktop's FilingSuggestion shape",
+            CloudJson.parseToJsonElement(
+                """{"title":"Acme renewal terms","folders":[{"folderId":"f-acme","name":"Acme Corp","reason":"customer"}]}""",
+            ),
+            meta.raw[PENDING],
+        )
+        assertEquals("offering renames nothing", CLOCK_TITLE, meta.title)
+        assertNull("and files nothing", meta.folderId)
+    }
+
+    @Test
+    fun `a proposed new folder is persisted with a null id`() {
+        answer = """{"title":"","folders":[{"name":"Globex","isNew":true,"reason":"new customer"}]}"""
+        offer()
+        val folder = (lastMeta().raw.getValue(PENDING).jsonObject.getValue("folders") as JsonArray).single().jsonObject
+        assertEquals(JsonNull, folder["folderId"])
+        assertEquals("Globex", folder.getValue("name").jsonPrimitive.content)
+        assertEquals("", lastMeta().raw.getValue(PENDING).jsonObject.getValue("title").jsonPrimitive.content)
+    }
+
+    /** Another device spent a pass while this one was thinking: ours is not a competitor. */
+    @Test
+    fun `a pass spent elsewhere meanwhile is neither written nor offered`() {
+        duringChat = { stored = RecordingMeta(stored).withFilingSuggested().raw }
+        offer()
+
+        assertEquals(FilingPhase.SETTLED, state.phase)
+        assertTrue("nothing written over the other device's", pushes.isEmpty())
+        assertEquals(1, count(CHAT))
+    }
+
+    @Test
+    fun `a persist that failed still offers, and the answer writes the flag`() {
+        pushFails = true
+        offer()
+        assertEquals(FilingPhase.OFFERING, state.phase)
+        assertEquals(RENEWAL, state.proposedTitle)
+
+        pushFails = false
+        assertTrue(runBlocking { model.acceptSuggested() })
+        assertTrue(lastMeta().filingSuggested)
+        assertEquals(JsonNull, lastMeta().raw[PENDING])
+    }
+
+    /** The same inputs every client sends: the stored transcript, its names, its context, the UI language. */
+    @Test
+    fun `the pass reads the stored transcript, the speaker names and the context`() {
+        stored = buildJsonObject {
+            stored.forEach { (key, value) -> put(key, value) }
+            put("meetingContext", "  Renewal with Acme  ")
+            putJsonObject("speakerNames") { put("mix-1", "Jack") }
+            putJsonArray("segments") {
+                addJsonObject {
+                    put("id", "mix-0")
+                    put("source", "mix")
+                    put("speaker", 1)
+                    put("text", "Stored line.")
+                    put("isFinal", true)
+                    put("startMs", 65_000)
+                    put("endMs", 66_000)
+                }
+                addJsonObject {
+                    put("id", "mix-1")
+                    put("source", "mix")
+                    put("speaker", 2)
+                    put("text", "Nobody named me.")
+                    put("isFinal", true)
+                    put("startMs", 70_000)
+                    put("endMs", 71_000)
+                }
+            }
+        }
+        language = FilingLanguage.ZH_TW
+        offer()
+
+        val messages = chats.single().getValue("messages") as JsonArray
+        val system = messages[0].jsonObject.getValue("content").jsonPrimitive.content
+        val user = messages[1].jsonObject.getValue("content").jsonPrimitive.content
+        assertEquals(FilingSuggester.systemPrompt(FilingLanguage.ZH_TW), system)
+        assertEquals(
+            "Meeting context: Renewal with Acme\n\n" +
+                "The recording is currently called: $CLOCK_TITLE\n\n" +
+                "The user's existing folders:\n- $ACME\n\n" +
+                "Transcript:\n[1:05] [Jack] Stored line.\n[1:10] [Speaker 2] Nobody named me.",
+            user,
+        )
+        assertEquals(FilingPrompt.MODEL, chats.single().getValue("model").jsonPrimitive.content)
+    }
+
     @Test
     fun `a failed pass is silence, not an error`() {
         answer = "I cannot help with that."
@@ -202,9 +334,10 @@ class FilingSuggestionModelTest {
         offer()
         assertTrue(runBlocking { model.acceptSuggested() })
 
-        assertEquals(1, pushes.size)
+        assertEquals("the offer's own write, then the answer", 2, pushes.size)
         val meta = lastMeta()
         assertEquals(RENEWAL, meta.title)
+        assertEquals("answered, so it is no longer pending", JsonNull, meta.raw[PENDING])
         assertEquals(ACME_ID, meta.folderId)
         assertTrue(meta.filingSuggested)
         assertEquals("live", meta.source)
@@ -225,7 +358,7 @@ class FilingSuggestionModelTest {
         assertFalse("nothing left to accept", runBlocking { model.acceptSuggested() })
 
         assertEquals(1, count("POST /folders"))
-        assertEquals(1, pushes.size)
+        assertEquals("the offer's own write, then the answer", 2, pushes.size)
         val created = state.existingFolders.single { it.name == "Globex" }
         assertEquals(created.id, lastMeta().folderId)
         assertTrue(state.proposedFolders.isEmpty())
@@ -261,8 +394,9 @@ class FilingSuggestionModelTest {
     @Test
     fun `a save with nothing to change pushes nothing`() {
         offer()
+        val before = pushes.size
         assertFalse(runBlocking { model.apply("  $CLOCK_TITLE ", null) })
-        assertTrue(pushes.isEmpty())
+        assertEquals(before, pushes.size)
     }
 
     @Test

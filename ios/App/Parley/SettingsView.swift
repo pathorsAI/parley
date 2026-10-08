@@ -20,10 +20,13 @@ struct SettingsView: View {
     /// to the App Group's defaults, which is where the extension looks for them
     /// on every appearance — there is no live binding across a process boundary.
     @State private var enabled = TypingKeyboards.enabled()
-    /// The cleanup pass after dictation. Bound here, read raw by the
-    /// coordinator: both sides are `UserDefaults.standard`, and the coordinator
-    /// has to be able to answer this in the background with no view alive.
-    @AppStorage(DictationCoordinator.polishKey) private var polishEnabled = true
+    /// The cleanup pass after dictation: off, tidy or concise. Bound here,
+    /// read raw by the coordinator: both sides are `UserDefaults.standard`, and
+    /// the coordinator has to be able to answer this in the background with no
+    /// view alive. The old on/off switch is folded into this key at launch
+    /// (`PolishStyle.migrateLegacySetting`), so the default here is only ever
+    /// what someone who never touched either setting sees.
+    @AppStorage(DictationCoordinator.polishKey) private var polishStyle = PolishStyle.default
     /// Whether a recording made here keeps its audio after uploading. Read raw
     /// out of the same defaults by `MeetingUploader`, which has no view alive
     /// when it has to decide — see `LocalAudioStore.keepsAudioOnPhone`, which is
@@ -36,6 +39,9 @@ struct SettingsView: View {
     @AppStorage(DictationHistoryStore.enabledKey) private var keepDictationHistory = true
     @ObservedObject private var dictationHistory = DictationHistory.shared
     @State private var showClearHistoryConfirmation = false
+    /// Pushes 常用資訊 when the keyboard's saved-info panel links to it.
+    @State private var showSavedInfo = false
+    @State private var showResetZhuyinConfirmation = false
     @State private var personalFolders: [CloudFolder] = []
     @State private var orgFolders: [String: [CloudFolder]] = [:]
     @State private var showDeleteConfirmation = false
@@ -79,6 +85,9 @@ struct SettingsView: View {
                         dictationHistorySection
                     }
                     keyboardsSection
+                    // Outside the account gate, like the keyboards: 常用資訊
+                    // needs no account.
+                    savedInfoSection
                     appearanceSection
                     languageSection
                     // Outside every gate: a report can be sent signed out —
@@ -116,6 +125,14 @@ struct SettingsView: View {
                 // Settings is a page of short rows; the default height packs
                 // them tighter than anything else in the app.
                 .environment(\.defaultMinListRowHeight, 48)
+                // The keyboard's saved-info panel linking here
+                // (`SettingsLinkInbox`). Taken, so it is acted on once.
+                .onReceive(SettingsLinkInbox.shared.$request) { request in
+                    guard request != nil, let link = SettingsLinkInbox.shared.take() else { return }
+                    switch link {
+                    case .snippets: showSavedInfo = true
+                    }
+                }
                 #if DEBUG
                     .onReceive(ScreenshotDemo.shared.$focusKeyboardSection) { focus in
                         // .center, not .top: scrollTo ignores the navigation
@@ -134,6 +151,7 @@ struct SettingsView: View {
                 #endif
             }
             .navigationTitle("Settings")
+            .navigationDestination(isPresented: $showSavedInfo) { SavedInfoView() }
             .task { await loadFolders() }
             .task { findStuckUpload() }
             .onChange(of: app.pendingUploadCount) { _, count in
@@ -599,8 +617,12 @@ struct SettingsView: View {
             // text and run in this order: the model tidies what was said, then
             // the dictionary has the last word over what it did.
             VStack(alignment: .leading, spacing: 4) {
-                Toggle("Polish with AI", isOn: $polishEnabled)
-                Text("After dictation ends, AI rewrites what you said into written text before it is inserted: filler and misheard words out, punctuation and clause order fixed, a spoken \"first, second, third\" laid out as a list. Nothing is added or summarised away, and the original language is preserved.")
+                Picker("Polish with AI", selection: $polishStyle) {
+                    ForEach(PolishStyle.allCases, id: \.self) { style in
+                        Text(Self.polishStyleLabel(style)).tag(style)
+                    }
+                }
+                Text(Self.polishStyleCaption(polishStyle))
                     .font(.parley.caption)
                     .foregroundStyle(Color(.secondaryLabel))
                     .fixedSize(horizontal: false, vertical: true)
@@ -618,6 +640,29 @@ struct SettingsView: View {
             sectionHeader("Voice keyboard")
         } footer: {
             sectionFooter("Fix a word right after dictating it and Parley learns how you say it. What it has learned is in the personal dictionary, where you can also add names it should get right.")
+        }
+    }
+
+    /// The picker's name for each polish style.
+    static func polishStyleLabel(_ style: PolishStyle) -> LocalizedStringKey {
+        switch style {
+        case .off: "Polish style: off"
+        case .tidy: "Polish style: tidy"
+        case .concise: "Polish style: concise"
+        }
+    }
+
+    /// One line under the picker saying what the chosen style does to the
+    /// words — the difference between tidy and concise is the whole choice,
+    /// so it is spelled out for the one that is selected.
+    static func polishStyleCaption(_ style: PolishStyle) -> LocalizedStringKey {
+        switch style {
+        case .off:
+            "Dictation is inserted exactly as it was transcribed."
+        case .tidy:
+            "Removes filler, fixes slips of the tongue and lays the text out, keeping every sentence you said."
+        case .concise:
+            "Also cuts verbal tics and pleasantries, leaving the shortest sentences that still mean the same thing."
         }
     }
 
@@ -666,6 +711,28 @@ struct SettingsView: View {
                     // the same rule delivered as a telling-off.
                     .disabled(enabled == [keyboard])
             }
+            // Here rather than beside the personal dictionary's clear, which
+            // sits behind the account gate: the 注音 pane learns with no account
+            // and no Full Access, so its reset has to be reachable without
+            // them too. Always shown — the app cannot see whether a keyboard
+            // without Full Access learned anything, and a reset of nothing is
+            // harmless.
+            Button("Reset Zhuyin learning", role: .destructive) {
+                showResetZhuyinConfirmation = true
+            }
+            .confirmationDialog(
+                "Reset Zhuyin learning?", isPresented: $showResetZhuyinConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Reset", role: .destructive) {
+                    // Deletes the file and bumps the App Group counter, so a
+                    // keyboard holding the old memory drops it instead of
+                    // writing it back.
+                    ZhuyinMemory.requestReset()
+                }
+            } message: {
+                Text("The Bopomofo keyboard forgets every word it learned from the candidates you picked, and suggests in its original order again.")
+            }
         } header: {
             sectionHeader("Keyboards")
         } footer: {
@@ -693,6 +760,23 @@ struct SettingsView: View {
         switch keyboard {
         case .english: return "English keyboard"
         case .zhuyin: return "Bopomofo keyboard"
+        }
+    }
+
+    // MARK: saved info
+
+    /// The way to 常用資訊 — the name, phone numbers, addresses and IDs the
+    /// keyboard types with one tap. Its own section, outside the account gate,
+    /// because it needs neither an account nor the network.
+    private var savedInfoSection: some View {
+        Section {
+            NavigationLink {
+                SavedInfoView()
+            } label: {
+                Label("Saved info", systemImage: "person.text.rectangle")
+            }
+        } footer: {
+            sectionFooter("Your name, phone numbers, addresses and ID numbers, one tap away on the Parley keyboard. They stay on this phone.")
         }
     }
 

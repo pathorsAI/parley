@@ -49,7 +49,7 @@ initMenuCommands();
 
 // Hydrate the shared folder registry (disk-backed; see history/folders.ts).
 // Every window needs it: History (grid + sidebar), Settings + main titlebar
-// (SaveDestinationPicker), replay (folder chip).
+// (DestinationSheet), replay (folder chip).
 void initFolderRegistry().catch((error) =>
   log.warn("folders: registry init failed", { error: String(error) })
 );

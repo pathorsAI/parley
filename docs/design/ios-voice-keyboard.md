@@ -58,7 +58,10 @@ hand-off, and the in-app dictation session are new.
    That state is the keyboard's cue: it inserts the whole committed text in a
    single `insertText`, then writes the character count back to the uplink as
    its high-water mark (`insertedCount`), so a keyboard killed mid-session and
-   relaunched after the session ended still pastes exactly once. `error` inserts
+   relaunched after the session ended still pastes exactly once. The insert
+   waits until the keyboard is on screen in an active host: a `done` that
+   arrives while it is away (stopped from Parley, the Live Activity or the lock
+   screen) is typed on the next appearance, not into nowhere. `error` inserts
    nothing at all.
 6. **Or ✕, and nothing at all.** The keyboard's ✕ writes the same
    `stopRequested` with `cancelRequested` beside it. The app cuts the relay
@@ -907,12 +910,29 @@ on a machine that has no App Group container.
 
 The desktop reads the field it pasted into through the Accessibility API and
 watches the value settle. The keyboard has no such thing. Its entire view of the
-field is `textDocumentProxy.documentContextBeforeInput`: a run of text ending at
-the cursor, clipped at a length iOS does not promise, with no notification when
-anything changes. So the shape is a snapshot and a comparison — snapshot the
-window when the dictated text has just landed (`state == .done`), compare it
-against the window again at `viewWillDisappear` or at the start of the next
-session, diff, record.
+field is the proxy's `documentContextBeforeInput` and
+`documentContextAfterInput`: the runs of text either side of the cursor, each
+clipped at a length iOS does not promise, with no notification when anything
+changes. So the shape is a snapshot and a comparison — snapshot both sides when
+the dictated text has just landed, compare them against both sides again at
+`viewWillDisappear` or at the start of the next session, diff, record.
+
+**The snapshot is taken by the insertion, once.** It used to be taken whenever a
+drain saw `state == .done` — and `done` is republished on every drain, which
+runs on every appearance. A keyboard that came back after the user had fixed the
+word re-snapshotted the *fixed* field, and the fix disappeared from the
+comparison. Now `noteInserted` is called from the branch of `drainDownlink` that
+types the transcript, which the `insertedCount` high-water mark already runs
+exactly once per session.
+
+**Both sides of the cursor, not just the text before it.** With only the text
+before the cursor, fixing 派斯 → Pathors in 「我們派斯的產品很好」 and leaving
+the cursor after the fix turned the view into 「我們Pathors」: the rest of the
+sentence was behind the cursor, which a one-sided view cannot tell from deleted —
+and because it sat right against the real change, the diff merged them into
+`派斯的產品很好 → Pathors`. A misheard word after where the cursor ended up was
+never seen at all. Reading both sides (up to 200 characters each), the field is
+the same field wherever the cursor is.
 
 **The scope this buys is narrow, and it is worth stating rather than discovering:
 only edits the user makes while our keyboard is still up in that same field.**
@@ -924,18 +944,24 @@ alignment in a field longer than 200 characters when an edit changes the text's
 length, and `viewWillDisappear` is not a promise on a process iOS kills without
 ceremony. In both cases nothing is learned, which is the intended failure —
 **capturing garbage here becomes a rule that rewrites the user's words from then
-on**, and that is far worse than capturing nothing.
+on**, and that is far worse than capturing nothing. (Fixes made where the
+keyboard cannot see them have their own way in: "Fix this word", below.)
 
-`LexiconCapture.alignable` is the one gate: the two windows have to agree at one
-end or the other, or they are two different pieces of text. It deliberately does
-*not* trim them down to their disagreement first, because a character-level trim
-cuts through the middle of words — "we use pearly" against "we use Parley" shares
-the prefix `we use ` and the suffix `y`, so the trimmed pair is `pearl → Parle`,
-a rule that could never match again since Latin pairs need a whole word. Handing
-both whole windows to a token-level diff is what keeps a learned pair at word
-edges. The anchor is also *weighted* rather than counted — an ideograph is worth
-two — because Chinese packs into five characters what English spends a clause on,
-and a raw count would have refused 在 → 再, the correction this was built for.
+`LexiconCapture.harvest` runs three gates. **Same field:** the token alignment
+has to cover at least half of the smaller view — the ends no longer have to
+agree, because in a field longer than the windows moving the cursor slides both
+of them. **A vocabulary change:** `EditDiff`'s refusals, below. **Anchored:**
+every change has to be pinned by shared text on both sides (at least 3 on each
+side and 6 together, weighted), or, on a side with none, by the real edge of the
+field — and an edge only counts as real when neither view was clipped there,
+since a change that runs into a clipped edge may include text that merely slid
+out of view. Nothing is trimmed before the diff, because a character-level trim
+cuts through the middle of words — "we use pearly" against "we use Parley"
+shares the prefix `we use ` and the suffix `y`, so the trimmed pair is
+`pearl → Parle`, a rule that could never match again since Latin pairs need a
+whole word. The weights count an ideograph as two, because Chinese packs into
+five characters what English spends a clause on, and a raw count would demand
+several times more agreement from a Chinese user than from an English one.
 
 `EditDiff` is that token-level diff: Latin runs are words, ideographs are single
 characters, an LCS aligns them, and adjacent changed tokens merge into one span.
@@ -943,6 +969,22 @@ Most of the file is refusals — pure insertions, pure deletions, case,
 punctuation, whitespace, and anything over ten characters on either side. An
 insertion, a deletion, a typo fix and a wholesale rewrite all arrive through the
 same channel; only one of them is vocabulary.
+
+**A CJK pair is never one character.** Ideographs are diffed one at a time, so
+派斯 → 帕斯 aligns 斯 and comes out as 派 → 帕 — which, applied as a plain
+substring, turns every 派對 into 帕對. When either side of a CJK change would be a
+single character, the shared character after it (or, failing that, before it) is
+taken onto both sides: 派斯 → 帕斯 is learned as 派斯 → 帕斯, 在 → 再 as 在來 → 再來,
+帕索斯 → 派斯 as 帕索斯 → 派斯. An original that is still one character — nothing
+shared to widen into — is refused, `Lexicon.record` refuses it too, and `apply`
+skips single-character originals already on file from before the rule.
+
+Every harvest is logged (`os.Logger`, subsystem
+`com.pathors.parley.ios.keyboard`, category `lexicon`): what was learned, with
+the words `.private`, and every refusal reason by name, public. The app logs how
+many replacements each fold made (category `lexicon`), counts only. Without the
+reasons, a capture that never learns is indistinguishable from one that is never
+fed.
 
 ### Why a pair does nothing until it has been seen twice
 
@@ -979,25 +1021,74 @@ sentence around it. Once insertion becomes one shot at `done` (#309) the boundar
 is zero and the whole transcript goes through the dictionary, which is where this
 wants to end up.
 
-Application itself is three rules, each of them a way of not doing damage: only
+Application itself is four rules, each of them a way of not doing damage: only
 confirmed pairs; longest original first (with both `parley` and `parley cloud` on
-file the longer has to win, or it comes out as neither); and word boundaries with
+file the longer has to win, or it comes out as neither); word boundaries with
 case-insensitive matching for an all-ASCII original against a plain substring
 replacement for CJK, which is what makes `api` leave the `api` inside `rapid`
-alone while 在 → 再 works at all. A pair whose replacement properly contains its
-original is never applied — it would grow the text on every pass.
+alone while 在來 → 再來 works at all; and never a single-CJK-character original.
+A pair whose replacement properly contains its original is never applied — it
+would grow the text on every pass.
 
-### Known follow-up: recognition context
+### Recognition context
 
-The dictionary currently only rewrites text after the fact. Biasing recognition
-*at the source* would be better and the terms are ready for it
-(`LexiconStore.recognitionTerms`), but the wire is deliberately untouched:
-Soniox's config frame takes a `context.terms` list and the desktop fills it
-(`src-tauri/src/transcription/soniox.rs`), while `SonioxProtocol.Config` on the
-phone carries no such field. Whether the hosted relay forwards a `context` from
-an iOS client cannot be established from this side, and a config frame the relay
-rejects costs the user dictation altogether — so adding it is a separate change,
-made against a relay whose behaviour has been confirmed.
+Rewriting after the fact is the second line; the first is biasing recognition
+at the source. Every relay session — dictation and meetings alike, as on the
+desktop — sends `LexiconStore.recognitionTerms()` as Soniox's `context.terms`
+in the config frame (`SonioxProtocol.Config.context`), cleaned exactly as the
+desktop cleans them (`clean_vocabulary`: trimmed, no empties, de-duplicated in
+order) and capped at 200, the desktop's `VOCABULARY_LIMIT`. With no terms the
+field is omitted and the frame is byte-identical to before. The hosted relay
+injects the key and forces the model and forwards every other field unchanged
+(parley-internal `apps/cloud/src/stt.ts`), which is what the desktop has relied
+on since its dictionary shipped — no backend change.
+
+`recognitionTerms` is the user's own words and nothing else: their typed terms,
+then the replacements of their corrections, newest first — the order is the
+priority under every cap (the polish prompt keeps the first 30, Soniox the first
+200). Nothing read from the system lexicon is ever among them; see below.
+
+### Corrections the keyboard cannot see: "Fix this word"
+
+Most fixes happen where the keyboard is not looking — with the Apple keyboard,
+after the message was sent, in another app. The dictation history (Library ›
+Voice typing) is where those can be taught: select the misheard words in an
+entry's detail sheet and choose **Fix this word** from the selection menu (or
+long-press a row for **Fix a word**), and a sheet asks for *Heard as* (prefilled
+with the selection) and *Should be*. Saving stores the pair **already confirmed**
+(`LexiconStore.recordConfirmed`, count at the threshold) — the two-sightings rule
+tells a mishearing from a change of mind, and nobody fills in a form by changing
+their mind — so it applies from the next dictation and its replacement joins the
+recognition terms. It also rewrites that entry's text with the pair
+(`DictationHistoryStore.correct`), keeping the words as said: `rawText` is never
+touched, and an entry without one gets its uncorrected text as `rawText`. The
+personal dictionary screen has the same sheet as **Add correction**. Both refuse
+what the dictionary would refuse (`Lexicon.problem`): a single CJK character, a
+replacement that contains its original.
+
+### Text Replacement (and why not Contacts)
+
+On its first appearance in a process the keyboard calls
+`requestSupplementaryLexicon`, off the keystroke path. What comes back mixes two
+kinds of entry, told apart by shape:
+
+- **Entries whose `userInput` differs from their `documentText`** are Text
+  Replacement shortcuts. They are the only thing kept — in the keyboard's memory
+  (`TextReplacements`, via `SystemLexicon.replacements`), never in the App Group,
+  so no Full Access is needed. While the word immediately before the cursor on
+  the English pane is a shortcut (case-insensitively), its expansion is the
+  bar's **first** suggestion; tapping it deletes the shortcut and inserts the
+  expansion. Nothing expands on its own — the bar offers, as everywhere else.
+- **Entries whose `userInput` equals their `documentText`** are contact names
+  (and Text Replacement phrases saved without a shortcut, which cannot be told
+  apart from them). These are **dropped before anything is copied out of the
+  `UILexicon`**: not stored, not logged, not held in memory. **Contact names do
+  not leave the phone**, and everything the dictionary holds does — recognition
+  terms go to the relay and Soniox as `context.terms` and into the polish
+  prompt, and the dictionary syncs with the account. An early build of this
+  change did store them, as `systemTerms` in `lexicon.json`, to bias
+  recognition; that was ruled out, and `LexiconStore.load` rewrites any file
+  that still carries the field without it.
 
 ## Action Button / Control Center trigger
 
@@ -1188,6 +1279,74 @@ key on touch-down. Each key is still its own SwiftUI control, so a second
 finger landing before the first lifts is handled key by key, and a character
 types on release. Both need one pane-level touch surface in place of the
 per-key buttons.
+
+### The space bar is a trackpad
+
+On the system keyboard, a space bar held still for a moment stops being a key:
+the other caps go blank and sliding the same finger walks the caret through the
+text. Without it, putting the caret between two letters means a long-press in
+the field, a magnifier and a steady thumb, so correcting one word in the middle
+of a sentence was the moment people left Parley's keyboard. The QWERTY and 注音
+space bars both do it now (`SpaceKey`); the symbol planes' space bar does not
+yet.
+
+- **Entering.** The finger has to stay within 10pt of where it landed for
+  0.35s (`SpaceCursor.holdDelay`, `.slop`). Then every other key on the pane
+  fades and drops its label, the bar reads 「左右滑動移動游標」 / "Slide to move
+  the cursor", and a soft `.light` tick plays.
+- **Moving.** Only horizontal travel counts — the caret moves along the text,
+  never between lines. One character per 9pt for a slow drag; above 300 pt/s
+  the gain rises linearly to 2.5× at 1,200 pt/s, so a careful slide is never
+  accelerated and a flick crosses a sentence. Turning round needs a full 9pt in
+  the new direction before the caret follows, so a wobbling finger does not
+  jitter it. Each touch sample that moved the caret plays the system's
+  selection detent.
+- **Leaving.** Letting go puts the keys back and types nothing — including a
+  hold that never moved, because the keys going blank already said this press
+  was not a space.
+- **A tap is unchanged.** A press released before the hold, or one that
+  wandered past the slop first, types exactly what it did: a space, the
+  double-space period, or on the 注音 pane the first tone and then confirm. A
+  press lifted well off the key types nothing, as a button's cancelled touch
+  does.
+- **Not while a 注音 reading is pending.** There space is still composing, and
+  the reading is marked text the caret cannot leave without the host
+  committing or dropping it. The hold is refused, the press stays an ordinary
+  one, and letting go tones or confirms as before.
+- **Not a swipe.** The pane track's swipe needs 24pt of travel before it
+  engages, more than the hold's slop, so it can never be moving when the bar
+  becomes a trackpad; once it has, the track ignores that finger until a turn
+  after it lifts (`SpaceCursorModel.holdsTouch`). A press that travels 24pt
+  sideways *before* the hold is still a swipe, as it always was.
+- **VoiceOver** sees the same "Space" button it did, and activating it types a
+  space. The trackpad is touch-only; VoiceOver already moves the caret with the
+  rotor.
+
+How a drag becomes an offset. `adjustTextPosition(byCharacterOffset:)` counts
+UTF-16 code units, not characters as a reader sees them — a step of 1 across 😀
+lands between its surrogates. So `CaretWalk` walks a snapshot of the text either
+side of the caret one grapheme cluster per step and hands the proxy each
+cluster's UTF-16 length. The snapshot is taken once, when the hold begins,
+because the proxy's context lags an adjustment by a round trip to the host and
+moving the caret never changes the text. Past the ends of what the host shared
+— often a sentence or a line — each step is one code unit, counted and repaid
+on the way back: right for everything in the Basic Multilingual Plane, a few
+units off for the rest of that drag at the true start or end of the document.
+
+What it costs. The panes still do not observe the bridge: `SpaceCursorModel`
+publishes on entering and leaving only, the panes observe it the way the letter
+pane observes shift, and the keys learn it from the environment
+(`keysRecede`). Each key redraws twice per trackpad drag and never on a
+keystroke; the touch samples themselves change nothing SwiftUI watches.
+
+The haptics are the one exception to *no haptics* above, and they are not key
+feedback: the entry tick and the detents answer a drag, the way the system's
+trackpad does. Like every haptic in the extension they need Full Access and
+respect the system's own haptics switch; the key click on touch-down follows
+Keyboard Clicks, as on every key.
+
+Pure logic in ParleyKit (`SpaceCursor`, `CaretWalk`, unit-tested); the touch
+handling in `ios/Keyboard/KeyboardSpaceCursor.swift`.
 
 ### The backdrop: the system's, unless it would disagree
 
@@ -1403,6 +1562,11 @@ would contradict it two panes later.
 The strip defaults to the first typing pane when there is no Full Access,
 because that is the pane that still works in that state.
 
+With Full Access the strip also carries a **saved-info button** at its
+trailing end, after the tabs, and the wordmark's place doubles as a **transient
+chip slot** — 「↩︎ 換回原文」 or the field's 常用資訊. Both are described in
+[The strip slot and saved info](#the-strip-slot-and-saved-info) below.
+
 While 注音 is being typed the strip gives its whole row over to the candidates
 for the oldest pending syllable; see below. The composition itself is marked
 text in the host's field, as on the system keyboard, so the row holds only the
@@ -1561,6 +1725,11 @@ live in the App Group, so a keyboard without Full Access simply has none of them
 and the list answers alone; that is a supported state, not a failure, and it is
 the state App Review 4.4.1 judges the keyboard in. The suggestions themselves
 need no network and no App Group at all.
+
+A Text Replacement shortcut in front of the cursor puts its expansion first on
+the bar; a tap deletes the shortcut — which need not be letters, so it is
+deleted by its own length rather than the partial word's — and inserts the
+expansion. Same contract as every other suggestion: offered, never applied.
 
 **The data** is `english-words.txt` in ParleyKit: 40,000 lowercase words, 338 KiB,
 frequency ordered, generated by `scripts/gen-english-words.mjs` from
@@ -1825,7 +1994,9 @@ pitch — and `123` and return are about 2.5 keys wide.
 The pane now does all of that. Where 1.15 differed, the difference was the
 composer's limit rather than a position anybody argued for.
 
-**v1 is 傳統注音: typed continuously, predicted by phrase, converted greedily.**
+**v1 is 傳統注音: typed continuously, predicted by phrase, converted by a
+lattice, and learning from the candidates the user picks.** (Converted greedily
+until the lattice; see *The lattice*.)
 
 - **大千 layout**, as it is actually defined: a mapping onto a QWERTY board. So
   the top row is *eleven* keys (`1234567890-`) and the three below it are ten
@@ -2120,7 +2291,8 @@ syllable is finished. libtabe's notice sits beside McBopomofo's in
   lot to hold in a keyboard extension for phrases that occur nine times in a
   corpus.
 - **Ordered once, at generation time.** The file's order is the ranking and the
-  class does no sorting. The score is not raw occurrence: the corpus is written
+  bar does no sorting. Each row also carries that score as a log10 probability
+  in a third column, which only the lattice reads (see *The lattice*). The score is not raw occurrence: the corpus is written
   news, and by raw count `ㄋㄏ` puts 女孩, 年後, 男孩, 南韓 and 內涵 ahead of 你好
   (12th). So the score is `ln(occ + 1)` plus the mean `ln(charOcc + 1)` of the
   phrase's characters — a phrase built of common characters is more likely to be
@@ -2142,13 +2314,10 @@ syllable is finished. libtabe's notice sits beside McBopomofo's in
   reach — the typed symbol or one of its alternatives, for each of the two —
   which is up to about forty buckets for two lone 聲母. The exact half still
   reads only the typed key.
-- **`best` is greedy, not a lattice.** Return, space-on-a-toned-syllable,
-  punctuation and leaving the pane all commit `best`, which walks the buffer
-  left to right taking the longest phrase that exactly covers the syllables in
-  front of it (four, then three, then two) and otherwise that syllable's top
-  character. Deterministic and explainable, and wrong in ways the user can see
-  in the bar and fix by tapping instead. A viterbi over the same table is the
-  obvious next step and is not this one.
+- **`best` is a lattice.** Return, space-on-a-toned-syllable, punctuation and
+  leaving the pane all commit `best`, the likeliest segmentation of the whole
+  buffer. Until this release it walked greedily, longest phrase first; see *The
+  lattice* for what replaced it and what that changed.
 - **Loaded lazily, warmed early, never twice at once.** Parsing and indexing
   61,000 rows is about 100 ms on a current phone, which is not a hitch to spend
   on the user's second syllable. So both tables are warmed on a background
@@ -2259,9 +2428,13 @@ neighbours nearest-centre first — `ㄋ` → ㄌㄇㄎㄊㄍㄏ, `ㄓ` → ㄗ�
   `ㄗㄨㄥ ㄨㄣˊ` offers 中文 first.
 - **`best` is stricter than the bar**, because the bar is a list to choose from
   and `best` is text that lands unasked. An exact cover of any length beats a
-  forgiven one of any length. A forgiven cover is taken only for a window
-  holding a syllable with **no exact row** — one that cannot be right as typed
-  — and then the fewest errors win, length breaking a tie. So `ㄓㄨㄡ ㄨㄣˊ`
+  forgiven one of any length. A forgiven cover is a node of the lattice only
+  for a window holding a syllable with **no exact row** — one that cannot be
+  right as typed — and every forgiven symbol costs it a penalty of 20 in log10
+  units, more than any difference the tables can express over six syllables,
+  so fewer errors always win. (The greedy walk stated these as `if`s; the
+  lattice keeps them as arithmetic, and every test written for the greedy
+  rules still passes.) So `ㄓㄨㄡ ㄨㄣˊ`
   commits 中文, but `ㄗㄨㄥ ㄨㄣˊ`, whose syllables are both real readings (從,
   文), commits as typed with 中文 first in the bar. Letting any forgiven cover
   beat one character per syllable was tried first and changed five of twenty
@@ -2276,25 +2449,128 @@ pending syllables whose every symbol has alternatives, 0.65 ms for two lone
 matching alone was 0.02–0.8 ms in the same debug build. The budget is 8 ms on a
 phone.
 
+#### The lattice
+
+`ZhuyinComposer.best` scores every way of cutting the buffer into phrases and
+single characters and commits the likeliest. The nodes are each syllable as its
+top character — exactly what the bar would show first for it — and each window
+of two to four syllables as the best phrase that covers exactly it
+(`ZhuyinPhrases.exactCover`). The walk is McBopomofo's (`ReadingGrid::walk()` in
+their gramambular2, MIT): the lattice only points forward, so one pass in
+position order finds the path with the highest summed score. Six syllables are
+at most eighteen nodes; the cost is the dozen phrase lookups, about 0.15 ms in a
+debug build on an M4 Mac mini.
+
+- **Scores.** The generators now write a log10 probability per row: for a
+  phrase in the phrase table's third column, for a reading's first character in
+  the dictionary's. Both are on McBopomofo's scale (`frequency_builder.py`):
+  `log10(2.7^(len−1) × count / norm)`, `norm` being the length-scaled sum of
+  every `phrase.occ` count, so a phrase and the characters that would spell it
+  are comparable — the one question rank cannot answer. A phrase's count is
+  not its raw count but the pseudo-count its ordering score already implies,
+  `e^(score − pivot)` (`pivot` the median character term), so the score is
+  monotone in rank within a length: the first exact match of a span is also its
+  highest-scoring one, the walk and the bar never disagree about which phrase
+  answers a span, and the bar is byte-for-byte the order it was. The score fills
+  what was padding in a phrase row, which is still 32 bytes; the file grows from
+  1.7 to 2.0 MB.
+- **What changed.** Typing every pair of the 400 commonest two-character phrases
+  toneless (144,728 four-syllable buffers) and comparing walks: they disagree on
+  5,808; the lattice commits the intended pair on 3,901 of those, the greedy
+  walk on 173. 我們的話 used to commit as 我們的化, 一個辦法 as 一個半法,
+  可能回來 as 可能會來, 重要事情 as 中藥商情, because a three-character phrase
+  across the seam beat the two words. Six of these are tests.
+- **The cases it loses** are mostly function words the corpus over-counts in a
+  phrase: 只是 typed after another word can lose to 這是. They are a tap away in
+  the bar, and the memory below learns them in two.
+
+#### Learning from picks
+
+`ZhuyinMemory` is McBopomofo's user override model (`UserOverrideModel`, MIT)
+carried over to a keyboard that commits from the front of a six-syllable buffer.
+
+- **The key** is McBopomofo's: the two words committed before the node, the
+  node's reading (as typed, tones dropped), and the value the walk had chosen.
+  The words come from the composer's `context` — its picks, the nodes of a
+  confirmed walk, associations — and the keyboard resets them when the field
+  changes, when the caret leaves the composition, and when anything from outside
+  the composer (punctuation, English, a space or delete typed into the
+  document) lands.
+- **Only a tap teaches.** A candidate picked that differs from the front of the
+  walk the corpus alone would have committed is observed; return and space
+  teach nothing. A remembered choice that return or space commits is touched —
+  its age starts again — so a word in daily use does not age out.
+- **Two picks make a preference.** Each choice has a count and a last-used time;
+  its weight is the count halved every seven days unused. It is offered at
+  weight 1.5 — two picks, the second within about three days — and dropped
+  below 0.25. A pick adds one to what is left of the old weight, so two picks a
+  fortnight apart are not yet a preference. One pick is not enough because one
+  pick is ambiguous: the user may have meant that word only that once.
+- **Applied two ways.** The remembered choice goes to the front of the bar, and
+  replaces the node in the walk — with a score no path can beat when the user
+  chose a longer phrase than the walk had (McBopomofo's
+  `kOverrideValueWithHighScore`, for 增加[自][會] → 增加[字彙]: two characters
+  outscore the phrase, which is why the walk kept choosing them), otherwise with
+  the score of the node it replaces, so only the word changes. A refresh first
+  asks whether any window of the buffer has a reading the memory knows, so a
+  keystroke with nothing learned for it costs what it did.
+- **Bounded.** 500 keys, least recently used out first (McBopomofo's capacity).
+  A full memory measured about 150–210 KB of footprint.
+- **Stored on the phone only.** `zhuyin-memory.json` in the App Group, read on a
+  background queue with the 注音 tables' warm and written two seconds after the
+  last change, off the main thread (and flushed when the keyboard goes away).
+  Without Full Access there is no App Group, and the memory lives only as long
+  as the process. See `ios/AppStore/privacy-label.md`.
+- **Forgetting.** Holding a learned candidate in the strip or the ⌄ grid puts
+  「不要再建議」/"Don't suggest this" in the strip, beside the candidate and a ✕;
+  it removes every lesson that produces that word and demotes nothing else. It
+  is an inline prompt rather than a context menu because a keyboard extension
+  cannot reliably present one, and only learned candidates offer it. The tap the
+  hold's lift becomes is swallowed while the prompt is up, so a hold never also
+  commits. Settings › Keyboards has 「重置注音學習」/"Reset Zhuyin learning", outside
+  the account gate because the pane learns without an account; it deletes the
+  file and bumps a counter in the App Group's defaults, which the keyboard checks
+  on every appearance and before every write, so a keyboard holding the old
+  memory drops it rather than writing it back.
+
+#### Associated phrases (聯想詞)
+
+After a pick that empties the buffer the strip offers what usually comes next:
+pick 研 and it offers 究, 究所, 發 …; tap 究 and it offers what follows 研究, then
+what follows 究. Any 注音 key, delete, space, return or punctuation dismisses
+them.
+
+The table (`zhuyin-associations.txt`, `ZhuyinAssociations`,
+`scripts/gen-zhuyin-associations.mjs`) is built the way McBopomofo builds
+`associated-phrases-v2.txt` (`phrase_deriver.py`, MIT): every phrase under its
+first character, best first, sixty per character. Their file is a build product
+of their cooked data, not in their repository, so this derives it again from the
+same `BPMFMappings.txt` and `phrase.occ`, scored by the phrase table's own
+`scoredRows`. Two differences: rows are keyed by character, not by (character,
+reading) — a commit here may be a phrase, a prediction or a forgiven match, so
+the reading is not reliably known — and only phrases the corpus counted are
+kept. A lookup reads the last three committed characters, then two, then one,
+so a chain keeps following one phrase as long as the table has it. 3,490 rows,
+190 KB on disk, about 0.5 MB resident; loaded lazily with the other 注音 tables
+and dropped under memory pressure whenever its suggestions are not on screen.
+The lookup returns at most thirty, the strip's `drawnLimit`, and there is no ⌄
+grid behind them.
+
 #### What v1 does not do
 
 Named here so nobody has to guess whether it was forgotten:
 
-- **No lattice.** Phrases are predicted and committed greedily (above); there is
-  no viterbi over segmentations, and no 5–6 character phrases. That includes
-  error tolerance: `best` weighs a forgiven cover against the covers at the same
-  position, never against a whole alternative segmentation.
+- **No 5–6 character phrases**, in the bar or the lattice.
 - **One wrong symbol per syllable, and only a wrong one.** A syllable with two
   substitutions, a missing symbol, an extra one, two symbols swapped between
   syllables, or a wrong tone is not forgiven (see *Error tolerance*).
-- **No user dictionary and no learning.** The bar's order is the corpus's, not
-  yours. A keyboard extension that accumulated a per-user model would be holding
-  state this process is deliberately kept free of.
+- **No user dictionary of new words.** The memory reorders and overrides what
+  the tables already hold; it cannot add a word they lack. And it learns only
+  from taps on the bar, never from what is typed or committed otherwise.
 - **No 漢語拼音 or 倚天 layouts.**
 - **No half-width/full-width toggle.** The 注音 pane types full-width marks and
   the English pane ASCII (see *Punctuation is full-width* above); a user who
   wants `,` in Chinese text swipes to English for it.
-- **No associated-phrase prompts** after a commit.
 - **No unbounded buffer.** Six syllables may be pending; a seventh commits the
   oldest at its best guess. A sentence-length buffer would be a sentence this
   process has to hold, redraw and unwind, and phrases are four syllables at
@@ -2303,7 +2579,8 @@ Named here so nobody has to guess whether it was forgotten:
 What is *not* on this list any more is having to finish a syllable before
 starting the next. Until 1.16 a tone key was the only way to move on; that was
 the composer's limit, and it read as a rule. Nor, since 1.20, is exact-only
-matching: one wrong symbol per syllable no longer empties the bar.
+matching: one wrong symbol per syllable no longer empties the bar. Nor, now, a
+greedy walk, a bar that never learns, or nothing after a pick.
 
 #### The globe, and why it is still not on every device
 
@@ -2364,6 +2641,128 @@ supply, and it is UIKit's own globe behaviour — a tap advances to the next
 keyboard, a hold presents the system keyboard picker, from which 注音 is one
 more tap.
 
+## The strip slot and saved info
+
+Two things a phone keyboard is expected to do that have nothing to do with
+voice — undo a rewrite it did not ask for, and fill in a form — share one place
+on the strip and one panel over the keys. The keyboard's half is
+`KeyboardStripSlot` (state and rules) and `SavedInfoPanel` (the view); the
+store and every rule that can be tested without a phone are in ParleyKit
+(`Snippets.swift`); the app's half is Settings › 常用資訊 (`SavedInfoView`).
+
+**None of it exists without Full Access.** There is no App Group to read a
+snippet from. The saved-info button and every chip are hidden, and nothing else
+about the keyboard changes — App Review 4.4.1 judges the keyboard in exactly
+that state.
+
+### The slot
+
+The wordmark's place holds at most one kind of chip, chosen in this order:
+
+1. **「↩︎ 換回原文」 / "Use original"** — the dictation that just landed was
+   polished and the polish changed it, and the cursor is still right after it.
+   A tap deletes the inserted text (`deleteBackward()` once per grapheme, the
+   unit measured for the suggestion bar) and inserts the raw words.
+2. **Field chips** — the field's `textContentType` (or, failing that, its
+   `keyboardType`) asks for an email, a phone number, an address or a name, and
+   the user saved one in 常用資訊. Suggested only; nothing is inserted without
+   a tap.
+
+The order is how perishable each is: the revert stops being possible the moment
+the user types, and the field's kind lasts as long as the field. "✓ Copied"
+still takes the slot for its 1.2 s — it confirms a tap the user just made — and
+the first-run copy hint gives way to any chip. A chip takes the wordmark's place
+*and* the run after it: the tabs, the mic chip and the saved-info button keep
+their widths, and the chip's text truncates into what is left.
+
+#### The revert needs the raw words
+
+The keyboard used to receive only the final text. `Downlink.raw` now carries
+what "insert without polishing" would have typed — the raw transcript with the
+personal dictionary applied, so a revert does not undo the user's own
+corrections — beside a `done`, and **only when the polish changed it**. It is
+optional and absent otherwise, so old keyboards and old apps read each other's
+files unchanged. The keyboard offers it only when the insertion was the whole
+transcript (`insertedCount` was 0), and drops it on any key, any host-reported
+change that leaves the cursor somewhere other than right after the insertion
+(`RevertOffer.cursorIsAfterInsertion`, which refuses an empty or too-short
+clipped context rather than guessing), a new session, or a pane switch. After a
+revert the lexicon watch is moved to the raw words; leaving the polished text as
+its picture would teach the dictionary every rewrite the polish made.
+
+### The saved-info panel
+
+The button — a card with a person on it, `person.text.rectangle`, read by
+VoiceOver as 「常用資訊」 — opens a panel over the key area like the candidate
+grid, the same 213pt so the keyboard never changes height. One list: icon,
+label and value; 身分證字號 and 統一編號 masked; a tap inserts the whole value
+with `insertText` — never through the system pasteboard — and closes the panel.
+The last row, and the empty state, link to Settings › 常用資訊
+(`parley://settings/snippets`), where the list is edited.
+
+The panel is built when it opens and dropped when it closes; the list is a
+`LazyVStack`, and it holds no unmasked sensitive value — taps go back to
+`KeyboardStripSlot` by id. Inserting from the strip or the panel harvests the
+lexicon watch first, so a saved value — an ID number included — can never
+become a dictionary "correction".
+
+### 常用資訊 (snippets)
+
+`Snippet {id, kind, label, value, updatedAt}`, kinds 姓名, 手機, 市話, Email,
+住家地址, 公司地址, 身分證字號, 統一編號 and 自訂 (with the user's label). Edited
+in the app — add, edit, delete, reorder, with an explicit Save and a light
+format hint (a Taiwan ID's check digit, eight digits for 統一編號) that never
+refuses a value. **身分證字號 and 統一編號 are sensitive**: the keyboard draws
+them masked (first two, `•` for each in between, last two — `A1••••••89`),
+VoiceOver reads only their label and "hidden", a tap inserts the full value, and
+the value never goes to the polish, the lexicon, a log or the system pasteboard.
+
+`snippets.json` lives in the App Group container, written atomically with
+`FileProtectionType.complete` (the key is discarded shortly after the phone
+locks; snippets are only ever edited by the user in front of an unlocked phone)
+and excluded from backup. Local only: nothing is uploaded, synced or logged.
+The Keychain was considered and ruled out — sharing an item between the app and
+the keyboard needs a keychain access group, an entitlement and signing change on
+both targets, for what a protected file in the group they already share gives
+just as well.
+
+### The clipboard features 1.30 had, and why they went
+
+1.30 (TestFlight build 47) also had a **paste chip** — 「📋 貼上」 when
+something new had been copied in another app — and a **clipboard history** in
+the same panel, with optional auto-collect and a preview of the copied text in
+the strip. Both were removed before release, and **the keyboard no longer reads
+the pasteboard at all.** The reasons are iOS's, not ours to engineer around:
+
+- **No background access.** A keyboard runs only while it is on screen, and
+  iOS gives it no way to hear about a copy made while it is not. A history can
+  only capture what is on the pasteboard at the moments the keyboard appears —
+  so it misses most of what the user copies, and a history with holes the user
+  cannot predict is worse than none.
+- **Every read prompts.** Reading what another app put on the pasteboard shows
+  the paste banner, or the "Allow Paste?" prompt, unless the user goes to
+  Settings › Parley › Paste from Other Apps › Allow. Asking people to change a
+  privacy setting before a convenience feature works — and explaining why the
+  keyboard asks otherwise — was not a trade worth making. The counter-only
+  check (`changeCount`, `hasStrings`) the paste chip used avoided the prompt
+  for *offering* a paste, but the paste itself, the preview and every capture
+  were reads.
+
+The one pasteboard call left in the keyboard is the voice pane's tap-to-copy,
+which writes. `RetiredClipboard` sweeps what build 47 left behind —
+`clipboard-history.json` in the App Group and its five `clipboard.*` defaults
+keys — on every app launch and every keyboard load with Full Access;
+idempotent, and covered by `SnippetsTests`. A `parley://settings/clipboard` link
+from an old keyboard no longer parses and simply opens the app.
+
+### Performance
+
+Nothing here runs on the keystroke path except `KeyboardStripSlot.keyPressed`,
+which is one `nil` check unless the revert chip is up (then it takes the chip
+down once). The snippets are read once per appearance, and only when a field
+asks or the panel opens. The strip and the panel are value-fed and `Equatable`,
+like the panes.
+
 ## App Review notes
 
 - **4.4.1** (keyboards must work without Full Access): with Full Access off the
@@ -2375,9 +2774,11 @@ more tap.
   that draw one, and ours on the devices that don't — `needsInputModeSwitchKey`
   decides, on every pane. See the 注音 section above.
 - **Third-party data**: the 注音 dictionary is generated from McBopomofo's
-  MIT-licensed lexicon, and the phrase table from their `BPMFMappings.txt`,
-  which descends from libtabe's BSD-licensed `tsi.src`; both notices are in
-  `ios/THIRD-PARTY.md`. Nothing with an unclear licence is shipped.
+  MIT-licensed lexicon, and the phrase and associated-phrase tables from their
+  `BPMFMappings.txt`, which descends from libtabe's BSD-licensed `tsi.src`; the
+  lattice and the learning port McBopomofo's MIT-licensed algorithms. All the
+  notices are in `ios/THIRD-PARTY.md`. Nothing with an unclear licence is
+  shipped.
 - **2.5.1** (private APIs): the only private code in the project is the
   pre-26.4 auto-return — reading the host's bundle id, and asking
   `LSApplicationWorkspace` to open it — version-gated to where it works. Every
@@ -2386,10 +2787,15 @@ more tap.
   the feature actually runs on is public: audio session, openURL, App Group,
   Darwin notifications, insertText, App Intents. Note this path is now live for
   the first time; before the `HostBundleID` fix it was unreachable code.
+- **The pasteboard** is never read. The keyboard's only pasteboard call is the
+  voice pane's tap-to-copy, which writes, and only with Full Access — see "The
+  strip slot and saved info".
 - **The microphone window** is the one part of this keyboard that holds a
   system resource while the user is elsewhere. Its defence is consent that is
   visible and reversible: see that section.
 - Memory: the keyboard process holds no audio, no model, and no transcript
   history — it only shuttles text — to stay under the tight jetsam limit
-  keyboard extensions run against. The one file it does read is the 注音
-  dictionary, lazily and once; see that section for what it costs.
+  keyboard extensions run against. The files it reads are the 注音 tables,
+  lazily; see those sections for what they cost. With Full Access it also
+  writes one small file, the 注音 pane's learned picks (see *Learning from
+  picks*), which never leaves the phone.

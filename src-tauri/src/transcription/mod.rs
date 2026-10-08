@@ -10,10 +10,12 @@
 //! API — no change to callers.
 
 pub mod assemblyai;
+pub mod bridge;
 pub mod common;
 pub mod deepgram;
 pub mod gemini;
 pub mod openai;
+pub mod reconnect;
 pub mod soniox;
 pub mod ws;
 

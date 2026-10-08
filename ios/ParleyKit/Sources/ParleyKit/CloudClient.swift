@@ -10,7 +10,7 @@ public struct CloudError: Error, Equatable {
 /// `src/lib/cloud/{client,sync,folders,orgs}.ts` call-for-call; the 401/403
 /// discipline is the same — 401 means the session is dead (caller should sign
 /// out), 403 is resource-level and must NOT clear auth.
-public actor CloudClient: BatchTranscriptionService {
+public actor CloudClient: BatchTranscriptionService, DictionarySyncTransport {
     public static let defaultBaseURL = URL(string: "https://api.parley.tw")!
 
     /// Uploading an hour of compressed audio over a phone network is minutes of
@@ -278,6 +278,27 @@ public actor CloudClient: BatchTranscriptionService {
         _ = try await request(
             "orgs/\(orgId)/recordings/\(id)/folder", method: "PATCH",
             body: body, contentType: "application/json")
+    }
+
+    // MARK: personal dictionary
+
+    /// `GET /v1/dictionary?since=` — entries written since the cursor,
+    /// tombstones included. See `DictionarySync`.
+    public func pullDictionary(since: Int64?) async throws -> DictionaryPullResponse {
+        let query = since.map { [URLQueryItem(name: "since", value: String($0))] } ?? []
+        let data = try await request("v1/dictionary", query: query)
+        return try JSONDecoder().decode(DictionaryPullResponse.self, from: data)
+    }
+
+    /// `PUT /v1/dictionary` — one batch (the server takes up to 500). Answers
+    /// with the merged state of every phrase it touched.
+    public func pushDictionary(_ entries: [CloudDictionaryEntry]) async throws
+        -> DictionaryPushResponse
+    {
+        let body = try JSONEncoder().encode(["entries": entries])
+        let data = try await request(
+            "v1/dictionary", method: "PUT", body: body, contentType: "application/json")
+        return try JSONDecoder().decode(DictionaryPushResponse.self, from: data)
     }
 
     // MARK: generic JSON POST

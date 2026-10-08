@@ -11,8 +11,37 @@ import { hasProviderKey } from "../lib/ai/settings";
 import { CANCEL_UNDO_MS } from "../lib/voiceTyping/cancel";
 import { isModifierId, modifierIdsFor, shortcutCaps } from "../lib/voiceTyping/caps";
 import { loneModifierRelease, MODIFIER_CODES } from "../lib/voiceTyping/recorder";
-import type { VoicePolishStyle, VoiceTypingMode, VoiceTypingShortcut } from "../lib/types";
+import type {
+  VoiceTypingMode,
+  VoiceTypingPolishStyle,
+  VoiceTypingShortcut,
+} from "../lib/types";
 import { Button } from "@/components/ui/button";
+import { InfoTip } from "@/components/ui/info-tip";
+
+/** The polish styles in the order the picker shows them, with their name and
+ *  the one line saying what each does to the words. */
+const POLISH_STYLE_OPTIONS: readonly {
+  style: VoiceTypingPolishStyle;
+  label: TranslationKey;
+  hint: TranslationKey;
+}[] = [
+  {
+    style: "off",
+    label: "settings.voiceTyping.polishStyle.off",
+    hint: "settings.voiceTyping.polishStyle.offHint",
+  },
+  {
+    style: "tidy",
+    label: "settings.voiceTyping.polishStyle.tidy",
+    hint: "settings.voiceTyping.polishStyle.tidyHint",
+  },
+  {
+    style: "concise",
+    label: "settings.voiceTyping.polishStyle.concise",
+    hint: "settings.voiceTyping.polishStyle.conciseHint",
+  },
+];
 
 interface HotkeyStatus {
   authorized: boolean;
@@ -241,7 +270,7 @@ function describeTrigger(
  * rather than letting the feature look self-teaching everywhere.
  */
 export const VoiceTypingSettings = () => {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const settings = useStore((s) => s.settings);
   const updateSettings = useStore((s) => s.updateSettings);
   const [status, setStatus] = useState<HotkeyStatus | null>(null);
@@ -378,24 +407,20 @@ export const VoiceTypingSettings = () => {
   };
   const mode = settings.voiceTypingMode;
 
-  const setVoiceTypingPolish = (polish: boolean) => {
-    updateSettings({ voiceTypingPolish: polish });
-    broadcastSettings({ ...useStore.getState().settings }).catch((error) =>
-      log.warn("voice typing settings: broadcast failed", { error: String(error) }),
-    );
-  };
-  const setVoiceTypingPolishStyle = (style: VoicePolishStyle) => {
+  const setVoiceTypingPolishStyle = (style: VoiceTypingPolishStyle) => {
     updateSettings({ voiceTypingPolishStyle: style });
     broadcastSettings({ ...useStore.getState().settings }).catch((error) =>
       log.warn("voice typing settings: broadcast failed", { error: String(error) }),
     );
   };
-  const polishStyle = settings.voiceTypingPolishStyle;
-  // The toggle stays operable without a realtime provider — turning it on is
-  // how someone decides they want this, and the note tells them the one thing
-  // left to do. Disabling the control would leave them guessing why nothing
-  // happens.
+  // The picker stays operable without a realtime provider — choosing a style
+  // is how someone decides they want this, and the note tells them the one
+  // thing left to do. Disabling the control would leave them guessing why
+  // nothing happens.
   const polishHasProvider = hasProviderKey(settings, "realtime");
+  const polishStyle = settings.voiceTypingPolishStyle;
+  // "Label: what it does" lines for the hover explanations.
+  const sep = language === "zh-TW" ? "：" : ": ";
 
   // Guidance renders as single inline lines (no nested boxes) and only when
   // actionable — the default state is just the recorder, the chips and one
@@ -414,9 +439,13 @@ export const VoiceTypingSettings = () => {
       <div className="flex flex-col gap-1.5">
         <div className="flex items-center justify-between gap-3">
           <span className="flex flex-col gap-0.5">
-            <span className="text-sm font-medium">{t("settings.voiceTyping.pushToTalk")}</span>
-            <span className="text-[11px] text-muted-foreground">
-              {t("settings.voiceTyping.hint")}
+            <span className="flex items-center gap-1.5 text-sm font-medium">
+              {t("settings.voiceTyping.pushToTalk")}
+              <InfoTip label={t("settings.info")}>
+                {`${t("settings.voiceTyping.hint")}\n${t("settings.voiceTyping.cancelHint", {
+                  seconds: CANCEL_UNDO_MS / 1000,
+                })}`}
+              </InfoTip>
             </span>
           </span>
           <Button
@@ -435,66 +464,43 @@ export const VoiceTypingSettings = () => {
       <div className="flex flex-col gap-1.5">
         <div className="flex items-center justify-between gap-3">
           <span className="flex flex-col gap-0.5">
-            <span className="text-sm font-medium">{t("settings.voiceTyping.polish")}</span>
-            <span className="text-[11px] text-muted-foreground">
-              {t("settings.voiceTyping.polishHint")}
+            <span className="flex items-center gap-1.5 text-sm font-medium">
+              {t("settings.voiceTyping.polish")}
+              <InfoTip label={t("settings.info")}>
+                {POLISH_STYLE_OPTIONS.map((o) => `${t(o.label)}${sep}${t(o.hint)}`).join("\n")}
+              </InfoTip>
             </span>
           </span>
-          <Button
-            variant={settings.voiceTypingPolish ? "outline" : "default"}
-            size="sm"
-            className="h-7 shrink-0 px-2 text-[11px]"
-            onClick={() => setVoiceTypingPolish(!settings.voiceTypingPolish)}
-          >
-            {settings.voiceTypingPolish
-              ? t("settings.voiceTyping.disable")
-              : t("settings.voiceTyping.enable")}
-          </Button>
+          <div className="flex shrink-0 gap-1.5" role="radiogroup">
+            {POLISH_STYLE_OPTIONS.map((o) => (
+              <Button
+                key={o.style}
+                role="radio"
+                aria-checked={polishStyle === o.style}
+                variant={polishStyle === o.style ? "secondary" : "outline"}
+                size="sm"
+                className="h-7 px-2.5 text-[11px]"
+                onClick={() => setVoiceTypingPolishStyle(o.style)}
+              >
+                {t(o.label)}
+              </Button>
+            ))}
+          </div>
         </div>
-        {settings.voiceTypingPolish && !polishHasProvider && (
+        {polishStyle !== "off" && !polishHasProvider && (
           <p className="text-[11px] text-warning-foreground">
             {t("settings.voiceTyping.polishNoProvider")}
           </p>
-        )}
-        {settings.voiceTypingPolish && (
-          <>
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-[11px] font-medium text-muted-foreground">
-                {t("settings.voiceTyping.polishStyle")}
-              </span>
-              <div className="flex shrink-0 gap-1.5">
-                {(["proofread", "rewrite"] as const).map((style) => (
-                  <Button
-                    key={style}
-                    variant={polishStyle === style ? "secondary" : "outline"}
-                    size="sm"
-                    className="h-7 px-2.5 text-[11px]"
-                    onClick={() => setVoiceTypingPolishStyle(style)}
-                  >
-                    {t(
-                      style === "proofread"
-                        ? "settings.voiceTyping.polishStyle.proofread"
-                        : "settings.voiceTyping.polishStyle.rewrite",
-                    )}
-                  </Button>
-                ))}
-              </div>
-            </div>
-            <p className="text-[11px] text-muted-foreground">
-              {t(
-                polishStyle === "rewrite"
-                  ? "settings.voiceTyping.polishStyle.rewriteHint"
-                  : "settings.voiceTyping.polishStyle.proofreadHint",
-              )}
-            </p>
-          </>
         )}
       </div>
 
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-[11px] font-medium text-muted-foreground">
+          <span className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
             {t("settings.voiceTyping.mode")}
+            <InfoTip label={t("settings.info")}>
+              {`${t("settings.voiceTyping.mode.hold")}${sep}${t("settings.voiceTyping.mode.holdHint")}\n${t("settings.voiceTyping.mode.toggle")}${sep}${t("settings.voiceTyping.mode.toggleHint")}`}
+            </InfoTip>
           </span>
           <div className="flex shrink-0 gap-1.5">
             {(["hold", "toggle"] as const).map((m) => (
@@ -514,22 +520,13 @@ export const VoiceTypingSettings = () => {
             ))}
           </div>
         </div>
-        <p className="text-[11px] text-muted-foreground">
-          {t(
-            mode === "toggle"
-              ? "settings.voiceTyping.mode.toggleHint"
-              : "settings.voiceTyping.mode.holdHint",
-          )}
-        </p>
-        <p className="text-[11px] text-muted-foreground">
-          {t("settings.voiceTyping.cancelHint", { seconds: CANCEL_UNDO_MS / 1000 })}
-        </p>
       </div>
 
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-[11px] font-medium text-muted-foreground">
+          <span className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
             {t("settings.voiceTyping.shortcut")}
+            <InfoTip label={t("settings.info")}>{t(recorderHelpKey)}</InfoTip>
           </span>
           <span
             className={`flex shrink-0 items-center gap-1 text-[11px] font-medium ${
@@ -620,9 +617,11 @@ export const VoiceTypingSettings = () => {
           </div>
         </div>
 
-        <p className="text-[11px] text-muted-foreground">
-          {recording ? t("settings.voiceTyping.recorder.cancelHint") : t(recorderHelpKey)}
-        </p>
+        {recording && (
+          <p className="text-[11px] text-muted-foreground">
+            {t("settings.voiceTyping.recorder.cancelHint")}
+          </p>
+        )}
         {recordHint && (
           <p className="text-[11px] font-medium text-warning-foreground">
             {t(recordHint)}
@@ -671,8 +670,9 @@ export const VoiceTypingSettings = () => {
           </p>
         )}
         {fnListenOnly && (
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
-            {t("settings.voiceTyping.fnListenOnly")}{" "}
+          <p className="flex flex-wrap items-center gap-x-1.5 text-[11px] text-muted-foreground">
+            {t("settings.voiceTyping.fnListenOnlyShort")}
+            <InfoTip label={t("settings.info")}>{t("settings.voiceTyping.fnListenOnly")}</InfoTip>
             <button
               type="button"
               className="font-medium text-foreground underline underline-offset-2"

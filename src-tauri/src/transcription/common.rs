@@ -32,11 +32,35 @@ pub const PROSODY_EVENT: &str = "audio://prosody";
 /// The `source` label of a voice-typing session's events.
 pub const VOICE_TYPING_SOURCE: &str = "voice-typing";
 
+/// Event the frontend listens on for the live transcription's connection
+/// state during a meeting. Payloads: `{ source, state: "live", leg }` once a
+/// leg's handshake completes (see [`note_connected`]), and `{ source, state:
+/// "reconnecting", attempt }` while the session redials after a dropped
+/// connection (see `capture::run_metered_session`). The recording itself never
+/// depends on either.
+pub const TRANSCRIPTION_STATE_EVENT: &str = "meeting://transcription";
+
+/// How long a provider handshake (TCP + TLS + websocket upgrade) may take.
+/// A healthy one completes in well under a second, though the hosted relay
+/// usually takes about two and has been seen at six and a half; without a
+/// bound, a dial into a dead network waits on the OS, which can take minutes —
+/// long past the hold buffer that keeps the meeting's words for the next leg,
+/// and long past any dictation the user is waiting on.
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+
 tokio::task_local! {
     /// The voice-typing session the current task belongs to, set by
     /// `run_metered_session` for the whole session task and `None` for
     /// meetings.
     pub static SESSION: Option<u64>;
+
+    /// The bridge feeding the current meeting leg, scoped by the session loop
+    /// around each leg's `run_session` (see `capture::run_legs`). The adapter
+    /// runs inline in that task, so [`note_connected`] can reach it to
+    /// [confirm](crate::transcription::bridge::SttBridge::confirm) the
+    /// handshake — which is what lets the bridge stop keeping copies of the
+    /// audio it fed the leg. Unset for voice typing.
+    pub static BRIDGE: Option<std::sync::Arc<crate::transcription::bridge::SttBridge>>;
 }
 
 /// The session id to stamp on an event for `source`. A voice-typing event
@@ -66,42 +90,6 @@ pub fn session_for(source: &str) -> Option<u64> {
 /// end of stream (Soniox's `<fin>`), so the host waits for that close rather
 /// than guessing from silence.
 pub const CONNECTED_EVENT: &str = "stt://connected";
-
-/// Say the session's socket is open (see [`CONNECTED_EVENT`]).
-pub fn emit_connected(app: &AppHandle, source: &str, acks_finalize: bool) {
-    let _ = app.emit(
-        CONNECTED_EVENT,
-        serde_json::json!({
-            "source": source,
-            "session": session_for(source),
-            "acksFinalize": acks_finalize,
-        }),
-    );
-}
-
-/// The longest a provider's WebSocket handshake may take before the session
-/// fails. The hosted relay usually accepts in about two seconds and has been
-/// seen at six and a half; a connect still pending at fifteen is not coming,
-/// and without a bound it parked the session (and the dictation the user is
-/// waiting on) until the OS gave up on the TCP connection.
-pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
-
-/// `connect` bounded by [`CONNECT_TIMEOUT`].
-pub async fn with_connect_timeout<T>(
-    connect: impl std::future::Future<Output = Result<T>>,
-) -> Result<T> {
-    connect_within(CONNECT_TIMEOUT, connect).await
-}
-
-/// [`with_connect_timeout`] with the bound as a parameter, for tests.
-async fn connect_within<T>(
-    limit: Duration,
-    connect: impl std::future::Future<Output = Result<T>>,
-) -> Result<T> {
-    tokio::time::timeout(limit, connect)
-        .await
-        .map_err(|_| anyhow!("connect failed: no answer within {}s", limit.as_secs()))?
-}
 
 /// rustls 0.23 requires a process-wide default CryptoProvider before any TLS
 /// handshake; installing it lazily (once) avoids a panic in the ws task.
@@ -138,6 +126,61 @@ pub struct TranscribeConfig {
     /// injects the real key server-side, so the vendor stays hidden. `None` =
     /// BYOK direct-to-vendor (the default for every other provider).
     pub relay_endpoint: Option<String>,
+    /// Which leg of a reconnecting meeting session this is: 0 for the first
+    /// connection, +1 per redial. Every leg numbers its segments from zero, so
+    /// leg > 0 namespaces its ids (see [`Timeline::segment_id`]) — otherwise a
+    /// reconnect would overwrite the opening of the meeting with its own first
+    /// sentence. Always 0 outside meetings.
+    pub leg: u32,
+    /// Milliseconds into the recording at which this leg's first sample was
+    /// captured. A new provider session's clock restarts at zero, so every
+    /// timestamp the leg emits is shifted by this to stay on the recording's
+    /// timeline. Always 0 for the first leg and outside meetings.
+    pub time_offset_ms: u64,
+    /// Whether the adapter emits `audio://level` for the audio it sends. A
+    /// reconnecting meeting turns it off and meters at its bridge instead:
+    /// the bridge sees every chunk as it is captured, while an adapter sees
+    /// nothing during a handshake and then the whole hold buffer in one burst
+    /// (hundreds of level events in a second — a thrashing titlebar meter).
+    pub level_events: bool,
+}
+
+impl TranscribeConfig {
+    /// The leg/offset pair the segment builder stamps onto what it emits.
+    pub fn timeline(&self) -> Timeline {
+        Timeline {
+            leg: self.leg,
+            offset_ms: self.time_offset_ms,
+        }
+    }
+}
+
+/// Where one session leg sits in its meeting: which leg it is (for segment
+/// ids) and where its clock starts (for timestamps). Pure, so the id and
+/// offset rules are testable without an `AppHandle`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Timeline {
+    pub leg: u32,
+    pub offset_ms: u64,
+}
+
+impl Timeline {
+    /// The id of committed segment `index` from `source`. The first leg keeps
+    /// the plain `{source}-{index}` shape — the frontend and saved history key
+    /// on it — and later legs insert `@{leg}` so their indices, which restart
+    /// at zero, can never collide with an earlier leg's.
+    pub fn segment_id(&self, source: &str, index: u64) -> String {
+        if self.leg == 0 {
+            format!("{source}-{index}")
+        } else {
+            format!("{source}@{}-{index}", self.leg)
+        }
+    }
+
+    /// A provider timestamp moved onto the recording's timeline.
+    pub fn shift(&self, ms: u64) -> u64 {
+        ms.saturating_add(self.offset_ms)
+    }
 }
 
 /// Normalize a custom-vocabulary list before it goes on the wire: trim each
@@ -223,7 +266,61 @@ pub fn emit_segment(
     );
 }
 
+/// A leg's handshake completed (and its opening config frame went out, where
+/// the protocol has one). Adapters call it right after that, once per leg:
+/// - it emits [`CONNECTED_EVENT`] (`stt://connected`), which the voice-typing
+///   host times its wait for the final answer from; `acks_finalize` says the
+///   provider answers the closing finalize with an explicit end of stream;
+/// - it confirms the leg to its bridge, which can now let go of its copies of
+///   the audio fed to the leg (meetings only; voice typing has no bridge);
+/// - it tells the meeting UI transcription is live (`meeting://transcription`,
+///   state `live`), which drops its "reconnecting" banner. Voice typing has no
+///   such surface.
+pub fn note_connected(app: &AppHandle, source: &str, leg: u32, acks_finalize: bool) {
+    let _ = app.emit(
+        CONNECTED_EVENT,
+        serde_json::json!({
+            "source": source,
+            "session": session_for(source),
+            "acksFinalize": acks_finalize,
+        }),
+    );
+    let _ = BRIDGE.try_with(|bridge| {
+        if let Some(bridge) = bridge {
+            bridge.confirm();
+        }
+    });
+    if source == VOICE_TYPING_SOURCE {
+        return;
+    }
+    let _ = app.emit(
+        TRANSCRIPTION_STATE_EVENT,
+        serde_json::json!({ "source": source, "state": "live", "leg": leg }),
+    );
+}
+
+/// Bound a websocket handshake by [`CONNECT_TIMEOUT`]. An elapsed dial is a
+/// plain "connect timed out" error, which `run_metered_session` classifies as
+/// a connection failure (retryable in a meeting).
+pub async fn with_connect_timeout<T>(
+    connect: impl std::future::Future<Output = Result<T>>,
+) -> Result<T> {
+    connect_within(CONNECT_TIMEOUT, connect).await
+}
+
+/// [`with_connect_timeout`] with the bound as a parameter, for tests.
+async fn connect_within<T>(
+    limit: Duration,
+    connect: impl std::future::Future<Output = Result<T>>,
+) -> Result<T> {
+    match tokio::time::timeout(limit, connect).await {
+        Ok(result) => result,
+        Err(_elapsed) => Err(anyhow!("connect timed out")),
+    }
+}
+
 /// Open a WebSocket with extra request headers (provider auth lives here).
+/// Bounded by [`CONNECT_TIMEOUT`].
 pub async fn connect_with_headers(
     url: &str,
     headers: &[(&str, String)],
@@ -356,6 +453,7 @@ pub struct LevelMeter {
     peak: i32,
     samples: u64,
     window: u64,
+    enabled: bool,
 }
 
 impl LevelMeter {
@@ -368,10 +466,21 @@ impl LevelMeter {
             samples: 0,
             // 16 kHz / 1600 = 10 windows per second.
             window: TARGET_SAMPLE_RATE as u64 / 10,
+            enabled: true,
         }
     }
 
+    /// Mute (`false`) or keep (`true`) the meter — adapters pass
+    /// [`TranscribeConfig::level_events`]. A muted meter ignores every push.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
     pub fn push(&mut self, chunk: &[i16]) {
+        if !self.enabled {
+            return;
+        }
         for &s in chunk {
             self.peak = self.peak.max((s as i32).abs());
         }
@@ -402,10 +511,16 @@ impl LevelMeter {
 /// 2. `emit_committed()` to surface the open run as solid text,
 /// 3. `emit_tail(interim, speaker, start)` for the tentative tail,
 /// 4. `endpoint()` when the provider signals end-of-utterance.
+///
+/// Adapters work in the provider's own clock (zero at the leg's first sample)
+/// and indices; the builder's [`Timeline`] moves every id and timestamp it
+/// emits onto the meeting's, so a reconnected leg neither overwrites earlier
+/// segments nor files its words at the start of the meeting.
 pub struct SegmentBuilder {
     app: AppHandle,
     source: &'static str,
     event: &'static str,
+    timeline: Timeline,
     seg_index: u64,
     /// Speaker of the open run, or `None` when no run is open.
     cur_speaker: Option<i64>,
@@ -415,11 +530,17 @@ pub struct SegmentBuilder {
 }
 
 impl SegmentBuilder {
-    pub fn new(app: AppHandle, source: &'static str, event: &'static str) -> Self {
+    pub fn new(
+        app: AppHandle,
+        source: &'static str,
+        event: &'static str,
+        timeline: Timeline,
+    ) -> Self {
         Self {
             app,
             source,
             event,
+            timeline,
             seg_index: 0,
             cur_speaker: None,
             cur_final: String::new(),
@@ -434,6 +555,7 @@ impl SegmentBuilder {
     }
 
     /// The end timestamp of the current open run — useful as a tail start.
+    /// In the provider's clock, like every timestamp an adapter passes in.
     pub fn current_end(&self) -> u64 {
         self.cur_end
     }
@@ -461,19 +583,25 @@ impl SegmentBuilder {
         self.cur_end = end_ms;
     }
 
-    /// Emit the open run under a fresh segment id and advance the index.
-    fn commit(&mut self) {
+    /// Emit the open run under its segment id (settled text), shifted onto
+    /// the meeting's timeline.
+    fn emit_open_run(&self) {
         emit_segment(
             &self.app,
             self.event,
             self.source,
-            format!("{}-{}", self.source, self.seg_index),
+            self.timeline.segment_id(self.source, self.seg_index),
             self.current_speaker(),
             self.cur_final.clone(),
             true,
-            self.cur_start,
-            self.cur_end,
+            self.timeline.shift(self.cur_start),
+            self.timeline.shift(self.cur_end),
         );
+    }
+
+    /// Emit the open run under a fresh segment id and advance the index.
+    fn commit(&mut self) {
+        self.emit_open_run();
         self.seg_index += 1;
     }
 
@@ -481,23 +609,16 @@ impl SegmentBuilder {
     /// it keeps growing under the same id until an endpoint or speaker change.
     pub fn emit_committed(&self) {
         if !self.cur_final.trim().is_empty() {
-            emit_segment(
-                &self.app,
-                self.event,
-                self.source,
-                format!("{}-{}", self.source, self.seg_index),
-                self.current_speaker(),
-                self.cur_final.clone(),
-                true,
-                self.cur_start,
-                self.cur_end,
-            );
+            self.emit_open_run();
         }
     }
 
     /// Emit the tentative tail under a stable `{source}-tail` id (empty text
-    /// clears the previous tail in the UI).
+    /// clears the previous tail in the UI). The id carries no leg: there is
+    /// only ever one tentative tail, and a new leg's first tail replaces the
+    /// dead leg's.
     pub fn emit_tail(&self, text: &str, speaker: i64, start_ms: u64) {
+        let start_ms = self.timeline.shift(start_ms);
         emit_segment(
             &self.app,
             self.event,
@@ -532,7 +653,7 @@ mod tests {
         let limit = Duration::from_millis(20);
         let started = std::time::Instant::now();
         let r: Result<()> = connect_within(limit, std::future::pending()).await;
-        assert!(r.unwrap_err().to_string().starts_with("connect failed"));
+        assert_eq!(r.unwrap_err().to_string(), "connect timed out");
         assert!(started.elapsed() >= limit);
     }
 
@@ -609,5 +730,50 @@ mod tests {
         assert_eq!(urlencode("a b&c=d"), "a%20b%26c%3Dd");
         // CJK must be escaped per UTF-8 byte, not per char.
         assert_eq!(urlencode("派"), "%E6%B4%BE");
+    }
+
+    #[test]
+    fn the_first_leg_keeps_the_plain_segment_ids() {
+        // Saved history and the frontend's upsert key on this exact shape.
+        let first = Timeline::default();
+        assert_eq!(first.segment_id("mix", 0), "mix-0");
+        assert_eq!(first.segment_id("them", 12), "them-12");
+        assert_eq!(first.shift(1_500), 1_500);
+    }
+
+    #[test]
+    fn a_later_leg_namespaces_its_ids_and_shifts_its_clock() {
+        let third = Timeline {
+            leg: 2,
+            offset_ms: 600_000,
+        };
+        // Its index restarts at zero but can't collide with leg 0's "mix-0".
+        assert_eq!(third.segment_id("mix", 0), "mix@2-0");
+        assert_eq!(third.segment_id("me", 7), "me@2-7");
+        // Provider time zero is ten minutes into the meeting.
+        assert_eq!(third.shift(0), 600_000);
+        assert_eq!(third.shift(2_340), 602_340);
+    }
+
+    #[test]
+    fn the_config_carries_its_timeline() {
+        let config = TranscribeConfig {
+            api_key: String::new(),
+            model: String::new(),
+            language_hints: Vec::new(),
+            diarization: false,
+            vocabulary: Vec::new(),
+            relay_endpoint: None,
+            leg: 3,
+            time_offset_ms: 42,
+            level_events: true,
+        };
+        assert_eq!(
+            config.timeline(),
+            Timeline {
+                leg: 3,
+                offset_ms: 42
+            }
+        );
     }
 }

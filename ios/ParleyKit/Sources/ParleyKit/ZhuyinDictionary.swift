@@ -22,6 +22,13 @@ import Foundation
 /// 從, 總 and 宗 first and 中 after them. The table itself is unchanged: the
 /// variants are more lookups into it, not more rows.
 ///
+/// **Each row carries one score**: the log10 probability of its first
+/// character, which is what `ZhuyinComposer.best`'s lattice spends for spelling
+/// a syllable as one character (`topCandidate(for:)`). Only the first one's,
+/// because the lattice's character node is a syllable's top candidate and the
+/// rest of the row is the bar's, ordered by position. Same scale and same
+/// normaliser as the phrase table's scores — see `scripts/gen-zhuyin-dict.mjs`.
+///
 /// **Loaded lazily, and never twice at once.** This runs inside a keyboard
 /// extension, which iOS jetsams far sooner than an app, so the resource is not
 /// touched until the user types into the 注音 pane: a keyboard opened on the
@@ -42,8 +49,22 @@ public final class ZhuyinDictionary {
         Bundle.module.url(forResource: "zhuyin-dict", withExtension: "txt")
     }
 
+    /// One row: the characters, most frequent first, concatenated with no
+    /// separator, and the first one's log10 probability.
+    struct Row {
+        let characters: String
+        let score: Float
+    }
+
+    /// The score a row is given when nobody wrote one — a fixture built from
+    /// `init(entries:)`, or a resource row from before the column existed.
+    /// Roughly a common character's (的 is −1.8, 研 −3.0): low enough that a
+    /// fixture phrase, scored from its rank, beats the characters that would
+    /// spell it, which is what every fixture written before scores expected.
+    public static let defaultScore: Float = -4
+
     private var url: URL?
-    private var table: [String: String]?
+    private var table: [String: Row]?
     /// A background build is on its way back to the main queue.
     private var warming = false
     /// Everyone who asked `warm` to be told when the table lands, oldest first.
@@ -72,9 +93,14 @@ public final class ZhuyinDictionary {
     private(set) var parseCount = 0
 
     /// Build from an already-parsed table. This is how tests get a fixture, and
-    /// how a caller with its own data source stays out of the bundle.
-    public init(entries: [String: String]) {
-        table = entries
+    /// how a caller with its own data source stays out of the bundle. Every row
+    /// scores `defaultScore` unless `scores` names it.
+    public init(entries: [String: String], scores: [String: Float] = [:]) {
+        table = entries.mapValues { Row(characters: $0, score: Self.defaultScore) }
+        for (reading, score) in scores {
+            guard let row = table?[reading] else { continue }
+            table?[reading] = Row(characters: row.characters, score: score)
+        }
     }
 
     /// A `nil` url is a dictionary that answers nothing — a missing resource
@@ -152,14 +178,8 @@ public final class ZhuyinDictionary {
     /// answers the toneless row too — re-toning is allowed, and asking "what
     /// could this still become" has to survive it. Fuzzy as `candidates` is.
     public func tonelessCandidates(for syllable: ZhuyinSyllable, fuzzy: Bool = true) -> [String] {
-        withVariants(of: syllable, fuzzy: fuzzy) { variant in
-            var key = "~"
-            if let initial = variant.initial { key.append(initial) }
-            if let medial = variant.medial { key.append(medial) }
-            if let final = variant.final { key.append(final) }
-            // A bare `~` is not a key; `candidates(for:)` answers it with nothing.
-            return key.count > 1 ? key : ""
-        }
+        // A bare `~` is not a key; `candidates(for:)` answers it with nothing.
+        withVariants(of: syllable, fuzzy: fuzzy, key: Self.tonelessKey)
     }
 
     /// How many characters each fuzzy variant may add. A slip is asking for the
@@ -191,7 +211,7 @@ public final class ZhuyinDictionary {
         var seen: Set<String>?
         for variant in ZhuyinFuzzy.variants(of: syllable) {
             let reading = key(variant)
-            guard !reading.isEmpty, let row = load()[reading] else { continue }
+            guard !reading.isEmpty, let row = load()[reading]?.characters else { continue }
             if seen == nil { seen = Set(out) }
             var added = 0
             for scalar in row.unicodeScalars {
@@ -209,7 +229,7 @@ public final class ZhuyinDictionary {
     /// nothing is pronounced as — `ㄍㄧ` parses and has no candidates, and the
     /// pane says so by showing an empty bar rather than by refusing the keys.
     public func candidates(for reading: String) -> [String] {
-        guard !reading.isEmpty, let row = load()[reading] else { return [] }
+        guard !reading.isEmpty, let row = load()[reading]?.characters else { return [] }
         // Every character in the source is exactly one Unicode scalar (the
         // generator enforces it), so the row needs no separator and no parsing
         // — including the ones outside the BMP, which is where the rarer
@@ -221,13 +241,57 @@ public final class ZhuyinDictionary {
     /// fuzzy fallback. The composer takes its top from `candidates` instead, which
     /// is exact-first and falls back to a variant's.
     public func top(for syllable: ZhuyinSyllable) -> String? {
-        guard let row = load()[syllable.text], let first = row.unicodeScalars.first else {
+        guard let row = load()[syllable.text], let first = row.characters.unicodeScalars.first
+        else {
             return nil
         }
         return String(first)
     }
 
-    private func load() -> [String: String] {
+    /// A syllable's top candidate as the lattice sees it: the character, its
+    /// score, and whether a wrong symbol had to be forgiven to get it.
+    public struct Top: Equatable, Sendable {
+        public let character: String
+        public let score: Float
+        /// 0 for the syllable's own row, 1 for a `ZhuyinFuzzy` variant's.
+        public let errors: Int
+    }
+
+    /// What `candidates(for:)` / `tonelessCandidates(for:)` would put first,
+    /// without building the rest of the list — toneless when `toneless`, which
+    /// is how the composer looks up a syllable that has no tone yet.
+    ///
+    /// The same rule as `withVariants`: the syllable's own row when it has one,
+    /// otherwise the first variant that has a row, scored as that row. `nil`
+    /// when nothing reads that way at all, which the composer answers with the
+    /// raw 注音.
+    public func topCandidate(for syllable: ZhuyinSyllable, toneless: Bool) -> Top? {
+        let key: (ZhuyinSyllable) -> String = toneless ? Self.tonelessKey : { $0.text }
+        let table = load()
+        if let row = table[key(syllable)], let first = row.characters.unicodeScalars.first {
+            return Top(character: String(first), score: row.score, errors: 0)
+        }
+        for variant in ZhuyinFuzzy.variants(of: syllable) {
+            let reading = key(variant)
+            guard !reading.isEmpty, let row = table[reading],
+                let first = row.characters.unicodeScalars.first
+            else { continue }
+            return Top(character: String(first), score: row.score, errors: 1)
+        }
+        return nil
+    }
+
+    /// The `~` key for a syllable's slots, tone ignored. Empty for a syllable
+    /// with no slots, which no row is keyed by.
+    private static func tonelessKey(_ syllable: ZhuyinSyllable) -> String {
+        var key = "~"
+        if let initial = syllable.initial { key.append(initial) }
+        if let medial = syllable.medial { key.append(medial) }
+        if let final = syllable.final { key.append(final) }
+        return key.count > 1 ? key : ""
+    }
+
+    private func load() -> [String: Row] {
         if let table { return table }
         // Never a second parse beside the one in flight — see `warm`.
         if warming { return [:] }
@@ -245,19 +309,21 @@ public final class ZhuyinDictionary {
 
     /// Read the resource. Static, and a function of the URL alone, so `warm`
     /// can run it on a background queue without touching this instance.
-    private static func parse(_ url: URL) -> [String: String] {
+    private static func parse(_ url: URL) -> [String: Row] {
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [:] }
-        var entries: [String: String] = [:]
+        var entries: [String: Row] = [:]
         entries.reserveCapacity(2000)
         // `~` rows need no special case: the key is read verbatim and the prefix
         // is not a 注音 symbol, so nothing else can claim it.
         for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
             guard !line.hasPrefix("#") else { continue }
-            guard let tab = line.firstIndex(of: "\t") else { continue }
-            let reading = String(line[line.startIndex..<tab])
-            let row = String(line[line.index(after: tab)...])
-            guard !reading.isEmpty, !row.isEmpty else { continue }
-            entries[reading] = row
+            let columns = line.split(separator: "\t", omittingEmptySubsequences: false)
+            guard columns.count >= 2 else { continue }
+            let reading = String(columns[0])
+            let characters = String(columns[1])
+            guard !reading.isEmpty, !characters.isEmpty else { continue }
+            let score = columns.count > 2 ? Float(columns[2]) ?? defaultScore : defaultScore
+            entries[reading] = Row(characters: characters, score: score)
         }
         // The file's string goes out of scope here.
         return entries

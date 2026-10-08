@@ -21,7 +21,7 @@ import {
 } from "./polish";
 
 const settings = {
-  voiceTypingPolish: true,
+  voiceTypingPolishStyle: "tidy",
   llmProviders: { realtime: "parley", deep: "parley" },
   models: { parley: { realtime: "parley-fast", deep: "parley-smart" } },
   reasoningEffort: { realtime: "low", deep: "medium" },
@@ -205,7 +205,7 @@ describe("polish against Parley Cloud from a WebKit webview", () => {
   it("names why it did not run: off, or too short", async () => {
     const fetchSpy = webkitFetch(async () => completion(POLISHED));
     await expect(
-      polishTranscriptOutcome({ raw: RAW, settings: { ...settings, voiceTypingPolish: false } }),
+      polishTranscriptOutcome({ raw: RAW, settings: { ...settings, voiceTypingPolishStyle: "off" } }),
     ).resolves.toEqual({ text: null, outcome: "off" });
     await expect(polishTranscriptOutcome({ raw: "ok", settings })).resolves.toEqual({
       text: null,
@@ -370,32 +370,29 @@ describe("polish against Parley Cloud from a WebKit webview", () => {
 
   it("names the guard's reason when it refuses the answer", async () => {
     webkitFetch(async () => completion("Sure!"));
-    const rewrite = { ...settings, voiceTypingPolishStyle: "rewrite" } as Settings;
-    await expect(polishTranscriptOutcome({ raw: RAW, settings: rewrite })).resolves.toEqual({
+    await expect(polishTranscriptOutcome({ raw: RAW, settings })).resolves.toEqual({
       text: null,
       outcome: "rejectedLength",
     });
     expect(log.info).toHaveBeenCalledWith(
       "voice-typing: polish rejected, keeping raw",
-      expect.objectContaining({ outcome: "rejectedLength", style: "rewrite" }),
+      expect.objectContaining({ outcome: "rejectedLength", style: "tidy" }),
     );
     expect(log.warn).not.toHaveBeenCalled();
   });
 
-  /** Settings saved before the style existed proofread, and a proofread that
-   *  rewrote the sentence is refused. */
-  it("proofreads by default, and refuses an answer that rewrote the dictation", async () => {
-    const fetchSpy = webkitFetch(async () => completion("Sure! Shipping on Friday works."));
-    await expect(polishTranscriptOutcome({ raw: RAW, settings })).resolves.toEqual({
-      text: null,
-      outcome: "rejectedRewrite",
+  /** Concise on Parley Cloud asks for its own alias and prompt, and still
+   *  asks for low reasoning — the same transport as tidy. */
+  it("sends the concise style to its own alias with its own prompt", async () => {
+    const fetchSpy = webkitFetch(async () => completion(POLISHED));
+    const concise = { ...settings, voiceTypingPolishStyle: "concise" } as Settings;
+    await expect(polishTranscriptOutcome({ raw: RAW, settings: concise })).resolves.toEqual({
+      text: POLISHED,
+      outcome: "polished",
     });
     const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
-    expect(body.messages[0].content).toContain("You proofread raw voice-dictation transcripts.");
-    expect(body.temperature).toBe(0);
-    expect(log.info).toHaveBeenCalledWith(
-      "voice-typing: polish rejected, keeping raw",
-      expect.objectContaining({ outcome: "rejectedRewrite", style: "proofread" }),
-    );
+    expect(body.model).toBe("parley-concise");
+    expect(body.messages[0].content).toContain("You turn a raw voice-dictation transcript");
+    expect(body.reasoning_effort).toBe("low");
   });
 });

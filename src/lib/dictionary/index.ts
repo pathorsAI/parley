@@ -18,6 +18,10 @@
 //!     spelling comes back in the first place;
 //!   - `applyReplacements()` rewrites the variants that came back anyway, right
 //!     before the text is shown/pasted.
+//!
+//! When the user is signed in with cloud sync on, ../cloud/dictionarySync
+//! mirrors the entries to their Parley account (and so to the iPhone). That is
+//! why every content change stamps `updatedAt`: sync is last-write-wins on it.
 
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -60,6 +64,10 @@ export interface DictionaryEntry {
   variants: string[];
   /** Epoch milliseconds — newest entries bias the STT first. */
   createdAt: number;
+  /** Epoch milliseconds of the last change to the phrase, its variants or its
+   *  source — the clock cloud sync resolves conflicts with. Absent on entries
+   *  written before sync existed (sync falls back to `createdAt`). */
+  updatedAt?: number;
   source: DictionarySource;
 }
 
@@ -133,6 +141,7 @@ function normalizeEntry(e: DictionaryEntry): DictionaryEntry {
     phrase: e.phrase,
     variants: Array.isArray(e.variants) ? e.variants.filter((v) => typeof v === "string") : [],
     createdAt: typeof e.createdAt === "number" ? e.createdAt : 0,
+    ...(typeof e.updatedAt === "number" ? { updatedAt: e.updatedAt } : {}),
     source: e.source === "manual" || e.source === "mcp" ? e.source : "correction",
   };
 }
@@ -256,6 +265,22 @@ export async function initDictionary(): Promise<void> {
   });
 }
 
+/** Re-read the file now (rather than on the next focus or broadcast). Cloud
+ *  sync calls this before it diffs, so an edit another window or the MCP server
+ *  just made is never mistaken for a missing entry. */
+export async function reloadDictionary(): Promise<void> {
+  await refreshFromDisk();
+}
+
+/**
+ * Replace the whole entry list in one write — cloud sync's way of applying what
+ * the server sent back. Everything else in the file (declined corrections) is
+ * kept. Broadcasts like any other edit.
+ */
+export function replaceEntries(entries: DictionaryEntry[]): void {
+  persist({ ...read(), entries });
+}
+
 /**
  * Resolves once this window has read the dictionary file. Anything that WRITES
  * — a Settings edit, accepting a correction — must await this first, or it
@@ -326,18 +351,22 @@ export function addEntry(input: {
     persist({
       ...file,
       entries: file.entries.map((e) =>
-        e.id === existing.id ? { ...e, variants: [...e.variants, ...fresh] } : e,
+        e.id === existing.id
+          ? { ...e, variants: [...e.variants, ...fresh], updatedAt: Date.now() }
+          : e,
       ),
     });
     // Undo reverses the variant this call introduced. The correction loop — the
     // only caller with an undo — always adds exactly one.
     return { kind: "variant", entryId: existing.id, variant: fresh[0] };
   }
+  const now = Date.now();
   const entry: DictionaryEntry = {
     id: crypto.randomUUID(),
     phrase,
     variants,
-    createdAt: Date.now(),
+    createdAt: now,
+    updatedAt: now,
     source: input.source,
   };
   persist({ ...file, entries: [...file.entries, entry] });
@@ -358,7 +387,7 @@ export function updateEntry(
       const phrase = patch.phrase === undefined ? e.phrase : patch.phrase.trim();
       const variants =
         patch.variants === undefined ? e.variants : cleanVariants(patch.variants, phrase);
-      return { ...e, phrase, variants, source: patch.source ?? e.source };
+      return { ...e, phrase, variants, source: patch.source ?? e.source, updatedAt: Date.now() };
     }),
   });
 }
@@ -376,7 +405,9 @@ export function removeVariant(entryId: string, variant: string): void {
   persist({
     ...file,
     entries: file.entries.map((e) =>
-      e.id === entryId ? { ...e, variants: e.variants.filter((v) => v !== variant) } : e,
+      e.id === entryId
+        ? { ...e, variants: e.variants.filter((v) => v !== variant), updatedAt: Date.now() }
+        : e,
     ),
   });
 }

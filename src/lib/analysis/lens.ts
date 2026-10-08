@@ -18,6 +18,7 @@
 // different WATCHERS — which is exactly the axis evaluations/presets still owns.
 
 import { evalSignature } from "../evaluations/presets";
+import { fillPrompt, STUDY } from "../ai/studyPrompt";
 import type { AnalysisLens, MeetingKind } from "../types";
 
 /**
@@ -89,96 +90,34 @@ export function hasCategories(lens: AnalysisLens): boolean {
 export const DECISION_CATEGORIES = ["decision", "open", "fact"] as const;
 
 // ── Prompt frames (model input — English on purpose, like every other prompt) ──
+// The text lives in shared/prompts/study.json (shared with Android); these
+// accessors only pick the right fragment for a lens.
 
 /** How the timeline pass introduces itself under each lens. */
 export function findingsIntro(lens: AnalysisLens, mode: "live" | "replay"): string {
-  const tense =
-    mode === "live"
-      ? "The meeting is STILL IN PROGRESS — you see only what has been said SO FAR."
-      : "The conversation is OVER and you can see the whole thing.";
-  if (lens === "decision")
-    return `You are writing the RECORD of a working meeting — an internal team discussion, design review, planning session, or project sync — for the user ("ME"), who was in the room. ${tense} Everyone present is on the SAME side; there is no opposing party and nothing to win. Your job is to capture what the meeting PRODUCED: what got decided, what is still open, and the facts established along the way.`;
-  if (lens === "opportunity")
-    return `You are analyzing a SALES conversation for the user ("ME") with a prospect or customer ("THEM"). ${tense} This is not a fight to win — a customer objection is information, not an attack. Your job is to surface what moves the opportunity: the pain THEM revealed, the objections and risks THEM raised, and what ME still does not know.`;
-  return `You are doing a post-hoc RETRO of a finished negotiation for the user ("ME") against the other party ("THEM"). ${tense}`;
+  return fillPrompt(STUDY.timeline.intro[lens], { tense: STUDY.timeline.tense[mode] });
 }
 
 /** The per-lens field guide spliced into the timeline pass's field list. */
 export function findingsFieldGuide(lens: AnalysisLens): string {
-  if (lens === "decision")
-    return `- category: "decision" when the meeting SETTLED something (a choice made, an approach agreed, a thing explicitly dropped) — this is the most valuable output, do not bury a real decision as a mere fact; "open" when a question was raised and left UNRESOLVED, or a decision was explicitly deferred; "fact" for a substantive piece of information established or explained that is neither.
-- title: a short label for what was decided / left open / established.
-- detail: ONE or two sentences carrying the substance — for a decision, WHAT was decided and, when it was argued, the reason that won; for an open item, what specifically is still undecided and what it is blocked on.
-Do NOT judge how well ME performed, do NOT score anyone, and do NOT write coaching advice. This is a record, not a review.`;
-  if (lens === "opportunity")
-    return `- side: "them" for something THEM revealed or raised (a pain, a requirement, an objection, a constraint, a buying signal, a competitor); "me" for a gap on MY side — a question ME failed to ask, a qualification dimension still unknown, a commitment ME made loosely.
-- title: a short label for the moment.
-- detail: 1-2 sentences on what it means for the opportunity — what the pain really is, what is behind the objection, or what ME still needs to learn.
-Do NOT frame THEM as an adversary and do NOT score ME on "winning" an exchange. An objection ME answered is still worth recording as the objection it was.`;
-  return `- side: "them" for a substantive move BY THEM (a position, argument, demand, anchor, pressure, leverage, or a constraint/concern they raised); "me" for a problem/mistake/missed move BY ME.
-- title: a short label for the dynamic (not a quote).
-- detail: 1-2 sentences on the STRATEGIC substance — the underlying interest, leverage, risk, missed exploration, or move — and why it matters.`;
+  return STUDY.timeline.fieldGuide[lens];
 }
 
 /**
- * The brief's section spec. Headings are English here (model input); the
+ * The brief's section spec. Headings are English (model input); the
  * output-language instruction translates them along with the prose, exactly as
  * the adversarial brief has always worked.
  */
 export function briefSections(lens: AnalysisLens): string {
-  if (lens === "decision")
-    return `## Highlights
-3-5 bullets covering what this meeting was actually about and what came out of it. No praise, no scoring.
-
-## Decisions
-Every decision the meeting settled — one bullet each, stating what was decided. End each bullet with the [m:ss] where it was settled. If the meeting settled nothing, say so in one line rather than inventing decisions.
-
-## Open questions
-What was raised and left unresolved, and what each one is waiting on. End each bullet with its [m:ss].
-
-## Suggested next agenda
-2-4 bullets: what the next session of this meeting should open with, based on what was left open.
-
-Write a RECORD, not a review. Do NOT assess how ME performed, do NOT list what fell short, and do NOT give coaching advice — none of that belongs in meeting notes.`;
-  if (lens === "opportunity")
-    return `## Where this landed
-How the opportunity stands after this call, in a few lines.
-
-## Their pain and objections
-What THEM actually needs, and every concern or objection they raised — each with a [m:ss].
-
-## What we still don't know
-The qualification gaps that matter: unknown budget, decision process, timeline, competing options, who actually decides. Be specific about the question that would close each gap.
-
-## Next steps
-What ME should do to advance this deal, concretely.`;
-  return `## Outcome
-How it went overall and whether ME achieved the goal.
-
-## What fell short
-Objectives or evaluation criteria that were NOT met — each with a one-line piece of evidence from the transcript.
-
-## How to improve
-Concrete, specific things ME could do better next time. No generic advice.
-
-## Key moments
-2-4 pivotal points. Start each bullet with the moment's timestamp in [m:ss] form (copy it from the transcript line), then: what happened, then the counterfactual — "when X happened, if ME had done Y, THEM could not have Z."`;
+  return STUDY.brief.sections[lens];
 }
 
 /** How the brief pass introduces itself under each lens. */
 export function briefIntro(lens: AnalysisLens): string {
-  if (lens === "decision")
-    return `You are writing the MEETING NOTES for a finished internal working meeting, for ME, who was in the room. Everyone present was on the same side. The meeting is OVER and you can see the full transcript.`;
-  if (lens === "opportunity")
-    return `You are writing the POST-CALL summary of a finished SALES conversation for ME. The call is OVER and you can see the full transcript, so judge the whole conversation, not the moment.`;
-  return `You are writing a POST-MEETING debrief for ME after a live negotiation. The meeting is OVER and you can see the full transcript, so judge the whole conversation, not the moment.`;
+  return STUDY.brief.intro[lens];
 }
 
 /** How the action-items pass introduces itself under each lens. */
 export function actionsIntro(lens: AnalysisLens): string {
-  if (lens === "decision")
-    return `You are writing the FOLLOW-UPS from a finished internal working meeting, for ME. The meeting is OVER. These are the things the meeting agreed someone would go do, plus anything left open that needs chasing.`;
-  if (lens === "opportunity")
-    return `You are writing the POST-CALL next steps after a finished sales conversation, for ME. The call is OVER.`;
-  return `You are writing the POST-MEETING ACTION ITEMS for the user ("ME") after a finished negotiation against the other party ("THEM"). The meeting is OVER.`;
+  return STUDY.actionItems.intro[lens];
 }

@@ -276,12 +276,15 @@ export type VoiceTypingShortcut =
  *  - `toggle`: tap once to start, tap again to finish + paste (release ignored). */
 export type VoiceTypingMode = "hold" | "toggle";
 
-/** What the voice-typing polish pass may do to a dictation:
- *  - `proofread`: fix misheard words and pause-made punctuation, drop "um"s;
- *    the speaker's wording and order stay as said (default).
- *  - `rewrite`: turn speech into written prose — reorder, merge, lay out
- *    lists (iOS's polish, word for word). */
-export type VoicePolishStyle = "proofread" | "rewrite";
+/** How hard the AI pass after dictation rewrites the transcript:
+ *  - `off`: paste the transcript as recognised.
+ *  - `tidy`: filler and false starts out, clauses reordered, lists laid out,
+ *    every sentence kept (`POLISH_SYSTEM_PROMPT`). The default.
+ *  - `concise`: tidy, and then verbal tics, hedges and pleasantries go too,
+ *    down to the shortest wording that keeps every fact
+ *    (`CONCISE_SYSTEM_PROMPT`).
+ *  The same three strings iOS stores (`PolishStyle`). */
+export type VoiceTypingPolishStyle = "off" | "tidy" | "concise";
 
 /** Model ids for one provider: a low-latency realtime model, a stronger deep one. */
 export interface ProviderModels {
@@ -360,13 +363,12 @@ export interface Settings {
   /** Whether the trigger is hold-to-talk (default) or tap-to-toggle. */
   voiceTypingMode: VoiceTypingMode;
   /** Voice typing: run the transcript through the `realtime` model lane before
-   *  pasting, to strip filler words and fix punctuation. Costs the round trip —
-   *  the paste waits for it, bounded by `POLISH_TIMEOUT_MS` — so it is a
-   *  setting rather than a given. Off unless the realtime lane has a usable
-   *  provider, whatever this says. Default on. */
-  voiceTypingPolish: boolean;
-  /** How far that pass may go (see {@link VoicePolishStyle}). */
-  voiceTypingPolishStyle: VoicePolishStyle;
+   *  pasting, in this style. Costs the round trip — the paste waits for it,
+   *  bounded by `POLISH_TIMEOUT_MS` — so it is a setting rather than a given.
+   *  Off unless the realtime lane has a usable provider, whatever this says.
+   *  Default `tidy`. Replaced the boolean `voiceTypingPolish` (false → `off`,
+   *  true → `tidy`; see `migrateVoiceTypingPolishStyle`). */
+  voiceTypingPolishStyle: VoiceTypingPolishStyle;
   /** The active evaluation set used in meetings (the runtime copy lives in the store). */
   evaluations: EvalDef[];
   /** Library of evaluation templates (built-in + custom) you can apply. */

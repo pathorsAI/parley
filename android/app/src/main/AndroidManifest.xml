@@ -57,5 +57,61 @@
         <receiver
             android:name=".ui.HandoffShareReceiver"
             android:exported="false" />
+
+        <!-- ── Voice typing (the Parley keyboard) ──────────────────────────────
+
+             The input method itself. `exported="true"` and the
+             BIND_INPUT_METHOD permission go together and are not optional: the
+             system's InputMethodManagerService is a different process and has to
+             bind this, and requiring the signature-level BIND_INPUT_METHOD is
+             what stops anything *else* from doing so. An exported IME service
+             without that permission would let any app on the device drive the
+             keyboard.
+
+             The `android.view.im` meta-data points at res/xml/method.xml, which
+             carries the subtype and the settings link. -->
+        <service
+            android:name=".ime.ParleyInputMethodService"
+            android:exported="true"
+            android:label="@string/ime_label"
+            android:permission="android.permission.BIND_INPUT_METHOD">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+            <meta-data
+                android:name="android.view.im"
+                android:resource="@xml/method" />
+        </service>
+
+        <!-- Holds the microphone for one dictation. An input method is never the
+             top app, and since Android 11 an app that is not the top app and has
+             no microphone-typed foreground service is fed silence rather than an
+             error — so without this, voice typing would transcribe nothing and
+             look like it was working. See DictationService for the background-
+             start exemption that makes it legal. -->
+        <service
+            android:name=".ime.DictationService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
+        <!-- The keyboard's settings screen, and the only place on the voice-typing
+             path where RECORD_AUDIO can be requested: a runtime permission dialog
+             needs an Activity, and an InputMethodService has none.
+
+             `exported="true"` is required, not incidental. This is the activity
+             method.xml names as `android:settingsActivity`, and the system
+             Settings app launches it *by component name from its own process*
+             when the user taps Parley in the keyboard list — a non-exported
+             activity refuses that with a SecurityException, and the row in
+             system settings silently does nothing. Exporting it is safe here:
+             it takes no intent extras, reads nothing from the caller, and does
+             nothing an app could not do by opening its own settings — it shows
+             two toggles and asks for a permission the user must grant by hand.
+             No intent-filter, so it is reachable only by explicit component. -->
+        <activity
+            android:name=".ime.VoiceTypingSettingsActivity"
+            android:exported="true"
+            android:label="@string/ime_settings_title"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode" />
     </application>
 </manifest>

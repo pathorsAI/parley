@@ -61,6 +61,12 @@ class TranscriptBackfillerTest {
     /** Recordings whose re-read fails, as it would on a flat network or a 5xx. */
     private val unreadable = mutableSetOf<String>()
 
+    /** Recordings the cloud no longer has (deleted while the job ran). */
+    private val missing = mutableSetOf<String>()
+
+    @Volatile
+    private var posts = 0
+
     @Before
     fun serveCloud() {
         server.dispatcher = object : Dispatcher() {
@@ -69,10 +75,14 @@ class TranscriptBackfillerTest {
                 val id = parts.getOrNull(1).orEmpty()
                 return when {
                     request.method == "GET" && id in unreadable -> MockResponse().setResponseCode(503)
+                    request.method == "GET" && id in missing -> MockResponse().setResponseCode(404)
                     request.method == "GET" && parts.lastOrNull() == "meta" -> MockResponse()
                         .setResponseCode(200)
                         .setBody(cloudMeta.getOrPut(id) { MeetingUploader.buildMeta(pending(id)).raw }.toString())
-                    request.method == "POST" -> MockResponse().setResponseCode(200).setBody("""{"updatedAt":2}""")
+                    request.method == "POST" -> {
+                        posts++
+                        MockResponse().setResponseCode(200).setBody("""{"updatedAt":2}""")
+                    }
                     else -> MockResponse().setResponseCode(404)
                 }
             }
@@ -276,7 +286,7 @@ class TranscriptBackfillerTest {
         // words and would silently throw all of that away.
         val queue = queue("loved")
         val ledger = ledger("loved-l")
-        val existing = buildJsonObject {
+        val captured = buildJsonObject {
             put("id", "rec-1")
             put("title", "Pricing call")
             put("source", "live")
@@ -285,7 +295,7 @@ class TranscriptBackfillerTest {
             put("folderId", "folder-9")
             put("analyzed", true)
             putJsonObject("speakerNames") { put("mix-0", "Jack") }
-            putJsonArray("findings") { addJsonObject { put("id", "f1") } }
+            putJsonArray("findings") { repeat(4) { addJsonObject { put("id", "f$it") } } }
             put("brief", "only the desktop writes this")
         }
         val summary = RecordingSummary(
@@ -304,11 +314,22 @@ class TranscriptBackfillerTest {
                 pending = pending("rec-1"),
                 folderId = "folder-9",
                 manualRetries = 1,
-                existingMeta = existing,
+                existingMeta = captured,
                 existingSummary = summary,
             ),
             audio("a.ogg"),
         )
+        // While the job ran: renamed, moved, and offered a filing suggestion.
+        cloudMeta["rec-1"] = buildJsonObject {
+            captured.forEach { (key, value) -> if (key != "title" && key != "folderId") put(key, value) }
+            put("title", FINAL_TITLE)
+            put("folderId", ACME_FOLDER)
+            put("filingSuggested", true)
+            putJsonObject("filingSuggestion") {
+                put("title", "Acme pricing")
+                putJsonArray("folders") {}
+            }
+        }
 
         backfiller(queue, ledger, FakeBatch(fullTranscript())).drain()
 
@@ -321,14 +342,36 @@ class TranscriptBackfillerTest {
 
         assertEquals(listOf(FIRST_LINE, SECOND_LINE), meta.segments.map { it.text })
         assertEquals(mapOf("mix-0" to "Jack"), meta.speakerNames)
-        assertEquals(1, meta.findingsCount)
+        assertEquals(4, meta.findingsCount)
         assertTrue(meta.analyzed)
         assertEquals("only the desktop writes this", meta.raw["brief"]?.toString()?.trim('"'))
-        assertEquals("folder-9", meta.folderId)
+        // The recording as it is NOW, not as it was when the run was asked for.
+        assertEquals(FINAL_TITLE, meta.title)
+        assertEquals(ACME_FOLDER, meta.folderId)
+        assertTrue(meta.filingSuggested)
+        assertEquals("Acme pricing", meta.filingSuggestion?.title)
+        assertEquals(FINAL_TITLE, pushedSummary.title)
+        assertEquals(ACME_FOLDER, pushedSummary.folderId)
         // The analysis counts belong to the recording, not to the transcript.
         assertEquals(4, pushedSummary.findingsCount)
-        assertEquals(2, pushedSummary.actionItemsCount)
         assertEquals(2, pushedSummary.speakerCount)
+    }
+
+    @Test
+    fun `a run for a recording deleted meanwhile pushes nothing and finishes`() = runBlocking {
+        val queue = queue("gone")
+        val ledger = ledger("gone-l")
+        queue.enqueueCopying(
+            BackfillRequest(pending = pending(GONE), manualRetries = 1, existingMeta = buildJsonObject { put("id", GONE) }),
+            audio("a.ogg"),
+        )
+        missing += GONE
+
+        val result = backfiller(queue, ledger, FakeBatch(fullTranscript())).drain()
+
+        assertNull(result.failure)
+        assertEquals("not resurrected", 0, posts)
+        assertEquals(0, queue.count())
     }
 
     // ── the ledger ───────────────────────────────────────────────────────────
@@ -492,8 +535,8 @@ class TranscriptBackfillerTest {
     @Test
     fun `a manifest whose blob is gone is discarded instead of wedging the queue`() = runBlocking {
         val queue = queue("orphan")
-        queue.enqueueMoving(BackfillRequest(pending = pending("rec-gone")), audio("a.ogg"))
-        queue.audioFile("rec-gone").delete()
+        queue.enqueueMoving(BackfillRequest(pending = pending(GONE)), audio("a.ogg"))
+        queue.audioFile(GONE).delete()
         queue.enqueueMoving(BackfillRequest(pending = pending("rec-ok")), audio("b.ogg"))
 
         val result = backfiller(queue, ledger("orphan-l"), FakeBatch(fullTranscript())).drain()
@@ -608,6 +651,9 @@ class TranscriptBackfillerTest {
         const val RECORDING = "rec-renamed"
         const val RENAMED = "Acme renewal terms"
         const val MOVED_TO = "folder-3"
+        const val FINAL_TITLE = "Acme pricing, final"
+        const val ACME_FOLDER = "folder-acme"
+        const val GONE = "rec-gone"
 
         /** The two runs the batch job comes back with. */
         const val FIRST_LINE = "Every word of it."

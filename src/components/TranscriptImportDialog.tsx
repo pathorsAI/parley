@@ -11,7 +11,7 @@ import { log } from "../lib/log";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { DestinationPicker } from "./DestinationPicker";
+import { DestinationField } from "./DestinationSheet";
 import {
   personalDestination,
   PERSONAL_ROOT,
@@ -85,6 +85,8 @@ export function TranscriptImportDialog() {
   // all, not even via the settings-wide auto-share default.
   const [destination, setDestination] = useState<LibraryDestination>(PERSONAL_ROOT);
   const [handoff, setHandoff] = useState<OrgHandoffMode | null>(null);
+  /** The user chose a destination in this dialog (vs. the door's default). */
+  const [picked, setPicked] = useState(false);
   const [importing, setImporting] = useState(false);
 
   // (Re)prepare whenever the dialog opens with a new set of paths.
@@ -99,6 +101,7 @@ export function TranscriptImportDialog() {
     // and asks.
     setDestination(personalDestination(prefillFolderId ?? null));
     setHandoff(null);
+    setPicked(false);
     Promise.all(paths.map(prepareTranscriptFile)).then((prepared) => {
       if (alive) setFiles(prepared);
     });
@@ -202,12 +205,16 @@ export function TranscriptImportDialog() {
           {ready && (
             <div className="flex flex-col gap-1.5 border-t pt-3">
               <span className="text-[11px] text-muted-foreground">{t("owner.label")}</span>
-              <DestinationPicker
+              <DestinationField
+                verb="save"
+                title={t("dest.title.save")}
                 value={destination}
                 mode={handoff}
+                fresh={!prefillFolderId && !picked}
                 onChange={(next, mode) => {
                   setDestination(next);
                   setHandoff(mode);
+                  setPicked(true);
                 }}
               />
             </div>

@@ -37,6 +37,52 @@ final class DictationHistoryStoreTests: XCTestCase {
             source: source, hostBundleID: "com.apple.mobilenotes")
     }
 
+    // MARK: correcting an entry
+
+    func testACorrectionRewritesTheTextAndKeepsTheWordsAsSaid() {
+        let store = makeStore()
+        let e = entry("我們派斯的產品很好，派斯很棒")
+        store.append(e)
+
+        let after = store.correct(id: e.id, original: "派斯", replacement: "Pathors")
+
+        XCTAssertEqual(after.first?.text, "我們Pathors的產品很好，Pathors很棒")
+        // The text was the raw transcript, so it becomes the original.
+        XCTAssertEqual(after.first?.rawText, "我們派斯的產品很好，派斯很棒")
+        XCTAssertEqual(store.load().first?.text, "我們Pathors的產品很好，Pathors很棒")
+    }
+
+    func testACorrectionLeavesAPolishedEntrysOriginalAlone() {
+        let store = makeStore()
+        let e = DictationHistoryEntry(
+            text: "We use pearly daily.", startedAt: clock.now, durationMs: 1_000,
+            source: .keyboard, rawText: "we use pearly every day", polish: .polished)
+        store.append(e)
+
+        let after = store.correct(id: e.id, original: "pearly", replacement: "Parley")
+
+        XCTAssertEqual(after.first?.text, "We use Parley daily.")
+        XCTAssertEqual(after.first?.rawText, "we use pearly every day")
+        XCTAssertEqual(after.first?.polish, .polished)
+    }
+
+    func testACorrectionThatDoesNotOccurChangesNothing() {
+        let store = makeStore()
+        let e = entry("nothing to fix here")
+        store.append(e)
+        let after = store.correct(id: e.id, original: "pearly", replacement: "Parley")
+        XCTAssertEqual(after.first, e)
+    }
+
+    func testACorrectionUsesWholeWordsForLatin() {
+        let store = makeStore()
+        let e = entry("a rapid api call")
+        store.append(e)
+        XCTAssertEqual(
+            store.correct(id: e.id, original: "api", replacement: "API").first?.text,
+            "a rapid API call")
+    }
+
     // MARK: retention
 
     /// 200 is the cap: the 201st entry evicts the oldest, and only the oldest.
@@ -291,6 +337,50 @@ final class DictationHistoryStoreTests: XCTestCase {
 
         XCTAssertEqual(loaded.map(\.text), ["from the future"])
         XCTAssertNil(loaded.first?.polish)
+    }
+
+    // MARK: the polish style
+
+    /// The style that produced a polished entry survives the file, and an
+    /// entry with no style recorded stays without one.
+    func testRoundTripKeepsThePolishStyle() {
+        let written = [
+            DictationHistoryEntry(
+                text: "明天下午五點在公司樓下的咖啡廳見。", startedAt: clock.now.addingTimeInterval(-10),
+                durationMs: 6_000, source: .keyboard,
+                rawText: "明天下午三點，啊不對，應該是下午五點，在那個，在公司樓下的咖啡廳見。",
+                polish: .polished, polishStyle: .concise),
+            DictationHistoryEntry(
+                text: "We should call them back.", startedAt: clock.now.addingTimeInterval(-20),
+                durationMs: 2_000, source: .keyboard, rawText: "so uh we should call them back",
+                polish: .polished, polishStyle: .tidy),
+            DictationHistoryEntry(
+                text: "OK", startedAt: clock.now.addingTimeInterval(-30), durationMs: 500,
+                source: .keyboard, polish: .tooShort),
+        ]
+        let first = makeStore()
+        for e in written.reversed() { first.append(e) }
+
+        let loaded = makeStore().load()
+        XCTAssertEqual(loaded, written)
+        XCTAssertEqual(loaded.map(\.polishStyle), [.concise, .tidy, nil])
+    }
+
+    /// A style this build does not know reads as "not recorded", like an
+    /// unknown outcome does — the entry and the file both survive.
+    func testAnUnknownPolishStyleReadsAsNoStyle() throws {
+        let future = """
+            [{"id":"6F2C1A5E-8B7D-4C3E-9A1F-0D2B3C4E5F61","text":"from the future",\
+            "startedAt":\(clock.now.timeIntervalSinceReferenceDate - 60),"durationMs":4200,\
+            "source":"keyboard","polish":"polished","polishStyle":"somethingNew"}]
+            """
+        try Data(future.utf8).write(to: directory.appendingPathComponent(DictationHistoryStore.fileName))
+
+        let loaded = makeStore().load()
+
+        XCTAssertEqual(loaded.map(\.text), ["from the future"])
+        XCTAssertEqual(loaded.first?.polish, .polished)
+        XCTAssertNil(loaded.first?.polishStyle)
     }
 
     /// A torn write, a hand-edited file, a future format — none of it may take

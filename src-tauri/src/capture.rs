@@ -25,6 +25,9 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::audio::AudioSource;
+use crate::transcription::bridge::SttBridge;
+use crate::transcription::common::{LevelMeter, LEVEL_EVENT, TRANSCRIPTION_STATE_EVENT};
+use crate::transcription::reconnect::ReconnectPolicy;
 use crate::transcription::{self, SttProvider, TranscribeConfig};
 
 /// Grace given to capture threads to release their device on stop. Threads
@@ -257,6 +260,57 @@ pub fn spawn_capture<S: AudioSource>(
 /// `stop_meeting`.
 pub type RecorderBuf = Arc<Mutex<Option<Vec<i16>>>>;
 
+/// Where the meter hands each chunk after teeing it into the recording.
+trait ChunkSink {
+    /// Pass one chunk on. `false` means downstream is gone for good and the
+    /// meter should stop.
+    fn deliver(&mut self, chunk: Vec<i16>) -> bool;
+    /// The meter is done: no more chunks will come.
+    fn finish(&mut self) {}
+}
+
+/// Single-shot sessions (voice typing): the adapter's own input. When the
+/// adapter is gone there is nothing left to feed, so the meter stops — and
+/// for dictation that is exactly right, the session is over.
+impl ChunkSink for UnboundedSender<Vec<i16>> {
+    fn deliver(&mut self, chunk: Vec<i16>) -> bool {
+        self.send(chunk).is_ok()
+    }
+}
+
+/// Reconnecting sessions (meetings): the bridge never refuses a chunk — with
+/// no leg attached it holds it for the next one — so the meter keeps draining
+/// the capture, and keeps recording, until the capture itself ends. Finishing
+/// closes the bridge, which drains the current leg's input (the provider's
+/// final flush) and wakes a reconnect loop sleeping on its backoff.
+struct BridgeSink {
+    bridge: Arc<SttBridge>,
+    /// The session's `audio://level`, metered here — on every chunk, as it is
+    /// captured — instead of in the adapters, whose meters `run_legs` mutes
+    /// (`TranscribeConfig::level_events`). An adapter only sees audio once a
+    /// leg is reading: between legs and through a handshake the titlebar
+    /// meter would go flat, reading as a dead microphone at exactly the moment
+    /// the recording is fine and only the network is not, and after a
+    /// reconnect it would replay the whole hold buffer as a burst. This is the
+    /// live mic level, which is what the titlebar means. `None` in tests (a
+    /// `LevelMeter` needs an `AppHandle`).
+    level: Option<LevelMeter>,
+}
+
+impl ChunkSink for BridgeSink {
+    fn deliver(&mut self, chunk: Vec<i16>) -> bool {
+        if let Some(level) = self.level.as_mut() {
+            level.push(&chunk);
+        }
+        self.bridge.send(chunk);
+        true
+    }
+
+    fn finish(&mut self) {
+        self.bridge.close();
+    }
+}
+
 /// The sample counter interposed between capture and the STT adapter: forwards
 /// every chunk untouched, tees into the recording buffer, and counts the
 /// samples it forwards into `streamed` as it goes — live, so the session's
@@ -265,9 +319,15 @@ pub type RecorderBuf = Arc<Mutex<Option<Vec<i16>>>>;
 /// [`run_metered_session`] for what `recorder` / `cutoff` / `paused` mean;
 /// split out as a free async fn so the cutoff policy below is testable without
 /// an `AppHandle`.
-async fn meter_chunks(
+///
+/// How long it runs is the sink's call: a single-shot sink stops it when the
+/// adapter is gone, while a meeting's bridge never does — the meter (and the
+/// recording tee) then runs until `rx` closes, i.e. until `stop_meeting`
+/// clears the capture gate. Transcription dying must never stop the capture
+/// behind it (pathorsAI/parley#570).
+async fn meter_chunks<S: ChunkSink>(
     mut rx: UnboundedReceiver<Vec<i16>>,
-    count_tx: UnboundedSender<Vec<i16>>,
+    mut sink: S,
     recorder: Option<RecorderBuf>,
     cutoff: Option<Arc<AtomicBool>>,
     paused: Option<Arc<AtomicBool>>,
@@ -300,18 +360,19 @@ async fn meter_chunks(
                 buf.extend_from_slice(&chunk);
             }
         }
-        if count_tx.send(chunk).is_err() {
+        if !sink.deliver(chunk) {
             break;
         }
-        // Past the cutoff this chunk was one of the queued ones. Dropping
-        // `count_tx` by leaving the loop closes the STT input, triggering its
-        // final flush of only the pre-release speech.
+        // Past the cutoff this chunk was one of the queued ones. Leaving the
+        // loop finishes (and drops) the sink, which closes the STT input,
+        // triggering its final flush of only the pre-release speech.
         match backlog {
             Some(0) => break,
             Some(n) => backlog = Some(n - 1),
             None => {}
         }
     }
+    sink.finish();
     streamed.load(Ordering::SeqCst)
 }
 
@@ -322,17 +383,21 @@ async fn meter_chunks(
 /// session's own DRAIN_READ_GRACE counts from the drain, which cannot come
 /// before its socket has connected: a meeting stream over a slow connect that
 /// never answers the finalize, or any session stuck past its own bounds, is
-/// aborted before it ends itself, and used to take its usage line with it. `stt://closed` stays off the
-/// abort path on purpose (see [`run_metered_session`]).
-struct UsageReport<F: FnOnce(u64)> {
-    streamed: Arc<AtomicU64>,
+/// aborted before it ends itself, and used to take its usage line with it.
+/// `stt://closed` stays off the abort path on purpose (see
+/// [`run_metered_session`]).
+///
+/// `samples` reads the billable total at report time: the meter's live count
+/// for a single-shot session, the bridge's delivered count for a meeting.
+struct UsageReport<S: Fn() -> u64, F: FnOnce(u64)> {
+    samples: S,
     report: Option<F>,
 }
 
-impl<F: FnOnce(u64)> UsageReport<F> {
-    fn new(streamed: Arc<AtomicU64>, report: F) -> Self {
+impl<S: Fn() -> u64, F: FnOnce(u64)> UsageReport<S, F> {
+    fn new(samples: S, report: F) -> Self {
         Self {
-            streamed,
+            samples,
             report: Some(report),
         }
     }
@@ -340,12 +405,12 @@ impl<F: FnOnce(u64)> UsageReport<F> {
     /// Report the samples streamed so far; a no-op after the first call.
     fn send(&mut self) {
         if let Some(report) = self.report.take() {
-            report(self.streamed.load(Ordering::SeqCst));
+            report((self.samples)());
         }
     }
 }
 
-impl<F: FnOnce(u64)> Drop for UsageReport<F> {
+impl<S: Fn() -> u64, F: FnOnce(u64)> Drop for UsageReport<S, F> {
     fn drop(&mut self) {
         self.send();
     }
@@ -360,14 +425,28 @@ impl<F: FnOnce(u64)> Drop for UsageReport<F> {
 /// tears down on it), voice typing passes `voicetyping://error` (the host
 /// forwards it to the overlay's error state).
 ///
+/// `reconnect`: meetings pass `true`. The meter then feeds an [`SttBridge`]
+/// instead of the adapter directly, so the capture and the recording keep
+/// running no matter what happens to transcription, and the session runs as
+/// a chain of legs (see `run_legs`): a connection failure ("connect") no
+/// longer raises `error_event` at all — the session holds the audio, emits
+/// `meeting://transcription` `{ source, state: "reconnecting", attempt }`,
+/// backs off along [`ReconnectPolicy::MEETING`] and redials, and the new leg
+/// announces `{ source, state: "live", leg }` once its handshake completes.
+/// Only a failure a redial cannot fix (`quota` / `auth` / `key`) still raises
+/// `error_event`, and it ends transcription without ending the recording.
+/// Voice typing passes `false` and keeps the single-shot behaviour: one
+/// session, and any failure raises `error_event`.
+///
 /// `error_mute`: session tasks outlive `stop_meeting` by up to the flush/abort
 /// grace, and the meeting UI tears down on `meeting://error` unconditionally —
 /// so a failure inside that window (it belongs to a meeting the user already
 /// ended) would kill the NEXT meeting the user just started, or toast a
 /// spurious failure for one that completed fine. `stop_meeting` sets the flag
-/// when it releases its tasks; a muted failure is logged only. Voice typing
-/// passes `None` — its stale-error guards are abort-on-restart plus the
-/// host-side busy/generation checks.
+/// when it releases its tasks; a muted failure is logged only (and a muted
+/// reconnecting session stops redialling). Voice typing passes `None` — its
+/// stale-error guards are abort-on-restart plus the host-side busy/generation
+/// checks.
 ///
 /// `cutoff`: voice typing sets this on release (see `stop_voice_typing`) to HARD
 /// CUT the audio `RELEASE_TAIL` after the key is let go (at once on the cap) —
@@ -386,6 +465,10 @@ impl<F: FnOnce(u64)> Drop for UsageReport<F> {
 ///
 /// `session`: the voice-typing session id, stamped on every event the task
 /// emits (see `transcription::common::SESSION`). Meetings pass `None`.
+///
+/// Either way the task ends with `usage://stt` (the audio actually handed to
+/// the provider — for a reconnecting session, every leg's share, excluding
+/// held audio that overflowed or was never delivered) and `stt://closed`.
 #[allow(clippy::too_many_arguments)]
 pub fn run_metered_session(
     app: &AppHandle,
@@ -399,15 +482,24 @@ pub fn run_metered_session(
     cutoff: Option<Arc<AtomicBool>>,
     paused: Option<Arc<AtomicBool>>,
     session: Option<u64>,
+    reconnect: bool,
 ) -> tauri::async_runtime::JoinHandle<()> {
     let app = app.clone();
     tauri::async_runtime::spawn(transcription::common::SESSION.scope(session, async move {
-        // Interpose a sample counter between capture and the STT adapter: it
-        // forwards every chunk untouched and counts it, so we can bill the
-        // audio duration actually streamed — also when this task is aborted
-        // (the report goes out as it is dropped; see UsageReport).
-        let streamed = Arc::new(AtomicU64::new(0));
-        let mut usage = UsageReport::new(streamed.clone(), {
+        let failure = Failure {
+            app: &app,
+            label,
+            error_event,
+            error_mute: error_mute.as_ref(),
+            session,
+            // Hosted mode and BYOK fail for different reasons and need
+            // different guidance, so classify against the mode (captured
+            // before `config` is moved into the session).
+            hosted: config.relay_endpoint.is_some(),
+        };
+        // Bills the audio duration actually streamed — also when this task is
+        // aborted (the report goes out as it is dropped; see UsageReport).
+        let emit_usage = {
             let app = app.clone();
             move |samples: u64| {
                 let seconds = samples as f64 / crate::audio::TARGET_SAMPLE_RATE as f64;
@@ -420,67 +512,56 @@ pub fn run_metered_session(
                     }),
                 );
             }
-        });
-        let (count_tx, count_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
-        let counter = tauri::async_runtime::spawn(meter_chunks(
-            rx, count_tx, recorder, cutoff, paused, streamed,
-        ));
-
-        // Hosted mode and BYOK fail for different reasons and need different
-        // guidance, so classify against the mode (captured before `config` is
-        // moved into the session).
-        let hosted = config.relay_endpoint.is_some();
-        if let Err(e) =
-            transcription::run_session(provider, app.clone(), config, label, count_rx).await
-        {
-            let msg = e.to_string();
-            log::warn!("[stt:{label}] session ended: {msg}");
-            // Surface the failure to the UI instead of silently leaving the
-            // meeting in "recording" (or the dictation overlay listening) with
-            // no transcript. Classify so the frontend can show an actionable
-            // message. Hosted mode routinely hits 402 (out of credits) / 401
-            // (expired cloud session) — the fix is billing or re-login. BYOK
-            // instead fails on a rejected vendor key (401/403/"unauthorized"),
-            // where telling the user to "sign in" is wrong — the fix is the key
-            // in Settings.
-            let low = msg.to_lowercase();
-            let bad_key = msg.contains("401")
-                || msg.contains("403")
-                || low.contains("unauthorized")
-                || low.contains("api key");
-            let code = if hosted && msg.contains("402") {
-                "quota"
-            } else if hosted && msg.contains("401") {
-                "auth"
-            } else if !hosted && bad_key {
-                "key"
-            } else {
-                "connect"
+        };
+        let streamed = Arc::new(AtomicU64::new(0));
+        if reconnect {
+            // The meter feeds the bridge; the legs come and go behind it. Bill
+            // what the bridge actually handed to a leg.
+            let bridge = Arc::new(SttBridge::default());
+            let mut usage = UsageReport::new(
+                {
+                    let bridge = bridge.clone();
+                    move || bridge.delivered_samples()
+                },
+                emit_usage,
+            );
+            let sink = BridgeSink {
+                bridge: bridge.clone(),
+                level: Some(LevelMeter::new(app.clone(), label, LEVEL_EVENT)),
             };
-            if error_mute
-                .as_ref()
-                .is_some_and(|m| m.load(Ordering::SeqCst))
+            let counter = tauri::async_runtime::spawn(meter_chunks(
+                rx, sink, recorder, cutoff, paused, streamed,
+            ));
+            run_legs(&app, provider, config, label, &bridge, &failure).await;
+            // The count is final once the meter has returned.
+            let _ = counter.await;
+            usage.send();
+        } else {
+            // Interpose a sample counter between capture and the STT adapter:
+            // it forwards every chunk untouched and counts it as it goes.
+            let mut usage = UsageReport::new(
+                {
+                    let streamed = streamed.clone();
+                    move || streamed.load(Ordering::SeqCst)
+                },
+                emit_usage,
+            );
+            let (count_tx, count_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+            let counter = tauri::async_runtime::spawn(meter_chunks(
+                rx, count_tx, recorder, cutoff, paused, streamed,
+            ));
+            if let Err(e) =
+                transcription::run_session(provider, app.clone(), config, label, count_rx).await
             {
-                // The owning meeting was already stopped: the failure has no
-                // actionable surface and the teardown it triggers would hit
-                // whatever meeting is CURRENTLY running instead.
-                log::info!("[stt:{label}] failure after stop — suppressing {error_event}");
-            } else {
-                let _ = app.emit(
-                    error_event,
-                    serde_json::json!({
-                        "source": label,
-                        "code": code,
-                        "message": msg,
-                        "session": session,
-                    }),
-                );
+                let msg = e.to_string();
+                log::warn!("[stt:{label}] session ended: {msg}");
+                failure.report(failure.classify(&msg), &msg);
             }
+            // The count is final once the meter has returned.
+            let _ = counter.await;
+            usage.send();
         }
 
-        // The count is final once the meter has returned.
-        let _ = counter.await;
-        usage.send();
         // The session is over and every token it will ever produce has been
         // emitted: the provider answered the closing finalize (Soniox's
         // `<fin>`), closed the socket, or failed — or, after a normal stop,
@@ -495,6 +576,171 @@ pub fn run_metered_session(
             serde_json::json!({ "source": label, "session": session }),
         );
     }))
+}
+
+/// How a session surfaces a failure: its classification and the
+/// `error_event` (subject to `error_mute`). Shared by the single-shot and
+/// reconnecting paths so the codes the frontend branches on are decided in
+/// one place.
+struct Failure<'a> {
+    app: &'a AppHandle,
+    label: &'static str,
+    error_event: &'static str,
+    error_mute: Option<&'a Arc<AtomicBool>>,
+    session: Option<u64>,
+    hosted: bool,
+}
+
+impl Failure<'_> {
+    /// Classify so the frontend can show an actionable message. Hosted mode
+    /// routinely hits 402 (out of credits) / 401 (expired cloud session) — the
+    /// fix is billing or re-login. BYOK instead fails on a rejected vendor key
+    /// (401/403/"unauthorized"), where telling the user to "sign in" is wrong —
+    /// the fix is the key in Settings. Everything else is "connect": the
+    /// network or the provider, which a meeting retries.
+    fn classify(&self, msg: &str) -> &'static str {
+        let low = msg.to_lowercase();
+        let bad_key = msg.contains("401")
+            || msg.contains("403")
+            || low.contains("unauthorized")
+            || low.contains("api key");
+        if self.hosted && msg.contains("402") {
+            "quota"
+        } else if self.hosted && msg.contains("401") {
+            "auth"
+        } else if !self.hosted && bad_key {
+            "key"
+        } else {
+            "connect"
+        }
+    }
+
+    fn muted(&self) -> bool {
+        self.error_mute.is_some_and(|m| m.load(Ordering::SeqCst))
+    }
+
+    /// Surface the failure to the UI instead of silently leaving the meeting
+    /// with no transcript (or the dictation overlay listening to nothing) —
+    /// unless the owning meeting was already stopped: then the failure has no
+    /// actionable surface, and the teardown it triggers would hit whatever
+    /// meeting is CURRENTLY running instead.
+    fn report(&self, code: &'static str, msg: &str) {
+        let label = self.label;
+        if self.muted() {
+            log::info!(
+                "[stt:{label}] failure after stop — suppressing {}",
+                self.error_event
+            );
+            return;
+        }
+        let _ = self.app.emit(
+            self.error_event,
+            serde_json::json!({
+                "source": label,
+                "code": code,
+                "message": msg,
+                "session": self.session,
+            }),
+        );
+    }
+}
+
+/// A meeting's transcription as a chain of legs behind `bridge`, redialling
+/// after every connection failure until the capture ends. Returns once the
+/// session is over for good: a leg drained normally (the meeting stopped), a
+/// failure a redial cannot fix was reported, or the capture ended while the
+/// session was between legs.
+///
+/// Mirrors the iOS `MeetingRecorder` reconnect path (`scheduleReconnect` /
+/// `performReconnect`), minus its attempt ceiling — see [`ReconnectPolicy`].
+async fn run_legs(
+    app: &AppHandle,
+    provider: SttProvider,
+    config: TranscribeConfig,
+    label: &'static str,
+    bridge: &Arc<SttBridge>,
+    failure: &Failure<'_>,
+) {
+    let policy = ReconnectPolicy::MEETING;
+    let mut leg: u32 = 0;
+    let mut attempt: u32 = 0;
+    loop {
+        // The bridge decides the offset, because the bridge is what knows
+        // where in the recording the audio it holds was actually spoken. `None`
+        // = the capture ended while we were between legs: nothing to redial for.
+        let Some(attached) = bridge.attach() else {
+            log::info!("[stt:{label}] capture ended before leg {leg} could start");
+            return;
+        };
+        let leg_config = TranscribeConfig {
+            leg,
+            time_offset_ms: attached.time_offset_ms,
+            // The bridge meters the level (see `BridgeSink`).
+            level_events: false,
+            ..config.clone()
+        };
+        if leg > 0 {
+            log::info!(
+                "[stt:{label}] leg {leg} dialling, offset {} ms",
+                attached.time_offset_ms
+            );
+        }
+        let started = std::time::Instant::now();
+        // Scoped so the adapter's `note_connected` can confirm this leg to the
+        // bridge — until then the bridge keeps copies of what it feeds it.
+        let result = transcription::common::BRIDGE
+            .scope(
+                Some(bridge.clone()),
+                transcription::run_session(provider, app.clone(), leg_config, label, attached.rx),
+            )
+            .await;
+        let Err(e) = result else {
+            // The leg drained its input: the bridge closed it because the
+            // capture ended. A normal stop, final tokens flushed.
+            return;
+        };
+        let lived = started.elapsed();
+        let msg = e.to_string();
+        let code = failure.classify(&msg);
+        if code != "connect" {
+            // Quota, an expired session, a rejected key: the next handshake
+            // would be refused the same way. Say so once and stop holding
+            // audio nobody will read — the recording carries on regardless.
+            log::warn!("[stt:{label}] leg {leg} ended ({code}), not redialling: {msg}");
+            bridge.discard();
+            failure.report(code, &msg);
+            return;
+        }
+        if bridge.is_closed() || failure.muted() {
+            // The meeting is stopping, and this is just its socket going down
+            // with it (or dying inside the flush grace). Nothing to redial for.
+            log::info!("[stt:{label}] leg {leg} ended after stop: {msg}");
+            return;
+        }
+
+        // Keep the words spoken from here on for the next leg.
+        bridge.hold();
+        attempt = policy.next_attempt(attempt, lived);
+        let delay = policy.delay(attempt);
+        log::warn!(
+            "[stt:{label}] leg {leg} dropped after {:.1}s: {msg} — redial #{attempt} in {}s",
+            lived.as_secs_f64(),
+            delay.as_secs()
+        );
+        let _ = app.emit(
+            TRANSCRIPTION_STATE_EVENT,
+            serde_json::json!({ "source": label, "state": "reconnecting", "attempt": attempt }),
+        );
+        // Stopping the meeting must not wait out a backoff.
+        tokio::select! {
+            _ = tokio::time::sleep(delay) => {}
+            _ = bridge.closed() => {
+                log::info!("[stt:{label}] capture ended during reconnect backoff");
+                return;
+            }
+        }
+        leg += 1;
+    }
 }
 
 #[cfg(test)]
@@ -600,8 +846,9 @@ mod coordinator_tests {
 
 #[cfg(test)]
 mod meter_tests {
-    use super::{meter_chunks, UsageReport};
-    use std::sync::atomic::{AtomicBool, AtomicU64};
+    use super::{meter_chunks, BridgeSink, RecorderBuf, UsageReport};
+    use crate::transcription::bridge::SttBridge;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
 
     /// Feed `chunks` (one i16 each, so a chunk's value identifies it), with the
@@ -665,6 +912,57 @@ mod meter_tests {
         assert_eq!(samples, 2);
     }
 
+    /// The core of pathorsAI/parley#570: transcription dying must not stop the
+    /// meter, or the capture behind it (and the recording) stops too. With a
+    /// meeting's bridge as the sink, the meter keeps draining and recording
+    /// after the leg's receiver is gone, and the audio waits for the next leg.
+    #[tokio::test]
+    async fn a_meeting_keeps_recording_after_its_transcription_leg_dies() {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+        let recorder: RecorderBuf = Arc::new(Mutex::new(Some(Vec::new())));
+        let bridge = Arc::new(SttBridge::default());
+        let leg = bridge.attach().unwrap();
+        drop(leg); // the provider socket died; its input is gone
+        for c in [1, 2, 3] {
+            tx.send(vec![c]).unwrap();
+        }
+        let sink = BridgeSink {
+            bridge: bridge.clone(),
+            level: None,
+        };
+        let meter = tokio::spawn(meter_chunks(
+            rx,
+            sink,
+            Some(recorder.clone()),
+            None,
+            None,
+            Arc::default(),
+        ));
+        // Still running: the capture side is open, so the meter is parked on
+        // it rather than having given up with the leg.
+        tokio::task::yield_now().await;
+        assert!(!meter.is_finished());
+        tx.send(vec![4]).unwrap();
+        // The next leg gets everything since the old one died, in order.
+        let mut next = bridge.attach().unwrap();
+        tokio::task::yield_now().await;
+        tx.send(vec![5]).unwrap();
+        drop(tx); // stop_meeting cleared the gate
+        let samples = meter.await.unwrap();
+        assert_eq!(samples, 5);
+        assert_eq!(
+            recorder.lock().unwrap().as_ref().unwrap(),
+            &vec![1, 2, 3, 4, 5]
+        );
+        let mut got = Vec::new();
+        while let Some(chunk) = next.rx.recv().await {
+            got.push(chunk[0]);
+        }
+        // The capture ending closed the bridge, which ended the leg's input.
+        assert_eq!(got, vec![1, 2, 3, 4, 5]);
+        assert!(bridge.is_closed());
+    }
+
     #[tokio::test]
     async fn a_paused_meeting_drops_chunks_without_ending_the_session() {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
@@ -682,9 +980,7 @@ mod meter_tests {
     fn the_usage_report_goes_out_once() {
         let reported = Arc::new(Mutex::new(Vec::new()));
         let sink = reported.clone();
-        let mut usage = UsageReport::new(Arc::new(AtomicU64::new(480)), move |n| {
-            sink.lock().unwrap().push(n)
-        });
+        let mut usage = UsageReport::new(|| 480, move |n| sink.lock().unwrap().push(n));
         usage.send();
         usage.send();
         drop(usage);
@@ -707,7 +1003,10 @@ mod meter_tests {
 
         let reported = Arc::new(Mutex::new(Vec::new()));
         let sink = reported.clone();
-        let mut usage = UsageReport::new(streamed, move |n| sink.lock().unwrap().push(n));
+        let mut usage = UsageReport::new(
+            move || streamed.load(Ordering::SeqCst),
+            move |n| sink.lock().unwrap().push(n),
+        );
         let session = tokio::spawn(async move {
             // A read half that never answers the finalize.
             std::future::pending::<()>().await;

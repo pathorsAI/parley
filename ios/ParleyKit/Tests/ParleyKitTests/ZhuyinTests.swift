@@ -812,10 +812,10 @@ final class ZhuyinComposerPhraseTests: XCTestCase {
         XCTAssertTrue(c.candidates.isEmpty)
     }
 
-    func testBestWalksTheBufferGreedily() {
-        // 我是台灣人, typed without a single tone key. Greedy left to right: the
-        // longest phrase that exactly covers what is in front of it, then one
-        // character for what is left.
+    func testBestWalksTheWholeBuffer() {
+        // 我是台灣人, typed without a single tone key. The likeliest cut of the
+        // whole buffer into phrases and characters (see `ZhuyinLatticeTests`
+        // for where that differs from longest-phrase-first).
         var c = ZhuyinComposer(dictionary: .bundled, phrases: ZhuyinPhrases.bundled)
         for symbol in "ㄨㄛㄕㄊㄞㄨㄢㄖㄣ" { _ = c.symbol(symbol) }
         XCTAssertEqual(c.reading, "ㄨㄛ ㄕ ㄊㄞ ㄨㄢ ㄖㄣ")

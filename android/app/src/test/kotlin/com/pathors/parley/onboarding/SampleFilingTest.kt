@@ -84,7 +84,6 @@ class SampleFilingTest {
     private fun card(folders: List<CloudFolder>): FilingSuggestionModel {
         val model = FilingSuggestionModel(
             cloud = CloudClient(baseUrl = NOWHERE, tokenProvider = { null }),
-            speakerLabel = { "" },
         )
         val offer = PendingFiling(
             suggestion = requireNotNull(pending(folders)),
@@ -116,7 +115,6 @@ class SampleFilingTest {
         )
         val model = FilingSuggestionModel(
             cloud = CloudClient(baseUrl = NOWHERE, tokenProvider = { null }),
-            speakerLabel = { "" },
         )
         assertTrue(model.present(offer, target))
 

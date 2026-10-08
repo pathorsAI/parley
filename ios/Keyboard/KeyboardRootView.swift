@@ -69,9 +69,15 @@ struct KeyboardRootView: View {
                 // `contentShape` cannot fix that from inside SwiftUI; a fill
                 // below the eye's threshold can.
                 .background(KBTheme.hitFill(dark))
+                // A held space bar steering the caret (`SpaceKey`) owns its
+                // finger: the same sideways drag is not a swipe, here or on
+                // release. The bar only becomes a trackpad within 10pt of
+                // where it was pressed, well inside the 24pt this needs, so
+                // the track can never already be moving when it does.
                 .simultaneousGesture(
                     DragGesture(minimumDistance: 24)
                         .updating($drag) { value, state, _ in
+                            guard !bridge.spaceCursor.holdsTouch else { return }
                             state = rubberBanded(value.translation.width, width: width)
                         }
                         // The track is about to show a neighbour, so it had
@@ -80,10 +86,13 @@ struct KeyboardRootView: View {
                         // animated, so the neighbour is simply drawn where the
                         // finger has put it. By the time the release animates
                         // a step, it has been there for many frames.
-                        .onChanged { _ in revealNeighbours() }
+                        .onChanged { _ in
+                            if !bridge.spaceCursor.holdsTouch { revealNeighbours() }
+                        }
                         .onEnded { value in
                             let dx = value.translation.width
-                            guard abs(dx) > KBMetrics.swipeThreshold,
+                            guard !bridge.spaceCursor.holdsTouch,
+                                abs(dx) > KBMetrics.swipeThreshold,
                                 abs(dx) > abs(value.translation.height) * 1.5
                             else { return }
                             bridge.stepPane(by: dx < 0 ? 1 : -1)
@@ -93,8 +102,8 @@ struct KeyboardRootView: View {
                 // the keyboard has no background to cover it with. Hit-testing
                 // goes with it, so the track can't be swiped or typed on
                 // underneath the grid.
-                .opacity(showsCandidateGrid ? 0 : 1)
-                .allowsHitTesting(!showsCandidateGrid)
+                .opacity(coversKeys ? 0 : 1)
+                .allowsHitTesting(!coversKeys)
             }
             // A pane set without the tabs or the swipe — the controller
             // sending the keyboard elsewhere because a pane was switched off,
@@ -110,7 +119,13 @@ struct KeyboardRootView: View {
                 if showsCandidateGrid {
                     CandidateGrid(
                         candidates: bridge.zhuyin.candidates, dark: dark,
-                        pick: bridge.pickCandidate, backspace: bridge.backspace)
+                        pick: bridge.pickCandidate, hold: bridge.holdCandidate,
+                        backspace: bridge.backspace)
+                } else if let panel = bridge.savedInfoPanel {
+                    // Built when the panel opens and gone when it closes:
+                    // nothing of the saved info is in the view tree otherwise.
+                    SavedInfoPanel(bridge: bridge, content: panel, dark: dark)
+                        .equatable()
                 }
             }
             .clipped()
@@ -171,6 +186,9 @@ struct KeyboardRootView: View {
     /// the next turn of the main queue — one frame later, and only the first
     /// time; after that every pane on the way exists and the tap moves at once.
     private func select(_ pane: KeyboardPane) {
+        // A tab is a way back to the keys, including the current pane's own
+        // tab while the saved-info panel is over them.
+        if bridge.savedInfoPanel != nil { bridge.closeSavedInfo() }
         guard reveal(from: bridge.pane, to: pane) else { return bridge.setPane(pane) }
         DispatchQueue.main.async { bridge.setPane(pane) }
     }
@@ -238,7 +256,9 @@ struct KeyboardRootView: View {
     /// it takes the 1.20 chip at the left of the row again.
     private var modeStrip: some View {
         HStack(spacing: 0) {
-            if bridge.zhuyin.isPending {
+            if let candidate = bridge.forgetPrompt {
+                forgetPrompt(candidate)
+            } else if bridge.zhuyin.isPending {
                 // Only a host that ignores marked text gets the chip: anywhere
                 // else the reading is already underlined in the field.
                 if !bridge.zhuyin.composition.isEmpty { compositionChip }
@@ -250,13 +270,18 @@ struct KeyboardRootView: View {
                     candidateBar
                 }
                 if showsExpandKey { expandKey }
+            } else if showsAssociations {
+                associationBar
             } else if showsSuggestions {
                 suggestionBar
             } else {
                 StripHome(
                     bridge: bridge, dark: dark, panes: bridge.panes, pane: bridge.pane,
                     showsWindowChip: showsWindowChip, justCopied: bridge.justCopied,
-                    offersCopyHint: bridge.copyHintOffered, select: select
+                    offersCopyHint: bridge.copyHintOffered,
+                    chip: bridge.hasFullAccess ? bridge.stripChip : nil,
+                    showsSavedInfoButton: bridge.hasFullAccess,
+                    savedInfoOpen: bridge.savedInfoPanel != nil, select: select
                 )
                 .equatable()
             }
@@ -351,12 +376,78 @@ struct KeyboardRootView: View {
     /// nothing between reads as one long string: 會出好處會場 is three words,
     /// and at 2pt spacing nobody could tell. The system keyboard leaves about a
     /// character's width between candidates for the same reason.
+    ///
+    /// Holding a candidate the keyboard learned asks whether to stop suggesting
+    /// it (`forgetPrompt`); holding any other does nothing.
     private var candidateBar: some View {
         StripBar(
             items: bridge.zhuyin.candidates, dark: dark, fontSize: 22,
-            label: Text("Candidates"), action: bridge.pickCandidate
+            label: Text("Candidates"), action: bridge.pickCandidate,
+            hold: bridge.holdCandidate
         )
         .equatable()
+    }
+
+    // MARK: 注音 associated phrases
+
+    /// After a pick that leaves nothing pending, the strip offers what usually
+    /// comes next (聯想詞) — on the 注音 pane only, and until any other key.
+    private var showsAssociations: Bool {
+        bridge.pane == .zhuyin && !bridge.zhuyin.associations.isEmpty
+    }
+
+    /// The same bar as the candidates, and for the same reason the same size:
+    /// these are one- and two-character Chinese words too. No ⌄ — the lookup
+    /// returns at most `ZhuyinAssociations.limit`, which the bar draws whole —
+    /// and no hold, because nothing here was learned.
+    private var associationBar: some View {
+        StripBar(
+            items: bridge.zhuyin.associations, dark: dark, fontSize: 22,
+            label: Text("Next-phrase suggestions"), action: bridge.pickAssociation
+        )
+        .equatable()
+    }
+
+    // MARK: forgetting a learned candidate
+
+    /// "Don't suggest this", in place of the strip, for the candidate the user
+    /// held. In the strip rather than a context menu because a keyboard
+    /// extension's view cannot present one reliably, and in the strip rather
+    /// than over the keys because the strip is where the candidate was.
+    ///
+    /// The candidate on the left so the user sees what is about to be
+    /// forgotten; the action and ✕ on the right. Any key also dismisses it.
+    private func forgetPrompt(_ candidate: String) -> some View {
+        HStack(spacing: 10) {
+            Text(verbatim: candidate)
+                .font(.system(size: 22))
+                .foregroundStyle(KBTheme.ink(dark))
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 8)
+            Button(action: { bridge.forgetCandidate(candidate) }) {
+                Text("Don't suggest this")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(KBTheme.recording)
+                    .lineLimit(1)
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: KBMetrics.strip - 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(KBTheme.control(dark)))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            Button(action: bridge.dismissForgetPrompt) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(KBTheme.ink(dark))
+                    .frame(width: 32, height: KBMetrics.strip - 4)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text("Cancel"))
+        }
     }
 
     /// The grid replaces the 注音 keys only while there is a reading to choose
@@ -364,6 +455,13 @@ struct KeyboardRootView: View {
     /// is a second guard, so the grid can never sit over another pane's keys.
     private var showsCandidateGrid: Bool {
         bridge.candidatesExpanded && bridge.pane == .zhuyin && bridge.zhuyin.isPending
+    }
+
+    /// Something is over the key area — the candidate grid or the saved-info
+    /// panel —
+    /// and the track underneath is hidden and untouchable.
+    private var coversKeys: Bool {
+        showsCandidateGrid || bridge.savedInfoPanel != nil
     }
 
     /// Only with something to show, or with the grid already open so it can be
@@ -469,6 +567,14 @@ private struct StripHome: View, Equatable {
     /// The first-run hint may take the wordmark's place — see
     /// `KeyboardBridge.copyHintOffered` and `wordmark`.
     var offersCopyHint: Bool
+    /// The transient chip that takes the wordmark's place — the revert, or the
+    /// field's 常用資訊 (`KeyboardStripSlot`). `nil` without Full Access.
+    var chip: KeyboardBridge.StripChip?
+    /// The saved-info button at the trailing end. Full Access only: without it
+    /// the App Group that holds 常用資訊 cannot be opened.
+    var showsSavedInfoButton: Bool
+    /// The panel is open, so the button is drawn selected.
+    var savedInfoOpen: Bool
     /// A tab tap. The root view's `select`, not `bridge.setPane`, because the
     /// root is what knows which panes are built: a tab that slides across an
     /// unbuilt one has to build it first (see `KeyboardRootView.paneSlot`).
@@ -494,13 +600,28 @@ private struct StripHome: View, Equatable {
     static func == (a: Self, b: Self) -> Bool {
         a.dark == b.dark && a.panes == b.panes && a.pane == b.pane
             && a.showsWindowChip == b.showsWindowChip && a.justCopied == b.justCopied
-            && a.offersCopyHint == b.offersCopyHint
+            && a.offersCopyHint == b.offersCopyHint && a.chip == b.chip
+            && a.showsSavedInfoButton == b.showsSavedInfoButton
+            && a.savedInfoOpen == b.savedInfoOpen
     }
 
     var body: some View {
         HStack(spacing: 0) {
-            wordmark
-            Spacer(minLength: Self.leadingGap)
+            if let chip, !justCopied {
+                // The chip takes the wordmark's place *and* the run after it:
+                // a frame that wants all the width is laid out last, so the
+                // tabs, the mic chip and the saved-info button keep their
+                // natural widths and the chip's text truncates into what is
+                // left. "✓ Copied" still wins for its moment — it confirms a
+                // tap the user just made.
+                chipSlot(chip)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.trailing, Self.leadingGap)
+                    .transition(.opacity)
+            } else {
+                wordmark
+                Spacer(minLength: Self.leadingGap)
+            }
             if showsWindowChip {
                 windowChip
                     .onGeometryChange(for: CGFloat.self, of: leadingEdge) { chipLeading = $0 }
@@ -508,8 +629,78 @@ private struct StripHome: View, Equatable {
             }
             paneTabs
                 .onGeometryChange(for: CGFloat.self, of: leadingEdge) { tabsLeading = $0 }
+            if showsSavedInfoButton { savedInfoButton }
         }
+        .animation(.easeOut(duration: 0.18), value: chip)
         .coordinateSpace(.named(Self.stripSpace))
+    }
+
+    // MARK: the transient chip slot
+
+    @ViewBuilder
+    private func chipSlot(_ chip: KeyboardBridge.StripChip) -> some View {
+        switch chip {
+        case .revert:
+            chipButton(
+                symbol: "arrow.uturn.backward", label: Text("Use original"),
+                action: bridge.useOriginal
+            )
+            .accessibilityHint(Text("Replaces the polished text with what you said."))
+        case .fields(let chips):
+            HStack(spacing: 6) {
+                ForEach(chips) { field in
+                    chipButton(
+                        symbol: field.kind.symbolName, label: Text(verbatim: field.text),
+                        action: { bridge.insertFieldSnippet(field.id) }
+                    )
+                    .accessibilityLabel(
+                        field.kind.isSensitive
+                            ? Text(verbatim: field.kind.displayName)
+                            : Text(verbatim: "\(field.kind.displayName), \(field.text)"))
+                }
+            }
+        }
+    }
+
+    /// A capsule in the control wash, the mic chip's shape: an icon and a
+    /// line of text that truncates rather than pushing anything over.
+    private func chipButton(symbol: String, label: Text, action: @escaping () -> Void)
+        -> some View
+    {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: symbol)
+                    .font(.system(size: 10, weight: .semibold))
+                label
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .foregroundStyle(KBTheme.ink(dark))
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(KBTheme.control(dark)))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// The saved-info button at the trailing end: opens 常用資訊 over the keys,
+    /// and closes it again. A card with a person on it rather than the
+    /// clipboard 1.30 drew here — the panel holds the user's own details now,
+    /// not anything copied.
+    private var savedInfoButton: some View {
+        Button(action: bridge.toggleSavedInfo) {
+            Image(systemName: savedInfoOpen ? "person.text.rectangle.fill" : "person.text.rectangle")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(savedInfoOpen ? KBTheme.accent : KBTheme.ink(dark))
+                .frame(width: 30, height: KBMetrics.strip - 4)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.leading, 4)
+        .accessibilityLabel(Text("Saved info"))
+        .accessibilityAddTraits(savedInfoOpen ? [.isSelected] : [])
     }
 
     private func leadingEdge(_ proxy: GeometryProxy) -> CGFloat {
@@ -867,6 +1058,14 @@ private struct StripBar: View, Equatable {
     /// labels, so this names the container.
     var label: Text
     var action: (String) -> Void
+    /// A long press on an item, for the bars that have something to say about
+    /// one (the 注音 candidates: forget a learned one). `nil` is a bar where
+    /// holding is just a slow tap.
+    var hold: ((String) -> Void)? = nil
+
+    /// How long a press is before it is a hold — the system's own
+    /// context-menu delay.
+    static let holdDuration: Double = 0.5
 
     /// The items the bar draws, which is all it compares.
     private var drawn: ArraySlice<String> { items.prefix(Self.drawnLimit) }
@@ -891,6 +1090,13 @@ private struct StripBar: View, Equatable {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    // Simultaneous, so the scroll and the tap keep working; the
+                    // controller swallows the tap the hold's lift becomes. Masked
+                    // off entirely on a bar with nothing to do on a hold.
+                    .simultaneousGesture(
+                        LongPressGesture(minimumDuration: Self.holdDuration)
+                            .onEnded { _ in hold?(item) },
+                        including: hold == nil ? .subviews : .all)
                 }
             }
         }

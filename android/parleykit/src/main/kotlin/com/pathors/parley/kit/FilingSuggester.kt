@@ -49,7 +49,9 @@ data class FilingSuggestion(
  * The pass that runs once a recording has been transcribed: read the
  * conversation and say what the recording should be CALLED and where it should
  * be FILED. A port of iOS `ParleyKit/FilingSuggester.swift`, which is itself a
- * port of the desktop's `src/lib/ai/filing.ts`.
+ * port of the desktop's `src/lib/ai/filing.ts`. The prompt text, the request
+ * parameters and the limits all come from `shared/prompts/filing.json` via the
+ * generated [FilingPrompt]; nothing prompt-shaped is defined here.
  *
  * Every door into a recording names it badly — on the phone a recording arrives
  * named after the clock — so this is usually the first honest title a recording
@@ -62,78 +64,23 @@ data class FilingSuggestion(
  */
 object FilingSuggester {
     /**
-     * The same alias the dictation rewrite uses. One short label off an
-     * already-transcribed conversation rides the cheap fast lane — exactly as the
-     * desktop puts it on the "realtime" workload.
-     */
-    const val MODEL = "parley-fast"
-
-    private const val TEMPERATURE = 0.2
-    private const val MAX_TOKENS = 512
-
-    /**
-     * The standing instruction, kept word-for-word in sync with the desktop's
-     * `SYSTEM` (`src/lib/ai/filing.ts`) and iOS `filingRules`: every platform
-     * files the same person's recordings into the same folder registry, and drift
-     * between them shows up as the phone and the Mac disagreeing about where a
-     * meeting belongs.
-     */
-    val filingRules: String = """
-        Given a finished meeting transcript, decide what the recording should be CALLED and where it should be FILED. Both doors into a recording name it badly — a live meeting arrives as "即時會議 · <date>" and an upload arrives as its file name — so this is usually the first honest title the recording gets.
-
-        TITLE
-        - Say what the meeting was ABOUT and, where it is clear, WITH WHOM: a company or a person plus the topic or the decision reached.
-        - No date and no time. The library card already shows those, so spending the title on them wastes the only line the user reads.
-        - No filler as the subject: "meeting", "recording", "call", "討論" and the like describe every recording in the library and therefore identify none of them. A title that would fit any meeting is a failed title.
-        - Keep it short — roughly 10-24 characters of CJK, or about 4-8 English words.
-        - If the current title is already specific and accurate, return it UNCHANGED. Churn for its own sake makes the library harder to trust, not easier.
-
-        FOLDERS
-        - The user's existing folders are listed below. Strongly prefer them. One folder is typically one customer/company or one ongoing workstream, so ask which of those this conversation belongs to.
-        - Return 2-3 candidates ordered best-first. If only one is genuinely defensible, return one — a padded list is worse than a short one.
-        - Copy an existing folder's name EXACTLY (character for character) when you mean that folder, and set isNew to false.
-        - AT MOST ONE candidate may be a folder that does not exist yet (isNew: true), and only when no existing folder honestly fits. A new folder per meeting would grow the registry faster than the user can prune it.
-        - reason is ONE short clause saying why the folder fits — it is shown as a tooltip, not read as prose.
-        """.trimIndent()
-
-    /**
-     * The desktop gets its JSON out of the provider's schema-constrained mode;
-     * here the shape has to be asked for in words.
+     * The standing instruction for [language]: the shared rules, the language
+     * the title must be written in, then the JSON shape. Every Parley client
+     * assembles exactly this from `shared/prompts/filing.json` (here via the
+     * generated [FilingPrompt]), so the phone and the Mac read the same
+     * conversation the same way and propose the same title.
      *
-     * Deliberately NOT an OpenAI `response_format` parameter: nobody has verified
-     * that the worker in front of the model passes it through, and a request
+     * The desktop gets its JSON out of the provider's schema-constrained mode;
+     * the phones ask for it in words ([FilingPrompt.JSON_INSTRUCTION]) and
+     * deliberately send no OpenAI `response_format`: nobody has verified that
+     * the worker in front of the model passes it through, and a request
      * rejected for an unknown field costs the whole pass — while a model that
      * answers in prose costs nothing, because [parse] shrugs and the recording
-     * keeps its name. [resolveFolders] has to survive a disobedient model anyway,
-     * so the constraints are stated here and ENFORCED there.
+     * keeps its name. [resolveFolders] has to survive a disobedient model
+     * anyway, so the constraints are stated in the prompt and ENFORCED there.
      */
-    val jsonInstruction: String = "\n\n" +
-        "Return your answer strictly as a single JSON object and nothing else — no preamble, " +
-        "no explanation, no code fences. Use these property names EXACTLY (verbatim): " +
-        "{\"title\": string, \"folders\": [{\"name\": string, \"isNew\": boolean, \"reason\": string}]}."
-
-    val systemPrompt: String = filingRules + jsonInstruction
-
-    /**
-     * A title longer than this is not a title. Loose enough to let a long but
-     * honest title through, tight enough to catch a model that answered with a
-     * sentence — or the meeting's summary — where a label was asked for.
-     */
-    const val MAXIMUM_TITLE_CHARACTERS = 80
-
-    /**
-     * How much transcript travels with the request. A meeting is not capped the
-     * way dictation is, and an over-long request is not a worse suggestion, it is
-     * a rejected request and no suggestion at all — so a long transcript is sent
-     * as its head and its tail with the middle elided (see [capped]).
-     */
-    const val MAXIMUM_TRANSCRIPT_CHARACTERS = 24_000
-
-    /**
-     * Marked, not silent: the model should know it is reading an excerpt so it
-     * does not conclude the meeting simply stopped mid-sentence.
-     */
-    const val ELISION_MARKER = "\n\n[… transcript trimmed …]\n\n"
+    fun systemPrompt(language: FilingLanguage): String =
+        FilingPrompt.RULES + language.instruction + FilingPrompt.JSON_INSTRUCTION
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -147,9 +94,12 @@ object FilingSuggester {
      * current title and leaves the recording where it is. Throws only on
      * transport/HTTP failure, which means the same thing to the caller.
      *
-     * @param speakerLabel the label a segment's speaker is shown under. Passed in
-     *   because it is display copy (bilingual, and a name the user set wins), and
-     *   the label the model reads should be the one the user reads.
+     * @param speakerLabel the label a segment's speaker is shown under — the
+     *   name stored in the recording's `speakerNames` when there is one, which
+     *   is what the desktop's `transcriptWithTimestamps` sends.
+     * @param language the app's UI language; the title is written in it
+     *   whatever language was spoken.
+     * @param meetingContext the recording's `meetingContext`, "" for none.
      */
     suspend fun suggest(
         segments: List<TranscriptSegment>,
@@ -157,12 +107,15 @@ object FilingSuggester {
         currentTitle: String,
         folders: List<FilingFolder>,
         chat: ChatCompletions,
+        language: FilingLanguage,
+        meetingContext: String = "",
     ): FilingSuggestion? {
         val rendered = transcript(segments, speakerLabel)
         if (rendered.isEmpty()) return null
         val excerpt = capped(rendered)
 
-        val response = chat.chatCompletion(CloudChat.encode(request(currentTitle, folders, excerpt)))
+        val request = request(currentTitle, folders, excerpt, language, meetingContext)
+        val response = chat.chatCompletion(CloudChat.encode(request))
         val payload = CloudChat.content(response)?.let(::parse) ?: return null
 
         val resolved = resolveFolders(payload.folders, folders)
@@ -176,37 +129,52 @@ object FilingSuggester {
     }
 
     /** The request body, minus the transport. */
-    fun request(currentTitle: String, folders: List<FilingFolder>, transcript: String): CloudChat.Request =
+    fun request(
+        currentTitle: String,
+        folders: List<FilingFolder>,
+        transcript: String,
+        language: FilingLanguage,
+        meetingContext: String = "",
+    ): CloudChat.Request =
         CloudChat.Request(
-            model = MODEL,
-            temperature = TEMPERATURE,
-            maxTokens = MAX_TOKENS,
+            model = FilingPrompt.MODEL,
+            temperature = FilingPrompt.TEMPERATURE,
+            maxTokens = FilingPrompt.MAX_TOKENS,
             messages = listOf(
-                CloudChat.Message(role = "system", content = systemPrompt),
-                CloudChat.Message(role = "user", content = userMessage(currentTitle, folders, transcript)),
+                CloudChat.Message(role = "system", content = systemPrompt(language)),
+                CloudChat.Message(
+                    role = "user",
+                    content = userMessage(currentTitle, folders, transcript, meetingContext),
+                ),
             ),
         )
 
     /**
-     * The context block, mirroring the desktop's prompt: what the recording is
+     * The context block, in the order every client sends it: the meeting
+     * context the user wrote (only when there is one), what the recording is
      * called now (so the model can decline to rename it), the menu of existing
      * homes, then the conversation.
      */
-    fun userMessage(currentTitle: String, folders: List<FilingFolder>, transcript: String): String {
-        val named = currentTitle.trim().ifEmpty { "(untitled)" }
-        return "The recording is currently called: $named\n\n" +
+    fun userMessage(
+        currentTitle: String,
+        folders: List<FilingFolder>,
+        transcript: String,
+        meetingContext: String = "",
+    ): String {
+        val context = meetingContext.trim()
+        val contextBlock = if (context.isEmpty()) "" else FilingPrompt.MEETING_CONTEXT_PREFIX + context + "\n\n"
+        val named = currentTitle.trim().ifEmpty { FilingPrompt.UNTITLED }
+        return contextBlock +
+            FilingPrompt.CURRENT_TITLE_PREFIX + named + "\n\n" +
             folderMenu(folders) +
-            "Transcript:\n$transcript"
+            FilingPrompt.TRANSCRIPT_HEADER + "\n" + transcript
     }
 
     /** Render the folder registry as the model's menu of existing homes. */
     fun folderMenu(folders: List<FilingFolder>): String {
         val names = personal(folders).map { it.name.trim() }.filter { it.isNotEmpty() }
-        if (names.isEmpty()) {
-            return "The user has NO folders yet, so every suggestion would have to be created — " +
-                "return exactly ONE folder, with isNew: true.\n\n"
-        }
-        return "The user's existing folders:\n" + names.joinToString("\n") { "- $it" } + "\n\n"
+        if (names.isEmpty()) return FilingPrompt.NO_FOLDERS + "\n\n"
+        return FilingPrompt.FOLDERS_HEADER + "\n" + names.joinToString("\n") { "- $it" } + "\n\n"
     }
 
     /**
@@ -236,21 +204,28 @@ object FilingSuggester {
     }
 
     /**
-     * Head + tail, with the middle marked as removed. Two thirds to the opening,
-     * which has to carry who is in the room and what this is — most of a title —
-     * and one third to the close, which carries how it ended.
+     * Head + tail, with the middle marked as removed, once the transcript runs
+     * past [FilingPrompt.MAX_TRANSCRIPT_CHARACTERS]: an over-long request is not
+     * a worse suggestion, it is a rejected request and no suggestion at all.
+     * The head's share ([FilingPrompt.HEAD_SHARE_NUMERATOR] /
+     * [FilingPrompt.HEAD_SHARE_DENOMINATOR], two thirds) goes to the opening,
+     * which has to carry who is in the room and what this is — most of a title
+     * — and the rest to the close, which carries how it ended. The cut is
+     * marked ([FilingPrompt.ELISION_MARKER]), not silent, so the model does not
+     * conclude the meeting simply stopped mid-sentence.
      *
      * Counted in code points, and cut on code-point boundaries, so a cut never
      * lands inside a surrogate pair.
      */
     fun capped(transcript: String): String {
+        val max = FilingPrompt.MAX_TRANSCRIPT_CHARACTERS
         val length = transcript.codePointCount(0, transcript.length)
-        if (length <= MAXIMUM_TRANSCRIPT_CHARACTERS) return transcript
-        val head = MAXIMUM_TRANSCRIPT_CHARACTERS * 2 / 3
-        val tail = MAXIMUM_TRANSCRIPT_CHARACTERS - head
+        if (length <= max) return transcript
+        val head = max * FilingPrompt.HEAD_SHARE_NUMERATOR / FilingPrompt.HEAD_SHARE_DENOMINATOR
+        val tail = max - head
         val headEnd = transcript.offsetByCodePoints(0, head)
         val tailStart = transcript.offsetByCodePoints(transcript.length, -tail)
-        return transcript.substring(0, headEnd) + ELISION_MARKER + transcript.substring(tailStart)
+        return transcript.substring(0, headEnd) + FilingPrompt.ELISION_MARKER + transcript.substring(tailStart)
     }
 
     // ── what came back ───────────────────────────────────────────────────────
@@ -343,6 +318,12 @@ object FilingSuggester {
      * Whether [candidate] is a title we are willing to put in front of the user.
      * The model is not trusted to have followed the prompt.
      *
+     * Refused: an empty title; one longer than
+     * [FilingPrompt.MAX_TITLE_CHARACTERS] code points (a sentence, or the
+     * meeting's summary, where a label was asked for); the title the recording
+     * already has (nothing to propose); and one containing a Simplified-only
+     * character that appears in neither the current title nor the transcript.
+     *
      * [transcript] is not read for content — only to answer "was this
      * conversation already in Simplified Chinese", so that a meeting conducted in
      * Simplified is not handed a rejection for a title that matches what was
@@ -351,15 +332,22 @@ object FilingSuggester {
     fun acceptTitle(candidate: String, currentTitle: String, transcript: String): Boolean {
         val trimmed = candidate.trim()
         if (trimmed.isEmpty()) return false
-        if (trimmed.codePointCount(0, trimmed.length) > MAXIMUM_TITLE_CHARACTERS) return false
+        if (trimmed.codePointCount(0, trimmed.length) > FilingPrompt.MAX_TITLE_CHARACTERS) return false
+        if (trimmed == currentTitle.trim()) return false
         // Simplified drift: renaming a Traditional Chinese meeting into
-        // Simplified is the failure that looks like success. Only a NEWLY
-        // introduced simplified character counts.
-        val drifted = SimplifiedChinese.contains(trimmed) &&
-            !SimplifiedChinese.contains(currentTitle) &&
-            !SimplifiedChinese.contains(transcript)
-        return !drifted
+        // Simplified is the failure that looks like success. Judged per
+        // character, the same on every platform: a Simplified-only character
+        // (FilingPrompt.SIMPLIFIED_ONLY_CHARS) is drift unless that very
+        // character is already in the current title or the transcript as sent.
+        return trimmed.codePoints().noneMatch { cp ->
+            cp in simplifiedOnly && !currentTitle.containsCodePoint(cp) && !transcript.containsCodePoint(cp)
+        }
     }
+
+    /** [FilingPrompt.SIMPLIFIED_ONLY_CHARS] as code points. */
+    private val simplifiedOnly: Set<Int> = FilingPrompt.SIMPLIFIED_ONLY_CHARS.codePoints().toArray().toSet()
+
+    private fun String.containsCodePoint(cp: Int): Boolean = indexOf(String(Character.toChars(cp))) >= 0
 
     /**
      * Turn the model's raw folder picks into suggestions the UI can act on — a

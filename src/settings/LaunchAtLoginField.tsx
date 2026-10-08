@@ -4,6 +4,7 @@ import { useI18n } from "../i18n";
 import { isMac, isTauri } from "../lib/platform";
 import { log } from "../lib/log";
 import { isTranslocatedError, launchAtLoginStatus, setLaunchAtLogin } from "../lib/launchAtLogin";
+import { InfoTip } from "@/components/ui/info-tip";
 
 /**
  * Settings › Basic › Launch at login: one checkbox over the OS login item.
@@ -72,21 +73,21 @@ export function LaunchAtLoginField() {
 
   if (!isTauri()) return null;
 
+  // Title only; what it does lives behind the info tip, as for every other
+  // setting.
   return (
-    <div className="flex max-w-sm flex-col gap-1.5">
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          className="size-3.5 accent-primary"
-          checked={enabled === true}
-          disabled={enabled === null || busy}
-          onChange={(e) => void toggle(e.target.checked)}
-        />
-        {t("settings.basic.launchAtLoginLabel")}
-      </label>
-      <p className="text-[11px] text-muted-foreground">
+    <label className="flex max-w-sm items-center gap-2 text-sm">
+      <input
+        type="checkbox"
+        className="size-3.5 accent-primary"
+        checked={enabled === true}
+        disabled={enabled === null || busy}
+        onChange={(e) => void toggle(e.target.checked)}
+      />
+      {t("settings.basic.launchAtLogin")}
+      <InfoTip label={t("settings.info")}>
         {t(isMac() ? "settings.basic.launchAtLoginHelp" : "settings.basic.launchAtLoginHelpWindows")}
-      </p>
-    </div>
+      </InfoTip>
+    </label>
   );
 }
