@@ -22,6 +22,11 @@ import type { StageOutputPatch } from "../history/history";
  *      "regenerate all" invalidates a stage while its previous pass still
  *      streams. Latest wins: the older run is SUPERSEDED and its result is
  *      dropped — never written to the store and never persisted.
+ *   4. the user regenerates a stage that is STILL RUNNING — typically one whose
+ *      model call hung. `cancel()` aborts the run's signal (which every runner
+ *      hands to its model call, so the request itself is torn down) and marks
+ *      it superseded, so whatever it still produces is dropped exactly as in 3.
+ *      The caller then resets the stage to "idle" and a fresh run starts.
  *
  * One module-level guard per runner; `begin()` at run start returns a handle
  * the runner checks before every store write and ends exactly once.
@@ -36,6 +41,9 @@ export interface RunHandle {
   target(): RunTarget;
   /** Leave the in-flight registry. Idempotent; call in `finally`. */
   end(): void;
+  /** Aborted when this run is cancelled ({@link RunGuard.cancel}). Pass it to
+   *  the model call so a cancelled run stops waiting on — and paying for — it. */
+  signal: AbortSignal;
 }
 
 export interface RunTarget {
@@ -48,6 +56,18 @@ export interface RunTarget {
 export interface RunGuard {
   /** Register a new run; returns its handle. */
   begin(): RunHandle;
+  /** Cancel this stage's in-flight run for the recording on screen: abort its
+   *  signal and mark it superseded so its result is dropped. Returns whether
+   *  anything was running. */
+  cancel(): boolean;
+}
+
+/** What a cancelled run's signal aborts with. Never shown: a cancelled run is
+ *  superseded, so landStage drops its failure along with everything else. */
+function cancelledError(): Error {
+  const err = new Error("The run was cancelled: the stage was regenerated");
+  err.name = "AbortError";
+  return err;
 }
 
 // Keep the session → saved-entry mapping current. A fresh upload auto-saves
@@ -102,6 +122,9 @@ export function makeRunGuard(stage: StudyStage): RunGuard {
   // to the oldest in-flight token, so it stays a handful of entries.
   const begun: { token: number; session: string | null }[] = [];
   const inFlight = new Set<number>();
+  // In-flight runs by token: their recording and abort handle, for cancel().
+  const live = new Map<number, { session: string | null; controller: AbortController }>();
+  const cancelled = new Set<number>();
 
   const prune = () => {
     if (!inFlight.size) {
@@ -119,10 +142,13 @@ export function makeRunGuard(stage: StudyStage): RunGuard {
       const session = currentSession();
       begun.push({ token, session });
       inFlight.add(token);
+      const controller = new AbortController();
+      live.set(token, { session, controller });
       if (session !== null) runRegistry.add(session, stage, token);
       let ended = false;
 
       const superseded = () =>
+        cancelled.has(token) ||
         begun.some((r) => r.token > token && keyOf(r.session) === keyOf(session));
 
       return {
@@ -139,10 +165,25 @@ export function makeRunGuard(stage: StudyStage): RunGuard {
           if (ended) return;
           ended = true;
           inFlight.delete(token);
+          live.delete(token);
+          cancelled.delete(token);
           if (session !== null) runRegistry.remove(session, stage, token);
           prune();
         },
+        signal: controller.signal,
       };
+    },
+    cancel() {
+      const key = keyOf(currentSession());
+      let any = false;
+      for (const [token, run] of live) {
+        if (keyOf(run.session) !== key || cancelled.has(token)) continue;
+        cancelled.add(token);
+        run.controller.abort(cancelledError());
+        any = true;
+      }
+      if (any) log.info("study: running stage cancelled", { stage });
+      return any;
     },
   };
 }
@@ -174,6 +215,9 @@ export async function landStage(
     /** Also persist `patch` while the recording is still loaded (stages that have
      *  no other persist hook: brief, delivery, filing, the early findings write). */
     persistWhileLoaded?: boolean;
+    /** Set when this pass FAILED (its message). Logged when it lands off screen;
+     *  on screen, `apply()` shows it. */
+    error?: string;
     /** Push to the cloud on a while-loaded write (default true). The early
      *  findings write skips it: the action-items write follows within seconds
      *  and pushes the newer content (each push re-uploads the audio). */
@@ -189,7 +233,15 @@ export async function landStage(
     }
     return;
   }
-  if (run.superseded() || !patch) {
+  if (run.superseded()) {
+    run.end();
+    return;
+  }
+  // A failure nobody is looking at: the user left the recording. Without a
+  // patch nothing is persisted (reopening retries the stage), but it must not
+  // vanish from the log either — "it was generating when I left" is a bug report.
+  if (opts.error !== undefined) log.warn("study: stage failed off screen", { stage, error: opts.error });
+  if (!patch) {
     run.end();
     return;
   }
