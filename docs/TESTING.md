@@ -156,12 +156,17 @@ hosted relay's connect time and the model's answers are not. With the hosted
 - **A one-breath sentence goes straight in.** Dictate 「我等一下就過去找你」 with
   polish on: no "Polishing…", no trailing 。, and the `inserted` line logs
   `polish` `singleClause`. Dictate two clauses (「好，我等一下過去」): polish runs.
-- **Proofread keeps your words.** With Polish style on Proofread, dictate a
-  sentence with an 「呃」 in it and a pause in the middle: the 「呃」 and the
-  pause's 。 are gone, and every other word is as you said it, in the same
-  order. Switch to Rewrite and the same dictation comes back as written prose,
-  as before. A rejected proofread logs `outcome` `rejectedRewrite` and pastes
-  the dictation as said.
+- **Polish runs, on Tidy and on Concise.** Dictate two clauses with an 「呃」
+  in them: "Polishing…" shows, the 「呃」 is gone, and the `inserted` line logs
+  `polish` `polished`. On a Mac this is the check that the hosted LLM calls
+  pass the CORS preflight at all (`voice-typing.polish: failed … TypeError`
+  in the log means they do not). When the model times out or fails, the
+  text is inserted as said and the pill says "Inserted as dictated (polish
+  unavailable)".
+- **A tap during the settle keeps the last words.** In toggle mode, dictate a
+  sentence, tap to stop, and tap again right away to start the next one:
+  the first sentence is pasted whole, its last words included, and the log
+  shows `voice-typing: settled` with `reason` `restart` for it.
 
 ## Voice typing and the clipboard: what only a person can check
 
@@ -175,12 +180,12 @@ part of the next section:
   Preview), then a link, and each time dictate into Notes and into a browser
   text field: the text is inserted and the overlay says "Inserted"; ⌘V
   afterwards pastes the image or the link, not the dictation. `parley.log`
-  shows `clipboard restored` about a second after each paste.
+  shows `clipboard restored` about a second and a half after each paste.
 - **The paste reads the dictation, not the restore.** Dictate into a busy
   Electron app (Slack, VS Code) and a Chromium page: the dictated text
   appears, never the clipboard you had before.
 - **A copy made right after wins.** Dictate, then copy something else within
-  the second after the text appears: ⌘V pastes what you copied, and the log
+  a second after the text appears: ⌘V pastes what you copied, and the log
   says `clipboard changed after the paste; left as it is`.
 - **Back to back.** Two quick dictations in a row, then ⌘V: your original
   clipboard, not the first dictation. Again with a copy in between (polish
@@ -212,7 +217,16 @@ part of the next section:
   focused in Parley's window, nothing is inserted and the overlay's Copy
   still works.
 - **Clipboard managers do not keep it.** With Maccy, Raycast or Paste
-  running, dictate: the dictation does not appear in their history.
+  running, dictate: the dictation does not appear in their history, and the
+  clipboard you had, once it is back, is not listed a second time.
+- **Remote desktops and VMs keep the dictation.** Dictate into a Microsoft
+  Remote Desktop / Windows App session, a Parallels or VMware Fusion VM, or a
+  Screen Sharing window: the text is pasted on the other side, nothing of
+  your old clipboard is, and afterwards the clipboard still holds the
+  dictation (`pasting into a remote or virtual machine` in `parley.log`).
+- **Esc is never left claimed.** After any dictation — pasted, cancelled,
+  failed — Esc works again in the app in front (close a dialog, leave full
+  screen) once the text is in.
 - **Nowhere to paste.** Dictate with no text field focused (click the
   desktop first): nothing is inserted; the overlay's Copy puts the text on the
   clipboard and the pill turns into "Copied to clipboard", which ⌘V then
@@ -289,7 +303,7 @@ involved:
   rich text, HTML, a picture), not the live Excel object, so formulas do not
   survive it, and Windows rebuilds the bitmap formats from the DIB. Win+V
   history (turn it on in Settings › System › Clipboard) does not list the
-  dictation. If the restore never happens, `parley.log` says why (`clipboard
+  dictation, nor the restored clipboard a second time. If the restore never happens, `parley.log` says why (`clipboard
   changed after the paste` means the sequence number moved while the target
   app read the paste; `clipboard restore failed; trying again` means another
   process held the clipboard, and up to three retries follow).
@@ -305,6 +319,14 @@ involved:
   dictate again: afterwards Ctrl+V pastes that earlier dictation, not
   nothing — and with Win+V history on, the earlier dictation still does not
   appear in the history after the second dictation's restore.
+- **Remote desktops and VMs keep the dictation.** Dictate into a Remote
+  Desktop Connection (mstsc) or Windows App session, a Hyper-V, VMware or
+  VirtualBox VM window, Citrix Workspace, TeamViewer, AnyDesk and a VNC
+  viewer: the text is pasted on the other side (not your old clipboard),
+  and it stays on the local clipboard afterwards (`pasting into a remote or
+  virtual machine` in `parley.log`). Check that the paste reaches the remote
+  side at all: the dictation now goes up as an ordinary copy, without the
+  history and monitor markers, so the client's clipboard sync can carry it.
 - **UIPI clipboard-only fallback.** Dictating into a window running as
   administrator (e.g. an elevated terminal) cannot paste — Windows blocks
   input injection into higher-integrity processes. The overlay should say the
