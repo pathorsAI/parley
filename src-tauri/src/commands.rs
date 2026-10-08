@@ -99,7 +99,7 @@ pub fn write_folders(app: AppHandle, json: String) -> Result<(), String> {
 /// only what a meeting needs beyond its capture stays here.
 #[derive(Default)]
 pub struct MeetingState {
-    /// Live transcription session tasks (the per-source Soniox/etc. WebSocket
+    /// Live transcription session tasks (the per-source provider WebSocket
     /// loops). Held so `stop_meeting` can `abort()` them — a direct cancel that
     /// closes the socket even if the capture→channel-close cascade stalls, instead
     /// of letting the session linger and keep emitting transcript after stop.
@@ -126,7 +126,7 @@ pub fn list_input_devices() -> Vec<String> {
 
 /// Start a mic-only preview that emits `audio://level` (source "test") so the
 /// Settings UI can show whether the selected device is actually picking up sound.
-/// No Soniox session is opened.
+/// No transcription session is opened.
 #[tauri::command]
 pub fn start_mic_test(
     app: AppHandle,
@@ -627,7 +627,7 @@ pub fn discard_recording(path: String) {
 }
 
 /// The app's folder inside the user's Documents directory — where the
-/// human-readable artifacts (saved transcripts, Soniox diagnostic logs) go.
+/// human-readable artifacts (saved transcripts, batch-transcription diagnostic logs) go.
 ///
 /// Resolved through Tauri's path API rather than `$HOME`, which Windows does
 /// not set: reading it there failed every save and every diagnostic log with

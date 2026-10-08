@@ -10,7 +10,7 @@ vi.mock("../log", () => ({
 import { useStore } from "../store";
 import type { Settings } from "../types";
 import { arbitrateImportPaths, assertUploadTranscribable } from "./ingest";
-import { STT_BY_ID, sttBatchUrl } from "../transcription/providers";
+import { STT_BY_ID, sttBatchUrl, sttRelayUrl } from "../transcription/providers";
 import { translate } from "../../i18n/messages";
 
 // The single audio-vs-transcript arbitration rule (R7) shared by the picker and
@@ -120,5 +120,13 @@ describe("sttBatchUrl", () => {
     expect(sttBatchUrl("parley")).toMatch(/\/stt\/batch$/);
     expect(sttBatchUrl("soniox")).toBeUndefined();
     expect(sttBatchUrl("deepgram")).toBeUndefined();
+  });
+});
+
+describe("sttRelayUrl", () => {
+  it("streams hosted Parley over the v2 protocol, tagged with its feature", () => {
+    expect(sttRelayUrl("parley", "meeting")).toMatch(/^wss?:\/\/.+\/stt\/v2\/stream\?feature=meeting$/);
+    expect(sttRelayUrl("parley", "voice_typing")).toMatch(/\/stt\/v2\/stream\?feature=voice_typing$/);
+    expect(sttRelayUrl("soniox", "meeting")).toBeUndefined();
   });
 });

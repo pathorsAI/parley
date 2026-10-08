@@ -105,11 +105,10 @@ pub struct TranscribeConfig {
     /// an OpenAI transcription `prompt`, a Gemini system instruction), so each
     /// adapter maps it onto its own wire field; empty = no biasing at all.
     pub vocabulary: Vec<String>,
-    /// Hosted "parley" mode: when set, this is the cloud STT relay's `wss://` URL.
-    /// The adapter connects HERE (not the vendor) with `Authorization: Bearer
-    /// {api_key}` and omits the provider key from its config frame — the relay
-    /// injects the real key server-side, so the vendor stays hidden. `None` =
-    /// BYOK direct-to-vendor (the default for every other provider).
+    /// Hosted "parley" mode: when set, this is the cloud STT endpoint's `wss://`
+    /// URL, and `api_key` is the signed-in cloud session, sent as
+    /// `Authorization: Bearer {api_key}`. Only the `parley` adapter reads it;
+    /// `None` = BYOK direct-to-vendor (every other provider).
     pub relay_endpoint: Option<String>,
     /// Which leg of a reconnecting meeting session this is: 0 for the first
     /// connection, +1 per redial. Every leg numbers its segments from zero, so

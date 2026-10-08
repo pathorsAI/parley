@@ -3,7 +3,7 @@ import { toTraditional } from "./zhConvert";
 import type { Source } from "./types";
 
 /**
- * M0 development stand-in for the real Soniox pipeline. It fakes a back-and-forth
+ * M0 development stand-in for the real transcription pipeline. It fakes a back-and-forth
  * conversation, emitting partial segments that grow word-by-word and then settle
  * to final — exercising the same `upsertSegment` path the Rust transcript events
  * will use in M1. Replace/disable once the realtime websocket is wired up.
