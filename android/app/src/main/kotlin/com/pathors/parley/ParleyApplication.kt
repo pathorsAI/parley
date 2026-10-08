@@ -24,6 +24,7 @@ import com.pathors.parley.feedback.SyncFailureLedger
 import com.pathors.parley.feedback.UncaughtCrashRecorder
 import com.pathors.parley.kit.ParleyClientHeader
 import com.pathors.parley.library.SaveLocationStore
+import com.pathors.parley.ime.VoiceTypingSettings
 import com.pathors.parley.meeting.ImportSession
 import com.pathors.parley.meeting.MeetingService
 import com.pathors.parley.meeting.MeetingSession
@@ -205,6 +206,7 @@ class AppContainer(private val app: Application) {
         bundled = { AnnouncementStore.loadBundled(app) },
         hadStoredSession = { auth.currentToken() != null },
         appVersion = BuildConfig.VERSION_NAME,
+        keyboardUsed = { VoiceTypingSettings(app).keyboardUsedNow() },
     )
 
     /**

@@ -31,15 +31,18 @@ data class AnnouncementState(val seen: Set<String> = emptySet())
  *    at most the running `versionName` ([AppVersion], numeric by component).
  *    An entry committed ahead of its release sits in the bundle doing nothing,
  *    and one with `android: null` is another platform's news.
- * 3. **Only for its audience.** Android has no Parley keyboard, so a
- *    [AnnouncementAudience.Keyboard] announcement is never met here; an
- *    audience this build does not know is unmet too.
+ * 3. **Only for its audience.** [AnnouncementAudience.Keyboard] needs the
+ *    Parley keyboard to have been used on this phone (`keyboardUsed`, which
+ *    the app sets the first time its input method is shown); an audience this
+ *    build does not know is unmet.
  * 4. **One sheet, the newest.** Several unseen at once — someone skipped a few
  *    releases — shows only the newest (highest `ships.android`, then the later
  *    id), and the older ones are retired alongside it.
  *
  * An announcement whose audience is unmet is left alone rather than retired,
- * as on iOS — unless something newer is shown, which retires it with the rest.
+ * as on iOS: if the user picks up the keyboard later, the sheet about the
+ * keyboard is still waiting — unless something newer has been shown in the
+ * meantime, which retires it with the rest.
  */
 object AnnouncementGate {
 
@@ -76,11 +79,14 @@ object AnnouncementGate {
      * @param state what the phone has already seen.
      * @param appVersion the running build's `versionName`. One that cannot be
      *   read shows nothing.
+     * @param keyboardUsed whether the Parley keyboard has been used on this
+     *   phone. False until it has, so keyboard announcements wait.
      */
     fun decide(
         announcements: List<Announcement>,
         state: AnnouncementState,
         appVersion: String,
+        keyboardUsed: Boolean = false,
     ): Decision {
         val running = AppVersion.parse(appVersion) ?: return Decision.NOTHING
 
@@ -92,7 +98,7 @@ object AnnouncementGate {
         }
 
         val newest = released
-            .filter { (item, _) -> audienceMet(item.audience ?: AnnouncementAudience.All) }
+            .filter { (item, _) -> audienceMet(item.audience ?: AnnouncementAudience.All, keyboardUsed) }
             .maxWithOrNull(compareBy<Pair<Announcement, AppVersion>> { it.second }.thenBy { it.first.id })
             ?: return Decision.NOTHING
 
@@ -106,10 +112,10 @@ object AnnouncementGate {
         )
     }
 
-    /** Android has no Parley keyboard: only "everyone" is ever met here. */
-    fun audienceMet(audience: AnnouncementAudience): Boolean = when (audience) {
+    /** iOS `audienceMet(_:keyboardUsed:)`. */
+    fun audienceMet(audience: AnnouncementAudience, keyboardUsed: Boolean): Boolean = when (audience) {
         AnnouncementAudience.All -> true
-        AnnouncementAudience.Keyboard -> false
+        AnnouncementAudience.Keyboard -> keyboardUsed
         is AnnouncementAudience.Unknown -> false
     }
 }
