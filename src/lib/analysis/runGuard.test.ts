@@ -117,6 +117,54 @@ describe("makeRunGuard", () => {
   });
 });
 
+describe("RunGuard.cancel (regenerating a stage that is still running)", () => {
+  it("aborts the run's signal and supersedes it, so its result is dropped", async () => {
+    const guard = makeRunGuard("findings");
+    show("A");
+    const run = guard.begin();
+    expect(run.signal.aborted).toBe(false);
+
+    expect(guard.cancel()).toBe(true);
+    expect(run.signal.aborted).toBe(true);
+    expect(run.superseded()).toBe(true);
+    expect(run.alive()).toBe(false);
+
+    const apply = vi.fn();
+    await landStage(run, { stage: "findings", apply, patch: { findings: [] } });
+    expect(apply).not.toHaveBeenCalled();
+    expect(persistStageOutputs).not.toHaveBeenCalled();
+    expect(runRegistry.stagesFor("A").has("findings")).toBe(false);
+  });
+
+  it("only cancels the run for the recording on screen", () => {
+    const guard = makeRunGuard("actions");
+    show("A");
+    const a = guard.begin();
+    show("B");
+    const b = guard.begin();
+    expect(guard.cancel()).toBe(true);
+    expect(b.signal.aborted).toBe(true);
+    // A's pass (the user left it mid-run) still lands on A's entry.
+    expect(a.signal.aborted).toBe(false);
+    expect(a.superseded()).toBe(false);
+    a.end();
+    b.end();
+  });
+
+  it("reports false when nothing is running, and a fresh run after a cancel is alive", () => {
+    const guard = makeRunGuard("brief");
+    show("A");
+    expect(guard.cancel()).toBe(false);
+    const old = guard.begin();
+    guard.cancel();
+    const fresh = guard.begin();
+    expect(fresh.alive()).toBe(true);
+    expect(fresh.signal.aborted).toBe(false);
+    old.end();
+    fresh.end();
+  });
+});
+
 describe("landStage", () => {
   it("on screen: applies to the store, and persists only when asked", async () => {
     const guard = makeRunGuard("actions");

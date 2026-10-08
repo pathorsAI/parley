@@ -248,8 +248,11 @@ export async function analyzeTimeline(opts: {
   lens?: AnalysisLens;
   /** Called with the cumulative placed findings as they stream in (for live UI). */
   onPartial?: (events: TimelineEvent[]) => void;
+  /** Cancels the pass (the run was superseded). The call also has its own
+   *  deadline — see streamObjectResilient. */
+  signal?: AbortSignal;
 }): Promise<TimelineEvent[]> {
-  const { settings, segments, evals, meetingContext, names, mode = "replay", lens = "decision", onPartial } = opts;
+  const { settings, segments, evals, meetingContext, names, mode = "replay", lens = "decision", onPartial, signal } = opts;
 
   const transcript = transcriptWithTimestamps(segments, names);
   const T = STUDY.timeline;
@@ -294,6 +297,7 @@ export async function analyzeTimeline(opts: {
     schema: schemaFor(lens),
     system: system + JSON_MODE_INSTRUCTION + outputLanguageInstruction(settings),
     prompt: `${ctx}${T.evalsHeader}\n${list}\n\n${transcriptLabel}:\n${transcript || STUDY.noSpeech}`,
+    signal,
     onPartial: (p) => {
       if (!onPartial) return;
       const placed = placeEvents((p as { moments?: (RawEvent | undefined)[] }).moments);

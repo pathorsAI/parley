@@ -7,6 +7,7 @@ import { profileContext } from "./profile";
 import { MEETING_KINDS } from "../analysis/lens";
 import { log } from "../log";
 import { meetingContextBlock, STUDY } from "./studyPrompt";
+import { createDeadline, MEETING_KIND_DEADLINE_MS } from "./deadline";
 import type { MeetingKind, Settings, TranscriptSegment } from "../types";
 
 const schema = z.object({
@@ -27,19 +28,28 @@ function isKind(v: unknown): v is MeetingKind {
  *
  * Returns null when there is nothing to judge or the pass fails; callers fall
  * back to the decision lens (see lensOf), never to an adversarial reading.
+ *
+ * Bounded by {@link MEETING_KIND_DEADLINE_MS} in total — fallback included — so
+ * a provider that never answers costs the findings pass a minute, not forever.
+ * `signal` cancels it (the findings run it belongs to was superseded).
  */
 export async function detectMeetingKind(opts: {
   settings: Settings;
   segments: TranscriptSegment[];
   meetingContext?: string;
   names?: Record<string, string>;
+  signal?: AbortSignal;
 }): Promise<MeetingKind | null> {
-  const { settings, segments, meetingContext, names } = opts;
+  const { settings, segments, meetingContext, names, signal } = opts;
   const transcript = transcriptWithTimestamps(segments, names);
   if (!transcript.trim()) return null;
 
   const ctx = profileContext(settings) + meetingContextBlock(meetingContext);
 
+  // One ceiling over the streamed try AND its fallback: handed to
+  // streamObjectResilient as the caller's signal, so when it fires nothing is
+  // retried.
+  const deadline = createDeadline({ hardMs: MEETING_KIND_DEADLINE_MS, parent: signal });
   try {
     const { object, usage } = await streamObjectResilient({
       settings,
@@ -47,6 +57,7 @@ export async function detectMeetingKind(opts: {
       schema,
       system: STUDY.meetingKind.system + JSON_MODE_INSTRUCTION,
       prompt: `${ctx}${STUDY.meetingKind.transcriptHeader}\n${transcript}`,
+      signal: deadline.signal,
     });
     void recordLlmUsage(settings, "realtime", "eval", usage);
     const kind = object.kind;
@@ -54,7 +65,9 @@ export async function detectMeetingKind(opts: {
     log.info("ai.meetingKind: detected", { kind });
     return kind;
   } catch (e) {
-    log.warn("ai.meetingKind: failed", { error: String(e) });
+    log.warn("ai.meetingKind: failed", { error: String(e), timedOut: deadline.reason() === "hard" });
     return null;
+  } finally {
+    deadline.clear();
   }
 }

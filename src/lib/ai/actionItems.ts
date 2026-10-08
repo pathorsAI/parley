@@ -70,8 +70,11 @@ export async function generateActionItems(opts: {
   names?: Record<string, string>;
   /** Called with the cumulative items as they stream in. */
   onPartial?: (items: ActionItem[]) => void;
+  /** Cancels the pass (the run was superseded). The call also has its own
+   *  deadline — see streamObjectResilient. */
+  signal?: AbortSignal;
 }): Promise<ActionItem[]> {
-  const { settings, segments, findings, meetingContext, names, lens = "decision", onPartial } = opts;
+  const { settings, segments, findings, meetingContext, names, lens = "decision", onPartial, signal } = opts;
   const transcript = transcriptWithTimestamps(segments, names);
   if (!transcript.trim()) return [];
 
@@ -111,6 +114,7 @@ export async function generateActionItems(opts: {
     schema,
     system: systemFor(lens) + JSON_MODE_INSTRUCTION + outputLanguageInstruction(settings),
     prompt: `${ctx}${A.findingsHeader}\n${findingsList}\n\n${A.transcriptHeader}\n${transcript}`,
+    signal,
     onPartial: (p) => {
       if (!onPartial) return;
       const placed = placeItems((p as { actions?: (RawItem | undefined)[] }).actions);

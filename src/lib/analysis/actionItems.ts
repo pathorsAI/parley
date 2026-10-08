@@ -3,6 +3,8 @@ import { hasProviderKey } from "../ai/settings";
 import { generateActionItems } from "../ai/actionItems";
 import { lensOf } from "./lens";
 import { landStage, makeRunGuard } from "./runGuard";
+import { studyErrorMessage } from "./errorMessage";
+import { log } from "../log";
 
 /**
  * Generate post-meeting action items from the analysis findings + transcript and
@@ -17,6 +19,12 @@ import { landStage, makeRunGuard } from "./runGuard";
  * never re-runs it. A run superseded by a newer pass is discarded (runGuard).
  */
 const guard = makeRunGuard("actions");
+
+/** Cancel the action-items pass running for the recording on screen. */
+export function cancelActionItems(): boolean {
+  return guard.cancel();
+}
+
 export async function runActionItems(): Promise<void> {
   const state = useStore.getState();
   const { settings, speakerNames, findings, meetingKind } = state;
@@ -38,6 +46,7 @@ export async function runActionItems(): Promise<void> {
       meetingContext,
       names: speakerNames,
       lens: lensOf(meetingKind),
+      signal: run.signal,
       // Stream items into the store so they appear one-by-one while generating.
       onPartial: (partial) => {
         if (run.alive()) useStore.getState().setActionItems(partial);
@@ -52,11 +61,12 @@ export async function runActionItems(): Promise<void> {
       patch: { findings, actionItems: items, analyzed: true, meetingKind },
     });
   } catch (err) {
-    console.error("[actionItems]", err);
-    const { describeAiError } = await import("../ai/errors");
-    const message = describeAiError(err);
+    if (run.superseded()) log.info("actionItems: superseded pass ended", { error: String(err) });
+    else log.error("actionItems: generation failed", { error: String(err) });
+    const message = await studyErrorMessage(err, settings.llmProviders.deep);
     await landStage(run, {
       stage: "actions",
+      error: message,
       apply: () => {
         useStore.getState().setActionItemsError(message);
         useStore.getState().setActionItemsStatus("error");
