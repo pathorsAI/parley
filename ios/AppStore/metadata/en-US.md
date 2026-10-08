@@ -83,6 +83,10 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.31
+
+Dictation you finish away from the keyboard now lands in your text. If you tap the mic, stop recording in Parley, from the Live Activity or from the lock screen, and then go back to the app you were typing in, the Parley keyboard types the words into the field when it reappears — no more copying them by hand.
+
 ## What's New — 1.30
 
 The Parley keyboard now saves you a lot of trips out to other apps.

@@ -56,6 +56,10 @@ Parley iOS 版對平台的限制講得很直白。iOS 不開放任何第三方 A
 
 Parley 採用 Apache-2.0 授權。原始碼：github.com/pathorsAI/parley
 
+## What's New — 1.31
+
+在鍵盤以外的地方結束的語音輸入，現在會自動打進原本的欄位。點麥克風後如果是在 Parley、動態島或鎖定畫面上按停止，回到原本打字的 App 時，Parley 鍵盤一出現就會把文字輸入進去，不必再手動複製貼上。
+
 ## What's New — 1.30
 
 Parley 鍵盤這一版，讓你少切出去好幾次。
