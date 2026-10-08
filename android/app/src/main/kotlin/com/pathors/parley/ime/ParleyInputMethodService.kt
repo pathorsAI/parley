@@ -108,6 +108,15 @@ class ParleyInputMethodService :
     /** Whether this instance has recorded that the keyboard was used. */
     private var keyboardUseRecorded = false
 
+    /** Which field a dictation may write into. See [DictationFieldGate]. */
+    private val fieldGate = DictationFieldGate()
+
+    /** Whether the composing region we wrote is still in the field. */
+    private val composingSpan = ComposingSpanTracker()
+
+    /** The text last passed to `setComposingText`. */
+    private var lastComposed = ""
+
     // ── lifecycle ────────────────────────────────────────────────────────────
 
     override fun onCreate() {
@@ -171,6 +180,44 @@ class ParleyInputMethodService :
         return view
     }
 
+    /**
+     * A field has been attached — before its input view, and whether or not the
+     * pane is shown.
+     *
+     * When it is a different field from the one a dictation was started in, that
+     * dictation is let go here and now: its words were meant for the previous
+     * field, where its raw text stays (the editor settles a composing region it
+     * loses), and none of it — not the transcript replay, not the polished
+     * commit — may reach this one, which might be a password field.
+     */
+    override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
+        super.onStartInput(attribute, restarting)
+        val newTarget = fieldGate.onStartInput(
+            packageName = attribute?.packageName,
+            fieldId = attribute?.fieldId ?: 0,
+            restarting = restarting,
+        )
+        if (!newTarget) return
+        composingSpan.reset()
+        lastComposed = ""
+        val session = DictationService.activeSession.value
+        if (session != null && !fieldGate.owns(session.ownerToken)) {
+            DictationService.clear(only = session)
+        }
+    }
+
+    override fun onUpdateSelection(
+        oldSelStart: Int,
+        oldSelEnd: Int,
+        newSelStart: Int,
+        newSelEnd: Int,
+        candidatesStart: Int,
+        candidatesEnd: Int,
+    ) {
+        super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
+        composingSpan.onSelectionUpdate(candidatesStart, candidatesEnd)
+    }
+
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
         currentInputType = info?.inputType
@@ -181,7 +228,7 @@ class ParleyInputMethodService :
         // and the new one may be a password. Cancelling drops the composing text,
         // which is the only ending that leaves nothing behind.
         if (!InputFieldGuard.allowsDictation(currentInputType) && isDictating()) {
-            DictationService.requestCancel(this)
+            DictationService.requestCancel()
         }
         refreshBlock()
         observeSession()
@@ -211,7 +258,7 @@ class ParleyInputMethodService :
      */
     override fun onFinishInputView(finishingInput: Boolean) {
         super.onFinishInputView(finishingInput)
-        if (isDictating()) DictationService.requestStop(this)
+        if (isDictating()) DictationService.requestStop()
     }
 
     override fun onFinishInput() {
@@ -222,6 +269,10 @@ class ParleyInputMethodService :
     override fun onDestroy() {
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()
+        // Nobody is left to commit this dictation, and a session left in
+        // activeSession would otherwise be typed into whatever field the next
+        // keyboard instance is handed. Its raw text stays where it was spoken.
+        DictationService.activeSession.value?.let { DictationService.clear(only = it) }
         scope.cancel()
         super.onDestroy()
     }
@@ -263,16 +314,23 @@ class ParleyInputMethodService :
             return
         }
         if (isDictating()) {
-            DictationService.requestStop(this)
+            DictationService.requestStop()
             return
         }
         uiState = uiState.copy(failure = null, notice = null)
-        DictationService.start(this)
+        composingSpan.reset()
+        lastComposed = ""
+        if (!DictationService.start(this, fieldGate.currentToken)) {
+            // The platform refused the foreground service, so the microphone
+            // would only hear silence.
+            uiState = uiState.copy(failure = DictationFailure.MIC_UNAVAILABLE)
+            return
+        }
         observeSession()
     }
 
     private fun onCancelClick() {
-        if (isDictating()) DictationService.requestCancel(this)
+        if (isDictating()) DictationService.requestCancel()
     }
 
     /** One call. On iOS this is a hand-drawn side-slide track. */
@@ -302,6 +360,12 @@ class ParleyInputMethodService :
      * `collectLatest` on the session flow, so a new session replaces the watch on
      * the old one. Idempotent enough to be called from every callback that could
      * have missed a session starting.
+     *
+     * Only a session started in the current field is watched. Anything else — a
+     * dictation from a field the user has left, or one a destroyed keyboard
+     * instance left behind — is let go without a single character written: its
+     * text is a `StateFlow`, and collecting it here would replay its whole
+     * transcript into this field.
      */
     private fun observeSession() {
         sessionJob?.cancel()
@@ -311,10 +375,29 @@ class ParleyInputMethodService :
                     uiState = uiState.copy(phase = DictationPhase.IDLE, level = 0f, elapsedMs = 0)
                     return@collectLatest
                 }
-                launch { session.text.collect(::showComposing) }
+                if (!fieldGate.owns(session.ownerToken)) {
+                    DictationService.clear(only = session)
+                    return@collectLatest
+                }
+                launch {
+                    session.text.collect { text ->
+                        // Re-checked on every write: the field can change under
+                        // a running collector, and a finished session's text is
+                        // already committed.
+                        if (fieldGate.owns(session.ownerToken) && !session.state.value.isTerminal()) {
+                            showComposing(text)
+                        }
+                    }
+                }
                 launch { session.level.collect { uiState = uiState.copy(level = it) } }
                 launch { session.elapsedMs.collect { uiState = uiState.copy(elapsedMs = it) } }
-                session.state.collect(::onSessionState)
+                session.state.collect { state ->
+                    if (fieldGate.owns(session.ownerToken)) {
+                        onSessionState(state)
+                    } else if (state.isTerminal()) {
+                        DictationService.clear(only = session)
+                    }
+                }
             }
         }
     }
@@ -328,7 +411,12 @@ class ParleyInputMethodService :
      * where a typist would expect it.
      */
     private fun showComposing(text: String) {
-        currentInputConnection?.setComposingText(text, 1)
+        val connection = currentInputConnection ?: return
+        // An empty session text is the state before the first words; writing it
+        // would only clear a region we never made.
+        if (text.isEmpty() && lastComposed.isEmpty()) return
+        connection.setComposingText(text, 1)
+        lastComposed = text
     }
 
     private fun onSessionState(state: DictationState) {
@@ -386,10 +474,24 @@ class ParleyInputMethodService :
      */
     private fun commit(text: String) {
         val connection: InputConnection = currentInputConnection ?: return
-        if (text.isEmpty()) {
-            clearComposing()
-        } else {
-            connection.commitText(text, 1)
+        val composed = lastComposed
+        lastComposed = ""
+        val action = FinalCommit.decide(
+            regionGone = composingSpan.isGone,
+            textBeforeCursor = if (composed.isEmpty()) {
+                null
+            } else {
+                connection.getTextBeforeCursor(composed.length, 0)
+            },
+            composed = composed,
+        )
+        composingSpan.reset()
+        when {
+            // The app already took the raw text (sent it, cleared the box), or
+            // the user moved on: writing now would type the dictation twice.
+            action == FinalCommit.Action.LEAVE -> connection.finishComposingText()
+            text.isEmpty() -> clearComposing()
+            else -> connection.commitText(text, 1)
         }
     }
 

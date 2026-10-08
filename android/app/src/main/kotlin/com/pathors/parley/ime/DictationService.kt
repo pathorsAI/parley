@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -63,8 +64,11 @@ import kotlinx.coroutines.launch
  * input view is destroyed and recreated as the user moves between fields and as
  * the configuration changes, and a dictation must not die with a view. The
  * session stays in [activeSession] after it reaches a terminal state so the input
- * method can read the final text and commit it; [clear] is what lets it go, and
- * the input method calls that only once the words are in the field.
+ * method can read the final text and commit it; [clear] is what lets it go. The
+ * input method calls it once the words are in the field, or to abandon a session
+ * that is no longer the current field's (see [DictationFieldGate]). Every session
+ * carries the token of the field it was started in, and a start request never
+ * adopts a finished session or one from another field ([DictationAdoption]).
  */
 class DictationService : Service() {
 
@@ -105,30 +109,49 @@ class DictationService : Service() {
             }
         }
 
+        val owner = intent?.getLongExtra(EXTRA_OWNER, DictationFieldGate.NO_OWNER)
+            ?: DictationFieldGate.NO_OWNER
         val existing = _activeSession.value
-        if (existing != null) {
-            // A start that raced another start, or one that arrived while the
-            // previous session was still waiting to be read. Adopt rather than
-            // open a second microphone.
-            ensureForeground()
-            observe(existing)
-            return START_NOT_STICKY
+        when (DictationAdoption.decide(existing?.state?.value, existing?.ownerToken ?: DictationFieldGate.NO_OWNER, owner)) {
+            DictationAdoption.Action.ADOPT -> {
+                // The same field asked twice, faster than the first session got
+                // anywhere. Watch it rather than open a second microphone.
+                ensureForeground()
+                observe(existing!!)
+                return START_NOT_STICKY
+            }
+
+            // A session nobody will ever commit (its keyboard died with it, so it
+            // sat finished in activeSession), or a live one from another field.
+            // Handing either to this caller would type its words into a field
+            // they were never meant for.
+            DictationAdoption.Action.REPLACE -> {
+                if (_activeSession.compareAndSet(existing, null)) existing?.dispose()
+            }
+
+            DictationAdoption.Action.START -> Unit
         }
 
         // Order is load-bearing: foreground first, microphone second. See the
         // class docs.
-        createChannel()
-        startForegroundNotification()
         val container = applicationContext.parleyContainer
         val session = DictationSession(
             context = applicationContext,
             auth = container.auth,
             cloud = container.cloud,
             settings = VoiceTypingSettings(applicationContext),
+            ownerToken = owner,
         )
+        val foreground = ensureForeground()
         _activeSession.value = session
         observe(session)
-        session.start()
+        if (foreground) {
+            session.start()
+        } else {
+            // Without a microphone-typed foreground service AudioRecord would
+            // only hand back silence. Fail visibly instead of transcribing nothing.
+            session.refuse(DictationFailure.MIC_UNAVAILABLE)
+        }
         return START_NOT_STICKY
     }
 
@@ -137,10 +160,21 @@ class DictationService : Service() {
      * against stopping without ever having started foreground — see the class
      * docs.
      */
-    private fun ensureForeground() {
-        if (inForeground) return
-        createChannel()
-        startForegroundNotification()
+    private fun ensureForeground(): Boolean {
+        if (inForeground) return true
+        return try {
+            createChannel()
+            startForegroundNotification()
+            true
+        } catch (e: IllegalStateException) {
+            // ForegroundServiceStartNotAllowedException (API 31+) is one of these.
+            Log.w(TAG, "foreground start refused", e)
+            false
+        } catch (e: SecurityException) {
+            // A microphone-typed foreground service without RECORD_AUDIO (API 34+).
+            Log.w(TAG, "foreground start refused", e)
+            false
+        }
     }
 
     /**
@@ -154,10 +188,7 @@ class DictationService : Service() {
         observerJob?.cancel()
         observerJob = serviceScope.launch {
             session.state.collect { state ->
-                val over = state is DictationState.Done ||
-                    state is DictationState.Failed ||
-                    state is DictationState.Cancelled
-                if (over) stopSelfAndForeground()
+                if (state.isTerminal()) stopSelfAndForeground()
             }
         }
     }
@@ -236,6 +267,8 @@ class DictationService : Service() {
     companion object {
         private const val ACTION_STOP = "com.pathors.parley.action.STOP_DICTATION"
         private const val ACTION_CANCEL = "com.pathors.parley.action.CANCEL_DICTATION"
+        private const val EXTRA_OWNER = "com.pathors.parley.extra.DICTATION_OWNER"
+        private const val TAG = "DictationService"
 
         /**
          * Its own channel, not the meeting one. A user who mutes "Meeting
@@ -266,37 +299,48 @@ class DictationService : Service() {
          * without it — and the caller must be the current input method, which is
          * what makes the background start legal.
          */
-        fun start(context: Context) {
+        fun start(context: Context, ownerToken: Long): Boolean = try {
             ContextCompat.startForegroundService(
                 context,
-                Intent(context, DictationService::class.java),
+                Intent(context, DictationService::class.java).putExtra(EXTRA_OWNER, ownerToken),
             )
-        }
-
-        /** Stop talking and settle the text. The session stays until [clear]. */
-        fun requestStop(context: Context) {
-            ContextCompat.startForegroundService(
-                context,
-                Intent(context, DictationService::class.java).setAction(ACTION_STOP),
-            )
-        }
-
-        /** Throw the dictation away: nothing is committed. */
-        fun requestCancel(context: Context) {
-            ContextCompat.startForegroundService(
-                context,
-                Intent(context, DictationService::class.java).setAction(ACTION_CANCEL),
-            )
+            true
+        } catch (e: IllegalStateException) {
+            // ForegroundServiceStartNotAllowedException (API 31+) is one of these.
+            Log.w(TAG, "dictation start refused", e)
+            false
+        } catch (e: SecurityException) {
+            Log.w(TAG, "dictation start refused", e)
+            false
         }
 
         /**
-         * The input method has committed the text; let the session go, and with
-         * it any service instance still standing.
+         * Stop talking and settle the text. The session stays until [clear].
+         *
+         * A direct call, not an intent: the keyboard runs in this process, and a
+         * `startForegroundService` that lands after the session has ended and
+         * the service has stopped would be a promise of a notification nobody
+         * keeps — a crash. The service sees the session end through its observer.
          */
-        fun clear() {
-            val session = _activeSession.value
-            _activeSession.value = null
-            session?.dispose()
+        fun requestStop() {
+            _activeSession.value?.requestStop()
+        }
+
+        /** Throw the dictation away: nothing is committed. Direct, as [requestStop]. */
+        fun requestCancel() {
+            _activeSession.value?.cancel()
+        }
+
+        /**
+         * Let the session go — once the input method has committed its text, or
+         * when it is abandoning it — and with it any service instance still
+         * standing. With [only], does nothing unless that is still the session.
+         */
+        fun clear(only: DictationSession? = null) {
+            val session = _activeSession.value ?: return
+            if (only != null && only !== session) return
+            if (!_activeSession.compareAndSet(session, null)) return
+            session.dispose()
             instance?.stopSelfAndForeground()
         }
     }

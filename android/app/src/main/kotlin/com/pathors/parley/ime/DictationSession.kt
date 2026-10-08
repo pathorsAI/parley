@@ -126,6 +126,12 @@ class DictationSession(
     private val auth: AuthManager,
     private val cloud: CloudClient,
     private val settings: VoiceTypingSettings,
+    /**
+     * The [DictationFieldGate] token of the field this dictation was started in.
+     * The keyboard writes this session's words only while that field is still
+     * the one attached.
+     */
+    val ownerToken: Long = DictationFieldGate.NO_OWNER,
 ) {
 
     private val _state = MutableStateFlow<DictationState>(DictationState.Idle)
@@ -159,7 +165,13 @@ class DictationSession(
             CoroutineExceptionHandler { _, t -> Log.e(TAG, "unhandled in dictation scope", t) },
     )
 
+    /**
+     * Mutated by the relay's event collector and read by [finishUp] and [fail],
+     * which run on other `Dispatchers.Default` threads. [DictationTranscript] is a
+     * plain `LinkedHashMap`, so every touch goes through [transcriptLock].
+     */
     private val transcript = DictationTranscript()
+    private val transcriptLock = Any()
 
     @Volatile private var relay: SttRelayClient? = null
     private var captureJob: Job? = null
@@ -232,6 +244,17 @@ class DictationSession(
             _state.value = DictationState.Cancelled
         }
         teardown()
+    }
+
+    /**
+     * End before the microphone was ever opened, as [reason]. For the service
+     * when the platform refused the foreground start: without a
+     * `microphone`-typed foreground service `AudioRecord` would only hand back
+     * silence, so the honest outcome is a failure the keyboard can show.
+     */
+    fun refuse(reason: DictationFailure) {
+        if (_state.value !is DictationState.Idle) return
+        fail(reason, null)
     }
 
     /** Release everything. Called by [DictationService] once the state is read. */
@@ -318,8 +341,10 @@ class DictationSession(
         if (cancelled) return
         when (event) {
             is SttRelayEvent.Segment -> {
-                transcript.accept(event.segment)
-                _text.value = transcript.live
+                _text.value = synchronized(transcriptLock) {
+                    transcript.accept(event.segment)
+                    transcript.live
+                }
             }
 
             // Out of quota is terminal: the next handshake is refused the same
@@ -361,20 +386,24 @@ class DictationSession(
         // open so the relay can stream the flushed tail back; closing now would
         // truncate the last utterance. Bounded, because a dead socket must not be
         // able to hold the keyboard hostage.
+        //
+        // Wait for the *collector*, not the socket. The relay's event channel is
+        // unbounded and completes right after its terminal event, so the socket
+        // reporting terminated says nothing about whether the final segment has
+        // been read out of the channel yet; the collector finishing does.
         val client = relay
         if (client != null) {
             runCatching { client.finish() }
-            withTimeoutOrNull(DRAIN_TIMEOUT_MS) {
-                while (!client.isTerminated) delay(DRAIN_POLL_MS)
-            }
+            withTimeoutOrNull(DRAIN_TIMEOUT_MS) { eventsJob?.join() }
         }
 
         // Fold after the drain, not before: the flushed tail is the last thing
         // the relay sends and it is usually the end of the sentence.
-        transcript.foldPartial()
-        _text.value = transcript.live
-
-        val raw = transcript.committed
+        val raw = synchronized(transcriptLock) {
+            transcript.foldPartial()
+            _text.value = transcript.live
+            transcript.committed
+        }
         if (cancelled || terminal.get()) return
         if (raw.isBlank()) {
             // Nothing was heard. Not a failure — a key tapped twice, or a silent
@@ -419,11 +448,14 @@ class DictationSession(
     private fun fail(reason: DictationFailure, detail: String?) {
         if (cancelled) return
         if (!terminal.compareAndSet(false, true)) return
-        transcript.foldPartial()
-        _text.value = transcript.live
+        val partial = synchronized(transcriptLock) {
+            transcript.foldPartial()
+            _text.value = transcript.live
+            transcript.committed
+        }
         _state.value = DictationState.Failed(
             reason = reason,
-            partialText = transcript.committed,
+            partialText = partial,
             detail = detail,
         )
         teardown()
@@ -488,7 +520,6 @@ class DictationSession(
         /** How long to wait for the relay's flushed tail before giving up on it. */
         private const val DRAIN_TIMEOUT_MS = 3_000L
 
-        private const val DRAIN_POLL_MS = 50L
         private const val TICK_MS = 200L
     }
 }
