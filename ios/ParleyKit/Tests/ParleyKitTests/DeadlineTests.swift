@@ -3,7 +3,7 @@ import XCTest
 @testable import ParleyKit
 
 /// `Deadline.wait` has to bound work that ignores cancellation — the case the
-/// task-group race it replaced in `SttRelayClient` got wrong.
+/// task-group race it replaced in `ParleyStreamClient` got wrong.
 final class DeadlineTests: XCTestCase {
     func testWorkThatFinishesInTimeWins() async {
         let finished = await Deadline.wait(atMost: .seconds(5)) {

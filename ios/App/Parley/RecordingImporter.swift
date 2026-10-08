@@ -134,7 +134,9 @@ final class RecordingImporter: ObservableObject {
             // No language hints: the phone has no STT language setting, so the
             // cloud auto-detects, exactly as the desktop does with an empty list.
             transcript = try await BatchTranscriber(service: app.cloud)
-                .transcribe(audio: bytes, diarization: true, languageHints: [])
+                .transcribe(
+                    audio: bytes, diarization: true, languages: [],
+                    terms: LexiconStore.recognitionTerms())
         } catch let error as CloudError {
             return .failed(error.batchTranscriptionMessage)
         } catch let error as BatchTranscriptionError {

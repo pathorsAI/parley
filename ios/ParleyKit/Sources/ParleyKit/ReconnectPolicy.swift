@@ -2,7 +2,7 @@ import Foundation
 
 /// When to redial the relay, how long to wait, and when to stop trying.
 ///
-/// A relay session is not resumable — every reconnect is a fresh Soniox leg —
+/// A relay session is not resumable — every reconnect is a fresh recognition session —
 /// so redialling costs a handshake and a new billing session, and hammering a
 /// relay that is down helps nobody. The ladder doubles from one second and
 /// caps, which is long enough to stop hammering and short enough that walking

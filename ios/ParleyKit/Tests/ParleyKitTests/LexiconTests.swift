@@ -200,8 +200,8 @@ final class LexiconTests: XCTestCase {
         var lexicon = Lexicon()
         lexicon.addTerm("Pathors", now: t(10))
         lexicon.record(original: "pearly", replacement: "Parley", now: t(20))
-        lexicon.record(original: "sonyox", replacement: "Soniox", now: t(30))
-        XCTAssertEqual(lexicon.recognitionTerms, ["Pathors", "Soniox", "Parley"])
+        lexicon.record(original: "pensive", replacement: "Pensieve", now: t(30))
+        XCTAssertEqual(lexicon.recognitionTerms, ["Pathors", "Pensieve", "Parley"])
     }
 
     func testRecognitionTermsDeduplicate() {

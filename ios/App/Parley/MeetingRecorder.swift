@@ -171,7 +171,7 @@ final class MeetingRecorder: ObservableObject {
     var isBusy: Bool { phase == .finishing || phase == .uploading }
 
     private var capture: AudioCapture?
-    private var relay: SttRelayClient?
+    private var relay: ParleyStreamClient?
     private var uploader: MeetingUploader?
     /// The audio thread writes here, not to a client it captured once. A
     /// reconnect swaps the client behind it; a tap closure holding the old one
@@ -374,8 +374,8 @@ final class MeetingRecorder: ObservableObject {
     /// The personal dictionary biases a meeting's recognition too, as the
     /// desktop's does (`src/lib/meeting/start.ts` passes the same vocabulary):
     /// a name the keyboard learned is a name people say in meetings.
-    private func makeRelay(token: String, leg: Int, timeOffsetMs: UInt64) -> SttRelayClient {
-        SttRelayClient(
+    private func makeRelay(token: String, leg: Int, timeOffsetMs: UInt64) -> ParleyStreamClient {
+        ParleyStreamClient(
             options: .init(
                 bearerToken: token, vocabulary: LexiconStore.recognitionTerms(),
                 feature: "meeting",
@@ -389,7 +389,7 @@ final class MeetingRecorder: ObservableObject {
         }
     }
 
-    private func connect(_ client: SttRelayClient, leg: Int) async {
+    private func connect(_ client: ParleyStreamClient, leg: Int) async {
         do {
             try await client.start()
             guard self.leg == leg, phase == .recording else { return }
@@ -398,6 +398,21 @@ final class MeetingRecorder: ObservableObject {
             status = String(localized: "Transcribing live")
         } catch {
             guard self.leg == leg else { return }
+            if (error as? ParleyStreamClient.Rejected)?.isQuotaExceeded == true,
+                phase == .recording
+            {
+                // Refused at the handshake for quota: the next one would be
+                // refused the same way.
+                DiagnosticsJournal.record("stt_handshake_402", "live transcription refused")
+                relay = nil
+                client.cancel()
+                giveUpOnTranscription(
+                    String(
+                        localized:
+                            "You're out of transcription quota — live transcription stopped. The recording keeps running, and the audio is transcribed in full after it syncs."
+                    ))
+                return
+            }
             // The handshake failed, so this leg never carried anything: hand
             // the audio back to the hold buffer for the next one.
             audio.hold()
@@ -423,7 +438,7 @@ final class MeetingRecorder: ObservableObject {
             // owns the copy; once the meeting is winding down the stop path
             // does, and neither wants this overwriting it.
             guard !finishRequested, isRecording else { return }
-            let code = "stt_relay_error_\(relayCode.map(String.init) ?? "unknown")"
+            let code = "stt_relay_error_\(relayCode ?? "unknown")"
             AppLog.recording.error(
                 "relay leg \(eventLeg, privacy: .public) error: \(code, privacy: .public)")
             DiagnosticsJournal.record(code, "live transcription error")

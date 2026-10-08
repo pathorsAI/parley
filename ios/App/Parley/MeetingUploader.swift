@@ -1065,7 +1065,9 @@ final class MeetingUploader {
         // Same call the import path makes: no language hints, so the cloud
         // auto-detects exactly as the desktop does with an empty list.
         let transcript = try await BatchTranscriber(service: cloud)
-            .transcribe(audio: audio, diarization: true, languageHints: [])
+            .transcribe(
+                audio: audio, diarization: true, languages: [],
+                terms: LexiconStore.recognitionTerms())
 
         // The transcription has completed and been billed, so a hand-triggered
         // run is charged *here* — after the await that could have thrown, and

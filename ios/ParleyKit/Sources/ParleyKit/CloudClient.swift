@@ -348,16 +348,18 @@ public actor CloudClient: BatchTranscriptionService, DictionarySyncTransport {
     // MARK: hosted batch transcription
 
     /// Create a job from raw (already compressed) audio; the response is the id.
-    /// The hints param is omitted entirely when empty so the cloud auto-detects,
-    /// rather than being handed an empty list to interpret.
-    public func startBatchJob(audio: Data, diarization: Bool, languageHints: [String]) async throws
-        -> String
-    {
+    /// The options ride in the query under Parley's own names (`diarization`,
+    /// `languages`, `terms`). `languages` is omitted entirely when empty so the
+    /// cloud auto-detects, rather than being handed an empty list to interpret.
+    public func startBatchJob(
+        audio: Data, diarization: Bool, languages: [String], terms: [String]
+    ) async throws -> String {
         var query = [URLQueryItem(name: "diarization", value: diarization ? "1" : "0")]
-        if !languageHints.isEmpty {
+        if !languages.isEmpty {
             query.append(
-                URLQueryItem(name: "language_hints", value: languageHints.joined(separator: ",")))
+                URLQueryItem(name: "languages", value: languages.joined(separator: ",")))
         }
+        query += Self.batchTermsQuery(terms)
         let data = try await request(
             "stt/batch", method: "POST", body: audio, contentType: "application/octet-stream",
             query: query, timeout: Self.batchUploadTimeout)
@@ -365,12 +367,25 @@ public actor CloudClient: BatchTranscriptionService, DictionarySyncTransport {
         return try JSONDecoder().decode(Created.self, from: data).id
     }
 
+    /// One repeated `terms` item per term, cleaned and capped like the
+    /// streaming hints. The server also splits on commas, so a term that
+    /// contains one cannot be sent intact and is left out.
+    static func batchTermsQuery(_ terms: [String]) -> [URLQueryItem] {
+        ParleyStreamProtocol.cleanVocabulary(terms.filter { !$0.contains(",") })
+            .map { URLQueryItem(name: "terms", value: $0) }
+    }
+
     public func batchJobStatus(id: String) async throws -> BatchJobStatus {
         try await get("stt/batch/\(id)", as: BatchJobStatus.self)
     }
 
+    /// The transcript in Parley's own token shape (`?format=parley`): the
+    /// streaming token minus `final`, with no marker tokens.
     public func batchTranscript(id: String) async throws -> BatchTranscriptResponse {
-        try await get("stt/batch/\(id)/transcript", as: BatchTranscriptResponse.self)
+        let data = try await request(
+            "stt/batch/\(id)/transcript",
+            query: [URLQueryItem(name: "format", value: BatchTranscriptResponse.format)])
+        return try JSONDecoder().decode(BatchTranscriptResponse.self, from: data)
     }
 
     /// Best-effort cleanup so the cloud isn't left holding the audio. The

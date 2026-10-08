@@ -11,10 +11,12 @@ import Foundation
 
 // MARK: wire shapes
 
-/// One token from the cloud transcript. The shapes are permissive on purpose:
-/// the upstream vendor omits `speaker` on control and spacing tokens, and sends
-/// it as a string in some responses and a number in others (see `SpeakerId` in
-/// `replay.rs`), so a token that decodes strictly would decode nothing at all.
+/// One token from the cloud transcript, in Parley's own token shape
+/// (`?format=parley`: `text`, `start_ms`, `end_ms`, `speaker`, `language`,
+/// `confidence`). The decoder stays permissive on purpose — `speaker` may be
+/// absent, or written as a string rather than a number (see `SpeakerId` in
+/// `replay.rs`) — because a token that decodes strictly would decode nothing
+/// at all.
 public struct BatchToken: Decodable, Equatable, Sendable {
     public let text: String
     public let startMs: UInt64
@@ -30,8 +32,8 @@ public struct BatchToken: Decodable, Equatable, Sendable {
         self.speaker = speaker
     }
 
-    /// The cloud hands back the vendor's tokens untouched, so the timing keys are
-    /// snake_case on the wire (`start_ms`, exactly what `replay.rs` reads). This
+    /// The timing keys are snake_case on the wire (`start_ms`, exactly what
+    /// `replay.rs` reads). This
     /// decoder used to read `startMs`, which is never sent: every token fell back
     /// to 0, so every batch-transcribed recording — an import, or a meeting whose
     /// live transcript was backfilled — synced with all of its lines at 00:00
@@ -80,6 +82,10 @@ public struct BatchToken: Decodable, Equatable, Sendable {
 }
 
 public struct BatchTranscriptResponse: Decodable, Sendable {
+    /// The `format` the transcript route is asked for: Parley's own token
+    /// shape rather than whatever the recognizer behind the service returns.
+    public static let format = "parley"
+
     public let tokens: [BatchToken]
 
     public init(tokens: [BatchToken]) { self.tokens = tokens }
@@ -114,8 +120,11 @@ public struct BatchJobStatus: Decodable, Sendable {
 /// fake. Splitting them out keeps the polling loop testable without a network —
 /// this package has no URL-protocol stubbing and does not want any.
 public protocol BatchTranscriptionService: Sendable {
-    func startBatchJob(audio: Data, diarization: Bool, languageHints: [String]) async throws
-        -> String
+    /// `terms` biases recognition toward the user's own words, the batch
+    /// counterpart of the streaming `hints.terms`.
+    func startBatchJob(
+        audio: Data, diarization: Bool, languages: [String], terms: [String]
+    ) async throws -> String
     func batchJobStatus(id: String) async throws -> BatchJobStatus
     func batchTranscript(id: String) async throws -> BatchTranscriptResponse
     /// Best effort, and deliberately not `throws`: by the time this runs the
@@ -237,8 +246,7 @@ public func groupBatchTokens(_ tokens: [BatchToken], source: String) -> [Transcr
     }
 
     for tok in tokens {
-        // Skip control / endpoint markers that some models emit.
-        if tok.text == "<end>" || tok.text == "<fin>" { continue }
+        // No marker tokens to skip: `?format=parley` never carries any.
 
         // Tokens without a speaker (e.g. some punctuation/spacing tokens) should
         // stay in the CURRENT speaker's run — snapping them to speaker 0 would
@@ -318,10 +326,10 @@ public struct BatchTranscriber: Sendable {
 
     /// Upload → poll → fetch → group → best-effort delete.
     public func transcribe(
-        audio: Data, diarization: Bool = true, languageHints: [String] = []
+        audio: Data, diarization: Bool = true, languages: [String] = [], terms: [String] = []
     ) async throws -> BatchTranscriptionResult {
         let jobId = try await service.startBatchJob(
-            audio: audio, diarization: diarization, languageHints: languageHints)
+            audio: audio, diarization: diarization, languages: languages, terms: terms)
 
         // The cloud normalizes upstream states into the four handled here, so a
         // status we don't recognize is treated as "still working" rather than a

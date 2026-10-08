@@ -7,7 +7,7 @@ import XCTest
 /// lands where it was actually said.
 final class RelayAudioBridgeTests: XCTestCase {
     /// One second of audio at the pipeline's fixed 16 kHz.
-    private static let secondOfSamples = Int(SonioxProtocol.sampleRate)
+    private static let secondOfSamples = Int(ParleyStreamProtocol.sampleRate)
 
     private final class Recorder: PcmSink, @unchecked Sendable {
         private let lock = NSLock()

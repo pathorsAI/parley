@@ -46,7 +46,7 @@ public struct LexiconPair: Codable, Sendable, Equatable, Identifiable {
 ///
 /// These are not substitutions — there is nothing to substitute, because
 /// nothing came back wrong yet. They exist to bias recognition toward words the
-/// user knows they are going to say: they ride in Soniox's `context.terms` (see
+/// user knows they are going to say: they ride in the streaming `hints.terms` (see
 /// `LexiconStore.recognitionTerms`) and in the polish prompt's list of words to
 /// leave alone.
 public struct LexiconTerm: Codable, Sendable, Equatable, Identifiable {
@@ -262,12 +262,12 @@ public struct Lexicon: Codable, Sendable, Equatable {
 
     /// The user's own words: everything they typed in, plus the right-hand
     /// side of every correction. Deduplicated, newest first — under a cap
-    /// (the polish prompt's 30, Soniox's 200) the newest survive.
+    /// (the polish prompt's 30, recognition's 200) the newest survive.
     ///
     /// These and nothing else are the dictionary's words. The keyboard can
     /// read contact names (`requestSupplementaryLexicon`), and deliberately
-    /// does not keep them: recognition terms leave the phone — to the relay
-    /// and Soniox, and into the polish prompt — and contacts do not.
+    /// does not keep them: recognition terms leave the phone — to the
+    /// transcription service, and into the polish prompt — and contacts do not.
     public var userTerms: [String] {
         var seen = Set<String>()
         var out: [String] = []
@@ -538,8 +538,8 @@ public enum LexiconStore {
     /// The terms recognition should be biased toward (`Lexicon.recognitionTerms`):
     /// the user's own words, never anything read from Contacts.
     ///
-    /// Spent in two places: every relay session sends them as Soniox's
-    /// `context.terms` (`SonioxProtocol.context(for:)`, capped at 200, the
+    /// Spent in two places: every streaming session sends them as
+    /// `hints.terms` (`ParleyStreamProtocol.hints(for:)`, capped at 200, the
     /// desktop's `VOCABULARY_LIMIT`), and the polish prompt protects the first
     /// 30 (`TranscriptPolisher`).
     public static func recognitionTerms() -> [String] { load().recognitionTerms }

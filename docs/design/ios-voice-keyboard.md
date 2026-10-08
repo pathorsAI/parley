@@ -1033,20 +1033,17 @@ would grow the text on every pass.
 ### Recognition context
 
 Rewriting after the fact is the second line; the first is biasing recognition
-at the source. Every relay session — dictation and meetings alike, as on the
-desktop — sends `LexiconStore.recognitionTerms()` as Soniox's `context.terms`
-in the config frame (`SonioxProtocol.Config.context`), cleaned exactly as the
+at the source. Every streaming session — dictation and meetings alike, as on
+the desktop — sends `LexiconStore.recognitionTerms()` as `hints.terms` in the
+`start` frame (`ParleyStreamProtocol.Start.hints`), cleaned exactly as the
 desktop cleans them (`clean_vocabulary`: trimmed, no empties, de-duplicated in
 order) and capped at 200, the desktop's `VOCABULARY_LIMIT`. With no terms the
-field is omitted and the frame is byte-identical to before. The hosted relay
-injects the key and forces the model and forwards every other field unchanged
-(parley-internal `apps/cloud/src/stt.ts`), which is what the desktop has relied
-on since its dictionary shipped — no backend change.
+field is omitted.
 
 `recognitionTerms` is the user's own words and nothing else: their typed terms,
 then the replacements of their corrections, newest first — the order is the
-priority under every cap (the polish prompt keeps the first 30, Soniox the first
-200). Nothing read from the system lexicon is ever among them; see below.
+priority under every cap (the polish prompt keeps the first 30, recognition the
+first 200). Nothing read from the system lexicon is ever among them; see below.
 
 ### Corrections the keyboard cannot see: "Fix this word"
 
@@ -1084,7 +1081,7 @@ kinds of entry, told apart by shape:
   apart from them). These are **dropped before anything is copied out of the
   `UILexicon`**: not stored, not logged, not held in memory. **Contact names do
   not leave the phone**, and everything the dictionary holds does — recognition
-  terms go to the relay and Soniox as `context.terms` and into the polish
+  terms go to the transcription service as `hints.terms` and into the polish
   prompt, and the dictionary syncs with the account. An early build of this
   change did store them, as `systemTerms` in `lexicon.json`, to bias
   recognition; that was ruled out, and `LexiconStore.load` rewrites any file

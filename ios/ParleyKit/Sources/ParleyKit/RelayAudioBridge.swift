@@ -1,19 +1,19 @@
 import Foundation
 
 /// Anything that can accept a chunk of 16 kHz mono PCM from the audio thread.
-/// `SttRelayClient` is the only production conformer; tests use a recorder.
+/// `ParleyStreamClient` is the only production conformer; tests use a recorder.
 public protocol PcmSink: AnyObject, Sendable {
     func enqueue(pcm samples: [Int16])
 }
 
-extension SttRelayClient: PcmSink {}
+extension ParleyStreamClient: PcmSink {}
 
 /// Routes microphone chunks to whichever relay leg is current — and **holds
 /// them while there is none**.
 ///
-/// A relay session cannot be resumed: the socket carries one Soniox session,
+/// A relay session cannot be resumed: the socket carries one recognition session,
 /// and a dropped socket means a fresh leg with its own clock starting at zero
-/// (which is what `SttRelayClient.Options.idPrefix` and `timeOffsetMs` are
+/// (which is what `ParleyStreamClient.Options.idPrefix` and `timeOffsetMs` are
 /// for). The gap between the two legs is the interesting part. Without this
 /// type it is simply thrown away: the recording keeps a perfect audio file,
 /// but the words spoken during a five-second blip never reach the relay and
@@ -77,7 +77,7 @@ public final class RelayAudioBridge: @unchecked Sendable {
 
     public init(
         holdLimit: Duration = RelayAudioBridge.defaultHoldLimit,
-        sampleRate: UInt32 = SonioxProtocol.sampleRate
+        sampleRate: UInt32 = ParleyStreamProtocol.sampleRate
     ) {
         self.sampleRate = UInt64(sampleRate)
         let seconds = holdLimit.components.seconds

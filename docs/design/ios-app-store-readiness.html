@@ -149,7 +149,7 @@
           <thead><tr><th>Priority</th><th>項目</th><th>現況</th><th>補法</th></tr></thead>
           <tbody>
             <tr><td><span class="status block">BLOCKER</span></td><td>帳號刪除</td><td>Better Auth / app 都沒有 deletion flow。</td><td>雲端刪 session、user、個人 recording/R2；iOS 設定頁內啟動、確認與完成回饋。</td></tr>
-            <tr><td><span class="status block">BLOCKER</span></td><td>隱私政策</td><td><code>parley.tw/privacy</code> 目前 404，app 內也沒有入口。</td><td>上線中英／繁中 policy，描述音訊、逐字稿、帳號、R2、Soniox／Groq、保留／刪除；Settings 加連結。</td></tr>
+            <tr><td><span class="status block">BLOCKER</span></td><td>隱私政策</td><td><code>parley.tw/privacy</code> 目前 404，app 內也沒有入口。</td><td>上線中英／繁中 policy，描述音訊、逐字稿、帳號、R2、語音辨識與 LLM 服務商、保留／刪除；Settings 加連結。</td></tr>
             <tr><td><span class="status block">BLOCKER</span></td><td>Store metadata</td><td>Screenshots、描述、keywords、Support URL、copyright、review credentials、聯絡人、notes 均空白。</td><td>產出 Night Signal 5 張 iPhone screenshots，填 zh-Hant 首發資料與 review packet。</td></tr>
             <tr><td><span class="status watch">WATCH</span></td><td>錄音同意</td><td>目前點「開始錄音」就請求 mic，未提示與會者同意或雲端轉錄。</td><td>首次錄音 sheet：目的、資料流、與會者同意、可在 Settings 關閉；不影響後續一鍵錄音。</td></tr>
             <tr><td><span class="status watch">WATCH</span></td><td>資料韌性</td><td>停止錄音後若 upload 失敗，temp Ogg 會被刪除，不能重試。</td><td>改成 pending upload queue；顯示同步狀態、保留檔案直到成功或使用者刪除。</td></tr>

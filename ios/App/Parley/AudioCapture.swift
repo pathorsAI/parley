@@ -319,7 +319,7 @@ final class AudioCapture: @unchecked Sendable {
         }
         guard
             let target = AVAudioFormat(
-                commonFormat: .pcmFormatInt16, sampleRate: Double(SonioxProtocol.sampleRate),
+                commonFormat: .pcmFormatInt16, sampleRate: Double(ParleyStreamProtocol.sampleRate),
                 channels: 1, interleaved: true),
             let converter = AVAudioConverter(from: hwFormat, to: target)
         else {
