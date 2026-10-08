@@ -118,7 +118,9 @@ function buildSystem(lens: AnalysisLens, mode: "live" | "replay"): string {
   });
 }
 
-const CLOCK_RE = /(\d{1,2}):(\d{2})(?::(\d{2}))?/;
+// Any number of leading digits: a meeting past 100 minutes is cited as
+// "[102:30]", which a two-digit cap would read as 2:30.
+const CLOCK_RE = /(\d+):(\d{2})(?::(\d{2}))?/;
 
 /** Parse a model-supplied "[m:ss]" / "m:ss" / "h:mm:ss" time into milliseconds. */
 export function parseClockMs(raw: string | undefined): number | null {

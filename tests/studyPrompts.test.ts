@@ -110,6 +110,25 @@ const SEGMENTS: TranscriptSegment[] = [
 
 const SPEAKER_NAMES: Record<string, string> = { "mix-2": "Amy" };
 
+// Unnamed speakers on every source a recording can carry: a desktop's "me" and
+// "them" (speaker 0 and 1 included — "them" 1 is "Remote 1", not "Them") and a
+// phone's diarized "mix". The phone must label these in a PROMPT exactly as the
+// desktop does, whatever its own UI shows.
+const UNNAMED_SEGMENTS: TranscriptSegment[] = [
+  { id: "u-0", source: "me", speaker: 0, text: "Let's start with the timeline.", isFinal: true, startMs: 0, endMs: 2000 },
+  { id: "u-1", source: "me", speaker: 1, text: "I can do Tuesday.", isFinal: true, startMs: 2500, endMs: 4000 },
+  { id: "u-2", source: "me", speaker: 2, text: "I'm also on this call.", isFinal: true, startMs: 4500, endMs: 6000 },
+  { id: "u-3", source: "them", speaker: 0, text: "Tuesday works for us.", isFinal: true, startMs: 6500, endMs: 8000 },
+  { id: "u-4", source: "them", speaker: 1, text: "我們需要先看合約。", isFinal: true, startMs: 8500, endMs: 10000 },
+  { id: "u-5", source: "them", speaker: 3, text: "And the pricing sheet.", isFinal: true, startMs: 10500, endMs: 12000 },
+  { id: "u-6", source: "mix", speaker: 0, text: "Who is speaking here?", isFinal: true, startMs: 62000, endMs: 63000 },
+  { id: "u-7", source: "mix", speaker: 1, text: "That was me.", isFinal: true, startMs: 63500, endMs: 65000 },
+  { id: "u-8", source: "mix", speaker: 27, text: "Late joiner.", isFinal: true, startMs: 6100000, endMs: 6102000 },
+  { id: "u-9", source: "them", speaker: 2, text: "Named on the desktop.", isFinal: true, startMs: 6103000, endMs: 6104000 },
+];
+
+const UNNAMED_SPEAKER_NAMES: Record<string, string> = { "them-2": "Ben" };
+
 const MEETING_CONTEXT = "Pilot rollout and pricing call with Acme's operations team.";
 
 const FINDINGS: TimelineEvent[] = [
@@ -168,8 +187,8 @@ async function captureOne(run: () => Promise<unknown>): Promise<Captured> {
 
 // ── Stage drivers ──────────────────────────────────────────────────────────
 
-const meetingKindCall = (settings: Settings, meetingContext?: string, segments = SEGMENTS) =>
-  captureOne(() => detectMeetingKind({ settings, segments, meetingContext, names: SPEAKER_NAMES }));
+const meetingKindCall = (settings: Settings, meetingContext?: string, segments = SEGMENTS, names = SPEAKER_NAMES) =>
+  captureOne(() => detectMeetingKind({ settings, segments, meetingContext, names }));
 
 const timelineCall = (opts: {
   settings: Settings;
@@ -229,12 +248,14 @@ const deliveryCall = (opts: {
   mode: "live" | "post";
   prosody?: { speechRateHz: number; pitchVarSemitones: number };
   measuredRateHz?: number | null;
+  segments?: TranscriptSegment[];
+  names?: Record<string, string>;
 }) =>
   captureOne(() =>
     analyzeDelivery({
       settings: opts.settings,
-      segments: SEGMENTS,
-      names: SPEAKER_NAMES,
+      segments: opts.segments ?? SEGMENTS,
+      names: opts.names ?? SPEAKER_NAMES,
       prosody: opts.prosody
         ? { f0Hz: 180, monotonyScore: 0.3, sessionRateHz: 4.1, voicedRatio: 0.6, ...opts.prosody }
         : null,
@@ -457,6 +478,24 @@ async function buildGolden() {
     cases.push({ stage: "delivery", language, ...(await deliveryCall({ settings, mode: "post" })) });
     setStoreContext({});
   }
+  // The transcript as each builder renders it, with unnamed speakers on every
+  // source: the timestamped form (meeting kind) and the plain one (delivery).
+  const speakerCases: GoldenCase[] = [];
+  for (const language of LANGUAGES) {
+    const settings = settingsFor(language);
+    speakerCases.push({
+      stage: "meetingKind",
+      language,
+      ...(await meetingKindCall(settings, MEETING_CONTEXT, UNNAMED_SEGMENTS, UNNAMED_SPEAKER_NAMES)),
+    });
+    setStoreContext({ meetingContext: MEETING_CONTEXT });
+    speakerCases.push({
+      stage: "delivery",
+      language,
+      ...(await deliveryCall({ settings, mode: "post", segments: UNNAMED_SEGMENTS, names: UNNAMED_SPEAKER_NAMES })),
+    });
+    setStoreContext({});
+  }
   return {
     $comment:
       "Prompts the DESKTOP builds for fixed inputs (blank profile, replay/post mode). Android's StudyPromptsGoldenTest checks that the phone builds the same system and user prompts. Regenerate: UPDATE_STUDY_GOLDEN=1 bunx vitest run tests/studyPrompts.test.ts",
@@ -468,6 +507,11 @@ async function buildGolden() {
       actionItems: ACTION_ITEMS,
     },
     cases,
+    unnamedSpeakers: {
+      segments: UNNAMED_SEGMENTS,
+      speakerNames: UNNAMED_SPEAKER_NAMES,
+      cases: speakerCases,
+    },
   };
 }
 

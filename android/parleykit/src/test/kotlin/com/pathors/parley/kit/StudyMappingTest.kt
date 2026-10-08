@@ -28,6 +28,10 @@ class StudyMappingTest {
         assertEquals(65_000L, StudyMapping.parseClockMs("1:05"))
         assertEquals(3_723_000L, StudyMapping.parseClockMs("[1:02:03]"))
         assertEquals(754_000L, StudyMapping.parseClockMs("around 12:34 or so"))
+        // Past 100 minutes, as m+:ss — not 2:30.
+        assertEquals(6_150_000L, StudyMapping.parseClockMs("[102:30]"))
+        assertEquals(60_000_000L, StudyMapping.parseClockMs("1000:00"))
+        assertEquals(6_150_000L, StudyMapping.parseClockMs("[1:42:30]"))
         assertNull(StudyMapping.parseClockMs("soon"))
         assertNull(StudyMapping.parseClockMs(""))
         assertNull(StudyMapping.parseClockMs(null))

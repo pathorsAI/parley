@@ -26,11 +26,11 @@ import com.pathors.parley.kit.StudyPrompts
 import com.pathors.parley.kit.TimelineEvent
 import com.pathors.parley.kit.TranscriptSegment
 import com.pathors.parley.kit.ArtifactDisplay
-import com.pathors.parley.ui.speakerStrings
 import java.io.IOException
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -154,8 +154,6 @@ class StudyPass(
     private val scope: CoroutineScope,
     /** The app's UI language, read when a stage runs: the prose is written in it. */
     private val language: () -> FilingLanguage,
-    /** The label for a speaker nobody has named — display copy, from the app's string table. */
-    private val fallbackSpeakerLabel: (source: String, speaker: Int) -> String,
     /** "Analyse recordings automatically". */
     private val autoAnalysis: suspend () -> Boolean,
     /** Whether the hosted model can be asked (a stored session); read when a recording is opened. */
@@ -185,11 +183,19 @@ class StudyPass(
      * The recording screen opened [recordingId] (a personal, cloud-synced
      * recording) with [meta]: take the stages' statuses from what the meta
      * holds — the desktop's `restoredStudyStatuses` — and start whatever is
-     * owed. A stage running from an earlier visit stays running; a result
-     * that arrived meanwhile (another device) wins over a failure remembered
-     * from this process.
+     * owed. A stage running from an earlier visit stays running (and is not
+     * started again); one this process finished stays finished, even when
+     * [meta] predates its write or the chain behind it failed — otherwise a
+     * failed action-items pass would re-spend the findings on every open. A
+     * result that arrived meanwhile (another device) wins over a failure
+     * remembered from this process.
+     *
+     * The returned job completes once the recording's entry in [state]
+     * reflects this open — what the screen waits for before deciding what to
+     * open on. The entry's meta is cleared here: [meta] is what the screen
+     * just loaded, so a meta kept from an earlier visit could only be older.
      */
-    fun open(recordingId: String, meta: RecordingMeta) {
+    fun open(recordingId: String, meta: RecordingMeta): Job =
         scope.launch {
             val auto = try {
                 autoAnalysis()
@@ -202,10 +208,12 @@ class StudyPass(
             val restored = restoredStatuses(meta)
             _state.update { all ->
                 val previous = all[recordingId]
+                val forced = previous?.forced.orEmpty()
                 val statuses = restored.mapValues { (artifact, status) ->
                     val before = previous?.statuses?.get(artifact)
                     when {
                         before == StageStatus.RUNNING -> StageStatus.RUNNING
+                        before == StageStatus.DONE && artifact !in forced -> StageStatus.DONE
                         status == StageStatus.DONE -> StageStatus.DONE
                         before == StageStatus.ERROR -> StageStatus.ERROR
                         else -> status
@@ -219,15 +227,14 @@ class StudyPass(
                         autoAnalysis = auto,
                         manual = previous?.manual ?: false,
                         canSpend = spend,
-                        forced = previous?.forced.orEmpty(),
+                        forced = forced,
                         cascade = previous?.cascade ?: false,
-                        meta = previous?.meta,
+                        meta = null,
                     )
                     )
             }
             dispatch(recordingId)
         }
-    }
 
     /**
      * Regenerate one artifact by hand: reset it and let the scheduler run it
@@ -380,9 +387,10 @@ class StudyPass(
     /** What every stage reads off the freshly fetched meta. */
     private inner class Input(val meta: RecordingMeta, val language: FilingLanguage) {
         val segments: List<TranscriptSegment> = meta.segments.map { it.toKit() }
+        // The desktop's labels, not the screen's: what the model reads is the
+        // same on every device, whatever language the phone is read in.
         private val label: (TranscriptSegment) -> String = { segment ->
-            meta.speakerNames["${segment.source}-${segment.speaker}"]?.takeIf { it.isNotEmpty() }
-                ?: fallbackSpeakerLabel(segment.source, segment.speaker)
+            SpeakerLabel.prompt(segment, meta.speakerNames)
         }
         val timestamped: String = StudyPromptBuilder.transcriptWithTimestamps(segments, label)
         val plain: String get() = StudyPromptBuilder.transcriptAsText(segments, label)
@@ -559,7 +567,7 @@ class StudyPass(
             else -> StudyFailure.SERVER
         }
 
-        /** The pass as the app runs it: the cloud client, its string table, its UI language. */
+        /** The pass as the app runs it: the cloud client, its UI language. */
         fun create(
             context: Context,
             cloud: CloudClient,
@@ -580,7 +588,6 @@ class StudyPass(
                 chat = cloud.studyChat,
                 scope = scope,
                 language = { FilingPass.uiLanguage(app) },
-                fallbackSpeakerLabel = { source, speaker -> SpeakerLabel.fallback(source, speaker, speakerStrings(app)) },
                 autoAnalysis = settings::autoAnalysisNow,
                 canSpend = canSpend,
             )

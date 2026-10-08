@@ -490,7 +490,9 @@ screenshot run.
   when it is stale). `kit/StudyPromptBuilder` assembles the pieces in the
   desktop's order, and `StudyPromptsGoldenTest` checks it against
   `shared/prompts/study.golden.json` — the prompts the desktop really builds
-  for fixed inputs. The phone sends no `response_format`: it appends the JSON
+  for fixed inputs. An unnamed speaker is labelled in a prompt with the
+  desktop's English labels ("You" / "Them" / "Remote N" / "Speaker N",
+  `SpeakerLabel.prompt`), never the screen's localized ones. The phone sends no `response_format`: it appends the JSON
   shape in words (`phone.schema`) and reads the first JSON object out of the
   reply (`kit/StudyMapping`, the desktop's mapping rules: clock parsing,
   snapping to a transcript line, the `maxMs + 5000` drop, eval ids checked

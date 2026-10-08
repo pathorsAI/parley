@@ -376,12 +376,16 @@ class RecordingMeta(val raw: JsonObject) {
      * A copy carrying a findings pass: the findings and the kind they were read
      * through — the desktop's `{ findings, meetingKind }` patch. `analyzed` is
      * left alone: it means findings AND action items, and the action items are
-     * still to come.
+     * still to come. A null kind (detection failed) leaves the stored one
+     * alone, as the desktop's `mergeStageOutputs` does: a kind somebody set on
+     * another device while this pass ran is not erased by a failed guess.
      */
-    fun withFindings(findings: JsonArray, meetingKind: String?): RecordingMeta = replacingAll(
-        FINDINGS to findings,
-        MEETING_KIND to (meetingKind?.let(::JsonPrimitive) ?: JsonNull),
-    )
+    fun withFindings(findings: JsonArray, meetingKind: String?): RecordingMeta =
+        if (meetingKind == null) {
+            replacing(FINDINGS, findings)
+        } else {
+            replacingAll(FINDINGS to findings, MEETING_KIND to JsonPrimitive(meetingKind))
+        }
 
     /**
      * A copy carrying an action-items pass, and `analyzed: true` — findings and

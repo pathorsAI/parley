@@ -142,7 +142,6 @@ class StudyPassTest {
         chat = model,
         scope = this,
         language = { FilingLanguage.EN },
-        fallbackSpeakerLabel = { _, speaker -> "Speaker $speaker" },
         autoAnalysis = { auto },
         canSpend = { signedIn },
         newId = { "id-${ids++}" },
@@ -411,7 +410,7 @@ class StudyPassTest {
         }
         val pass = StudyPass(
             cloud = cloud, chat = model, scope = this, language = { FilingLanguage.EN },
-            fallbackSpeakerLabel = { _, s -> "S$s" }, autoAnalysis = { true }, canSpend = { true },
+            autoAnalysis = { true }, canSpend = { true },
             newId = { "id-${ids++}" }, timeoutMs = { Long.MAX_VALUE / 4 },
         )
         // runCurrent, not advanceUntilIdle: virtual time must not reach the timeout.
@@ -427,5 +426,94 @@ class StudyPassTest {
         release!!.invoke()
         advanceUntilIdle()
         assertTrue(pass.statuses().values.all { it == StageStatus.DONE })
+    }
+
+    @Test
+    fun `reopening after the action items failed does not spend the findings again`() = runTest {
+        val cloud = FakeCloud(baseMeta())
+        val model = FakeModel()
+        // No findings at all: the meta restores them as idle (`[]`, not analysed).
+        model.answers["findings"] = { """{"moments":[]}""" }
+        model.answers["actions"] = { throw IOException("offline") }
+        val pass = pass(cloud, model)
+
+        pass.open(id, cloud.meta)
+        advanceUntilIdle()
+        assertEquals(StageStatus.DONE, pass.statuses()[StudyArtifact.FINDINGS])
+        assertEquals(StageStatus.ERROR, pass.statuses()[StudyArtifact.ACTIONS])
+        assertEquals(StageStatus.IDLE, StudyPass.restoredStatuses(cloud.meta)[StudyArtifact.FINDINGS])
+
+        pass.open(id, cloud.meta)
+        advanceUntilIdle()
+
+        assertEquals(1, model.asked.count { it == "findings" })
+        assertEquals(1, model.asked.count { it == "kind" })
+        assertEquals(StageStatus.DONE, pass.statuses()[StudyArtifact.FINDINGS])
+        assertEquals(StageStatus.ERROR, pass.statuses()[StudyArtifact.ACTIONS])
+    }
+
+    @Test
+    fun `reopening with a stale meta while the action items run does not redo the findings`() = runTest {
+        val cloud = FakeCloud(baseMeta())
+        val stale = cloud.meta
+        val model = FakeModel()
+        var release: (() -> Unit)? = null
+        model.answers["actions"] = {
+            kotlinx.coroutines.suspendCancellableCoroutine<Unit> { c -> release = { c.resumeWith(Result.success(Unit)) } }
+            """{"actions":[]}"""
+        }
+        val pass = StudyPass(
+            cloud = cloud, chat = model, scope = this, language = { FilingLanguage.EN },
+            autoAnalysis = { true }, canSpend = { true },
+            newId = { "id-${ids++}" }, timeoutMs = { Long.MAX_VALUE / 4 },
+        )
+        pass.open(id, cloud.meta)
+        runCurrent()
+        assertEquals(StageStatus.RUNNING, pass.statuses()[StudyArtifact.ACTIONS])
+
+        // The screen still holds the meta from before the findings landed.
+        pass.open(id, stale)
+        runCurrent()
+
+        assertEquals(1, model.asked.count { it == "findings" })
+        assertEquals(StageStatus.DONE, pass.statuses()[StudyArtifact.FINDINGS])
+        assertEquals(StageStatus.RUNNING, pass.statuses()[StudyArtifact.ACTIONS])
+        assertEquals(1, model.asked.count { it == "actions" })
+
+        release!!.invoke()
+        advanceUntilIdle()
+        assertTrue(pass.statuses().values.all { it == StageStatus.DONE })
+    }
+
+    @Test
+    fun `reopening forgets the meta an earlier visit left behind`() = runTest {
+        val cloud = FakeCloud(baseMeta())
+        val pass = pass(cloud, FakeModel())
+        pass.open(id, cloud.meta)
+        advanceUntilIdle()
+        assertTrue(pass.state.value[id]!!.meta != null)
+
+        pass.open(id, cloud.meta).join()
+
+        assertNull(pass.state.value[id]!!.meta)
+    }
+
+    @Test
+    fun `a failed kind detection does not erase a kind set elsewhere meanwhile`() = runTest {
+        val cloud = FakeCloud(baseMeta())
+        cloud.beforeWrite = { cloud.meta = RecordingMeta(JsonObject(cloud.meta.raw + ("meetingKind" to JsonPrimitive("internal")))) }
+        val model = FakeModel()
+        model.answers["kind"] = { throw IOException("offline") }
+        model.answers["findings"] = {
+            """{"moments":[{"time":"0:08","category":"decision","severity":"info","source":"extra","evalIds":[],"title":"Hold","detail":"Price held."}]}"""
+        }
+        val pass = pass(cloud, model)
+
+        pass.open(id, cloud.meta)
+        advanceUntilIdle()
+
+        assertEquals(StageStatus.DONE, pass.statuses()[StudyArtifact.FINDINGS])
+        assertEquals(1, cloud.meta.findingsCount)
+        assertEquals("internal", cloud.meta.raw["meetingKind"]!!.jsonPrimitive.content)
     }
 }

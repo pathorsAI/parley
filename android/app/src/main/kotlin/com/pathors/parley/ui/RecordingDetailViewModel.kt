@@ -35,6 +35,7 @@ import com.pathors.parley.kit.DeliveryAssessment
 import com.pathors.parley.kit.StudyArtifact
 import com.pathors.parley.study.RecordingStudy
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -514,15 +515,30 @@ class RecordingDetailViewModel(
      */
     val studyEligible: Boolean get() = orgId == null && !isSample && !DemoMode.isActive
 
+    /** Whether the study has taken this visit's meta — see [study] and [studyKnown]. */
+    private val studyOpened = MutableStateFlow(false)
+
+    /**
+     * Whether what [study] says can be trusted for this recording: right away
+     * where the phone runs no study here, once this visit's open has landed
+     * otherwise. The screen picks the page it opens on only after this — an
+     * unanalysed recording read before the study is known would lock onto the
+     * transcript although the report is about to fill in.
+     */
+    val studyKnown: StateFlow<Boolean> =
+        if (studyEligible) studyOpened.asStateFlow() else MutableStateFlow(true).asStateFlow()
+
     /**
      * Where the study stands for this recording — [AppContainer.study]'s entry,
      * or a fixed fixture in a screenshot run; null when the phone does not run
      * it here (see [studyEligible]).
      */
     val study: StateFlow<RecordingStudy?> = when {
-        studyEligible -> container.study.state
-            .map { it[recordingId] }
-            .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+        // Gated on this visit's open: until it lands, the entry is whatever an
+        // earlier visit left (its statuses, its meta), not this recording now.
+        studyEligible -> combine(container.study.state, studyOpened) { all, opened ->
+            if (opened) all[recordingId] else null
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
         DemoMode.isActive && !isSample -> MutableStateFlow(DemoMode.study(recordingId)).asStateFlow()
         else -> MutableStateFlow<RecordingStudy?>(null).asStateFlow()
     }
@@ -540,7 +556,12 @@ class RecordingDetailViewModel(
     /** Hand the loaded meta to the study, which starts whatever is owed. */
     private fun openStudy() {
         if (!studyEligible) return
-        _state.value.meta?.let { container.study.open(recordingId, it) }
+        val meta = _state.value.meta ?: return
+        val opening = container.study.open(recordingId, meta)
+        viewModelScope.launch {
+            opening.join()
+            studyOpened.value = true
+        }
     }
 
     /** A stage wrote (or adopted) a result: show the meta it left in the cloud. */

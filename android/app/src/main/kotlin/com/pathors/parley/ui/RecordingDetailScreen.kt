@@ -167,6 +167,7 @@ fun RecordingDetailScreen(
     )
     val state by viewModel.state.collectAsState()
     val study by viewModel.study.collectAsState()
+    val studyKnown by viewModel.studyKnown.collectAsState()
     val playback by viewModel.playbackState.collectAsState()
     val retranscribe by viewModel.retranscribe.collectAsState()
     val filing by viewModel.filing.collectAsState()
@@ -183,7 +184,10 @@ fun RecordingDetailScreen(
 
     // Which page is up: chosen once, when the recording first loads (see
     // [initialFace]), and the reader's after that — a reload never flips it.
-    // Saveable, so a rotation keeps the page too.
+    // Saveable, so a rotation keeps the page too. Chosen only once the study
+    // for THIS visit is known: before that an unanalysed recording would lock
+    // onto the transcript although the study is about to run. Until then the
+    // page shown is provisional and follows what the meta already holds.
     var chosenFace by rememberSaveable { mutableStateOf<DetailFace?>(null) }
     val face = chosenFace ?: state.meta?.let {
         initialFace(
@@ -193,8 +197,8 @@ fun RecordingDetailScreen(
             forceTranscript = DemoMode.navigation.value?.screen == DemoMode.Screen.TRANSCRIPT,
         )
     }
-    LaunchedEffect(face) {
-        if (chosenFace == null && face != null) chosenFace = face
+    LaunchedEffect(face, studyKnown) {
+        if (chosenFace == null && face != null && studyKnown) chosenFace = face
         // Search belongs to the transcript; leaving it closes the field, which
         // also clears the query.
         if (face == DetailFace.REPORT) searching = false

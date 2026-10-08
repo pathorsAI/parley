@@ -293,5 +293,128 @@
       "system": "You are a delivery coach for the user in a just-finished conversation. Judge the USER'S OWN delivery only — never the other party's; use the profile to tell which speaker is the user. Two things:\n1) TONE — reserve 'aggressive'/'rude' for genuinely hostile, demeaning, dismissive, or contemptuous wording; firm disagreement or pushback is 'firm', not aggressive. When uncertain, prefer the milder label.\n2) FILLER WORDS / VERBAL CRUTCHES — consider ONLY the lexical words/phrases in the provided watchlist. Do NOT consider non-lexical hesitation sounds (um, uh, er, 呃, 啊, 嗯) — speech-to-text usually drops them, so they won't be in the transcript. Filler use is normal and human: flag 'frequent' ONLY when the user leans on watchlist words as crutches densely enough to distract a listener; never flag ordinary, meaningful uses of those same words, and never flag mere presence.\nBe honest and concise.\n\nReturn your answer strictly as a single JSON object matching the provided schema. Use the schema's property names EXACTLY (verbatim) — do not rename, translate, or add top-level keys.\n\nWrite ALL of your prose output (summaries, titles, explanations, advice) in Traditional Chinese (繁體中文), regardless of the language spoken in the transcript. Keep any VERBATIM quotes you cite from the transcript in their original language.",
       "prompt": "Meeting context: Pilot rollout and pricing call with Acme's operations team.\n\nFiller watchlist (judge OVER-use of these as verbal crutches only — ignore meaningful uses, and ignore non-lexical um/uh sounds): 那個, 這個, 就是, 就是說, 然後, 反正, 其實, 基本上, 怎麼講, 怎麼說, 你知道, 你知道嗎, 你懂嗎, 對不對, 對啊對啊, 這樣子, 之類的, 什麼的, 老實說, 說真的, 的部分, 的話, like, you know, i mean, basically, actually, literally, sort of, kind of, kinda, sorta, you see, i guess, right?, so yeah, to be honest, at the end of the day, or whatever, and stuff\n\nFull transcript:\n[Speaker 1] Thanks for joining. Let's settle the pilot rollout date today.\n[Amy] Um, we need the security review signed off before any rollout.\n[Speaker 1] 嗯，我覺得價格還可以再談。\n[Amy] Our budget this quarter is 40,000, so 6,000 a month is too high.\n[Speaker 1] Could we phase it, starting with one team in November?\n[Amy] 就是說，我們需要老闆同意才能簽。"
     }
-  ]
+  ],
+  "unnamedSpeakers": {
+    "segments": [
+      {
+        "id": "u-0",
+        "source": "me",
+        "speaker": 0,
+        "text": "Let's start with the timeline.",
+        "isFinal": true,
+        "startMs": 0,
+        "endMs": 2000
+      },
+      {
+        "id": "u-1",
+        "source": "me",
+        "speaker": 1,
+        "text": "I can do Tuesday.",
+        "isFinal": true,
+        "startMs": 2500,
+        "endMs": 4000
+      },
+      {
+        "id": "u-2",
+        "source": "me",
+        "speaker": 2,
+        "text": "I'm also on this call.",
+        "isFinal": true,
+        "startMs": 4500,
+        "endMs": 6000
+      },
+      {
+        "id": "u-3",
+        "source": "them",
+        "speaker": 0,
+        "text": "Tuesday works for us.",
+        "isFinal": true,
+        "startMs": 6500,
+        "endMs": 8000
+      },
+      {
+        "id": "u-4",
+        "source": "them",
+        "speaker": 1,
+        "text": "我們需要先看合約。",
+        "isFinal": true,
+        "startMs": 8500,
+        "endMs": 10000
+      },
+      {
+        "id": "u-5",
+        "source": "them",
+        "speaker": 3,
+        "text": "And the pricing sheet.",
+        "isFinal": true,
+        "startMs": 10500,
+        "endMs": 12000
+      },
+      {
+        "id": "u-6",
+        "source": "mix",
+        "speaker": 0,
+        "text": "Who is speaking here?",
+        "isFinal": true,
+        "startMs": 62000,
+        "endMs": 63000
+      },
+      {
+        "id": "u-7",
+        "source": "mix",
+        "speaker": 1,
+        "text": "That was me.",
+        "isFinal": true,
+        "startMs": 63500,
+        "endMs": 65000
+      },
+      {
+        "id": "u-8",
+        "source": "mix",
+        "speaker": 27,
+        "text": "Late joiner.",
+        "isFinal": true,
+        "startMs": 6100000,
+        "endMs": 6102000
+      },
+      {
+        "id": "u-9",
+        "source": "them",
+        "speaker": 2,
+        "text": "Named on the desktop.",
+        "isFinal": true,
+        "startMs": 6103000,
+        "endMs": 6104000
+      }
+    ],
+    "speakerNames": {
+      "them-2": "Ben"
+    },
+    "cases": [
+      {
+        "stage": "meetingKind",
+        "language": "en",
+        "system": "Classify a finished meeting transcript into EXACTLY ONE kind, so the right analysis can be run over it. Answer with the kind alone.\n\n- \"internal\": a working meeting among people ON THE SAME SIDE — a team discussion, design/product review, planning or roadmap session, project sync, retro, 1:1. Nobody is selling to anybody; the output is decisions and follow-ups. This is also where a meeting that fits NONE of the others belongs.\n- \"sales\": ME is selling to, or qualifying, a prospect or customer — discovery, demo, solution pitch, follow-up call. The other party is evaluating whether to buy. Commercial terms may come up, but the call is still about fit and value.\n- \"pricing\": the deal is already wanted by both sides and the conversation is about TERMS — price, discount, scope, payment, contract clauses, renewal. Concrete numbers are being pushed back and forth.\n- \"rivalry\": ME is across the table from a competitor, a rival, or a party whose interests genuinely conflict — carving up a market, a partnership between competitors, a dispute, a hard procurement standoff. Information leakage and non-committal wording matter more than closing.\n\nJudge the WHOLE conversation by what it was FOR, not by isolated words: one mention of a price inside a design review is still \"internal\", and a hard-fought discount conversation with an existing customer is \"pricing\", not \"sales\". When a sales call is genuinely dominated by haggling terms, prefer \"pricing\"; when you are torn between \"internal\" and anything else and the participants are plainly colleagues, choose \"internal\".\n\nReturn your answer strictly as a single JSON object matching the provided schema. Use the schema's property names EXACTLY (verbatim) — do not rename, translate, or add top-level keys.",
+        "prompt": "Meeting context: Pilot rollout and pricing call with Acme's operations team.\n\nTranscript:\n[0:00] [You] Let's start with the timeline.\n[0:02] [You] I can do Tuesday.\n[0:04] [Speaker 2] I'm also on this call.\n[0:06] [Them] Tuesday works for us.\n[0:08] [Remote 1] 我們需要先看合約。\n[0:10] [Remote 3] And the pricing sheet.\n[1:02] [Speaker 1] Who is speaking here?\n[1:03] [Speaker 1] That was me.\n[101:40] [Speaker 27] Late joiner.\n[101:43] [Ben] Named on the desktop."
+      },
+      {
+        "stage": "delivery",
+        "language": "en",
+        "system": "You are a delivery coach for the user in a just-finished conversation. Judge the USER'S OWN delivery only — never the other party's; use the profile to tell which speaker is the user. Two things:\n1) TONE — reserve 'aggressive'/'rude' for genuinely hostile, demeaning, dismissive, or contemptuous wording; firm disagreement or pushback is 'firm', not aggressive. When uncertain, prefer the milder label.\n2) FILLER WORDS / VERBAL CRUTCHES — consider ONLY the lexical words/phrases in the provided watchlist. Do NOT consider non-lexical hesitation sounds (um, uh, er, 呃, 啊, 嗯) — speech-to-text usually drops them, so they won't be in the transcript. Filler use is normal and human: flag 'frequent' ONLY when the user leans on watchlist words as crutches densely enough to distract a listener; never flag ordinary, meaningful uses of those same words, and never flag mere presence.\nBe honest and concise.\n\nReturn your answer strictly as a single JSON object matching the provided schema. Use the schema's property names EXACTLY (verbatim) — do not rename, translate, or add top-level keys.\n\nWrite ALL of your prose output (summaries, titles, explanations, advice) in English, regardless of the language spoken in the transcript. Keep any VERBATIM quotes you cite from the transcript in their original language.",
+        "prompt": "Meeting context: Pilot rollout and pricing call with Acme's operations team.\n\nFiller watchlist (judge OVER-use of these as verbal crutches only — ignore meaningful uses, and ignore non-lexical um/uh sounds): like, you know, i mean, basically, actually, literally, sort of, kind of, kinda, sorta, you see, i guess, right?, so yeah, to be honest, at the end of the day, or whatever, and stuff, 那個, 這個, 就是, 就是說, 然後, 反正, 其實, 基本上, 怎麼講, 怎麼說, 你知道, 你知道嗎, 你懂嗎, 對不對, 對啊對啊, 這樣子, 之類的, 什麼的, 老實說, 說真的, 的部分, 的話\n\nFull transcript:\n[You] Let's start with the timeline.\n[You] I can do Tuesday.\n[Speaker 2] I'm also on this call.\n[Them] Tuesday works for us.\n[Remote 1] 我們需要先看合約。\n[Remote 3] And the pricing sheet.\n[Speaker 1] Who is speaking here?\n[Speaker 1] That was me.\n[Speaker 27] Late joiner.\n[Ben] Named on the desktop."
+      },
+      {
+        "stage": "meetingKind",
+        "language": "zh-TW",
+        "system": "Classify a finished meeting transcript into EXACTLY ONE kind, so the right analysis can be run over it. Answer with the kind alone.\n\n- \"internal\": a working meeting among people ON THE SAME SIDE — a team discussion, design/product review, planning or roadmap session, project sync, retro, 1:1. Nobody is selling to anybody; the output is decisions and follow-ups. This is also where a meeting that fits NONE of the others belongs.\n- \"sales\": ME is selling to, or qualifying, a prospect or customer — discovery, demo, solution pitch, follow-up call. The other party is evaluating whether to buy. Commercial terms may come up, but the call is still about fit and value.\n- \"pricing\": the deal is already wanted by both sides and the conversation is about TERMS — price, discount, scope, payment, contract clauses, renewal. Concrete numbers are being pushed back and forth.\n- \"rivalry\": ME is across the table from a competitor, a rival, or a party whose interests genuinely conflict — carving up a market, a partnership between competitors, a dispute, a hard procurement standoff. Information leakage and non-committal wording matter more than closing.\n\nJudge the WHOLE conversation by what it was FOR, not by isolated words: one mention of a price inside a design review is still \"internal\", and a hard-fought discount conversation with an existing customer is \"pricing\", not \"sales\". When a sales call is genuinely dominated by haggling terms, prefer \"pricing\"; when you are torn between \"internal\" and anything else and the participants are plainly colleagues, choose \"internal\".\n\nReturn your answer strictly as a single JSON object matching the provided schema. Use the schema's property names EXACTLY (verbatim) — do not rename, translate, or add top-level keys.",
+        "prompt": "Meeting context: Pilot rollout and pricing call with Acme's operations team.\n\nTranscript:\n[0:00] [You] Let's start with the timeline.\n[0:02] [You] I can do Tuesday.\n[0:04] [Speaker 2] I'm also on this call.\n[0:06] [Them] Tuesday works for us.\n[0:08] [Remote 1] 我們需要先看合約。\n[0:10] [Remote 3] And the pricing sheet.\n[1:02] [Speaker 1] Who is speaking here?\n[1:03] [Speaker 1] That was me.\n[101:40] [Speaker 27] Late joiner.\n[101:43] [Ben] Named on the desktop."
+      },
+      {
+        "stage": "delivery",
+        "language": "zh-TW",
+        "system": "You are a delivery coach for the user in a just-finished conversation. Judge the USER'S OWN delivery only — never the other party's; use the profile to tell which speaker is the user. Two things:\n1) TONE — reserve 'aggressive'/'rude' for genuinely hostile, demeaning, dismissive, or contemptuous wording; firm disagreement or pushback is 'firm', not aggressive. When uncertain, prefer the milder label.\n2) FILLER WORDS / VERBAL CRUTCHES — consider ONLY the lexical words/phrases in the provided watchlist. Do NOT consider non-lexical hesitation sounds (um, uh, er, 呃, 啊, 嗯) — speech-to-text usually drops them, so they won't be in the transcript. Filler use is normal and human: flag 'frequent' ONLY when the user leans on watchlist words as crutches densely enough to distract a listener; never flag ordinary, meaningful uses of those same words, and never flag mere presence.\nBe honest and concise.\n\nReturn your answer strictly as a single JSON object matching the provided schema. Use the schema's property names EXACTLY (verbatim) — do not rename, translate, or add top-level keys.\n\nWrite ALL of your prose output (summaries, titles, explanations, advice) in Traditional Chinese (繁體中文), regardless of the language spoken in the transcript. Keep any VERBATIM quotes you cite from the transcript in their original language.",
+        "prompt": "Meeting context: Pilot rollout and pricing call with Acme's operations team.\n\nFiller watchlist (judge OVER-use of these as verbal crutches only — ignore meaningful uses, and ignore non-lexical um/uh sounds): 那個, 這個, 就是, 就是說, 然後, 反正, 其實, 基本上, 怎麼講, 怎麼說, 你知道, 你知道嗎, 你懂嗎, 對不對, 對啊對啊, 這樣子, 之類的, 什麼的, 老實說, 說真的, 的部分, 的話, like, you know, i mean, basically, actually, literally, sort of, kind of, kinda, sorta, you see, i guess, right?, so yeah, to be honest, at the end of the day, or whatever, and stuff\n\nFull transcript:\n[You] Let's start with the timeline.\n[You] I can do Tuesday.\n[Speaker 2] I'm also on this call.\n[Them] Tuesday works for us.\n[Remote 1] 我們需要先看合約。\n[Remote 3] And the pricing sheet.\n[Speaker 1] Who is speaking here?\n[Speaker 1] That was me.\n[Speaker 27] Late joiner.\n[Ben] Named on the desktop."
+      }
+    ]
+  }
 }

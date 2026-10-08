@@ -25,10 +25,10 @@ import org.junit.Test
  * to how either side assembles the pieces fails a test instead of quietly
  * analysing a recording differently on the phone.
  *
- * The desktop labels an unnamed diarized speaker "Speaker N" (with an
- * undecided speaker 0 as "Speaker 1"); the phone's own labels are localized
- * letters, so the test hands the builder the desktop's labeller. Which label
- * a line carries is display copy, not the prompt's structure.
+ * The labels are the ones the phone's study pass uses ([SpeakerLabel.prompt]),
+ * not its localized display copy: an unnamed speaker reads "You" / "Them" /
+ * "Remote N" / "Speaker N" in the prompt exactly as on the desktop, on every
+ * source — the golden's `unnamedSpeakers` cases pin that.
  */
 class StudyPromptsGoldenTest {
 
@@ -40,7 +40,9 @@ class StudyPromptsGoldenTest {
 
     private val input = golden["input"]!!.jsonObject
 
-    private val segments: List<TranscriptSegment> = input["segments"]!!.jsonArray.map {
+    private val segments: List<TranscriptSegment> = segmentsOf(input)
+
+    private fun segmentsOf(holder: JsonObject): List<TranscriptSegment> = holder["segments"]!!.jsonArray.map {
         val o = it.jsonObject
         TranscriptSegment(
             id = o.str("id"),
@@ -60,13 +62,8 @@ class StudyPromptsGoldenTest {
     private val findings = TimelineEvent.listFromJson(input["findings"])
     private val actionItems = ActionItem.listFromJson(input["actionItems"])
 
-    /** The desktop's `speakerLabel` for a diarized `mix` line. */
-    private val desktopLabel: (TranscriptSegment) -> String = { s ->
-        names["${s.source}-${s.speaker}"] ?: "Speaker ${if (s.speaker == 0) 1 else s.speaker}"
-    }
-
-    private val timestamped = StudyPromptBuilder.transcriptWithTimestamps(segments, desktopLabel)
-    private val plain = StudyPromptBuilder.transcriptAsText(segments, desktopLabel)
+    private val timestamped = StudyPromptBuilder.transcriptWithTimestamps(segments) { SpeakerLabel.prompt(it, names) }
+    private val plain = StudyPromptBuilder.transcriptAsText(segments) { SpeakerLabel.prompt(it, names) }
 
     private data class Built(val system: String, val prompt: String)
 
@@ -111,6 +108,42 @@ class StudyPromptsGoldenTest {
             val built = build(case)
             assertEquals("$label system", case.str("system"), built.system)
             assertEquals("$label prompt", case.str("prompt"), built.prompt)
+        }
+    }
+
+    @Test
+    fun `unnamed speakers on every source are labelled in the prompt as the desktop labels them`() {
+        val unnamed = golden["unnamedSpeakers"]!!.jsonObject
+        val unnamedSegments = segmentsOf(unnamed)
+        val unnamedNames = unnamed["speakerNames"]!!.jsonObject.mapValues { it.value.jsonPrimitive.content }
+        val label: (TranscriptSegment) -> String = { SpeakerLabel.prompt(it, unnamedNames) }
+        val cases = unnamed["cases"] as JsonArray
+        assertTrue("no unnamed-speaker cases", cases.size >= 4)
+        for (element in cases) {
+            val case = element.jsonObject
+            val language = if (case.str("language") == "zh-TW") FilingLanguage.ZH_TW else FilingLanguage.EN
+            val built = when (case.str("stage")) {
+                "meetingKind" -> Built(
+                    StudyPromptBuilder.meetingKindSystem(),
+                    StudyPromptBuilder.meetingKindPrompt(
+                        context,
+                        StudyPromptBuilder.transcriptWithTimestamps(unnamedSegments, label),
+                    ),
+                )
+                "delivery" -> Built(
+                    StudyPromptBuilder.deliverySystem(language),
+                    StudyPromptBuilder.deliveryPrompt(
+                        context,
+                        null,
+                        language,
+                        StudyPromptBuilder.transcriptAsText(unnamedSegments, label),
+                    ),
+                )
+                else -> error("unknown stage ${case.str("stage")}")
+            }
+            val name = "${case.str("stage")}/${case.str("language")}"
+            assertEquals("$name system", case.str("system"), built.system)
+            assertEquals("$name prompt", case.str("prompt"), built.prompt)
         }
     }
 
