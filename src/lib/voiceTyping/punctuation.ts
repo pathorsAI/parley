@@ -1,9 +1,8 @@
 //! Pause-made full stops → commas, for dictation.
 //!
-//! The hosted STT (Soniox, behind the "parley" provider) runs with endpoint
-//! detection on, and the model closes every endpointed utterance with a
-//! sentence-final mark. So every breath-length pause ends a "sentence": a
-//! dictation of one thought comes back as 我覺得。 這個方案。 可以。 — short
+//! The streaming recognizer runs with endpoint detection on, and closes every
+//! endpointed utterance with a sentence-final mark. So every breath-length
+//! pause ends a "sentence": a dictation of one thought comes back as 我覺得。 這個方案。 可以。 — short
 //! fragments, each with its own 。 and, in the bilingual zh/en mode, a stray
 //! ASCII space after it. The LLM polish repunctuates and fixes that, but only
 //! when it runs: it is optional, it skips anything shorter than

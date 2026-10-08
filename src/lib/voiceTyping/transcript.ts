@@ -75,7 +75,7 @@ export class SessionTranscript {
   }
 
   /** Whether the text still ends in a tentative run: words the recognizer may
-   *  yet revise, or finalize. An endpoint or `<fin>` response commits it and
+   *  yet revise, or finalize. An endpoint or the finalize's answer commits it and
    *  sends an empty tail. */
   hasPendingTail(): boolean {
     return this.interim.trim() !== "";
@@ -116,9 +116,9 @@ export class SessionTranscript {
     }
     const interim = this.interim ? await normalize(this.interim) : "";
     if (this.session !== session) return null;
-    // Most pause-made 。 sit on the seam between two finals (Soniox commits one
-    // per endpoint, each closed with its own 。, the next often opening with a
-    // space), and only this join can see a seam. It must not move into
+    // Most pause-made 。 sit on the seam between two finals (the recognizer
+    // commits one per endpoint, each closed with its own 。, the next often
+    // opening with a space), and only this join can see a seam. It must not move into
     // normalizeTranscriptText: that runs per segment, and it is shared with
     // meetings and replay, which keep the STT's punctuation as it came. The
     // host and the overlay both report through here, so what the overlay shows

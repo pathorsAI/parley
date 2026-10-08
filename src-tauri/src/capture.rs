@@ -566,8 +566,8 @@ pub fn run_metered_session(
         }
 
         // The session is over and every token it will ever produce has been
-        // emitted: the provider answered the closing finalize (Soniox's
-        // `<fin>`), closed the socket, or failed — or, after a normal stop,
+        // emitted: the provider acknowledged the closing finalize, closed the
+        // socket, or failed — or, after a normal stop,
         // DRAIN_READ_GRACE ran out on a provider that did neither. The
         // voice-typing host delivers on this signal; meetings have their own
         // teardown and ignore it. Deliberately NOT reached when the task is

@@ -323,7 +323,8 @@ describe("voice-typing host", () => {
   });
 
   /** Regression: on the hosted relay the quiet rule pasted a long dictation
-   *  1.5 s after the release, before the `<fin>` that carried its last words. */
+   *  1.5 s after the release, before the finalize's answer carried its last
+   *  words. */
   it("waits for the finalize's answer, not for quiet, when the provider gives one", async () => {
     backend.acksFinalize = true;
     await key(true);

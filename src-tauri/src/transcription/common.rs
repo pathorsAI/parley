@@ -87,8 +87,8 @@ pub fn session_for(source: &str) -> Option<u64> {
 /// of this and the release — the hosted relay takes two seconds or more to
 /// accept a connection, and a short dictation is often released before that.
 /// `acksFinalize`: the provider answers the closing finalize with an explicit
-/// end of stream (Soniox's `<fin>`), so the host waits for that close rather
-/// than guessing from silence.
+/// end of stream, so the host waits for that close rather than guessing from
+/// silence.
 pub const CONNECTED_EVENT: &str = "stt://connected";
 
 /// rustls 0.23 requires a process-wide default CryptoProvider before any TLS

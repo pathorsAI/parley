@@ -111,8 +111,8 @@ describe("settleVerdict", () => {
   });
 
   /** The regression for "the end of a long dictation is cut off" on the
-   *  hosted relay: its `<fin>` came 1–3 s after the release, and the quiet
-   *  rule delivered at 1.5 s without the words it carried. */
+   *  hosted relay: the finalize's answer came 1–3 s after the release, and
+   *  the quiet rule delivered at 1.5 s without the words it carried. */
   it("never ends a session that answers the finalize on silence", () => {
     const acks = { acksFinalize: true, lastSegmentAt: RELEASE + 200 };
     for (const after of [QUIET_FLOOR_MS, QUIET_FLOOR_MS + SETTLE_MS, CLOSE_WAIT_MAX_MS - 1]) {

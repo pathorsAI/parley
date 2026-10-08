@@ -75,8 +75,8 @@ describe("SessionTranscript", () => {
     expect(await text(t, async (raw) => raw.toUpperCase())).toBe("FIRST SECOND THIRD");
   });
 
-  /** Soniox commits one final per endpoint, each closed with its own 。 and
-   *  the next opening with a space; only the join sees that seam. */
+  /** The recognizer commits one final per endpoint, each closed with its
+   *  own 。 and the next opening with a space; only the join sees that seam. */
   it("softens a pause-made full stop on the seam between two finals", async () => {
     const t = new SessionTranscript();
     t.reset(1);

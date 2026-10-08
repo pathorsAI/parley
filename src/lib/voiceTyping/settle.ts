@@ -3,7 +3,8 @@
 //!
 //! The paste must wait for the recognizer's answer to the closing finalize —
 //! Rust says so with `stt://closed`, which it always sends within a bounded
-//! time (Soniox's `<fin>`, a closed socket, a failure, or DRAIN_READ_GRACE).
+//! time (the finalize acknowledged, a closed socket, a failure, or
+//! DRAIN_READ_GRACE).
 //! Everything else here is the safety net for a session whose close never
 //! arrives (the backend aborted it, or a provider that never answers).
 //!
@@ -26,7 +27,7 @@
 export const CONNECT_WAIT_MAX_MS = 18000;
 /** Hard cap on the wait for the close, counted from the later of the release
  *  and the connect — the moment the finalize can actually go out. On the
- *  hosted relay the `<fin>` comes back 0.5–3 s after that; 6 s leaves margin
+ *  hosted relay the answer comes back 0.5–3 s after that; 6 s leaves margin
  *  for a slow recognizer and the 1 s timer alignment of a hidden window. Rust
  *  always ends the session DRAIN_READ_GRACE (7 s) after the finalize at the
  *  latest, so this only fires for a close that was lost. */
@@ -48,8 +49,8 @@ export interface SettleInput {
   releasedAt: number;
   /** When the session's socket opened (`stt://connected`), 0 = not yet. */
   connectedAt: number;
-  /** The provider answers the closing finalize with an explicit end
-   *  (Soniox's `<fin>`): its close is the only end worth waiting for. */
+  /** The provider answers the closing finalize with an explicit end of
+   *  stream: its close is the only end worth waiting for. */
   acksFinalize: boolean;
   /** When `stt://closed` arrived for this session, 0 = not yet. */
   closedAt: number;

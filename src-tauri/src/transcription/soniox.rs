@@ -162,9 +162,8 @@ async fn forward_audio(
         // here — the relay must forward this finalize to Soniox and stream the
         // flushed tail BACK to us first; closing now would make the relay's
         // server socket fire 'close' and stop relaying, truncating the last
-        // utterance. The relay neither closes the socket after the finalize nor
-        // sends `finished`, so the read loop ends on the `<fin>` that answers
-        // this finalize instead (see `ends_stream`) — in both modes.
+        // utterance. Nor is the socket closed for us after the finalize, so the
+        // read loop ends on the `<fin>` that answers it (see `ends_stream`).
         close: !is_relay,
     };
 
@@ -217,10 +216,10 @@ fn apply_tokens(builder: &mut SegmentBuilder, tokens: &[SonioxToken]) -> bool {
 
 /// Whether this response ends the stream for us: Soniox's `finished`, or the
 /// `<fin>` acknowledging our closing finalize. Every token for audio sent
-/// before the finalize is final by then and nothing more will come. The hosted
-/// relay does not close the socket afterwards, so waiting for the close meant
-/// waiting for stop_voice_typing's 8 s abort — which skipped `stt://closed` and
-/// `usage://stt` for every hosted dictation and meeting.
+/// before the finalize is final by then and nothing more will come. A socket
+/// that is not closed afterwards used to leave the session waiting for
+/// stop_voice_typing's 8 s abort — which skipped `stt://closed` and
+/// `usage://stt`.
 fn ends_stream(resp: &SonioxResponse) -> bool {
     resp.finished || resp.tokens.iter().any(|t| t.text == TOKEN_FIN)
 }
@@ -259,8 +258,8 @@ async fn read_transcripts(
             builder.endpoint();
         }
         if done && !resp.finished {
-            // Confirms in the field that the relay forwards `<fin>`; without
-            // this line the session would end on DRAIN_READ_GRACE instead.
+            // Confirms in the field that the finalize was acknowledged; without
+            // this line the session ends on DRAIN_READ_GRACE instead.
             log::info!("[soniox:{source}] finalize acknowledged; ending the stream");
         }
         Ok(if done { Next::Stop } else { Next::Continue })
@@ -288,7 +287,7 @@ pub async fn run_session(
     // report can be checked against what actually went on the wire: the COUNT
     // of terms sent after cleaning, never the terms themselves (user data).
     // The connect time is the other half of a short dictation's wait: no token
-    // can come back before it, and through the relay it is two hops.
+    // can come back before it.
     log::info!(
         "[soniox:{source}] connected in {}ms, model={}, diarization={}, relay={}, vocabulary={}, leg={}",
         connecting.elapsed().as_millis(),
@@ -298,8 +297,8 @@ pub async fn run_session(
         clean_vocabulary(&config.vocabulary).len(),
         config.leg
     );
-    // Soniox answers the closing finalize with `<fin>` (both modes), which
-    // ends the stream; see `ends_stream`.
+    // The closing finalize is answered with `<fin>`, which ends the stream;
+    // see `ends_stream`.
     note_connected(&app, source, config.leg, true);
 
     let meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT).enabled(config.level_events);
@@ -375,7 +374,7 @@ mod tests {
         assert!(!ends_stream(&resp));
     }
 
-    /// The hosted relay's only end-of-stream signal: the finalize's answer.
+    /// A socket nobody closes ends here: on the finalize's answer.
     #[test]
     fn the_finalize_acknowledgement_ends_the_stream() {
         let resp = response(json!({
