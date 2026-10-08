@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { SessionOwner, SessionTranscript, type Segment } from "./transcript";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { SessionDrains, SessionOwner, SessionTranscript, type Segment } from "./transcript";
 
 const identity = async (raw: string) => raw;
 
@@ -184,5 +184,50 @@ describe("SessionOwner", () => {
     expect(host.owns({ session: 1 })).toBe(false);
     expect(host.owns({ session: 2 })).toBe(true);
     expect(host.owns({ session: null })).toBe(false);
+  });
+});
+
+describe("SessionDrains", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** The regression: a toggle tap during settle used to abort the settling
+   *  session, so its last words never arrived. */
+  it("keeps a restarted dictation's flush until its close", async () => {
+    const drains = new SessionDrains(3000);
+    const t = new SessionTranscript();
+    t.reset(1);
+    t.accept(final("voice-typing-0", "我們明天", 1));
+    let settled = false;
+    const done = drains.add(1, t).then(() => {
+      settled = true;
+    });
+    // The next session's segments are not this dictation's.
+    expect(drains.accept(final("voice-typing-0", "下一句", 2))).toBe(false);
+    expect(drains.accept(final("voice-typing-1", "早上九點見", 1))).toBe(true);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(drains.close(1)).toBe(true);
+    await done;
+    expect(await text(t)).toBe("我們明天早上九點見");
+    // Closed: nothing more is routed to it.
+    expect(drains.accept(final("voice-typing-2", "遲到的", 1))).toBe(false);
+  });
+
+  it("gives up after the cap", async () => {
+    vi.useFakeTimers();
+    const drains = new SessionDrains(3000);
+    const t = new SessionTranscript();
+    t.reset(4);
+    let settled = false;
+    void drains.add(4, t).then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(2999);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(settled).toBe(true);
+    expect(drains.close(4)).toBe(false);
   });
 });

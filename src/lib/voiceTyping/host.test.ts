@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { RESTART_DRAIN_MAX_MS } from "./transcript";
 
 // The host's press → release → settle → deliver lifecycle, against an
 // in-memory event bus standing in for Tauri and a scripted backend. Every
@@ -394,13 +395,16 @@ describe("voice-typing host", () => {
         ),
     );
     await key(true);
-    segment(1, "0", "第一句話", true);
+    segment(1, "0", "第一句", true);
     await key(false);
     await tick(200);
     await key(true); // re-press while the first one is still settling
 
     expect(calls("start_voice_typing")).toHaveLength(2);
     expect(inserted()).toEqual([]);
+    // The first session still finishes its flush, and its answer is kept.
+    finish(1, "1", "話");
+    await tick();
     expect(settledReasons()).toEqual(["restart"]);
 
     segment(2, "0", "第二句", true);
@@ -577,8 +581,13 @@ describe("voice-typing host", () => {
     await key(false);
     expect(calls("start_voice_typing")).toHaveLength(2);
     expect(calls("stop_voice_typing")).toHaveLength(1);
+    // The tap no longer cuts the settling dictation short: the recognizer's
+    // answer to its finalize still lands in it.
+    expect(inserted()).toEqual([]);
+    finish(1, "1", "的結尾");
+    await tick();
     expect(settledReasons()).toEqual(["restart"]);
-    expect(inserted()).toEqual(["切換模式"]);
+    expect(inserted()).toEqual(["切換模式的結尾"]);
 
     // …and the tap after that stops it, as the user meant.
     segment(2, "0", "下一句", true);
@@ -588,7 +597,25 @@ describe("voice-typing host", () => {
     expect(calls("stop_voice_typing")).toEqual([{ tail: true }, { tail: true }]);
     finish(2, "0", "下一句話");
     await tick();
-    expect(inserted()).toEqual(["切換模式", "下一句話"]);
+    expect(inserted()).toEqual(["切換模式的結尾", "下一句話"]);
+  });
+
+  /** A restarted session whose close never comes is delivered anyway, with
+   *  what it had, after the cap. */
+  it("delivers a restarted dictation after the cap when its session never closes", async () => {
+    await key(true);
+    segment(1, "0", "沒有結尾", true);
+    await key(false);
+    await tick(200);
+    await key(true);
+    await tick(RESTART_DRAIN_MAX_MS - 1);
+    expect(inserted()).toEqual([]);
+    await tick(1);
+    expect(inserted()).toEqual(["沒有結尾"]);
+    // A straggler from it after that changes nothing.
+    finish(1, "1", "太晚了");
+    await tick();
+    expect(inserted()).toEqual(["沒有結尾"]);
   });
 });
 
@@ -817,6 +844,7 @@ describe("voice-typing host: Esc cancels, Undo copies", () => {
     fire("voicetyping://cancel", { fromTrigger: false });
     await tick();
     expect(calls("start_voice_typing")).toHaveLength(2);
+    finish(1, "1", "的尾巴"); // the old session's flush, held for its Undo
 
     segment(2, "0", "第二句", true);
     await key(false);
@@ -900,7 +928,9 @@ describe("voice-typing host: Esc cancels, Undo copies", () => {
     await escape();
     await undo(); // before it settled
     await key(false);
-    await key(true); // the restart settles it on the spot
+    await key(true); // the restart settles it once its session closes
+    fire("stt://closed", { source: "voice-typing", session: 1 });
+    await tick();
     expect(copied()).toEqual(["要回來的"]);
     expect(inserted()).toEqual([]);
   });

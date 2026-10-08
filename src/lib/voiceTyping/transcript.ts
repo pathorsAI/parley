@@ -145,7 +145,68 @@ export class SessionOwner {
     this.current = session;
   }
 
+  /** The session events are accepted from, or null between a press and its
+   *  `start`. */
+  get session(): number | null {
+    return this.current;
+  }
+
   owns(p: { session: number | null }): boolean {
     return p.session !== null && p.session === this.current;
+  }
+}
+
+/** How long a dictation handed over by a re-press ("restart") may keep
+ *  collecting its recognizer's final answer before it is delivered anyway. The
+ *  next dictation starts at once regardless; this only bounds how long the
+ *  previous one's paste waits for its own close. Rust ends a released session
+ *  within DRAIN_READ_GRACE of its finalize, and on the hosted relay the answer
+ *  comes back 0.5–3 s after it, so a close that takes longer than this is
+ *  rare, and what had arrived by then is still delivered. */
+export const RESTART_DRAIN_MAX_MS = 3000;
+
+/**
+ * Released dictations that a re-press took over before their recognizer had
+ * answered. Rust no longer kills such a session when the next one starts (it
+ * finishes its flush in the background, under its own id), so the host keeps
+ * routing that session's segments into the dictation's own transcript until
+ * its `stt://closed` (or a failure) arrives, and its delivery waits for that,
+ * at most {@link RESTART_DRAIN_MAX_MS}. Before, the restart aborted the old
+ * socket and the end of the previous dictation was lost.
+ */
+export class SessionDrains {
+  private readonly open = new Map<number, { t: SessionTranscript; done: () => void }>();
+
+  constructor(private readonly maxMs: number = RESTART_DRAIN_MAX_MS) {}
+
+  /** Keep feeding `t` from `session` until it closes; resolves on the close or
+   *  after the cap, whichever comes first. */
+  add(session: number, t: SessionTranscript): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const timer = setTimeout(finish, this.maxMs);
+      const open = this.open;
+      function finish(): void {
+        clearTimeout(timer);
+        open.delete(session);
+        resolve();
+      }
+      this.open.get(session)?.done();
+      this.open.set(session, { t, done: finish });
+    });
+  }
+
+  /** Route a segment from a draining session. False when it is not one. */
+  accept(seg: Segment): boolean {
+    if (seg.session === null) return false;
+    const d = this.open.get(seg.session);
+    return d ? d.t.accept(seg) : false;
+  }
+
+  /** `session` closed or failed: its transcript is final. */
+  close(session: number | null): boolean {
+    if (session === null) return false;
+    const d = this.open.get(session);
+    d?.done();
+    return d !== undefined;
   }
 }

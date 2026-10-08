@@ -41,7 +41,13 @@ import {
   recoveredMessage,
   type DoneActionPayload,
 } from "./overlay";
-import { SessionOwner, SessionTranscript, type Segment, type SessionEvent } from "./transcript";
+import {
+  SessionDrains,
+  SessionOwner,
+  SessionTranscript,
+  type Segment,
+  type SessionEvent,
+} from "./transcript";
 import { settleVerdict, type SettleReason } from "./settle";
 import { appendVoiceEntry, type PolishedStyle } from "./history";
 import {
@@ -142,6 +148,9 @@ let busy = false;
 let failed = false;
 /** Which backend session the events we act on must come from. */
 const owner = new SessionOwner();
+/** Released dictations a re-press took over before their recognizer had
+ *  answered: their sessions still finish their flush (see startSession). */
+const drains = new SessionDrains();
 /** Session generation. A delivery that was still awaiting its insert when
  *  a NEW session started must not run its tail (emit "done" + schedule hide)
  *  against the new session's overlay. */
@@ -273,6 +282,7 @@ export function initVoiceTyping(): () => void {
   // final, and a straggler must not change the text being pasted.
   track(
     listen<Segment>("transcript://segment", (e) => {
+      if (drains.accept(e.payload)) return;
       if (!busy || !owner.owns(e.payload)) return;
       if (!transcript.accept(e.payload)) return;
       lastSegmentAt = Date.now();
@@ -297,6 +307,12 @@ export function initVoiceTyping(): () => void {
   // it, and the delivery still pastes whatever text arrived before the death.
   track(
     listen<{ code: string; session: number | null }>("voicetyping://error", (e) => {
+      // A restarted dictation's session failed while it finished its flush:
+      // what it had is final, and the new dictation's overlay is not its.
+      if (drains.close(e.payload.session)) {
+        log.warn("voice-typing: restarted session failed", { code: e.payload.code });
+        return;
+      }
       if (!busy || !owner.owns(e.payload)) return;
       failed = true;
       log.warn("voice-typing: session failed", { code: e.payload.code });
@@ -335,6 +351,7 @@ export function initVoiceTyping(): () => void {
   );
   track(
     listen<{ source: string; session: number | null }>("stt://closed", (e) => {
+      if (drains.close(e.payload.session)) return;
       if (!busy || !owner.owns(e.payload)) return;
       closedAt = Date.now();
       if (releasedAt > 0) waitForSettle();
@@ -483,15 +500,23 @@ async function startSession() {
   cancelSuggestion();
   if (busy) {
     // A press during the previous dictation's settle window. Swallowing it
-    // (the old behavior) left the user talking into nothing — instead settle
-    // the pending text now and fall through to a fresh session. Its delivery
-    // is queued, not awaited: the mic only opens below, and a polish round
-    // trip in front of it would cost the start of the next utterance. The
-    // backend start also aborts the old session's task, so the old session
-    // cannot leak tokens into the new overlay — and whatever it had not
-    // flushed yet is lost, which the log records as reason "restart".
+    // (the old behavior) left the user talking into nothing — instead hand the
+    // pending dictation over now and fall through to a fresh session. Its
+    // delivery is queued, not awaited: the mic only opens below, and a polish
+    // round trip in front of it would cost the start of the next utterance.
+    // A released session is not killed by the next start (Rust lets it finish
+    // its flush under its own id, which the new overlay ignores), so its
+    // delivery first waits for the recognizer's final answer, at most
+    // RESTART_DRAIN_MAX_MS; until then its segments keep landing in its own
+    // transcript. Aborting it used to lose whatever it had not flushed — the
+    // end of the previous dictation. The log records reason "restart".
+    const settling = owner.session;
+    const stillFlushing = releasedAt > 0 && closedAt === 0 && !failed;
     const d = settleNow("restart");
-    if (d) void enqueueDelivery(d);
+    if (d) {
+      if (settling !== null && stillFlushing) d.drain = drains.add(settling, d.t);
+      void enqueueDelivery(d);
+    }
   }
   const { settings } = useStore.getState();
   if (!settings.voiceTypingEnabled) return;
@@ -687,6 +712,8 @@ interface Delivery {
   connectMs: number | null;
   closed: boolean;
   segments: number;
+  /** A restart's wait for its session's own close (see startSession). */
+  drain?: Promise<void>;
 }
 
 /**
@@ -798,6 +825,8 @@ async function deliver(d: Delivery): Promise<void> {
 }
 
 async function deliverSettled(d: Delivery): Promise<void> {
+  // A restart: the session the next press took over finishes its flush first.
+  if (d.drain) await d.drain;
   // Settled dictations only exist after a press, which already waited for
   // this — but the report below reads the dictionary cache, so say so here.
   await whenDictionaryReady();

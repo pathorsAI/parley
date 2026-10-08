@@ -78,6 +78,10 @@ struct VtInner {
     /// `MicCoordinator::stop_if`). `None` while the session taps a meeting's
     /// mic: the meeting owns that capture, and the cutoff alone ends the tap.
     mic_gate: Option<Arc<AtomicBool>>,
+    /// The host released the current session (`stop_voice_typing`): it is
+    /// only finishing its flush now, so the next start lets it (see
+    /// [`VoiceTypingState::open_session`]).
+    released: bool,
 }
 
 /// How long the next start waits for the previous task to finish the poll it
@@ -87,30 +91,58 @@ const RETIRE_GRACE: Duration = Duration::from_millis(300);
 
 impl VoiceTypingState {
     /// Retire the previous task, then `announce` the next session id and
-    /// return it. tokio's `abort()` lets a poll that is already running
-    /// finish, so the task is awaited: anything it emits precedes the
-    /// announcement.
+    /// return it.
+    ///
+    /// A previous session the host already released is left to finish its
+    /// flush: a re-press (or a toggle tap) during the settle used to abort it
+    /// here, and the recognizer's answer to the finalize — the end of the
+    /// previous dictation — was lost. Its events carry its own session id, so
+    /// the new overlay ignores them and the host routes them to the dictation
+    /// they belong to; its capture is already cut (or stopped by the caller),
+    /// and [`detach_flush`] bounds how long it may run.
+    ///
+    /// Any other previous task is aborted. tokio's `abort()` lets a poll that
+    /// is already running finish, so the task is awaited: anything it emits
+    /// precedes the announcement.
     async fn open_session(&self, announce: impl FnOnce(u64)) -> u64 {
-        let (session, previous) = {
+        let (session, previous, released) = {
             let mut vt = self.0.lock().unwrap();
             vt.session += 1;
             // The handles belong to the session being retired; until `adopt`
             // installs the new one's, a stop must find nothing to cut.
             vt.cutoff = None;
             vt.mic_gate = None;
-            (vt.session, vt.task.take())
+            let released = std::mem::take(&mut vt.released);
+            (vt.session, vt.task.take(), released)
         };
         if let Some(task) = previous {
-            task.abort();
-            if tokio::time::timeout(RETIRE_GRACE, task).await.is_err() {
-                log::warn!(
-                    "voice-typing: session {} did not stop within {RETIRE_GRACE:?}",
-                    session - 1
-                );
+            if released {
+                detach_flush(session - 1, task, FLUSH_ABORT_GRACE);
+            } else {
+                task.abort();
+                if tokio::time::timeout(RETIRE_GRACE, task).await.is_err() {
+                    log::warn!(
+                        "voice-typing: session {} did not stop within {RETIRE_GRACE:?}",
+                        session - 1
+                    );
+                }
             }
         }
         announce(session);
         session
+    }
+
+    /// The host released `session`: from here it only finishes its flush.
+    fn mark_released(&self, session: u64) {
+        let mut vt = self.0.lock().unwrap();
+        if vt.session == session {
+            vt.released = true;
+        }
+    }
+
+    /// The current session id.
+    fn current(&self) -> u64 {
+        self.0.lock().unwrap().session
     }
 
     fn adopt(
@@ -150,11 +182,6 @@ impl VoiceTypingState {
         (vt.session, vt.cutoff.clone(), vt.mic_gate.clone())
     }
 
-    /// The current session id.
-    fn current(&self) -> u64 {
-        self.0.lock().unwrap().session
-    }
-
     fn abort_if_current(&self, session: u64) {
         let vt = self.0.lock().unwrap();
         if vt.session == session {
@@ -163,6 +190,23 @@ impl VoiceTypingState {
             }
         }
     }
+}
+
+/// Let a released session's task run on after a newer one started, so it can
+/// deliver its final answer, but abort it once `grace` has passed: the
+/// stop's own abort backstop only ever aborts the CURRENT session, which this
+/// one no longer is. A session ends itself well before (CONNECT_TIMEOUT and
+/// DRAIN_READ_GRACE bound it, see FLUSH_ABORT_GRACE).
+fn detach_flush(session: u64, mut task: tauri::async_runtime::JoinHandle<()>, grace: Duration) {
+    tauri::async_runtime::spawn(async move {
+        tokio::select! {
+            _ = &mut task => {}
+            _ = tokio::time::sleep(grace) => {
+                log::warn!("voice-typing: released session {session} still running after {grace:?}; aborting it");
+                task.abort();
+            }
+        }
+    });
 }
 
 /// Held by a voice-typing session task (see `capture::run_metered_session`)
@@ -488,6 +532,7 @@ pub async fn stop_voice_typing(
 ) -> Result<(), String> {
     crate::tray::set_voice_typing_active(&app, false);
     let (session, cutoff, gate) = state.handles();
+    state.mark_released(session);
     let state = state.inner().clone();
     let tail = if tail.unwrap_or(true) {
         RELEASE_TAIL
@@ -1936,6 +1981,60 @@ mod session_gate_tests {
         open_announced(&state, events_tx).await;
         assert!(started.elapsed() < RETIRE_GRACE * 3, "took {:?}", started.elapsed());
         assert_eq!(settled(&mut events).await, vec!["reset", "reset"]);
+    }
+
+    /// The regression: a toggle tap during the settle started the next session,
+    /// which aborted the released one before the recognizer's final answer
+    /// came back. A released session now finishes its flush.
+    #[tokio::test]
+    async fn a_released_session_finishes_its_flush_after_the_next_start() {
+        let state = VoiceTypingState::default();
+        let (events_tx, mut events) = unbounded_channel();
+        let first = open_announced(&state, events_tx.clone()).await;
+        let flush_tx = events_tx.clone();
+        let task = tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let _ = flush_tx.send("final answer");
+        });
+        state.adopt(first, task, Arc::new(AtomicBool::new(false)), None);
+        state.mark_released(first);
+
+        let started = Instant::now();
+        let second = open_announced(&state, events_tx).await;
+        assert_eq!(second, first + 1);
+        // The new session did not wait for the old flush…
+        assert!(started.elapsed() < Duration::from_millis(40));
+        // …and the old flush still arrived.
+        assert_eq!(settled(&mut events).await, vec!["reset", "reset", "final answer"]);
+    }
+
+    /// Detached, a released session is still bounded.
+    #[tokio::test]
+    async fn a_detached_flush_is_aborted_after_its_grace() {
+        let (tx, mut rx) = unbounded_channel::<&'static str>();
+        let task = tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            let _ = tx.send("too late");
+        });
+        super::detach_flush(1, task, Duration::from_millis(20));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        // The sender went with the aborted task: nothing came, and nothing will.
+        assert!(matches!(
+            rx.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected)
+        ));
+    }
+
+    /// A released mark belongs to its session only.
+    #[tokio::test]
+    async fn a_stale_release_does_not_mark_the_next_session() {
+        let state = VoiceTypingState::default();
+        let first = state.open_session(|_| {}).await;
+        let second = state.open_session(|_| {}).await;
+        state.mark_released(first);
+        assert!(!state.0.lock().unwrap().released);
+        state.mark_released(second);
+        assert!(state.0.lock().unwrap().released);
     }
 
     /// Adopt an idle task for `session` with a fresh cutoff; returns the cutoff.
