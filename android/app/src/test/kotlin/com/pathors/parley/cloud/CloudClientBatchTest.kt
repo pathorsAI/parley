@@ -65,6 +65,19 @@ class CloudClientBatchTest {
     }
 
     @Test
+    fun `hint terms travel as repeated terms parameters`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"job-7"}"""))
+        val audio = temporary.newFile("terms.ogg").apply { writeBytes(ByteArray(8)) }
+
+        client().startBatchJob(audio, diarization = true, languageHints = listOf("zh"), terms = listOf("Parley", "派斯"))
+
+        assertEquals(
+            "/stt/batch?diarization=1&languages=zh&terms=Parley&terms=%E6%B4%BE%E6%96%AF",
+            server.takeRequest().path,
+        )
+    }
+
+    @Test
     fun `a status decodes what the cloud reports and tolerates what it omits`() = runBlocking {
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(

@@ -269,6 +269,34 @@ class ParleyStreamParserTest {
     }
 
     @Test
+    fun emptyTokenListClearsTheTentativeTail() {
+        // The server sends `tokens: []` when the recognizer retracts its guess.
+        parser.process(
+            """{"type":"transcript","tokens":[{"text":"maybe","final":false,"start_ms":0,"end_ms":100,"speaker":1}]}"""
+        )
+        parser.process("""{"type":"transcript","tokens":[]}""")
+
+        val last = emitted.last()
+        assertEquals(MIX_TAIL_ID, last.id)
+        assertEquals("", last.text)
+        assertTrue("no committed text was invented", emitted.none { it.isFinal })
+    }
+
+    @Test
+    fun aSecondFinalizedDoesNotAdvanceTheId() {
+        // `finalize` shortly before `end` yields two `finalized` frames.
+        parser.process(
+            """{"type":"transcript","tokens":[{"text":"One.","final":true,"start_ms":0,"end_ms":400}]}"""
+        )
+        parser.process("""{"type":"finalized"}""")
+        parser.process("""{"type":"finalized"}""")
+        parser.process(
+            """{"type":"transcript","tokens":[{"text":"Two.","final":true,"start_ms":500,"end_ms":900}]}"""
+        )
+        assertEquals(listOf("mix-0", "mix-1"), emitted.filter { it.isFinal }.map { it.id }.distinct())
+    }
+
+    @Test
     fun timeOffsetShiftsEverySegment() {
         val shifted = mutableListOf<TranscriptSegment>()
         val legParser = ParleyStreamParser("mix", idPrefix = "mix@1", timeOffsetMs = 2_000) { shifted += it }

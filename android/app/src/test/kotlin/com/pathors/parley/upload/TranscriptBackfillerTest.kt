@@ -674,6 +674,7 @@ private class FakeBatch(
         audio: File,
         diarization: Boolean,
         languageHints: List<String>,
+        terms: List<String>,
     ): String {
         if (failStart) throw IOException("no route to host")
         return "job-1"
@@ -696,6 +697,7 @@ private class RunningProbe : BatchTranscriptionService {
         audio: File,
         diarization: Boolean,
         languageHints: List<String>,
+        terms: List<String>,
     ): String {
         seen = backfiller.status("rec-renamed")
         throw IOException("stop here")

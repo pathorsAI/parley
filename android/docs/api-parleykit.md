@@ -159,13 +159,15 @@ after the one terminal event (`Closed` / `Error` / `QuotaExceeded`) — so a
 | Wire condition | Event |
 | --- | --- |
 | `ready` | none — `awaitOpen()` / `connect()` resolve |
-| `transcript` | `Segment` (committed run, then the tail — possibly empty) |
+| `transcript` | `Segment` (committed run, then the tail — possibly empty; `tokens: []` clears the tail) |
 | `endpoint` / `finalized` | none — the open run closes; the next final text gets a new id |
 | `done` | `Closed("finished")` |
+| recognizer unreachable (upgrade succeeds, no `ready`) | `Error("relay error upstream_unavailable: …")` |
+| no `done` within 10 s of `end` | `Error("relay error upstream_unavailable: …")` — the final text already received stands |
 | server close frame | `Closed("close code=<code> <reason>")` |
 | `error` frame | `Error("relay error <code>: <message>")` |
 | transport died mid-stream | `Closed("close code=0 <cause>")` |
-| handshake rejected (401/429/…) | `Error("relay handshake failed: HTTP <code> <msg>", httpStatus = <code>)` |
+| handshake rejected (401/426/429/…) | `Error("relay handshake failed: HTTP <code> <msg>", httpStatus = <code>)` |
 | out of hosted STT quota | `QuotaExceeded(...)` |
 
 `QuotaExceeded` is the one behavioral addition over the Swift client (OkHttp

@@ -26,8 +26,9 @@ import kotlinx.serialization.json.Json
 object ParleyStreamProtocol {
     /**
      * Keepalive cadence in milliseconds. The service closes a session that has
-     * neither audio nor keepalive for its idle window; the desktop and iOS send
-     * this every 2 seconds too.
+     * neither audio nor keepalive for its idle window (90 s; `finalize` does not
+     * count, and the recognizer behind it times out sooner), so the client sends
+     * this every 2 seconds until `end`, as the desktop and iOS do.
      */
     const val KEEPALIVE_INTERVAL_MS = 2_000L
     const val KEEPALIVE_FRAME = """{"type":"keepalive"}"""
@@ -205,7 +206,11 @@ class ParleyStreamError(
  *
  * - `transcript`: final tokens are pushed into the open run, the run is
  *   surfaced as committed text, and the non-final tokens become the tail.
- * - `endpoint` / `finalized`: the open run closes as an utterance.
+ *   `tokens: []` is how the server says the tail is now empty, so an empty
+ *   tail is emitted and clears it.
+ * - `endpoint` / `finalized`: the open run closes as an utterance. `end` always
+ *   yields `finalized` then `done`, and a `finalize` just before it can add a
+ *   second `finalized`; closing an empty run is a no-op, so that is harmless.
  * - `done`: [finished] flips.
  * - `error`: throws [ParleyStreamError].
  *

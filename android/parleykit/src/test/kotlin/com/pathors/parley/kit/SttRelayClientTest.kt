@@ -258,6 +258,69 @@ class SttRelayClientTest {
     }
 
     @Test
+    fun endYieldsFinalizedTwiceThenDoneAndTheFlowCompletes(): Unit = runBlocking {
+        enqueueUpgrade()
+        val relay = newClient()
+        relay.connect()
+        take(textFrames) // start
+        relay.requestFinalize()
+        take(textFrames) // finalize
+        relay.finish()
+        take(textFrames) // end
+
+        val socket = serverSocket.await()
+        socket.send("""{"type":"finalized"}""")
+        socket.send("""{"type":"finalized"}""")
+        socket.send("""{"type":"done"}""")
+        socket.close(1000, "done")
+
+        // A collector that joins (rather than polling isTerminated) must return.
+        val events = withTimeout(5_000) { relay.events.toList() }
+        assertEquals(listOf<SttRelayEvent>(SttRelayEvent.Closed("finished")), events)
+    }
+
+    @Test
+    fun upstreamUnavailableRightAfterTheUpgradeIsAnErrorAndUnblocksConnect(): Unit = runBlocking {
+        // The recognizer cannot be reached: the upgrade succeeds, no `ready`,
+        // then an error frame and close 1011.
+        server.enqueue(
+            MockResponse().withWebSocketUpgrade(
+                object : WebSocketListener() {
+                    override fun onMessage(webSocket: WebSocket, text: String) {
+                        webSocket.send(
+                            """{"type":"error","code":"upstream_unavailable","message":"Transcription is unavailable."}"""
+                        )
+                        webSocket.close(1011, "upstream_unavailable")
+                    }
+
+                    override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                        webSocket.close(1000, null)
+                    }
+                }
+            )
+        )
+        val relay = newClient()
+        withTimeout(5_000) { relay.connect() }
+
+        val events = withTimeout(5_000) { relay.events.toList() }
+        assertEquals(1, events.size)
+        val error = events.single() as SttRelayEvent.Error
+        assertEquals("relay error upstream_unavailable: Transcription is unavailable.", error.message)
+        assertEquals(null, error.httpStatus)
+        assertTrue(relay.isTerminated)
+    }
+
+    @Test
+    fun rejectedUpgradeWith426IsAnErrorWithItsStatus(): Unit = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(426).setBody("Upgrade Required"))
+        val relay = newClient()
+        relay.connect()
+
+        val event = withTimeout(5_000) { relay.events.first() }
+        assertEquals(426, (event as SttRelayEvent.Error).httpStatus)
+    }
+
+    @Test
     fun serverCloseReportsCodeAndReason(): Unit = runBlocking {
         enqueueUpgrade()
         val relay = newClient()

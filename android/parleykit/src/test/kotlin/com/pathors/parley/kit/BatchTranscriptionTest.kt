@@ -475,6 +475,7 @@ private class FakeBatchService(
         audio: File,
         diarization: Boolean,
         languageHints: List<String>,
+        terms: List<String>,
     ): String {
         starts += StartRecord(audio.length(), diarization, languageHints)
         return jobId

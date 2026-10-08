@@ -554,7 +554,7 @@ class CloudClient(
     /**
      * `POST /stt/batch` — create a job from already-compressed audio; the
      * response is the job id. Options travel as Parley's own query parameters:
-     * `diarization` and `languages` (comma-separated).
+     * `diarization`, `languages` (comma-separated) and `terms` (repeated).
      *
      * `languages` is omitted entirely when empty so the cloud auto-detects,
      * rather than being handed an empty list to interpret.
@@ -563,6 +563,7 @@ class CloudClient(
         audio: File,
         diarization: Boolean,
         languageHints: List<String>,
+        terms: List<String>,
     ): String {
         val url = url("stt", "batch").newBuilder()
             .addQueryParameter("diarization", if (diarization) "1" else "0")
@@ -570,6 +571,8 @@ class CloudClient(
                 if (languageHints.isNotEmpty()) {
                     addQueryParameter("languages", languageHints.joinToString(","))
                 }
+                // Repeated rather than comma-joined: a term may not contain a comma.
+                terms.filter { it.isNotBlank() && ',' !in it }.forEach { addQueryParameter("terms", it) }
             }
             .build()
         val request = Request.Builder().url(url).post(audio.asRequestBody(OCTET_STREAM))

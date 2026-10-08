@@ -175,10 +175,15 @@ data class BatchJobStatus(
  */
 interface BatchTranscriptionService {
 
+    /**
+     * Create a job. [languageHints] travel as `languages`, [terms] as hint
+     * terms the recognizer should favor (names, jargon).
+     */
     suspend fun startBatchJob(
         audio: File,
         diarization: Boolean,
         languageHints: List<String>,
+        terms: List<String> = emptyList(),
     ): String
 
     suspend fun batchJobStatus(id: String): BatchJobStatus
@@ -311,8 +316,9 @@ class BatchTranscriber(
         audio: File,
         diarization: Boolean = true,
         languageHints: List<String> = emptyList(),
+        terms: List<String> = emptyList(),
     ): BatchTranscriptionResult {
-        val jobId = service.startBatchJob(audio, diarization, languageHints)
+        val jobId = service.startBatchJob(audio, diarization, languageHints, terms)
 
         // The cloud normalizes job states into the four handled here, so a
         // status we don't recognize is treated as "still working" rather than a
