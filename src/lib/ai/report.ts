@@ -10,6 +10,7 @@ import {
   createDeadline,
   rejectOnAbort,
   STUDY_FALLBACK_DEADLINE_MS,
+  STUDY_FIRST_OUTPUT_MS,
   STUDY_HARD_DEADLINE_MS,
   STUDY_STALL_MS,
   untilAborted,
@@ -109,9 +110,9 @@ async function generateBriefOnce(
  * that is empty too, this throws. A stream that errored after some text throws
  * as well, rather than passing a truncated brief off as complete.
  *
- * Bounded in time: the stream runs under a 4-minute ceiling and a 90-second
- * stall timer (ai/deadline.ts), the non-streamed retry under its own 2-minute
- * one, and `signal` cancels both. A stream that times out before writing a word
+ * Bounded in time: the stream runs under a 12-minute ceiling, 5 minutes to
+ * write its first word and a 90-second stall timer after that (ai/deadline.ts),
+ * the non-streamed retry under its own 6-minute one, and `signal` cancels both. A stream that times out before writing a word
  * gets the retry; one that times out mid-brief throws the timeout.
  */
 export async function generatePostMeetingReport(opts: {
@@ -147,7 +148,12 @@ export async function generatePostMeetingReport(opts: {
   // Bounded like every study pass (ai/deadline.ts): a hard ceiling, plus a
   // stall timer every streamed chunk resets. `signal` (the run) is the parent,
   // so a cancelled run aborts the request instead of letting it finish unseen.
-  const deadline = createDeadline({ hardMs: STUDY_HARD_DEADLINE_MS, stallMs: STUDY_STALL_MS, parent: signal });
+  const deadline = createDeadline({
+    hardMs: STUDY_HARD_DEADLINE_MS,
+    firstOutputMs: STUDY_FIRST_OUTPUT_MS,
+    stallMs: STUDY_STALL_MS,
+    parent: signal,
+  });
   const call = {
     model: getModel(settings, "deep"),
     providerOptions: getProviderOptions(settings, "deep"),

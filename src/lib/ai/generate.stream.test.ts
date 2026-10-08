@@ -18,6 +18,7 @@ vi.mock("./provider", () => ({
 
 import { streamObjectResilient } from "./generate";
 import { isTimeoutError } from "./errors";
+import { ONE_SHOT_DEADLINE_MS, STUDY_FIRST_OUTPUT_MS } from "./deadline";
 
 const schema = z.object({ a: z.string() });
 const settings = {
@@ -115,11 +116,41 @@ describe("streamObjectResilient", () => {
         (e: unknown) => e,
       );
       await vi.advanceTimersByTimeAsync(30);
-      // The fallback gets a fresh 2-minute ceiling.
-      await vi.advanceTimersByTimeAsync(2 * 60_000);
+      // The fallback gets a fresh one-shot ceiling — not a shorter one.
+      await vi.advanceTimersByTimeAsync(ONE_SHOT_DEADLINE_MS - 1);
+      expect(await Promise.race([settled, Promise.resolve("pending")])).toBe("pending");
+      await vi.advanceTimersByTimeAsync(1);
       const err = await settled;
       expect(isTimeoutError(err)).toBe(true);
       expect(String((err as Error).message)).toContain("timed out");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("waits longer for the first partial than between later ones", async () => {
+    const doGenerate = vi.fn(async () => generated('{"a":"recovered"}'));
+    model.current = new MockLanguageModelV3({
+      // Accepts the request, then says nothing at all (yet).
+      doStream: async ({ abortSignal }) => ({
+        stream: new ReadableStream({
+          start(c) {
+            c.enqueue({ type: "stream-start", warnings: [] });
+            abortSignal?.addEventListener("abort", () => c.error(abortSignal.reason));
+          },
+        }),
+      }),
+      doGenerate,
+    });
+    vi.useFakeTimers();
+    try {
+      const p = call({ stallMs: 30 });
+      // Well past the stall window: still waiting for the first output.
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(doGenerate).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(STUDY_FIRST_OUTPUT_MS - 60_000);
+      expect((await p).object).toEqual({ a: "recovered" });
+      expect(doGenerate).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }

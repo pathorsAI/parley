@@ -10,6 +10,7 @@ import {
   rejectOnAbort,
   untilAborted,
   STUDY_FALLBACK_DEADLINE_MS,
+  STUDY_FIRST_OUTPUT_MS,
   STUDY_HARD_DEADLINE_MS,
   STUDY_STALL_MS,
   type Deadline,
@@ -231,11 +232,13 @@ async function generateObjectWithFallback<OBJECT>(
  * a single final partial — so a flaky stream still yields a result.
  *
  * Bounded in time, always: the stream runs under a deadline — `hardMs` overall
- * (default {@link STUDY_HARD_DEADLINE_MS}) and `stallMs` without a new partial
- * (default {@link STUDY_STALL_MS}) — hanging off the caller's `signal`. When OUR
- * deadline fires, the fallback still gets one try under a fresh
- * {@link STUDY_FALLBACK_DEADLINE_MS} ceiling, then the timeout is thrown. When
- * the CALLER's signal aborts (the run was cancelled) nothing is retried.
+ * (default {@link STUDY_HARD_DEADLINE_MS}), `firstOutputMs` for the first
+ * partial (default {@link STUDY_FIRST_OUTPUT_MS}) and `stallMs` between later
+ * ones (default {@link STUDY_STALL_MS}) — hanging off the caller's `signal`.
+ * Whether the stream failed or OUR deadline fired, the fallback gets one try
+ * under a fresh {@link STUDY_FALLBACK_DEADLINE_MS} (one-shot) ceiling, then its
+ * error is thrown. When the CALLER's signal aborts (the run was cancelled)
+ * nothing is retried.
  *
  * Also guards an AI SDK trap: `streamObject().object` only settles on the
  * provider's finish chunk. A request that fails before the stream starts (an
@@ -262,7 +265,9 @@ export async function streamObjectResilient<OBJECT>(opts: {
   signal?: AbortSignal;
   /** Ceiling on the streamed attempt. Default {@link STUDY_HARD_DEADLINE_MS}. */
   hardMs?: number;
-  /** Longest gap between partials. Default {@link STUDY_STALL_MS}. */
+  /** Longest wait for the first partial. Default {@link STUDY_FIRST_OUTPUT_MS}. */
+  firstOutputMs?: number;
+  /** Longest gap between partials after the first. Default {@link STUDY_STALL_MS}. */
   stallMs?: number;
 }) {
   const { settings, workload, schema, system, prompt, onPartial, temperature, signal } = opts;
@@ -275,6 +280,7 @@ export async function streamObjectResilient<OBJECT>(opts: {
   const deadline = createDeadline({
     hardMs: opts.hardMs ?? STUDY_HARD_DEADLINE_MS,
     stallMs: opts.stallMs ?? STUDY_STALL_MS,
+    firstOutputMs: opts.firstOutputMs ?? STUDY_FIRST_OUTPUT_MS,
     parent: signal,
   });
 
@@ -322,7 +328,7 @@ export async function streamObjectResilient<OBJECT>(opts: {
       prompt,
       temperature,
       signal,
-      hardMs: timedOut ? STUDY_FALLBACK_DEADLINE_MS : undefined,
+      hardMs: STUDY_FALLBACK_DEADLINE_MS,
     });
     onPartial?.(res.object);
     return { object: res.object, usage: res.usage };
