@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Meeting Notes with MCP: Connect Your Meeting Library</title>
+    <meta name="description" content="Learn how MCP meeting notes work: connect a compatible AI client to a local meeting library for search, retrieval, organization, and follow-up." />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="https://parley.tw/guides/meeting-notes-with-mcp/" />
+    <meta property="og:site_name" content="Parley" />
+    <meta property="og:title" content="Meeting Notes with MCP: Connect Your Meeting Library" />
+    <meta property="og:description" content="Use Model Context Protocol to make a searchable meeting library available to compatible AI clients without repetitive copy and paste." />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://parley.tw/guides/meeting-notes-with-mcp/" />
+    <meta property="og:image" content="https://parley.tw/assets/og-en.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Meeting Notes with MCP: Connect Your Meeting Library" />
+    <meta name="twitter:description" content="A practical guide to connecting meeting transcripts and notes to compatible AI clients through MCP." />
+    <meta name="twitter:image" content="https://parley.tw/assets/og-en.png" />
+    <link rel="icon" type="image/svg+xml" href="../../assets/logo.svg" />
+    <link rel="preload" href="../../assets/fonts/dm-sans-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../guides.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Article",
+            "headline": "Meeting Notes with MCP: Connect Your Meeting Library",
+            "description": "A practical guide to using Model Context Protocol with a local meeting library and compatible AI clients.",
+            "datePublished": "2026-10-10",
+            "dateModified": "2026-10-10",
+            "mainEntityOfPage": "https://parley.tw/guides/meeting-notes-with-mcp/",
+            "author": { "@type": "Organization", "name": "Pathors AI", "url": "https://pathors.com" },
+            "publisher": { "@type": "Organization", "name": "Parley", "url": "https://parley.tw/" },
+            "image": "https://parley.tw/assets/og-en.png"
+          },
+          {
+            "@type": "BreadcrumbList",
+            "itemListElement": [
+              { "@type": "ListItem", "position": 1, "name": "Parley", "item": "https://parley.tw/en/" },
+              { "@type": "ListItem", "position": 2, "name": "Meeting Notes with MCP", "item": "https://parley.tw/guides/meeting-notes-with-mcp/" }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <header class="nav guide-nav">
+      <div class="wrap nav__in guide-nav__in">
+        <a class="wm" href="../../en/" aria-label="Parley home">Parley</a>
+        <nav class="guide-nav__links" aria-label="Guide navigation"><a href="../../en/">Home</a><a class="guide-nav__optional" href="../open-source-meeting-recorder/">Open-source recorders</a><a class="b1 b1--sm" href="../../en/#download">Download</a></nav>
+      </div>
+    </header>
+    <main class="guide-main">
+      <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="../../en/">Parley</a><span>/</span><span>Guides</span><span>/</span><span>Meeting notes with MCP</span></nav>
+      <article>
+        <header class="guide-hero">
+          <span class="guide-kicker">Model Context Protocol</span>
+          <h1>Turn meeting notes into an MCP-connected library</h1>
+          <p class="guide-hero__dek">Meeting notes are more useful when your AI client can find the right conversation, inspect the transcript, and trace an answer back to its source. MCP provides a standard connection between the client and the meeting library.</p>
+          <div class="guide-hero__actions"><a class="b1 b--lg" href="../../en/#download">Download Parley</a><a class="b2 b--lg" href="https://github.com/pathorsAI/parley" target="_blank" rel="noopener">View on GitHub</a></div>
+        </header>
+        <div class="guide-article">
+          <section>
+            <h2>What MCP changes for meeting notes</h2>
+            <p>Model Context Protocol lets a compatible AI client call tools supplied by another application. Instead of manually exporting and pasting one transcript at a time, the client can ask the meeting application for the relevant records when you request them.</p>
+            <p>Parley includes a built-in local MCP server that exposes its meeting library to compatible clients. The library remains in the app; the MCP connection provides controlled tools for working with it. What a connected client or model receives still depends on the tool you invoke and the provider behind that client.</p>
+            <div class="guide-callout"><p><strong>MCP is the connection, not the model.</strong> It defines how a compatible client discovers and calls tools. Your client configuration and chosen model provider determine where the retrieved context is processed.</p></div>
+          </section>
+          <section>
+            <h2>A simple MCP meeting workflow</h2>
+            <ol class="guide-list">
+              <li><strong>Record and transcribe:</strong> create a timestamped meeting record in Parley. macOS can capture both sides; Windows currently captures the microphone only.</li>
+              <li><strong>Keep the library organized:</strong> use clear meeting names, speaker labels, and folders so retrieval has useful structure.</li>
+              <li><strong>Connect a compatible client:</strong> add Parley's local MCP server using the setup details shown in the app.</li>
+              <li><strong>Ask a scoped question:</strong> specify the account, project, time period, or meeting rather than asking for an unbounded summary.</li>
+              <li><strong>Verify against the source:</strong> inspect the cited meeting and timestamp before treating a generated answer as fact.</li>
+            </ol>
+          </section>
+          <section>
+            <h2>Useful questions for an MCP-connected library</h2>
+            <div class="guide-table-wrap">
+              <table class="guide-table">
+                <thead><tr><th>Goal</th><th>Example request</th><th>What to verify</th></tr></thead>
+                <tbody>
+                  <tr><td>Prepare a follow-up</td><td>Find the commitments and open questions from the latest project meeting.</td><td>Owner, exact wording, due date, and timestamp.</td></tr>
+                  <tr><td>Trace a decision</td><td>Which meetings discussed this decision, and how did the rationale change?</td><td>Chronology and whether statements are decisions or proposals.</td></tr>
+                  <tr><td>Compare conversations</td><td>Summarize recurring concerns across meetings in this folder.</td><td>Sample coverage and whether outliers were omitted.</td></tr>
+                  <tr><td>Recover context</td><td>Find the meeting where this requirement first appeared.</td><td>The original transcript passage and speaker attribution.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+          <section>
+            <h2>Design prompts for retrieval, not improvisation</h2>
+            <p>Good requests tell the client what collection to search, what evidence to return, and how to handle uncertainty. Ask for meeting names and timestamps alongside conclusions. If no matching evidence exists, instruct the client to say so instead of filling the gap.</p>
+            <ul class="guide-list">
+              <li>Set a scope: a folder, customer, project, named meeting, or date range.</li>
+              <li>Name the output: commitments, objections, decisions, unanswered questions, or a chronological brief.</li>
+              <li>Require evidence: meeting title, speaker, and timestamp for important claims.</li>
+              <li>Separate quoted facts from synthesis or recommendation.</li>
+              <li>Review sensitive context before sending it to a cloud-backed client or model.</li>
+            </ul>
+          </section>
+          <section>
+            <h2>Privacy boundaries still matter</h2>
+            <p>Parley's audio and transcripts are local in the app, and its MCP server is local. However, a connected client may send retrieved content to its configured model provider. If the workflow must remain on-device, use a compatible client and local model setup that you have verified end to end.</p>
+            <p>For cloud-backed clients, apply the same provider review you would use for direct transcript analysis: access controls, retention, regional requirements, and the sensitivity of the meetings in scope.</p>
+          </section>
+          <section>
+            <h2>Continue reading</h2>
+            <div class="guide-links">
+              <a class="guide-link-card" href="../open-source-meeting-recorder/"><span>Guide 01</span><strong>Open-source meeting recorder</strong><p>Compare capture, storage, providers, retrieval, extensibility, and licensing.</p></a>
+              <a class="guide-link-card" href="../local-first-meeting-transcription/"><span>Guide 02</span><strong>Local-first meeting transcription</strong><p>Understand which parts of a recording-to-notes workflow stay local.</p></a>
+            </div>
+          </section>
+          <section class="guide-cta">
+            <h2>Connect the meetings you already recorded</h2>
+            <p>Parley combines a local-first meeting library with a built-in local MCP server for compatible AI clients.</p>
+            <div class="guide-hero__actions"><a class="b1 b--lg" href="../../en/#download">Get Parley</a><a class="b2 b--lg" href="https://github.com/pathorsAI/parley" target="_blank" rel="noopener">Explore the source</a></div>
+          </section>
+        </div>
+      </article>
+    </main>
+    <footer class="foot guide-foot"><div class="wrap"><div class="foot__bottom"><p>© 2026 <a href="https://pathors.com" target="_blank" rel="noopener">Pathors AI</a> · Apache 2.0</p><p><a href="../../en/">Parley home</a></p></div></div></footer>
+  </body>
+</html>

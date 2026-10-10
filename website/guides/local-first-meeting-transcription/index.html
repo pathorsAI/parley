@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Local-First Meeting Transcription: A Practical Guide</title>
+    <meta name="description" content="Understand local-first meeting transcription, what stays on your device, where providers fit, and how to design a transparent recording-to-notes workflow." />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="https://parley.tw/guides/local-first-meeting-transcription/" />
+    <meta property="og:site_name" content="Parley" />
+    <meta property="og:title" content="Local-First Meeting Transcription: A Practical Guide" />
+    <meta property="og:description" content="A clear model for local storage, transcription providers, AI analysis, and the choices that determine where meeting data goes." />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://parley.tw/guides/local-first-meeting-transcription/" />
+    <meta property="og:image" content="https://parley.tw/assets/og-en.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Local-First Meeting Transcription: A Practical Guide" />
+    <meta name="twitter:description" content="Learn what local-first actually means across recording, transcription, analysis, and storage." />
+    <meta name="twitter:image" content="https://parley.tw/assets/og-en.png" />
+    <link rel="icon" type="image/svg+xml" href="../../assets/logo.svg" />
+    <link rel="preload" href="../../assets/fonts/dm-sans-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../guides.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Article",
+            "headline": "Local-First Meeting Transcription: A Practical Guide",
+            "description": "A practical guide to local-first meeting transcription, provider choices, and transparent meeting-data flows.",
+            "datePublished": "2026-10-10",
+            "dateModified": "2026-10-10",
+            "mainEntityOfPage": "https://parley.tw/guides/local-first-meeting-transcription/",
+            "author": { "@type": "Organization", "name": "Pathors AI", "url": "https://pathors.com" },
+            "publisher": { "@type": "Organization", "name": "Parley", "url": "https://parley.tw/" },
+            "image": "https://parley.tw/assets/og-en.png"
+          },
+          {
+            "@type": "BreadcrumbList",
+            "itemListElement": [
+              { "@type": "ListItem", "position": 1, "name": "Parley", "item": "https://parley.tw/en/" },
+              { "@type": "ListItem", "position": 2, "name": "Local-First Meeting Transcription", "item": "https://parley.tw/guides/local-first-meeting-transcription/" }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <header class="nav guide-nav">
+      <div class="wrap nav__in guide-nav__in">
+        <a class="wm" href="../../en/" aria-label="Parley home">Parley</a>
+        <nav class="guide-nav__links" aria-label="Guide navigation"><a href="../../en/">Home</a><a class="guide-nav__optional" href="../meeting-notes-with-mcp/">MCP meeting notes</a><a class="b1 b1--sm" href="../../en/#download">Download</a></nav>
+      </div>
+    </header>
+    <main class="guide-main">
+      <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="../../en/">Parley</a><span>/</span><span>Guides</span><span>/</span><span>Local-first meeting transcription</span></nav>
+      <article>
+        <header class="guide-hero">
+          <span class="guide-kicker">Privacy and architecture</span>
+          <h1>Local-first meeting transcription, explained clearly</h1>
+          <p class="guide-hero__dek">“Local-first” is useful only when the data path is explicit. Separate recording, transcription, analysis, and storage so you can decide which parts stay on your machine and which providers receive data.</p>
+          <div class="guide-hero__actions"><a class="b1 b--lg" href="../../en/#download">Download Parley</a><a class="b2 b--lg" href="https://github.com/pathorsAI/parley" target="_blank" rel="noopener">Inspect the source</a></div>
+        </header>
+        <div class="guide-article">
+          <section>
+            <h2>Local-first is a storage model, not a magic promise</h2>
+            <p>In a local-first meeting app, the primary library is available on your device. You can keep working with recordings and transcripts without depending on a vendor dashboard to be the only copy. That improves control, portability, and the ability to integrate the library with local tools.</p>
+            <p>But transcription and AI analysis may still involve another service. If you select a cloud transcription provider, audio is sent to that provider for processing. If you ask a cloud model to analyze a transcript, the relevant text is sent to that model. A fully local path requires local providers for those steps as well.</p>
+          </section>
+          <section>
+            <h2>Map the meeting data path</h2>
+            <div class="guide-table-wrap">
+              <table class="guide-table">
+                <thead><tr><th>Stage</th><th>What it handles</th><th>Your decision</th></tr></thead>
+                <tbody>
+                  <tr><td>Capture</td><td>Microphone and, where supported, system audio.</td><td>Check operating-system support and obtain appropriate participant consent.</td></tr>
+                  <tr><td>Transcription</td><td>Audio is converted into timestamped text.</td><td>Choose a cloud provider, a supported hosted route, or your own provider.</td></tr>
+                  <tr><td>Analysis</td><td>Transcript text becomes summaries, findings, or action items.</td><td>Select a model route appropriate for the meeting's sensitivity and task.</td></tr>
+                  <tr><td>Library</td><td>Audio, transcripts, and saved outputs remain available after the call.</td><td>Decide how the local app directory is backed up and protected.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+          <section>
+            <h2>What Parley keeps local</h2>
+            <p>Parley stores audio and transcripts locally in the app, along with the meeting library you search and organize. Its built-in MCP server also runs locally and exposes that library to compatible clients you configure.</p>
+            <p>Provider calls are separate from storage. Parley supports a bring-your-own-provider approach, so you can choose transcription and model services based on language, latency, capability, policy, or infrastructure. Do not describe a cloud-backed configuration as “data never leaves the device.” That statement is accurate only for a workflow in which each processing stage uses a local provider.</p>
+            <div class="guide-callout"><p><strong>Platform note:</strong> Parley captures both sides of a meeting on macOS. On Windows, it currently captures the microphone only. The storage model is the same, but the available audio source differs.</p></div>
+          </section>
+          <section>
+            <h2>Choose a setup by meeting sensitivity</h2>
+            <h3>Everyday internal meetings</h3>
+            <p>A vetted cloud transcription service may provide a practical balance of accuracy, language support, and speed. Keep the local library as the working record and document which providers process audio or text.</p>
+            <h3>Restricted or regulated conversations</h3>
+            <p>Start from organizational policy, not convenience. Confirm whether recording is permitted, which regions or vendors are allowed, what retention applies, and whether a local provider is required. A local-first app does not override those obligations.</p>
+            <h3>Offline or fully local workflows</h3>
+            <p>Use local transcription and model providers supported by your setup. Verify the full path while disconnected, including model downloads, transcript generation, analysis, and any client connected through MCP.</p>
+          </section>
+          <section>
+            <h2>A transparent setup checklist</h2>
+            <ul class="guide-list">
+              <li>Document which audio sources are captured on each device and operating system.</li>
+              <li>Identify the transcription provider and whether audio leaves the machine.</li>
+              <li>Identify the model provider and which transcript content it receives.</li>
+              <li>Protect the local app directory with suitable device access and backup controls.</li>
+              <li>Review consent, retention, and deletion expectations before recording.</li>
+              <li>Test search and export before relying on the library as a system of record.</li>
+            </ul>
+          </section>
+          <section>
+            <h2>Continue reading</h2>
+            <div class="guide-links">
+              <a class="guide-link-card" href="../open-source-meeting-recorder/"><span>Guide 01</span><strong>Open-source meeting recorder</strong><p>Evaluate capture, portability, provider choice, integrations, and licensing.</p></a>
+              <a class="guide-link-card" href="../meeting-notes-with-mcp/"><span>Guide 03</span><strong>Meeting notes with MCP</strong><p>Understand how a compatible AI client can work with a local meeting library.</p></a>
+            </div>
+          </section>
+          <section class="guide-cta">
+            <h2>Build the data path you actually want</h2>
+            <p>Use Parley's local-first library with the transcription and model providers appropriate for your workflow.</p>
+            <div class="guide-hero__actions"><a class="b1 b--lg" href="../../en/#download">Get Parley</a><a class="b2 b--lg" href="https://github.com/pathorsAI/parley" target="_blank" rel="noopener">View on GitHub</a></div>
+          </section>
+        </div>
+      </article>
+    </main>
+    <footer class="foot guide-foot"><div class="wrap"><div class="foot__bottom"><p>© 2026 <a href="https://pathors.com" target="_blank" rel="noopener">Pathors AI</a> · Apache 2.0</p><p><a href="../../en/">Parley home</a></p></div></div></footer>
+  </body>
+</html>

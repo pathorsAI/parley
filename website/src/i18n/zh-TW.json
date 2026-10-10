@@ -15,6 +15,7 @@
   "nav.meetings": "會議紀錄",
   "nav.ai": "給你的 AI",
   "nav.voice": "語音輸入",
+  "nav.guides": "指南",
   "nav.lang": "English",
   "nav.langTitle": "Read this page in English",
   "nav.download": "下載",
@@ -128,6 +129,10 @@
 
   "footer.product": "產品",
   "footer.project": "專案",
+  "footer.guides": "指南",
+  "footer.guideOpen": "開源會議錄音工具",
+  "footer.guideLocal": "本機優先會議轉錄",
+  "footer.guideMcp": "用 MCP 整理會議筆記",
   "footer.legal": "法律與支援",
   "footer.download": "下載",
   "footer.releases": "版本紀錄",
