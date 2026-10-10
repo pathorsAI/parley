@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Open-Source Meeting Recorder: A Practical Guide | Parley</title>
+    <meta name="description" content="Learn what to look for in an open-source meeting recorder, from audio capture and local storage to transcription choices, search, MCP access, and licensing." />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="https://parley.tw/guides/open-source-meeting-recorder/" />
+    <meta property="og:site_name" content="Parley" />
+    <meta property="og:title" content="Open-Source Meeting Recorder: A Practical Guide" />
+    <meta property="og:description" content="A practical checklist for evaluating open-source meeting recorders: capture, storage, providers, search, integrations, and licensing." />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://parley.tw/guides/open-source-meeting-recorder/" />
+    <meta property="og:image" content="https://parley.tw/assets/og-en.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Open-Source Meeting Recorder: A Practical Guide" />
+    <meta name="twitter:description" content="How to evaluate an open-source meeting recorder without overlooking capture, privacy, portability, or integrations." />
+    <meta name="twitter:image" content="https://parley.tw/assets/og-en.png" />
+    <link rel="icon" type="image/svg+xml" href="../../assets/logo.svg" />
+    <link rel="preload" href="../../assets/fonts/dm-sans-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../guides.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Article",
+            "headline": "Open-Source Meeting Recorder: A Practical Guide",
+            "description": "A practical guide to evaluating open-source meeting recorders across capture, storage, transcription, search, integrations, and licensing.",
+            "datePublished": "2026-10-10",
+            "dateModified": "2026-10-10",
+            "mainEntityOfPage": "https://parley.tw/guides/open-source-meeting-recorder/",
+            "author": { "@type": "Organization", "name": "Pathors AI", "url": "https://pathors.com" },
+            "publisher": { "@type": "Organization", "name": "Parley", "url": "https://parley.tw/" },
+            "image": "https://parley.tw/assets/og-en.png"
+          },
+          {
+            "@type": "BreadcrumbList",
+            "itemListElement": [
+              { "@type": "ListItem", "position": 1, "name": "Parley", "item": "https://parley.tw/en/" },
+              { "@type": "ListItem", "position": 2, "name": "Open-Source Meeting Recorder", "item": "https://parley.tw/guides/open-source-meeting-recorder/" }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <header class="nav guide-nav">
+      <div class="wrap nav__in guide-nav__in">
+        <a class="wm" href="../../en/" aria-label="Parley home">Parley</a>
+        <nav class="guide-nav__links" aria-label="Guide navigation"><a href="../../en/">Home</a><a class="guide-nav__optional" href="../local-first-meeting-transcription/">Local-first transcription</a><a class="b1 b1--sm" href="../../en/#download">Download</a></nav>
+      </div>
+    </header>
+    <main class="guide-main">
+      <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="../../en/">Parley</a><span>/</span><span>Guides</span><span>/</span><span>Open-source meeting recorder</span></nav>
+      <article>
+        <header class="guide-hero">
+          <span class="guide-kicker">Practical guide</span>
+          <h1>How to choose an open-source meeting recorder</h1>
+          <p class="guide-hero__dek">Source availability is only the beginning. A useful meeting recorder also needs reliable capture, clear storage boundaries, portable transcripts, and a realistic path from recording to follow-up.</p>
+          <div class="guide-hero__actions"><a class="b1 b--lg" href="../../en/#download">Download Parley</a><a class="b2 b--lg" href="https://github.com/pathorsAI/parley" target="_blank" rel="noopener">View on GitHub</a></div>
+        </header>
+        <div class="guide-article">
+          <section>
+            <h2>What “open source” should give you</h2>
+            <p>An open-source meeting recorder lets you inspect the code that handles sensitive conversations, understand its storage model, and adapt the workflow if your needs change. The license matters too: it determines whether you can modify, redistribute, or build on the project.</p>
+            <p><strong>Parley is released under Apache-2.0.</strong> Its meeting library is local-first: recordings and transcripts are stored locally in the app. Transcription and analysis are separate choices. You can use cloud providers, supported hosted routes, or your own providers; if you configure a local provider, that part of the workflow can stay on your machine.</p>
+            <div class="guide-callout"><p><strong>Privacy language should be precise.</strong> “Local-first” describes where the app keeps its library. It does not mean audio or text can never leave the device: that depends on the transcription and model providers you choose.</p></div>
+          </section>
+          <section>
+            <h2>A five-part evaluation checklist</h2>
+            <ul class="guide-list">
+              <li><strong>Capture:</strong> confirm which audio sources are recorded on each operating system, not just whether the app launches there.</li>
+              <li><strong>Storage:</strong> find where audio, transcripts, notes, and metadata live, and whether you can back them up or move them.</li>
+              <li><strong>Providers:</strong> check whether transcription and analysis are locked to one vendor or configurable.</li>
+              <li><strong>Retrieval:</strong> look for full-text search, timestamps, speaker labels, and links back to the original moment.</li>
+              <li><strong>Extensibility:</strong> inspect the license, repository activity, export formats, and APIs or protocols available to other tools.</li>
+            </ul>
+          </section>
+          <section>
+            <h2>Compare the workflow, not just the feature list</h2>
+            <div class="guide-table-wrap">
+              <table class="guide-table">
+                <thead><tr><th>Question</th><th>Why it matters</th><th>Parley today</th></tr></thead>
+                <tbody>
+                  <tr><td>What audio is captured?</td><td>A transcript is only useful if the necessary speakers are present.</td><td>macOS captures both sides of a call. Windows currently captures the microphone only.</td></tr>
+                  <tr><td>Where is the library?</td><td>Local access improves portability and makes backup choices explicit.</td><td>Audio and transcripts live locally in the app.</td></tr>
+                  <tr><td>Can providers change?</td><td>Accuracy, language coverage, cost, and privacy needs evolve.</td><td>Users can choose cloud transcription and model providers or configure their own providers.</td></tr>
+                  <tr><td>Can other tools use the library?</td><td>Meeting data becomes more valuable when it can support later work.</td><td>A built-in local MCP server exposes the meeting library to compatible clients.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+          <section>
+            <h2>Choose the capture setup before the AI setup</h2>
+            <p>Start with the meeting environment. On macOS, Parley can capture your microphone and the other side of the call. On Windows, it currently records your microphone only. If a complete two-sided Windows recording is required, account for that limitation before choosing transcription or analysis providers.</p>
+            <p>Next, decide where transcription and analysis should run. A cloud provider can be convenient and capable; a local or self-managed provider can give you a different control boundary. The right choice depends on the meeting, organizational policy, supported languages, and hardware.</p>
+          </section>
+          <section>
+            <h2>Continue reading</h2>
+            <div class="guide-links">
+              <a class="guide-link-card" href="../local-first-meeting-transcription/"><span>Guide 02</span><strong>Local-first meeting transcription</strong><p>Map the real data path from capture through transcription and analysis.</p></a>
+              <a class="guide-link-card" href="../meeting-notes-with-mcp/"><span>Guide 03</span><strong>Meeting notes with MCP</strong><p>Connect a compatible AI client to a searchable local meeting library.</p></a>
+            </div>
+          </section>
+          <section class="guide-cta">
+            <h2>Try the workflow with your own providers</h2>
+            <p>Parley is an Apache-2.0 meeting recorder for macOS and Windows, with local storage, provider choice, search, and a built-in local MCP server.</p>
+            <div class="guide-hero__actions"><a class="b1 b--lg" href="../../en/#download">Get Parley</a><a class="b2 b--lg" href="https://github.com/pathorsAI/parley" target="_blank" rel="noopener">Explore the source</a></div>
+          </section>
+        </div>
+      </article>
+    </main>
+    <footer class="foot guide-foot"><div class="wrap"><div class="foot__bottom"><p>© 2026 <a href="https://pathors.com" target="_blank" rel="noopener">Pathors AI</a> · Apache 2.0</p><p><a href="../../en/">Parley home</a></p></div></div></footer>
+  </body>
+</html>
