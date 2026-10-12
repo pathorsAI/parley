@@ -2,6 +2,8 @@ import { useStore, isTrimmed, hasSpokenSegment } from "../store";
 import { hasProviderKey } from "../ai/settings";
 import { analyzeDelivery } from "../ai/delivery";
 import { landStage, makeRunGuard } from "./runGuard";
+import { log } from "../log";
+import { studyErrorMessage } from "./errorMessage";
 
 /**
  * Run the whole-recording delivery assessment (tone + over-frequent fillers + an
@@ -15,6 +17,12 @@ import { landStage, makeRunGuard } from "./runGuard";
  * left it (see runGuard.landStage); a superseded run is discarded.
  */
 const guard = makeRunGuard("delivery");
+
+/** Cancel the delivery pass running for the recording on screen. */
+export function cancelDeliveryAnalysis(): boolean {
+  return guard.cancel();
+}
+
 export async function runDeliveryAnalysis(): Promise<void> {
   const state = useStore.getState();
   const { settings, speakerNames } = state;
@@ -29,6 +37,7 @@ export async function runDeliveryAnalysis(): Promise<void> {
   if (state.deliveryStatus === "running") return;
 
   const run = guard.begin();
+  useStore.setState({ deliveryError: null });
   state.setDeliveryStatus("running");
   try {
     const res = await analyzeDelivery({
@@ -37,6 +46,7 @@ export async function runDeliveryAnalysis(): Promise<void> {
       names: speakerNames,
       measuredRateHz: state.replay?.speechRateHz ?? null,
       mode: "post",
+      signal: run.signal,
     });
     // A legacy entry (saved before deliveryAssessment existed) recomputes this on
     // open — save it back so it only ever recomputes once. No-op when unsaved.
@@ -50,10 +60,16 @@ export async function runDeliveryAnalysis(): Promise<void> {
       persistWhileLoaded: true,
     });
   } catch (e) {
-    console.error("[delivery]", e);
+    if (run.superseded()) log.info("delivery: superseded pass ended", { error: String(e) });
+    else log.error("delivery: assessment failed", { error: String(e) });
+    const message = await studyErrorMessage(e, settings.llmProviders.realtime);
     await landStage(run, {
       stage: "delivery",
-      apply: () => useStore.getState().setDeliveryStatus("error"),
+      error: message,
+      apply: () => {
+        useStore.setState({ deliveryError: message });
+        useStore.getState().setDeliveryStatus("error");
+      },
       patch: null,
     });
   } finally {

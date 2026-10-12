@@ -56,6 +56,34 @@ object SpeakerLabel {
         names["$source-$speaker"]?.takeIf { it.isNotEmpty() } ?: fallback(source, speaker, strings)
 
     /**
+     * What a study PROMPT calls a speaker nobody has named: the desktop's
+     * `defaultSpeakerLabel` (store.ts), word for word and always in English,
+     * whatever language the phone is read in. Display copy may be localized
+     * and lettered; what the model reads must be what the desktop sends it,
+     * or the same recording is analysed differently on each device:
+     *
+     * - `mix`: "Speaker N", an undecided speaker (0) read as 1;
+     * - `me`: "You" for speaker 0 or 1, "Speaker N" after that;
+     * - `them` (and anything else): "Them" for speaker 0, "Remote N" from 1 —
+     *   so `them` speaker 1 is "Remote 1", not "Them".
+     */
+    fun promptFallback(source: String, speaker: Int): String {
+        val display = if (speaker == 0) 1 else speaker
+        return when (source) {
+            SOURCE_MIX -> "Speaker $display"
+            SOURCE_ME -> if (display <= 1) "You" else "Speaker $display"
+            else -> if (speaker > 0) "Remote $speaker" else "Them"
+        }
+    }
+
+    /**
+     * [promptFallback], unless [names] holds a name for this speaker — the
+     * desktop's `speakerLabel`, which takes any assigned name as it is.
+     */
+    fun prompt(segment: TranscriptSegment, names: Map<String, String>): String =
+        names["${segment.source}-${segment.speaker}"] ?: promptFallback(segment.source, segment.speaker)
+
+    /**
      * 1 → A, 2 → B … 26 → Z, 27 → AA — bijective base 26, the way spreadsheet
      * columns count, so every index gets a distinct name. Empty for 0 and below:
      * that is "not decided", not speaker A. iOS `speakerLetter`.
@@ -76,5 +104,6 @@ object SpeakerLabel {
 
     private const val SOURCE_ME = "me"
     private const val SOURCE_THEM = "them"
+    private const val SOURCE_MIX = "mix"
     private const val ALPHABET = 26
 }

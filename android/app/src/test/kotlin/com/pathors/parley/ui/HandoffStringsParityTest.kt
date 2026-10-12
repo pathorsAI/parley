@@ -83,14 +83,14 @@ class HandoffStringsParityTest {
         "action_refresh" to "Refresh",
         "sign_in_didnt_finish" to "Sign-in didn't finish. Please try again.",
         "whats_new_also" to "Also",
-        // The recording page: Summary | Transcript (iOS #450).
-        "detail_face_summary" to "Summary",
+        // The recording page: Summary | Transcript (iOS #450). Android's first
+        // page is the report now (it runs the study stages; iOS does not), so
+        // its label and its sections are no longer iOS's copy.
         "detail_transcript" to "Transcript",
         "detail_action_items" to "Action items",
         "detail_no_transcript" to "This recording has no transcript.",
         "detail_load_failed_title" to "Couldn't load",
         "recording_untitled" to "Untitled recording",
-        "summary_highlights" to "Highlights %lld",
         "summary_speakers" to "Speakers",
         "summary_empty" to "No summary yet.",
         "summary_generate" to "Generate a summary with AI",

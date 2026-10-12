@@ -220,7 +220,7 @@ pub async fn run_session(
         config.diarization, config.leg
     );
     // Deepgram takes its whole config in the URL: the upgrade is the handshake.
-    note_connected(&app, source, config.leg);
+    note_connected(&app, source, config.leg, false);
 
     let meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT).enabled(config.level_events);
 

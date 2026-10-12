@@ -7,8 +7,8 @@ written as Chinese, the same way `values-zh-rTW/strings.xml` is written next to
 `values/strings.xml` rather than after it.
 
 Google Play counts CJK characters as one character each, so the same limits
-apply; every field is well under them (title 15/30, short description 33/80,
-full description ~1,260/4,000, release notes 145/500).
+apply; every field is well under them (title 19/30, short description 32/80,
+full description ~1,330/4,000, release notes 145/500).
 
 The full description is hard-wrapped here so it diffs cleanly. **Play renders
 line breaks literally**, so let paragraphs reflow when you paste: keep the blank
@@ -17,8 +17,8 @@ paragraph.
 
 | Field | Limit | Value |
 | --- | --- | --- |
-| App name (title) | 30 | `Parley 會議錄音與逐字稿` |
-| Short description | 80 | `會議還在進行，逐字稿就已經讀得到了；手上既有的錄音檔也能匯入轉成文字。` |
+| App name (title) | 30 | `Parley 語音輸入・會議錄音逐字稿` |
+| Short description | 80 | `在任何 App 用說的打字；會議還在進行，逐字稿就已經讀得到了。` |
 | Full description | 4,000 | below |
 | Category | — | 生產應用 (Productivity) |
 | Contact email | — | contact@pathors.com |
@@ -32,6 +32,13 @@ paragraph.
 手上是一份能直接引用的紀錄，不是一個三十分鐘的錄音檔加一片空白的記憶。
 
 登入就有 20 小時免費轉錄額度，不必自備任何 API key。
+
+語音輸入：在任何 App 用說的打字
+
+在任何有輸入框的地方——訊息、郵件、筆記——切到 Parley 鍵盤、按下麥克風，說的話就
+邊講邊出現在欄位裡；停下來之後，Parley 會把它整理成書面文字：拿掉贅字、補上標點，
+口頭列的一二三也會排成清單。這個鍵盤只有一個麥克風鍵，點一下就切回你平常用的鍵盤。
+它不會讀取欄位裡原本的內容，遇到密碼欄位也會自動停用。
 
 現場錄：邊開會，逐字稿邊長出來
 
@@ -66,15 +73,17 @@ App 裡還有
 
 它錄什麼、不錄什麼
 
-它用手機自己的麥克風錄下你所在的那個房間——不錄通話，也不擷取其他 app 的聲音。
+它用手機自己的麥克風錄下你所在的那個房間，以及你對 Parley 鍵盤說的話——不錄通話，
+也不擷取其他 app 的聲音。
 線上會議請交給能正確擷取系統音訊的桌面版。這一版還沒有播放器，打開一筆錄音看到
 的是逐字稿。資料夾與組織共享目前在桌面版與 iPhone 版。
 
 你的資料
 
-按下錄音才會開始錄，而且它是為了在場每個人都知道的會議而做的——Parley 是會議
-記錄工具，不是偷錄工具。音訊與逐字稿透過加密連線送到你的帳號，只用於轉錄與同步；
-不販售，也不拿去投放廣告。帳號與其中所有內容你隨時可以自行刪除：
+按下錄音或鍵盤上的麥克風才會開始收音（語音輸入打進欄位之後就不會留存成錄音），
+而且它是為了在場每個人都知道的會議而做的——Parley 是會議記錄工具，不是偷錄工具。
+音訊與逐字稿透過加密連線送到你的帳號，只用於轉錄與同步；不販售，也不拿去投放廣告。
+帳號與其中所有內容你隨時可以自行刪除：
 https://parley.tw/account-deletion/
 
 Parley 採用 Apache-2.0 授權。原始碼：github.com/pathorsAI/parley
@@ -88,9 +97,11 @@ Parley Android 版首次推出。錄一場面對面的會議，逐字稿會邊�
 
 ## Notes on the choices here
 
-- **The title carries the two search terms Taiwanese users actually type** —
-  「會議錄音」and「逐字稿」— with the wordmark first. 15 characters, half the
-  budget, and no claim the app cannot back.
+- **The title carries the search terms Taiwanese users actually type** —
+  「語音輸入」,「會議錄音」and「逐字稿」— with the wordmark first. Voice
+  typing leads, as on iOS, now that Android ships the keyboard; until it did,
+  the title was `Parley 會議錄音與逐字稿`, because 語音輸入 would have been a
+  claim the app could not back.
 - **Not a translation.** The English copy opens on "records the meetings you
   have in person"; the Chinese opens on 「會議還在進行，逐字稿就已經讀得到了」,
   which is the promise that lands in Chinese. Same facts, native rhythm.

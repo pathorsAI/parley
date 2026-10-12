@@ -15,6 +15,7 @@
   "nav.meetings": "Meetings",
   "nav.ai": "For your AI",
   "nav.voice": "Voice typing",
+  "nav.guides": "Guides",
   "nav.lang": "中文",
   "nav.langTitle": "以中文閱讀這個頁面",
   "nav.download": "Download",
@@ -128,6 +129,10 @@
 
   "footer.product": "Product",
   "footer.project": "Project",
+  "footer.guides": "Guides",
+  "footer.guideOpen": "Open-source recorders",
+  "footer.guideLocal": "Local-first transcription",
+  "footer.guideMcp": "Meeting notes with MCP",
   "footer.legal": "Legal &amp; support",
   "footer.download": "Download",
   "footer.releases": "Releases",

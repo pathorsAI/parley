@@ -255,7 +255,7 @@ sent (`encodeDefaults = true`): `findingsCount: 0` is part of the contract.
   "createdAt": 1723600000123,
   "durationMs": 92500,       // fractional when the sample count says so
   "speakerCount": 2,         // distinct "{source}-{speaker}" pairs, min 1 when there is speech
-  "findingsCount": 0,        // the phone does not analyze
+  "findingsCount": 0,        // 0 on upload; study writes re-derive it from the meta (below)
   "actionItemsCount": 0,
   "hasAudio": true,
   "snippet": "…",            // first 3 final lines joined by " ", capped at 120 chars
@@ -306,6 +306,26 @@ object straight into a `HistoryEntry`, and `analyzed: false` is what tells it th
 pipeline still owes a pass. `analyzed` cannot be inferred from the empty arrays —
 a short, clean meeting legitimately analyzes to zero of both.
 
+### The study fields Android writes
+
+Android now runs the desktop's study stages itself (`study/StudyPass`, see
+`app-structure.md`) and writes their results into the same meta fields the
+desktop does, each through one `editRecordingIf` read-modify-write (so unknown
+fields survive, and a field another device filled meanwhile is kept rather
+than overwritten):
+
+| Stage | Fields written | Shape |
+|---|---|---|
+| findings | `findings`, `meetingKind` | desktop `TimelineEvent[]` (`id`, `atMs`, `side`?, `category`?, `severity`, `source`, `evalIds`?, `title`, `detail`, `resolved`?, `resolution`?); kind `internal` / `sales` / `pricing` / `rivalry`, or null |
+| action items | `actionItems`, `analyzed: true` | desktop `ActionItem[]` (`id`, `text`, `done`, `linkedEventId`, `atMs`, `severity`?) |
+| brief | `brief` + `briefFailed: false`, or `briefFailed: true` | markdown with `[m:ss]` citations |
+| delivery | `deliveryAssessment` | `{ tone, toneEvidence, fillers: { level, examples, note }, pace, summary }` |
+
+The summary pushed with each write is `RecordingSummary.fromMeta(meta)`, so
+`findingsCount` / `actionItemsCount` follow the arrays just written. The phone
+never writes `speechRateHz` (it has no acoustic measurement) and never sets a
+`meetingKind` that is already there.
+
 Reading back, `RecordingMeta` keeps the **raw** `JsonObject` rather than a typed
 class, exactly as iOS keeps a dictionary: the desktop writes fields the phone
 knows nothing about (`brief`, `intel`, `deliveryAssessment`, `companyId`,
@@ -313,7 +333,10 @@ knows nothing about (`brief`, `intel`, `deliveryAssessment`, `companyId`,
 `withFolderId(...)` to change one field and keep the rest verbatim. Typed reads:
 `id`, `title`, `source`, `createdAt`, `durationMs`, `analyzed`, `audio`,
 `hasAudio`, `folderId`, `speakerNames`, `segments`, `speakerKey(seg)`,
-`speakerName(seg)`.
+`speakerName(seg)`, and for the study `meetingKind`, `meetingBatna` /
+`meetingTarget` / `meetingFloor`, `brief`, `briefFailed`,
+`deliveryAssessment`, `speechRateHz`; the study's writers are `withFindings`,
+`withActionItems`, `withBrief`, `withBriefFailed`, `withDeliveryAssessment`.
 
 Speaker *labels* ("You" / "Them" / "Speaker N") are display copy and stay in the
 UI layer, which owns the bilingual string table; `speakerName()` returns only the

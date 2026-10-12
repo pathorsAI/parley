@@ -58,7 +58,10 @@ hand-off, and the in-app dictation session are new.
    That state is the keyboard's cue: it inserts the whole committed text in a
    single `insertText`, then writes the character count back to the uplink as
    its high-water mark (`insertedCount`), so a keyboard killed mid-session and
-   relaunched after the session ended still pastes exactly once. `error` inserts
+   relaunched after the session ended still pastes exactly once. The insert
+   waits until the keyboard is on screen in an active host: a `done` that
+   arrives while it is away (stopped from Parley, the Live Activity or the lock
+   screen) is typed on the next appearance, not into nowhere. `error` inserts
    nothing at all.
 6. **Or ✕, and nothing at all.** The keyboard's ✕ writes the same
    `stopRequested` with `cancelRequested` beside it. The app cuts the relay

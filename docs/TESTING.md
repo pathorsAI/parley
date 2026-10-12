@@ -76,6 +76,168 @@ Config lives in [`vitest.config.ts`](../vitest.config.ts) — `environment: "nod
 (the store + pure functions need no DOM); switch a file to `jsdom` only if a test
 genuinely needs the DOM.
 
+## Voice-typing overlay: what only a person can check
+
+The overlay's window behaviour is native (`present_voice_overlay` in
+`src-tauri/src/voice_typing.rs`), so no unit test reaches it. Walk these on a
+Mac, and on Windows as part of the next section, before a release that touches
+the overlay:
+
+- **Clicking the overlay never activates Parley.** Click the overlay pill and
+  the suggestion buttons mid-dictation: the menu bar stays on the target app,
+  the main window does not come forward (whether it is open behind other apps
+  or closed to the Dock), and the release still pastes into the original
+  field. The suggestion's Add, Ignore and Undo still respond to the first
+  click. On macOS, `parley.log` shows `overlay panel preventsActivation=true`
+  the first time the overlay appears.
+- **Transparent parts pass clicks through** (macOS; `start_hit_poller`). With
+  a chat app's composer at the bottom centre of the screen, start a dictation
+  and click the composer beside the pill, or above the transcript bubble once
+  words show: the caret lands there and the menu bar stays on the chat app.
+  Moving onto the pill, the transcript bubble or a suggestion bubble catches
+  clicks again, and the buttons still respond. Repeat on a 1×
+  external display next to a Retina laptop, and over a full-screen app's
+  Space.
+- **⌥↩ on a suggestion only accepts it** (`on_ptt` in
+  `src-tauri/src/hotkey.rs`). In hold mode, accept a dictionary suggestion
+  with ⌥↩ (Alt+Enter on Windows): the bubble turns into "Added · Undo" and no
+  dictation starts. The push-to-talk key still works afterwards, after a
+  shortcut change in Settings, and after sleep and wake.
+- **Esc cancels a dictation** (`src/lib/voiceTyping/cancel.ts`,
+  `cancel_shortcuts_for` in `src-tauri/src/hotkey.rs`). Hold each trigger and
+  press Esc while still holding it: a recorded combo such as F13, fn, ⌥Space,
+  right ⌘ and right ⌥. The overlay turns to "Transcription cancelled · Undo",
+  nothing is pasted, and releasing the key does nothing. Also in toggle mode
+  (tap, speak, Esc), and during "Polishing…". Then:
+  - Undo within 5 s: the text is on the clipboard, a history entry appears,
+    nothing is pasted, and the target app keeps focus. Undo clicked before
+    the text has settled turns the pill into the spinner until it does, then
+    copies it the same way. Undo at the last moment works too, just
+    before the pill starts to fade (about 4 s): with polish on, "Polishing…"
+    and then "Copied to clipboard" show in full rather than the overlay
+    fading out with no answer.
+  - Undo with polish on and the network off: after "Polishing…" the pill
+    reads "Copied as dictated (polish unavailable)", and the raw text is on
+    the clipboard.
+  - No Undo: the overlay fades and hides at about 5 s, with no history
+    entry.
+  - A new press during those 5 s starts a fresh dictation.
+  - Esc with no dictation running still reaches the app in front, and so
+    does Esc right after a dictation has pasted.
+  - Esc still reaches the app in front after the main window's page started
+    over mid-dictation: in a dev build (`bun tauri dev`) in toggle mode, tap
+    to start a dictation, reload the main window (right-click › Reload), then
+    press Esc in another app.
+  - Toggle mode, two sentences back to back: tap, speak, tap to stop, and tap
+    again right away while the first one is still finishing. The first
+    sentence is pasted and the second one records; the next tap stops it.
+  - If ⌥Esc or another held-key Esc never fires, `parley.log` names the
+    chord that did not register (`escape cancel … not registered`). fn adds
+    no chord of its own (`cancel_shortcuts_for` registers only the bare Esc
+    for it), so a dead fn+Esc shows up as no `escape cancel (shortcut)` line
+    after the press, or as `escape cancel Escape not registered` if the bare
+    Esc itself was refused.
+
+## Voice typing: timing and polish, against the real relay
+
+The settle rule (`src/lib/voiceTyping/settle.ts`) and the polish gate
+(`polishSkipReason` in `src/lib/voiceTyping/polish.ts`) are unit-tested; the
+hosted relay's connect time and the model's answers are not. With the hosted
+("parley") provider, on a Mac or Windows:
+
+- **A short tap still pastes.** In toggle mode tap, say one word, and tap again
+  within a second; in hold mode, the same with a quick hold. The word is
+  pasted, even when `parley.log` shows `connected in` longer than the hold:
+  `voice-typing: settled` has `reason` `closed`, and its `connectMs` is above
+  the hold time. Nothing in the log says `ended empty`.
+- **The last words survive a release on them.** Dictate two or three sentences
+  and stop on the last syllable: every word is pasted, and the settle `reason`
+  is `closed`, never `quiet`.
+- **A one-breath sentence goes straight in.** Dictate 「我等一下就過去找你」 with
+  polish on: no "Polishing…", no trailing 。, and the `inserted` line logs
+  `polish` `singleClause`. Dictate two clauses (「好，我等一下過去」): polish runs.
+- **Polish runs, on Tidy and on Concise.** Dictate two clauses with an 「呃」
+  in them: "Polishing…" shows, the 「呃」 is gone, and the `inserted` line logs
+  `polish` `polished`. On a Mac this is the check that the hosted LLM calls
+  pass the CORS preflight at all (`voice-typing.polish: failed … TypeError`
+  in the log means they do not). When the model times out or fails, the
+  text is inserted as said and the pill says "Inserted as dictated (polish
+  unavailable)".
+- **A tap during the settle keeps the last words.** In toggle mode, dictate a
+  sentence, tap to stop, and tap again right away to start the next one:
+  the first sentence is pasted whole, its last words included, and the log
+  shows `voice-typing: settled` with `reason` `restart` for it.
+
+## Voice typing and the clipboard: what only a person can check
+
+A dictation reaches the field through the clipboard and then gives the
+clipboard back (`insert_text`, `src-tauri/src/voice_typing/clipboard.rs`).
+The bookkeeping is unit-tested against a fake clipboard; what the real
+pasteboard and the apps reading it do is not. On a Mac, and on Windows as
+part of the next section:
+
+- **Your clipboard survives a dictation.** Copy an image (from a browser or
+  Preview), then a link, and each time dictate into Notes and into a browser
+  text field: the text is inserted and the overlay says "Inserted"; ⌘V
+  afterwards pastes the image or the link, not the dictation. `parley.log`
+  shows `clipboard restored` about a second and a half after each paste.
+- **The paste reads the dictation, not the restore.** Dictate into a busy
+  Electron app (Slack, VS Code) and a Chromium page: the dictated text
+  appears, never the clipboard you had before.
+- **A copy made right after wins.** Dictate, then copy something else within
+  a second after the text appears: ⌘V pastes what you copied, and the log
+  says `clipboard changed after the paste; left as it is`.
+- **Back to back.** Two quick dictations in a row, then ⌘V: your original
+  clipboard, not the first dictation. Again with a copy in between (polish
+  on, so the second takes a moment: ⌘X a word in the document right after
+  the first appears): ⌘V afterwards pastes the cut word, not your original
+  clipboard.
+- **A slow or huge clipboard does not hold up the paste for long.** Copy a
+  large range of cells in Excel or Numbers, or let a photo copied on an
+  iPhone reach the Mac through Universal Clipboard, then dictate. A read
+  that is already running cannot be interrupted, so the paste waits at most
+  for the first slow format the copying app renders or fetches (the first
+  Universal Clipboard transfer from the iPhone, say); after that the
+  snapshot stops. A cell range is saved as its text, HTML and rich text,
+  not as a picture of the cells, so it should not make the paste wait
+  noticeably; ⌘V afterwards pastes the cells into a spreadsheet or a
+  document, but no longer as a picture into an app that only takes
+  pictures.
+  `parley.log` shows either `clipboard restored`, or `could not save the
+  clipboard; it keeps the dictation: too slow or too large to save (… ms, …
+  bytes in … formats read)` — then ⌘V pastes the dictation, as it did
+  before Parley saved the clipboard.
+- **No paste, so the clipboard is the delivery.** Revoke Accessibility and
+  dictate: the overlay turns warning and says to press ⌘V; the text is on the
+  clipboard and stays there.
+- **Dictating into Parley itself.** Click into the Ask box, then a Settings
+  field, and dictate: the text appears there, the overlay says "Inserted"
+  (not "press ⌘V"), ⌘V afterwards pastes what you had copied before, and
+  Parley does not freeze for a few seconds after the paste. With nothing
+  focused in Parley's window, nothing is inserted and the overlay's Copy
+  still works.
+- **Clipboard managers do not keep it.** With Maccy, Raycast or Paste
+  running, dictate: the dictation does not appear in their history, and the
+  clipboard you had, once it is back, is not listed a second time.
+- **Remote desktops and VMs keep the dictation.** Dictate into a Microsoft
+  Remote Desktop / Windows App session, a Parallels or VMware Fusion VM, or a
+  Screen Sharing window: the text is pasted on the other side, nothing of
+  your old clipboard is, and afterwards the clipboard still holds the
+  dictation (`pasting into a remote or virtual machine` in `parley.log`).
+- **Esc is never left claimed.** After any dictation — pasted, cancelled,
+  failed — Esc works again in the app in front (close a dialog, leave full
+  screen) once the text is in.
+- **Nowhere to paste.** Dictate with no text field focused (click the
+  desktop first): nothing is inserted; the overlay's Copy puts the text on the
+  clipboard and the pill turns into "Copied to clipboard", which ⌘V then
+  pastes.
+- **Esc, Undo.** Undo of a cancelled dictation leaves its text on the
+  clipboard to stay, also when the previous dictation's restore was still
+  pending.
+- **A password stays out of it.** Copy a password from a password manager,
+  then dictate: the dictation is inserted, and afterwards the clipboard is
+  empty — Parley neither keeps nor puts back a concealed entry.
+
 ## Windows: what only a Windows machine can check
 
 CI builds and lints the Windows target (`cargo clippy --target
@@ -99,18 +261,77 @@ involved:
   second copy. Quit Parley from the tray ends the process (check Task Manager),
   and mid-meeting it saves the meeting first.
 - **Tray voice typing.** Start voice typing opens the overlay and the item
-  turns into Stop voice typing; the second click ends the dictation and the
-  text lands on the clipboard. Where it pastes depends on which window is in
-  front when the dictation ends — after a tray click that is usually not your
-  document, so the clipboard is the reliable result.
-- **Clipboard paste** (`paste_to_frontmost` in `src-tauri/src/voice_typing.rs`).
+  turns into Stop voice typing; the second click ends the dictation. Where it
+  goes depends on which window is in front when the dictation ends — after a
+  tray click that is often not your document: the tray menu leaves Parley's
+  own hidden tray window in front. Then the text is left on the clipboard
+  (no restore follows) and the overlay says to press Ctrl+V; click into
+  Notepad and Ctrl+V pastes it. Click into Notepad before the dictation
+  settles instead and it is pasted there. When a visible Parley window is in
+  front (the Ask box, Settings), the text goes into whichever of its fields
+  has focus.
+- **Dictating with the window hidden** (`src/lib/voiceTyping/settle.ts`). The
+  dictation host runs in the main window, and WebView2 throttles a hidden
+  page's timers harder after five minutes. Hide Parley to the tray for longer
+  than that, then dictate a single word with a short tap: it still pastes, and
+  `parley.log` shows `voice-typing: settled` with `reason` `closed`.
+- **Voice-typing overlay clicks.** The overlay checks in the section above:
+  clicking the pill or a suggestion button mid-dictation leaves the target app
+  in front, and the release still pastes into the original field.
+- **Overlay click-through, before it is switched on** (`CLICK_THROUGH` in the
+  Windows `imp` of `src-tauri/src/voice_typing.rs`). It is off on Windows:
+  the toggle needs WS_EX_LAYERED, which can blank a WebView2 window, so the
+  transparent area around the pill still eats clicks. Whoever implements the
+  toggle walks this at 100 % and 150 % scaling: clicks beside the pill, or
+  above the transcript bubble, reach the app behind; the overlay never shows
+  in Alt+Tab or the taskbar; it never turns black or invisible after the
+  cursor moves on and off the pill; and Ctrl+V still lands in the target app.
+- **Esc cancel under a held key** (`windows_hook.rs`, `modifier_ptt.rs`). Hold
+  right Ctrl, speak, press Esc: the dictation cancels, the Start menu does not
+  open, and nothing is pasted; the next hold dictates normally. The same with
+  right Alt (and AltGr on a German or French layout — no menu bar is left
+  armed in Notepad), with Ctrl+Alt+Space held, and with an elevated window in
+  front.
+- **Clipboard paste** (`insert_text` in `src-tauri/src/voice_typing.rs`).
   Dictating into Notepad, a browser text field and an Office app pastes the
   text at the caret, and the held Ctrl+Alt of the shortcut does not turn the
   paste into Ctrl+Alt+V.
+- **The clipboard comes back** (`clipboard/windows.rs`). Walk the clipboard
+  section above on Windows. Also: copy a range of cells in Excel, dictate into
+  Notepad, then paste into Excel — the cells come back as cells, with their
+  values and formatting. The restore brings back the static formats (text,
+  rich text, HTML, a picture), not the live Excel object, so formulas do not
+  survive it, and Windows rebuilds the bitmap formats from the DIB. Win+V
+  history (turn it on in Settings › System › Clipboard) does not list the
+  dictation, nor the restored clipboard a second time. If the restore never happens, `parley.log` says why (`clipboard
+  changed after the paste` means the sequence number moved while the target
+  app read the paste; `clipboard restore failed; trying again` means another
+  process held the clipboard, and up to three retries follow).
+- **A large Excel copy does not freeze Parley** (`insert_text` runs off the
+  main thread on Windows). Copy a large range in a big workbook, then
+  dictate into Outlook or Notepad: the overlay and Parley's windows stay
+  responsive while Excel renders, and copying and pasting in other apps keeps
+  working right after. A range too slow to save leaves the dictation on the
+  clipboard (`too slow or too large to save` in `parley.log`).
+- **A dictation left on the clipboard is not mistaken for a password.**
+  With a dictation still on the clipboard (`could not save the clipboard` or
+  `clipboard restore failed; the clipboard keeps the dictation` in the log),
+  dictate again: afterwards Ctrl+V pastes that earlier dictation, not
+  nothing — and with Win+V history on, the earlier dictation still does not
+  appear in the history after the second dictation's restore.
+- **Remote desktops and VMs keep the dictation.** Dictate into a Remote
+  Desktop Connection (mstsc) or Windows App session, a Hyper-V, VMware or
+  VirtualBox VM window, Citrix Workspace, TeamViewer, AnyDesk and a VNC
+  viewer: the text is pasted on the other side (not your old clipboard),
+  and it stays on the local clipboard afterwards (`pasting into a remote or
+  virtual machine` in `parley.log`). Check that the paste reaches the remote
+  side at all: the dictation now goes up as an ordinary copy, without the
+  history and monitor markers, so the client's clipboard sync can carry it.
 - **UIPI clipboard-only fallback.** Dictating into a window running as
   administrator (e.g. an elevated terminal) cannot paste — Windows blocks
   input injection into higher-integrity processes. The overlay should say the
-  text is on the clipboard, and Ctrl+V should paste it.
+  text is on the clipboard, and Ctrl+V should paste it; it stays there (no
+  restore follows a refused paste).
 - **Caches** (Settings › MCP Server › Caches). The only way to clear caches on
   Windows, which draws no menu bar: sizes show, each Clear works, and Clear all
   asks first.

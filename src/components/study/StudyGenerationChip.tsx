@@ -21,6 +21,8 @@ import {
 import { useI18n, type TranslationKey } from "../../i18n";
 import { LANGUAGE_OPTIONS } from "../../i18n/messages";
 import { log } from "../../lib/log";
+import { useStore } from "../../lib/store";
+import { useShallow } from "zustand/react/shallow";
 import { Button } from "@/components/ui/button";
 import { Flag } from "@/components/ui/flag";
 import { MeetingContextField } from "../MeetingContextField";
@@ -56,21 +58,33 @@ const STATUS_UI: Record<
  * that used to be scattered across the replay player bar and report sections.
  *
  * Regeneration is INVALIDATION (regenerateArtifact/reanalyzeAll): this
- * component never talks to the runners — the pipeline owns the topology.
+ * component never talks to the runners — the pipeline owns the topology. A
+ * stage that is still generating can be regenerated too: the pipeline cancels
+ * it and starts over, which is the way out of a pass whose model call hung.
  */
 export function StudyGenerationChip() {
   const { t, language } = useI18n();
   const pipeline = useStudyPipeline();
+  const errors = useStore(
+    useShallow((s): Record<StudyArtifactKey, string | null> => ({
+      findings: s.analysisError,
+      actions: s.actionItemsError,
+      brief: s.briefError,
+      delivery: s.deliveryError,
+    })),
+  );
   // Confirm-dialog for "regenerate all": adjust context, then run.
   const [confirming, setConfirming] = useState(false);
 
   if (!pipeline.hasTranscript) return null;
 
-  const anyRunning = pipeline.artifacts.some((a) => a.display === "running");
   // Regenerating while the speakers are being corrected would analyse the very
   // labels that are about to change — the pipeline holds those stages anyway,
   // so the controls say so instead of queueing a click that looks ignored.
-  const regenLocked = !pipeline.hasDeepKey || anyRunning || pipeline.diarizing;
+  // A RUNNING stage does not lock anything: regenerating it cancels the pass
+  // and starts a fresh one (studyPipeline.regenerateArtifact), and locking here
+  // is what left a hung pass with no way out.
+  const regenLocked = !pipeline.hasDeepKey || pipeline.diarizing;
 
   function confirmRegenAll() {
     setConfirming(false);
@@ -118,9 +132,8 @@ export function StudyGenerationChip() {
                 key={a.key}
                 artifact={a}
                 label={t(ARTIFACT_LABEL[a.key])}
+                error={errors[a.key]}
                 t={t}
-                // One pass at a time: regenerating anything while another output
-                // streams would race the chained pipeline (and double-spend).
                 disabled={regenLocked}
                 onRegen={() => regenerateArtifact(a.key)}
               />
@@ -257,28 +270,36 @@ function ChipContent({ pipeline: p, t }: Readonly<{ pipeline: Pipeline; t: TFn }
 function ArtifactRow({
   artifact,
   label,
+  error,
   t,
   disabled,
   onRegen,
 }: Readonly<{
   artifact: StudyArtifactState;
   label: string;
+  /** Why the stage failed, when the store knows. */
+  error: string | null;
   t: TFn;
   disabled: boolean;
   onRegen: () => void;
 }>) {
   const ui = STATUS_UI[artifact.display];
   const Icon = ui.icon;
-  const busy = artifact.display === "running" || artifact.display === "queued";
+  // Queued is waiting on an upstream stage: there is nothing of its own to
+  // restart yet. Running is fine — regenerating it cancels and restarts it.
+  const waiting = artifact.display === "queued";
+  // The reason a stage failed, on hover — "Failed" alone gives the user nothing
+  // to act on (a timeout reads differently from a rejected key).
+  const failure = artifact.display === "error" && error ? error : undefined;
   return (
-    <div className="flex items-center gap-2 border-b px-3 py-1.5 text-xs last:border-b-0">
+    <div className="flex items-center gap-2 border-b px-3 py-1.5 text-xs last:border-b-0" title={failure}>
       <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
       <span className={cn("flex items-center gap-1 text-[11px]", ui.className)}>
         {Icon && <Icon className={cn("size-3", ui.spin && "animate-spin")} />}
         {t(ui.label)}
       </span>
       <DropdownMenu.Item
-        disabled={disabled || busy}
+        disabled={disabled || waiting}
         onSelect={(e) => {
           // Keep the panel open so the row flips to "generating" in place.
           e.preventDefault();

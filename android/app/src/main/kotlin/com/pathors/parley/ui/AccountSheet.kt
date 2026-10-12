@@ -70,6 +70,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.pathors.parley.BuildConfig
 import com.pathors.parley.R
+import com.pathors.parley.study.StudySettings
 import com.pathors.parley.auth.CustomTabsLauncher
 import com.pathors.parley.cloud.CloudOrg
 import com.pathors.parley.cloud.CloudUser
@@ -175,6 +176,8 @@ fun AccountSheet(
             AppearanceSection()
 
             LanguageSection()
+
+            AnalysisSection()
 
             FeedbackSection(onReport = onDismiss)
 
@@ -739,6 +742,46 @@ private fun openLanguageSettings(context: Context) {
             // Try the next one.
         }
     }
+}
+
+/**
+ * "Analyze recordings automatically" — the desktop's `autoStudyAnalysis`
+ * setting. On by default: opening a recording that has not been analysed
+ * writes its report with the hosted model. Off leaves it unanalysed until
+ * somebody asks from the recording's analysis menu.
+ */
+@Composable
+private fun AnalysisSection() {
+    val settings = rememberContainer().studySettings
+    val scope = rememberCoroutineScope()
+    val auto by settings.autoAnalysis.collectAsState(initial = StudySettings.DEFAULT_AUTO_ANALYSIS)
+
+    SectionHeader(R.string.account_analysis_title)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .toggleable(
+                value = auto,
+                role = Role.Switch,
+                onValueChange = { on -> scope.launch { settings.setAutoAnalysis(on) } },
+            ),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = stringResource(R.string.account_auto_study),
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+        )
+        Switch(checked = auto, onCheckedChange = null)
+    }
+
+    Text(
+        text = stringResource(R.string.account_auto_study_footnote),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 /**

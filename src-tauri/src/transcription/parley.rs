@@ -424,6 +424,7 @@ pub async fn run_session(
         .relay_endpoint
         .as_deref()
         .ok_or_else(|| anyhow!("hosted transcription requires the cloud endpoint"))?;
+    let connecting = std::time::Instant::now();
     let ws = connect_with_headers(
         &stream_url(endpoint),
         &[("Authorization", format!("Bearer {}", config.api_key))],
@@ -435,13 +436,18 @@ pub async fn run_session(
         .send(Message::Text(serde_json::to_string(&start_frame(&config))?))
         .await?;
     await_ready(&mut read, source).await?;
-    eprintln!(
-        "[{NAME}:{source}] connected, diarization={}, vocabulary={}, leg={}",
+    // To parley.log: the connect time (through `ready`) is the other half of a
+    // short dictation's wait, and the COUNT of terms sent after cleaning (never
+    // the terms themselves) checks a "my name is ignored" report.
+    log::info!(
+        "[{NAME}:{source}] connected in {}ms, diarization={}, vocabulary={}, leg={}",
+        connecting.elapsed().as_millis(),
         config.diarization,
-        config.vocabulary.len(),
+        clean_vocabulary(&config.vocabulary).len(),
         config.leg
     );
-    note_connected(&app, source, config.leg);
+    // The closing `end` is answered with `done`, which ends the stream.
+    note_connected(&app, source, config.leg, true);
 
     let meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT).enabled(config.level_events);
     let ended = Arc::new(AtomicBool::new(false));

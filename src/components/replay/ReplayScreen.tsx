@@ -49,7 +49,10 @@ export function ReplayScreen() {
   const session = useReplaySession();
   const playheadMs = useReplayPlayheadMs();
   const durationMs = session?.durationMs ?? 0;
-  const player = useReplayPlayer(durationMs, session?.audioOffsetMs ?? 0);
+  const player = useReplayPlayer(durationMs, session?.audioOffsetMs ?? 0, {
+    audioSrc: session?.audioSrc ?? "",
+    audioPath: session?.audioPath ?? "",
+  });
   // (The analysis pipeline runs from StudyScreen — landing on the report page
   // starts it too, not just this workbench.)
 
@@ -135,16 +138,20 @@ export function ReplayScreen() {
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      {/* Hidden audio element — the player hook drives + observes it. */}
+      {/* Hidden audio element — the player hook drives + observes it, including
+          its errors (a recording the webview can't decode falls back to a WAV
+          decoded in Rust). No src at all when there is no file: an empty src
+          is itself a media error. */}
       <audio
         ref={player.audioRef}
-        src={session.audioSrc}
+        src={player.src || undefined}
         preload="metadata"
         onTimeUpdate={player.onTimeUpdate}
         onLoadedMetadata={player.onLoadedMetadata}
         onPlay={player.onPlay}
         onPause={player.onPause}
         onEnded={player.onEnded}
+        onError={player.onError}
         className="hidden"
       >
         <track kind="captions" />
@@ -153,7 +160,8 @@ export function ReplayScreen() {
       <ReplayPlayerBar
         durationMs={session.durationMs}
         player={player}
-        onExport={isTauri() ? exportRecording : undefined}
+        audioMissing={!session.audioSrc}
+        onExport={isTauri() && session.audioSrc ? exportRecording : undefined}
         labels={{
           play: t("replay.play"),
           pause: t("replay.pause"),
@@ -167,6 +175,9 @@ export function ReplayScreen() {
           trimNote: t("replay.trimNote"),
           trimStart: t("replay.trimStart"),
           trimEnd: t("replay.trimEnd"),
+          audioMissing: t("replay.audio.missing"),
+          audioRepairing: t("replay.audio.repairing"),
+          audioUnplayable: player.error ? t("replay.audio.unplayable", { error: player.error.message }) : "",
         }}
       />
 

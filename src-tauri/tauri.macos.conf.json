@@ -4,6 +4,7 @@
     "windows": [
       {
         "title": "Parley",
+        "visible": false,
         "width": 1200,
         "height": 800,
         "minWidth": 900,
@@ -11,6 +12,7 @@
         "decorations": false,
         "transparent": true,
         "shadow": true,
+        "backgroundThrottling": "disabled",
         "windowEffects": {
           "effects": ["sidebar"],
           "state": "followsWindowActiveState",

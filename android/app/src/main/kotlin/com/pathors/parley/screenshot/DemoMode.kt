@@ -14,6 +14,9 @@ import com.pathors.parley.kit.FilingFolderSuggestion
 import com.pathors.parley.kit.FilingSuggestion
 import com.pathors.parley.kit.GettingStartedState
 import com.pathors.parley.kit.SampleManifest
+import com.pathors.parley.kit.StageStatus
+import com.pathors.parley.kit.StudyArtifact
+import com.pathors.parley.study.RecordingStudy
 import com.pathors.parley.kit.TranscriptSegment
 import com.pathors.parley.library.SaveDestination
 import com.pathors.parley.meeting.ImportFailure
@@ -95,6 +98,25 @@ object DemoMode {
 
         /** The same, with its share-and-copy menu open. */
         SHARE_MENU,
+
+        /** The featured recording on its report face — see [ReportScenario]. */
+        REPORT,
+    }
+
+    /**
+     * What the report face of the featured recording shows. The study never
+     * runs in demo mode (no network); these pin its statuses so each state of
+     * the generation chip and the report sections can be captured.
+     */
+    enum class ReportScenario(val route: String) {
+        /** Every artifact done: brief, action items, timeline, delivery. */
+        DONE("report"),
+
+        /** Findings done, action items and delivery generating, the brief queued behind them. */
+        ANALYZING("report-analyzing"),
+
+        /** [DONE] with the analysis menu (statuses, regenerate) open. */
+        MENU("report-menu"),
     }
 
     /**
@@ -179,6 +201,7 @@ object DemoMode {
         val screen: Screen,
         val serial: Long,
         val scenario: MeetingScenario = MeetingScenario.LIVE,
+        val report: ReportScenario? = null,
     )
 
     private val _enabled = MutableStateFlow(false)
@@ -222,6 +245,7 @@ object DemoMode {
             "record", "meeting", in FILING_ROUTES -> Screen.MEETING
             "account", "settings" -> Screen.ACCOUNT
             "movetofolder" -> Screen.MOVE_TO_FOLDER
+            in REPORT_ROUTES -> Screen.REPORT
             in IMPORT_ROUTES -> {
                 _importEnding.value = IMPORT_ROUTES.getValue(route)
                 Screen.IMPORT
@@ -239,6 +263,7 @@ object DemoMode {
             serial = serial,
             scenario = FILING_ROUTES[route]
                 ?: MeetingScenario.fromRoute(uri.getQueryParameter(QUERY_SCENARIO)),
+            report = REPORT_ROUTES[route],
         )
         return true
     }
@@ -502,22 +527,47 @@ object DemoMode {
                     }
                 }
                 putJsonArray("findings") {
-                    findings(id, locale).forEach { finding ->
+                    findings(id, locale).forEachIndexed { index, finding ->
                         addJsonObject {
+                            put("id", "$id-finding-$index")
+                            put("atMs", finding.atMs)
+                            finding.side?.let { put("side", it) }
+                            put("severity", finding.severity)
+                            put("source", "extra")
                             put("title", finding.title)
                             put("detail", finding.detail)
-                            put("atMs", finding.atMs)
-                            put("severity", finding.severity)
+                            finding.resolution?.let {
+                                put("resolved", true)
+                                put("resolution", it)
+                            }
                         }
                     }
                 }
                 putJsonArray("actionItems") {
-                    actionItems(id, locale).forEach { item ->
+                    actionItems(id, locale).forEachIndexed { index, item ->
                         addJsonObject {
+                            put("id", "$id-action-$index")
                             put("text", item.text)
                             put("rationale", item.rationale)
                             put("done", false)
+                            item.atMs?.let { put("atMs", it) }
                         }
+                    }
+                }
+                analysis(id, locale)?.let { analysis ->
+                    put("meetingKind", analysis.kind)
+                    put("brief", analysis.brief)
+                    put("briefFailed", false)
+                    putJsonObject("deliveryAssessment") {
+                        put("tone", "firm")
+                        put("toneEvidence", analysis.toneEvidence)
+                        putJsonObject("fillers") {
+                            put("level", "ok")
+                            putJsonArray("examples") {}
+                            put("note", "")
+                        }
+                        put("pace", "comfortable")
+                        put("summary", analysis.deliverySummary)
                     }
                 }
             }
@@ -668,10 +718,42 @@ object DemoMode {
         val title: String,
         val detail: String,
         val atMs: Long,
+        /** The desktop's severities: info / warn / critical. */
         val severity: String,
+        /** me / them — the featured recording is a negotiation (adversarial lens). */
+        val side: String? = null,
+        /** How ME handled it: the finding is resolved, drawn green. */
+        val resolution: String? = null,
     )
 
-    private data class ActionItem(val text: String, val rationale: String)
+    private data class ActionItem(val text: String, val rationale: String, val atMs: Long? = null)
+
+    /** The rest of a fully analysed recording: its kind, brief and delivery read. */
+    private data class Analysis(
+        val kind: String,
+        val brief: String,
+        val toneEvidence: String,
+        val deliverySummary: String,
+    )
+
+    private fun analysis(id: String, locale: Locale): Analysis? = when (id) {
+        FEATURED_ID -> Analysis(
+            kind = "pricing",
+            brief = t(
+                locale,
+                "## Outcome\n**The renewal is agreed except for the seat count.** Northwind budgeted forty seats against an eighty-seat quote [0:12]; a price hold through the next renewal kept the talk moving without a discount [0:27].\n\n## What fell short\n- The seat gap was never priced as a tiered option, so it is still a yes-or-no question for finance [0:12].\n\n## How to improve\n- Bring a forty-seat tier with a path to eighty, so finance can say yes to something.\n\n## Key moments\n- [0:58] The onboarding estimate came with a condition; SSO on Okta was confirmed, so two weeks holds.",
+                "## 結果\n**除了席次，續約條件都談定了。** 北風編列四十席，報價卻是八十席 [0:12]；用鎖價到下次續約取代折扣，讓談判繼續往前 [0:27]。\n\n## 不足之處\n- 席次落差沒有包成分級方案，對財務來說仍是二選一 [0:12]。\n\n## 如何改進\n- 帶一個四十席、可升級到八十席的方案，讓財務有東西可以點頭。\n\n## 關鍵時刻\n- [0:58] 導入時程附帶條件；客戶已確認 SSO 在 Okta 上，兩週可行。",
+            ),
+            toneEvidence = t(locale, "We can hold this year's rate", "今年的價格可以鎖住"),
+            deliverySummary = t(
+                locale,
+                "Calm and specific; you held the floor without sounding defensive.",
+                "沉穩而具體；守住底線，聽起來不防衛。",
+            ),
+        )
+
+        else -> null
+    }
 
     private fun findings(id: String, locale: Locale): List<Finding> = when (id) {
         FEATURED_ID -> listOf(
@@ -682,7 +764,7 @@ object DemoMode {
                     "Forty seats budgeted against an eighty-seat quote. Everything else about the renewal was already agreed.",
                     "編列四十席，報價卻是八十席。續約的其他條件其實都談定了。",
                 ),
-                12_000, "high",
+                12_000, "critical", side = "them",
             ),
             Finding(
                 t(locale, "A price hold replaced a discount", "用鎖價取代了折扣"),
@@ -691,7 +773,12 @@ object DemoMode {
                     "Holding this year's rate through the next renewal kept the conversation moving without cutting below the enterprise seat floor.",
                     "把今年的價格鎖到下一次續約，讓談判繼續往前，又不必跌破企業版的席次門檻。",
                 ),
-                27_000, "medium",
+                27_000, "warn", side = "them",
+                resolution = t(
+                    locale,
+                    "Offered to hold this year's rate instead of cutting the price.",
+                    "以鎖住今年價格取代降價。",
+                ),
             ),
             Finding(
                 t(locale, "The onboarding estimate has a condition", "導入時程附帶條件"),
@@ -700,7 +787,7 @@ object DemoMode {
                     "Two weeks assumes SSO is already on Okta; add a week for identity mapping if it isn't. The customer confirmed it is.",
                     "兩週的前提是 SSO 已在 Okta 上；若不是，身分對應要再加一週。客戶已確認是。",
                 ),
-                58_000, "low",
+                58_000, "info", side = "me",
             ),
         )
 
@@ -712,7 +799,7 @@ object DemoMode {
                     "Friday is a hard date — missing it pushes the whole evaluation into next quarter.",
                     "週五是硬期限，錯過就整個評估拖到下一季。",
                 ),
-                52_000, "high",
+                52_000, "critical", side = "them",
             ),
             Finding(
                 t(locale, "Billing needs two cost centres", "請款需要拆成兩個成本中心"),
@@ -721,7 +808,7 @@ object DemoMode {
                     "Raised as an aside, but it has to be set up before the trial starts or the first invoice bounces internally.",
                     "只是順口提到，但要在試用開始前設定好，否則第一張帳單在他們內部就會被退。",
                 ),
-                74_000, "medium",
+                74_000, "warn", side = "them",
             ),
         )
 
@@ -741,6 +828,7 @@ object DemoMode {
                     "Finance reviews it on Thursday, so it has to land Wednesday at the latest.",
                     "財務週四要審，最晚週三要送到。",
                 ),
+                atMs = 27_000,
             ),
             ActionItem(
                 t(
@@ -868,6 +956,28 @@ object DemoMode {
         )
         ImportEnding.QUOTA -> ImportState.Failed(ImportFailure.QUOTA_EXHAUSTED)
         ImportEnding.SIGNED_OUT -> ImportState.Failed(ImportFailure.SESSION_EXPIRED)
+    }
+
+    private val REPORT_ROUTES = ReportScenario.entries.associateBy { it.route }
+
+    /**
+     * The study as the report face of [id] shows it in a screenshot run: the
+     * featured recording's, pinned to the requested [ReportScenario]; null for
+     * every other recording (no chip).
+     */
+    fun study(id: String): RecordingStudy? {
+        if (id != FEATURED_ID) return null
+        val scenario = _navigation.value?.report ?: ReportScenario.DONE
+        val statuses = when (scenario) {
+            ReportScenario.ANALYZING -> mapOf(
+                StudyArtifact.FINDINGS to StageStatus.DONE,
+                StudyArtifact.ACTIONS to StageStatus.RUNNING,
+                StudyArtifact.BRIEF to StageStatus.IDLE,
+                StudyArtifact.DELIVERY to StageStatus.RUNNING,
+            )
+            else -> StudyArtifact.entries.associateWith { StageStatus.DONE }
+        }
+        return RecordingStudy(statuses = statuses, hasTranscript = true, autoAnalysis = true, canSpend = true)
     }
 
     private val IMPORT_ROUTES = mapOf(

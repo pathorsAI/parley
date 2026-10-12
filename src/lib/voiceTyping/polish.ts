@@ -1,9 +1,10 @@
-import { generateText } from "ai";
+import { APICallError, generateText } from "ai";
 import { getModel, getProviderOptions } from "../ai/provider";
 import { hasProviderKey } from "../ai/settings";
 import { logAiError } from "../ai/errors";
 import { log } from "../log";
 import type { Settings, VoiceTypingPolishStyle } from "../types";
+import { isSingleClause } from "./punctuation";
 
 /**
  * The rewrite pass that runs after a dictation settles and before the text is
@@ -25,6 +26,35 @@ import type { Settings, VoiceTypingPolishStyle } from "../types";
  * caller has to interpret, it is bounded by its own timeout rather than the
  * provider's, and `accept` is deliberately suspicious of what comes back.
  */
+
+/**
+ * Why one dictation was or was not polished. Every value iOS also has is
+ * spelled as its `PolishOutcome` raw value, so a log line (and, later, a
+ * history entry) reads the same on both platforms; `cancelled` is the desktop's
+ * own, and the iOS-only `skipped` / `overdue` have no desktop path. Only
+ * `polished` replaces the raw transcript; every other value leaves the caller
+ * with the text as dictated.
+ *
+ * - `tooShort`, `singleClause`, `off`: never attempted (below
+ *   {@link MIN_POLISH_CHARS}; a single clause, see {@link polishSkipReason}; or
+ *   the style is off / the realtime lane cannot run). `singleClause` is the
+ *   desktop's own.
+ * - `timedOut`: no answer inside {@link POLISH_TIMEOUT_MS}.
+ * - `rejectedLength`, `rejectedScript`: an answer came back and
+ *   {@link polishVerdict} refused it.
+ * - `failed`: the request itself failed (transport, HTTP status, sign-in).
+ * - `cancelled`: the caller's own signal aborted it; not a failure.
+ */
+export type PolishOutcome =
+  | "polished"
+  | "tooShort"
+  | "singleClause"
+  | "off"
+  | "timedOut"
+  | "rejectedLength"
+  | "rejectedScript"
+  | "failed"
+  | "cancelled";
 
 /** Below this the round trip costs more — in latency, and in the risk of the
  *  model "helping" — than the tidy-up is worth. A single short phrase has no
@@ -173,42 +203,86 @@ export function minPolishRatio(style: VoiceTypingPolishStyle): number {
 /** The longest a reply may be, as a fraction of the transcript. */
 export const MAX_POLISH_RATIO = 2;
 
-/** Long enough to be worth a round trip. */
-export function shouldPolish(raw: string): boolean {
-  return raw.trim().length >= MIN_POLISH_CHARS;
+/**
+ * Why a dictation is not worth a round trip, or `null` when it is. `text` is
+ * what would be polished; `gateText` is what the length gate measures (the
+ * text before softenPausePeriods, `TranscriptText.sttText`, which may be a mark
+ * or a space longer — see the host).
+ *
+ * - `tooShort`: under {@link MIN_POLISH_CHARS}.
+ * - `singleClause`: one clause, no comma (punctuation.ts, `isSingleClause`) —
+ *   "我等一下就過去", "收到我馬上處理". There is nothing in it to restructure, and
+ *   the round trip (one to four seconds) was the slowest part of exactly the
+ *   dictations that should feel instant. Its trailing 。 is already gone
+ *   (softenPausePeriods), and the dictionary's replacements still ran on it.
+ */
+export function polishSkipReason(
+  text: string,
+  gateText: string = text,
+): "tooShort" | "singleClause" | null {
+  if (gateText.trim().length < MIN_POLISH_CHARS) return "tooShort";
+  if (isSingleClause(text)) return "singleClause";
+  return null;
 }
 
 /**
- * The system message for one request: the standing prompt, plus a line naming
- * the user's own vocabulary when there is any. Empty in, unchanged out.
+ * The line that names the speaker's own name and organisation (Settings ›
+ * Basic). Unlike the dictionary line it asks for a repair, not just
+ * preservation: a name is the word the recogniser is most likely to hear as a
+ * same-sounding ordinary word, and the context that tells the two apart is
+ * exactly what this pass has. It is also told not to plant the name where it
+ * was not said — the rewrite must never add content.
+ *
+ * Desktop-only: iOS has no profile name, so there is nothing to mirror, and the
+ * verbatim parity test covers {@link POLISH_SYSTEM_PROMPT} alone.
+ */
+export const SPEAKER_TERMS_LINE =
+  "The speaker's own name and organisation, spelled exactly as they write them. Where the transcript has a word that sounds the same as one of these and the context shows it refers to the speaker or their organisation, the recogniser misheard it: write this spelling. Never add these words where they were not said: ";
+
+/**
+ * The system message for one request: the style's standing prompt, plus a line
+ * naming the user's own vocabulary when there is any, plus a line naming the
+ * speaker when the profile has a name or company. Empty in, unchanged out.
  *
  * Those terms are words the user has already corrected by hand — a cleanup pass
  * that "fixes" a name they spelled out themselves is exactly the kind of help
- * nobody asked for.
+ * nobody asked for. A term on both lists is named once, on the speaker line,
+ * which says more about it. The prompts and the dictionary line stay word for
+ * word what iOS sends.
  */
 export function polishSystemPrompt(
   protectedTerms: string[],
   style: VoiceTypingPolishStyle = "tidy",
+  speakerTerms: string[] = [],
 ): string {
-  const base = style === "concise" ? CONCISE_SYSTEM_PROMPT : POLISH_SYSTEM_PROMPT;
-  const kept = protectedTerms.filter((t) => t.trim()).slice(0, MAX_PROTECTED_TERMS);
-  if (!kept.length) return base;
-  return `${base}\nPreserve these user-dictionary terms exactly as written: ${kept.join("、")}`;
+  let prompt = style === "concise" ? CONCISE_SYSTEM_PROMPT : POLISH_SYSTEM_PROMPT;
+  const speaker = [...new Set(speakerTerms.map((t) => t.trim()).filter(Boolean))];
+  const kept = protectedTerms
+    .filter((t) => t.trim() && !speaker.includes(t.trim()))
+    .slice(0, MAX_PROTECTED_TERMS);
+  if (kept.length) {
+    prompt += `\nPreserve these user-dictionary terms exactly as written: ${kept.join("、")}`;
+  }
+  if (speaker.length) prompt += `\n${SPEAKER_TERMS_LINE}${speaker.join("、")}`;
+  return prompt;
 }
 
 /**
- * Whether `polished` is a plausible rewrite of `raw`. The model is not trusted
- * to have followed the prompt: this is the last gate before text the user did
- * not say replaces text they did.
+ * Whether `polished` is a plausible rewrite of `raw`, and if not, which test it
+ * failed. The model is not trusted to have followed the prompt: this is the last
+ * gate before text the user did not say replaces text they did. The reason only
+ * travels as far as the log line — to the caller every rejection means "paste
+ * the raw text".
  */
-export function acceptPolish(
+export function polishVerdict(
   raw: string,
   polished: string,
   style: VoiceTypingPolishStyle = "tidy",
-): boolean {
+): "polished" | "rejectedLength" | "rejectedScript" {
   const trimmedRaw = raw.trim();
   const trimmed = polished.trim();
-  if (!trimmed || !trimmedRaw) return false;
+  // An empty answer is the far end of the length band.
+  if (!trimmed || !trimmedRaw) return "rejectedLength";
 
   // A rewrite moves the length in both directions — filler and repetition come
   // out, list markers and line breaks go in — but it moves it, it does not
@@ -218,14 +292,25 @@ export function acceptPolish(
   // hands the model a free hand: "rewrite" drifting into "condense" is the
   // failure mode this feature has to keep out of people's documents.
   const ratio = trimmed.length / trimmedRaw.length;
-  if (ratio < minPolishRatio(style) || ratio > MAX_POLISH_RATIO) return false;
+  if (ratio < minPolishRatio(style) || ratio > MAX_POLISH_RATIO) return "rejectedLength";
 
   // Simplified drift is the one failure that looks like success. Only a NEWLY
   // introduced simplified character counts — someone who dictated simplified
   // text in the first place gets their own script back untouched.
-  if (!containsSimplifiedChinese(trimmedRaw) && containsSimplifiedChinese(trimmed)) return false;
+  if (!containsSimplifiedChinese(trimmedRaw) && containsSimplifiedChinese(trimmed)) {
+    return "rejectedScript";
+  }
 
-  return true;
+  return "polished";
+}
+
+/** {@link polishVerdict} as a yes/no: is `polished` safe to paste over `raw`? */
+export function acceptPolish(
+  raw: string,
+  polished: string,
+  style: VoiceTypingPolishStyle = "tidy",
+): boolean {
+  return polishVerdict(raw, polished, style) === "polished";
 }
 
 /**
@@ -271,61 +356,242 @@ export function polishModelOverride(
 }
 
 /**
- * Send `raw` to be cleaned up, in the user's polish style. Resolves to the
- * polished text, or to `null` for every other outcome — off, not configured,
- * too short, timed out, transport error, or an answer that failed
- * {@link acceptPolish}. The caller pastes the raw transcript on `null`, so there
- * is exactly one thing to handle.
+ * Send `raw` to be cleaned up, in the user's polish style, and say how it went.
+ * `text` is the polished text when `outcome` is `"polished"` and `null` for
+ * every other outcome — the caller pastes the raw transcript on `null`, so there
+ * is still exactly one thing to handle; `outcome` is there for the user-facing
+ * note and the log.
  *
  * Both styles share everything but the prompt, the length floor and (on Parley
  * Cloud) the model: same temperature, same output cap, same
  * {@link POLISH_TIMEOUT_MS}.
+ *
+ * `signal` lets the caller abandon the round trip (the user cancelled the
+ * dictation). That resolves to `"cancelled"` and is not logged as a failure.
+ */
+export async function polishTranscriptOutcome(opts: {
+  raw: string;
+  settings: Settings;
+  protectedTerms?: string[];
+  /** The speaker's own name and company (`profileTerms`). */
+  speakerTerms?: string[];
+  signal?: AbortSignal;
+  /** What {@link polishSkipReason}'s length gate measures when it is not
+   *  `raw`: the dictation before softenPausePeriods (`TranscriptText.sttText`),
+   *  which may be a mark or a space longer. `raw` is still what gets
+   *  polished. */
+  gateText?: string;
+}): Promise<{ text: string | null; outcome: PolishOutcome }> {
+  const { raw, settings, protectedTerms = [], speakerTerms = [], signal, gateText = raw } = opts;
+  if (!canPolish(settings)) return { text: null, outcome: "off" };
+  const skip = polishSkipReason(raw, gateText);
+  if (skip) return { text: null, outcome: skip };
+  if (signal?.aborted) return { text: null, outcome: "cancelled" };
+
+  const rawChars = raw.trim().length;
+  const startedAt = performance.now();
+  // A hand-rolled timeout rather than `AbortSignal.timeout` (Safari 16) joined
+  // to the caller's signal with `AbortSignal.any` (Safari 17.4): the app still
+  // runs on macOS releases whose WebKit has neither, and a missing one throws a
+  // TypeError before any request goes out — the same symptom as the CORS
+  // failure, with a different cure. It is also what vitest's fake timers can
+  // drive; `AbortSignal.timeout` ignores them. `timedOut` tells our own abort
+  // apart from the caller's.
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, POLISH_TIMEOUT_MS);
+  const onCancel = () => controller.abort();
+  signal?.addEventListener("abort", onCancel, { once: true });
+
+  const style = settings.voiceTypingPolishStyle;
+  let effort = hostedReasoningEffort(settings);
+  try {
+    let result: Awaited<ReturnType<typeof generateText>>;
+    for (;;) {
+      try {
+        result = await generateText({
+          model: getModel(settings, "realtime", {
+            modelId: polishModelOverride(settings, style),
+          }),
+          providerOptions: withReasoningEffort(getProviderOptions(settings, "realtime"), effort),
+          system: polishSystemPrompt(protectedTerms, style, speakerTerms),
+          prompt: raw,
+          temperature: 0.2,
+          maxOutputTokens: 2048,
+          // No retries. The SDK's first backoff is two seconds — half the
+          // budget — so a single 429/5xx would sleep, retry, and be cut off
+          // by the timeout, and the log would show a TimeoutError in place of
+          // the status that explains it. One attempt, then the raw text.
+          maxRetries: 0,
+          abortSignal: controller.signal,
+        });
+        break;
+      } catch (error) {
+        // The one exception: the backend refused the reasoning effort we
+        // asked for. That answer is quick and says nothing about the
+        // dictation, so ask again with the next value (or none) at once.
+        if (!effort || controller.signal.aborted || !refusesReasoningEffort(error)) throw error;
+        log.info("voice-typing: polish backend refused reasoning_effort; asking without it", {
+          effort,
+          ms: Math.round(performance.now() - startedAt),
+        });
+        hostedEffortRefused(effort);
+        effort = hostedReasoningEffort(settings);
+      }
+    }
+    const polished = result.text.trim();
+    const ms = Math.round(performance.now() - startedAt);
+    const answer = { ...answerMeta(result), effort: effort ?? null };
+    const verdict = polishVerdict(raw, polished, style);
+    if (verdict !== "polished") {
+      // Not an error — the guard doing its job. Logged at info because a run of
+      // these means the prompt or the lane's model is wrong, and that is only
+      // ever visible here.
+      log.info("voice-typing: polish rejected, keeping raw", {
+        ms,
+        rawChars,
+        polishedChars: polished.length,
+        outcome: verdict,
+        style,
+        ...answer,
+      });
+      return { text: null, outcome: verdict };
+    }
+    log.info("voice-typing: polished", {
+      ms,
+      rawChars,
+      chars: polished.length,
+      style,
+      ...answer,
+    });
+    return { text: polished, outcome: "polished" };
+  } catch (error) {
+    const ms = Math.round(performance.now() - startedAt);
+    // The user walked away from this dictation; nothing failed.
+    if (signal?.aborted && !timedOut) {
+      log.info("voice-typing: polish cancelled", { ms });
+      return { text: null, outcome: "cancelled" };
+    }
+    // Includes the timeout. Everything here means the same thing to the caller,
+    // so it is logged for us and swallowed for them. `ms` is what tells an
+    // instant transport refusal from the budget running out; the provider and
+    // model name the lane it ran on (neither is personal data).
+    const outcome: PolishOutcome = timedOut ? "timedOut" : "failed";
+    const provider = settings.llmProviders.realtime;
+    logAiError(
+      "voice-typing.polish",
+      { rawChars, ms, provider, model: settings.models[provider]?.realtime, outcome },
+      error,
+    );
+    return { text: null, outcome };
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onCancel);
+  }
+}
+
+/**
+ * The reasoning effort to ask the hosted model for, most economical first.
+ *
+ * Parley Cloud serves the realtime lane with a model that reasons before it
+ * answers — the log shows 70 of 92 output tokens spent thinking on a
+ * 16-character dictation — and for a clean-up pass all of that is latency:
+ * long dictations ran out of the 4 s budget, or of the 2048-token cap, while
+ * still thinking, and pasted unpolished with every filler still in them. So
+ * the hosted polish asks for as little reasoning as the backend takes.
+ *
+ * The client does not know which model is behind the alias, so it does not
+ * know which values that model accepts ("low" for one family, "none" for
+ * another). It learns: a value the backend refuses (an HTTP 400 that names the
+ * reasoning effort) is not sent again for the rest of the session, and once
+ * every value has been refused the request goes out without one, exactly as
+ * before. BYOK lanes are untouched — getProviderOptions already sends the
+ * user's own setting to a model it knows reasons.
+ */
+const HOSTED_REASONING_EFFORTS = ["low", "none"] as const;
+/** Values the hosted backend refused this session. */
+const refusedEfforts = new Set<string>();
+
+function hostedReasoningEffort(settings: Settings): string | undefined {
+  if (settings.llmProviders.realtime !== "parley") return undefined;
+  return HOSTED_REASONING_EFFORTS.find((e) => !refusedEfforts.has(e));
+}
+
+function hostedEffortRefused(effort: string): void {
+  refusedEfforts.add(effort);
+}
+
+/** For tests: forget what the backend refused. */
+export function resetHostedReasoningEffort(): void {
+  refusedEfforts.clear();
+}
+
+function withReasoningEffort(
+  options: ReturnType<typeof getProviderOptions>,
+  effort: string | undefined,
+): ReturnType<typeof getProviderOptions> {
+  if (!effort) return options;
+  const own = (options as Record<string, Record<string, unknown> | undefined>).parley ?? {};
+  return { ...options, parley: { ...own, reasoningEffort: effort } } as ReturnType<
+    typeof getProviderOptions
+  >;
+}
+
+/** A 400 whose body names the reasoning effort: the backend will not take
+ *  that value (or the parameter at all). Anything else is a real failure. */
+function refusesReasoningEffort(error: unknown): boolean {
+  return (
+    APICallError.isInstance(error) &&
+    error.statusCode === 400 &&
+    /reasoning[_ ]?effort/i.test(`${error.responseBody ?? ""} ${error.message}`)
+  );
+}
+
+/**
+ * What the model's answer says about itself, for the log: why it stopped, the
+ * model that actually served it (the hosted ids are aliases), and how many of
+ * its output tokens went to reasoning. Counts and names only, never text.
+ *
+ * Long dictations came back empty about three seconds in (`polishedChars=0`,
+ * `rejectedLength`), so the raw text was pasted with every filler still in
+ * it. An answer that spent its whole `maxOutputTokens` thinking stops with
+ * `length` and no text; a server that cut the request off stops otherwise.
+ * These fields tell the two apart.
+ */
+function answerMeta(result: {
+  finishReason: string;
+  usage: {
+    outputTokens?: number | undefined;
+    outputTokenDetails?: { reasoningTokens?: number | undefined };
+    reasoningTokens?: number | undefined;
+  };
+  reasoningText?: string | undefined;
+  response?: { modelId?: string };
+}): Record<string, string | number | null> {
+  const { usage } = result;
+  return {
+    finish: result.finishReason,
+    model: result.response?.modelId ?? null,
+    outTokens: usage.outputTokens ?? null,
+    reasoningTokens: usage.outputTokenDetails?.reasoningTokens ?? usage.reasoningTokens ?? null,
+    reasoningChars: result.reasoningText?.length ?? 0,
+  };
+}
+
+/**
+ * {@link polishTranscriptOutcome} without the outcome: the polished text, or
+ * `null` for every other result — not configured, too short, timed out,
+ * transport error, or an answer that failed {@link acceptPolish}.
  */
 export async function polishTranscript(opts: {
   raw: string;
   settings: Settings;
   protectedTerms?: string[];
+  speakerTerms?: string[];
+  signal?: AbortSignal;
 }): Promise<string | null> {
-  const { raw, settings, protectedTerms = [] } = opts;
-  if (!canPolish(settings) || !shouldPolish(raw)) return null;
-  const style = settings.voiceTypingPolishStyle;
-
-  const startedAt = performance.now();
-  try {
-    const { text } = await generateText({
-      model: getModel(settings, "realtime", { modelId: polishModelOverride(settings, style) }),
-      providerOptions: getProviderOptions(settings, "realtime"),
-      system: polishSystemPrompt(protectedTerms, style),
-      prompt: raw,
-      temperature: 0.2,
-      maxOutputTokens: 2048,
-      abortSignal: AbortSignal.timeout(POLISH_TIMEOUT_MS),
-    });
-    const polished = text.trim();
-    const ms = Math.round(performance.now() - startedAt);
-    if (!acceptPolish(raw, polished, style)) {
-      // Not an error — the guard doing its job. Logged at info because a run of
-      // these means the prompt or the lane's model is wrong, and that is only
-      // ever visible here.
-      log.info("voice-typing: polish rejected, keeping raw", {
-        style,
-        ms,
-        rawChars: raw.trim().length,
-        polishedChars: polished.length,
-      });
-      return null;
-    }
-    log.info("voice-typing: polished", {
-      style,
-      ms,
-      rawChars: raw.trim().length,
-      chars: polished.length,
-    });
-    return polished;
-  } catch (error) {
-    // Includes the timeout. Everything here means the same thing to the caller,
-    // so it is logged for us and swallowed for them.
-    logAiError("voice-typing.polish", { rawChars: raw.trim().length }, error);
-    return null;
-  }
+  return (await polishTranscriptOutcome(opts)).text;
 }

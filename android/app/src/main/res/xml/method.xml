@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The input method's own metadata, pointed at by the `android.view.im` meta-data
+  on ParleyInputMethodService in AndroidManifest.xml. The system reads this to
+  build the keyboard list, so the label and the settings link here are what the
+  user sees in Settings → System → Languages & input.
+
+  `settingsActivity` is what makes the "Parley" row in that list tappable. It is
+  also the only place a runtime permission can be asked for on the whole
+  voice-typing path, because an InputMethodService has no Activity — see
+  VoiceTypingSettingsActivity.
+
+  `supportsSwitchingToNextInputMethod` is what allows the pane's keyboard key to
+  call switchToNextInputMethod(false). Parley is voice-only and has no character
+  keys, so handing typing back to whatever the user was using before is not a
+  courtesy, it is the other half of the feature; without this flag the call is
+  refused and the user is stranded on a keyboard that cannot type.
+
+  One subtype, mode "voice". That is the declaration that tells the platform this
+  is a dictation input method rather than a layout — it is how the system's own
+  voice typing is declared, and it is what lets Android place the keyboard
+  correctly in pickers instead of listing it among the layouts. iOS has to draw
+  its own side-slide track between panels to achieve the same thing.
+
+  The subtype is deliberately not locale-pinned. Parley sends the relay
+  `language_hints = ["zh", "en"]` for every dictation (DictationSession) and the
+  provider detects which is being spoken, so declaring a locale per subtype would
+  advertise a choice the pipeline does not actually make — and would put two
+  indistinguishable Parley rows in the user's keyboard switcher.
+-->
+<input-method
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:settingsActivity="com.pathors.parley.ime.VoiceTypingSettingsActivity"
+    android:supportsSwitchingToNextInputMethod="true">
+    <subtype
+        android:label="@string/ime_subtype_voice"
+        android:imeSubtypeMode="voice"
+        android:isAsciiCapable="false" />
+</input-method>

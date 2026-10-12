@@ -405,8 +405,10 @@ const CLEARED_STUDY_SLICE: Pick<
   | "actionItemsError"
   | "deliveryAssessment"
   | "deliveryStatus"
+  | "deliveryError"
   | "brief"
   | "briefStatus"
+  | "briefError"
   | "filingSuggestion"
   | "filingStatus"
   | "meetingKind"
@@ -423,8 +425,10 @@ const CLEARED_STUDY_SLICE: Pick<
   actionItemsError: null,
   deliveryAssessment: null,
   deliveryStatus: "idle",
+  deliveryError: null,
   brief: null,
   briefStatus: "idle",
+  briefError: null,
   filingSuggestion: null,
   filingStatus: "idle",
   meetingKind: null,
@@ -623,6 +627,9 @@ interface ParleyState {
    *  persisted onto the loaded entry so reopening never regenerates it. */
   brief: string | null;
   briefStatus: AsyncTaskStatus;
+  /** Why the last brief pass failed (this session only — a failure restored
+   *  from disk has no message). Shown by the generation chip. */
+  briefError: string | null;
   setBrief: (brief: string | null) => void;
   /** What kind of meeting the loaded recording is — detected once by the
    *  analysis pass and overridable from the report page. It picks the analysis
@@ -738,6 +745,8 @@ interface ParleyState {
   deliveryAssessment: DeliveryAssessment | null;
   /** Mainly for REPLAY: drives the post-call delivery section's spinner. */
   deliveryStatus: AsyncTaskStatus;
+  /** Why the last REPLAY delivery pass failed, for the generation chip. */
+  deliveryError: string | null;
   setDeliveryAssessment: (a: DeliveryAssessment | null) => void;
   setDeliveryStatus: (s: ParleyState["deliveryStatus"]) => void;
 
@@ -986,6 +995,7 @@ export const useStore = create<ParleyState>()(
       deliveryNudge: null,
       deliveryAssessment: null,
       deliveryStatus: "idle",
+      deliveryError: null,
       actionItems: [],
       actionItemsStatus: "idle",
       actionItemsError: null,
@@ -1166,6 +1176,7 @@ export const useStore = create<ParleyState>()(
   setStudyTab: (tab) => set({ studyTab: tab }),
   brief: null,
   briefStatus: "idle",
+  briefError: null,
   setBrief: (brief) => set({ brief }),
   setMeetingKind: (meetingKind) => set({ meetingKind }),
   appendBrief: (chunk) => set((s) => ({ brief: (s.brief ?? "") + chunk })),

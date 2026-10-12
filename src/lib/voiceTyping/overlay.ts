@@ -1,13 +1,26 @@
 //! Lifecycle for the floating voice-typing overlay window: a transparent,
 //! always-on-top, non-focusing panel pinned to the bottom-centre of the display
 //! the mouse pointer sits on. Created once (hidden) and shown/repositioned per
-//! dictation.
+//! dictation. Only what it draws catches clicks; the transparent rest of the
+//! window passes them to the app behind (macOS — see hitRegions.ts).
 
 import { isTauri } from "../tauriEvents";
 import { log } from "../log";
+import type { TranslationKey } from "../../i18n/messages";
+import type { PolishOutcome } from "./polish";
 
 const LABEL = "voice-typing";
 const WIDTH = 460;
+/**
+ * The overlay's content is a bottom-anchored stack (VoiceTypingApp), and this
+ * is its budget. With 16 px of bottom padding and 8 px gaps, the common states
+ * fit: done with a full three-line transcript is 16 + 36 pill + 22.5 note +
+ * 84 transcript + 2 × 8 = 174.5 px, polishing 172.5 px, a two-line dictionary
+ * suggestion about 138 px. Only the rare hosted-cap note overflows; the
+ * transcript bubble (overflow-hidden) then gives up about a line — it is
+ * still pasted whole. There used to be a "Parley" wordmark under the pill;
+ * its 30 px squeezed every done state, so it went.
+ */
 const HEIGHT = 180;
 /** Gap above the bottom of the WORK AREA (sits low, just clearing the Dock). */
 const BOTTOM_MARGIN = 64;
@@ -46,6 +59,19 @@ async function ensureOverlay(): Promise<void> {
       resizable: false,
       // Don't steal focus from the app the user is typing into.
       focus: false,
+      // Windows: WS_EX_NOACTIVATE from creation, which tao then keeps through
+      // its own style rewrites. macOS: it only shapes the TaoWindow, and
+      // present_voice_overlay swaps that class for NSPanel anyway. NEVER call
+      // setFocusable (or any other window-flag setter) on this window at
+      // runtime: after the swap tao would read an ivar NSPanel does not have,
+      // and on Windows the setter hides the window and strips its ex-styles
+      // (see imp::present_overlay in voice_typing.rs).
+      focusable: false,
+      // The panel never activates Parley (voice_typing.rs, prevent_activation),
+      // so every click on it is a first mouse in a non-key window of an
+      // inactive app — and WKWebView drops those unless it accepts first
+      // mouse. Without this the suggestion buttons stop receiving pointerdown.
+      acceptFirstMouse: true,
       visible: false,
     });
     await new Promise<void>((resolve) => {
@@ -196,4 +222,127 @@ export async function hideOverlay(): Promise<void> {
   await invoke("dismiss_voice_overlay").catch((error) =>
     log.warn("voice-typing: dismiss overlay failed", { error: String(error) }),
   );
+}
+
+/**
+ * The `message` of the host's `{ phase: "done" }` event — what the overlay's
+ * closing confirmation says about a finished dictation:
+ *
+ * - `empty`: nothing was said, so nothing was inserted.
+ * - `clipboard-only`: no paste went out — the synthetic paste was refused (no
+ *   Accessibility on macOS, UIPI on Windows) or would have landed nowhere
+ *   (Windows' hidden tray window in front after a tray Stop) — so the text
+ *   was left on the clipboard; the overlay names the paste key.
+ * - `ok-unpolished`: inserted, but as dictated, because the polish pass was
+ *   attempted and did not come back (timed out, or the request failed).
+ * - `ok`: inserted — polished, or with no polish to expect.
+ *
+ * The rest never come from {@link doneMessage}. Three are an Undo's, from
+ * {@link recoveredMessage}:
+ *
+ * - `recovered`: an Undo of an Esc-cancelled dictation copied it to the
+ *   clipboard (Undo never pastes; host.ts, deliverRecovered).
+ * - `recovered-unpolished`: the same, but as dictated, because the polish the
+ *   Undo ran first timed out or failed.
+ * - `nothing`: that cancelled dictation had no text to bring back.
+ *
+ * And one is the Copy button's:
+ *
+ * - `copied`: the user clicked Copy on an inserted dictation's confirmation,
+ *   and its text is on the clipboard now (host.ts, onCopyAction).
+ */
+export type DoneMessage =
+  | "empty"
+  | "clipboard-only"
+  | "ok-unpolished"
+  | "ok"
+  | "recovered"
+  | "recovered-unpolished"
+  | "nothing"
+  | "copied";
+
+/**
+ * Pick the {@link DoneMessage} for one finalized dictation.
+ *
+ * Only a polish that was tried and broke gets a note. When it never ran (off,
+ * too short) the user is not waiting on it; when the answer was refused by the
+ * guard, the raw text is the guard working as designed. But a timeout or a
+ * failed request means the "polishing…" beat the user just sat through
+ * produced nothing — and pasting the raw text under a plain confirmation is
+ * what kept a CORS failure that broke every hosted polish on the Mac out of
+ * sight. A refused paste outranks all of it: that note tells the user to act.
+ */
+export function doneMessage(d: {
+  text: string;
+  pasted: boolean;
+  outcome: PolishOutcome;
+}): DoneMessage {
+  if (!d.text) return "empty";
+  if (!d.pasted) return "clipboard-only";
+  if (polishBroke(d.outcome)) return "ok-unpolished";
+  return "ok";
+}
+
+/**
+ * Pick the {@link DoneMessage} for an Undo that brought a cancelled dictation
+ * back to the clipboard. `outcome` is the polish the Undo ran first, or `off`
+ * when there was none to run (the dictation's own polish had already finished).
+ * The same rule as {@link doneMessage}: an Undo can sit through "polishing…"
+ * too, and when that pass times out or fails, the plain "copied" would hide it.
+ */
+export function recoveredMessage(d: { text: string; outcome: PolishOutcome }): DoneMessage {
+  if (!d.text) return "nothing";
+  return polishBroke(d.outcome) ? "recovered-unpolished" : "recovered";
+}
+
+/** A polish that was attempted and produced nothing: the user waited on
+ *  "polishing…" for it, so the confirmation says the text went out as
+ *  dictated. */
+function polishBroke(outcome: PolishOutcome): boolean {
+  return outcome === "timedOut" || outcome === "failed";
+}
+
+/** The overlay's closing confirmation for a {@link DoneMessage}. */
+export interface DonePill {
+  /** What it says. `voiceTyping.pasteBlocked` takes the paste key as
+   *  `{paste}`. */
+  note: TranslationKey;
+  /** Warning when the user has something left to do (paste by hand). */
+  tone: "success" | "warning";
+  /** Offer Copy: the text went into a field, and not onto the clipboard. A
+   *  paste can land nowhere — no field had focus — and the clipboard has
+   *  already been given back, so this is the way to get the text then. */
+  copy: boolean;
+}
+
+/**
+ * The confirmation pill for the host's verdict, or null when there is none
+ * (no verdict yet, or one with its own note: `empty`, `nothing`). An insert
+ * says "inserted", not "copied": the text did not stay on the clipboard, and
+ * a note that says it did sends the user to ⌘V for nothing.
+ */
+export function donePill(verdict: string | null): DonePill | null {
+  switch (verdict) {
+    case "ok":
+      return { note: "voiceTyping.inserted", tone: "success", copy: true };
+    case "ok-unpolished":
+      return { note: "voiceTyping.insertedUnpolished", tone: "success", copy: true };
+    case "clipboard-only":
+      return { note: "voiceTyping.pasteBlocked", tone: "warning", copy: false };
+    case "recovered":
+    case "copied":
+      return { note: "voiceTyping.copied", tone: "success", copy: false };
+    case "recovered-unpolished":
+      return { note: "voiceTyping.copiedUnpolished", tone: "success", copy: false };
+    default:
+      return null;
+  }
+}
+
+/** Overlay → main window: a button on the closing confirmation was clicked. */
+export const DONE_ACTION_EVENT = "voicetyping://done-action";
+
+export interface DoneActionPayload {
+  /** Copy the dictation just inserted to the clipboard. */
+  action: "copy";
 }

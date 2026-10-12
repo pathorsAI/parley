@@ -31,8 +31,9 @@ announcement, shared by every platform, so a release's copy is written once:
   Versions compare numerically by component (`1.9 < 1.10`, `1.22 == 1.22.0`).
 - **`audience`** — `keyboard` means "has used the Parley keyboard on this
   device". A value a build does not know counts as unmet, never as everyone.
-  Android has no Parley keyboard, so a `keyboard` announcement never shows
-  there.
+  On Android that is the voice-typing keyboard: the flag is set the first time
+  it is shown (`ParleyInputMethodService.onStartInputView`), and a `keyboard`
+  announcement waits until then.
 - **`hero`** — looked up in each platform's own registry of native views (iOS:
   `ios/App/Parley/WhatsNewHero.swift`; Android has none yet). Unknown or absent
   draws no hero; the sheet is complete without one.

@@ -9,7 +9,9 @@
 //! Two kinds of cache live in two places:
 //!
 //! * On disk, under the OS app-cache dir: `transcriptions/` (STT results for
-//!   uploaded files) and `diarizations/` (speaker clusters). Removed here.
+//!   uploaded files), `diarizations/` (speaker clusters) and `playback/` (WAV
+//!   copies of recordings the webview could not play, see playback.rs — cleared
+//!   with "All", since it has no row of its own). Removed here.
 //! * In the webview's localStorage: the analysis results and the saved speaker
 //!   names (part of the diarization result). Rust cannot reach those, so they
 //!   are cleared by the main window on `cache://clear-analysis` and
@@ -24,6 +26,8 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 pub const TRANSCRIPTIONS_DIR: &str = "transcriptions";
 /// On-disk diarization cache (subdirectory of the app-cache dir).
 pub const DIARIZATIONS_DIR: &str = "diarizations";
+/// Decoded playback fallbacks (subdirectory of the app-cache dir; playback.rs).
+pub const PLAYBACK_DIR: &str = "playback";
 
 /// Which cache to clear.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -56,6 +60,10 @@ pub fn clear<R: Runtime>(app: &AppHandle<R>, kind: CacheKind) {
     if analysis {
         let _ = app.emit("cache://clear-analysis", ());
     }
+    // Pure derived data with no row of its own: "All" is the way to drop it.
+    if kind == CacheKind::All {
+        clear_cache_dir(app, PLAYBACK_DIR);
+    }
 }
 
 /// Remove a subdirectory of the OS app-cache dir (recreated lazily on next write).
@@ -84,6 +92,7 @@ pub fn clear_cache<R: Runtime>(app: AppHandle<R>, kind: CacheKind) {
 pub struct CacheSizes {
     transcription: u64,
     diarization: u64,
+    playback: u64,
 }
 
 /// Size of the on-disk caches. Both are flat directories of a few small JSON
@@ -95,6 +104,7 @@ pub async fn cache_sizes<R: Runtime>(app: AppHandle<R>) -> Result<CacheSizes, St
     Ok(CacheSizes {
         transcription: dir_size(&root.join(TRANSCRIPTIONS_DIR)),
         diarization: dir_size(&root.join(DIARIZATIONS_DIR)),
+        playback: dir_size(&root.join(PLAYBACK_DIR)),
     })
 }
 

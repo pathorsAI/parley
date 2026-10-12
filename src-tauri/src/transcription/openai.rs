@@ -177,7 +177,7 @@ pub async fn run_session(
         "[openai:{source}] connected, model={model} (diarization unsupported → speaker 0), leg={}",
         config.leg
     );
-    note_connected(&app, source, config.leg);
+    note_connected(&app, source, config.leg, false);
 
     let meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT).enabled(config.level_events);
 
