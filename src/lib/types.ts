@@ -238,6 +238,13 @@ export type ReasoningEffort = "low" | "medium" | "high";
  */
 export type LlmWorkload = "realtime" | "deep";
 
+/**
+ * Which product feature a hosted LLM call bills to, sent to Parley Cloud as
+ * `X-Parley-Feature` so credit usage is attributed per feature. A call without
+ * one (the connection test) is recorded as "other".
+ */
+export type LlmFeature = "voice_typing" | "ask" | "meeting" | "report";
+
 /** Separate reasoning depths per workload lane. */
 export interface ModelReasoningEfforts {
   realtime: ReasoningEffort;

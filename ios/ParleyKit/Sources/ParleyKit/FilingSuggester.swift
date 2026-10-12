@@ -131,7 +131,7 @@ public enum FilingSuggester {
             request(
                 meetingContext: meetingContext, currentTitle: currentTitle, folders: folders,
                 transcript: excerpt, language: language))
-        let data = try await cloud.postJSON(CloudChat.path, body: body)
+        let data = try await cloud.chatCompletion(body, feature: .meeting)
         guard let content = CloudChat.content(from: data), let payload = parse(content) else {
             return nil
         }

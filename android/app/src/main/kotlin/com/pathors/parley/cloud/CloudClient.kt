@@ -605,16 +605,13 @@ class CloudClient(
 
     /**
      * `POST v1/chat/completions` — the cloud's OpenAI-compatible chat endpoint,
-     * with the same bearer token as every other call. The request and response
-     * shapes live in `kit/CloudChat.kt`; this is only the transport, so the
-     * passes built on it (the filing suggestion) are testable without a server.
+     * with the same bearer token as every other call, and `X-Parley-Feature`
+     * naming what the call bills to. The request and response shapes live in
+     * `kit/CloudChat.kt`; this is only the transport, so the passes built on it
+     * (the filing suggestion) are testable without a server.
      */
-    override suspend fun chatCompletion(requestJson: String): String {
-        val request = Request.Builder()
-            .url(url(*CloudChat.PATH.split('/').toTypedArray()))
-            .post(requestJson.toRequestBody(APPLICATION_JSON))
-        return execute(request) { response -> bodyText(response) }
-    }
+    override suspend fun chatCompletion(requestJson: String, feature: CloudChat.Feature): String =
+        execute(chatRequest(requestJson, feature)) { response -> bodyText(response) }
 
     /**
      * [chatCompletion] for the study stages (`study/StudyPass`), which wait far
@@ -624,12 +621,15 @@ class CloudClient(
      * is done. The stage's own coroutine timeout bounds the wait; this only
      * stops the socket giving up first.
      */
-    val studyChat: ChatCompletions = ChatCompletions { requestJson ->
-        val request = Request.Builder()
-            .url(url(*CloudChat.PATH.split('/').toTypedArray()))
-            .post(requestJson.toRequestBody(APPLICATION_JSON))
-        execute(request, client = studyHttp) { response -> bodyText(response) }
+    val studyChat: ChatCompletions = ChatCompletions { requestJson, feature ->
+        execute(chatRequest(requestJson, feature), client = studyHttp) { response -> bodyText(response) }
     }
+
+    private fun chatRequest(requestJson: String, feature: CloudChat.Feature): Request.Builder =
+        Request.Builder()
+            .url(url(*CloudChat.PATH.split('/').toTypedArray()))
+            .header(CloudChat.FEATURE_HEADER, feature.wire)
+            .post(requestJson.toRequestBody(APPLICATION_JSON))
 
     private val studyHttp: OkHttpClient by lazy {
         http.newBuilder()

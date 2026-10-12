@@ -108,6 +108,7 @@ final class FilingPassTests: XCTestCase {
 
         // The model was given the meta's context, names and the shared prompt.
         let chat = try XCTUnwrap(FilingStubProtocol.requests.first { $0.url!.path == "/v1/chat/completions" })
+        XCTAssertEqual(chat.feature, "meeting")
         let chatBody = try XCTUnwrap(
             try JSONSerialization.jsonObject(with: chat.body) as? [String: Any])
         let messages = try XCTUnwrap(chatBody["messages"] as? [[String: Any]])
@@ -201,6 +202,7 @@ private final class FilingStubProtocol: URLProtocol {
     struct Seen {
         let url: URL?
         let httpMethod: String?
+        let feature: String?
         let body: Data
     }
 
@@ -222,7 +224,10 @@ private final class FilingStubProtocol: URLProtocol {
             }
             stream.close()
         }
-        Self.requests.append(Seen(url: request.url, httpMethod: request.httpMethod, body: body))
+        Self.requests.append(
+            Seen(
+                url: request.url, httpMethod: request.httpMethod,
+                feature: request.value(forHTTPHeaderField: "X-Parley-Feature"), body: body))
         guard let handler = Self.handler else {
             client?.urlProtocol(self, didFailWithError: URLError(.unknown))
             return

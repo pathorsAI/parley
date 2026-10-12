@@ -294,6 +294,7 @@ export async function analyzeTimeline(opts: {
   const { object, usage } = await streamObjectResilient({
     settings,
     workload,
+    feature: "meeting",
     schema: schemaFor(lens),
     system: system + JSON_MODE_INSTRUCTION + outputLanguageInstruction(settings),
     prompt: `${ctx}${T.evalsHeader}\n${list}\n\n${transcriptLabel}:\n${transcript || STUDY.noSpeech}`,

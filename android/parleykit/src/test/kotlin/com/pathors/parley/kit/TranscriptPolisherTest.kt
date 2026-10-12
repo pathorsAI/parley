@@ -287,7 +287,7 @@ class TranscriptPolisherTest {
     fun `polish returns the rewrite when it is acceptable`() = runBlocking {
         val polished = TranscriptPolisher.polish(
             raw = RAW_SHIP,
-            chat = ChatCompletions { completion(POLISHED_SHIP) },
+            chat = ChatCompletions { _, _ -> completion(POLISHED_SHIP) },
         )
         assertEquals(POLISHED_SHIP, polished)
     }
@@ -296,7 +296,7 @@ class TranscriptPolisherTest {
     fun `polish trims what the model padded`() = runBlocking {
         val polished = TranscriptPolisher.polish(
             raw = RAW_SHIP,
-            chat = ChatCompletions { completion("\n  $POLISHED_SHIP\n") },
+            chat = ChatCompletions { _, _ -> completion("\n  $POLISHED_SHIP\n") },
         )
         assertEquals(POLISHED_SHIP, polished)
     }
@@ -308,14 +308,14 @@ class TranscriptPolisherTest {
             "a summary is not a rewrite",
             TranscriptPolisher.polish(
                 raw = "the quick brown fox jumped over it. ".repeat(4),
-                chat = ChatCompletions { completion("A fox jumped.") },
+                chat = ChatCompletions { _, _ -> completion("A fox jumped.") },
             ),
         )
         assertNull(
             "simplified drift is not a rewrite",
             TranscriptPolisher.polish(
                 raw = "我們說好的時間到了嗎",
-                chat = ChatCompletions { completion("我们说好的时间到了。") },
+                chat = ChatCompletions { _, _ -> completion("我们说好的时间到了。") },
             ),
         )
     }
@@ -325,13 +325,13 @@ class TranscriptPolisherTest {
         assertNull(
             TranscriptPolisher.polish(
                 raw = RAW_SHIPPING,
-                chat = ChatCompletions { """{"choices":[]}""" },
+                chat = ChatCompletions { _, _ -> """{"choices":[]}""" },
             ),
         )
         assertNull(
             TranscriptPolisher.polish(
                 raw = RAW_SHIPPING,
-                chat = ChatCompletions { "502 Bad Gateway" },
+                chat = ChatCompletions { _, _ -> "502 Bad Gateway" },
             ),
         )
     }
@@ -345,7 +345,7 @@ class TranscriptPolisherTest {
     fun `polish lets a transport failure through`(): Unit = runBlocking {
         TranscriptPolisher.polish(
             raw = RAW_SHIPPING,
-            chat = ChatCompletions { error("no network") },
+            chat = ChatCompletions { _, _ -> error("no network") },
         )
         Unit
     }
@@ -355,12 +355,26 @@ class TranscriptPolisherTest {
         var sent: String? = null
         TranscriptPolisher.polish(
             raw = RAW_SHIPPING,
-            chat = ChatCompletions { body ->
+            chat = ChatCompletions { body, _ ->
                 sent = body
                 completion("I was thinking about shipping it.")
             },
             protectedTerms = listOf("Cerana"),
         )
         assertTrue(sent!!.contains("Cerana"))
+    }
+
+    /** The cloud attributes the call's credit usage to voice typing. */
+    @Test
+    fun `polish bills to voice typing`() = runBlocking {
+        var billed: CloudChat.Feature? = null
+        TranscriptPolisher.polish(
+            raw = RAW_SHIPPING,
+            chat = ChatCompletions { _, feature ->
+                billed = feature
+                completion(POLISHED_SHIP)
+            },
+        )
+        assertEquals(CloudChat.Feature.VOICE_TYPING, billed)
     }
 }

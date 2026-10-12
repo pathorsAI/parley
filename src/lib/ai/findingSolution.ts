@@ -134,6 +134,7 @@ export async function generateFindingSolution(opts: {
   const { object, usage } = await generateObjectResilient({
     settings,
     workload: "realtime",
+    feature: "meeting",
     schema,
     system: SYSTEM + JSON_MODE_INSTRUCTION + outputLanguageInstruction(settings),
     prompt: buildFindingSolutionPrompt({ context: ctx, finding, segments, names, mode }),

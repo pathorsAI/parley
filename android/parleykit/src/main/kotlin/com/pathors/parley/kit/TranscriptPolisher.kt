@@ -177,7 +177,7 @@ object TranscriptPolisher {
         chat: ChatCompletions,
         protectedTerms: List<String> = emptyList(),
     ): String? {
-        val body = chat.chatCompletion(requestBody(raw, protectedTerms))
+        val body = chat.chatCompletion(requestBody(raw, protectedTerms), CloudChat.Feature.VOICE_TYPING)
         val content = contentFromChatCompletion(body) ?: return null
         val polished = content.trim()
         return if (accept(raw, polished)) polished else null

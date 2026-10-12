@@ -14,8 +14,6 @@ import Foundation
 /// reason when there is not — and why `verdict` is deliberately suspicious of
 /// what comes back.
 public enum TranscriptPolisher {
-    /// The cloud's OpenAI-compatible chat endpoint (see `CloudChat`).
-    static let path = CloudChat.path
     /// The cloud's alias for the small, fast, Groq-hosted model. Dictation is
     /// capped at ten minutes (`MicActivityPolicy.dictationLimit`) and almost
     /// always far shorter, so the transcripts are short and latency is the
@@ -212,7 +210,7 @@ public enum TranscriptPolisher {
         do {
             let body = try JSONEncoder().encode(
                 request(raw: raw, protectedTerms: protectedTerms, style: style))
-            let data = try await cloud.postJSON(path, body: body)
+            let data = try await cloud.chatCompletion(body, feature: .voiceTyping)
             return result(raw: raw, reply: data, style: style)
         } catch {
             return .unpolished(.failed)

@@ -474,9 +474,11 @@ class FilingSuggesterTest {
 
     private class FakeChat(private val reply: String) : ChatCompletions {
         var sent: String? = null
+        var billed: CloudChat.Feature? = null
 
-        override suspend fun chatCompletion(requestJson: String): String {
+        override suspend fun chatCompletion(requestJson: String, feature: CloudChat.Feature): String {
             sent = requestJson
+            billed = feature
             return reply
         }
     }
@@ -497,6 +499,7 @@ class FilingSuggesterTest {
             suggestWith(chat),
         )
         assertTrue(chat.sent.orEmpty().contains("[0:00] [Speaker 1] Hello."))
+        assertEquals(CloudChat.Feature.MEETING, chat.billed)
     }
 
     @Test

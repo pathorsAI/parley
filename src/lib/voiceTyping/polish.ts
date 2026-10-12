@@ -415,6 +415,7 @@ export async function polishTranscriptOutcome(opts: {
         result = await generateText({
           model: getModel(settings, "realtime", {
             modelId: polishModelOverride(settings, style),
+            feature: "voice_typing",
           }),
           providerOptions: withReasoningEffort(getProviderOptions(settings, "realtime"), effort),
           system: polishSystemPrompt(protectedTerms, style, speakerTerms),

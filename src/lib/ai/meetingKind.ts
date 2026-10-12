@@ -54,6 +54,7 @@ export async function detectMeetingKind(opts: {
     const { object, usage } = await streamObjectResilient({
       settings,
       workload: "realtime",
+      feature: "meeting",
       schema,
       system: STUDY.meetingKind.system + JSON_MODE_INSTRUCTION,
       prompt: `${ctx}${STUDY.meetingKind.transcriptHeader}\n${transcript}`,

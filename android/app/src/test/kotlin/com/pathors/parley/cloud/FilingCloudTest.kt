@@ -76,6 +76,7 @@ class FilingCloudTest {
         assertEquals("POST", request.method)
         assertEquals("/v1/chat/completions", request.path)
         assertEquals("Bearer session-token", request.getHeader("Authorization"))
+        assertEquals("meeting", request.getHeader("X-Parley-Feature"))
         assertTrue(request.getHeader("Content-Type").orEmpty().startsWith("application/json"))
         val body = CloudJson.parseToJsonElement(request.body.readUtf8()).jsonObject
         assertEquals("parley-fast", body["model"]?.jsonPrimitive?.content)

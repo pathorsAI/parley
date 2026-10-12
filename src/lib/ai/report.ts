@@ -153,7 +153,7 @@ export async function generatePostMeetingReport(opts: {
     parent: signal,
   });
   const call = {
-    model: getModel(settings, "deep"),
+    model: getModel(settings, "deep", { feature: "report" }),
     providerOptions: getProviderOptions(settings, "deep"),
     system: systemFor(lens) + outputLanguageInstruction(settings),
     prompt,

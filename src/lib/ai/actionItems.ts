@@ -111,6 +111,7 @@ export async function generateActionItems(opts: {
   const { object, usage } = await streamObjectResilient({
     settings,
     workload: "deep",
+    feature: "meeting",
     schema,
     system: systemFor(lens) + JSON_MODE_INSTRUCTION + outputLanguageInstruction(settings),
     prompt: `${ctx}${A.findingsHeader}\n${findingsList}\n\n${A.transcriptHeader}\n${transcript}`,

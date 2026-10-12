@@ -162,13 +162,13 @@ class StudyPass(
     /** Per-call time limits; the generated defaults, shorter in tests. */
     private val timeoutMs: (Call) -> Long = Call::defaultTimeoutMs,
 ) {
-    /** One model call, for its time limit. */
-    enum class Call(private val seconds: Int) {
-        MEETING_KIND(StudyPrompts.TIMEOUT_SECONDS_MEETING_KIND),
-        FINDINGS(StudyPrompts.TIMEOUT_SECONDS_FINDINGS),
-        ACTION_ITEMS(StudyPrompts.TIMEOUT_SECONDS_ACTION_ITEMS),
-        BRIEF(StudyPrompts.TIMEOUT_SECONDS_BRIEF),
-        DELIVERY(StudyPrompts.TIMEOUT_SECONDS_DELIVERY),
+    /** One model call, for its time limit and the feature it bills to. */
+    enum class Call(private val seconds: Int, val feature: CloudChat.Feature) {
+        MEETING_KIND(StudyPrompts.TIMEOUT_SECONDS_MEETING_KIND, CloudChat.Feature.MEETING),
+        FINDINGS(StudyPrompts.TIMEOUT_SECONDS_FINDINGS, CloudChat.Feature.MEETING),
+        ACTION_ITEMS(StudyPrompts.TIMEOUT_SECONDS_ACTION_ITEMS, CloudChat.Feature.MEETING),
+        BRIEF(StudyPrompts.TIMEOUT_SECONDS_BRIEF, CloudChat.Feature.REPORT),
+        DELIVERY(StudyPrompts.TIMEOUT_SECONDS_DELIVERY, CloudChat.Feature.MEETING),
         ;
 
         fun defaultTimeoutMs(): Long = seconds * MS_PER_SECOND
@@ -530,7 +530,7 @@ class StudyPass(
 
     /** One model call within its time limit; the assistant's text, or a failure. */
     private suspend fun ask(call: Call, request: CloudChat.Request): String {
-        val response = withTimeoutOrNull(timeoutMs(call)) { chat.chatCompletion(CloudChat.encode(request)) }
+        val response = withTimeoutOrNull(timeoutMs(call)) { chat.chatCompletion(CloudChat.encode(request), call.feature) }
             ?: throw StageFailure(StudyFailure.TIMEOUT)
         return CloudChat.content(response) ?: throw StageFailure(StudyFailure.UNREADABLE)
     }

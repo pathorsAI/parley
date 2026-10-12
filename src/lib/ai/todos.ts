@@ -36,6 +36,7 @@ export async function checkTodos(opts: {
   const { object, usage } = await generateObjectResilient({
     settings,
     workload: "realtime",
+    feature: "meeting",
     schema,
     system:
       "You track a meeting checklist. Given the checklist items and the live transcript, " +

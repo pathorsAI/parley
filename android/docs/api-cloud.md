@@ -154,6 +154,15 @@ build that made them. It is added by one OkHttp interceptor
 own client; the value is set once in `Application.onCreate`. No call site sets
 it, so none can forget it.
 
+### `X-Parley-Feature`
+
+Every `POST v1/chat/completions` also carries `X-Parley-Feature`, the product
+feature the call bills to (`kit/CloudChat.Feature`), so the cloud can attribute
+LLM credit usage per feature: the dictation cleanup sends `voice_typing`, the
+filing pass and the study stages `meeting`, the brief `report`. The pass picks
+the value and hands it to `ChatCompletions.chatCompletion`; `CloudClient` puts
+it on the wire.
+
 ### Problem reports
 
 `feedback/FeedbackCenter` is the one door. A report is a

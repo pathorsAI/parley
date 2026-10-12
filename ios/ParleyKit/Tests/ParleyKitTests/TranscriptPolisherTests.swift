@@ -202,6 +202,18 @@ final class TranscriptPolisherTests: XCTestCase {
         XCTAssertEqual(result, .unpolished(.failed))
     }
 
+    /// The cloud attributes the call's credit usage by `X-Parley-Feature`.
+    func testThePolishBillsToVoiceTyping() async {
+        let body = completion("We should probably call them back.")
+        let cloud = stubbedCloud { request in
+            request.value(forHTTPHeaderField: "X-Parley-Feature") == "voice_typing"
+                ? (200, body) : (400, Data())
+        }
+        let result = await TranscriptPolisher.polishOutcome(
+            raw: "so uh we should probably call them back", cloud: cloud)
+        XCTAssertEqual(result.outcome, .polished)
+    }
+
     func testAGoodReplyComesBackPolished() async {
         let body = completion("We should probably call them back.")
         let cloud = stubbedCloud { _ in (200, body) }
