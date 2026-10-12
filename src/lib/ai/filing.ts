@@ -222,8 +222,10 @@ export async function suggestFiling(opts: {
   folders: readonly { id: string; name: string }[];
   /** What the recording is called right now, so the model can decline to change it. */
   currentTitle: string;
+  /** Cancels the pass (the run was superseded). */
+  signal?: AbortSignal;
 }): Promise<FilingSuggestion | null> {
-  const { settings, segments, names, meetingContext, folders, currentTitle } = opts;
+  const { settings, segments, names, meetingContext, folders, currentTitle, signal } = opts;
   const full = transcriptWithTimestamps(segments, names);
   if (!full.trim()) return null;
   const transcript = capFilingTranscript(full);
@@ -241,6 +243,7 @@ export async function suggestFiling(opts: {
         transcript,
       }),
       temperature: FILING.temperature,
+      signal,
     });
     void recordLlmUsage(settings, "realtime", "eval", usage);
 

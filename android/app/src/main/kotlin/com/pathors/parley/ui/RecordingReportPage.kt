@@ -53,14 +53,19 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import com.pathors.parley.R
+import com.pathors.parley.kit.ArtifactDisplay
 import com.pathors.parley.kit.BriefMarkup
+import com.pathors.parley.kit.DeliveryStats
+import com.pathors.parley.kit.StudyArtifact
+import com.pathors.parley.kit.TranscriptSegment
+import com.pathors.parley.study.RecordingStudy
 import com.pathors.parley.ui.theme.ParleyTheme
 
 /**
- * What the summary page does when somebody taps something on it — gathered so
- * the page takes one value instead of six.
+ * What the report page does when somebody taps something on it — gathered so
+ * the page takes one value instead of a dozen.
  */
-internal class SummaryActions(
+internal class ReportActions(
     /**
      * Whether a tick on an action item is kept. True for the sample only, which
      * keeps its ticks on the phone; a cloud recording shows the ticks it has and
@@ -71,53 +76,90 @@ internal class SummaryActions(
     val canGenerate: Boolean,
     /** A moment on the recording, taken to the transcript. */
     val jump: (Long) -> Unit,
+    /** A moment on the recording, played without leaving the report (the timeline's dots). */
+    val seek: (Long) -> Unit,
     val tickActionItem: (id: String, done: Boolean) -> Unit,
     /** The Share-to-AI hand-off: the analysis prompt plus the transcript. */
     val generate: () -> Unit,
+    val regenerate: (StudyArtifact) -> Unit,
+    val regenerateAll: () -> Unit,
+    /** Open the analysis menu on arrival (the screenshot route for it). */
+    val openStudyMenu: Boolean = false,
 )
 
 /**
- * The recording screen's summary page: what the meeting came to, apart from
- * what was said in it. iOS `RecordingSummaryView`; see
- * `docs/design/ios-recording-page.md`.
+ * The recording screen's report page (報告): what the meeting came to, apart
+ * from what was said in it — the desktop's report tab, in its order: the
+ * generation chip, then the brief (重點), the action items (後續行動), the
+ * timeline analysis (時間軸分析), the delivery scorecard (評分), and who was
+ * there. Every timestamp on the page is a way *into* the transcript rather
+ * than a label: it hands the moment to [ReportActions.jump], which switches
+ * pages, seeks, and lights the turn.
  *
- * Top to bottom — brief, action items, highlights, speakers — which is the
- * order a person back from a meeting asks in: what happened, what do I have to
- * do, what should I look at again, who was there. Every timestamp on the page
- * is a way *into* the transcript rather than a label: it hands the moment to
- * [SummaryActions.jump], which switches pages, seeks, and lights the turn.
- *
- * The same page as the transcript: white, no cards, sections separated by
- * whitespace with a small sentence-case label over each. Blue appears only on
- * what can be tapped — the timestamps and the one button of the empty state.
+ * [study] is the study pipeline for this recording (`study/StudyPass`), or
+ * null where the phone does not run it (the sample, an organization's
+ * recording). With it, every section the pipeline owes says where it is —
+ * queued behind its upstream stage, generating, failed — in the desktop's
+ * words; without it, the page shows whatever analysis the recording carries.
+ * Only when there is no analysis and no way to make one does the page fall
+ * back to the Share-to-AI hand-off.
  */
 @Composable
-internal fun RecordingSummaryPage(
+internal fun RecordingReportPage(
     state: RecordingDetailViewModel.UiState,
+    study: RecordingStudy?,
     /** The people in the transcript, in order of first appearance, as the transcript labels them. */
     speakers: List<String>,
+    /** The transcript, for the scorecard's on-device numbers. */
+    segments: List<TranscriptSegment>,
     listState: LazyListState,
-    actions: SummaryActions,
+    actions: ReportActions,
     modifier: Modifier = Modifier,
 ) {
+    val sections = remember(state, study) { ReportLayout.of(state, study) }
+    val stats = remember(segments) {
+        DeliveryLocalStats(
+            talkShare = DeliveryStats.talkTimeRatio(segments),
+            fillerSounds = DeliveryStats.fillerSounds(segments),
+        )
+    }
     LazyColumn(
         state = listState,
         modifier = modifier,
         contentPadding = PaddingValues(20.dp),
         verticalArrangement = Arrangement.spacedBy(32.dp),
     ) {
-        if (state.hasAnalysis) {
-            if (state.brief.isNotEmpty()) {
-                item(key = "brief") { Brief(state.brief, actions.jump) }
+        if (study != null) {
+            item(key = "chip") {
+                StudyChip(
+                    study = study,
+                    onRegenerate = actions.regenerate,
+                    onRegenerateAll = actions.regenerateAll,
+                    openInitially = actions.openStudyMenu,
+                )
             }
-            if (state.actionItems.isNotEmpty()) {
-                item(key = "actions") { ActionItems(state.actionItems, actions) }
+        }
+        sections.brief?.let { display ->
+            item(key = "brief") { BriefSection(state.brief, display, study, actions.jump) }
+        }
+        sections.actions?.let { display ->
+            item(key = "actions") { ActionItemsSection(state.actionItems, display, study, actions) }
+        }
+        sections.timeline?.let { display ->
+            item(key = "timeline") {
+                TimelineSection(state.findings, display, study, state.meta?.durationMs?.toLong() ?: 0L, actions)
             }
-            if (state.findings.isNotEmpty()) {
-                item(key = "highlights") { Highlights(state.findings, actions.jump) }
+        }
+        sections.delivery?.let { display ->
+            item(key = "delivery") {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    SectionLabel(stringResource(R.string.report_delivery))
+                    DeliveryScorecard(state.delivery, display, state.meta?.speechRateHz, stats)
+                }
             }
-        } else {
-            item(key = "empty") { NoSummary(actions) }
+        }
+        if (sections.empty) {
+            item(key = "empty") { NoSummary(actions, offerHandoff = study == null || !study.canSpend) }
         }
         if (speakers.isNotEmpty()) {
             item(key = "speakers") { SpeakerList(speakers) }
@@ -125,7 +167,79 @@ internal fun RecordingSummaryPage(
     }
 }
 
+/**
+ * Which sections the report shows, and what each says about its artifact —
+ * null for a section that is not drawn. Pure, so the rules are testable:
+ *
+ * - a section with content is drawn;
+ * - with the pipeline running here, a section whose artifact is queued,
+ *   generating or failed is drawn too (with that status), and a finished
+ *   empty one says so; an untouched one (auto-analysis off) is not;
+ * - nothing drawn at all is the empty state.
+ */
+internal data class ReportLayout(
+    val brief: ArtifactDisplay?,
+    val actions: ArtifactDisplay?,
+    val timeline: ArtifactDisplay?,
+    val delivery: ArtifactDisplay?,
+) {
+    val empty: Boolean get() = brief == null && actions == null && timeline == null && delivery == null
+
+    companion object {
+        fun of(state: RecordingDetailViewModel.UiState, study: RecordingStudy?): ReportLayout {
+            fun section(artifact: StudyArtifact, hasContent: Boolean): ArtifactDisplay? {
+                if (study == null) return if (hasContent) ArtifactDisplay.DONE else null
+                val display = study.display(artifact)
+                return when {
+                    display != ArtifactDisplay.IDLE -> display
+                    hasContent -> ArtifactDisplay.DONE
+                    else -> null
+                }
+            }
+            return ReportLayout(
+                brief = section(StudyArtifact.BRIEF, state.brief.isNotEmpty()),
+                actions = section(StudyArtifact.ACTIONS, state.actionItems.isNotEmpty()),
+                timeline = section(StudyArtifact.FINDINGS, state.findings.isNotEmpty()),
+                delivery = section(StudyArtifact.DELIVERY, state.delivery != null),
+            )
+        }
+    }
+}
+
+/** Waiting, generating or failed: the line in place of the artifact. Null when the content shows. */
+@Composable
+private fun pendingLine(
+    display: ArtifactDisplay,
+    queued: Int,
+    running: Int,
+    error: String,
+): String? = when (display) {
+    ArtifactDisplay.QUEUED -> stringResource(queued)
+    ArtifactDisplay.RUNNING -> stringResource(running)
+    ArtifactDisplay.ERROR -> error
+    else -> null
+}
+
 // ── brief ────────────────────────────────────────────────────────────────────
+
+@Composable
+private fun BriefSection(brief: String, display: ArtifactDisplay, study: RecordingStudy?, onJump: (Long) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        SectionLabel(stringResource(R.string.report_brief))
+        val pending = pendingLine(
+            display,
+            queued = R.string.report_brief_queued,
+            running = R.string.report_brief_generating,
+            error = stringResource(R.string.report_brief_error),
+        )
+        when {
+            pending != null -> SectionStatus(pending, display)
+            brief.isNotEmpty() -> Brief(brief, onJump)
+        }
+        // A failed regeneration over a brief that is still there keeps showing it.
+        if (display == ArtifactDisplay.ERROR && brief.isNotEmpty() && study != null) Brief(brief, onJump)
+    }
+}
 
 @Composable
 private fun Brief(brief: String, onJump: (Long) -> Unit) {
@@ -189,29 +303,47 @@ internal fun briefParagraph(
 // ── action items ─────────────────────────────────────────────────────────────
 
 @Composable
-private fun ActionItems(items: List<ActionItemRow>, actions: SummaryActions) {
+private fun ActionItemsSection(
+    items: List<ActionItemRow>,
+    display: ArtifactDisplay,
+    study: RecordingStudy?,
+    actions: ReportActions,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SectionLabel(stringResource(R.string.detail_action_items))
-        items.forEach { item ->
-            Row(
-                verticalAlignment = Alignment.Top,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                ActionCheck(item, actions)
-                Text(
-                    text = item.text,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (item.done) {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    } else {
-                        MaterialTheme.colorScheme.onSurface
-                    },
-                    // Centres the first line on the 28dp check beside it.
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(top = 3.dp),
-                )
-                item.atMs?.let { MomentLink(it, actions.jump, Modifier.padding(top = 3.dp)) }
+        val pending = pendingLine(
+            display,
+            queued = R.string.report_actions_queued,
+            running = R.string.report_actions_generating,
+            error = stringResource(
+                R.string.report_actions_error,
+                stringResource(failureText(study?.failures?.get(StudyArtifact.ACTIONS))),
+            ),
+        )
+        when {
+            pending != null -> SectionStatus(pending, display)
+            items.isEmpty() -> EmptyLine(stringResource(R.string.report_actions_empty))
+            else -> items.forEach { item ->
+                Row(
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    ActionCheck(item, actions)
+                    Text(
+                        text = item.text,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (item.done) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        },
+                        // Centres the first line on the 28dp check beside it.
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(top = 3.dp),
+                    )
+                    item.atMs?.let { MomentLink(it, actions.jump, Modifier.padding(top = 3.dp)) }
+                }
             }
         }
     }
@@ -222,7 +354,7 @@ private fun ActionItems(items: List<ActionItemRow>, actions: SummaryActions) {
  * done" in the platform's words. A toggle only where the tick is kept.
  */
 @Composable
-private fun ActionCheck(item: ActionItemRow, actions: SummaryActions) {
+private fun ActionCheck(item: ActionItemRow, actions: ReportActions) {
     val done = stringResource(R.string.summary_done)
     val base = Modifier
         .size(CHECK_TARGET)
@@ -256,49 +388,48 @@ private fun ActionCheck(item: ActionItemRow, actions: SummaryActions) {
     }
 }
 
-// ── highlights ───────────────────────────────────────────────────────────────
+// ── the timeline ─────────────────────────────────────────────────────────────
 
 /**
- * The analysis's findings, each with the moment it came from.
- *
- * A 2dp rule down the left edge in ink, and nothing else: no fill, no glyph,
- * no card. The rule says "this is a different kind of thing from the prose
- * above" without claiming more importance than what was said.
+ * 時間軸分析 — the findings, as the desktop's replay timeline puts them: a
+ * strip across the recording with a dot per finding (a tap plays it), then the
+ * list in time order. Each moment is a way into the transcript.
  */
 @Composable
-private fun Highlights(findings: List<FindingRow>, onJump: (Long) -> Unit) {
+private fun TimelineSection(
+    findings: List<FindingRow>,
+    display: ArtifactDisplay,
+    study: RecordingStudy?,
+    durationMs: Long,
+    actions: ReportActions,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        SectionLabel(stringResource(R.string.summary_highlights, findings.size))
-        findings.forEach { finding ->
-            Row(Modifier.height(IntrinsicSize.Min)) {
-                Box(
-                    Modifier
-                        .width(2.dp)
-                        .fillMaxHeight()
-                        .background(MaterialTheme.colorScheme.onSurface),
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f)) { SectionLabel(stringResource(R.string.report_timeline)) }
+            if (findings.isNotEmpty() && display == ArtifactDisplay.DONE) {
+                Text(
+                    stringResource(R.string.report_timeline_count, findings.size),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Spacer(Modifier.width(12.dp))
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    Row(verticalAlignment = Alignment.Top) {
-                        Text(
-                            text = finding.title,
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        MomentLink(finding.atMs, onJump)
-                    }
-                    if (finding.detail.isNotEmpty()) {
-                        Text(
-                            text = finding.detail,
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Normal),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+            }
+        }
+        val pending = pendingLine(
+            display,
+            queued = R.string.report_timeline_queued,
+            running = R.string.report_timeline_analyzing,
+            error = stringResource(
+                R.string.report_timeline_error,
+                stringResource(failureText(study?.failures?.get(StudyArtifact.FINDINGS))),
+            ),
+        )
+        when {
+            pending != null -> SectionStatus(pending, display)
+            findings.isEmpty() -> EmptyLine(stringResource(R.string.report_timeline_empty))
+            else -> {
+                TimelineStrip(findings, durationMs, actions.seek)
+                findings.forEach { finding ->
+                    FindingEntry(finding) { MomentLink(finding.atMs, actions.jump) }
                 }
             }
         }
@@ -324,19 +455,22 @@ private fun SpeakerList(speakers: List<String>) {
 // ── nothing to summarise ─────────────────────────────────────────────────────
 
 /**
- * Never a blank page: a recording with no analysis says so, and offers the way
- * to get one — the same hand-off to the user's own AI the `⋯` menu makes, with
- * the prompt and the transcript.
+ * Never a blank page: a recording with no analysis says so, and — where the
+ * phone cannot make one (the sample, an organization's recording, signed out)
+ * — offers the way to get one: the same hand-off to the user's own AI the `⋯`
+ * menu makes, with the prompt and the transcript.
  */
 @Composable
-private fun NoSummary(actions: SummaryActions) {
+private fun NoSummary(actions: ReportActions, offerHandoff: Boolean) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(
             text = stringResource(R.string.summary_empty),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        TextButton(
+        // Where the phone can analyse the recording itself, the chip above is
+        // the way; the hand-off to the user's own AI is for where it cannot.
+        if (offerHandoff) TextButton(
             onClick = actions.generate,
             enabled = actions.canGenerate,
             contentPadding = PaddingValues(vertical = 8.dp),
@@ -352,6 +486,11 @@ private fun NoSummary(actions: SummaryActions) {
 }
 
 // ── pieces ───────────────────────────────────────────────────────────────────
+
+@Composable
+private fun EmptyLine(text: String) {
+    Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
 
 @Composable
 private fun SectionLabel(text: String) {

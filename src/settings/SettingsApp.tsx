@@ -28,6 +28,7 @@ import { claudeCodeCommand, mcpClientConfigJson, type McpServerInfo } from "../l
 import { ReleaseNotesDialog } from "../components/ReleaseNotesDialog";
 import { UsagePanel } from "./UsagePanel";
 import { CachesPanel } from "./CachesPanel";
+import { LaunchAtLoginField } from "./LaunchAtLoginField";
 import { STT_PROVIDERS, STT_BY_ID } from "../lib/transcription/providers";
 import { Button } from "@/components/ui/button";
 import { CopyButton } from "@/components/CopyButton";
@@ -548,6 +549,10 @@ export function SettingsApp() {
                 ))}
               </div>
             </Field>
+            {/* App-wide, so it lives here rather than under Voice Typing: the
+                MCP server also comes up at login. The help text names voice
+                typing, the main reason to turn it on. */}
+            <LaunchAtLoginField />
             <Field label={t("settings.basic.setup")}>
               <div className="flex flex-wrap items-center gap-2">
                 <Button

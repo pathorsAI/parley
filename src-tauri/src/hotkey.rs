@@ -29,17 +29,23 @@
 //! selecting a modifier unregisters all combos and arms the tap / hook on that
 //! key.
 //!
+//! While a dictation is cancellable, Esc cancels it: a global shortcut armed
+//! and disarmed by the frontend (`set_voice_typing_cancel_armed`), plus the
+//! Windows hook for an Esc under a held right Ctrl / right Alt.
+//!
 //! Auto-paste is a separate concern with a separate gate: Accessibility on
 //! macOS, nothing at all on Windows (see voice_typing.rs).
 
 #![allow(unexpected_cfgs)]
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use serde::Serialize;
-use tauri::AppHandle;
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
+use tauri::{AppHandle, Emitter};
+use tauri_plugin_global_shortcut::{
+    Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutEvent, ShortcutState,
+};
 
 /// Key transitions → push-to-talk start/stop for a held modifier. Only the
 /// Windows hook drives it, but it is compiled into every test build so its
@@ -66,10 +72,11 @@ fn alt_space() -> Shortcut {
 /// setting at startup — until then [`status`] reports [`BOOT_DEFAULT_ID`].
 static CURRENT: Mutex<Option<String>> = Mutex::new(None);
 
-/// The trigger lib.rs registers at boot, and therefore what [`status`] must
-/// report before the frontend applies the saved selection. It differs per
-/// platform because Alt+Space is the native window system menu on Windows —
-/// see the registration in lib.rs for why we don't claim it there.
+/// The trigger [`register_boot_trigger`] registers at launch, and therefore
+/// what [`status`] must report before the frontend applies the saved
+/// selection. It differs per platform because Alt+Space is the native window
+/// system menu on Windows — see [`register_boot_trigger`] for why we don't
+/// claim it there.
 #[cfg(target_os = "macos")]
 const BOOT_DEFAULT_ID: &str = "alt-space";
 #[cfg(target_os = "windows")]
@@ -80,12 +87,70 @@ const BOOT_DEFAULT_ID: &str = "combo:control+alt+Space";
 const BOOT_DEFAULT_ID: &str = "alt-space";
 
 /// Whether the active combo actually registered with the OS (a combo can fail
-/// if another app owns it). Starts true because lib.rs registers
-/// [`BOOT_DEFAULT_ID`] at boot on both shipping platforms. On a platform where
+/// if another app owns it). [`register_boot_trigger`] stores the boot
+/// registration's real result on both shipping platforms. On a platform where
 /// it registers nothing this reads optimistically until the frontend applies
 /// the saved selection — which is also the first moment a trigger could exist
 /// there at all, so nobody is misled about a live one.
 static COMBO_OK: AtomicBool = AtomicBool::new(true);
+
+/// What every push-to-talk trigger emits: the combo handler below, the macOS
+/// HID tap and the Windows keyboard hook alike, so the dictation host cannot
+/// tell them apart.
+pub(crate) const PTT_EVENT: &str = "voicetyping://ptt";
+
+/// Push-to-talk for a key-combo trigger: key down starts, key up ends.
+///
+/// Attached to the one trigger shortcut (`on_shortcut`), never installed as the
+/// plugin-wide `Builder::with_handler`. The plugin calls a plugin-wide handler
+/// for EVERY shortcut it has registered, including the ones host.ts registers
+/// from JS — the dictionary suggestion's ⌥↩ — so each of those used to start a
+/// dictation too. The plugin also runs handlers while it holds its
+/// shortcut-map lock, and registering takes that lock: never (un)register a
+/// shortcut from inside a handler.
+fn on_ptt(app: &AppHandle, _sc: &Shortcut, ev: ShortcutEvent) {
+    let down = ev.state == ShortcutState::Pressed;
+    let _ = app.emit(PTT_EVENT, serde_json::json!({ "down": down }));
+}
+
+/// Register `sc` as the push-to-talk combo. A failure — another app owns the
+/// combo — is logged (`what` names the attempt) and answered false; it is
+/// never fatal.
+fn register_trigger(app: &AppHandle, sc: Shortcut, what: &str) -> bool {
+    app.global_shortcut()
+        .on_shortcut(sc, on_ptt)
+        .map_err(|e| log::warn!("voice-typing: {what} {sc} failed: {e}"))
+        .is_ok()
+}
+
+/// Register the boot default until the frontend applies the saved selection
+/// (see [`set_voice_typing_shortcut`], called from the voice-typing host).
+///
+/// The two shipping platforms deliberately take a DIFFERENT key. Alt+Space is
+/// the conventional dictation trigger on macOS, but on Windows it is the native
+/// window system menu (the Move/Size/Close popup every window has), and
+/// claiming it globally would swallow that menu for the whole session. Windows
+/// therefore boots on Ctrl+Alt+Space, which is also what the frontend defaults
+/// the saved setting to, so applying the setting re-registers the same combo
+/// rather than moving the user's shortcut out from under them. Nowhere else
+/// registers anything: voice typing has no implementation to drive there (see
+/// voice_typing.rs).
+///
+/// Called from the app's setup rather than handed to the plugin's builder:
+/// there, a boot combo the OS refused (on Windows, one another app already
+/// owns) failed the plugin's own setup, which failed the app build and
+/// panicked at launch. Here it is a logged warning and a "not active" trigger
+/// in Settings.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub fn register_boot_trigger(app: &AppHandle) {
+    let ok =
+        parse_combo(BOOT_DEFAULT_ID).is_some_and(|sc| register_trigger(app, sc, "boot register"));
+    COMBO_OK.store(ok, Ordering::SeqCst);
+}
+
+/// Nothing to register off macOS and Windows (see the shipping variant).
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub fn register_boot_trigger(_app: &AppHandle) {}
 
 /// Parse a picker id into a plugin `Shortcut`. `alt-space` is the legacy id for
 /// Option+Space; `combo:<expr>` carries a recorded combo whose tokens follow the
@@ -96,6 +161,182 @@ fn parse_combo(id: &str) -> Option<Shortcut> {
         return Some(alt_space());
     }
     id.strip_prefix("combo:")?.parse::<Shortcut>().ok()
+}
+
+/// The selection id in effect: the saved one once the frontend has applied it,
+/// the boot default before that.
+fn current_id() -> String {
+    CURRENT
+        .lock()
+        .unwrap()
+        .clone()
+        .unwrap_or_else(|| BOOT_DEFAULT_ID.to_string())
+}
+
+// ── Esc cancels a dictation ──────────────────────────────────────────────────
+//
+// host.ts arms the cancel from a press until the dictation's text is committed
+// to the clipboard, and disarms it after. While armed, Esc is a global
+// shortcut (Carbon `RegisterEventHotKey` / Win32 `RegisterHotKey`) that only
+// Parley receives; the rest of the time it belongs to the app in front.
+
+/// Esc cancelled the dictation. Payload `{ "fromTrigger": bool }`: true when
+/// the Windows hook caught it under the held trigger and swallowed it, which
+/// also silences that trigger's release (see `windows_hook::deliver`).
+pub(crate) const CANCEL_EVENT: &str = "voicetyping://cancel";
+
+/// A dictation is cancellable right now. The Windows hook reads it on every
+/// key, so it is the Rust side's own record rather than a JS mirror.
+pub(crate) static CANCEL_ARMED: AtomicBool = AtomicBool::new(false);
+
+/// The Esc shortcuts registered while armed, so disarming removes exactly
+/// those and never the push-to-talk trigger.
+static CANCEL_REGISTERED: Mutex<Vec<Shortcut>> = Mutex::new(Vec::new());
+
+/// Esc pressed while armed. Only the press: a held Esc must not cancel twice,
+/// and the release means nothing. Like [`on_ptt`], it runs under the plugin's
+/// shortcut-map lock, so it only emits.
+fn on_cancel(app: &AppHandle, _sc: &Shortcut, ev: ShortcutEvent) {
+    if ev.state != ShortcutState::Pressed {
+        return;
+    }
+    log::info!("voice-typing: escape cancel (shortcut)");
+    let _ = app.emit(CANCEL_EVENT, serde_json::json!({ "fromTrigger": false }));
+}
+
+/// Escape chords the OS reserves, which the cancel never claims even when the
+/// held trigger would need them: on Windows Ctrl+Esc (Start), Alt+Esc and
+/// Alt+Shift+Esc (cycle windows), Ctrl+Shift+Esc (Task Manager) and anything
+/// with the Windows key; on macOS ⌘⌥Esc (Force Quit) and ⌘⌥⇧Esc (force quit
+/// the front app).
+fn reserved_escape(mods: Modifiers, windows: bool) -> bool {
+    if windows {
+        mods.contains(Modifiers::SUPER)
+            || [
+                Modifiers::CONTROL,
+                Modifiers::ALT,
+                Modifiers::ALT | Modifiers::SHIFT,
+                Modifiers::CONTROL | Modifiers::SHIFT,
+            ]
+            .contains(&mods)
+    } else {
+        mods.contains(Modifiers::SUPER | Modifiers::ALT)
+    }
+}
+
+/// The Esc shortcuts that cancel a dictation started by trigger `id`.
+///
+/// Carbon and `RegisterHotKey` match modifiers exactly, so a bare Esc never
+/// fires while the user is still holding a trigger that has one: holding
+/// ⌥Space and pressing Esc arrives as ⌥Esc. Each trigger therefore also gets
+/// Esc with the modifiers it holds — except where the OS reserves that chord,
+/// and except Windows' right Ctrl / right Alt, whose Esc the keyboard hook
+/// catches before any hotkey could (`modifier_ptt`). `fn` is not a hotkey
+/// modifier, so fn+Esc should match the bare Esc (a manual check in
+/// docs/TESTING.md). A shortcut equal to the trigger
+/// itself is dropped: the plugin keys its handlers by chord, so registering it
+/// would replace push-to-talk, and disarming would then unregister it.
+/// `windows` picks the platform rules, so both are testable anywhere.
+fn cancel_shortcuts_for(id: &str, windows: bool) -> Vec<Shortcut> {
+    let trigger = parse_combo(id);
+    let held = match id {
+        _ if windows && MODIFIER_IDS.contains(&id) => None,
+        "right-option" => Some(Modifiers::ALT),
+        "right-command" => Some(Modifiers::SUPER),
+        "right-control" => Some(Modifiers::CONTROL),
+        "fn" => None,
+        // `alt-space` and every recorded combo: the modifiers it is held with.
+        _ => trigger.map(|sc| sc.mods),
+    };
+    let mut out = vec![Shortcut::new(None, Code::Escape)];
+    // The variant always has modifiers, so it never repeats the bare Esc.
+    if let Some(mods) = held.filter(|m| !m.is_empty() && !reserved_escape(*m, windows)) {
+        out.push(Shortcut::new(Some(mods), Code::Escape));
+    }
+    out.retain(|sc| trigger.is_none_or(|t| t.id() != sc.id()));
+    out
+}
+
+/// Bumped by every arm request, repeats included: a press re-arms Esc while
+/// an earlier dictation may still hold it, and the backstop below must not
+/// take a claim made after the session it watches ended.
+static CANCEL_ARM_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// How long after a voice-typing session task ends Esc may still be claimed.
+/// The host keeps it through the delivery — the polish round trip (at most
+/// 4 s) and the insert — and gives it back before the paste; past this the
+/// host is not coming back to it (its delivery threw before the disarm, or
+/// the main webview died).
+pub(crate) const CANCEL_BACKSTOP_DELAY: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Arm or disarm Esc for cancelling the current dictation (host.ts). Sync on
+/// purpose, like [`set_voice_typing_shortcut`]: it runs on the main thread,
+/// where the plugin's registration runs inline. A repeat of the current state
+/// does nothing, so the frontend keeps no mirror of it.
+#[tauri::command]
+pub fn set_voice_typing_cancel_armed(app: AppHandle, armed: bool) {
+    if armed {
+        CANCEL_ARM_SEQ.fetch_add(1, Ordering::SeqCst);
+    }
+    if CANCEL_ARMED.swap(armed, Ordering::SeqCst) == armed {
+        return;
+    }
+    apply_cancel_shortcuts(&app);
+}
+
+/// The backstop for a host that never disarms: a voice-typing session task
+/// ended, so [`CANCEL_BACKSTOP_DELAY`] later Esc is handed back to the app in
+/// front — unless it was armed again in the meantime (a newer press) or
+/// `still_current` says a newer session has started. Logged, because it means
+/// the host lost track of its own claim.
+pub(crate) fn release_cancel_after_session(
+    app: &AppHandle,
+    still_current: impl FnOnce(&AppHandle) -> bool + Send + 'static,
+) {
+    let seq = CANCEL_ARM_SEQ.load(Ordering::SeqCst);
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(CANCEL_BACKSTOP_DELAY).await;
+        if !backstop_should_release(seq) || !still_current(&app) {
+            return;
+        }
+        log::warn!(
+            "voice-typing: Esc still claimed {CANCEL_BACKSTOP_DELAY:?} after the session ended; releasing it"
+        );
+        let main = app.clone();
+        // The plugin's registration wants the main thread (see above).
+        let _ = app.run_on_main_thread(move || set_voice_typing_cancel_armed(main, false));
+    });
+}
+
+/// Whether Esc is still claimed by nothing newer than arm request `seq`.
+fn backstop_should_release(seq: u64) -> bool {
+    CANCEL_ARMED.load(Ordering::SeqCst) && CANCEL_ARM_SEQ.load(Ordering::SeqCst) == seq
+}
+
+/// Bring the registered Esc shortcuts in line with [`CANCEL_ARMED`] and the
+/// current trigger. A shortcut that does not register — another app owns
+/// Esc, macOS 15's refusal of Option-only hotkeys, a chord the OS keeps — is
+/// logged and skipped; the other one may still work. Main thread only (every
+/// caller is): it holds [`CANCEL_REGISTERED`] across the plugin calls, which
+/// would otherwise wait on the main thread.
+fn apply_cancel_shortcuts(app: &AppHandle) {
+    let gs = app.global_shortcut();
+    let mut registered = CANCEL_REGISTERED.lock().unwrap();
+    for sc in registered.drain(..) {
+        if let Err(e) = gs.unregister(sc) {
+            log::warn!("voice-typing: escape cancel {sc} not unregistered: {e}");
+        }
+    }
+    if !CANCEL_ARMED.load(Ordering::SeqCst) {
+        return;
+    }
+    for sc in cancel_shortcuts_for(&current_id(), cfg!(target_os = "windows")) {
+        match gs.on_shortcut(sc, on_cancel) {
+            Ok(()) => registered.push(sc),
+            Err(e) => log::warn!("voice-typing: escape cancel {sc} not registered: {e}"),
+        }
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -110,7 +351,8 @@ pub struct HotkeyStatus {
     /// How the trigger is delivered: `combo` (global-shortcut plugin),
     /// `tap-active` (HID tap that swallows the key), `tap-listen` (HID tap
     /// that observes but can't swallow), `hook` (Windows low-level keyboard
-    /// hook, which observes and never swallows), or `none` (nothing live).
+    /// hook, which observes and swallows only the Esc that cancels a held
+    /// dictation), or `none` (nothing live).
     mode: String,
     /// The current selection id (`alt-space` / `combo:…` / `fn` / `right-*`).
     shortcut: String,
@@ -147,8 +389,10 @@ pub fn ensure_fn_listener(app: AppHandle) -> bool {
 #[tauri::command]
 pub fn set_voice_typing_shortcut(app: AppHandle, shortcut: String) -> HotkeyStatus {
     let gs = app.global_shortcut();
-    // Drop every combo we own (ours is the only user of the plugin).
+    // Drop every combo we own (ours is the only user of the plugin), the Esc
+    // cancel included — it is re-applied below for the new trigger.
     let _ = gs.unregister_all();
+    CANCEL_REGISTERED.lock().unwrap().clear();
     if MODIFIER_IDS.contains(&shortcut.as_str()) {
         // A modifier key drives push-to-talk via the HID tap. The user picked
         // it explicitly, so force a tap attempt even without a visible grant.
@@ -159,10 +403,7 @@ pub fn set_voice_typing_shortcut(app: AppHandle, shortcut: String) -> HotkeyStat
         // A key combo drives push-to-talk; park the HID tap (matches nothing).
         imp::set_shortcut("alt-space");
         let ok = match parse_combo(&shortcut) {
-            Some(sc) => gs
-                .register(sc)
-                .map_err(|e| log::warn!("voice-typing: register {shortcut:?} failed: {e}"))
-                .is_ok(),
+            Some(sc) => register_trigger(&app, sc, "register"),
             None => {
                 log::warn!("voice-typing: unparsable shortcut {shortcut:?}");
                 false
@@ -171,6 +412,9 @@ pub fn set_voice_typing_shortcut(app: AppHandle, shortcut: String) -> HotkeyStat
         COMBO_OK.store(ok, Ordering::SeqCst);
     }
     *CURRENT.lock().unwrap() = Some(shortcut);
+    // The held-trigger Esc variant follows the trigger (and a change made
+    // mid-dictation keeps the cancel armed).
+    apply_cancel_shortcuts(&app);
     status()
 }
 
@@ -181,11 +425,7 @@ pub fn voice_typing_hotkey_status() -> HotkeyStatus {
 }
 
 fn status() -> HotkeyStatus {
-    let id = CURRENT
-        .lock()
-        .unwrap()
-        .clone()
-        .unwrap_or_else(|| BOOT_DEFAULT_ID.to_string());
+    let id = current_id();
     if MODIFIER_IDS.contains(&id.as_str()) {
         modifier_status(id)
     } else {
@@ -287,11 +527,7 @@ pub fn install_wake_observer(app: AppHandle) {
 /// notice when it times out during a slow wake.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn reassert(app: &AppHandle) {
-    let id = CURRENT
-        .lock()
-        .unwrap()
-        .clone()
-        .unwrap_or_else(|| BOOT_DEFAULT_ID.to_string());
+    let id = current_id();
     log::info!("voice-typing: re-asserting trigger {id:?} after wake");
     // Always revive the tap: in combo mode it's parked (matches nothing) but
     // must stay alive for the next switch back to a modifier key. (The
@@ -303,17 +539,14 @@ fn reassert(app: &AppHandle) {
         // (permission granted after launch).
         imp::ensure_started(app.clone(), false);
     } else {
-        let gs = app.global_shortcut();
-        let _ = gs.unregister_all();
-        let ok = match parse_combo(&id) {
-            Some(sc) => gs
-                .register(sc)
-                .map_err(|e| log::warn!("voice-typing: wake re-register {id:?} failed: {e}"))
-                .is_ok(),
-            None => false,
-        };
+        let _ = app.global_shortcut().unregister_all();
+        CANCEL_REGISTERED.lock().unwrap().clear();
+        let ok = parse_combo(&id).is_some_and(|sc| register_trigger(app, sc, "wake re-register"));
         COMBO_OK.store(ok, Ordering::SeqCst);
     }
+    // A Carbon registration can come back inert from sleep too: re-register
+    // the Esc cancel if a dictation is armed (else this only clears it).
+    apply_cancel_shortcuts(app);
 }
 
 #[cfg(target_os = "macos")]
@@ -512,7 +745,7 @@ mod imp {
                         shortcut_id(),
                         if now { "down" } else { "up" }
                     );
-                    let _ = app.emit("voicetyping://ptt", serde_json::json!({ "down": now }));
+                    let _ = app.emit(super::PTT_EVENT, serde_json::json!({ "down": now }));
                 }
                 // Swallow the key so the OS / frontmost app doesn't also react
                 // (e.g. fn's "Press 🌐 to" emoji / dictation / input-source) —
@@ -684,4 +917,133 @@ mod imp {
         false
     }
     pub fn install_wake_observer(_app: AppHandle) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The boot trigger is registered from this id at launch; an id that no
+    /// longer parses would leave a fresh install with no trigger at all.
+    #[test]
+    fn the_boot_default_parses_to_a_combo() {
+        assert!(parse_combo(BOOT_DEFAULT_ID).is_some());
+    }
+
+    /// The Esc backstop takes back only a claim nothing renewed: a press after
+    /// the session ended arms again, and that claim is the new dictation's.
+    /// (The only test touching these globals, so it cannot race another.)
+    #[test]
+    fn the_esc_backstop_leaves_a_renewed_claim_alone() {
+        CANCEL_ARMED.store(true, Ordering::SeqCst);
+        let seq = CANCEL_ARM_SEQ.load(Ordering::SeqCst);
+        assert!(backstop_should_release(seq));
+        // A newer press armed it again (a repeat of the armed state included).
+        CANCEL_ARM_SEQ.fetch_add(1, Ordering::SeqCst);
+        assert!(!backstop_should_release(seq));
+        // Already handed back: nothing to do.
+        let seq = CANCEL_ARM_SEQ.load(Ordering::SeqCst);
+        CANCEL_ARMED.store(false, Ordering::SeqCst);
+        assert!(!backstop_should_release(seq));
+    }
+
+    fn esc(mods: Option<Modifiers>) -> Shortcut {
+        Shortcut::new(mods, Code::Escape)
+    }
+
+    const MAC: bool = false;
+    const WIN: bool = true;
+
+    #[test]
+    fn a_trigger_without_modifiers_needs_only_the_bare_escape() {
+        for windows in [MAC, WIN] {
+            assert_eq!(cancel_shortcuts_for("combo:F13", windows), [esc(None)]);
+        }
+        assert_eq!(cancel_shortcuts_for("fn", MAC), [esc(None)]);
+    }
+
+    #[test]
+    fn a_held_modifier_trigger_also_gets_escape_under_that_modifier() {
+        let alt = Some(Modifiers::ALT);
+        assert_eq!(
+            cancel_shortcuts_for("alt-space", MAC),
+            [esc(None), esc(alt)]
+        );
+        assert_eq!(
+            cancel_shortcuts_for("right-option", MAC),
+            [esc(None), esc(alt)]
+        );
+        assert_eq!(
+            cancel_shortcuts_for("right-command", MAC),
+            [esc(None), esc(Some(Modifiers::SUPER))]
+        );
+        assert_eq!(
+            cancel_shortcuts_for("right-control", MAC),
+            [esc(None), esc(Some(Modifiers::CONTROL))]
+        );
+        assert_eq!(
+            cancel_shortcuts_for("combo:control+alt+Space", WIN),
+            [esc(None), esc(Some(Modifiers::CONTROL | Modifiers::ALT))]
+        );
+    }
+
+    /// The keyboard hook catches Esc under a held right Ctrl / right Alt, and
+    /// Ctrl+Esc / Alt+Esc are Windows' own.
+    #[test]
+    fn windows_leaves_the_held_modifier_keys_to_the_hook() {
+        assert_eq!(cancel_shortcuts_for("right-control", WIN), [esc(None)]);
+        assert_eq!(cancel_shortcuts_for("right-option", WIN), [esc(None)]);
+        assert_eq!(cancel_shortcuts_for("alt-space", WIN), [esc(None)]);
+    }
+
+    #[test]
+    fn chords_the_os_reserves_are_never_claimed() {
+        // Task Manager.
+        assert_eq!(
+            cancel_shortcuts_for("combo:control+shift+KeyD", WIN),
+            [esc(None)]
+        );
+        // Anything with the Windows key.
+        assert_eq!(
+            cancel_shortcuts_for("combo:super+shift+KeyV", WIN),
+            [esc(None)]
+        );
+        // Force Quit, and its force-quit-the-front-app sibling.
+        assert_eq!(
+            cancel_shortcuts_for("combo:super+alt+KeyD", MAC),
+            [esc(None)]
+        );
+        assert_eq!(
+            cancel_shortcuts_for("combo:super+alt+shift+KeyD", MAC),
+            [esc(None)]
+        );
+        // The same chord on the other platform is fine.
+        assert_eq!(
+            cancel_shortcuts_for("combo:control+shift+KeyD", MAC),
+            [esc(None), esc(Some(Modifiers::CONTROL | Modifiers::SHIFT))]
+        );
+    }
+
+    /// Registering the trigger's own chord would replace push-to-talk's
+    /// handler, and disarming would unregister the trigger.
+    #[test]
+    fn the_trigger_itself_is_never_a_cancel() {
+        for windows in [MAC, WIN] {
+            assert!(cancel_shortcuts_for("combo:Escape", windows).is_empty());
+            assert_eq!(
+                cancel_shortcuts_for("combo:alt+Escape", windows),
+                [esc(None)]
+            );
+        }
+    }
+
+    #[test]
+    fn an_unparsable_trigger_still_gets_the_bare_escape() {
+        for windows in [MAC, WIN] {
+            assert_eq!(
+                cancel_shortcuts_for("combo:not a key", windows),
+                [esc(None)]
+            );
+        }
+    }
 }

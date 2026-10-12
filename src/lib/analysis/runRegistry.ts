@@ -10,6 +10,8 @@
 // registry loadHistory starts an in-flight stage as "running" instead, and the
 // ORIGINAL run (whose session pin matches again) keeps writing into the store.
 
+import { STUDY_MAX_RUN_MS } from "../ai/deadline";
+
 export type StudyStage = "findings" | "actions" | "brief" | "delivery" | "filing";
 
 /** Where a session's outputs persist: its own saved entry on disk, or (for a
@@ -21,11 +23,19 @@ export interface SessionTarget {
   readOnly: boolean;
 }
 
+/** Time for a run that just hit its last deadline to land (or drop) its result. */
+const IN_FLIGHT_SLACK_MS = 60_000;
+
 /** A flight older than this is treated as hung: loading its recording ignores it
  *  (the stage restores normally and may re-dispatch, superseding the old run).
- *  Without a ceiling, a request that never settles would leave the stage reading
- *  "running" forever with no way to retry it. */
-export const IN_FLIGHT_MAX_AGE_MS = 10 * 60_000;
+ *
+ *  Every study model call now runs under a deadline (ai/deadline.ts), so a run
+ *  cannot outlive {@link STUDY_MAX_RUN_MS} — classification, the streamed pass
+ *  up to its hard deadline and its one fallback — plus a little slack. The
+ *  ceiling is derived from those deadlines rather than set beside them, so a
+ *  restored "running" can never outlast the call it stands for, and raising a
+ *  deadline can never make a live flight look hung. */
+export const IN_FLIGHT_MAX_AGE_MS = STUDY_MAX_RUN_MS + IN_FLIGHT_SLACK_MS;
 
 interface Flight {
   stage: StudyStage;

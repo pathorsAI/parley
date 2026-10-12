@@ -6,12 +6,14 @@
 //! config dir, via read_dictionary/write_dictionary) — one registry for every
 //! window, and the same file the local MCP server reads and writes. Structured
 //! after history/folders.ts: disk is truth, an in-memory cache keeps reads
-//! synchronous, and a `dictionary://updated` broadcast re-hydrates the other
-//! windows. Because the MCP server edits the file behind our back, every window
-//! also re-reads on focus (the same trick templatesSync.ts uses).
+//! synchronous, and a `dictionary://updated` broadcast (from any window, and
+//! from the MCP server after its own writes) re-hydrates every OTHER window.
+//! Each window also re-reads on focus, as a backstop for a writer that never
+//! announces itself (a hand-edited file).
 //!
 //! Two things consume the entries:
-//!   - `vocabularyTerms()` biases the STT itself (the `vocabulary` argument on
+//!   - `recognitionTerms()` (the profile name and company, then
+//!     `vocabularyTerms()`) biases the STT itself (the `vocabulary` argument on
 //!     start_voice_typing / start_meeting / transcribe_file), so the right
 //!     spelling comes back in the first place;
 //!   - `applyReplacements()` rewrites the variants that came back anyway, right
@@ -25,10 +27,26 @@ import { invoke } from "@tauri-apps/api/core";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { isTauri } from "../tauriEvents";
 import { log } from "../log";
+import type { Settings } from "../types";
 
-/** Broadcast whenever this window (or the MCP server, via the focus re-read)
- *  changed the dictionary. Payload-free: listeners re-read from disk. */
+/** Broadcast whenever the dictionary file changed: by a window's own write, by
+ *  a window that found a change on focus, or by the MCP server (Rust, see
+ *  mcp.rs). The payload only says who sent it ({@link UpdatedPayload});
+ *  listeners re-read from disk. */
 export const DICTIONARY_UPDATED_EVENT = "dictionary://updated";
+
+/** Who announced a change: a window's {@link ORIGIN}, or "mcp" from Rust. Older
+ *  senders put `{}` on the wire, which simply reads as "someone else". */
+type UpdatedPayload = { origin?: string };
+
+/** This window's sender id. A window must not re-read on its OWN broadcast: the
+ *  cache already holds that state (it was set before the write was queued), and
+ *  the read could only race the write chain. */
+const ORIGIN = crypto.randomUUID();
+
+function isOwn(p: UpdatedPayload | null | undefined): boolean {
+  return p?.origin === ORIGIN;
+}
 
 /** How many phrases are handed to the STT as recognition bias. Providers cap
  *  the vocabulary list; past a couple hundred terms the hint stops helping and
@@ -85,6 +103,9 @@ let hydrated = false;
 let ready: Promise<void> | null = null;
 /** Serializes writes so a slow one can't land after a newer snapshot. */
 let writeChain: Promise<void> = Promise.resolve();
+/** Bumped by every {@link persist}. A read that was in flight while this moved
+ *  saw the file from BEFORE that change, and must not replace the cache. */
+let localEdits = 0;
 
 /** Parse the file tolerantly: anything missing or malformed degrades to empty
  *  rather than throwing away the parts that ARE readable. Returns null only
@@ -141,10 +162,11 @@ function persist(next: DictionaryFile): void {
     return;
   }
   cache = next;
+  localEdits += 1;
   if (!isTauri()) return;
   writeChain = writeChain
     .then(() => invoke("write_dictionary", { contents: JSON.stringify(next, null, 2) }))
-    .then(() => emit(DICTIONARY_UPDATED_EVENT, {}))
+    .then(() => emit(DICTIONARY_UPDATED_EVENT, { origin: ORIGIN } satisfies UpdatedPayload))
     .then(() => {})
     .catch((error) => log.error("dictionary: write failed", { error: String(error) }));
 }
@@ -153,8 +175,25 @@ function persist(next: DictionaryFile): void {
  *  contents actually changed (used to decide whether to tell other windows). */
 async function refreshFromDisk(): Promise<boolean> {
   if (!isTauri()) return false;
+  const editsBefore = localEdits;
   try {
     const raw = await invoke<string>("read_dictionary");
+    // This window changed the dictionary while the read was in flight, so the
+    // file we got predates the cache. Its write is queued and will land as the
+    // newer state; applying this read would roll the cache back to a file
+    // without that change, and the next edit would write the rollback to disk.
+    if (localEdits !== editsBefore) return false;
+    // write_config_file (commands.rs) and the MCP server both write with a
+    // plain, non-atomic `std::fs::write`: truncate, then write. A read that
+    // lands in between sees an empty file — and the Rust side maps a read
+    // error to "" as well. Once this window holds a real dictionary, an empty
+    // read is far more likely to be that than a user who emptied the file by
+    // hand; taking it would paste without replacements, and the next local
+    // edit would write the near-empty result over the real file.
+    if (!raw.trim() && hydrated && cache && (cache.entries.length || cache.ignored.length)) {
+      log.warn("dictionary: empty read ignored (a write was mid-flight)");
+      return false;
+    }
     // A missing file comes back as "" — that's an empty dictionary, and it
     // counts as a successful read (first run has to be writable).
     hydrated = true;
@@ -170,26 +209,59 @@ async function refreshFromDisk(): Promise<boolean> {
 }
 
 /**
- * Hydrate the dictionary for this window and keep it honest afterwards. Call
+ * Re-read once this window's own queued writes have landed. A foreign event can
+ * arrive between a local `persist` (cache already updated, write still queued)
+ * and that write reaching disk; reading right then would hand back a file
+ * without our change and roll the cache back to it — and since the write's own
+ * broadcast is then ignored as ours, the rollback would stick.
+ */
+function refreshAfterWrites(): Promise<boolean> {
+  return writeChain.then(refreshFromDisk);
+}
+
+/** Re-read the file now and, when it changed behind our back (a hand edit, or
+ *  an MCP write whose broadcast was missed), tell the other windows too. */
+export async function refreshDictionary(): Promise<void> {
+  if (await refreshAfterWrites()) {
+    await emit(DICTIONARY_UPDATED_EVENT, { origin: ORIGIN } satisfies UpdatedPayload);
+  }
+}
+
+/**
+ * Hydrate the dictionary for this window and keep it current afterwards. Call
  * once at boot from main.tsx — EVERY window needs it: the main window rewrites
  * dictated text before pasting, the overlay rewrites what it displays, Settings
  * edits the list.
  *
- * The focus re-read is what makes an MCP-side edit show up: that server writes
- * the same file while the app sits in the background, and a stale in-memory
- * cache would silently overwrite it on the next local edit.
+ * Every window follows every other writer through `dictionary://updated`. It
+ * used to re-read on window `focus` alone, which looked sufficient and was not:
+ * the window that rewrites dictated text is the voice-typing overlay, and the
+ * overlay is non-activating on purpose (a borderless NSPanel on macOS, which can
+ * never become key; WS_EX_NOACTIVATE on Windows) so it never steals the caret
+ * from the app being dictated into. It therefore never received `focus`, and
+ * kept rewriting with the file it read at launch — an entry added in Settings,
+ * accepted from a correction bubble, or written over MCP did nothing until the
+ * app restarted. Nothing outside the Settings dictionary page listened for the
+ * broadcast. The main window had the same gap for its STT bias whenever it was
+ * not refocused (tray-only on Windows, or dictating straight into another app).
+ *
+ * The listener goes up BEFORE the first read, so a change that lands while that
+ * read is in flight still gets a re-read of its own.
  */
 export async function initDictionary(): Promise<void> {
   if (!isTauri()) {
     hydrated = true; // browser dev: an in-memory dictionary is all there is
     return;
   }
+  listen<UpdatedPayload>(DICTIONARY_UPDATED_EVENT, (e) => {
+    if (!isOwn(e.payload)) void refreshAfterWrites();
+  }).catch((error) => log.warn("dictionary: update listener failed", { error: String(error) }));
   ready = refreshFromDisk().then(() => {});
   await ready;
   window.addEventListener("focus", () => {
-    refreshFromDisk()
-      .then((changed) => (changed ? emit(DICTIONARY_UPDATED_EVENT, {}) : undefined))
-      .catch((error) => log.warn("dictionary: focus refresh failed", { error: String(error) }));
+    refreshDictionary().catch((error) =>
+      log.warn("dictionary: focus refresh failed", { error: String(error) }),
+    );
   });
 }
 
@@ -219,13 +291,14 @@ export function whenDictionaryReady(): Promise<void> {
   return ready ?? Promise.resolve();
 }
 
-/** Listen for dictionary changes from this or another window. The cache is
- *  refreshed from disk BEFORE the callback runs, so a listener's
- *  `listEntries()` already sees the new file. */
+/** Listen for dictionary changes from this or another window (or MCP). The
+ *  cache is refreshed from disk BEFORE the callback runs, so a listener's
+ *  `listEntries()` already sees the new file. On this window's own broadcast
+ *  the cache is already current, so the callback runs without a re-read. */
 export async function listenForDictionaryUpdated(cb: () => void): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
-  return listen(DICTIONARY_UPDATED_EVENT, () => {
-    refreshFromDisk()
+  return listen<UpdatedPayload>(DICTIONARY_UPDATED_EVENT, (e) => {
+    (isOwn(e.payload) ? Promise.resolve(false) : refreshAfterWrites())
       .catch(() => false)
       .finally(cb);
   });
@@ -371,6 +444,65 @@ export function vocabularyTerms(): string[] {
   return out;
 }
 
+/** One profile field may hold several spellings — the Settings placeholder
+ *  itself reads "王小明 / Ming". Slash (half or full width), comma, 、, ; and |
+ *  separate them; whitespace does NOT ("Jane Doe" is one name, and the STT
+ *  takes multi-word terms). */
+const PROFILE_TERM_SPLIT = /\s*[/／,，、;；|]\s*/;
+/** Longer than this is prose, not a name. */
+const PROFILE_TERM_MAX_CHARS = 40;
+
+/**
+ * The user's own proper nouns from Settings › Basic — their name and their
+ * company — split into the separate spellings a field may hold, trimmed and
+ * deduped, name first.
+ *
+ * These are the words a dictation is most likely to contain and the STT is
+ * least likely to know, yet voice typing used to ignore them entirely: only
+ * the meeting prompts read the profile. Role and background are left out on
+ * purpose — a job title is ordinary vocabulary the STT already spells right,
+ * and free-text background is not a term at all.
+ */
+export function profileTerms(s: Pick<Settings, "userName" | "userCompany">): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const field of [s.userName, s.userCompany]) {
+    for (const part of (field || "").split(PROFILE_TERM_SPLIT)) {
+      const term = part.trim();
+      if (!term || [...term].length > PROFILE_TERM_MAX_CHARS || seen.has(term)) continue;
+      seen.add(term);
+      out.push(term);
+    }
+  }
+  return out;
+}
+
+/**
+ * The recognition bias for one STT session: the profile terms FIRST, then the
+ * dictionary (newest first), deduped and capped at {@link VOCABULARY_LIMIT}.
+ * Profile terms lead because they must never age out of the cap — a large
+ * dictionary costs its oldest phrase a slot instead.
+ *
+ * Also the anchors the correction loop widens a CJK edit to (see
+ * `detectCorrection`), since these are exactly the whole terms a one-character
+ * fix belongs to.
+ */
+export function recognitionTerms(
+  s: Pick<Settings, "userName" | "userCompany">,
+  dictionary: readonly string[] = vocabularyTerms(),
+): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of [...profileTerms(s), ...dictionary]) {
+    const term = raw.trim();
+    if (!term || seen.has(term)) continue;
+    seen.add(term);
+    out.push(term);
+    if (out.length >= VOCABULARY_LIMIT) break;
+  }
+  return out;
+}
+
 const ASCII_ONLY = /^[\x00-\x7F]+$/;
 const WORD_EDGE_START = /^\w/;
 const WORD_EDGE_END = /\w$/;
@@ -404,6 +536,21 @@ function asciiVariantRe(variant: string): RegExp {
   return new RegExp(`${before}${escapeRegExp(variant)}${after}`, "gi");
 }
 
+/** Whether `phrase` properly contains `variant` — the pair would grow text that
+ *  is already right (派斯 → 派斯科技 turns 派斯科技 into 派斯科技科技). Compared
+ *  the way the variant matches: case-insensitively for an ASCII variant. A
+ *  case-only pair (parley → Parley) is the same length, so it is not growth. */
+function phraseContainsVariant(phrase: string, variant: string, ascii: boolean): boolean {
+  if (phrase.length <= variant.length) return false;
+  return ascii ? phrase.toLowerCase().includes(variant.toLowerCase()) : phrase.includes(variant);
+}
+
+/** Where `phrase` already stands in `text`, as [start, end) UTF-16 ranges. */
+function phraseRanges(text: string, phrase: string, ascii: boolean): [number, number][] {
+  const re = new RegExp(escapeRegExp(phrase), ascii ? "gi" : "g");
+  return [...text.matchAll(re)].map((m) => [m.index, m.index + m[0].length]);
+}
+
 /**
  * Rewrite every known variant into its phrase.
  *
@@ -415,6 +562,14 @@ function asciiVariantRe(variant: string): RegExp {
  * Longer variants go first: with both "Parley" and "Parley Cloud" on file, the
  * longer phrase must win instead of being half-rewritten by the shorter one.
  *
+ * A phrase that properly contains its own variant (派斯 → 派斯科技, parley →
+ * Parley Cloud) only rewrites the variant where it is NOT already part of the
+ * phrase, so text the STT got right stays right and a second pass over the
+ * same text changes nothing. iOS refuses such pairs outright (`Lexicon.loops`
+ * in LexiconStore.swift); masking keeps the pair the user configured working
+ * instead of silently dropping it, and the pass idempotent — the host runs it
+ * again over the polished text.
+ *
  * `entries` defaults to the live dictionary; pass an explicit list to rewrite
  * against a specific set (and to test this without touching disk).
  */
@@ -425,12 +580,18 @@ export function applyReplacements(
   if (!text) return text;
   let out = text;
   for (const { variant, phrase } of replacementPairs(entries)) {
-    if (ASCII_ONLY.test(variant)) {
-      // A function replacer, so a `$` in the phrase stays literal.
-      out = out.replace(asciiVariantRe(variant), () => phrase);
-    } else {
-      out = out.split(variant).join(phrase);
-    }
+    const ascii = ASCII_ONLY.test(variant);
+    const re = ascii ? asciiVariantRe(variant) : new RegExp(escapeRegExp(variant), "g");
+    // Matched against the whole string rather than the gaps between the
+    // phrase's occurrences, so an ASCII variant's word-boundary lookarounds
+    // still see the real neighbouring characters.
+    const guard = phraseContainsVariant(phrase, variant, ascii)
+      ? phraseRanges(out, phrase, ascii)
+      : [];
+    // A function replacer, so a `$` in the phrase stays literal.
+    out = out.replace(re, (match: string, offset: number) =>
+      guard.some(([s, e]) => offset < e && offset + match.length > s) ? match : phrase,
+    );
   }
   return out;
 }

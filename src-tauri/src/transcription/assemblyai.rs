@@ -136,7 +136,7 @@ pub async fn run_session(
         config.leg
     );
     // The URL carries the whole config: the upgrade is the handshake.
-    note_connected(&app, source, config.leg);
+    note_connected(&app, source, config.leg, false);
 
     let meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT).enabled(config.level_events);
     // Raw pcm_s16le on the wire; `Terminate` is v3's goodbye frame.

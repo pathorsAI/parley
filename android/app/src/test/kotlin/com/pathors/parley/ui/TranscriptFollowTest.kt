@@ -95,8 +95,8 @@ class TranscriptFollowTest {
     // ── the page it opens on ─────────────────────────────────────────────────
 
     @Test
-    fun `a recording with analysis opens on its summary, one without on its transcript`() {
-        assertEquals(DetailFace.SUMMARY, initialFace(hasAnalysis = true))
+    fun `a recording with analysis opens on its report, one without on its transcript`() {
+        assertEquals(DetailFace.REPORT, initialFace(hasAnalysis = true))
         assertEquals(DetailFace.TRANSCRIPT, initialFace(hasAnalysis = false))
     }
 

@@ -136,18 +136,7 @@ pub async fn save_remote_history_entry(
 ) -> Result<String, String> {
     // Fetch the audio first — bail (writing nothing) if it fails.
     let audio_bytes = match (audio_url, token) {
-        (Some(url), Some(token)) => {
-            let res = reqwest::Client::new()
-                .get(&url)
-                .bearer_auth(&token)
-                .send()
-                .await
-                .map_err(|e| e.to_string())?;
-            if !res.status().is_success() {
-                return Err(format!("audio download failed: {}", res.status()));
-            }
-            Some(res.bytes().await.map_err(|e| e.to_string())?)
-        }
+        (Some(url), Some(token)) => Some(fetch_cloud_audio(&url, &token).await?),
         _ => None,
     };
     let dir = history_dir(&app)?.join(safe_id(&id));
@@ -159,6 +148,77 @@ pub async fn save_remote_history_entry(
     std::fs::write(dir.join("meta.json"), meta_json).map_err(|e| e.to_string())?;
     log::info!("history: saved remote entry {}", dir.to_string_lossy());
     Ok(dir.to_string_lossy().into_owned())
+}
+
+/// The longest a cloud audio download may take end to end. Generous — an hour of
+/// Opus is ~10 MB — but finite: without it a stalled connection left the
+/// download (and the "downloading…" state the user sees) waiting forever.
+const AUDIO_DOWNLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+/// Giving up on a server that never accepts the connection takes far less.
+const AUDIO_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Fetch a cloud recording (bearer auth) and check that what came back is audio
+/// before anyone writes it as `audio.ogg`.
+async fn fetch_cloud_audio(url: &str, token: &str) -> Result<Vec<u8>, String> {
+    let client = reqwest::Client::builder()
+        .connect_timeout(AUDIO_CONNECT_TIMEOUT)
+        .timeout(AUDIO_DOWNLOAD_TIMEOUT)
+        .build()
+        .map_err(|e| e.to_string())?;
+    let res = client
+        .get(url)
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !res.status().is_success() {
+        return Err(format!("audio download failed: {}", res.status()));
+    }
+    let content_type = res
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let bytes = Vec::from(res.bytes().await.map_err(|e| e.to_string())?);
+    if !looks_like_audio(&bytes, content_type.as_deref()) {
+        log::warn!(
+            "history: audio download returned {} bytes that are not audio (content-type {:?})",
+            bytes.len(),
+            content_type
+        );
+        return Err("audio download returned an error page instead of the recording".into());
+    }
+    Ok(bytes)
+}
+
+/// Whether a downloaded body can be a recording rather than, say, an HTML error
+/// page or a JSON error served with a 200. Recordings are Ogg from every
+/// platform — except a desktop upload whose compression failed, which is kept
+/// (and synced) as a raw copy of the source under the same `audio.ogg` name, and
+/// that can be any container the importer accepts (WMA/ASF, AIFF, CAF, …).
+/// Listing audio magics would refuse whichever one was missed and leave that
+/// entry unsyncable everywhere else, so this rejects what an error looks like
+/// instead: an empty body, a text/JSON content type, or a body that opens (after
+/// an optional BOM and whitespace) like markup or JSON. No audio container
+/// starts with `<`, `{` or `[`.
+fn looks_like_audio(bytes: &[u8], content_type: Option<&str>) -> bool {
+    if bytes.is_empty() {
+        return false;
+    }
+    if let Some(ct) = content_type {
+        let mime = ct
+            .split(';')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase();
+        if mime.starts_with("text/") || mime == "application/json" || mime.ends_with("+json") {
+            return false;
+        }
+    }
+    let body = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
+    let first = body.iter().find(|b| !b.is_ascii_whitespace());
+    !matches!(first, Some(b'<' | b'{' | b'['))
 }
 
 /// Write the bundled onboarding sample's `audio.ogg` from bytes the webview
@@ -211,16 +271,7 @@ pub async fn download_remote_audio(
     url: String,
     token: String,
 ) -> Result<String, String> {
-    let res = reqwest::Client::new()
-        .get(&url)
-        .bearer_auth(&token)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !res.status().is_success() {
-        return Err(format!("audio download failed: {}", res.status()));
-    }
-    let bytes = res.bytes().await.map_err(|e| e.to_string())?;
+    let bytes = fetch_cloud_audio(&url, &token).await?;
     let dir = app
         .path()
         .app_cache_dir()
@@ -379,8 +430,45 @@ pub fn read_transcript_file(path: String) -> Result<TranscriptFile, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::apply_rename;
+    use super::{apply_rename, looks_like_audio};
     use serde_json::json;
+
+    #[test]
+    fn only_audio_bodies_are_kept_as_recordings() {
+        let audio: &[&[u8]] = &[
+            b"OggS\0\x02rest-of-page",
+            b"RIFF\x24\0\0\0WAVEfmt ",
+            b"\0\0\0\x20ftypM4A ",
+            b"ID3\x04\0",
+            // WMA (ASF header GUID) — an allowed upload kept as a raw copy.
+            &[0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11, 0xA6, 0xD9],
+            b"FORM\0\0\x10\0AIFFCOMM", // AIFF
+            b"caff\0\x01\0\0desc",     // Core Audio Format
+        ];
+        for body in audio {
+            assert!(looks_like_audio(body, None), "{body:?}");
+            assert!(
+                looks_like_audio(body, Some("application/octet-stream")),
+                "{body:?}"
+            );
+            assert!(looks_like_audio(body, Some("audio/ogg")), "{body:?}");
+        }
+        // What a misrouted or failing download actually returns.
+        assert!(!looks_like_audio(b"<!DOCTYPE html><html>", None));
+        assert!(!looks_like_audio(b"{\"error\":\"not found\"}", None));
+        assert!(!looks_like_audio(b"[{\"error\":1}]", None));
+        assert!(!looks_like_audio(b"\xEF\xBB\xBF\r\n  <html>", None));
+        assert!(!looks_like_audio(b"\n\t{\"message\":\"denied\"}", None));
+        assert!(!looks_like_audio(b"", None));
+        // Said outright by the server, whatever the body starts with.
+        assert!(!looks_like_audio(
+            b"Not Found",
+            Some("text/plain; charset=utf-8")
+        ));
+        assert!(!looks_like_audio(b"OggS", Some("text/html")));
+        assert!(!looks_like_audio(b"OggS", Some("Application/JSON")));
+        assert!(!looks_like_audio(b"OggS", Some("application/problem+json")));
+    }
 
     #[test]
     fn rename_sets_title() {

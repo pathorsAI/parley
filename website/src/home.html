@@ -61,6 +61,7 @@
       <a href="#open">{{nav.open}}</a>
       <a href="#meetings">{{nav.meetings}}</a>
       <a href="#ai">{{nav.ai}}</a>
+      <a href="{{@base}}guides/open-source-meeting-recorder/">{{nav.guides}}</a>
     </nav>
     <a class="nav__lang" href="{{@altHref}}" hreflang="{{@altHtmlLang}}" lang="{{@altHtmlLang}}" title="{{nav.langTitle|attr}}">{{nav.lang}}</a>
     <a class="b1 b1--sm" href="#download">{{nav.download}}</a>
@@ -405,6 +406,12 @@ claude mcp add --transport http parley \
         <a href="https://github.com/pathorsAI/parley/releases">{{footer.releases}}</a>
         <a href="https://github.com/pathorsAI/parley/blob/main/CONTRIBUTING.md">{{footer.contributing}}</a>
         <a href="https://github.com/pathorsAI/parley/blob/main/LICENSE">{{footer.license}}</a>
+      </nav>
+      <nav class="foot__col" aria-label="{{footer.guides|attr}}">
+        <h2>{{footer.guides}}</h2>
+        <a href="{{@base}}guides/open-source-meeting-recorder/">{{footer.guideOpen}}</a>
+        <a href="{{@base}}guides/local-first-meeting-transcription/">{{footer.guideLocal}}</a>
+        <a href="{{@base}}guides/meeting-notes-with-mcp/">{{footer.guideMcp}}</a>
       </nav>
       <nav class="foot__col" aria-label="{{footer.legal|attr}}">
         <h2>{{footer.legal}}</h2>

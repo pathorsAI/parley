@@ -466,7 +466,7 @@ h3 { font-size: 18px; font-weight: 600; line-height: 1.4; }
 
 /* ---------- Footer ---------- */
 .foot { border-top: 1px solid var(--hairline); padding: 56px 0 44px; font-size: 14.5px; }
-.foot__top { display: grid; grid-template-columns: 1.4fr repeat(3, 1fr); gap: 32px; }
+.foot__top { display: grid; grid-template-columns: 1.25fr repeat(4, 1fr); gap: 28px; }
 .foot__col { display: flex; flex-direction: column; gap: 8px; }
 .foot__col h2 { font-size: 13px; font-weight: 600; color: var(--secondary); margin: 0 0 4px; letter-spacing: 0; line-height: 1.4; }
 .foot__col a { color: var(--ink); }
