@@ -35,7 +35,7 @@ enum class BatchTranscriptionFailure {
     /** 413 — the file is past what hosted transcription will take. */
     TOO_LARGE,
 
-    /** 502 — the cloud is up but the transcription vendor behind it is not. */
+    /** 502 — the cloud is up but its transcription backend is not. */
     UPSTREAM_UNREACHABLE,
 
     /** The request never reached the server at all. */

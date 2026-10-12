@@ -12,6 +12,18 @@ enum CloudChat {
     /// The cloud's OpenAI-compatible chat endpoint.
     static let path = "v1/chat/completions"
 
+    /// The header the cloud attributes a call's credit usage by.
+    static let featureHeader = "X-Parley-Feature"
+
+    /// Which product feature a call bills to; the raw value is the header
+    /// value. The desktop's `LlmFeature`.
+    enum Feature: String {
+        case voiceTyping = "voice_typing"
+        case ask
+        case meeting
+        case report
+    }
+
     struct Request: Encodable {
         struct Message: Encodable {
             let role: String

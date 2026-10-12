@@ -114,6 +114,7 @@ export async function analyzeDelivery(opts: {
   const { object, usage } = await generateObjectResilient({
     settings,
     workload: "realtime",
+    feature: "meeting",
     schema,
     system: SYSTEM(mode === "live") + outputLanguageInstruction(settings),
     prompt: `${ctx}${label}:\n${transcript}`,

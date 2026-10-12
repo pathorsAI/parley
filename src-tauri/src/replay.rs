@@ -2,14 +2,14 @@
 //!
 //! Unlike the realtime adapters in `transcription/`, this hits each provider's
 //! pre-recorded/batch API and returns ready-to-render, diarized-where-supported
-//! segments. `transcribe_file` dispatches by provider: Soniox (upload → job →
-//! poll → diarized tokens) is the reference; Deepgram / AssemblyAI / OpenAI /
-//! Gemini adapters live alongside it, and Gemini is still GATED OFF in the STT
-//! registry (`supportsFileUpload: false`) until it's smoke-tested against its
-//! live API. Hosted "parley" is the odd one out: it posts to Parley Cloud, which
-//! proxies Soniox with the master key server-side, so no vendor name, model or
-//! key ever crosses this boundary — it authenticates with the cloud session
-//! token exactly like the realtime relay does. The wrapper (compression,
+//! segments. `transcribe_file` dispatches by provider. The BYOK adapters —
+//! Soniox (upload → job → poll → diarized tokens), Deepgram, AssemblyAI, OpenAI
+//! and Gemini — talk to their vendor with the user's own key; Gemini is still
+//! GATED OFF in the STT registry (`supportsFileUpload: false`) until it's
+//! smoke-tested against its live API. Hosted "parley" posts to Parley Cloud's
+//! batch routes and reads back Parley's own token shape
+//! (`docs/design/stt-protocol.md`); it authenticates with the cloud session
+//! token exactly like the live hosted stream does. The wrapper (compression,
 //! acoustic speech-rate, per-provider caching) is provider-independent.
 
 use std::time::Duration;
@@ -17,7 +17,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-use crate::transcription::common::{clean_vocabulary, ensure_crypto_provider};
+use crate::transcription::common::{clean_vocabulary, ensure_crypto_provider, urlencode};
 use crate::transcription::soniox::{context_for, SonioxContext};
 
 const SONIOX_BASE: &str = "https://api.soniox.com/v1";
@@ -43,7 +43,7 @@ struct ReplaySegment {
 }
 
 /// Cache payload persisted per uploaded file (keyed by name+size). Holds the
-/// successful transcription so an identical re-upload skips Soniox (and billing).
+/// successful transcription so an identical re-upload skips the provider (and billing).
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CachedTranscription {
@@ -56,7 +56,7 @@ struct CachedTranscription {
 }
 
 /// Result of `transcribe_file` — segments plus the overall duration. `cached` is
-/// true when this came from the on-disk cache (no Soniox call, so the frontend
+/// true when this came from the on-disk cache (no provider call, so the frontend
 /// must NOT record STT usage for it).
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -142,8 +142,8 @@ struct TranscriptResponse {
 /// `language_hints` may be empty (providers auto-detect). `diarization` toggles
 /// speaker separation. The `api_key` is supplied by the frontend and never leaves
 /// the Rust side beyond the provider request — for hosted "parley" it is the
-/// cloud session token, and `batch_url` is the cloud endpoint that stands in for
-/// a vendor (see the match below).
+/// cloud session token, and `batch_url` is the cloud batch endpoint (see the
+/// match below).
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn transcribe_file(
@@ -251,7 +251,7 @@ pub async fn transcribe_file(
     // `TranscriptionResult` shape (segments + duration); the acoustic speech-rate
     // is grafted on afterward since it's provider-independent. The BYOK arms talk
     // to their vendor with the user's own key; the hosted "parley" arm talks only
-    // to Parley Cloud, which holds the vendor key — hence no model is forwarded
+    // to Parley Cloud, which picks the model itself — hence no model is forwarded
     // there and the endpoint has to be handed in from the frontend.
     let result = match provider.as_str() {
         "soniox" => run_upload_and_transcribe(
@@ -309,11 +309,6 @@ pub async fn transcribe_file(
             )
             .await
         }
-        // Hosted mode takes no vocabulary: Parley Cloud's batch endpoint accepts
-        // only `diarization` + `language_hints` as query params, with no field
-        // for custom vocabulary, so there is nothing to map onto. Biasing here
-        // needs a cloud-side change first — inventing a param would just be
-        // ignored (or rejected).
         "parley" => match batch_url.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
             Some(base) => {
                 parley_batch(
@@ -321,8 +316,11 @@ pub async fn transcribe_file(
                     &api_key,
                     base,
                     &upload_path,
-                    &language_hints,
-                    diarization,
+                    &BatchOptions {
+                        languages: &language_hints,
+                        diarization,
+                        vocabulary: &vocabulary,
+                    },
                 )
                 .await
             }
@@ -377,7 +375,11 @@ fn cache_file_path(app: &AppHandle, path: &str, provider: &str) -> Option<std::p
             }
         })
         .collect();
-    let dir = app.path().app_cache_dir().ok()?.join(crate::cache::TRANSCRIPTIONS_DIR);
+    let dir = app
+        .path()
+        .app_cache_dir()
+        .ok()?
+        .join(crate::cache::TRANSCRIPTIONS_DIR);
     // Soniox keeps its original (provider-less) filename so existing caches stay
     // valid; new providers get a suffixed key.
     let file = if provider == "soniox" {
@@ -675,6 +677,31 @@ async fn loop_poll(
 /// current run and starts a new one; whitespace is preserved as Soniox supplies
 /// it. Empty / whitespace-only runs are dropped.
 fn group_tokens(tokens: &[Token]) -> Vec<ReplaySegment> {
+    group_runs(
+        tokens
+            .iter()
+            // Skip control / endpoint markers that some models emit.
+            .filter(|tok| tok.text != "<end>" && tok.text != "<fin>")
+            .map(|tok| RunToken {
+                text: &tok.text,
+                speaker: tok.speaker.as_ref().map(SpeakerId::to_i64),
+                start_ms: tok.start_ms,
+                end_ms: tok.end_ms,
+            }),
+    )
+}
+
+/// One token as the run grouper takes it — the common shape every token-based
+/// batch response is mapped onto before grouping.
+struct RunToken<'a> {
+    text: &'a str,
+    speaker: Option<i64>,
+    start_ms: u64,
+    end_ms: u64,
+}
+
+/// Group tokens into speaker-runs (see [`group_tokens`]).
+fn group_runs<'a>(tokens: impl IntoIterator<Item = RunToken<'a>>) -> Vec<ReplaySegment> {
     let mut segments: Vec<ReplaySegment> = Vec::new();
     let mut seg_index: u64 = 0;
 
@@ -684,15 +711,11 @@ fn group_tokens(tokens: &[Token]) -> Vec<ReplaySegment> {
     let mut cur_end: u64 = 0;
 
     for tok in tokens {
-        // Skip control / endpoint markers that some models emit.
-        if tok.text == "<end>" || tok.text == "<fin>" {
-            continue;
-        }
         // Tokens without a speaker (e.g. some punctuation/spacing tokens) should
         // stay in the CURRENT speaker's run — snapping them to speaker 0 would
         // close the run and fragment the transcript into spurious extra speakers.
-        let spk = match tok.speaker.as_ref() {
-            Some(s) => s.to_i64(),
+        let spk = match tok.speaker {
+            Some(s) => s,
             None if cur_speaker >= 0 => cur_speaker,
             None => 0,
         };
@@ -715,7 +738,7 @@ fn group_tokens(tokens: &[Token]) -> Vec<ReplaySegment> {
             cur_text.clear();
             cur_start = tok.start_ms;
         }
-        cur_text.push_str(&tok.text);
+        cur_text.push_str(tok.text);
         cur_end = tok.end_ms;
     }
 
@@ -1316,6 +1339,16 @@ async fn gemini_batch(
 }
 
 // --- Parley Cloud (hosted batch) ----------------------------------------------
+// Parley's own batch contract (`docs/design/stt-protocol.md`): neutral option
+// names on upload, and `?format=parley` on the transcript route for Parley's
+// token shape. Deliberately its own types — nothing here is shared with a BYOK
+// vendor's wire format.
+
+/// Job created by the upload route.
+#[derive(Deserialize)]
+struct CloudJobCreated {
+    id: String,
+}
 
 /// Job status from the cloud. camelCase on the wire (the cloud is TypeScript);
 /// `durationMs` is null until the job completes, `errorMessage` only ever set on
@@ -1330,41 +1363,92 @@ struct CloudJobStatus {
     duration_ms: Option<u64>,
 }
 
+/// One token of a hosted transcript (`?format=parley`): the streaming token
+/// shape minus `final`. `speaker` (≥1) is present only with diarization.
+#[derive(Deserialize, Default)]
+struct CloudToken {
+    #[serde(default)]
+    text: String,
+    #[serde(default)]
+    start_ms: u64,
+    #[serde(default)]
+    end_ms: u64,
+    #[serde(default)]
+    speaker: Option<i64>,
+}
+
+#[derive(Deserialize, Default)]
+struct CloudTranscript {
+    #[serde(default)]
+    tokens: Vec<CloudToken>,
+}
+
+/// Parse a `?format=parley` transcript body into segments. Pure, for tests.
+fn parse_cloud_transcript(body: &str) -> Result<Vec<ReplaySegment>, String> {
+    let transcript: CloudTranscript =
+        serde_json::from_str(body).map_err(|e| format!("Unreadable hosted transcript: {e}"))?;
+    Ok(group_runs(transcript.tokens.iter().map(|tok| RunToken {
+        text: &tok.text,
+        speaker: tok.speaker,
+        start_ms: tok.start_ms,
+        end_ms: tok.end_ms,
+    })))
+}
+
+/// Recognition options for a hosted upload.
+struct BatchOptions<'a> {
+    languages: &'a [String],
+    diarization: bool,
+    vocabulary: &'a [String],
+}
+
+/// The upload URL: the options ride as query params under their neutral
+/// names (see the protocol doc's batch clarifications) — `languages`
+/// comma-separated, one `terms` param per dictionary term, each value
+/// percent-encoded and each omitted when empty so the cloud auto-detects /
+/// applies no biasing. The server splits `terms` on commas too, so a comma
+/// inside a term becomes a space rather than splitting it in two.
+fn cloud_upload_url(base: &str, opts: &BatchOptions) -> String {
+    let mut url = format!(
+        "{base}?diarization={}",
+        if opts.diarization { "1" } else { "0" }
+    );
+    if !opts.languages.is_empty() {
+        let languages: Vec<String> = opts.languages.iter().map(|l| urlencode(l)).collect();
+        url.push_str(&format!("&languages={}", languages.join(",")));
+    }
+    for term in clean_vocabulary(opts.vocabulary) {
+        url.push_str(&format!("&terms={}", urlencode(&term.replace(',', " "))));
+    }
+    url
+}
+
 /// Hosted batch transcription through Parley Cloud.
 ///
-/// Shorter than the Soniox adapter on purpose: the cloud owns the vendor account,
-/// so uploading the file and creating the job collapse into a single POST, and
-/// no model name is ever sent (picking it is the cloud's business, not ours).
-/// `token` is the cloud session bearer; `base` is `${CLOUD_URL}/stt/batch`.
-/// The transcript comes back in the same token shape the Soniox arm parses —
-/// deliberately, so `Token` / `TranscriptResponse` / `group_tokens` are reused
-/// verbatim and diarized output can't drift between hosted and BYOK modes.
+/// The cloud owns recognition, so uploading the file and creating the job
+/// collapse into a single POST, and no model name is ever sent (picking it is
+/// the cloud's business, not ours). `token` is the cloud session bearer;
+/// `base` is `${CLOUD_URL}/stt/batch`.
 async fn parley_batch(
     client: &reqwest::Client,
     token: &str,
     base: &str,
     upload_path: &str,
-    language_hints: &[String],
-    diarization: bool,
+    opts: &BatchOptions<'_>,
 ) -> Result<TranscriptionResult, String> {
     let bytes = tokio::fs::read(upload_path)
         .await
         .map_err(|e| format!("Failed to read file: {e}"))?;
 
     // 1. Upload the raw (already compressed) bytes; the response is the job id.
-    // The hints param is omitted entirely when empty so the cloud auto-detects,
-    // rather than being handed an empty list to interpret.
-    let mut url = format!("{base}?diarization={}", if diarization { "1" } else { "0" });
-    if !language_hints.is_empty() {
-        url.push_str(&format!("&language_hints={}", language_hints.join(",")));
-    }
     log::info!(
-        "replay: uploading to parley cloud bytes={} diarization={}",
+        "replay: uploading to parley cloud bytes={} diarization={} terms={}",
         bytes.len(),
-        diarization
+        opts.diarization,
+        opts.vocabulary.len()
     );
     let create_resp = client
-        .post(url)
+        .post(cloud_upload_url(base, opts))
         .bearer_auth(token)
         .header("Content-Type", "application/octet-stream")
         .body(bytes)
@@ -1377,13 +1461,13 @@ async fn parley_batch(
         log::error!("replay: parley batch create failed status={}", status);
         return Err(parley_batch_error(status, &body));
     }
-    let created: IdResponse = read_json(create_resp, "parley batch create").await?;
+    let created: CloudJobCreated = read_json(create_resp, "parley batch create").await?;
     let job_id = created.id;
     log::info!("replay: parley cloud job created jobId={}", job_id);
 
     // 2. Poll until the job settles. Same cadence and cap as the BYOK adapters —
-    // the cloud normalizes upstream states into the four below, so a status we
-    // don't recognize is treated as "still working" rather than a hard failure.
+    // the cloud normalizes job states into the four below, so a status we don't
+    // recognize is treated as "still working" rather than a hard failure.
     let mut reported_duration_ms: Option<u64> = None;
     for poll in 1..=MAX_POLLS {
         tokio::time::sleep(POLL_INTERVAL).await;
@@ -1419,26 +1503,36 @@ async fn parley_batch(
         return Err("Transcription timed out".to_string());
     };
 
-    // 3. Fetch the diarized tokens.
+    // 3. Fetch the tokens in Parley's own shape.
     let transcript_resp = client
-        .get(format!("{base}/{job_id}/transcript"))
+        .get(format!("{base}/{job_id}/transcript?format=parley"))
         .bearer_auth(token)
         .send()
         .await
         .map_err(|e| format!("Fetch transcript failed: {e}"))?;
-    let transcript: TranscriptResponse =
-        read_json(transcript_resp, "parley batch transcript").await?;
+    let transcript_status = transcript_resp.status();
+    let body = transcript_resp
+        .text()
+        .await
+        .map_err(|e| format!("Fetch transcript failed: {e}"))?;
+    if !transcript_status.is_success() {
+        log::error!(
+            "replay: parley batch transcript failed status={}",
+            transcript_status
+        );
+        return Err(parley_batch_error(transcript_status, &body));
+    }
+    let segments = parse_cloud_transcript(&body)?;
 
     // 4. Best-effort cleanup so the cloud isn't left holding the audio. Fire and
-    // forget, like the Soniox arm's deletes — we already have the transcript, so
-    // a failure here must not fail the transcription.
+    // forget — we already have the transcript, so a failure here must not fail
+    // the transcription.
     let _ = client
         .delete(format!("{base}/{job_id}"))
         .bearer_auth(token)
         .send()
         .await;
 
-    let segments = group_tokens(&transcript.tokens);
     let duration_ms = segments
         .iter()
         .map(|s| s.end_ms)
@@ -1609,4 +1703,114 @@ fn try_write_soniox_log(app: &AppHandle, ctx: &SonioxLogContext) -> Result<(), S
     // Surface the absolute path in the dev log so the user can find the file.
     log::info!("replay: saved soniox log path={}", path.to_string_lossy());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hosted_upload_url_uses_neutral_option_names() {
+        let languages = vec!["zh".to_string(), "en".to_string()];
+        let vocabulary = vec![" Parley ".to_string(), "派斯".to_string(), "".to_string()];
+        let url = cloud_upload_url(
+            "https://api.parley.tw/stt/batch",
+            &BatchOptions {
+                languages: &languages,
+                diarization: true,
+                vocabulary: &vocabulary,
+            },
+        );
+        assert_eq!(
+            url,
+            "https://api.parley.tw/stt/batch?diarization=1&languages=zh,en&terms=Parley&terms=%E6%B4%BE%E6%96%AF"
+        );
+    }
+
+    #[test]
+    fn a_comma_never_splits_a_hosted_term() {
+        let url = cloud_upload_url(
+            "https://x/stt/batch",
+            &BatchOptions {
+                languages: &[],
+                diarization: true,
+                vocabulary: &["Smith, John".to_string()],
+            },
+        );
+        assert_eq!(
+            url,
+            "https://x/stt/batch?diarization=1&terms=Smith%20%20John"
+        );
+    }
+
+    #[test]
+    fn hosted_upload_url_omits_empty_options() {
+        let url = cloud_upload_url(
+            "https://api.parley.tw/stt/batch",
+            &BatchOptions {
+                languages: &[],
+                diarization: false,
+                vocabulary: &["  ".to_string()],
+            },
+        );
+        assert_eq!(url, "https://api.parley.tw/stt/batch?diarization=0");
+    }
+
+    #[test]
+    fn parses_the_hosted_token_shape_into_speaker_runs() {
+        let body = r#"{"tokens":[
+            {"text":"Hello","start_ms":0,"end_ms":300,"speaker":1,"language":"en","confidence":0.9},
+            {"text":" there","start_ms":300,"end_ms":600,"speaker":1},
+            {"text":",","start_ms":600,"end_ms":610},
+            {"text":"你好","start_ms":700,"end_ms":1000,"speaker":2}
+        ]}"#;
+        let segments = parse_cloud_transcript(body).unwrap();
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[0].id, "them-0");
+        assert_eq!(segments[0].speaker, 1);
+        // A speakerless token stays in the current run.
+        assert_eq!(segments[0].text, "Hello there,");
+        assert_eq!((segments[0].start_ms, segments[0].end_ms), (0, 610));
+        assert_eq!(segments[1].id, "them-1");
+        assert_eq!(segments[1].speaker, 2);
+        assert_eq!(segments[1].text, "你好");
+    }
+
+    #[test]
+    fn a_hosted_transcript_without_diarization_is_one_speaker_zero_run() {
+        let body = r#"{"tokens":[{"text":"a","start_ms":0,"end_ms":1},{"text":" b","start_ms":1,"end_ms":2}]}"#;
+        let segments = parse_cloud_transcript(body).unwrap();
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].speaker, 0);
+        assert_eq!(segments[0].text, "a b");
+    }
+
+    #[test]
+    fn an_empty_or_unreadable_hosted_transcript() {
+        assert!(parse_cloud_transcript(r#"{"tokens":[]}"#)
+            .unwrap()
+            .is_empty());
+        assert!(parse_cloud_transcript("{}").unwrap().is_empty());
+        assert!(parse_cloud_transcript("nope").is_err());
+    }
+
+    #[test]
+    fn the_byok_grouper_still_drops_markers() {
+        let tokens = vec![
+            Token {
+                text: "hi".into(),
+                start_ms: 0,
+                end_ms: 10,
+                speaker: Some(SpeakerId::Str("1".into())),
+            },
+            Token {
+                text: "<end>".into(),
+                ..Token::default()
+            },
+        ];
+        let segments = group_tokens(&tokens);
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].text, "hi");
+        assert_eq!(segments[0].speaker, 1);
+    }
 }

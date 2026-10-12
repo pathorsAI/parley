@@ -135,8 +135,9 @@ pub struct Pump {
     /// Text frame that tells the server the stream is over, sent once the audio
     /// stops. `None` = closing the socket is the whole goodbye.
     pub finish: Option<&'static str>,
-    /// Whether to close the write half afterwards. Soniox's hosted relay needs
-    /// it left open so the relay can forward the flushed tail back to us.
+    /// Whether to close the write half afterwards. A protocol whose goodbye is
+    /// answered in band (the hosted `end` → tail → `done`) leaves it open so
+    /// the server's reply still reaches the read half.
     pub close: bool,
 }
 

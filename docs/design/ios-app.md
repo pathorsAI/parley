@@ -52,7 +52,7 @@ iOS 版不是「把桌機塞進手機」。它是補上另一半的會議形態�
 
 ### 3.2 這件事往上傳染到 me/them
 
-桌機有兩條天然分離的聲道，所以非 diarizing provider 也能開兩個 session 標 `"me"`/`"them"`（[`commands.rs:471`](../../src-tauri/src/commands.rs:471)）。iPhone 只有一條，只能走既有的 diarizing 拓撲：單一 session 標 `"mix"`，speaker 整數由 hosted 轉錄服務給（[`commands.rs:386`](../../src-tauri/src/commands.rs:386)）。
+桌機有兩條天然分離的聲道，所以非 diarizing provider 也能開兩個 session 標 `"me"`/`"them"`（[`commands.rs:471`](../../src-tauri/src/commands.rs:471)）。iPhone 只有一條，只能走既有的 diarizing 拓撲：單一 session 標 `"mix"`，speaker 整數由 hosted 服務給（[`commands.rs:386`](../../src-tauri/src/commands.rs:386)、[`parley.rs`](../../src-tauri/src/transcription/parley.rs)）。
 
 **已知地雷**：[`intel/extract.ts:107`](../../src/lib/intel/extract.ts:107) 用 `s.source === "me" ? "我" : "對方"` 組 prompt，`"mix"` 全部被標成「對方」——連使用者自己講的話。桌機 diarizing 模式今天就有這個 bug，iOS 每一場都會踩。**列為 Phase 0 前置修復**。
 
@@ -125,8 +125,8 @@ live findings 需要 eval templates 才有判準；scenario/stage bundles 決定
 |---|---|---|
 | `AudioCapture` | AVAudioEngine → 16k mono i16（對齊 `TARGET_SAMPLE_RATE`）；`.record` + `UIBackgroundModes: audio`；中斷/路由變更/鎖屏 | 中 |
 | `Recorder` | 邊錄邊寫檔（D9），結束後編 Opus/Ogg（libopus SPM）符合 `audio/ogg` 契約 | 中——libopus on iOS 要驗證 |
-| `ParleyStreamClient` | WS → `wss://api.parley.tw/stt/v2/stream`（Parley 自己的串流協定 v2），Bearer session token；先送 `start` frame；`{"type":"keepalive"}` 每 2s、`{"type":"end"}` 收尾後讀到 `done`；**送出 `end` 後絕不關 socket**（否則最後一句被截斷） | 中 |
-| `SegmentBuilder` | 移植 [`common.rs:242`](../../src-tauri/src/transcription/common.rs:242)：speaker-run 累積、同 id 重發 final、`{source}-tail` 的 partial、`<end>`/`<fin>` 驅動 endpoint | **高——最容易出錯，必須有 unit test** |
+| `ParleyStreamClient` | WS → `wss://api.parley.tw/stt/v2/stream`（Parley 自己的串流協定 v2，見 [`stt-protocol.md`](stt-protocol.md)），Bearer session token；先送 `start` frame；`{"type":"keepalive"}` 每 2s、`{"type":"end"}` 收尾後讀到 `done`；**送出 `end` 後絕不關 socket**（否則最後一句被截斷） | 中 |
+| `SegmentBuilder` | 移植 [`common.rs:242`](../../src-tauri/src/transcription/common.rs:242)：speaker-run 累積、同 id 重發 final、`{source}-tail` 的 partial、`endpoint`/`finalized` frame 驅動 endpoint | **高——最容易出錯，必須有 unit test** |
 | `SpeakerIdentity` | mix 模式下指定「誰是我」（D7） | 低 |
 | `LiveCoach` | 45s 一次打 `/v1/chat/completions`，複用 timeline live prompt + eval schema | 中 |
 | `SyncClient` | delta pull、presigned 上傳、離線重試佇列 | 中 |

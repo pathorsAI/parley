@@ -76,26 +76,6 @@ class BatchTranscriptionTest {
     }
 
     @Test
-    fun `control tokens are skipped`() {
-        // `<fin>` here claims speaker 2. If it were not skipped outright it
-        // would close the run and invent a second speaker.
-        val segments = groupBatchTokens(
-            listOf(
-                tok("Hello", 1, 0, 300),
-                tok("<end>", null, 300, 300),
-                tok("<fin>", 2, 300, 300),
-                tok(" world", 1, 300, 600),
-            ),
-            source = "mix",
-        )
-
-        assertEquals(1, segments.size)
-        assertEquals(1, segments[0].speaker)
-        assertEquals("Hello world", segments[0].text)
-        assertEquals(600L, segments[0].endMs)
-    }
-
-    @Test
     fun `a speakerless token stays in the current run`() {
         // Snapping a speakerless token to 0 would close speaker 1's run and
         // fragment one utterance into three segments.
@@ -205,7 +185,8 @@ class BatchTranscriptionTest {
 
     @Test
     fun `a token accepts a speaker as a number, a string, or absent`() {
-        // The vendor sends all three shapes; a strict decoder would decode none.
+        // Older responses wrote the speaker as a string, and it is absent
+        // without diarization; a strict decoder would decode none of these.
         val decoded = json.decodeFromString(
             BatchTranscriptResponse.serializer(),
             """
@@ -225,11 +206,11 @@ class BatchTranscriptionTest {
 
     @Test
     fun `token timing decodes from the snake_case wire shape`() {
-        // Verbatim shape of a token the cloud passes through from the vendor —
-        // timing is snake_case, and a missed key silently decodes as 0 (#576).
+        // Verbatim `?format=parley` token shape — timing is snake_case, and a
+        // missed key silently decodes as 0 (#576).
         val decoded = json.decodeFromString(
             BatchTranscriptResponse.serializer(),
-            """{"tokens":[{"text":"你好","start_ms":1520,"end_ms":1880,"confidence":0.98,"speaker":"1","language":"zh"},{"text":"嗎","start_ms":2400,"end_ms":2600,"speaker":"2"}]}""",
+            """{"tokens":[{"text":"你好","start_ms":1520,"end_ms":1880,"speaker":1,"language":"zh","confidence":0.98},{"text":"嗎","start_ms":2400,"end_ms":2600,"speaker":2}]}""",
         )
         val segments = groupBatchTokens(decoded.tokens, source = "mix")
 
@@ -494,6 +475,7 @@ private class FakeBatchService(
         audio: File,
         diarization: Boolean,
         languageHints: List<String>,
+        terms: List<String>,
     ): String {
         starts += StartRecord(audio.length(), diarization, languageHints)
         return jobId

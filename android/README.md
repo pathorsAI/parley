@@ -12,13 +12,14 @@ desktop app when a recording syncs down — same division of labor as iOS.
 android/
   app/         com.pathors.parley — Compose UI, auth, cloud sync, audio pipeline
   parleykit/   pure-JVM Kotlin port of ios/ParleyKit (SegmentBuilder,
-               SonioxProtocol, SttRelayClient) — same semantics, same tests
+               ParleyStreamProtocol, SttRelayClient) — same semantics, same tests
 ```
 
 - **Auth**: Custom Tab → `https://api.parley.tw/sign-in?to=parley://auth-callback`
   → deep link back with the session token → `Authorization: Bearer` everywhere.
 - **Live meeting**: `AudioRecord` (16 kHz mono s16le) → `SttRelayClient`
-  (`wss://api.parley.tw/stt/stream`) → `SegmentBuilder` → live transcript UI.
+  (Parley stream protocol v2, `wss://api.parley.tw/stt/v2/stream`) →
+  `SegmentBuilder` → live transcript UI.
   Runs in a `microphone` foreground service.
 - **Import a recording**: SAF file picker → `AudioFileDecoder`
   (MediaExtractor/MediaCodec + anti-aliased resample to 16 kHz mono) → streamed

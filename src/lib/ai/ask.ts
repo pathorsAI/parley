@@ -45,7 +45,7 @@ export async function askAboutMeeting(opts: {
   let full = "";
   try {
     const result = streamText({
-      model: getModel(settings, "realtime"),
+      model: getModel(settings, "realtime", { feature: "ask" }),
       providerOptions: getProviderOptions(settings, "realtime"),
       system: SYSTEM,
       abortSignal: signal,

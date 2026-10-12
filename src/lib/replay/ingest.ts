@@ -226,7 +226,7 @@ export async function transcribeRecording(
 
   reportStage(opts, { stage: "decoding" });
 
-  // Language hints come from settings if present; empty lets Soniox auto-detect.
+  // Language hints come from settings if present; empty lets the provider auto-detect.
   const languageHints = languageHintsFromSettings(settings);
 
   reportStage(opts, { stage: "uploading" });
@@ -234,7 +234,7 @@ export async function transcribeRecording(
   // The Rust command uploads the file, creates the async job, polls to
   // completion, then fetches the diarized tokens. It owns the network + secrets.
   // `batchUrl` is set only for hosted Parley, where `apiKey` is the cloud session
-  // token and the cloud — not this client — knows the vendor.
+  // token rather than a provider key.
   reportStage(opts, { stage: "transcribing" });
   log.info("ingest: transcribe invoke", { provider, languageHints, diarization: info.diarization });
   const result = await invoke<RustTranscriptionResult>("transcribe_file", {
@@ -255,7 +255,7 @@ export async function transcribeRecording(
     cached: result.cached,
   });
 
-  // Soniox returns Simplified for zh audio; convert to Traditional to match the
+  // Providers may return Simplified for zh audio; convert to Traditional to match the
   // live transcription path (tauriEvents.ts also normalizes segments), and apply
   // the phrase dictionary so known variants read the same everywhere.
   const segments: TranscriptSegment[] = await Promise.all(

@@ -3,6 +3,7 @@ package com.pathors.parley.study
 import com.pathors.parley.cloud.CloudException
 import com.pathors.parley.cloud.RecordingMeta
 import com.pathors.parley.kit.ChatCompletions
+import com.pathors.parley.kit.CloudChat
 import com.pathors.parley.kit.FilingLanguage
 import com.pathors.parley.kit.StageStatus
 import com.pathors.parley.kit.StudyArtifact
@@ -98,6 +99,7 @@ class StudyPassTest {
     private class FakeModel : ChatCompletions {
         val asked = mutableListOf<String>()
         val models = mutableListOf<String>()
+        val features = mutableListOf<String>()
         var answers: MutableMap<String, suspend () -> String> = mutableMapOf(
             "kind" to { """{"kind":"pricing"}""" },
             "findings" to {
@@ -110,7 +112,7 @@ class StudyPassTest {
             },
         )
 
-        override suspend fun chatCompletion(requestJson: String): String {
+        override suspend fun chatCompletion(requestJson: String, feature: CloudChat.Feature): String {
             val body = Json.parseToJsonElement(requestJson).jsonObject
             val model = body["model"]!!.jsonPrimitive.content
             val system = body["messages"]!!.jsonArray[0].jsonObject["content"]!!.jsonPrimitive.content
@@ -123,6 +125,7 @@ class StudyPassTest {
             }
             asked += stage
             models += "$stage:$model"
+            features += "$stage:${feature.wire}"
             val content = answers.getValue(stage)()
             return buildJsonObject {
                 put("choices", buildJsonArray { add(buildJsonObject { put("message", buildJsonObject { put("content", content) }) }) })
@@ -172,6 +175,11 @@ class StudyPassTest {
                 "delivery:${StudyPrompts.MODEL_DELIVERY}",
             ),
             model.models.toSet(),
+        )
+        assertEquals(
+            "the brief bills to the report, every other stage to the meeting",
+            setOf("kind:meeting", "findings:meeting", "actions:meeting", "brief:report", "delivery:meeting"),
+            model.features.toSet(),
         )
 
         val raw = cloud.meta.raw

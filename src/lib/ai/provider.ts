@@ -1,7 +1,7 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { LanguageModel } from "ai";
-import type { LlmWorkload, Settings } from "../types";
+import type { LlmFeature, LlmWorkload, Settings } from "../types";
 import { PROVIDER_BY_ID, isReasoningModel, normalizeBaseUrl, type ProviderInfo } from "./providers";
 import { cloudToken, CLOUD_URL } from "../cloud/client";
 import { CLOUD_ENABLED } from "../flags";
@@ -40,8 +40,9 @@ export const JSON_MODE_INSTRUCTION: string = STUDY.jsonModeInstruction;
  * Anthropic, Groq and OpenRouter allow the header anyway; nothing is lost there.
  *
  * Do not add custom headers here without checking the endpoint's CORS
- * allow-list first: an `X-Parley-Feature`, say, is not on Parley Cloud's and
- * would break the preflight in exactly the same way.
+ * allow-list first. `X-Parley-Feature` is on Parley Cloud's, so it rides only on
+ * the hosted provider; a BYOK endpoint's allow-list would not have it and the
+ * preflight would fail in exactly the same way.
  */
 export function getModel(
   settings: Settings,
@@ -62,6 +63,8 @@ export function getModel(
      * lane's model.
      */
     modelId?: string;
+    /** The feature this call bills to on Parley Cloud. Ignored by BYOK providers. */
+    feature?: LlmFeature;
   }
 ): LanguageModel {
   const provider = settings.llmProviders[workload];
@@ -104,6 +107,7 @@ export function getModel(
       name: info.id,
       baseURL: `${CLOUD_URL}/v1`,
       apiKey: token,
+      headers: opts?.feature ? { "X-Parley-Feature": opts.feature } : undefined,
       supportsStructuredOutputs: opts?.forceJsonObject ? false : info.supportsStructuredOutputs ?? false,
       fetch: webviewFetch,
     });

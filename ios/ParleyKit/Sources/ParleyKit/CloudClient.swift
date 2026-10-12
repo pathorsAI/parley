@@ -301,14 +301,17 @@ public actor CloudClient: BatchTranscriptionService, DictionarySyncTransport {
         return try JSONDecoder().decode(DictionaryPushResponse.self, from: data)
     }
 
-    // MARK: generic JSON POST
+    // MARK: chat
 
-    /// `POST` a JSON body and hand back the raw response body, for callers that
-    /// own their own request/response shapes — the OpenAI-compatible
-    /// `v1/chat/completions` endpoint the dictation polish pass uses. Same
+    /// `POST v1/chat/completions` with a JSON body, handing back the raw
+    /// response body: the OpenAI-compatible endpoint the dictation polish and
+    /// filing passes use, which own their request/response shapes (`CloudChat`).
+    /// Tagged with the feature the call bills to (`X-Parley-Feature`). Same
     /// auth header and same 2xx-or-`CloudError` discipline as every call above.
-    public func postJSON(_ path: String, body: Data) async throws -> Data {
-        try await request(path, method: "POST", body: body, contentType: "application/json")
+    func chatCompletion(_ body: Data, feature: CloudChat.Feature) async throws -> Data {
+        try await request(
+            CloudChat.path, method: "POST", body: body, contentType: "application/json",
+            headers: [CloudChat.featureHeader: feature.rawValue])
     }
 
     /// The remote feature-flag document (`HostReturnPolicy` is its only reader
@@ -404,11 +407,11 @@ public actor CloudClient: BatchTranscriptionService, DictionarySyncTransport {
 
     private func request(
         _ path: String, method: String = "GET", body: Data? = nil, contentType: String? = nil,
-        query: [URLQueryItem] = [], timeout: TimeInterval? = nil
+        query: [URLQueryItem] = [], timeout: TimeInterval? = nil, headers: [String: String] = [:]
     ) async throws -> Data {
         try await requestWithResponse(
             path, method: method, body: body, contentType: contentType, query: query,
-            timeout: timeout
+            timeout: timeout, headers: headers
         ).0
     }
 
@@ -422,7 +425,7 @@ public actor CloudClient: BatchTranscriptionService, DictionarySyncTransport {
     /// segment.
     private func makeRequest(
         _ path: String, method: String = "GET", body: Data? = nil, contentType: String? = nil,
-        query: [URLQueryItem] = [], timeout: TimeInterval? = nil
+        query: [URLQueryItem] = [], timeout: TimeInterval? = nil, headers: [String: String] = [:]
     ) -> URLRequest {
         var url = baseURL.appendingPathComponent(path)
         if !query.isEmpty,
@@ -438,6 +441,7 @@ public actor CloudClient: BatchTranscriptionService, DictionarySyncTransport {
         req.httpMethod = method
         req.httpBody = body
         if let contentType { req.setValue(contentType, forHTTPHeaderField: "Content-Type") }
+        for (name, value) in headers { req.setValue(value, forHTTPHeaderField: name) }
         if let token = tokenProvider() {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
@@ -446,11 +450,11 @@ public actor CloudClient: BatchTranscriptionService, DictionarySyncTransport {
 
     private func requestWithResponse(
         _ path: String, method: String = "GET", body: Data? = nil, contentType: String? = nil,
-        query: [URLQueryItem] = [], timeout: TimeInterval? = nil
+        query: [URLQueryItem] = [], timeout: TimeInterval? = nil, headers: [String: String] = [:]
     ) async throws -> (Data, HTTPURLResponse) {
         let req = makeRequest(
             path, method: method, body: body, contentType: contentType, query: query,
-            timeout: timeout)
+            timeout: timeout, headers: headers)
         let (data, resp) = try await session.data(for: req)
         let http = (resp as? HTTPURLResponse) ?? HTTPURLResponse()
         guard (200..<300).contains(http.statusCode) else {

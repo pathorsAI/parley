@@ -1,6 +1,6 @@
 //! Self-contained audio compression for the replay upload flow.
 //!
-//! Before a recording is uploaded to Soniox's async API we shrink it: decode
+//! Before a recording is uploaded for batch transcription we shrink it: decode
 //! whatever container/codec the user handed us (mp3, m4a/aac, flac, wav, ogg,
 //! alac, …) with [`symphonia`], downmix to mono, resample to 16 kHz, then
 //! re-encode as Opus inside an Ogg container at ~24 kbps. Speech transcription

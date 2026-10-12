@@ -557,22 +557,26 @@ class CloudClient(
 
     /**
      * `POST /stt/batch` — create a job from already-compressed audio; the
-     * response is the job id.
+     * response is the job id. Options travel as Parley's own query parameters:
+     * `diarization`, `languages` (comma-separated) and `terms` (repeated).
      *
-     * The hints parameter is omitted entirely when empty so the cloud
-     * auto-detects, rather than being handed an empty list to interpret.
+     * `languages` is omitted entirely when empty so the cloud auto-detects,
+     * rather than being handed an empty list to interpret.
      */
     override suspend fun startBatchJob(
         audio: File,
         diarization: Boolean,
         languageHints: List<String>,
+        terms: List<String>,
     ): String {
         val url = url("stt", "batch").newBuilder()
             .addQueryParameter("diarization", if (diarization) "1" else "0")
             .apply {
                 if (languageHints.isNotEmpty()) {
-                    addQueryParameter("language_hints", languageHints.joinToString(","))
+                    addQueryParameter("languages", languageHints.joinToString(","))
                 }
+                // Repeated rather than comma-joined: a term may not contain a comma.
+                terms.filter { it.isNotBlank() && ',' !in it }.forEach { addQueryParameter("terms", it) }
             }
             .build()
         val request = Request.Builder().url(url).post(audio.asRequestBody(OCTET_STREAM))
@@ -589,7 +593,11 @@ class CloudClient(
     override suspend fun batchTranscript(id: String): BatchTranscriptResponse =
         CloudJson.decodeFromString(
             BatchTranscriptResponse.serializer(),
-            getText(url("stt", "batch", id, "transcript")),
+            getText(
+                url("stt", "batch", id, "transcript").newBuilder()
+                    .addQueryParameter("format", "parley")
+                    .build()
+            ),
         )
 
     /**
@@ -605,16 +613,13 @@ class CloudClient(
 
     /**
      * `POST v1/chat/completions` — the cloud's OpenAI-compatible chat endpoint,
-     * with the same bearer token as every other call. The request and response
-     * shapes live in `kit/CloudChat.kt`; this is only the transport, so the
-     * passes built on it (the filing suggestion) are testable without a server.
+     * with the same bearer token as every other call, and `X-Parley-Feature`
+     * naming what the call bills to. The request and response shapes live in
+     * `kit/CloudChat.kt`; this is only the transport, so the passes built on it
+     * (the filing suggestion) are testable without a server.
      */
-    override suspend fun chatCompletion(requestJson: String): String {
-        val request = Request.Builder()
-            .url(url(*CloudChat.PATH.split('/').toTypedArray()))
-            .post(requestJson.toRequestBody(APPLICATION_JSON))
-        return execute(request) { response -> bodyText(response) }
-    }
+    override suspend fun chatCompletion(requestJson: String, feature: CloudChat.Feature): String =
+        execute(chatRequest(requestJson, feature)) { response -> bodyText(response) }
 
     /**
      * [chatCompletion] for the study stages (`study/StudyPass`), which wait far
@@ -624,12 +629,15 @@ class CloudClient(
      * is done. The stage's own coroutine timeout bounds the wait; this only
      * stops the socket giving up first.
      */
-    val studyChat: ChatCompletions = ChatCompletions { requestJson ->
-        val request = Request.Builder()
-            .url(url(*CloudChat.PATH.split('/').toTypedArray()))
-            .post(requestJson.toRequestBody(APPLICATION_JSON))
-        execute(request, client = studyHttp) { response -> bodyText(response) }
+    val studyChat: ChatCompletions = ChatCompletions { requestJson, feature ->
+        execute(chatRequest(requestJson, feature), client = studyHttp) { response -> bodyText(response) }
     }
+
+    private fun chatRequest(requestJson: String, feature: CloudChat.Feature): Request.Builder =
+        Request.Builder()
+            .url(url(*CloudChat.PATH.split('/').toTypedArray()))
+            .header(CloudChat.FEATURE_HEADER, feature.wire)
+            .post(requestJson.toRequestBody(APPLICATION_JSON))
 
     private val studyHttp: OkHttpClient by lazy {
         http.newBuilder()

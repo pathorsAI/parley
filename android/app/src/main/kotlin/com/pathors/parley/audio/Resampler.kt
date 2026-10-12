@@ -16,7 +16,7 @@ import kotlin.math.sqrt
  * Constants shared by every stage of the Android audio pipeline.
  *
  * The universal internal format is **16 kHz mono s16le PCM** — the same format
- * the desktop (`TARGET_SAMPLE_RATE`) and iOS (`SonioxProtocol.sampleRate`) paths
+ * the desktop (`TARGET_SAMPLE_RATE`) and iOS (ParleyKit) paths
  * produce, and what the relay meters at 32 000 bytes/s.
  */
 object Pcm {

@@ -17,7 +17,7 @@ import {
 } from "./deadline";
 
 export { STUDY_HARD_DEADLINE_MS, STUDY_STALL_MS } from "./deadline";
-import type { LlmWorkload, Settings } from "../types";
+import type { LlmFeature, LlmWorkload, Settings } from "../types";
 
 /**
  * Output-token cap. Reasoning models (Groq gpt-oss, o-series, …) spend output
@@ -132,6 +132,8 @@ export async function generateObjectResilient<OBJECT>(opts: {
   signal?: AbortSignal;
   /** Ceiling on the whole call. Default {@link ONE_SHOT_DEADLINE_MS}. */
   hardMs?: number;
+  /** The feature this call bills to on Parley Cloud; see {@link getModel}. */
+  feature?: LlmFeature;
 }) {
   const deadline = createDeadline({ hardMs: opts.hardMs ?? ONE_SHOT_DEADLINE_MS, parent: opts.signal });
   try {
@@ -174,9 +176,10 @@ async function retryAsJsonObject<OBJECT>(
   workload: LlmWorkload,
   call: ObjectCall<OBJECT>,
   tag: ObjectTag,
+  feature: LlmFeature | undefined,
 ) {
   try {
-    return await generateObject({ model: getModel(settings, workload, { forceJsonObject: true }), ...call });
+    return await generateObject({ model: getModel(settings, workload, { forceJsonObject: true, feature }), ...call });
   } catch (err) {
     if (call.abortSignal.aborted) throw err;
     logAiError("ai.generateObject json_object", tag, err);
@@ -192,10 +195,11 @@ async function generateObjectWithFallback<OBJECT>(
     system: string;
     prompt: string;
     temperature?: number;
+    feature?: LlmFeature;
   },
   abortSignal: AbortSignal,
 ) {
-  const { settings, workload, schema, system, prompt } = opts;
+  const { settings, workload, schema, system, prompt, feature } = opts;
   // Spread only when set, so callers that never pass it send exactly what they
   // sent before (some providers reject an explicit temperature on some models).
   const sampling = opts.temperature === undefined ? {} : { temperature: opts.temperature };
@@ -206,7 +210,7 @@ async function generateObjectWithFallback<OBJECT>(
   const call: ObjectCall<OBJECT> = { providerOptions, schema, system, prompt, maxOutputTokens, abortSignal, ...sampling };
 
   try {
-    return await generateObject({ model: getModel(settings, workload), ...call });
+    return await generateObject({ model: getModel(settings, workload, { feature }), ...call });
   } catch (err) {
     // Out of time or cancelled: nothing to salvage, and no time for a retry.
     if (abortSignal.aborted) throw err;
@@ -216,7 +220,7 @@ async function generateObjectWithFallback<OBJECT>(
     const salvaged = salvageOrNull(err, schema, tag, "");
     if (salvaged) return salvaged;
     if (!canFallback) throw err;
-    return retryAsJsonObject(settings, workload, call, tag);
+    return retryAsJsonObject(settings, workload, call, tag, feature);
   }
 }
 
@@ -269,8 +273,10 @@ export async function streamObjectResilient<OBJECT>(opts: {
   firstOutputMs?: number;
   /** Longest gap between partials after the first. Default {@link STUDY_STALL_MS}. */
   stallMs?: number;
+  /** The feature this call bills to on Parley Cloud, fallback included. */
+  feature?: LlmFeature;
 }) {
-  const { settings, workload, schema, system, prompt, onPartial, temperature, signal } = opts;
+  const { settings, workload, schema, system, prompt, onPartial, temperature, signal, feature } = opts;
   const sampling = temperature === undefined ? {} : { temperature };
   const provider = settings.llmProviders[workload];
   const providerOptions = getProviderOptions(settings, workload);
@@ -287,7 +293,7 @@ export async function streamObjectResilient<OBJECT>(opts: {
   try {
     let streamError: unknown = null;
     const result = streamObject({
-      model: getModel(settings, workload, { forceJsonObject }),
+      model: getModel(settings, workload, { forceJsonObject, feature }),
       providerOptions,
       schema,
       system,
@@ -329,6 +335,7 @@ export async function streamObjectResilient<OBJECT>(opts: {
       temperature,
       signal,
       hardMs: STUDY_FALLBACK_DEADLINE_MS,
+      feature,
     });
     onPartial?.(res.object);
     return { object: res.object, usage: res.usage };

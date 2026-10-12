@@ -115,7 +115,7 @@ object FilingSuggester {
         val excerpt = capped(rendered)
 
         val request = request(currentTitle, folders, excerpt, language, meetingContext)
-        val response = chat.chatCompletion(CloudChat.encode(request))
+        val response = chat.chatCompletion(CloudChat.encode(request), CloudChat.Feature.MEETING)
         val payload = CloudChat.content(response)?.let(::parse) ?: return null
 
         val resolved = resolveFolders(payload.folders, folders)

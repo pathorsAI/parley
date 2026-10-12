@@ -46,7 +46,7 @@ class CloudClientBatchTest {
         assertEquals("job-42", id)
         val request = server.takeRequest()
         assertEquals("POST", request.method)
-        assertEquals("/stt/batch?diarization=1&language_hints=zh%2Cen", request.path)
+        assertEquals("/stt/batch?diarization=1&languages=zh%2Cen", request.path)
         assertEquals("Bearer session-token", request.getHeader("Authorization"))
         assertEquals("application/octet-stream", request.getHeader("Content-Type"))
         assertEquals(64L, request.bodySize)
@@ -62,6 +62,19 @@ class CloudClientBatchTest {
         client().startBatchJob(audio, diarization = false, languageHints = emptyList())
 
         assertEquals("/stt/batch?diarization=0", server.takeRequest().path)
+    }
+
+    @Test
+    fun `hint terms travel as repeated terms parameters`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"job-7"}"""))
+        val audio = temporary.newFile("terms.ogg").apply { writeBytes(ByteArray(8)) }
+
+        client().startBatchJob(audio, diarization = true, languageHints = listOf("zh"), terms = listOf("Parley", "派斯"))
+
+        assertEquals(
+            "/stt/batch?diarization=1&languages=zh&terms=Parley&terms=%E6%B4%BE%E6%96%AF",
+            server.takeRequest().path,
+        )
     }
 
     @Test
@@ -84,15 +97,16 @@ class CloudClientBatchTest {
     fun `a transcript comes back with its tokens`() = runBlocking {
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(
-                """{"tokens":[{"text":"Hi","startMs":0,"endMs":400,"speaker":"1"}]}""",
+                """{"tokens":[{"text":"Hi","start_ms":0,"end_ms":400,"speaker":1}]}""",
             ),
         )
 
         val transcript = client().batchTranscript("job-42")
 
-        assertEquals("/stt/batch/job-42/transcript", server.takeRequest().path)
+        assertEquals("/stt/batch/job-42/transcript?format=parley", server.takeRequest().path)
         assertEquals(1, transcript.tokens.size)
         assertEquals(1, transcript.tokens[0].speaker)
+        assertEquals(400L, transcript.tokens[0].endMs)
     }
 
     @Test

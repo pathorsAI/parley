@@ -32,7 +32,13 @@ const RAW = "um so, I think we should uh ship it on friday";
 const POLISHED = "I think we should ship it on Friday.";
 
 /** Parley Cloud's Access-Control-Allow-Headers, verbatim (lower-cased). */
-const ALLOWED = new Set(["content-type", "authorization", "idempotency-key", "x-parley-client"]);
+const ALLOWED = new Set([
+  "content-type",
+  "authorization",
+  "idempotency-key",
+  "x-parley-client",
+  "x-parley-feature",
+]);
 
 type FetchImpl = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -98,6 +104,7 @@ describe("polish against Parley Cloud from a WebKit webview", () => {
     const headers = new Headers(init?.headers);
     expect(headers.get("authorization")).toBe("Bearer test-token");
     expect(headers.has("user-agent")).toBe(false);
+    expect(headers.get("x-parley-feature")).toBe("voice_typing");
     expect(JSON.parse(String(init?.body)).model).toBe("parley-fast");
     expect(log.info).toHaveBeenCalledWith("voice-typing: polished", expect.any(Object));
     expect(log.warn).not.toHaveBeenCalled();
@@ -366,6 +373,7 @@ describe("polish against Parley Cloud from a WebKit webview", () => {
     await polishTranscriptOutcome({ raw: RAW, settings: byok });
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body)).reasoning_effort).toBeUndefined();
+    expect(new Headers(fetchSpy.mock.calls[0][1]?.headers).has("x-parley-feature")).toBe(false);
   });
 
   it("names the guard's reason when it refuses the answer", async () => {

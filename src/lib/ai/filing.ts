@@ -234,6 +234,7 @@ export async function suggestFiling(opts: {
     const { object, usage } = await streamObjectResilient({
       settings,
       workload: "realtime",
+      feature: "meeting",
       schema,
       system: filingSystemPrompt(filingLanguage(settings)),
       prompt: filingUserMessage({

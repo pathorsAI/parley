@@ -9,9 +9,8 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::common::{
-    clean_vocabulary, connect_with_headers, drive_session, ensure_crypto_provider, note_connected,
-    with_connect_timeout, LevelMeter, SegmentBuilder, Timeline, TranscribeConfig, LEVEL_EVENT,
-    TRANSCRIPT_EVENT,
+    clean_vocabulary, drive_session, ensure_crypto_provider, note_connected, with_connect_timeout,
+    LevelMeter, SegmentBuilder, Timeline, TranscribeConfig, LEVEL_EVENT, TRANSCRIPT_EVENT,
 };
 use super::ws::{self, Next, OnClose, Pump, Ws, WsRead, WsWrite};
 use crate::audio::resample::pcm_to_le_bytes;
@@ -28,10 +27,7 @@ const TOKEN_FIN: &str = "<fin>";
 
 #[derive(Serialize)]
 struct SonioxConfig<'a> {
-    /// Omitted in hosted "parley" relay mode — the relay injects the master key
-    /// server-side, so the Soniox key never rides in the client's config frame.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    api_key: Option<&'a str>,
+    api_key: &'a str,
     model: &'a str,
     audio_format: &'a str,
     sample_rate: u32,
@@ -41,8 +37,7 @@ struct SonioxConfig<'a> {
     enable_endpoint_detection: bool,
     enable_speaker_diarization: bool,
     /// Custom vocabulary biasing. Omitted entirely when the phrase dictionary is
-    /// empty so the config frame stays byte-identical to what it was before —
-    /// including through the hosted relay, which forwards this same frame.
+    /// empty so the config frame stays byte-identical to what it was before.
     #[serde(skip_serializing_if = "Option::is_none")]
     context: Option<SonioxContext>,
 }
@@ -93,26 +88,17 @@ struct SonioxResponse {
     finished: bool,
 }
 
-/// Open the session's socket. Hosted "parley" relay (config.relay_endpoint set):
-/// connect to the cloud WSS with a Bearer token instead of the vendor with an
-/// api_key. Otherwise BYOK: straight to Soniox. Both yield the same Soniox wire
-/// protocol. Either dial is bounded by `common::CONNECT_TIMEOUT`.
-async fn open_socket(config: &TranscribeConfig) -> Result<Ws> {
-    let Some(relay_url) = &config.relay_endpoint else {
-        ensure_crypto_provider();
-        let (ws, _) = with_connect_timeout(async {
-            tokio_tungstenite::connect_async(SONIOX_WS_URL)
-                .await
-                .map_err(|e| anyhow!("connect failed: {e}"))
-        })
-        .await?;
-        return Ok(ws);
-    };
-    connect_with_headers(
-        relay_url,
-        &[("Authorization", format!("Bearer {}", config.api_key))],
-    )
-    .await
+/// Open the session's socket, straight to Soniox with the user's own key (it
+/// rides in the config frame). Bounded by `common::CONNECT_TIMEOUT`.
+async fn open_socket() -> Result<Ws> {
+    ensure_crypto_provider();
+    let (ws, _) = with_connect_timeout(async {
+        tokio_tungstenite::connect_async(SONIOX_WS_URL)
+            .await
+            .map_err(|e| anyhow!("connect failed: {e}"))
+    })
+    .await?;
+    Ok(ws)
 }
 
 /// The opening config frame Soniox expects.
@@ -123,12 +109,7 @@ fn wire_config(config: &TranscribeConfig) -> SonioxConfig<'_> {
         Some(config.language_hints.clone())
     };
     SonioxConfig {
-        // Relay mode omits the key (the relay injects it); BYOK sends it.
-        api_key: if config.relay_endpoint.is_some() {
-            None
-        } else {
-            Some(config.api_key.as_str())
-        },
+        api_key: &config.api_key,
         model: &config.model,
         audio_format: "pcm_s16le",
         sample_rate: TARGET_SAMPLE_RATE,
@@ -147,7 +128,6 @@ async fn forward_audio(
     meter: LevelMeter,
     pcm_rx: UnboundedReceiver<Vec<i16>>,
     source: &'static str,
-    is_relay: bool,
 ) -> bool {
     let pump = Pump {
         // Soniox closes with a 408 if it doesn't see traffic regularly; mirror
@@ -157,14 +137,10 @@ async fn forward_audio(
             "{\"type\":\"keepalive\"}",
         )),
         finish: Some("{\"type\":\"finalize\"}"),
-        // BYOK: close our write half so Soniox flushes the final tokens to our
-        // still-open read half and then ends. In hosted RELAY mode, do NOT close
-        // here — the relay must forward this finalize to Soniox and stream the
-        // flushed tail BACK to us first; closing now would make the relay's
-        // server socket fire 'close' and stop relaying, truncating the last
-        // utterance. Nor is the socket closed for us after the finalize, so the
-        // read loop ends on the `<fin>` that answers it (see `ends_stream`).
-        close: !is_relay,
+        // Close our write half so Soniox flushes the final tokens to our
+        // still-open read half and then ends. The read loop also ends on the
+        // `<fin>` that answers the finalize (see `ends_stream`).
+        close: true,
     };
 
     let mut total: u64 = 0;
@@ -277,7 +253,7 @@ pub async fn run_session(
     pcm_rx: UnboundedReceiver<Vec<i16>>,
 ) -> Result<()> {
     let connecting = std::time::Instant::now();
-    let ws = open_socket(&config).await?;
+    let ws = open_socket().await?;
     let (mut write, read) = ws.split();
 
     write
@@ -289,11 +265,10 @@ pub async fn run_session(
     // The connect time is the other half of a short dictation's wait: no token
     // can come back before it.
     log::info!(
-        "[soniox:{source}] connected in {}ms, model={}, diarization={}, relay={}, vocabulary={}, leg={}",
+        "[soniox:{source}] connected in {}ms, model={}, diarization={}, vocabulary={}, leg={}",
         connecting.elapsed().as_millis(),
         config.model,
         config.diarization,
-        config.relay_endpoint.is_some(),
         clean_vocabulary(&config.vocabulary).len(),
         config.leg
     );
@@ -302,11 +277,10 @@ pub async fn run_session(
     note_connected(&app, source, config.leg, true);
 
     let meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT).enabled(config.level_events);
-    let is_relay = config.relay_endpoint.is_some();
 
     drive_session(
         "soniox",
-        forward_audio(write, meter, pcm_rx, source, is_relay),
+        forward_audio(write, meter, pcm_rx, source),
         read_transcripts(app, source, config.timeline(), read),
     )
     .await
@@ -317,14 +291,14 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn config(relay: Option<&str>, vocabulary: &[&str]) -> TranscribeConfig {
+    fn config(vocabulary: &[&str]) -> TranscribeConfig {
         TranscribeConfig {
             api_key: "sk-test".to_string(),
             model: "stt-rt-v3".to_string(),
             language_hints: vec!["zh".to_string(), "en".to_string()],
             diarization: false,
             vocabulary: vocabulary.iter().map(|t| t.to_string()).collect(),
-            relay_endpoint: relay.map(str::to_string),
+            relay_endpoint: None,
             leg: 0,
             time_offset_ms: 0,
             level_events: true,
@@ -332,20 +306,11 @@ mod tests {
     }
 
     #[test]
-    fn relay_frame_carries_cleaned_terms_and_no_key() {
-        let cfg = config(Some("wss://example/stt"), &[" 名字 ", "Parley", "Parley"]);
-        let frame = serde_json::to_value(wire_config(&cfg)).unwrap();
-        // The relay injects the key server-side; it must never ride in the frame.
-        assert!(frame.get("api_key").is_none());
-        assert_eq!(frame["context"]["terms"], json!(["名字", "Parley"]));
-    }
-
-    #[test]
-    fn byok_frame_carries_the_key() {
-        let cfg = config(None, &["Parley"]);
+    fn frame_carries_the_key_and_cleaned_terms() {
+        let cfg = config(&[" 名字 ", "Parley", "Parley"]);
         let frame = serde_json::to_value(wire_config(&cfg)).unwrap();
         assert_eq!(frame["api_key"], json!("sk-test"));
-        assert_eq!(frame["context"]["terms"], json!(["Parley"]));
+        assert_eq!(frame["context"]["terms"], json!(["名字", "Parley"]));
     }
 
     fn response(raw: serde_json::Value) -> SonioxResponse {
@@ -394,10 +359,10 @@ mod tests {
 
     #[test]
     fn empty_vocabulary_omits_context() {
-        let cfg = config(Some("wss://example/stt"), &["  ", ""]);
+        let cfg = config(&["  ", ""]);
         let frame = serde_json::to_value(wire_config(&cfg)).unwrap();
         assert!(frame.get("context").is_none());
-        let cfg = config(None, &[]);
+        let cfg = config(&[]);
         let frame = serde_json::to_value(wire_config(&cfg)).unwrap();
         assert!(frame.get("context").is_none());
     }

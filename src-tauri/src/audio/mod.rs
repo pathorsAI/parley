@@ -21,7 +21,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use tokio::sync::mpsc::UnboundedSender;
 
-/// Target sample rate for everything we hand to Soniox (mono, s16le).
+/// Target sample rate for everything we hand to a transcription provider (mono, s16le).
 pub const TARGET_SAMPLE_RATE: u32 = 16_000;
 
 /// A capture backend that produces 16 kHz mono `i16` PCM on `tx` until `running`

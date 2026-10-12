@@ -14,15 +14,26 @@ import kotlinx.serialization.json.Json
  */
 fun interface ChatCompletions {
     /**
-     * Send one request body to `v1/chat/completions` and return the response
-     * body. Throws on transport or HTTP failure.
+     * Send one request body to `v1/chat/completions`, billed to [feature], and
+     * return the response body. Throws on transport or HTTP failure.
      */
-    suspend fun chatCompletion(requestJson: String): String
+    suspend fun chatCompletion(requestJson: String, feature: CloudChat.Feature): String
 }
 
 object CloudChat {
     /** The cloud's OpenAI-compatible chat endpoint, relative to the API base. */
     const val PATH = "v1/chat/completions"
+
+    /** The header the cloud attributes a call's credit usage by. */
+    const val FEATURE_HEADER = "X-Parley-Feature"
+
+    /** Which product feature a call bills to; [wire] is the header value. The desktop's `LlmFeature`. */
+    enum class Feature(val wire: String) {
+        VOICE_TYPING("voice_typing"),
+        ASK("ask"),
+        MEETING("meeting"),
+        REPORT("report"),
+    }
 
     @Serializable
     data class Message(val role: String, val content: String)
