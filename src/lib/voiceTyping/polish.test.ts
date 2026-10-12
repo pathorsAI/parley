@@ -9,13 +9,15 @@ import {
   MAX_PROTECTED_TERMS,
   MIN_POLISH_CHARS,
   POLISH_SYSTEM_PROMPT,
+  SPEAKER_TERMS_LINE,
   acceptPolish,
   canPolish,
   containsSimplifiedChinese,
   minPolishRatio,
   polishModelOverride,
+  polishSkipReason,
   polishSystemPrompt,
-  shouldPolish,
+  polishVerdict,
 } from "./polish";
 import type { LlmProvider, Settings, VoiceTypingPolishStyle } from "../types";
 
@@ -24,21 +26,52 @@ vi.mock("../ai/settings", () => ({
 }));
 let hasKey = true;
 
-describe("shouldPolish", () => {
+describe("polishSkipReason", () => {
   it("skips text too short to have anything to clean", () => {
-    expect(shouldPolish("好")).toBe(false);
-    expect(shouldPolish("ok thanks")).toBe(true);
+    expect(polishSkipReason("好")).toBe("tooShort");
+    expect(polishSkipReason("ok, thanks a lot")).toBeNull();
   });
 
   /** The pause is the cost, and a user notices it most on the shortest
    *  utterances — which are also the ones with no filler to remove. */
   it("measures the trimmed length", () => {
-    expect(shouldPolish(`   ${"a".repeat(MIN_POLISH_CHARS - 1)}   `)).toBe(false);
-    expect(shouldPolish(`   ${"a".repeat(MIN_POLISH_CHARS)}   `)).toBe(true);
+    const short = `   ${"a".repeat(MIN_POLISH_CHARS - 4)}, b   `;
+    const long = `   ${"a".repeat(MIN_POLISH_CHARS - 3)}, b   `;
+    expect(polishSkipReason(short)).toBe("tooShort");
+    expect(polishSkipReason(long)).toBeNull();
   });
 
   it("treats whitespace-only as nothing to do", () => {
-    expect(shouldPolish("   \n  ")).toBe(false);
+    expect(polishSkipReason("   \n  ")).toBe("tooShort");
+  });
+
+  /** A quick one-breath sentence has nothing to restructure, and the round
+   *  trip was the slowest part of it. Its 。 is already gone by now. */
+  it.each([
+    "我等一下就過去找你",
+    "我們明天下午三點在公司開會",
+    "這個問題我晚點再回覆你好嗎？",
+    "Sounds good to me thanks",
+    "I'll be there in five minutes.",
+  ])("skips a single clause: %j", (text) => {
+    expect(polishSkipReason(text)).toBe("singleClause");
+  });
+
+  it.each([
+    "我覺得，這個方案可以",
+    "好的。我知道了謝謝",
+    "第一點是預算、第二點是時程",
+    "OK, sounds good to me",
+    "這個版本 v2.0 先上線",
+  ])("polishes anything with a mark inside: %j", (text) => {
+    expect(polishSkipReason(text)).toBeNull();
+  });
+
+  /** The length gate reads the text as the recognizer gave it; the clause
+   *  test reads the softened text that is polished and pasted. */
+  it("measures length on gateText and the clause on text", () => {
+    expect(polishSkipReason("好的，我知道。", "好的。 我知道。")).toBeNull();
+    expect(polishSkipReason("好，知道", "好， 知道")).toBe("tooShort");
   });
 });
 
@@ -62,6 +95,36 @@ describe("polishSystemPrompt", () => {
     expect(prompt).toContain("term0");
     expect(prompt).toContain(`term${MAX_PROTECTED_TERMS - 1}`);
     expect(prompt).not.toContain(`term${MAX_PROTECTED_TERMS}`);
+  });
+
+  it("is unchanged for a user with no dictionary and no profile", () => {
+    expect(polishSystemPrompt([], "tidy", [])).toBe(POLISH_SYSTEM_PROMPT);
+    expect(polishSystemPrompt([], "tidy", ["  "])).toBe(POLISH_SYSTEM_PROMPT);
+  });
+
+  /** The speaker's name is the word most likely to come back as a
+   *  same-sounding ordinary word; this line is what lets the model repair it. */
+  it("names the speaker only when the profile has terms", () => {
+    expect(polishSystemPrompt(["Parley"])).not.toContain(SPEAKER_TERMS_LINE);
+    const prompt = polishSystemPrompt([], "tidy", [" 王小明 ", "東蜂科技"]);
+    expect(prompt.startsWith(POLISH_SYSTEM_PROMPT)).toBe(true);
+    expect(prompt).toContain(`${SPEAKER_TERMS_LINE}王小明、東蜂科技`);
+    expect(prompt).not.toContain("Preserve these user-dictionary terms");
+    const concise = polishSystemPrompt([], "concise", ["王小明"]);
+    expect(concise).toBe(`${CONCISE_SYSTEM_PROMPT}\n${SPEAKER_TERMS_LINE}王小明`);
+  });
+
+  it("lists a term on both lists only on the speaker line", () => {
+    const prompt = polishSystemPrompt(["Parley", "王小明"], "tidy", ["王小明"]);
+    expect(prompt).toContain("Preserve these user-dictionary terms exactly as written: Parley\n");
+    expect(prompt.endsWith(`${SPEAKER_TERMS_LINE}王小明`)).toBe(true);
+    expect(prompt.split("王小明")).toHaveLength(2);
+  });
+
+  it("keeps the dictionary cap for terms that are not the speaker's", () => {
+    const terms = ["王小明", ...Array.from({ length: MAX_PROTECTED_TERMS }, (_, i) => `term${i}`)];
+    const prompt = polishSystemPrompt(terms, "tidy", ["王小明"]);
+    expect(prompt).toContain(`term${MAX_PROTECTED_TERMS - 1}`);
   });
 });
 
@@ -150,6 +213,39 @@ describe("acceptPolish", () => {
    *  first place gets their own script back untouched. */
   it("leaves Simplified input alone", () => {
     expect(acceptPolish("我觉得这个时候应该要说清楚", "我觉得这个时候应该要说清楚。")).toBe(true);
+  });
+});
+
+/** The same guard as acceptPolish, but saying which test failed — the reason
+ *  the "polish rejected" log line carries. */
+describe("polishVerdict", () => {
+  const raw = "所以我覺得這個東西呢就是那個我們應該要先做完再說";
+
+  it("passes a plausible rewrite", () => {
+    expect(polishVerdict(raw, "所以我覺得這個東西，我們應該要先做完再說。")).toBe("polished");
+  });
+
+  it("names a length-band failure, including an empty answer", () => {
+    expect(polishVerdict("a".repeat(100), "a".repeat(29))).toBe("rejectedLength");
+    expect(polishVerdict("a".repeat(100), "a".repeat(201))).toBe("rejectedLength");
+    expect(polishVerdict(raw, "   ")).toBe("rejectedLength");
+  });
+
+  it("names Simplified drift", () => {
+    expect(polishVerdict("我覺得這個時候應該要說清楚", "我觉得这个时候应该要说清楚")).toBe(
+      "rejectedScript",
+    );
+  });
+
+  it("agrees with acceptPolish", () => {
+    for (const [r, p] of [
+      [raw, "所以我覺得這個東西，我們應該要先做完再說。"],
+      ["a".repeat(100), "a".repeat(29)],
+      ["我覺得這個時候應該要說清楚", "我觉得这个时候应该要说清楚"],
+      ["我觉得这个时候应该要说清楚", "我觉得这个时候应该要说清楚。"],
+    ] as const) {
+      expect(acceptPolish(r, p)).toBe(polishVerdict(r, p) === "polished");
+    }
   });
 });
 

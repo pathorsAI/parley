@@ -18,7 +18,7 @@ import type { ReplaySession } from "./types";
 import { STT_BY_ID, sttApiKey, sttBatchUrl } from "../transcription/providers";
 import { normalizeTranscriptText } from "../textNormalize";
 import { languageHintsFromSettings } from "../transcription/languageHints";
-import { vocabularyTerms } from "../dictionary";
+import { recognitionTerms } from "../dictionary";
 import { log } from "../log";
 import { recordUsage } from "../usage/log";
 import { sttCostUsd } from "../usage/pricing";
@@ -243,9 +243,9 @@ export async function transcribeRecording(
     apiKey,
     model: null,
     languageHints,
-    // The user's phrase dictionary, as recognition bias — the same terms voice
-    // typing feeds the live session.
-    vocabulary: vocabularyTerms(),
+    // The user's name, company and phrase dictionary, as recognition bias —
+    // the same terms voice typing feeds the live session.
+    vocabulary: recognitionTerms(settings),
     diarization: info.diarization,
     batchUrl: sttBatchUrl(provider) ?? null,
   });

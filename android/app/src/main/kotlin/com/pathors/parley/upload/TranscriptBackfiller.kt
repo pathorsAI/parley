@@ -4,6 +4,7 @@ import android.content.Context
 import com.pathors.parley.cloud.CloudClient
 import com.pathors.parley.cloud.CloudException
 import com.pathors.parley.cloud.RecordingMeta
+import com.pathors.parley.cloud.RecordingMetaLocks
 import com.pathors.parley.cloud.RecordingSource
 import com.pathors.parley.cloud.RecordingSummary
 import com.pathors.parley.cloud.toDtos
@@ -379,19 +380,24 @@ class TranscriptBackfiller(
         // network the push below needs anyway — except for a recording that is
         // gone (404), which a push would resurrect, and which is finished
         // instead.
-        val current = try {
-            cloud.recordingMeta(id)
-        } catch (e: CloudException) {
-            if (!e.isNotFound) throw e
-            finish(id, audio)
-            return
-        }
-        val meta = current.replacingTranscript(segments, durationMs)
-        val summary = repushSummary(meta, request.pending)
+        //
+        // The read and the push hold the recording's meta lock, so a study
+        // stage or a rename landing meanwhile on this phone is read here
+        // rather than pushed over.
+        RecordingMetaLocks.withLock<Unit>(id) {
+            val current = try {
+                cloud.recordingMeta(id)
+            } catch (e: CloudException) {
+                if (!e.isNotFound) throw e
+                return@withLock
+            }
+            val meta = current.replacingTranscript(segments, durationMs)
+            val summary = repushSummary(meta, request.pending)
 
-        // Audio is already in the cloud and unchanged, so this is a metadata
-        // push only.
-        cloud.pushRecording(id, summary, meta)
+            // Audio is already in the cloud and unchanged, so this is a metadata
+            // push only.
+            cloud.pushRecording(id, summary, meta)
+        }
         finish(id, audio)
     }
 

@@ -5,6 +5,7 @@ import { transcriptAsText, useStore, meetingBriefText } from "../store";
 import { recordLlmUsage } from "../usage/log";
 import { profileContext, outputLanguageInstruction } from "./profile";
 import { fillerWatchlist } from "../analysis/fillerWords";
+import { fillPrompt, meetingContextBlock, STUDY } from "./studyPrompt";
 import type {
   DeliveryAssessment,
   ProsodyMetrics,
@@ -51,20 +52,9 @@ const schema = z.object({
 /** How far back the LIVE check looks (ms). Whole transcript is used post-call. */
 const LIVE_RECENT_MS = 30_000;
 
+/** The system prompt — text in shared/prompts/study.json (`delivery.*`). */
 const SYSTEM = (live: boolean) =>
-  "You are a delivery coach for the user in a " +
-  (live ? "live conversation" : "just-finished conversation") +
-  ". Judge the USER'S OWN delivery only — never the other party's; use the profile to tell which " +
-  "speaker is the user. Two things:\n" +
-  "1) TONE — reserve 'aggressive'/'rude' for genuinely hostile, demeaning, dismissive, or " +
-  "contemptuous wording; firm disagreement or pushback is 'firm', not aggressive. When uncertain, " +
-  "prefer the milder label.\n" +
-  "2) FILLER WORDS / VERBAL CRUTCHES — consider ONLY the lexical words/phrases in the provided watchlist. " +
-  "Do NOT consider non-lexical hesitation sounds (um, uh, er, 呃, 啊, 嗯) — speech-to-text usually drops them, " +
-  "so they won't be in the transcript. Filler use is normal and human: flag 'frequent' ONLY when the user " +
-  "leans on watchlist words as crutches densely enough to distract a listener; never flag ordinary, " +
-  "meaningful uses of those same words, and never flag mere presence.\n" +
-  "Be honest and concise." +
+  fillPrompt(STUDY.delivery.systemTemplate, { setting: STUDY.delivery.setting[live ? "live" : "post"] }) +
   JSON_MODE_INSTRUCTION;
 
 /**
@@ -103,22 +93,23 @@ export async function analyzeDelivery(opts: {
   const transcript = transcriptAsText(scope, names);
   if (!transcript.trim()) return null;
 
-  const mc = meetingBriefText(useStore.getState()).trim();
+  const D = STUDY.delivery;
+  const mc = meetingBriefText(useStore.getState());
   let delivery = "";
   if (prosody) {
-    delivery =
-      `Your delivery signals: ~${prosody.speechRateHz.toFixed(1)} syllables/sec, ` +
-      `pitch variation ${prosody.pitchVarSemitones.toFixed(1)} semitones.\n\n`;
+    delivery = fillPrompt(D.prosodyTemplate, {
+      rate: prosody.speechRateHz.toFixed(1),
+      pitch: prosody.pitchVarSemitones.toFixed(1),
+    });
   } else if (measuredRateHz) {
-    delivery =
-      `Acoustically measured speaking rate for this session: ~${measuredRateHz.toFixed(1)} ` +
-      `syllables/sec (≈ ${Math.round(measuredRateHz * 60)} syllables/min). ` +
-      `Use this for the pace read rather than guessing from the text.\n\n`;
+    delivery = fillPrompt(D.measuredRateTemplate, {
+      rate: measuredRateHz.toFixed(1),
+      perMinute: String(Math.round(measuredRateHz * 60)),
+    });
   }
-  const watchlist = `Filler watchlist (judge OVER-use of these as verbal crutches only — ignore meaningful uses, and ignore non-lexical um/uh sounds): ${fillerWatchlist(settings.language).join(", ")}\n\n`;
-  const ctx =
-    profileContext(settings) + (mc ? `Meeting context: ${mc}\n\n` : "") + delivery + watchlist;
-  const label = mode === "live" ? "Recent transcript" : "Full transcript";
+  const watchlist = fillPrompt(D.watchlistTemplate, { words: fillerWatchlist(settings.language).join(", ") });
+  const ctx = profileContext(settings) + meetingContextBlock(mc) + delivery + watchlist;
+  const label = D.transcriptLabel[mode];
 
   const { object, usage } = await generateObjectResilient({
     settings,

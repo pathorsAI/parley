@@ -31,6 +31,14 @@ import com.pathors.parley.playback.PlaybackController
 import com.pathors.parley.playback.PlaybackPhase
 import com.pathors.parley.playback.PlaybackState
 import com.pathors.parley.screenshot.DemoMode
+import com.pathors.parley.kit.DeliveryAssessment
+import com.pathors.parley.kit.StudyArtifact
+import com.pathors.parley.study.RecordingStudy
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import com.pathors.parley.upload.BackfillStatus
 import com.pathors.parley.upload.ManualRetryBudgetSpentException
 import java.io.File
@@ -66,6 +74,14 @@ data class FindingRow(
     /** Where on the recording it starts; 0 when the entry does not say, as on iOS. */
     val atMs: Long,
     val severity: String?,
+    /** "me" / "them" — the sales and negotiation lenses. */
+    val side: String? = null,
+    /** "decision" / "open" / "fact" — the meeting-notes lens. */
+    val category: String? = null,
+    /** ME handled it — the negotiation lens only; drawn green. */
+    val resolved: Boolean = false,
+    /** How ME handled it, when [resolved]. */
+    val resolution: String? = null,
 )
 
 /** One action item (`src/lib/types.ts` `ActionItem`). */
@@ -472,18 +488,90 @@ class RecordingDetailViewModel(
         val brief: String = "",
         val findings: List<FindingRow> = emptyList(),
         val actionItems: List<ActionItemRow> = emptyList(),
+        /** The delivery read (評分), or null when there is none. */
+        val delivery: DeliveryAssessment? = null,
         /** Why nothing could be shown, or null. */
         val failure: DetailLoadFailure? = null,
     ) {
         val failed: Boolean get() = failure != null
 
         /**
-         * Whether there is anything for the summary page to show: a brief, a
-         * finding, or an action item. What the screen opens on is decided by
-         * this — iOS `RecordingMeta.hasAnalysis`.
+         * Whether there is anything for the report page to show: a brief, a
+         * finding, an action item or a delivery read. What the screen opens on
+         * is decided by this (with the study about to run) — iOS
+         * `RecordingMeta.hasAnalysis`, plus the delivery read Android now makes.
          */
         val hasAnalysis: Boolean
-            get() = brief.isNotEmpty() || findings.isNotEmpty() || actionItems.isNotEmpty()
+            get() = brief.isNotEmpty() || findings.isNotEmpty() || actionItems.isNotEmpty() || delivery != null
+    }
+
+    // ── the study (findings, action items, brief, delivery) ──────────────────
+
+    /**
+     * Whether this phone runs the study stages for this recording: a personal,
+     * cloud-synced one. Never an organization's (read-only here), the bundled
+     * sample (its analysis is written, and it is not in the cloud to write
+     * back to), or a screenshot run (no network).
+     */
+    val studyEligible: Boolean get() = orgId == null && !isSample && !DemoMode.isActive
+
+    /** Whether the study has taken this visit's meta — see [study] and [studyKnown]. */
+    private val studyOpened = MutableStateFlow(false)
+
+    /**
+     * Whether what [study] says can be trusted for this recording: right away
+     * where the phone runs no study here, once this visit's open has landed
+     * otherwise. The screen picks the page it opens on only after this — an
+     * unanalysed recording read before the study is known would lock onto the
+     * transcript although the report is about to fill in.
+     */
+    val studyKnown: StateFlow<Boolean> =
+        if (studyEligible) studyOpened.asStateFlow() else MutableStateFlow(true).asStateFlow()
+
+    /**
+     * Where the study stands for this recording — [AppContainer.study]'s entry,
+     * or a fixed fixture in a screenshot run; null when the phone does not run
+     * it here (see [studyEligible]).
+     */
+    val study: StateFlow<RecordingStudy?> = when {
+        // Gated on this visit's open: until it lands, the entry is whatever an
+        // earlier visit left (its statuses, its meta), not this recording now.
+        studyEligible -> combine(container.study.state, studyOpened) { all, opened ->
+            if (opened) all[recordingId] else null
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+        DemoMode.isActive && !isSample -> MutableStateFlow(DemoMode.study(recordingId)).asStateFlow()
+        else -> MutableStateFlow<RecordingStudy?>(null).asStateFlow()
+    }
+
+    /** Regenerate one report artifact by hand (the analysis menu). */
+    fun regenerate(artifact: StudyArtifact) {
+        if (studyEligible) container.study.regenerate(recordingId, artifact)
+    }
+
+    /** "Regenerate all", once confirmed. */
+    fun regenerateAll() {
+        if (studyEligible) container.study.regenerateAll(recordingId)
+    }
+
+    /** Hand the loaded meta to the study, which starts whatever is owed. */
+    private fun openStudy() {
+        if (!studyEligible) return
+        val meta = _state.value.meta ?: return
+        val opening = container.study.open(recordingId, meta)
+        viewModelScope.launch {
+            opening.join()
+            studyOpened.value = true
+        }
+    }
+
+    /** A stage wrote (or adopted) a result: show the meta it left in the cloud. */
+    private fun observeStudy() {
+        if (!studyEligible) return
+        viewModelScope.launch {
+            study.map { it?.meta }.distinctUntilChanged { a, b -> a === b }.collect { meta ->
+                if (meta != null && meta !== _state.value.meta) _state.value = fromMeta(meta)
+            }
+        }
     }
 
     /**
@@ -581,6 +669,7 @@ class RecordingDetailViewModel(
     init {
         load()
         observeBackfills()
+        observeStudy()
     }
 
     // ── problem reports ──────────────────────────────────────────────────────
@@ -746,6 +835,7 @@ class RecordingDetailViewModel(
             }
             openPlayer()
             presentFiling()
+            openStudy()
             syncRetranscribe()
             decidePrompts()
         }
@@ -1151,6 +1241,8 @@ class RecordingDetailViewModel(
         val meta = runCatching { fetchMeta() }.getOrNull()
             ?: return
         _state.value = fromMeta(meta)
+        // A transcript that arrived late may be the first thing worth analysing.
+        openStudy()
     }
 
     private suspend fun retriesRemaining(): Int =
@@ -1250,6 +1342,7 @@ class RecordingDetailViewModel(
                 brief = meta.brief,
                 findings = readFindings(meta),
                 actionItems = readActionItems(meta),
+                delivery = DeliveryAssessment.fromJson(meta.deliveryAssessment),
             )
         }
 
@@ -1298,6 +1391,10 @@ class RecordingDetailViewModel(
                     detail = obj.text("detail") ?: obj.text("description").orEmpty(),
                     atMs = (obj.number("atMs") ?: 0.0).toLong().coerceAtLeast(0L),
                     severity = obj.text("severity"),
+                    side = obj.text("side"),
+                    category = obj.text("category"),
+                    resolved = obj.bool("resolved") == true && obj.text("resolution") != null,
+                    resolution = obj.text("resolution"),
                 )
             }.sortedBy { it.atMs }
 

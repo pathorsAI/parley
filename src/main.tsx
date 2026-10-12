@@ -16,8 +16,25 @@ import { ShortcutSheet } from "./components/shell/ShortcutSheet";
 // Mirror webview console.* into the rotating log file (no-op outside Tauri).
 void attachConsoleOnce();
 
+// Secondary windows load the same bundle at a `#<route>` hash; main.tsx routes
+// each to its own root component (Settings / Field Log / How-to-reply).
+const route = globalThis.location.hash.replace(/^#/, "");
+// `history` is deliberately NOT here: the recordings library is a route inside
+// the main window's shell now (#195), not a window of its own.
+const ROUTES = [
+  "settings",
+  "finding-solution",
+  "diagnostics",
+  "voice-typing",
+] as const;
+const window_ = ROUTES.find((r) => route.startsWith(r)) ?? "main";
+log.info("ui: boot", { window: window_ });
+
 // Re-apply this window's saved page zoom (the KEYS are commands now — below).
-restoreZoom();
+// Not in the voice-typing overlay: the zoom is stored under one key shared by
+// every window on the origin, so zooming the main window used to scale the
+// overlay too — and a zoomed HUD overflows its fixed 460×180 window.
+if (window_ !== "voice-typing") restoreZoom();
 
 // The window-wide chords — ⌘, ⇧? and page zoom — from lib/commands/registry.ts.
 // Installed here rather than from a component because the secondary windows
@@ -43,20 +60,6 @@ void initFolderRegistry().catch((error) =>
 void initDictionary().catch((error) =>
   log.warn("dictionary: init failed", { error: String(error) })
 );
-
-// Secondary windows load the same bundle at a `#<route>` hash; main.tsx routes
-// each to its own root component (Settings / Field Log / How-to-reply).
-const route = globalThis.location.hash.replace(/^#/, "");
-// `history` is deliberately NOT here: the recordings library is a route inside
-// the main window's shell now (#195), not a window of its own.
-const ROUTES = [
-  "settings",
-  "finding-solution",
-  "diagnostics",
-  "voice-typing",
-] as const;
-const window_ = ROUTES.find((r) => route.startsWith(r)) ?? "main";
-log.info("ui: boot", { window: window_ });
 
 // Scope window-chrome CSS to the right surface: only the main window is
 // undecorated + transparent (rounded macOS-style corners); the secondary

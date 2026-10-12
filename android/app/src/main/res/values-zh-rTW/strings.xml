@@ -193,8 +193,6 @@
     <string name="detail_error_network">目前連不上雲端。請確認網路連線後，再開啟一次這筆錄音。</string>
     <string name="detail_error_not_found">雲端上已經沒有這筆錄音。</string>
     <string name="detail_error_forbidden">你已沒有權限查看這筆錄音。</string>
-    <string name="detail_face_summary">摘要</string>
-    <string name="summary_highlights">重點 %1$d</string>
     <string name="summary_speakers">講者</string>
     <string name="summary_empty">還沒有摘要。</string>
     <string name="summary_generate">用 AI 產生摘要</string>
@@ -473,6 +471,90 @@
 
     <string name="whats_new_also">也改了</string>
     <string name="whats_new_copy_language">zh-Hant</string>
+
+    <!-- The recording's report face and the study pipeline (study/StudyPass): the
+         generation chip, its menu, the sections and the delivery scorecard. The
+         desktop's wording (src/i18n/messages.ts study / studyGen / timeline /
+         actionItems / delivery). -->
+    <string name="detail_face_report">報告</string>
+    <string name="report_brief">重點</string>
+    <string name="report_timeline">時間軸分析</string>
+    <string name="report_delivery">評分</string>
+    <string name="report_brief_generating">整理這場會議的重點…</string>
+    <string name="report_brief_queued">排隊中——後續行動完成後自動開始</string>
+    <string name="report_brief_error">重點生成失敗——請從上方的分析選單重試</string>
+    <string name="report_actions_generating">產生中…</string>
+    <string name="report_actions_queued">排隊中——分析完成後自動開始</string>
+    <string name="report_actions_empty">沒有後續行動項目。</string>
+    <string name="report_actions_error">後續行動產生失敗（%1$s）</string>
+    <string name="report_timeline_analyzing">分析整段中…</string>
+    <string name="report_timeline_queued">排隊中</string>
+    <string name="report_timeline_empty">尚無分析結果</string>
+    <string name="report_timeline_error">分析失敗（%1$s）</string>
+    <string name="report_timeline_count">%1$d 個發現</string>
+    <string name="report_side_them">對方提的</string>
+    <string name="report_side_me">我的問題</string>
+    <string name="report_category_decision">決議</string>
+    <string name="report_category_open">未解</string>
+    <string name="report_category_fact">事實</string>
+    <string name="report_resolved">已化解</string>
+    <string name="report_resolved_how">化解方式：%1$s</string>
+    <string name="report_severity_info">提示</string>
+    <string name="report_severity_warn">注意</string>
+    <string name="report_severity_critical">嚴重</string>
+    <string name="report_finding_at">%1$s 的發現：%2$s</string>
+    <string name="study_chip_running">分析中 %1$d/%2$d</string>
+    <string name="study_chip_done">分析完成</string>
+    <string name="study_chip_failed">%1$d 項失敗</string>
+    <string name="study_chip_idle">尚未分析</string>
+    <string name="study_panel_title">本場錄音的分析</string>
+    <string name="study_status_queued">排隊中</string>
+    <string name="study_status_running">產生中</string>
+    <string name="study_status_done">完成</string>
+    <string name="study_status_error">失敗</string>
+    <string name="study_status_idle">未產生</string>
+    <string name="study_regenerate">重新產生</string>
+    <string name="study_regenerate_all">全部重新產生</string>
+    <string name="study_regenerate_all_hint">重新跑一次完整分析並覆蓋現有結果（時間軸、後續行動、重點、評分），會使用 Parley AI 額度。</string>
+    <string name="study_regenerate_all_confirm">重新產生全部</string>
+    <string name="study_cancel">取消</string>
+    <string name="study_failure_timeout">模型回應逾時</string>
+    <string name="study_failure_network">沒有網路連線</string>
+    <string name="study_failure_quota">Parley AI 額度已用完，請等待下期重置</string>
+    <string name="study_failure_signed_out">登入階段已過期，請重新登入</string>
+    <string name="study_failure_server">伺服器回傳錯誤</string>
+    <string name="study_failure_unreadable">無法讀取模型的回覆</string>
+    <string name="delivery_pace">語速</string>
+    <string name="delivery_talk_share">發言占比</string>
+    <string name="delivery_filler_sounds">口頭禪（痾/嗯）</string>
+    <string name="delivery_tone">語氣</string>
+    <string name="delivery_ai_read">AI 短評</string>
+    <string name="delivery_analyzing">分析中</string>
+    <string name="delivery_queued">排隊中——分析完成後自動開始</string>
+    <string name="delivery_none">目前表達沒有明顯問題</string>
+    <string name="delivery_error">表達分析暫時無法取得</string>
+    <string name="delivery_tone_advisory">由逐字稿判讀，僅供參考</string>
+    <string name="delivery_fillers">贅字</string>
+    <string name="delivery_unit_syllables_per_min">字/分</string>
+    <string name="delivery_unit_times">次</string>
+    <string name="delivery_filler_ok">適中</string>
+    <string name="delivery_filler_frequent">偏多</string>
+    <string name="delivery_pace_slow">偏慢</string>
+    <string name="delivery_pace_comfortable">適中</string>
+    <string name="delivery_pace_fast">偏快</string>
+    <string name="delivery_tone_neutral">中性</string>
+    <string name="delivery_tone_warm">親和</string>
+    <string name="delivery_tone_firm">堅定</string>
+    <string name="delivery_tone_sharp">偏銳利</string>
+    <string name="delivery_tone_aggressive">過於強勢</string>
+    <string name="delivery_tone_rude">失禮</string>
+    <string name="delivery_talk_high">偏高</string>
+    <string name="delivery_talk_balanced">均衡</string>
+    <string name="delivery_talk_low">偏少</string>
+    <string name="account_analysis_title">分析</string>
+    <string name="account_auto_study">自動分析錄音</string>
+    <string name="account_auto_study_footnote">開啟時，打開還沒分析過的錄音會用 Parley AI 產生時間軸、後續行動、重點與評分（會使用額度）。關閉後，仍可從錄音的分析選單點「重新產生」單獨分析。</string>
+
     <!-- Voice typing: the keyboard as the system lists it -->
     <string name="ime_label">Parley 語音輸入</string>
     <string name="ime_subtype_voice">語音輸入</string>

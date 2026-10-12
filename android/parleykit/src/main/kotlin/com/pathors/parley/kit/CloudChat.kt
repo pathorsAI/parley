@@ -30,12 +30,16 @@ object CloudChat {
     /**
      * The request, in the OpenAI shape: `max_tokens` is snake_case on the wire.
      * Deliberately no `response_format` — see [FilingSuggester.systemPrompt].
+     *
+     * A null [temperature] or [maxTokens] is left out of the body, not sent as
+     * `null`: the study stages ask with the provider's default temperature and
+     * the cloud's own output cap, exactly as the desktop does.
      */
     @Serializable
     data class Request(
         val model: String,
-        val temperature: Double,
-        @SerialName("max_tokens") val maxTokens: Int,
+        val temperature: Double? = null,
+        @SerialName("max_tokens") val maxTokens: Int? = null,
         val messages: List<Message>,
     )
 
@@ -51,6 +55,7 @@ object CloudChat {
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
+        explicitNulls = false
     }
 
     fun encode(request: Request): String = json.encodeToString(Request.serializer(), request)
