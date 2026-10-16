@@ -383,7 +383,7 @@ pub async fn connect_with_headers(
 /// After a normal stop, how long the read half may take to answer the closing
 /// handshake before the session ends anyway, counted from the drain (the
 /// forward half sent its last audio). The abort backstops count from the cut
-/// instead. `voice_typing::FLUSH_ABORT_GRACE` is built from this grace and
+/// instead. `voice_typing::session::FLUSH_ABORT_GRACE` is built from this grace and
 /// [`CONNECT_TIMEOUT`], so a dictation always ends here, in a normal return
 /// (`stt://closed` fired), however late its socket connected. Meetings'
 /// `teardown_meeting` still aborts 8 s after the cut: when the socket is
