@@ -145,3 +145,13 @@ describe("transcription error messages", () => {
     expect(localFailureCode("decoder crashed")).toBe("local");
   });
 });
+
+describe("codes that name Object.prototype members", () => {
+  it("fall back like any unknown code instead of resolving to a function", () => {
+    for (const code of ["constructor", "toString", "hasOwnProperty", "__proto__"]) {
+      expect(failureMessageKey("meeting", code)).toBe("meeting.error.connect");
+      expect(failureMessageKey("voiceTyping", code)).toBe("voiceTyping.error");
+      expect(failureMessageKey("upload", code)).toBeNull();
+    }
+  });
+});

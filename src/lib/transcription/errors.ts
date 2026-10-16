@@ -105,7 +105,11 @@ const FALLBACK_KEY = {
 export function failureMessageKey(surface: "meeting" | "voiceTyping", code: string | null): TranslationKey;
 export function failureMessageKey(surface: "upload", code: string): TranslationKey | null;
 export function failureMessageKey(surface: TranscriptionSurface, code: string | null): TranslationKey | null {
-  return (code && SESSION_FAILURE_KEY[surface][code]) || FALLBACK_KEY[surface];
+  const table = SESSION_FAILURE_KEY[surface];
+  // Own keys only: a code that happens to name an Object.prototype member
+  // ("constructor", "toString", …) must not resolve to that function.
+  const own = code !== null && Object.prototype.hasOwnProperty.call(table, code);
+  return (own && table[code]) || FALLBACK_KEY[surface];
 }
 
 /** One of the backend's on-device failure codes. */
