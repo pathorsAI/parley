@@ -1,0 +1,648 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`history IPC traffic > loadHistoryEntry 1`] = `
+[
+  [
+    "invoke",
+    "read_history_entry",
+    {
+      "id": "e1",
+    },
+  ],
+  [
+    "focus",
+  ],
+  [
+    "result",
+    undefined,
+  ],
+]
+`;
+
+exports[`history IPC traffic > migrateDuplicateFolders 1`] = `
+[
+  [
+    "invoke",
+    "list_history",
+    undefined,
+  ],
+  [
+    "invoke",
+    "read_history_entry",
+    {
+      "id": "e1",
+    },
+  ],
+  [
+    "invoke",
+    "save_history_entry",
+    {
+      "audioSourcePath": null,
+      "compress": false,
+      "id": "e1",
+      "metaJson": "{"id":"e1","title":"Title e1","source":"upload","createdAt":100,"durationMs":60000,"segments":[{"id":"s1","source":"them","speaker":1,"text":"hello there","isFinal":true,"startMs":0,"endMs":900}],"speakerNames":{"them-1":"Ann"},"findings":[],"actionItems":[],"analyzed":false,"meetingContext":"","meetingBatna":"","meetingTarget":"","meetingFloor":"","audio":"audio.ogg","folderId":"old"}",
+      "summaryJson": "{"id":"e1","title":"Title e1","source":"upload","createdAt":100,"durationMs":60000,"speakerCount":1,"findingsCount":0,"actionItemsCount":0,"hasAudio":true,"analyzed":false,"snippet":"hello there","folderId":"old"}",
+    },
+  ],
+  [
+    "deleteLocalFolder",
+    "twin",
+  ],
+  [
+    "emitFoldersUpdated",
+  ],
+  [
+    "emit",
+    "history://updated",
+    {
+      "id": undefined,
+    },
+  ],
+  [
+    "result",
+    1,
+  ],
+]
+`;
+
+exports[`history IPC traffic > patchEntryOutputs (pushed and not) 1`] = `
+[
+  [
+    "invoke",
+    "read_history_entry",
+    {
+      "id": "e1",
+    },
+  ],
+  [
+    "invoke",
+    "save_history_entry",
+    {
+      "audioSourcePath": null,
+      "compress": false,
+      "id": "e1",
+      "metaJson": "{"id":"e1","title":"Title e1","source":"upload","createdAt":100,"durationMs":60000,"segments":[{"id":"s1","source":"them","speaker":1,"text":"hello there","isFinal":true,"startMs":0,"endMs":900}],"speakerNames":{"them-1":"Ann"},"findings":[],"actionItems":[],"analyzed":false,"meetingContext":"","meetingBatna":"","meetingTarget":"","meetingFloor":"","audio":"audio.ogg","folderId":null,"brief":"b","briefFailed":false}",
+      "summaryJson": "{"id":"e1","title":"Title e1","source":"upload","createdAt":100,"durationMs":60000,"speakerCount":1,"findingsCount":0,"actionItemsCount":0,"hasAudio":true,"analyzed":false,"snippet":"hello there","folderId":null}",
+    },
+  ],
+  [
+    "emit",
+    "history://updated",
+    {
+      "id": "e1",
+    },
+  ],
+  [
+    "markDirty",
+    "e1",
+  ],
+  [
+    "invoke",
+    "read_history_entry",
+    {
+      "id": "e1",
+    },
+  ],
+  [
+    "invoke",
+    "save_history_entry",
+    {
+      "audioSourcePath": null,
+      "compress": false,
+      "id": "e1",
+      "metaJson": "{"id":"e1","title":"Title e1","source":"upload","createdAt":100,"durationMs":60000,"segments":[{"id":"s1","source":"them","speaker":1,"text":"hello there","isFinal":true,"startMs":0,"endMs":900}],"speakerNames":{"them-1":"Ann"},"findings":[],"actionItems":[],"analyzed":true,"meetingContext":"","meetingBatna":"","meetingTarget":"","meetingFloor":"","audio":"audio.ogg","folderId":null,"brief":"b","briefFailed":false}",
+      "summaryJson": "{"id":"e1","title":"Title e1","source":"upload","createdAt":100,"durationMs":60000,"speakerCount":1,"findingsCount":0,"actionItemsCount":0,"hasAudio":true,"analyzed":true,"snippet":"hello there","folderId":null}",
+    },
+  ],
+  [
+    "emit",
+    "history://updated",
+    {
+      "id": "e1",
+    },
+  ],
+  [
+    "markDirty",
+    "e1",
+  ],
+  [
+    "result",
+    undefined,
+  ],
+]
+`;
+
+exports[`history IPC traffic > persistFilingSuggestion 1`] = `
+[
+  [
+    "invoke",
+    "read_history_entry",
+    {
+      "id": "e1",
+    },
+  ],
+  [
+    "invoke",
+    "save_history_entry",
+    {
+      "audioSourcePath": null,
+      "compress": false,
+      "id": "e1",
+      "metaJson": "{"id":"e1","title":"Title e1","source":"upload","createdAt":100,"durationMs":60000,"segments":[{"id":"s1","source":"them","speaker":1,"text":"hello there","isFinal":true,"startMs":0,"endMs":900}],"speakerNames":{"them-1":"Ann"},"findings":[],"actionItems":[],"analyzed":false,"meetingContext":"","meetingBatna":"","meetingTarget":"","meetingFloor":"","audio":"audio.ogg","folderId":null,"filingSuggestion":{"title":"New","folders":[]},"filingSuggested":true}",
+      "summaryJson": "{"id":"e1","title":"Title e1","source":"upload","createdAt":100,"durationMs":60000,"speakerCount":1,"findingsCount":0,"actionItemsCount":0,"hasAudio":true,"analyzed":false,"snippet":"hello there","folderId":null}",
+    },
+  ],
+  [
+    "markDirty",
+    "e1",
+  ],
+  [
+    "result",
+    undefined,
+  ],
+]
+`;
+
+exports[`history IPC traffic > persistReadOnlyStudyOutputs 1`] = `
+[
+  [
+    "writeStudyCache",
+    "rec-1",
+    {
+      "actionItems": [
+        {
+          "atMs": null,
+          "done": false,
+          "id": "a1",
+          "linkedEventId": null,
+          "text": "x",
+        },
+      ],
+      "analyzed": true,
+      "brief": "the brief",
+      "deliveryAssessment": null,
+      "findings": [
+        {
+          "atMs": 10,
+          "detail": "d",
+          "id": "f1",
+          "severity": "warn",
+          "side": "them",
+          "source": "extra",
+          "title": "t",
+        },
+      ],
+      "meetingKind": "sales",
+    },
+  ],
+  [
+    "result",
+    undefined,
+  ],
+]
+`;
+
+exports[`history IPC traffic > persistStageOutputs to a read-only cache 1`] = `
+[
+  [
+    "writeStudyCache",
+    "ro",
+    {
+      "actionItems": undefined,
+      "analyzed": undefined,
+      "brief": undefined,
+      "briefFailed": true,
+      "deliveryAssessment": undefined,
+      "findings": undefined,
+      "meetingKind": undefined,
+    },
+  ],
+  [
+    "result",
+    undefined,
+  ],
+]
+`;
+
+exports[`history IPC traffic > renameHistoryEntry + deleteHistoryEntry + listHistory 1`] = `
+[
+  [
+    "invoke",
+    "rename_history_entry",
+    {
+      "id": "e1",
+      "title": "New name",
+    },
+  ],
+  [
+    "markDirty",
+    "e1",
+  ],
+  [
+    "emit",
+    "history://updated",
+    {
+      "id": "e1",
+    },
+  ],
+  [
+    "invoke",
+    "list_history",
+    undefined,
+  ],
+  [
+    "invoke",
+    "delete_history_entry",
+    {
+      "id": "e1",
+    },
+  ],
+  [
+    "result",
+    [
+      {
+        "createdAt": 1,
+        "folderId": null,
+        "id": "e1",
+      },
+    ],
+  ],
+]
+`;
+
+exports[`history IPC traffic > saveLiveToHistory: discarded when nothing was said 1`] = `
+[
+  [
+    "invoke",
+    "discard_recording",
+    {
+      "path": "/tmp-rec.ogg",
+    },
+  ],
+  [
+    "toast.message",
+    "沒有轉錄到任何內容，這場沒有存下來",
+  ],
+  [
+    "result",
+    undefined,
+  ],
+]
+`;
+
+exports[`history IPC traffic > saveLiveToHistory: kept, opened, no correction 1`] = `
+[
+  [
+    "invoke",
+    "measure_audio_speech_rate",
+    {
+      "path": "/tmp-rec.ogg",
+    },
+  ],
+  [
+    "invoke",
+    "save_history_entry",
+    {
+      "audioSourcePath": "/tmp-rec.ogg",
+      "compress": false,
+      "id": "uuid-1",
+      "metaJson": "{"id":"uuid-1","title":"即時會議 · 1970/1/1 上午8:00:01","source":"live","createdAt":1000,"durationMs":5000,"audio":"audio.ogg","folderId":null,"segments":[{"id":"m1","source":"me","speaker":0,"text":"spoken words","isFinal":true,"startMs":0,"endMs":1000}],"speakerNames":{},"findings":[],"actionItems":[],"analyzed":false,"meetingContext":"","meetingBatna":"","meetingTarget":"","meetingFloor":"","deliveryAssessment":null,"speechRateHz":2.5,"brief":null,"briefFailed":false,"filingSuggestion":null,"filingSuggested":false,"meetingKind":null}",
+      "summaryJson": "{"id":"uuid-1","title":"即時會議 · 1970/1/1 上午8:00:01","source":"live","createdAt":1000,"durationMs":5000,"speakerCount":1,"findingsCount":0,"actionItemsCount":0,"hasAudio":true,"analyzed":false,"snippet":"spoken words","folderId":null}",
+    },
+  ],
+  [
+    "markDirty",
+    "uuid-1",
+  ],
+  [
+    "invoke",
+    "read_history_entry",
+    {
+      "id": "uuid-1",
+    },
+  ],
+  [
+    "focus",
+  ],
+  [
+    "result",
+    undefined,
+  ],
+]
+`;
+
+exports[`history IPC traffic > saveLiveToHistory: speaker correction rewrites the saved entry and the store 1`] = `
+[
+  [
+    "invoke",
+    "save_history_entry",
+    {
+      "audioSourcePath": "/tmp-rec.ogg",
+      "compress": false,
+      "id": "uuid-1",
+      "metaJson": "{"id":"uuid-1","title":"即時會議 · 1970/1/1 上午8:00:01","source":"live","createdAt":1000,"durationMs":5000,"audio":"audio.ogg","folderId":null,"segments":[{"id":"x1","source":"mix","speaker":1,"text":"line one","isFinal":true,"startMs":0,"endMs":1000},{"id":"x2","source":"mix","speaker":2,"text":"line two","isFinal":true,"startMs":1000,"endMs":2000}],"speakerNames":{},"findings":[],"actionItems":[],"analyzed":false,"meetingContext":"","meetingBatna":"","meetingTarget":"","meetingFloor":"","deliveryAssessment":null,"speechRateHz":4,"brief":null,"briefFailed":false,"filingSuggestion":null,"filingSuggested":false,"meetingKind":null}",
+      "summaryJson": "{"id":"uuid-1","title":"即時會議 · 1970/1/1 上午8:00:01","source":"live","createdAt":1000,"durationMs":5000,"speakerCount":2,"findingsCount":0,"actionItemsCount":0,"hasAudio":true,"analyzed":false,"snippet":"line one","folderId":null}",
+    },
+  ],
+  [
+    "markDirty",
+    "uuid-1",
+  ],
+  [
+    "invoke",
+    "read_history_entry",
+    {
+      "id": "uuid-1",
+    },
+  ],
+  [
+    "focus",
+  ],
+  [
+    "invoke",
+    "read_history_entry",
+    {
+      "id": "uuid-1",
+    },
+  ],
+  [
+    "invoke",
+    "read_history_entry",
+    {
+      "id": "uuid-1",
+    },
+  ],
+  [
+    "invoke",
+    "save_history_entry",
+    {
+      "audioSourcePath": null,
+      "compress": false,
+      "id": "uuid-1",
+      "metaJson": "{"id":"uuid-1","title":"即時會議 · 1970/1/1 上午8:00:01","source":"live","createdAt":1000,"durationMs":5000,"audio":"audio.ogg","folderId":null,"segments":[{"id":"x1","source":"mix","speaker":2,"text":"line one","isFinal":true,"startMs":0,"endMs":1000},{"id":"x2","source":"mix","speaker":3,"text":"line two","isFinal":true,"startMs":1000,"endMs":2000}],"speakerNames":{},"findings":[],"actionItems":[],"analyzed":false,"meetingContext":"","meetingBatna":"","meetingTarget":"","meetingFloor":"","deliveryAssessment":null,"speechRateHz":4,"brief":null,"briefFailed":false,"filingSuggestion":null,"filingSuggested":false,"meetingKind":null}",
+      "summaryJson": "{"id":"uuid-1","title":"即時會議 · 1970/1/1 上午8:00:01","source":"live","createdAt":1000,"durationMs":5000,"speakerCount":2,"findingsCount":0,"actionItemsCount":0,"hasAudio":true,"analyzed":false,"snippet":"line one","folderId":null}",
+    },
+  ],
+  [
+    "emit",
+    "history://updated",
+    {
+      "id": "uuid-1",
+    },
+  ],
+  [
+    "markDirty",
+    "uuid-1",
+  ],
+  [
+    "toast.message",
+    "已依錄音聲紋重新校正說話者",
+  ],
+  [
+    "result",
+    undefined,
+  ],
+]
+`;
+
+exports[`history IPC traffic > saveTranscriptToHistory 1`] = `
+[
+  [
+    "invoke",
+    "save_history_entry",
+    {
+      "audioSourcePath": null,
+      "compress": false,
+      "id": "uuid-1",
+      "metaJson": "{"id":"uuid-1","title":"Imported","source":"upload","createdAt":42,"durationMs":1000,"segments":[{"id":"i1","source":"them","speaker":1,"text":"imported line","isFinal":true,"startMs":0,"endMs":1000}],"speakerNames":{},"findings":[],"actionItems":[],"analyzed":false,"meetingContext":"","meetingBatna":"","meetingTarget":"","meetingFloor":"","audio":null,"folderId":"fold-1"}",
+      "summaryJson": "{"id":"uuid-1","title":"Imported","source":"upload","createdAt":42,"durationMs":1000,"speakerCount":1,"findingsCount":0,"actionItemsCount":0,"hasAudio":false,"analyzed":false,"snippet":"imported line","folderId":"fold-1"}",
+    },
+  ],
+  [
+    "markDirty",
+    "uuid-1",
+  ],
+  [
+    "emit",
+    "history://updated",
+    {
+      "id": "uuid-1",
+    },
+  ],
+  [
+    "result",
+    "uuid-1",
+  ],
+]
+`;
+
+exports[`history IPC traffic > saveUploadToHistory 1`] = `
+[
+  [
+    "invoke",
+    "save_history_entry",
+    {
+      "audioSourcePath": "/recordings/meeting.wav",
+      "compress": true,
+      "id": "uuid-1",
+      "metaJson": "{"id":"uuid-1","title":"meeting.wav","source":"upload","createdAt":0,"durationMs":60000,"audio":"audio.ogg","folderId":"picked","segments":[{"id":"u1","source":"them","speaker":1,"text":"upload line","isFinal":true,"startMs":0,"endMs":1000}],"speakerNames":{},"findings":[],"actionItems":[],"analyzed":false,"meetingContext":"","meetingBatna":"","meetingTarget":"","meetingFloor":"","deliveryAssessment":null,"speechRateHz":3,"brief":null,"briefFailed":false,"filingSuggestion":null,"filingSuggested":false,"meetingKind":null}",
+      "summaryJson": "{"id":"uuid-1","title":"meeting.wav","source":"upload","createdAt":0,"durationMs":60000,"speakerCount":1,"findingsCount":0,"actionItemsCount":0,"hasAudio":true,"analyzed":false,"snippet":"upload line","folderId":"picked"}",
+    },
+  ],
+  [
+    "markDirty",
+    "uuid-1",
+  ],
+  [
+    "result",
+    "uuid-1",
+  ],
+]
+`;
+
+exports[`history IPC traffic > setEntryAnalysis 1`] = `
+[
+  [
+    "invoke",
+    "read_history_entry",
+    {
+      "id": "e1",
+    },
+  ],
+  [
+    "invoke",
+    "save_history_entry",
+    {
+      "audioSourcePath": null,
+      "compress": false,
+      "id": "e1",
+      "metaJson": "{"id":"e1","title":"Title e1","source":"upload","createdAt":100,"durationMs":60000,"segments":[{"id":"s1","source":"them","speaker":1,"text":"hello there","isFinal":true,"startMs":0,"endMs":900}],"speakerNames":{"them-1":"Ann"},"findings":[],"actionItems":[],"analyzed":true,"meetingContext":"","meetingBatna":"","meetingTarget":"","meetingFloor":"","audio":"audio.ogg","folderId":null,"briefFailed":false,"brief":"external"}",
+      "summaryJson": "{"id":"e1","title":"Title e1","source":"upload","createdAt":100,"durationMs":60000,"speakerCount":1,"findingsCount":0,"actionItemsCount":0,"hasAudio":true,"analyzed":true,"snippet":"hello there","folderId":null}",
+    },
+  ],
+  [
+    "emit",
+    "history://updated",
+    {
+      "id": "e1",
+    },
+  ],
+  [
+    "markDirty",
+    "e1",
+  ],
+  [
+    "result",
+    {
+      "actionItems": 0,
+      "analyzed": true,
+      "brief": true,
+      "findings": 0,
+      "id": "e1",
+    },
+  ],
+]
+`;
+
+exports[`history IPC traffic > setEntryFolder (changed, then unchanged) 1`] = `
+[
+  [
+    "invoke",
+    "read_history_entry",
+    {
+      "id": "e1",
+    },
+  ],
+  [
+    "invoke",
+    "save_history_entry",
+    {
+      "audioSourcePath": null,
+      "compress": false,
+      "id": "e1",
+      "metaJson": "{"id":"e1","title":"Title e1","source":"upload","createdAt":100,"durationMs":60000,"segments":[{"id":"s1","source":"them","speaker":1,"text":"hello there","isFinal":true,"startMs":0,"endMs":900}],"speakerNames":{"them-1":"Ann"},"findings":[],"actionItems":[],"analyzed":false,"meetingContext":"","meetingBatna":"","meetingTarget":"","meetingFloor":"","audio":"audio.ogg","folderId":"fold-9"}",
+      "summaryJson": "{"id":"e1","title":"Title e1","source":"upload","createdAt":100,"durationMs":60000,"speakerCount":1,"findingsCount":0,"actionItemsCount":0,"hasAudio":true,"analyzed":false,"snippet":"hello there","folderId":"fold-9"}",
+    },
+  ],
+  [
+    "markDirty",
+    "e1",
+  ],
+  [
+    "invoke",
+    "read_history_entry",
+    {
+      "id": "e1",
+    },
+  ],
+  [
+    "result",
+    undefined,
+  ],
+]
+`;
+
+exports[`history IPC traffic > updateEntryMeta 1`] = `
+[
+  [
+    "invoke",
+    "read_history_entry",
+    {
+      "id": "e1",
+    },
+  ],
+  [
+    "invoke",
+    "save_history_entry",
+    {
+      "audioSourcePath": null,
+      "compress": false,
+      "id": "e1",
+      "metaJson": "{"id":"e1","title":"Title e1","source":"upload","createdAt":100,"durationMs":60000,"segments":[{"id":"s1","source":"them","speaker":1,"text":"hello there","isFinal":true,"startMs":0,"endMs":900}],"speakerNames":{"me-0":"Me"},"findings":[],"actionItems":[],"analyzed":false,"meetingContext":"frame","meetingBatna":"","meetingTarget":"","meetingFloor":"","audio":"audio.ogg","folderId":null}",
+      "summaryJson": "{"id":"e1","title":"Title e1","source":"upload","createdAt":100,"durationMs":60000,"speakerCount":1,"findingsCount":0,"actionItemsCount":0,"hasAudio":true,"analyzed":false,"snippet":"hello there","folderId":null}",
+    },
+  ],
+  [
+    "emit",
+    "history://updated",
+    {
+      "id": "e1",
+    },
+  ],
+  [
+    "markDirty",
+    "e1",
+  ],
+  [
+    "result",
+    {
+      "actionItems": [],
+      "analyzed": false,
+      "audio": "audio.ogg",
+      "createdAt": 100,
+      "durationMs": 60000,
+      "findings": [],
+      "folderId": null,
+      "id": "e1",
+      "meetingBatna": "",
+      "meetingContext": "frame",
+      "meetingFloor": "",
+      "meetingTarget": "",
+      "segments": [
+        {
+          "endMs": 900,
+          "id": "s1",
+          "isFinal": true,
+          "source": "them",
+          "speaker": 1,
+          "startMs": 0,
+          "text": "hello there",
+        },
+      ],
+      "source": "upload",
+      "speakerNames": {
+        "me-0": "Me",
+      },
+      "title": "Title e1",
+    },
+  ],
+]
+`;
+
+exports[`history IPC traffic > updateHistoryEntry 1`] = `
+[
+  [
+    "invoke",
+    "read_history_entry",
+    {
+      "id": "e1",
+    },
+  ],
+  [
+    "invoke",
+    "save_history_entry",
+    {
+      "audioSourcePath": null,
+      "compress": false,
+      "id": "e1",
+      "metaJson": "{"id":"e1","title":"Title e1","source":"upload","createdAt":100,"durationMs":60000,"segments":[{"id":"s1","source":"them","speaker":1,"text":"new text","isFinal":true,"startMs":0,"endMs":900}],"speakerNames":{"them-1":"Bo"},"findings":[{"id":"f1","atMs":10,"side":"them","severity":"warn","source":"extra","title":"t","detail":"d"}],"actionItems":[{"id":"a1","text":"x","done":false,"linkedEventId":null,"atMs":null}],"analyzed":true,"meetingContext":"ctx","meetingBatna":"","meetingTarget":"","meetingFloor":"","audio":"audio.ogg","folderId":null,"filingSuggestion":{"title":"keep","folders":[]},"filingSuggested":true,"deliveryAssessment":null,"speechRateHz":null,"brief":"the brief","briefFailed":false,"meetingKind":"sales"}",
+      "summaryJson": "{"id":"e1","title":"Title e1","source":"upload","createdAt":100,"durationMs":60000,"speakerCount":1,"findingsCount":1,"actionItemsCount":1,"hasAudio":true,"analyzed":true,"snippet":"new text","folderId":null}",
+    },
+  ],
+  [
+    "emit",
+    "history://updated",
+    {
+      "id": "e1",
+    },
+  ],
+  [
+    "markDirty",
+    "e1",
+  ],
+  [
+    "result",
+    undefined,
+  ],
+]
+`;
