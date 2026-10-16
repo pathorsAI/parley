@@ -1,10 +1,15 @@
 //! Characterization tests for the batch (upload) adapters: each one runs
-//! against a local scripted server returning responses shaped like the
-//! vendor's, and the tests pin down the requests it sends, the segments it
-//! builds, how it polls, and the error text it fails with.
+//! through its registry row against a local scripted server returning
+//! responses shaped like the vendor's, and the tests pin down the requests it
+//! sends, the segments it builds, how it polls, and the error text it fails
+//! with.
+
+use std::sync::Mutex;
+use std::time::Duration;
 
 use super::*;
 use crate::test_http::{serve, upload_file, MockServer};
+use crate::transcription::provider::{spec, Batch};
 use serde_json::{json, Value};
 
 const AUDIO: &[u8] = b"OggS-fake-audio-bytes";
@@ -24,18 +29,68 @@ fn strings(v: &[&str]) -> Vec<String> {
     v.iter().map(|s| s.to_string()).collect()
 }
 
-/// The soniox log context, owned, as the adapter handed it to the writer.
-#[derive(Debug, Default)]
-struct SonioxLog {
-    model: String,
+/// Collects what an adapter logged.
+#[derive(Default)]
+struct Logged(Mutex<Vec<(String, Value)>>);
+
+impl ResponseLog for Logged {
+    fn write(&self, provider: &str, entry: Value) {
+        self.0.lock().unwrap().push((provider.to_string(), entry));
+    }
+}
+
+/// One upload as a test describes it.
+struct Call<'a> {
+    provider: &'a str,
+    endpoint: String,
+    poll: PollPolicy,
+    model: Option<&'a str>,
+    hints: &'a [&'a str],
     diarization: bool,
-    language_hints: Vec<String>,
-    file_name: String,
-    audio_duration_ms: u64,
-    token_count: usize,
-    tokens_with_speaker: usize,
-    distinct_speakers: Vec<i64>,
-    raw_transcript: String,
+    vocabulary: &'a [&'a str],
+    log: &'a dyn ResponseLog,
+}
+
+impl<'a> Call<'a> {
+    fn new(provider: &'a str, endpoint: String) -> Self {
+        Self {
+            provider,
+            endpoint,
+            poll: fast_poll(5),
+            model: None,
+            hints: &[],
+            diarization: true,
+            vocabulary: &[],
+            log: &NoLog,
+        }
+    }
+
+    /// Run the provider's registered batch adapter on a fake `rec.ogg`.
+    async fn run(self, credential: &str) -> Result<TranscriptionResult, String> {
+        let Some(Batch::Upload(adapter)) = spec(self.provider).and_then(|s| s.batch.as_ref())
+        else {
+            panic!("{} has no upload adapter", self.provider);
+        };
+        let path = upload_file("rec.ogg", AUDIO);
+        let path = path.to_str().unwrap();
+        let hints = strings(self.hints);
+        let vocabulary = strings(self.vocabulary);
+        let client = reqwest::Client::new();
+        adapter(BatchRequest {
+            client: &client,
+            endpoint: Some(&self.endpoint),
+            poll: self.poll,
+            credential,
+            upload_path: path,
+            audio: read_upload(path).await.unwrap(),
+            model: self.model,
+            language_hints: &hints,
+            diarization: self.diarization,
+            vocabulary: &vocabulary,
+            log: self.log,
+        })
+        .await
+    }
 }
 
 // --- Soniox ------------------------------------------------------------------
@@ -68,34 +123,24 @@ async fn run_soniox(
     poll: PollPolicy,
     hints: &[&str],
     vocabulary: &[&str],
-) -> (Result<TranscriptionResult, String>, Option<SonioxLog>) {
-    let path = upload_file("rec.ogg", AUDIO);
-    let mut log = None;
-    let result = run_upload_and_transcribe(
-        &reqwest::Client::new(),
-        &format!("{}/v1", server.base),
+) -> (Result<TranscriptionResult, String>, Option<Value>) {
+    let logged = Logged::default();
+    let result = Call {
         poll,
-        "sk-test",
-        path.to_str().unwrap(),
-        DEFAULT_ASYNC_MODEL,
-        &strings(hints),
-        true,
-        &strings(vocabulary),
-        |ctx| {
-            log = Some(SonioxLog {
-                model: ctx.model.to_string(),
-                diarization: ctx.enable_speaker_diarization,
-                language_hints: ctx.language_hints.to_vec(),
-                file_name: ctx.file_name.to_string(),
-                audio_duration_ms: ctx.audio_duration_ms,
-                token_count: ctx.token_count,
-                tokens_with_speaker: ctx.tokens_with_speaker,
-                distinct_speakers: ctx.distinct_speakers.iter().copied().collect(),
-                raw_transcript: ctx.raw_transcript.to_string(),
-            })
-        },
-    )
+        model: Some("stt-async-v5"),
+        hints,
+        vocabulary,
+        log: &logged,
+        ..Call::new("soniox", format!("{}/v1", server.base))
+    }
+    .run("sk-test")
     .await;
+    let mut logs = logged.0.into_inner().unwrap();
+    assert!(logs.len() <= 1);
+    let log = logs.pop().map(|(provider, entry)| {
+        assert_eq!(provider, "soniox");
+        entry
+    });
     (result, log)
 }
 
@@ -162,16 +207,25 @@ async fn soniox_uploads_creates_polls_fetches_and_cleans_up() {
         })
     );
 
-    let log = log.expect("the diagnostic log is written");
-    assert_eq!(log.model, "stt-async-v5");
-    assert!(log.diarization);
-    assert_eq!(log.language_hints, strings(&["zh", "en"]));
-    assert_eq!(log.file_name, "rec.ogg");
-    assert_eq!(log.audio_duration_ms, 5000);
-    assert_eq!(log.token_count, 5);
-    assert_eq!(log.tokens_with_speaker, 3);
-    assert_eq!(log.distinct_speakers, vec![1, 2]);
-    assert_eq!(log.raw_transcript, SONIOX_TRANSCRIPT);
+    assert_eq!(
+        log.expect("the diagnostic log is written"),
+        json!({
+            "request": {
+                "model": "stt-async-v5",
+                "enable_speaker_diarization": true,
+                "language_hints": ["zh", "en"],
+                "file_name": "rec.ogg",
+            },
+            "audio_duration_ms": 5000,
+            "diarization_summary": {
+                "token_count": 5,
+                "tokens_with_speaker": 3,
+                "distinct_speakers": [1, 2],
+                "distinct_speaker_count": 2,
+            },
+            "raw_transcript": serde_json::from_str::<Value>(SONIOX_TRANSCRIPT).unwrap(),
+        })
+    );
 }
 
 #[tokio::test]
@@ -253,16 +307,13 @@ async fn run_deepgram(
     diarization: bool,
     vocabulary: &[&str],
 ) -> Result<TranscriptionResult, String> {
-    let path = upload_file("rec.ogg", AUDIO);
-    deepgram_batch(
-        &reqwest::Client::new(),
-        &server.base,
-        "dg-key",
-        path.to_str().unwrap(),
-        &strings(hints),
+    Call {
+        hints,
         diarization,
-        &strings(vocabulary),
-    )
+        vocabulary,
+        ..Call::new("deepgram", server.base.clone())
+    }
+    .run("dg-key")
     .await
 }
 
@@ -339,17 +390,13 @@ async fn run_aai(
     hints: &[&str],
     vocabulary: &[&str],
 ) -> Result<TranscriptionResult, String> {
-    let path = upload_file("rec.ogg", AUDIO);
-    assemblyai_batch(
-        &reqwest::Client::new(),
-        &server.base,
+    Call {
         poll,
-        "aai-key",
-        path.to_str().unwrap(),
-        &strings(hints),
-        true,
-        &strings(vocabulary),
-    )
+        hints,
+        vocabulary,
+        ..Call::new("assemblyai", server.base.clone())
+    }
+    .run("aai-key")
     .await
 }
 
@@ -479,16 +526,14 @@ async fn run_openai(
     hints: &[&str],
     vocabulary: &[&str],
 ) -> Result<TranscriptionResult, String> {
-    let path = upload_file("rec.ogg", AUDIO);
-    openai_batch(
-        &reqwest::Client::new(),
-        &server.base,
-        "oa-key",
-        path.to_str().unwrap(),
+    Call {
         model,
-        &strings(hints),
-        &strings(vocabulary),
-    )
+        hints,
+        vocabulary,
+        diarization: false,
+        ..Call::new("openai", server.base.clone())
+    }
+    .run("oa-key")
     .await
 }
 
@@ -581,16 +626,13 @@ async fn run_gemini(
     model: Option<&str>,
     vocabulary: &[&str],
 ) -> Result<TranscriptionResult, String> {
-    let path = upload_file("rec.ogg", AUDIO);
-    gemini_batch(
-        &reqwest::Client::new(),
-        &server.base,
-        "gm-key",
-        path.to_str().unwrap(),
+    Call {
         model,
-        &[],
-        &strings(vocabulary),
-    )
+        vocabulary,
+        diarization: false,
+        ..Call::new("gemini", server.base.clone())
+    }
+    .run("gm-key")
     .await
 }
 
@@ -675,21 +717,13 @@ async fn cloud_server(
 }
 
 async fn run_cloud(server: &MockServer, poll: PollPolicy) -> Result<TranscriptionResult, String> {
-    let path = upload_file("rec.ogg", AUDIO);
-    let languages = strings(&["zh", "en"]);
-    let vocabulary = strings(&["Parley"]);
-    parley_batch(
-        &reqwest::Client::new(),
+    Call {
         poll,
-        "cloud-token",
-        &format!("{}/stt/batch", server.base),
-        path.to_str().unwrap(),
-        &BatchOptions {
-            languages: &languages,
-            diarization: true,
-            vocabulary: &vocabulary,
-        },
-    )
+        hints: &["zh", "en"],
+        vocabulary: &["Parley"],
+        ..Call::new("parley", format!("{}/stt/batch", server.base))
+    }
+    .run("cloud-token")
     .await
 }
 
@@ -831,71 +865,4 @@ async fn parley_cloud_job_and_transcript_failures() {
     .await;
     let err = run_cloud(&server, fast_poll(5)).await.unwrap_err();
     assert!(err.starts_with("Unreadable hosted transcript: "), "{err}");
-}
-
-// --- Entry checks and cache names ---------------------------------------------
-
-#[test]
-fn an_upload_without_a_credential_is_refused_unless_on_device() {
-    let missing = "Missing transcription credential — add the provider's API key in Settings, or sign in to Parley Cloud.";
-    for provider in [
-        "soniox",
-        "deepgram",
-        "assemblyai",
-        "openai",
-        "gemini",
-        "parley",
-        "nope",
-    ] {
-        assert_eq!(
-            check_batch_credential(provider, " "),
-            Err(missing.to_string()),
-            "{provider}"
-        );
-        assert_eq!(check_batch_credential(provider, "k"), Ok(()));
-    }
-    assert_eq!(check_batch_credential("local", ""), Ok(()));
-}
-
-#[test]
-fn hosted_uploads_need_the_batch_url() {
-    let missing = Err("hosted transcription requires the cloud batch URL".to_string());
-    assert_eq!(hosted_batch_base(None), missing);
-    assert_eq!(hosted_batch_base(Some("  ")), missing);
-    assert_eq!(
-        hosted_batch_base(Some(" https://x/stt/batch ")),
-        Ok("https://x/stt/batch")
-    );
-    assert_eq!(
-        unsupported_batch_provider("whisperx"),
-        "File transcription for 'whisperx' is not supported yet — switch to another transcription provider in Settings."
-    );
-}
-
-#[test]
-fn cache_file_names_stay_stable() {
-    // Existing caches on users' disks are found by exactly these names.
-    assert_eq!(cache_file_name("rec.ogg", 42, "soniox"), "rec.ogg-42.json");
-    assert_eq!(
-        cache_file_name("rec.ogg", 42, "deepgram"),
-        "rec.ogg-42-deepgram.json"
-    );
-    assert_eq!(
-        cache_file_name("會議 #1.m4a", 7, "parley"),
-        "會議__1.m4a-7-parley.json"
-    );
-    assert_eq!(
-        cache_file_name("a/b.wav", 1, "local-whisper-small-q5_1"),
-        "a_b.wav-1-local-whisper-small-q5_1.json"
-    );
-    assert_eq!(cache_key("soniox", Some("stt-async-v5")), "soniox");
-    assert_eq!(cache_key("openai", None), "openai");
-    assert_eq!(
-        cache_key("local", None),
-        format!("local-{}", crate::local_stt::DEFAULT_MODEL_ID)
-    );
-    assert_eq!(
-        cache_key("local", Some("whisper-small-q5_1")),
-        "local-whisper-small-q5_1"
-    );
 }

@@ -25,7 +25,7 @@ use crate::audio::microphone::Microphone;
 use crate::capture::{run_metered_session, spawn_capture, Begin, MicCoordinator, MicTap, MicUser};
 use crate::commands::{read_config_file, write_config_file};
 use crate::transcription::common::VOICE_TYPING_SOURCE;
-use crate::transcription::{SttProvider, TranscribeConfig};
+use crate::transcription::{Credential, SttProvider, TranscribeConfig};
 
 mod clipboard;
 pub use self::clipboard::ClipboardState;
@@ -291,7 +291,7 @@ pub async fn start_voice_typing(
     // token only works via the relay.
     crate::transcription::check_live_start(provider, &api_key, relay_endpoint.is_some())?;
     // Same guard as start_meeting: no dictation on a model that is not on disk.
-    if provider == SttProvider::Local {
+    if provider.credential() == Credential::LocalModel {
         crate::local_stt::ensure_installed(&app, model.as_deref().unwrap_or_default())?;
     }
     // A press must always yield a FRESH session. Release any voice-typing mic

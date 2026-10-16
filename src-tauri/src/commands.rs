@@ -9,7 +9,7 @@ use crate::capture::{
     run_metered_session, spawn_capture, Begin, MicCoordinator, MicTap, MicUser, RecorderBuf,
 };
 use crate::transcription::common::{LevelMeter, LEVEL_EVENT};
-use crate::transcription::{SttProvider, TranscribeConfig};
+use crate::transcription::{Credential, SttProvider, TranscribeConfig};
 
 /// Path to `name` inside the app config dir, where all of the app's small
 /// config/state files (templates, session snapshot, command queue, voice
@@ -211,7 +211,7 @@ fn check_meeting_start(
     crate::transcription::check_live_start(provider, api_key, has_relay)?;
     // On-device: fail now, before the mic is claimed, when the model is not
     // downloaded — a session that cannot load it would only fail later.
-    if provider == SttProvider::Local {
+    if provider.credential() == Credential::LocalModel {
         crate::local_stt::ensure_installed(app, model.unwrap_or_default())?;
     }
     Ok(())

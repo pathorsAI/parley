@@ -14,6 +14,9 @@ use tauri::AppHandle;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::tungstenite::Message;
 
+use super::batch::{
+    guess_audio_mime, last_end, read_json, BatchRequest, ReplaySegment, TranscriptionResult,
+};
 use super::common::{
     clean_vocabulary, connect_with_headers, drive_session, note_connected, LevelMeter,
     SegmentBuilder, Timeline, TranscribeConfig, LEVEL_EVENT,
@@ -159,6 +162,96 @@ fn on_payload(
         Some(err) => Err(err),
         None => Ok(Next::Continue),
     }
+}
+
+// --- Batch (/v1/audio/transcriptions) ------------------------------------------
+
+const OPENAI_BATCH_BASE: &str = "https://api.openai.com";
+
+#[derive(Deserialize, Default)]
+struct OaiVerbose {
+    #[serde(default)]
+    duration: f64,
+    #[serde(default)]
+    text: String,
+    #[serde(default)]
+    segments: Vec<OaiSegment>,
+}
+#[derive(Deserialize, Default)]
+struct OaiSegment {
+    #[serde(default)]
+    start: f64,
+    #[serde(default)]
+    end: f64,
+    #[serde(default)]
+    text: String,
+}
+
+/// OpenAI transcription with `verbose_json` for segment timestamps (whisper-1 —
+/// the gpt-4o transcribe models reject verbose_json). No diarization → a single
+/// speaker. 25 MB request limit (compression helps). Shape verified vs docs.
+pub(crate) async fn transcribe_file(req: BatchRequest<'_>) -> Result<TranscriptionResult, String> {
+    let base = req.base_or(OPENAI_BATCH_BASE);
+    let file_name = req.file_name_or("recording.ogg");
+    let part = reqwest::multipart::Part::bytes(req.audio)
+        .file_name(file_name)
+        .mime_str(guess_audio_mime(req.upload_path))
+        .map_err(|e| format!("openai: bad mime: {e}"))?;
+    // whisper-1 returns verbose_json segments with timestamps; the gpt-4o
+    // transcribe models don't, so default to whisper-1 for the replay path.
+    let model = req.model.unwrap_or("whisper-1");
+    let mut form = reqwest::multipart::Form::new()
+        .part("file", part)
+        .text("model", model.to_string())
+        .text("response_format", "verbose_json");
+    if let Some(lang) = req.language_hints.first() {
+        form = form.text("language", lang.clone());
+    }
+    // Whisper's only biasing hook is the free-text `prompt`; a comma-separated
+    // term list is the documented way to steer spelling. Same string the
+    // realtime adapter puts in `input_audio_transcription.prompt`.
+    let terms = clean_vocabulary(req.vocabulary);
+    if !terms.is_empty() {
+        form = form.text("prompt", terms.join(", "));
+    }
+    let resp = req
+        .client
+        .post(format!("{base}/v1/audio/transcriptions"))
+        .bearer_auth(req.credential)
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| format!("OpenAI request failed: {e}"))?;
+    let v: OaiVerbose = read_json(resp, "openai transcribe").await?;
+    Ok(verbose_result(v))
+}
+
+/// Map the verbose segments; fall back to the flat text as one segment.
+fn verbose_result(v: OaiVerbose) -> TranscriptionResult {
+    let mut segments: Vec<ReplaySegment> = v
+        .segments
+        .into_iter()
+        .filter(|s| !s.text.trim().is_empty())
+        .enumerate()
+        .map(|(i, s)| ReplaySegment {
+            id: format!("them-{i}"),
+            speaker: 0,
+            text: s.text.trim().to_string(),
+            start_ms: (s.start * 1000.0) as u64,
+            end_ms: (s.end * 1000.0) as u64,
+        })
+        .collect();
+    if segments.is_empty() && !v.text.trim().is_empty() {
+        segments.push(ReplaySegment {
+            id: "them-0".to_string(),
+            speaker: 0,
+            text: v.text.trim().to_string(),
+            start_ms: 0,
+            end_ms: (v.duration * 1000.0) as u64,
+        });
+    }
+    let duration_ms = ((v.duration * 1000.0) as u64).max(last_end(&segments));
+    TranscriptionResult::fresh(segments, duration_ms)
 }
 
 pub async fn run_session(

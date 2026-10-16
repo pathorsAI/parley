@@ -14,6 +14,7 @@ use tauri::AppHandle;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::tungstenite::Message;
 
+use super::batch::{guess_audio_mime, read_json, BatchRequest, ReplaySegment, TranscriptionResult};
 use super::common::{
     clean_vocabulary, connect_with_headers, drive_session, note_connected, LevelMeter,
     SegmentBuilder, Timeline, TranscribeConfig, LEVEL_EVENT,
@@ -139,6 +140,104 @@ fn on_payload(builder: &mut SegmentBuilder, interim: &mut String, payload: &str)
         apply_message(builder, interim, m);
     }
     Ok(Next::Continue)
+}
+
+// --- Batch (generateContent with inline audio) ---------------------------------
+
+const GEMINI_BATCH_BASE: &str = "https://generativelanguage.googleapis.com";
+
+#[derive(Deserialize, Default)]
+struct GemResponse {
+    #[serde(default)]
+    candidates: Vec<GemCandidate>,
+}
+#[derive(Deserialize, Default)]
+struct GemCandidate {
+    #[serde(default)]
+    content: GemContent,
+}
+#[derive(Deserialize, Default)]
+struct GemContent {
+    #[serde(default)]
+    parts: Vec<GemPart>,
+}
+#[derive(Deserialize, Default)]
+struct GemPart {
+    #[serde(default)]
+    text: String,
+}
+
+/// The transcription prompt. Gemini has no custom-vocabulary field; the
+/// transcription is driven by a prompt, so the phrase dictionary becomes one
+/// more line of that prompt.
+fn batch_prompt(vocabulary: &[String]) -> String {
+    let mut prompt = "Transcribe this audio verbatim. Output only the transcript text, with no commentary, labels, or timestamps.".to_string();
+    let terms = clean_vocabulary(vocabulary);
+    if !terms.is_empty() {
+        prompt.push_str(&format!(
+            "\nDomain terms that may occur — spell them exactly as written: {}.",
+            terms.join(", ")
+        ));
+    }
+    prompt
+}
+
+/// Gemini transcription via generateContent with inline audio. No timestamps or
+/// diarization, so the whole transcript is a single segment spanning the file
+/// (its length is measured by decoding). NEEDS LIVE SMOKE TEST.
+pub(crate) async fn transcribe_file(req: BatchRequest<'_>) -> Result<TranscriptionResult, String> {
+    use base64::Engine as _;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&req.audio);
+    let model = req.model.unwrap_or("gemini-2.5-flash");
+    let base = req.base_or(GEMINI_BATCH_BASE);
+    let url = format!(
+        "{base}/v1beta/models/{model}:generateContent?key={}",
+        req.credential
+    );
+    let body = serde_json::json!({
+        "contents": [{
+            "parts": [
+                { "inline_data": { "mime_type": guess_audio_mime(req.upload_path), "data": b64 } },
+                { "text": batch_prompt(req.vocabulary) }
+            ]
+        }]
+    });
+    let resp = req
+        .client
+        .post(url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Gemini request failed: {e}"))?;
+    let g: GemResponse = read_json(resp, "gemini transcribe").await?;
+    let text = g
+        .candidates
+        .first()
+        .and_then(|c| c.content.parts.first())
+        .map(|p| p.text.trim().to_string())
+        .unwrap_or_default();
+    // Gemini returns no duration; decode the file to length the single segment so
+    // the replay scrubber has a range (best-effort — 0 if the decode fails).
+    let path = req.upload_path.to_string();
+    let duration_ms = tokio::task::spawn_blocking(move || {
+        crate::replay_audio::decode_to_16k_mono(std::path::Path::new(&path))
+            .map(|pcm| (pcm.len() as u64) * 1000 / 16_000)
+            .unwrap_or(0)
+    })
+    .await
+    .unwrap_or(0);
+    let segments = if text.is_empty() {
+        Vec::new()
+    } else {
+        vec![ReplaySegment {
+            id: "them-0".to_string(),
+            speaker: 0,
+            text,
+            start_ms: 0,
+            end_ms: duration_ms,
+        }]
+    };
+    Ok(TranscriptionResult::fresh(segments, duration_ms))
 }
 
 pub async fn run_session(

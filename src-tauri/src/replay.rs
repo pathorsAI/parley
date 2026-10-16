@@ -1,65 +1,28 @@
 //! Batch (async) transcription for uploaded recordings — the "replay" feature.
 //!
-//! Unlike the realtime adapters in `transcription/`, this hits each provider's
-//! pre-recorded/batch API and returns ready-to-render, diarized-where-supported
-//! segments. `transcribe_file` dispatches by provider. The BYOK adapters —
-//! Soniox (upload → job → poll → diarized tokens), Deepgram, AssemblyAI, OpenAI
-//! and Gemini — talk to their vendor with the user's own key; Gemini is still
-//! GATED OFF in the STT registry (`supportsFileUpload: false`) until it's
-//! smoke-tested against its live API. Hosted "parley" posts to Parley Cloud's
-//! batch routes and reads back Parley's own token shape
+//! Unlike the realtime adapters, this hits each provider's pre-recorded/batch
+//! API and returns ready-to-render, diarized-where-supported segments. Which
+//! adapter serves a provider is its registry row's `batch` entry
+//! (`transcription::provider`); the adapters themselves live in the provider
+//! modules and share `transcription::batch`. The BYOK adapters — Soniox
+//! (upload → job → poll → diarized tokens), Deepgram, AssemblyAI, OpenAI and
+//! Gemini — talk to their vendor with the user's own key; Gemini is still
+//! GATED OFF in the frontend's STT registry (`supportsFileUpload: false`) until
+//! it's smoke-tested against its live API. Hosted "parley" posts to Parley
+//! Cloud's batch routes and reads back Parley's own token shape
 //! (`docs/design/stt-protocol.md`); it authenticates with the cloud session
-//! token exactly like the live hosted stream does. The wrapper (compression,
-//! acoustic speech-rate, per-provider caching) is provider-independent.
-
-use std::time::Duration;
+//! token exactly like the live hosted stream does. This module is the
+//! provider-independent wrapper: credential checks, compression, acoustic
+//! speech-rate, the per-provider cache, and the diagnostic response log.
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-use crate::transcription::common::{clean_vocabulary, ensure_crypto_provider, urlencode};
-use crate::transcription::soniox::{context_for, SonioxContext};
-
-const SONIOX_BASE: &str = "https://api.soniox.com/v1";
-const DEEPGRAM_BASE: &str = "https://api.deepgram.com";
-const ASSEMBLYAI_BASE: &str = "https://api.assemblyai.com";
-const OPENAI_BASE: &str = "https://api.openai.com";
-const GEMINI_BASE: &str = "https://generativelanguage.googleapis.com";
-/// Async batch model (distinct from the realtime `stt-rt-v5`).
-const DEFAULT_ASYNC_MODEL: &str = "stt-async-v5";
-/// How long to wait between status polls.
-const POLL_INTERVAL: Duration = Duration::from_millis(1500);
-/// Safety cap so a stuck job can't poll forever (~20 min at 1.5s/poll).
-const MAX_POLLS: u32 = 800;
-
-/// How a batch adapter polls a job: the production cadence is
-/// [`PollPolicy::DEFAULT`]; tests shorten it so a polled job settles at once.
-#[derive(Clone, Copy, Debug)]
-struct PollPolicy {
-    interval: Duration,
-    max_polls: u32,
-}
-
-impl PollPolicy {
-    const DEFAULT: Self = Self {
-        interval: POLL_INTERVAL,
-        max_polls: MAX_POLLS,
-    };
-}
-
-/// A finished, diarized transcript segment handed to the frontend. Serializes to
-/// camelCase so it matches the TS `TranscriptSegment` shape directly. Also
-/// Deserialize so it can be read back from the on-disk transcription cache.
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ReplaySegment {
-    id: String,
-    /// Always 0-based diarized speaker; the source is fixed to "them" in JS.
-    speaker: i64,
-    text: String,
-    start_ms: u64,
-    end_ms: u64,
-}
+use crate::transcription::batch::{
+    read_upload, BatchFn, BatchRequest, PollPolicy, ReplaySegment, ResponseLog, TranscriptionResult,
+};
+use crate::transcription::common::ensure_crypto_provider;
+use crate::transcription::provider::{self, Batch, Credential, ProviderSpec};
 
 /// Cache payload persisted per uploaded file (keyed by name+size). Holds the
 /// successful transcription so an identical re-upload skips the provider (and billing).
@@ -74,85 +37,18 @@ struct CachedTranscription {
     speech_rate_hz: f32,
 }
 
-/// Result of `transcribe_file` — segments plus the overall duration. `cached` is
-/// true when this came from the on-disk cache (no provider call, so the frontend
-/// must NOT record STT usage for it).
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TranscriptionResult {
-    segments: Vec<ReplaySegment>,
-    duration_ms: u64,
-    cached: bool,
-    /// Acoustically measured articulation rate (syllable nuclei per second of
-    /// voiced speech) over the whole recording — the post-call pace read, anchored
-    /// to the audio rather than guessed from STT-timed text. 0.0 if unmeasurable.
-    speech_rate_hz: f32,
-}
-
-// --- Soniox wire types --------------------------------------------------------
-
-#[derive(Serialize)]
-struct CreateTranscriptionRequest<'a> {
-    file_id: &'a str,
-    model: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    language_hints: Option<Vec<String>>,
-    enable_speaker_diarization: bool,
-    /// Custom vocabulary biasing — the same `context` object the realtime
-    /// adapter sends, omitted entirely when the phrase dictionary is empty.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    context: Option<SonioxContext>,
-}
-
-#[derive(Deserialize)]
-struct IdResponse {
-    id: String,
-}
-
-#[derive(Deserialize)]
-struct TranscriptionStatus {
-    status: String,
-    #[serde(default)]
-    error_message: Option<String>,
-    #[serde(default)]
-    audio_duration_ms: Option<u64>,
-}
-
-#[derive(Deserialize, Default)]
-struct Token {
-    #[serde(default)]
-    text: String,
-    #[serde(default)]
-    start_ms: u64,
-    #[serde(default)]
-    end_ms: u64,
-    /// Speaker can arrive as a string ("1") or a number, or be absent.
-    #[serde(default)]
-    speaker: Option<SpeakerId>,
-}
-
-/// Soniox sends the speaker as a string in some responses and a number in
-/// others; accept either.
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum SpeakerId {
-    Num(i64),
-    Str(String),
-}
-
-impl SpeakerId {
-    fn to_i64(&self) -> i64 {
-        match self {
-            SpeakerId::Num(n) => *n,
-            SpeakerId::Str(s) => s.trim().parse().unwrap_or(0),
-        }
-    }
-}
-
-#[derive(Deserialize, Default)]
-struct TranscriptResponse {
-    #[serde(default)]
-    tokens: Vec<Token>,
+/// What the frontend asked to transcribe, as the dispatch below needs it.
+struct Upload<'a> {
+    /// The normalized (trimmed, lowercase) provider id.
+    provider: &'a str,
+    spec: Option<&'static ProviderSpec>,
+    path: &'a str,
+    credential: &'a str,
+    model: Option<&'a str>,
+    language_hints: &'a [String],
+    diarization: bool,
+    batch_url: Option<&'a str>,
+    vocabulary: &'a [String],
 }
 
 /// Transcribe an audio file via the selected provider's batch API and return
@@ -161,8 +57,7 @@ struct TranscriptResponse {
 /// `language_hints` may be empty (providers auto-detect). `diarization` toggles
 /// speaker separation. The `api_key` is supplied by the frontend and never leaves
 /// the Rust side beyond the provider request — for hosted "parley" it is the
-/// cloud session token, and `batch_url` is the cloud batch endpoint (see the
-/// match below).
+/// cloud session token, and `batch_url` is the cloud batch endpoint.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn transcribe_file(
@@ -185,205 +80,58 @@ pub async fn transcribe_file(
     ensure_crypto_provider();
     let vocabulary = vocabulary.unwrap_or_default();
 
-    // File (batch) transcription is dispatched by `provider` at the transcription
-    // call below. The frontend only offers providers whose `supportsFileUpload`
-    // flag is on (transcription/providers.ts); the backend is the source of truth,
-    // so an unknown/unimplemented provider is rejected in the match's fallthrough.
-    // Adding a provider: implement its `*_batch` adapter, add a match arm below,
-    // and flip its flag in the registry — only after a live smoke test.
+    // File (batch) transcription is dispatched by the provider's registry row.
+    // The frontend only offers providers whose `supportsFileUpload` flag is on
+    // (transcription/providers.ts); the backend is the source of truth, so an
+    // unknown/unimplemented provider is rejected at dispatch.
     let provider = provider.trim().to_ascii_lowercase();
-
     check_batch_credential(&provider, &api_key)?;
+    let upload = Upload {
+        provider: &provider,
+        spec: provider::spec(&provider),
+        path: &path,
+        credential: &api_key,
+        model: model.as_deref(),
+        language_hints: &language_hints,
+        diarization,
+        batch_url: batch_url.as_deref(),
+        vocabulary: &vocabulary,
+    };
 
     // Cache: an identical re-upload (same file name + byte size, same provider)
     // reuses the prior SUCCESSFUL transcription — no compression, no provider
     // call, no billing. Failures are never cached, so a previously-failed file
     // re-transcribes.
-    let cache_path = cache_file_path(&app, &path, &cache_key(&provider, model.as_deref()));
-    if let Some(cp) = &cache_path {
-        if let Some(cached) = try_read_cache(cp).await {
-            log::info!(
-                "replay: cache hit segments={} path={}",
-                cached.segments.len(),
-                cp.display()
-            );
-            return Ok(TranscriptionResult {
-                segments: cached.segments,
-                duration_ms: cached.duration_ms,
-                cached: true,
-                speech_rate_hz: cached.speech_rate_hz,
-            });
-        }
+    let suffix = cache_suffix(&provider, upload.model);
+    let cache_path = cache_file_path(&app, &path, suffix.as_deref());
+    if let Some(cached) = read_cached(cache_path.as_deref()).await {
+        return Ok(cached);
     }
 
+    let batch = upload.spec.and_then(|s| s.batch.as_ref());
     // On-device: no upload, so no compression either — decode the original
     // file directly. Checked before any work so a missing model fails fast.
-    if provider == "local" {
-        return local_transcribe(
-            &app,
-            &path,
-            model.as_deref(),
-            &language_hints,
-            &vocabulary,
-            cache_path,
-        )
-        .await;
+    if let Some(Batch::OnDevice) = batch {
+        return local_transcribe(&app, &upload, cache_path).await;
     }
-
-    let client = reqwest::Client::new();
-
-    // 0. Try to compress the recording to a much smaller Opus/Ogg file before
-    // uploading. This is best-effort: any failure (unsupported codec, encode
-    // error, …) falls back to uploading the original file so it never blocks an
-    // upload. `compressed_temp` is set only when we produced a temp file, so we
-    // can delete it afterward (even on error).
-    let original_size = tokio::fs::metadata(&path).await.map(|m| m.len()).ok();
-    let mut compressed_temp: Option<std::path::PathBuf> = None;
-    let upload_path: String = match compress_for_upload_blocking(path.clone()).await {
-        Ok(temp) => {
-            let compressed_size = tokio::fs::metadata(&temp).await.map(|m| m.len()).ok();
-            match (original_size, compressed_size) {
-                (Some(orig), Some(comp)) => log::info!(
-                    "replay: compressed audio origBytes={} compBytes={} pct={:.1}",
-                    orig,
-                    comp,
-                    if orig > 0 {
-                        comp as f64 / orig as f64 * 100.0
-                    } else {
-                        0.0
-                    }
-                ),
-                _ => log::info!("replay: compressed audio (sizes unavailable)"),
-            }
-            let p = temp.to_string_lossy().into_owned();
-            compressed_temp = Some(temp);
-            p
-        }
-        Err(e) => {
-            log::warn!("replay: compression failed, uploading original error={}", e);
-            path.clone()
-        }
+    let adapter = match batch {
+        Some(Batch::Upload(adapter)) => Some(*adapter),
+        _ => None,
     };
-
-    // Measure the speaker's articulation rate acoustically over the audio we're
-    // about to transcribe, so the post-call pace read is a real measurement — not
-    // an LLM guess from STT-timed text. Done while the (compressed) temp still
-    // exists; best-effort (0.0 on any decode failure, so it can never block STT).
-    let speech_rate_hz = measure_speech_rate_blocking(upload_path.clone()).await;
-
-    // Run the rest of the flow, ensuring the temp file is cleaned up afterward.
-    // Dispatch on the provider — each `*_batch` returns the same
-    // `TranscriptionResult` shape (segments + duration); the acoustic speech-rate
-    // is grafted on afterward since it's provider-independent. The BYOK arms talk
-    // to their vendor with the user's own key; the hosted "parley" arm talks only
-    // to Parley Cloud, which picks the model itself — hence no model is forwarded
-    // there and the endpoint has to be handed in from the frontend.
-    let result = match provider.as_str() {
-        "soniox" => {
-            run_upload_and_transcribe(
-                &client,
-                SONIOX_BASE,
-                PollPolicy::DEFAULT,
-                &api_key,
-                &upload_path,
-                model.as_deref().unwrap_or(DEFAULT_ASYNC_MODEL),
-                &language_hints,
-                diarization,
-                &vocabulary,
-                |ctx| write_soniox_log(&app, ctx),
-            )
-            .await
-        }
-        "deepgram" => {
-            deepgram_batch(
-                &client,
-                DEEPGRAM_BASE,
-                &api_key,
-                &upload_path,
-                &language_hints,
-                diarization,
-                &vocabulary,
-            )
-            .await
-        }
-        "assemblyai" => {
-            assemblyai_batch(
-                &client,
-                ASSEMBLYAI_BASE,
-                PollPolicy::DEFAULT,
-                &api_key,
-                &upload_path,
-                &language_hints,
-                diarization,
-                &vocabulary,
-            )
-            .await
-        }
-        "openai" => {
-            openai_batch(
-                &client,
-                OPENAI_BASE,
-                &api_key,
-                &upload_path,
-                model.as_deref(),
-                &language_hints,
-                &vocabulary,
-            )
-            .await
-        }
-        "gemini" => {
-            gemini_batch(
-                &client,
-                GEMINI_BASE,
-                &api_key,
-                &upload_path,
-                model.as_deref(),
-                &language_hints,
-                &vocabulary,
-            )
-            .await
-        }
-        "parley" => match hosted_batch_base(batch_url.as_deref()) {
-            Ok(base) => {
-                parley_batch(
-                    &client,
-                    PollPolicy::DEFAULT,
-                    &api_key,
-                    base,
-                    &upload_path,
-                    &BatchOptions {
-                        languages: &language_hints,
-                        diarization,
-                        vocabulary: &vocabulary,
-                    },
-                )
-                .await
-            }
-            Err(e) => Err(e),
-        },
-        other => Err(unsupported_batch_provider(other)),
-    }
-    .map(|mut r| {
-        r.speech_rate_hz = speech_rate_hz;
-        r
-    });
-
-    if let Some(temp) = compressed_temp.take() {
-        let _ = tokio::fs::remove_file(&temp).await;
-    }
+    let result = transcribe_upload(&app, &upload, adapter).await;
 
     // Cache a successful transcription so an identical re-upload is free next time.
     if let (Ok(r), Some(cp)) = (&result, &cache_path) {
         write_cache(cp, r).await;
     }
-
     result
 }
 
 /// Refuse an upload that has no credential to send. `provider` is the
 /// normalized (trimmed, lowercase) id; on-device transcription needs none.
 fn check_batch_credential(provider: &str, api_key: &str) -> Result<(), String> {
-    if provider != "local" && api_key.trim().is_empty() {
+    let needs_key = provider::spec(provider).is_none_or(|s| s.credential.needs_key());
+    if needs_key && api_key.trim().is_empty() {
         log::warn!("replay: missing api key provider={}", provider);
         // Hosted mode's credential is the signed-in cloud session, not a pasted
         // key, so this one message has to point at both doors.
@@ -416,36 +164,129 @@ fn unsupported_batch_provider(provider: &str) -> String {
     )
 }
 
-/// The provider part of an upload's cache key. Local results depend on which
-/// model ran, so for "local" the model is part of the key.
-fn cache_key(provider: &str, model: Option<&str>) -> String {
-    if provider == "local" {
-        format!(
-            "local-{}",
-            crate::local_stt::resolve_model_id(model.unwrap_or_default())
-        )
-    } else {
-        provider.to_string()
+/// The provider part of an upload's cache file name, from its registry row
+/// (see `provider::UploadCache`); an id without a row keys by the id itself.
+fn cache_suffix(provider: &str, model: Option<&str>) -> Option<String> {
+    match provider::spec(provider) {
+        Some(spec) => spec.upload_cache_suffix(model),
+        None => Some(provider.to_string()),
     }
 }
 
-/// The "local" arm of [`transcribe_file`]: whisper.cpp on this machine (see
+/// Compress the recording, measure its speech rate, hand it to the provider's
+/// batch adapter, and clean the compressed temp file up whatever happens.
+async fn transcribe_upload(
+    app: &AppHandle,
+    upload: &Upload<'_>,
+    adapter: Option<BatchFn>,
+) -> Result<TranscriptionResult, String> {
+    let (upload_path, compressed_temp) = compress_upload(upload.path).await;
+
+    // Measure the speaker's articulation rate acoustically over the audio we're
+    // about to transcribe, so the post-call pace read is a real measurement — not
+    // an LLM guess from STT-timed text. Done while the (compressed) temp still
+    // exists; best-effort (0.0 on any decode failure, so it can never block STT).
+    let speech_rate_hz = measure_speech_rate_blocking(upload_path.clone()).await;
+
+    // Every adapter returns the same `TranscriptionResult` shape (segments +
+    // duration); the acoustic speech-rate is grafted on afterward since it's
+    // provider-independent.
+    let result = match adapter {
+        Some(adapter) => run_adapter(app, upload, adapter, &upload_path).await,
+        None => Err(unsupported_batch_provider(upload.provider)),
+    }
+    .map(|mut r| {
+        r.speech_rate_hz = speech_rate_hz;
+        r
+    });
+
+    if let Some(temp) = compressed_temp {
+        let _ = tokio::fs::remove_file(&temp).await;
+    }
+    result
+}
+
+/// Run one provider's batch adapter over the (compressed) upload. The BYOK
+/// adapters address their vendor themselves; the hosted one talks only to
+/// Parley Cloud, whose endpoint has to be handed in from the frontend.
+async fn run_adapter(
+    app: &AppHandle,
+    upload: &Upload<'_>,
+    adapter: BatchFn,
+    upload_path: &str,
+) -> Result<TranscriptionResult, String> {
+    let hosted = upload
+        .spec
+        .is_some_and(|s| s.credential == Credential::CloudSession);
+    let endpoint = if hosted {
+        Some(hosted_batch_base(upload.batch_url)?)
+    } else {
+        None
+    };
+    let audio = read_upload(upload_path).await?;
+    let client = reqwest::Client::new();
+    adapter(BatchRequest {
+        client: &client,
+        endpoint,
+        poll: PollPolicy::DEFAULT,
+        credential: upload.credential,
+        upload_path,
+        audio,
+        model: upload.model,
+        language_hints: upload.language_hints,
+        diarization: upload.diarization,
+        vocabulary: upload.vocabulary,
+        log: &DocumentsLog(app),
+    })
+    .await
+}
+
+/// Try to compress the recording to a much smaller Opus/Ogg file before
+/// uploading. This is best-effort: any failure (unsupported codec, encode
+/// error, …) falls back to uploading the original file so it never blocks an
+/// upload. Returns the path to upload and, when a temp file was produced, that
+/// file so the caller can delete it afterward (even on error).
+async fn compress_upload(path: &str) -> (String, Option<std::path::PathBuf>) {
+    let original_size = tokio::fs::metadata(path).await.map(|m| m.len()).ok();
+    match compress_for_upload_blocking(path.to_string()).await {
+        Ok(temp) => {
+            let compressed_size = tokio::fs::metadata(&temp).await.map(|m| m.len()).ok();
+            match (original_size, compressed_size) {
+                (Some(orig), Some(comp)) => log::info!(
+                    "replay: compressed audio origBytes={} compBytes={} pct={:.1}",
+                    orig,
+                    comp,
+                    if orig > 0 {
+                        comp as f64 / orig as f64 * 100.0
+                    } else {
+                        0.0
+                    }
+                ),
+                _ => log::info!("replay: compressed audio (sizes unavailable)"),
+            }
+            (temp.to_string_lossy().into_owned(), Some(temp))
+        }
+        Err(e) => {
+            log::warn!("replay: compression failed, uploading original error={}", e);
+            (path.to_string(), None)
+        }
+    }
+}
+
+/// The on-device arm of [`transcribe_file`]: whisper.cpp on this machine (see
 /// `transcription::local::transcribe_file_blocking`). Speaker 0 throughout —
 /// the app re-diarizes uploads from the audio separately (diarize.rs).
 async fn local_transcribe(
     app: &AppHandle,
-    path: &str,
-    model: Option<&str>,
-    language_hints: &[String],
-    vocabulary: &[String],
+    upload: &Upload<'_>,
     cache_path: Option<std::path::PathBuf>,
 ) -> Result<TranscriptionResult, String> {
-    let model = model.unwrap_or_default().to_string();
+    let model = upload.model.unwrap_or_default().to_string();
     crate::local_stt::ensure_installed(app, &model)?;
     let app_for_task = app.clone();
-    let audio_path = std::path::PathBuf::from(path);
-    let hints = language_hints.to_vec();
-    let vocab = vocabulary.to_vec();
+    let audio_path = std::path::PathBuf::from(upload.path);
+    let hints = upload.language_hints.to_vec();
+    let vocab = upload.vocabulary.to_vec();
     let (decoded, duration_ms) = tauri::async_runtime::spawn_blocking(move || {
         crate::transcription::local::transcribe_file_blocking(
             &app_for_task,
@@ -468,7 +309,7 @@ async fn local_transcribe(
             end_ms: d.end_ms,
         })
         .collect();
-    let speech_rate_hz = measure_speech_rate_blocking(path.to_string()).await;
+    let speech_rate_hz = measure_speech_rate_blocking(upload.path.to_string()).await;
     let result = TranscriptionResult {
         segments,
         duration_ms,
@@ -485,7 +326,11 @@ async fn local_transcribe(
 /// the user's "same name, same size" rule) and the provider (so a Soniox result
 /// isn't served for, say, a Deepgram request — different diarization). Lives in
 /// the app cache dir. `None` if the file can't be stat'd or there's no cache dir.
-fn cache_file_path(app: &AppHandle, path: &str, provider: &str) -> Option<std::path::PathBuf> {
+fn cache_file_path(
+    app: &AppHandle,
+    path: &str,
+    suffix: Option<&str>,
+) -> Option<std::path::PathBuf> {
     let size = std::fs::metadata(path).ok()?.len();
     let name = std::path::Path::new(path)
         .file_name()?
@@ -496,12 +341,12 @@ fn cache_file_path(app: &AppHandle, path: &str, provider: &str) -> Option<std::p
         .app_cache_dir()
         .ok()?
         .join(crate::cache::TRANSCRIPTIONS_DIR);
-    Some(dir.join(cache_file_name(&name, size, provider)))
+    Some(dir.join(cache_file_name(&name, size, suffix)))
 }
 
-/// The cache file name for an upload named `name` of `size` bytes under the
-/// provider part of its key (see [`cache_key`]).
-fn cache_file_name(name: &str, size: u64, provider: &str) -> String {
+/// The cache file name for an upload named `name` of `size` bytes, with the
+/// provider's [`cache_suffix`].
+fn cache_file_name(name: &str, size: u64, suffix: Option<&str>) -> String {
     // Sanitize the name to a safe single filename component.
     let safe: String = name
         .chars()
@@ -513,13 +358,27 @@ fn cache_file_name(name: &str, size: u64, provider: &str) -> String {
             }
         })
         .collect();
-    // Soniox keeps its original (provider-less) filename so existing caches stay
-    // valid; new providers get a suffixed key.
-    if provider == "soniox" {
-        format!("{safe}-{size}.json")
-    } else {
-        format!("{safe}-{size}-{provider}.json")
+    match suffix {
+        None => format!("{safe}-{size}.json"),
+        Some(suffix) => format!("{safe}-{size}-{suffix}.json"),
     }
+}
+
+/// The cached transcription at `cache_path`, as a cache-hit result.
+async fn read_cached(cache_path: Option<&std::path::Path>) -> Option<TranscriptionResult> {
+    let cp = cache_path?;
+    let cached = try_read_cache(cp).await?;
+    log::info!(
+        "replay: cache hit segments={} path={}",
+        cached.segments.len(),
+        cp.display()
+    );
+    Some(TranscriptionResult {
+        segments: cached.segments,
+        duration_ms: cached.duration_ms,
+        cached: true,
+        speech_rate_hz: cached.speech_rate_hz,
+    })
 }
 
 /// Read a cached transcription if present and parseable; otherwise `None`.
@@ -601,1206 +460,30 @@ async fn measure_speech_rate_blocking(path: String) -> f32 {
     .unwrap_or(0.0)
 }
 
-/// Upload `upload_path` to Soniox, create + poll the transcription job, fetch the
-/// transcript, and group it into segments. Split out from `transcribe_file` so
-/// the caller can guarantee temp-file cleanup regardless of outcome.
-#[allow(clippy::too_many_arguments)]
-async fn run_upload_and_transcribe(
-    client: &reqwest::Client,
-    base: &str,
-    poll: PollPolicy,
-    api_key: &str,
-    upload_path: &str,
-    model: &str,
-    language_hints: &[String],
-    diarization: bool,
-    vocabulary: &[String],
-    write_log: impl FnOnce(SonioxLogContext),
-) -> Result<TranscriptionResult, String> {
-    // 1. Upload the file → file id.
-    let bytes = tokio::fs::read(upload_path)
-        .await
-        .map_err(|e| format!("Failed to read file: {e}"))?;
-    let file_name = std::path::Path::new(upload_path)
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "recording".to_string());
-    log::info!(
-        "replay: uploading to soniox fileName={} bytes={}",
-        file_name,
-        bytes.len()
-    );
-    // Clone for the multipart part so `file_name` stays available for the
-    // diagnostic log written after transcription.
-    let part = reqwest::multipart::Part::bytes(bytes).file_name(file_name.clone());
-    let form = reqwest::multipart::Form::new().part("file", part);
+/// The app's [`ResponseLog`]: a reviewable JSON file per logged response at
+/// `<Documents>/Parley/logs/<provider>-<timestamp>-<suffix>.json`.
+struct DocumentsLog<'a>(&'a AppHandle);
 
-    let upload_resp = client
-        .post(format!("{base}/files"))
-        .bearer_auth(api_key)
-        .multipart(form)
-        .send()
-        .await
-        .map_err(|e| format!("Upload request failed: {e}"))?;
-    let upload: IdResponse = read_json(upload_resp, "file upload").await?;
-    let file_id = upload.id;
-    log::debug!("replay: upload ok fileId={}", file_id);
-
-    // 2. Create the async transcription job → transcription id.
-    // Clone for the request body so the original `language_hints` stays available
-    // for the diagnostic log written after the transcript is fetched.
-    let hints = if language_hints.is_empty() {
-        None
-    } else {
-        Some(language_hints.to_vec())
-    };
-    let create_body = CreateTranscriptionRequest {
-        file_id: &file_id,
-        model,
-        language_hints: hints,
-        enable_speaker_diarization: diarization,
-        context: context_for(vocabulary),
-    };
-    let create_resp = client
-        .post(format!("{base}/transcriptions"))
-        .bearer_auth(api_key)
-        .json(&create_body)
-        .send()
-        .await
-        .map_err(|e| format!("Create transcription failed: {e}"))?;
-    let created: IdResponse = read_json(create_resp, "create transcription").await?;
-    let transcription_id = created.id;
-    log::info!(
-        "replay: transcription job created transcriptionId={} model={} diarization={}",
-        transcription_id,
-        model,
-        diarization
-    );
-
-    // 3. Poll until completed or error.
-    let audio_duration_ms = loop_poll(client, base, poll, api_key, &transcription_id).await?;
-
-    // 4. Fetch the transcript tokens. We capture the RAW response body text (not
-    // just the parsed struct) so we can write it verbatim to a diagnostic log
-    // below — this lets the user inspect exactly what Soniox returned (per-token
-    // speaker labels, distinct speaker count, …) when diarization looks wrong.
-    let transcript_resp = client
-        .get(format!(
-            "{base}/transcriptions/{transcription_id}/transcript"
-        ))
-        .bearer_auth(api_key)
-        .send()
-        .await
-        .map_err(|e| format!("Fetch transcript failed: {e}"))?;
-    let (raw_transcript, transcript): (String, TranscriptResponse) =
-        read_json_with_raw(transcript_resp, "fetch transcript").await?;
-
-    // Diagnostics: surface how well Soniox actually diarized, so a real
-    // diarization problem (few/empty distinct speakers) can be told apart from a
-    // grouping/labeling one on our side.
-    let (token_count, tokens_with_speaker, distinct_speakers) = {
-        let toks = &transcript.tokens;
-        let with_spk = toks.iter().filter(|t| t.speaker.is_some()).count();
-        let mut speakers: std::collections::BTreeSet<i64> = std::collections::BTreeSet::new();
-        for t in toks {
-            if let Some(s) = t.speaker.as_ref() {
-                speakers.insert(s.to_i64());
-            }
-        }
-        log::info!(
-            "replay: diarization tokens={} tokensWithSpeaker={} distinctSpeakers={:?}",
-            toks.len(),
-            with_spk,
-            speakers
-        );
-        (toks.len(), with_spk, speakers)
-    };
-
-    // Persist a reviewable log of the raw Soniox response + request context.
-    // Best-effort: never let a logging failure abort the transcription.
-    write_log(SonioxLogContext {
-        model,
-        enable_speaker_diarization: diarization,
-        language_hints,
-        file_name: &file_name,
-        audio_duration_ms,
-        token_count,
-        tokens_with_speaker,
-        distinct_speakers: &distinct_speakers,
-        raw_transcript: &raw_transcript,
-    });
-
-    // 5. Best-effort cleanup of the uploaded file + transcription on Soniox.
-    let _ = client
-        .delete(format!("{base}/transcriptions/{transcription_id}"))
-        .bearer_auth(api_key)
-        .send()
-        .await;
-    let _ = client
-        .delete(format!("{base}/files/{file_id}"))
-        .bearer_auth(api_key)
-        .send()
-        .await;
-
-    // Group consecutive same-speaker tokens into segments (mirrors the realtime
-    // SegmentBuilder: a speaker change closes the open run).
-    let segments = group_tokens(&transcript.tokens);
-    let duration_ms = segments
-        .iter()
-        .map(|s| s.end_ms)
-        .max()
-        .unwrap_or(audio_duration_ms)
-        .max(audio_duration_ms);
-
-    Ok(TranscriptionResult {
-        segments,
-        duration_ms,
-        cached: false,
-        // Filled in by the caller (`transcribe_file`), which has the audio path.
-        speech_rate_hz: 0.0,
-    })
-}
-
-/// Poll the transcription status until it completes (returns the reported audio
-/// duration) or errors. Surfaces a timeout if it never settles.
-async fn loop_poll(
-    client: &reqwest::Client,
-    base: &str,
-    policy: PollPolicy,
-    api_key: &str,
-    transcription_id: &str,
-) -> Result<u64, String> {
-    for poll in 1..=policy.max_polls {
-        tokio::time::sleep(policy.interval).await;
-
-        let status_resp = client
-            .get(format!("{base}/transcriptions/{transcription_id}"))
-            .bearer_auth(api_key)
-            .send()
-            .await
-            .map_err(|e| format!("Poll request failed: {e}"))?;
-        let status: TranscriptionStatus = read_json(status_resp, "poll status").await?;
-
-        match status.status.as_str() {
-            "completed" => {
-                let audio_duration_ms = status.audio_duration_ms.unwrap_or(0);
-                log::info!(
-                    "replay: transcription completed audioDurationMs={} polls={}",
-                    audio_duration_ms,
-                    poll
-                );
-                return Ok(audio_duration_ms);
-            }
-            "error" => {
-                let msg = status
-                    .error_message
-                    .unwrap_or_else(|| "unknown error".into());
-                log::error!("replay: transcription job error errorMessage={}", msg);
-                return Err(format!("Transcription failed: {msg}"));
-            }
-            // "queued" | "processing" | anything else → keep polling.
-            _ => continue,
-        }
-    }
-    log::error!(
-        "replay: transcription timed out maxPolls={}",
-        policy.max_polls
-    );
-    Err("Transcription timed out".to_string())
-}
-
-/// Group a flat token stream into speaker-runs. A change of speaker closes the
-/// current run and starts a new one; whitespace is preserved as Soniox supplies
-/// it. Empty / whitespace-only runs are dropped.
-fn group_tokens(tokens: &[Token]) -> Vec<ReplaySegment> {
-    group_runs(
-        tokens
-            .iter()
-            // Skip control / endpoint markers that some models emit.
-            .filter(|tok| tok.text != "<end>" && tok.text != "<fin>")
-            .map(|tok| RunToken {
-                text: &tok.text,
-                speaker: tok.speaker.as_ref().map(SpeakerId::to_i64),
-                start_ms: tok.start_ms,
-                end_ms: tok.end_ms,
-            }),
-    )
-}
-
-/// One token as the run grouper takes it — the common shape every token-based
-/// batch response is mapped onto before grouping.
-struct RunToken<'a> {
-    text: &'a str,
-    speaker: Option<i64>,
-    start_ms: u64,
-    end_ms: u64,
-}
-
-/// Group tokens into speaker-runs (see [`group_tokens`]).
-fn group_runs<'a>(tokens: impl IntoIterator<Item = RunToken<'a>>) -> Vec<ReplaySegment> {
-    let mut segments: Vec<ReplaySegment> = Vec::new();
-    let mut seg_index: u64 = 0;
-
-    let mut cur_speaker: i64 = -1;
-    let mut cur_text = String::new();
-    let mut cur_start: u64 = 0;
-    let mut cur_end: u64 = 0;
-
-    for tok in tokens {
-        // Tokens without a speaker (e.g. some punctuation/spacing tokens) should
-        // stay in the CURRENT speaker's run — snapping them to speaker 0 would
-        // close the run and fragment the transcript into spurious extra speakers.
-        let spk = match tok.speaker {
-            Some(s) => s,
-            None if cur_speaker >= 0 => cur_speaker,
-            None => 0,
-        };
-
-        if cur_speaker == -1 {
-            cur_speaker = spk;
-            cur_start = tok.start_ms;
-        } else if spk != cur_speaker {
-            if !cur_text.trim().is_empty() {
-                segments.push(ReplaySegment {
-                    id: format!("them-{seg_index}"),
-                    speaker: cur_speaker,
-                    text: cur_text.clone(),
-                    start_ms: cur_start,
-                    end_ms: cur_end,
-                });
-                seg_index += 1;
-            }
-            cur_speaker = spk;
-            cur_text.clear();
-            cur_start = tok.start_ms;
-        }
-        cur_text.push_str(tok.text);
-        cur_end = tok.end_ms;
-    }
-
-    if !cur_text.trim().is_empty() {
-        segments.push(ReplaySegment {
-            id: format!("them-{seg_index}"),
-            speaker: cur_speaker.max(0),
-            text: cur_text,
-            start_ms: cur_start,
-            end_ms: cur_end,
-        });
-    }
-
-    segments
-}
-
-// ── Other batch providers ─────────────────────────────────────────────────────
-// Each mirrors Soniox's contract: read the (already compressed) upload file, call
-// the provider's pre-recorded/batch API, and return diarized-where-supported
-// `ReplaySegment`s plus a duration. The request/response shapes below are verified
-// against each vendor's current API docs (endpoints, params, response fields) —
-// but NOT via a live call from here. Deepgram / AssemblyAI / OpenAI are enabled in
-// the registry; Gemini stays off (`supportsFileUpload: false`) because inline
-// Ogg-Opus support + model naming are unconfirmed and it yields no timestamps.
-
-/// A speaker-tagged word with millisecond timings — the common currency for the
-/// word-stream providers (Deepgram). Grouped into speaker-runs by `group_words`.
-struct BatchWord {
-    speaker: Option<i64>,
-    text: String,
-    start_ms: u64,
-    end_ms: u64,
-}
-
-/// Group a flat word stream into speaker-runs, joining words with single spaces
-/// (mirrors `group_tokens`, but for providers that return separate words rather
-/// than Soniox's already-spaced tokens). A speaker change closes the current run;
-/// a word with no speaker stays in the current run.
-fn group_words(words: &[BatchWord]) -> Vec<ReplaySegment> {
-    let mut segments: Vec<ReplaySegment> = Vec::new();
-    let mut seg_index: u64 = 0;
-    let mut cur_speaker: i64 = -1;
-    let mut cur_text = String::new();
-    let mut cur_start: u64 = 0;
-    let mut cur_end: u64 = 0;
-
-    for w in words {
-        let spk = match w.speaker {
-            Some(s) => s,
-            None if cur_speaker >= 0 => cur_speaker,
-            None => 0,
-        };
-        if cur_speaker == -1 {
-            cur_speaker = spk;
-            cur_start = w.start_ms;
-        } else if spk != cur_speaker {
-            if !cur_text.trim().is_empty() {
-                segments.push(ReplaySegment {
-                    id: format!("them-{seg_index}"),
-                    speaker: cur_speaker,
-                    text: cur_text.trim().to_string(),
-                    start_ms: cur_start,
-                    end_ms: cur_end,
-                });
-                seg_index += 1;
-            }
-            cur_speaker = spk;
-            cur_text.clear();
-            cur_start = w.start_ms;
-        }
-        if !cur_text.is_empty() {
-            cur_text.push(' ');
-        }
-        cur_text.push_str(w.text.trim());
-        cur_end = w.end_ms;
-    }
-    if !cur_text.trim().is_empty() {
-        segments.push(ReplaySegment {
-            id: format!("them-{seg_index}"),
-            speaker: cur_speaker.max(0),
-            text: cur_text.trim().to_string(),
-            start_ms: cur_start,
-            end_ms: cur_end,
-        });
-    }
-    segments
-}
-
-/// Best-effort audio MIME from the file extension, for providers that want a
-/// Content-Type on a raw upload (Deepgram) or inline data (Gemini). We compress to
-/// Ogg/Opus before upload, so `.ogg`/`.opus` is the common case.
-fn guess_audio_mime(path: &str) -> &'static str {
-    let ext = std::path::Path::new(path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    match ext.as_str() {
-        "ogg" | "opus" => "audio/ogg",
-        "mp3" | "mpga" | "mpeg" => "audio/mpeg",
-        "wav" => "audio/wav",
-        "flac" => "audio/flac",
-        "m4a" | "mp4" | "aac" => "audio/mp4",
-        "webm" => "audio/webm",
-        _ => "application/octet-stream",
-    }
-}
-
-// --- Deepgram (pre-recorded) --------------------------------------------------
-
-#[derive(Deserialize, Default)]
-struct DgResponse {
-    #[serde(default)]
-    metadata: DgMeta,
-    #[serde(default)]
-    results: DgResults,
-}
-#[derive(Deserialize, Default)]
-struct DgMeta {
-    #[serde(default)]
-    duration: f64,
-}
-#[derive(Deserialize, Default)]
-struct DgResults {
-    #[serde(default)]
-    channels: Vec<DgChannel>,
-}
-#[derive(Deserialize, Default)]
-struct DgChannel {
-    #[serde(default)]
-    alternatives: Vec<DgAlt>,
-}
-#[derive(Deserialize, Default)]
-struct DgAlt {
-    #[serde(default)]
-    words: Vec<DgWord>,
-}
-#[derive(Deserialize, Default)]
-struct DgWord {
-    #[serde(default)]
-    word: String,
-    #[serde(default)]
-    punctuated_word: Option<String>,
-    #[serde(default)]
-    start: f64,
-    #[serde(default)]
-    end: f64,
-    #[serde(default)]
-    speaker: Option<i64>,
-}
-
-/// Deepgram pre-recorded API: POST the raw (compressed) bytes to /v1/listen and
-/// group the returned diarized word stream. Shape verified vs docs, not live-tested.
-async fn deepgram_batch(
-    client: &reqwest::Client,
-    base: &str,
-    api_key: &str,
-    upload_path: &str,
-    language_hints: &[String],
-    diarization: bool,
-    vocabulary: &[String],
-) -> Result<TranscriptionResult, String> {
-    let bytes = tokio::fs::read(upload_path)
-        .await
-        .map_err(|e| format!("Failed to read file: {e}"))?;
-    const BATCH_MODEL: &str = "nova-3";
-    let mut url = format!(
-        "{base}/v1/listen?model={BATCH_MODEL}&smart_format=true&punctuate=true&diarize={diarization}"
-    );
-    // One language hint pins the language; otherwise let Deepgram auto-detect.
-    match language_hints.first() {
-        Some(lang) => url.push_str(&format!("&language={lang}")),
-        None => url.push_str("&detect_language=true"),
-    }
-    // Same keyterm/keywords split as the realtime adapter, keyed off the model
-    // this path pins.
-    url.push_str(&crate::transcription::deepgram::vocabulary_params(
-        BATCH_MODEL,
-        vocabulary,
-    ));
-    let resp = client
-        .post(url)
-        .header("Authorization", format!("Token {api_key}"))
-        .header("Content-Type", guess_audio_mime(upload_path))
-        .body(bytes)
-        .send()
-        .await
-        .map_err(|e| format!("Deepgram request failed: {e}"))?;
-    let dg: DgResponse = read_json(resp, "deepgram transcribe").await?;
-    let words: Vec<BatchWord> = dg
-        .results
-        .channels
-        .first()
-        .and_then(|c| c.alternatives.first())
-        .map(|a| a.words.as_slice())
-        .unwrap_or(&[])
-        .iter()
-        .map(|w| BatchWord {
-            speaker: w.speaker,
-            text: w.punctuated_word.clone().unwrap_or_else(|| w.word.clone()),
-            start_ms: (w.start * 1000.0) as u64,
-            end_ms: (w.end * 1000.0) as u64,
-        })
-        .collect();
-    let segments = group_words(&words);
-    let duration_ms = ((dg.metadata.duration * 1000.0) as u64)
-        .max(segments.iter().map(|s| s.end_ms).max().unwrap_or(0));
-    Ok(TranscriptionResult {
-        segments,
-        duration_ms,
-        cached: false,
-        speech_rate_hz: 0.0,
-    })
-}
-
-// --- AssemblyAI (upload → transcript → poll) ----------------------------------
-
-#[derive(Deserialize, Default)]
-struct AaiUpload {
-    #[serde(default)]
-    upload_url: String,
-}
-#[derive(Deserialize, Default)]
-struct AaiTranscript {
-    #[serde(default)]
-    id: String,
-    #[serde(default)]
-    status: String,
-    #[serde(default)]
-    error: Option<String>,
-    #[serde(default)]
-    text: Option<String>,
-    #[serde(default)]
-    audio_duration: Option<f64>,
-    #[serde(default)]
-    utterances: Option<Vec<AaiUtterance>>,
-}
-#[derive(Deserialize, Default)]
-struct AaiUtterance {
-    #[serde(default)]
-    speaker: String,
-    #[serde(default)]
-    text: String,
-    #[serde(default)]
-    start: u64,
-    #[serde(default)]
-    end: u64,
-}
-
-/// AssemblyAI speaker labels are letters ("A", "B", …); map to a 0-based index.
-fn assemblyai_speaker_index(s: &str) -> i64 {
-    let s = s.trim();
-    if let Some(c) = s.chars().next() {
-        if c.is_ascii_alphabetic() {
-            return (c.to_ascii_uppercase() as i64) - ('A' as i64);
-        }
-    }
-    s.parse::<i64>().unwrap_or(0)
-}
-
-/// AssemblyAI batch: upload the bytes, create a transcript job (optionally with
-/// speaker labels), poll to completion, then map utterances to speaker-runs.
-/// Shape verified vs docs, not live-tested.
-#[allow(clippy::too_many_arguments)]
-async fn assemblyai_batch(
-    client: &reqwest::Client,
-    base: &str,
-    poll: PollPolicy,
-    api_key: &str,
-    upload_path: &str,
-    language_hints: &[String],
-    diarization: bool,
-    vocabulary: &[String],
-) -> Result<TranscriptionResult, String> {
-    let bytes = tokio::fs::read(upload_path)
-        .await
-        .map_err(|e| format!("Failed to read file: {e}"))?;
-    // 1. Upload the raw bytes → a temporary upload_url.
-    let up_resp = client
-        .post(format!("{base}/v2/upload"))
-        .header("authorization", api_key)
-        .header("content-type", "application/octet-stream")
-        .body(bytes)
-        .send()
-        .await
-        .map_err(|e| format!("AssemblyAI upload failed: {e}"))?;
-    let up: AaiUpload = read_json(up_resp, "assemblyai upload").await?;
-
-    // 2. Create the transcript job. speaker_labels ⇒ diarization; the language is
-    // auto-detected unless a single hint pins it.
-    let mut body = serde_json::Map::new();
-    body.insert("audio_url".into(), serde_json::Value::String(up.upload_url));
-    body.insert(
-        "speaker_labels".into(),
-        serde_json::Value::Bool(diarization),
-    );
-    match language_hints.first() {
-        Some(lang) => {
-            body.insert(
-                "language_code".into(),
-                serde_json::Value::String(lang.clone()),
+impl ResponseLog for DocumentsLog<'_> {
+    /// Best-effort: any failure (unresolvable Documents dir, IO error, …) is
+    /// reported via `log::warn!` and swallowed — logging must NEVER fail the
+    /// transcription.
+    fn write(&self, provider: &str, entry: serde_json::Value) {
+        if let Err(e) = write_response_log(self.0, provider, &entry) {
+            log::warn!(
+                "replay: failed to write {provider} response log error={}",
+                e
             );
         }
-        None => {
-            body.insert("language_detection".into(), serde_json::Value::Bool(true));
-        }
-    }
-    // The batch API's custom vocabulary is `word_boost` (an array of terms) —
-    // the v2 spelling of what v3 streaming calls `keyterms_prompt`.
-    let boost = clean_vocabulary(vocabulary);
-    if !boost.is_empty() {
-        body.insert(
-            "word_boost".into(),
-            serde_json::Value::Array(boost.into_iter().map(serde_json::Value::String).collect()),
-        );
-    }
-    let create_resp = client
-        .post(format!("{base}/v2/transcript"))
-        .header("authorization", api_key)
-        .json(&serde_json::Value::Object(body))
-        .send()
-        .await
-        .map_err(|e| format!("AssemblyAI create failed: {e}"))?;
-    let created: AaiTranscript = read_json(create_resp, "assemblyai create").await?;
-    let id = created.id.clone();
-    if id.is_empty() {
-        return Err("AssemblyAI: no transcript id returned".to_string());
-    }
-
-    // 3. Poll until completed or error.
-    let final_t: AaiTranscript = {
-        let mut done: Option<AaiTranscript> = None;
-        for _ in 0..poll.max_polls {
-            tokio::time::sleep(poll.interval).await;
-            let poll_resp = client
-                .get(format!("{base}/v2/transcript/{id}"))
-                .header("authorization", api_key)
-                .send()
-                .await
-                .map_err(|e| format!("AssemblyAI poll failed: {e}"))?;
-            let t: AaiTranscript = read_json(poll_resp, "assemblyai poll").await?;
-            match t.status.as_str() {
-                "completed" => {
-                    done = Some(t);
-                    break;
-                }
-                "error" => {
-                    return Err(format!(
-                        "AssemblyAI transcription failed: {}",
-                        t.error.unwrap_or_else(|| "unknown error".into())
-                    ));
-                }
-                _ => continue,
-            }
-        }
-        done.ok_or_else(|| "AssemblyAI transcription timed out".to_string())?
-    };
-
-    // 4. Prefer diarized utterances; fall back to the flat transcript text.
-    let duration_ms_meta = final_t
-        .audio_duration
-        .map(|d| (d * 1000.0) as u64)
-        .unwrap_or(0);
-    let segments: Vec<ReplaySegment> = match final_t.utterances {
-        Some(utts) if !utts.is_empty() => utts
-            .into_iter()
-            .filter(|u| !u.text.trim().is_empty())
-            .enumerate()
-            .map(|(i, u)| ReplaySegment {
-                id: format!("them-{i}"),
-                speaker: assemblyai_speaker_index(&u.speaker),
-                text: u.text.trim().to_string(),
-                start_ms: u.start,
-                end_ms: u.end,
-            })
-            .collect(),
-        _ => {
-            let text = final_t.text.clone().unwrap_or_default();
-            if text.trim().is_empty() {
-                Vec::new()
-            } else {
-                vec![ReplaySegment {
-                    id: "them-0".to_string(),
-                    speaker: 0,
-                    text: text.trim().to_string(),
-                    start_ms: 0,
-                    end_ms: duration_ms_meta,
-                }]
-            }
-        }
-    };
-    let duration_ms = duration_ms_meta.max(segments.iter().map(|s| s.end_ms).max().unwrap_or(0));
-    Ok(TranscriptionResult {
-        segments,
-        duration_ms,
-        cached: false,
-        speech_rate_hz: 0.0,
-    })
-}
-
-// --- OpenAI (/v1/audio/transcriptions) ----------------------------------------
-
-#[derive(Deserialize, Default)]
-struct OaiVerbose {
-    #[serde(default)]
-    duration: f64,
-    #[serde(default)]
-    text: String,
-    #[serde(default)]
-    segments: Vec<OaiSegment>,
-}
-#[derive(Deserialize, Default)]
-struct OaiSegment {
-    #[serde(default)]
-    start: f64,
-    #[serde(default)]
-    end: f64,
-    #[serde(default)]
-    text: String,
-}
-
-/// OpenAI transcription with `verbose_json` for segment timestamps (whisper-1 —
-/// the gpt-4o transcribe models reject verbose_json). No diarization → a single
-/// speaker. 25 MB request limit (compression helps). Shape verified vs docs.
-async fn openai_batch(
-    client: &reqwest::Client,
-    base: &str,
-    api_key: &str,
-    upload_path: &str,
-    model: Option<&str>,
-    language_hints: &[String],
-    vocabulary: &[String],
-) -> Result<TranscriptionResult, String> {
-    let bytes = tokio::fs::read(upload_path)
-        .await
-        .map_err(|e| format!("Failed to read file: {e}"))?;
-    let file_name = std::path::Path::new(upload_path)
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "recording.ogg".to_string());
-    let part = reqwest::multipart::Part::bytes(bytes)
-        .file_name(file_name)
-        .mime_str(guess_audio_mime(upload_path))
-        .map_err(|e| format!("openai: bad mime: {e}"))?;
-    // whisper-1 returns verbose_json segments with timestamps; the gpt-4o
-    // transcribe models don't, so default to whisper-1 for the replay path.
-    let model = model.unwrap_or("whisper-1");
-    let mut form = reqwest::multipart::Form::new()
-        .part("file", part)
-        .text("model", model.to_string())
-        .text("response_format", "verbose_json");
-    if let Some(lang) = language_hints.first() {
-        form = form.text("language", lang.clone());
-    }
-    // Whisper's only biasing hook is the free-text `prompt`; a comma-separated
-    // term list is the documented way to steer spelling. Same string the
-    // realtime adapter puts in `input_audio_transcription.prompt`.
-    let terms = clean_vocabulary(vocabulary);
-    if !terms.is_empty() {
-        form = form.text("prompt", terms.join(", "));
-    }
-    let resp = client
-        .post(format!("{base}/v1/audio/transcriptions"))
-        .bearer_auth(api_key)
-        .multipart(form)
-        .send()
-        .await
-        .map_err(|e| format!("OpenAI request failed: {e}"))?;
-    let v: OaiVerbose = read_json(resp, "openai transcribe").await?;
-    let mut segments: Vec<ReplaySegment> = v
-        .segments
-        .into_iter()
-        .filter(|s| !s.text.trim().is_empty())
-        .enumerate()
-        .map(|(i, s)| ReplaySegment {
-            id: format!("them-{i}"),
-            speaker: 0,
-            text: s.text.trim().to_string(),
-            start_ms: (s.start * 1000.0) as u64,
-            end_ms: (s.end * 1000.0) as u64,
-        })
-        .collect();
-    if segments.is_empty() && !v.text.trim().is_empty() {
-        segments.push(ReplaySegment {
-            id: "them-0".to_string(),
-            speaker: 0,
-            text: v.text.trim().to_string(),
-            start_ms: 0,
-            end_ms: (v.duration * 1000.0) as u64,
-        });
-    }
-    let duration_ms =
-        ((v.duration * 1000.0) as u64).max(segments.iter().map(|s| s.end_ms).max().unwrap_or(0));
-    Ok(TranscriptionResult {
-        segments,
-        duration_ms,
-        cached: false,
-        speech_rate_hz: 0.0,
-    })
-}
-
-// --- Gemini (generateContent with inline audio) -------------------------------
-
-#[derive(Deserialize, Default)]
-struct GemResponse {
-    #[serde(default)]
-    candidates: Vec<GemCandidate>,
-}
-#[derive(Deserialize, Default)]
-struct GemCandidate {
-    #[serde(default)]
-    content: GemContent,
-}
-#[derive(Deserialize, Default)]
-struct GemContent {
-    #[serde(default)]
-    parts: Vec<GemPart>,
-}
-#[derive(Deserialize, Default)]
-struct GemPart {
-    #[serde(default)]
-    text: String,
-}
-
-/// Gemini transcription via generateContent with inline audio. No timestamps or
-/// diarization, so the whole transcript is a single segment spanning the file
-/// (its length is measured by decoding). NEEDS LIVE SMOKE TEST.
-async fn gemini_batch(
-    client: &reqwest::Client,
-    base: &str,
-    api_key: &str,
-    upload_path: &str,
-    model: Option<&str>,
-    _language_hints: &[String],
-    vocabulary: &[String],
-) -> Result<TranscriptionResult, String> {
-    use base64::Engine as _;
-    let bytes = tokio::fs::read(upload_path)
-        .await
-        .map_err(|e| format!("Failed to read file: {e}"))?;
-    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-    let model = model.unwrap_or("gemini-2.5-flash");
-    let url = format!("{base}/v1beta/models/{model}:generateContent?key={api_key}");
-    // Gemini has no custom-vocabulary field; the transcription is driven by a
-    // prompt, so the phrase dictionary becomes one more line of that prompt.
-    let mut prompt = "Transcribe this audio verbatim. Output only the transcript text, with no commentary, labels, or timestamps.".to_string();
-    let terms = clean_vocabulary(vocabulary);
-    if !terms.is_empty() {
-        prompt.push_str(&format!(
-            "\nDomain terms that may occur — spell them exactly as written: {}.",
-            terms.join(", ")
-        ));
-    }
-    let body = serde_json::json!({
-        "contents": [{
-            "parts": [
-                { "inline_data": { "mime_type": guess_audio_mime(upload_path), "data": b64 } },
-                { "text": prompt }
-            ]
-        }]
-    });
-    let resp = client
-        .post(url)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("Gemini request failed: {e}"))?;
-    let g: GemResponse = read_json(resp, "gemini transcribe").await?;
-    let text = g
-        .candidates
-        .first()
-        .and_then(|c| c.content.parts.first())
-        .map(|p| p.text.trim().to_string())
-        .unwrap_or_default();
-    // Gemini returns no duration; decode the file to length the single segment so
-    // the replay scrubber has a range (best-effort — 0 if the decode fails).
-    let path = upload_path.to_string();
-    let duration_ms = tokio::task::spawn_blocking(move || {
-        crate::replay_audio::decode_to_16k_mono(std::path::Path::new(&path))
-            .map(|pcm| (pcm.len() as u64) * 1000 / 16_000)
-            .unwrap_or(0)
-    })
-    .await
-    .unwrap_or(0);
-    let segments = if text.is_empty() {
-        Vec::new()
-    } else {
-        vec![ReplaySegment {
-            id: "them-0".to_string(),
-            speaker: 0,
-            text,
-            start_ms: 0,
-            end_ms: duration_ms,
-        }]
-    };
-    Ok(TranscriptionResult {
-        segments,
-        duration_ms,
-        cached: false,
-        speech_rate_hz: 0.0,
-    })
-}
-
-// --- Parley Cloud (hosted batch) ----------------------------------------------
-// Parley's own batch contract (`docs/design/stt-protocol.md`): neutral option
-// names on upload, and `?format=parley` on the transcript route for Parley's
-// token shape. Deliberately its own types — nothing here is shared with a BYOK
-// vendor's wire format.
-
-/// Job created by the upload route.
-#[derive(Deserialize)]
-struct CloudJobCreated {
-    id: String,
-}
-
-/// Job status from the cloud. camelCase on the wire (the cloud is TypeScript);
-/// `durationMs` is null until the job completes, `errorMessage` only ever set on
-/// the "error" status.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CloudJobStatus {
-    status: String,
-    #[serde(default)]
-    error_message: Option<String>,
-    #[serde(default)]
-    duration_ms: Option<u64>,
-}
-
-/// One token of a hosted transcript (`?format=parley`): the streaming token
-/// shape minus `final`. `speaker` (≥1) is present only with diarization.
-#[derive(Deserialize, Default)]
-struct CloudToken {
-    #[serde(default)]
-    text: String,
-    #[serde(default)]
-    start_ms: u64,
-    #[serde(default)]
-    end_ms: u64,
-    #[serde(default)]
-    speaker: Option<i64>,
-}
-
-#[derive(Deserialize, Default)]
-struct CloudTranscript {
-    #[serde(default)]
-    tokens: Vec<CloudToken>,
-}
-
-/// Parse a `?format=parley` transcript body into segments. Pure, for tests.
-fn parse_cloud_transcript(body: &str) -> Result<Vec<ReplaySegment>, String> {
-    let transcript: CloudTranscript =
-        serde_json::from_str(body).map_err(|e| format!("Unreadable hosted transcript: {e}"))?;
-    Ok(group_runs(transcript.tokens.iter().map(|tok| RunToken {
-        text: &tok.text,
-        speaker: tok.speaker,
-        start_ms: tok.start_ms,
-        end_ms: tok.end_ms,
-    })))
-}
-
-/// Recognition options for a hosted upload.
-struct BatchOptions<'a> {
-    languages: &'a [String],
-    diarization: bool,
-    vocabulary: &'a [String],
-}
-
-/// The upload URL: the options ride as query params under their neutral
-/// names (see the protocol doc's batch clarifications) — `languages`
-/// comma-separated, one `terms` param per dictionary term, each value
-/// percent-encoded and each omitted when empty so the cloud auto-detects /
-/// applies no biasing. The server splits `terms` on commas too, so a comma
-/// inside a term becomes a space rather than splitting it in two.
-fn cloud_upload_url(base: &str, opts: &BatchOptions) -> String {
-    let mut url = format!(
-        "{base}?diarization={}",
-        if opts.diarization { "1" } else { "0" }
-    );
-    if !opts.languages.is_empty() {
-        let languages: Vec<String> = opts.languages.iter().map(|l| urlencode(l)).collect();
-        url.push_str(&format!("&languages={}", languages.join(",")));
-    }
-    for term in clean_vocabulary(opts.vocabulary) {
-        url.push_str(&format!("&terms={}", urlencode(&term.replace(',', " "))));
-    }
-    url
-}
-
-/// Hosted batch transcription through Parley Cloud.
-///
-/// The cloud owns recognition, so uploading the file and creating the job
-/// collapse into a single POST, and no model name is ever sent (picking it is
-/// the cloud's business, not ours). `token` is the cloud session bearer;
-/// `base` is `${CLOUD_URL}/stt/batch`.
-async fn parley_batch(
-    client: &reqwest::Client,
-    poll: PollPolicy,
-    token: &str,
-    base: &str,
-    upload_path: &str,
-    opts: &BatchOptions<'_>,
-) -> Result<TranscriptionResult, String> {
-    let bytes = tokio::fs::read(upload_path)
-        .await
-        .map_err(|e| format!("Failed to read file: {e}"))?;
-
-    // 1. Upload the raw (already compressed) bytes; the response is the job id.
-    log::info!(
-        "replay: uploading to parley cloud bytes={} diarization={} terms={}",
-        bytes.len(),
-        opts.diarization,
-        opts.vocabulary.len()
-    );
-    let create_resp = client
-        .post(cloud_upload_url(base, opts))
-        .bearer_auth(token)
-        .header("Content-Type", "application/octet-stream")
-        .body(bytes)
-        .send()
-        .await
-        .map_err(|e| format!("Upload to Parley Cloud failed: {e}"))?;
-    let status = create_resp.status();
-    if !status.is_success() {
-        let body = create_resp.text().await.unwrap_or_default();
-        log::error!("replay: parley batch create failed status={}", status);
-        return Err(parley_batch_error(status, &body));
-    }
-    let created: CloudJobCreated = read_json(create_resp, "parley batch create").await?;
-    let job_id = created.id;
-    log::info!("replay: parley cloud job created jobId={}", job_id);
-
-    // 2. Poll until the job settles. Same cadence and cap as the BYOK adapters —
-    // the cloud normalizes job states into the four below, so a status we don't
-    // recognize is treated as "still working" rather than a hard failure.
-    let mut reported_duration_ms: Option<u64> = None;
-    for attempt in 1..=poll.max_polls {
-        tokio::time::sleep(poll.interval).await;
-        let status_resp = client
-            .get(format!("{base}/{job_id}"))
-            .bearer_auth(token)
-            .send()
-            .await
-            .map_err(|e| format!("Poll request failed: {e}"))?;
-        let job: CloudJobStatus = read_json(status_resp, "parley batch status").await?;
-        match job.status.as_str() {
-            "completed" => {
-                let duration_ms = job.duration_ms.unwrap_or(0);
-                log::info!(
-                    "replay: parley cloud job completed durationMs={} polls={}",
-                    duration_ms,
-                    attempt
-                );
-                reported_duration_ms = Some(duration_ms);
-                break;
-            }
-            "error" => {
-                let msg = job.error_message.unwrap_or_else(|| "unknown error".into());
-                log::error!("replay: parley cloud job error errorMessage={}", msg);
-                return Err(format!("Transcription failed: {msg}"));
-            }
-            // "queued" | "processing" | anything else → keep polling.
-            _ => continue,
-        }
-    }
-    let Some(audio_duration_ms) = reported_duration_ms else {
-        log::error!(
-            "replay: parley cloud job timed out maxPolls={}",
-            poll.max_polls
-        );
-        return Err("Transcription timed out".to_string());
-    };
-
-    // 3. Fetch the tokens in Parley's own shape.
-    let transcript_resp = client
-        .get(format!("{base}/{job_id}/transcript?format=parley"))
-        .bearer_auth(token)
-        .send()
-        .await
-        .map_err(|e| format!("Fetch transcript failed: {e}"))?;
-    let transcript_status = transcript_resp.status();
-    let body = transcript_resp
-        .text()
-        .await
-        .map_err(|e| format!("Fetch transcript failed: {e}"))?;
-    if !transcript_status.is_success() {
-        log::error!(
-            "replay: parley batch transcript failed status={}",
-            transcript_status
-        );
-        return Err(parley_batch_error(transcript_status, &body));
-    }
-    let segments = parse_cloud_transcript(&body)?;
-
-    // 4. Best-effort cleanup so the cloud isn't left holding the audio. Fire and
-    // forget — we already have the transcript, so a failure here must not fail
-    // the transcription.
-    let _ = client
-        .delete(format!("{base}/{job_id}"))
-        .bearer_auth(token)
-        .send()
-        .await;
-
-    let duration_ms = segments
-        .iter()
-        .map(|s| s.end_ms)
-        .max()
-        .unwrap_or(audio_duration_ms)
-        .max(audio_duration_ms);
-
-    Ok(TranscriptionResult {
-        segments,
-        duration_ms,
-        cached: false,
-        speech_rate_hz: 0.0,
-    })
-}
-
-/// Turn a failed batch-create response into something the user can act on. These
-/// strings land in a toast, so each one names the next step: the status is what
-/// distinguishes "your session died" from "you're out of quota" from "this file
-/// is simply too big", and those need different actions. Unrecognized statuses
-/// keep the cloud's own `{"error": …}` code so a bug report still carries detail.
-fn parley_batch_error(status: reqwest::StatusCode, body: &str) -> String {
-    let code = serde_json::from_str::<serde_json::Value>(body)
-        .ok()
-        .and_then(|v| {
-            v.get("error")
-                .and_then(|e| e.as_str())
-                .map(|s| s.to_string())
-        })
-        .unwrap_or_default();
-    match status.as_u16() {
-        401 => "Sign in to Parley Cloud to transcribe recordings.".to_string(),
-        402 => {
-            "Your monthly hosted transcription quota is used up — upgrade your plan or wait for it to reset."
-                .to_string()
-        }
-        // The cloud caps how many transcriptions one account can have in flight,
-        // counting live meetings too — so this usually means "you're recording
-        // right now", which is a wait, not a failure.
-        429 => {
-            "Too many transcriptions running at once — wait for a meeting or an earlier upload to finish, then try again."
-                .to_string()
-        }
-        413 => {
-            "This recording is too large for hosted transcription — split it into shorter files and upload them separately."
-                .to_string()
-        }
-        502 => {
-            "Parley Cloud couldn't reach the transcription service — try again in a few minutes."
-                .to_string()
-        }
-        _ if code.is_empty() => format!("Hosted transcription failed (HTTP {status})"),
-        _ => format!("Hosted transcription failed (HTTP {status}): {code}"),
     }
 }
 
-/// Turn a reqwest Response into a deserialized body, surfacing the HTTP status +
-/// body text on failure so callers get a useful error message.
-async fn read_json<T: serde::de::DeserializeOwned>(
-    resp: reqwest::Response,
-    ctx: &str,
-) -> Result<T, String> {
-    let status = resp.status();
-    let text = resp
-        .text()
-        .await
-        .map_err(|e| format!("{ctx}: failed to read response: {e}"))?;
-    if !status.is_success() {
-        log::error!("replay: {} http error status={}", ctx, status);
-        return Err(format!("{ctx}: HTTP {status}: {text}"));
-    }
-    serde_json::from_str(&text).map_err(|e| format!("{ctx}: bad response JSON: {e} — {text}"))
-}
-
-/// Like `read_json`, but also returns the RAW response body text alongside the
-/// parsed struct. Used for the transcript fetch so the exact bytes Soniox sent
-/// can be written to a diagnostic log. Error handling matches `read_json`: HTTP
-/// status + body are surfaced on failure.
-async fn read_json_with_raw<T: serde::de::DeserializeOwned>(
-    resp: reqwest::Response,
-    ctx: &str,
-) -> Result<(String, T), String> {
-    let status = resp.status();
-    let text = resp
-        .text()
-        .await
-        .map_err(|e| format!("{ctx}: failed to read response: {e}"))?;
-    if !status.is_success() {
-        log::error!("replay: {} http error status={}", ctx, status);
-        return Err(format!("{ctx}: HTTP {status}: {text}"));
-    }
-    let parsed = serde_json::from_str(&text)
-        .map_err(|e| format!("{ctx}: bad response JSON: {e} — {text}"))?;
-    Ok((text, parsed))
-}
-
-/// Inputs for the Soniox diagnostic log. Bundled into one struct so the call
-/// site stays readable and the writer can stay best-effort.
-struct SonioxLogContext<'a> {
-    model: &'a str,
-    enable_speaker_diarization: bool,
-    language_hints: &'a [String],
-    file_name: &'a str,
-    audio_duration_ms: u64,
-    token_count: usize,
-    tokens_with_speaker: usize,
-    distinct_speakers: &'a std::collections::BTreeSet<i64>,
-    /// The full, verbatim transcript JSON body returned by Soniox.
-    raw_transcript: &'a str,
-}
-
-/// Write a reviewable JSON log of the raw Soniox transcript response plus the
-/// request context to `<Documents>/Parley/logs/soniox-<timestamp>.json`.
-///
-/// Best-effort: any failure (unresolvable Documents dir, IO error, …) is
-/// reported via `log::warn!` and swallowed — logging must NEVER fail the
-/// transcription.
-fn write_soniox_log(app: &AppHandle, ctx: SonioxLogContext) {
-    if let Err(e) = try_write_soniox_log(app, &ctx) {
-        log::warn!("replay: failed to write soniox response log error={}", e);
-    }
-}
-
-/// Fallible inner half of `write_soniox_log`. Returns the absolute path written.
-fn try_write_soniox_log(app: &AppHandle, ctx: &SonioxLogContext) -> Result<(), String> {
+/// Fallible half of [`DocumentsLog::write`].
+fn write_response_log(
+    app: &AppHandle,
+    provider: &str,
+    entry: &serde_json::Value,
+) -> Result<(), String> {
     // Mirror commands.rs::save_transcript's Documents/Parley layout, under a
     // dedicated `logs/` subdirectory — same `documents_dir` resolver, so both
     // land in the same place on every platform.
@@ -1816,149 +499,89 @@ fn try_write_soniox_log(app: &AppHandle, ctx: &SonioxLogContext) -> Result<(), S
         .unwrap_or(0);
     let suffix = uuid::Uuid::new_v4().simple().to_string();
     let suffix = &suffix[..8];
-    let path = dir.join(format!("soniox-{unix_secs}-{suffix}.json"));
+    let path = dir.join(format!("{provider}-{unix_secs}-{suffix}.json"));
 
-    // Embed the raw transcript as parsed JSON when it parses, else keep it as a
-    // string so nothing is ever lost.
-    let raw_value: serde_json::Value = serde_json::from_str(ctx.raw_transcript)
-        .unwrap_or_else(|_| serde_json::Value::String(ctx.raw_transcript.to_string()));
-
-    let distinct: Vec<i64> = ctx.distinct_speakers.iter().copied().collect();
-    let log = serde_json::json!({
-        "request": {
-            "model": ctx.model,
-            "enable_speaker_diarization": ctx.enable_speaker_diarization,
-            "language_hints": ctx.language_hints,
-            "file_name": ctx.file_name,
-        },
-        "audio_duration_ms": ctx.audio_duration_ms,
-        "diarization_summary": {
-            "token_count": ctx.token_count,
-            "tokens_with_speaker": ctx.tokens_with_speaker,
-            "distinct_speakers": distinct,
-            "distinct_speaker_count": distinct.len(),
-        },
-        "raw_transcript": raw_value,
-    });
-
-    let pretty = serde_json::to_string_pretty(&log).map_err(|e| e.to_string())?;
+    let pretty = serde_json::to_string_pretty(entry).map_err(|e| e.to_string())?;
     std::fs::write(&path, pretty).map_err(|e| e.to_string())?;
 
     // Surface the absolute path in the dev log so the user can find the file.
-    log::info!("replay: saved soniox log path={}", path.to_string_lossy());
+    log::info!(
+        "replay: saved {provider} log path={}",
+        path.to_string_lossy()
+    );
     Ok(())
 }
-
-#[cfg(test)]
-#[path = "replay_batch_tests.rs"]
-mod batch_tests;
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn hosted_upload_url_uses_neutral_option_names() {
-        let languages = vec!["zh".to_string(), "en".to_string()];
-        let vocabulary = vec![" Parley ".to_string(), "派斯".to_string(), "".to_string()];
-        let url = cloud_upload_url(
-            "https://api.parley.tw/stt/batch",
-            &BatchOptions {
-                languages: &languages,
-                diarization: true,
-                vocabulary: &vocabulary,
-            },
+    fn an_upload_without_a_credential_is_refused_unless_on_device() {
+        let missing = "Missing transcription credential — add the provider's API key in Settings, or sign in to Parley Cloud.";
+        for provider in [
+            "soniox",
+            "deepgram",
+            "assemblyai",
+            "openai",
+            "gemini",
+            "parley",
+            "nope",
+        ] {
+            assert_eq!(
+                check_batch_credential(provider, " "),
+                Err(missing.to_string()),
+                "{provider}"
+            );
+            assert_eq!(check_batch_credential(provider, "k"), Ok(()));
+        }
+        assert_eq!(check_batch_credential("local", ""), Ok(()));
+    }
+
+    #[test]
+    fn hosted_uploads_need_the_batch_url() {
+        let missing = Err("hosted transcription requires the cloud batch URL".to_string());
+        assert_eq!(hosted_batch_base(None), missing);
+        assert_eq!(hosted_batch_base(Some("  ")), missing);
+        assert_eq!(
+            hosted_batch_base(Some(" https://x/stt/batch ")),
+            Ok("https://x/stt/batch")
         );
         assert_eq!(
-            url,
-            "https://api.parley.tw/stt/batch?diarization=1&languages=zh,en&terms=Parley&terms=%E6%B4%BE%E6%96%AF"
+            unsupported_batch_provider("whisperx"),
+            "File transcription for 'whisperx' is not supported yet — switch to another transcription provider in Settings."
         );
     }
 
     #[test]
-    fn a_comma_never_splits_a_hosted_term() {
-        let url = cloud_upload_url(
-            "https://x/stt/batch",
-            &BatchOptions {
-                languages: &[],
-                diarization: true,
-                vocabulary: &["Smith, John".to_string()],
-            },
+    fn cache_file_names_stay_stable() {
+        // Existing caches on users' disks are found by exactly these names.
+        let name = |file: &str, size: u64, provider: &str, model: Option<&str>| {
+            cache_file_name(file, size, cache_suffix(provider, model).as_deref())
+        };
+        assert_eq!(
+            name("rec.ogg", 42, "soniox", Some("stt-async-v5")),
+            "rec.ogg-42.json"
+        );
+        for provider in ["deepgram", "assemblyai", "openai", "gemini", "parley"] {
+            assert_eq!(
+                name("rec.ogg", 42, provider, Some("m")),
+                format!("rec.ogg-42-{provider}.json")
+            );
+        }
+        assert_eq!(
+            name("會議 #1.m4a", 7, "parley", None),
+            "會議__1.m4a-7-parley.json"
         );
         assert_eq!(
-            url,
-            "https://x/stt/batch?diarization=1&terms=Smith%20%20John"
+            name("a/b.wav", 1, "local", Some("whisper-small-q5_1")),
+            "a_b.wav-1-local-whisper-small-q5_1.json"
         );
-    }
-
-    #[test]
-    fn hosted_upload_url_omits_empty_options() {
-        let url = cloud_upload_url(
-            "https://api.parley.tw/stt/batch",
-            &BatchOptions {
-                languages: &[],
-                diarization: false,
-                vocabulary: &["  ".to_string()],
-            },
+        assert_eq!(
+            name("a.wav", 1, "local", None),
+            format!("a.wav-1-local-{}.json", crate::local_stt::DEFAULT_MODEL_ID)
         );
-        assert_eq!(url, "https://api.parley.tw/stt/batch?diarization=0");
-    }
-
-    #[test]
-    fn parses_the_hosted_token_shape_into_speaker_runs() {
-        let body = r#"{"tokens":[
-            {"text":"Hello","start_ms":0,"end_ms":300,"speaker":1,"language":"en","confidence":0.9},
-            {"text":" there","start_ms":300,"end_ms":600,"speaker":1},
-            {"text":",","start_ms":600,"end_ms":610},
-            {"text":"你好","start_ms":700,"end_ms":1000,"speaker":2}
-        ]}"#;
-        let segments = parse_cloud_transcript(body).unwrap();
-        assert_eq!(segments.len(), 2);
-        assert_eq!(segments[0].id, "them-0");
-        assert_eq!(segments[0].speaker, 1);
-        // A speakerless token stays in the current run.
-        assert_eq!(segments[0].text, "Hello there,");
-        assert_eq!((segments[0].start_ms, segments[0].end_ms), (0, 610));
-        assert_eq!(segments[1].id, "them-1");
-        assert_eq!(segments[1].speaker, 2);
-        assert_eq!(segments[1].text, "你好");
-    }
-
-    #[test]
-    fn a_hosted_transcript_without_diarization_is_one_speaker_zero_run() {
-        let body = r#"{"tokens":[{"text":"a","start_ms":0,"end_ms":1},{"text":" b","start_ms":1,"end_ms":2}]}"#;
-        let segments = parse_cloud_transcript(body).unwrap();
-        assert_eq!(segments.len(), 1);
-        assert_eq!(segments[0].speaker, 0);
-        assert_eq!(segments[0].text, "a b");
-    }
-
-    #[test]
-    fn an_empty_or_unreadable_hosted_transcript() {
-        assert!(parse_cloud_transcript(r#"{"tokens":[]}"#)
-            .unwrap()
-            .is_empty());
-        assert!(parse_cloud_transcript("{}").unwrap().is_empty());
-        assert!(parse_cloud_transcript("nope").is_err());
-    }
-
-    #[test]
-    fn the_byok_grouper_still_drops_markers() {
-        let tokens = vec![
-            Token {
-                text: "hi".into(),
-                start_ms: 0,
-                end_ms: 10,
-                speaker: Some(SpeakerId::Str("1".into())),
-            },
-            Token {
-                text: "<end>".into(),
-                ..Token::default()
-            },
-        ];
-        let segments = group_tokens(&tokens);
-        assert_eq!(segments.len(), 1);
-        assert_eq!(segments[0].text, "hi");
-        assert_eq!(segments[0].speaker, 1);
+        // An id without a registry row still keys by the id.
+        assert_eq!(name("a.wav", 1, "retired", None), "a.wav-1-retired.json");
     }
 }

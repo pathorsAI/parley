@@ -8,6 +8,10 @@ use tauri::AppHandle;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::tungstenite::Message;
 
+use super::batch::{
+    group_runs, last_end, poll_job, read_json, read_json_with_raw, BatchRequest, JobState,
+    PollPolicy, ReplaySegment, RunToken, TranscriptionResult,
+};
 use super::common::{
     clean_vocabulary, drive_session, ensure_crypto_provider, note_connected, with_connect_timeout,
     LevelMeter, SegmentBuilder, Timeline, TranscribeConfig, LEVEL_EVENT,
@@ -250,6 +254,310 @@ fn on_payload(builder: &mut SegmentBuilder, source: &str, payload: &str) -> Resu
     Ok(if done { Next::Stop } else { Next::Continue })
 }
 
+// --- Batch (upload → job → poll → diarized tokens) ------------------------------
+
+const SONIOX_BATCH_BASE: &str = "https://api.soniox.com/v1";
+/// Async batch model (distinct from the realtime `stt-rt-v5`).
+const DEFAULT_ASYNC_MODEL: &str = "stt-async-v5";
+
+#[derive(Serialize)]
+struct CreateTranscriptionRequest<'a> {
+    file_id: &'a str,
+    model: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    language_hints: Option<Vec<String>>,
+    enable_speaker_diarization: bool,
+    /// Custom vocabulary biasing — the same `context` object the realtime
+    /// adapter sends, omitted entirely when the phrase dictionary is empty.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context: Option<SonioxContext>,
+}
+
+#[derive(Deserialize)]
+struct IdResponse {
+    id: String,
+}
+
+#[derive(Deserialize)]
+struct TranscriptionStatus {
+    status: String,
+    #[serde(default)]
+    error_message: Option<String>,
+    #[serde(default)]
+    audio_duration_ms: Option<u64>,
+}
+
+#[derive(Deserialize, Default)]
+struct BatchToken {
+    #[serde(default)]
+    text: String,
+    #[serde(default)]
+    start_ms: u64,
+    #[serde(default)]
+    end_ms: u64,
+    /// Speaker can arrive as a string ("1") or a number, or be absent.
+    #[serde(default)]
+    speaker: Option<SpeakerId>,
+}
+
+/// Soniox sends the speaker as a string in some responses and a number in
+/// others; accept either.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum SpeakerId {
+    Num(i64),
+    Str(String),
+}
+
+impl SpeakerId {
+    fn to_i64(&self) -> i64 {
+        match self {
+            SpeakerId::Num(n) => *n,
+            SpeakerId::Str(s) => s.trim().parse().unwrap_or(0),
+        }
+    }
+}
+
+#[derive(Deserialize, Default)]
+struct TranscriptResponse {
+    #[serde(default)]
+    tokens: Vec<BatchToken>,
+}
+
+/// Upload the file to Soniox, create + poll the transcription job, fetch the
+/// transcript, and group it into segments. The raw transcript goes to the
+/// request's diagnostic log.
+pub(crate) async fn transcribe_file(req: BatchRequest<'_>) -> Result<TranscriptionResult, String> {
+    let base = req.base_or(SONIOX_BATCH_BASE);
+    let client = req.client;
+    let api_key = req.credential;
+    let model = req.model.unwrap_or(DEFAULT_ASYNC_MODEL);
+
+    // 1. Upload the file → file id.
+    let file_name = req.file_name_or("recording");
+    log::info!(
+        "replay: uploading to soniox fileName={} bytes={}",
+        file_name,
+        req.audio.len()
+    );
+    // Clone for the multipart part so `file_name` stays available for the
+    // diagnostic log written after transcription.
+    let part = reqwest::multipart::Part::bytes(req.audio).file_name(file_name.clone());
+    let form = reqwest::multipart::Form::new().part("file", part);
+
+    let upload_resp = client
+        .post(format!("{base}/files"))
+        .bearer_auth(api_key)
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| format!("Upload request failed: {e}"))?;
+    let upload: IdResponse = read_json(upload_resp, "file upload").await?;
+    let file_id = upload.id;
+    log::debug!("replay: upload ok fileId={}", file_id);
+
+    // 2. Create the async transcription job → transcription id.
+    let hints = if req.language_hints.is_empty() {
+        None
+    } else {
+        Some(req.language_hints.to_vec())
+    };
+    let create_body = CreateTranscriptionRequest {
+        file_id: &file_id,
+        model,
+        language_hints: hints,
+        enable_speaker_diarization: req.diarization,
+        context: context_for(req.vocabulary),
+    };
+    let create_resp = client
+        .post(format!("{base}/transcriptions"))
+        .bearer_auth(api_key)
+        .json(&create_body)
+        .send()
+        .await
+        .map_err(|e| format!("Create transcription failed: {e}"))?;
+    let created: IdResponse = read_json(create_resp, "create transcription").await?;
+    let transcription_id = created.id;
+    log::info!(
+        "replay: transcription job created transcriptionId={} model={} diarization={}",
+        transcription_id,
+        model,
+        req.diarization
+    );
+
+    // 3. Poll until completed or error.
+    let audio_duration_ms =
+        poll_transcription(client, api_key, base, &transcription_id, req.poll).await?;
+
+    // 4. Fetch the transcript tokens. We capture the RAW response body text (not
+    // just the parsed struct) so we can write it verbatim to a diagnostic log
+    // below — this lets the user inspect exactly what Soniox returned (per-token
+    // speaker labels, distinct speaker count, …) when diarization looks wrong.
+    let transcript_resp = client
+        .get(format!(
+            "{base}/transcriptions/{transcription_id}/transcript"
+        ))
+        .bearer_auth(api_key)
+        .send()
+        .await
+        .map_err(|e| format!("Fetch transcript failed: {e}"))?;
+    let (raw_transcript, transcript): (String, TranscriptResponse) =
+        read_json_with_raw(transcript_resp, "fetch transcript").await?;
+
+    // Persist a reviewable log of the raw Soniox response + request context.
+    // Best-effort: never let a logging failure abort the transcription.
+    req.log.write(
+        "soniox",
+        diagnostic_log(
+            &DiagnosticRequest {
+                model,
+                diarization: req.diarization,
+                language_hints: req.language_hints,
+                file_name: &file_name,
+                audio_duration_ms,
+            },
+            &transcript.tokens,
+            &raw_transcript,
+        ),
+    );
+
+    // 5. Best-effort cleanup of the uploaded file + transcription on Soniox.
+    let _ = client
+        .delete(format!("{base}/transcriptions/{transcription_id}"))
+        .bearer_auth(api_key)
+        .send()
+        .await;
+    let _ = client
+        .delete(format!("{base}/files/{file_id}"))
+        .bearer_auth(api_key)
+        .send()
+        .await;
+
+    // Group consecutive same-speaker tokens into segments (mirrors the realtime
+    // SegmentBuilder: a speaker change closes the open run).
+    let segments = group_tokens(&transcript.tokens);
+    let duration_ms = last_end(&segments).max(audio_duration_ms);
+    Ok(TranscriptionResult::fresh(segments, duration_ms))
+}
+
+/// Poll the transcription status until it completes (returns the reported audio
+/// duration) or errors. Surfaces a timeout if it never settles.
+async fn poll_transcription(
+    client: &reqwest::Client,
+    api_key: &str,
+    base: &str,
+    transcription_id: &str,
+    policy: PollPolicy,
+) -> Result<u64, String> {
+    let settled = poll_job(policy, move || async move {
+        let status_resp = client
+            .get(format!("{base}/transcriptions/{transcription_id}"))
+            .bearer_auth(api_key)
+            .send()
+            .await
+            .map_err(|e| format!("Poll request failed: {e}"))?;
+        let status: TranscriptionStatus = read_json(status_resp, "poll status").await?;
+        Ok(match status.status.as_str() {
+            "completed" => JobState::Done(status.audio_duration_ms.unwrap_or(0)),
+            "error" => {
+                let msg = status
+                    .error_message
+                    .unwrap_or_else(|| "unknown error".into());
+                log::error!("replay: transcription job error errorMessage={}", msg);
+                JobState::Failed(format!("Transcription failed: {msg}"))
+            }
+            // "queued" | "processing" | anything else → keep polling.
+            _ => JobState::Pending,
+        })
+    })
+    .await?;
+    match settled {
+        Some((audio_duration_ms, polls)) => {
+            log::info!(
+                "replay: transcription completed audioDurationMs={} polls={}",
+                audio_duration_ms,
+                polls
+            );
+            Ok(audio_duration_ms)
+        }
+        None => {
+            log::error!(
+                "replay: transcription timed out maxPolls={}",
+                policy.max_polls
+            );
+            Err("Transcription timed out".to_string())
+        }
+    }
+}
+
+/// Group a flat token stream into speaker-runs (see [`group_runs`]), skipping
+/// the control / endpoint markers that some models emit.
+fn group_tokens(tokens: &[BatchToken]) -> Vec<ReplaySegment> {
+    group_runs(
+        tokens
+            .iter()
+            .filter(|tok| tok.text != TOKEN_END && tok.text != TOKEN_FIN)
+            .map(|tok| RunToken {
+                text: &tok.text,
+                speaker: tok.speaker.as_ref().map(SpeakerId::to_i64),
+                start_ms: tok.start_ms,
+                end_ms: tok.end_ms,
+            }),
+    )
+}
+
+/// The request context recorded next to a raw transcript.
+struct DiagnosticRequest<'a> {
+    model: &'a str,
+    diarization: bool,
+    language_hints: &'a [String],
+    file_name: &'a str,
+    audio_duration_ms: u64,
+}
+
+/// The diagnostic log of one batch transcription: the request context, how
+/// well Soniox actually diarized (so a real diarization problem — few/empty
+/// distinct speakers — can be told apart from a grouping/labeling one on our
+/// side), and the raw transcript.
+fn diagnostic_log(
+    request: &DiagnosticRequest,
+    tokens: &[BatchToken],
+    raw_transcript: &str,
+) -> serde_json::Value {
+    let with_speaker = tokens.iter().filter(|t| t.speaker.is_some()).count();
+    let speakers: std::collections::BTreeSet<i64> = tokens
+        .iter()
+        .filter_map(|t| t.speaker.as_ref().map(SpeakerId::to_i64))
+        .collect();
+    log::info!(
+        "replay: diarization tokens={} tokensWithSpeaker={} distinctSpeakers={:?}",
+        tokens.len(),
+        with_speaker,
+        speakers
+    );
+    // Embed the raw transcript as parsed JSON when it parses, else keep it as a
+    // string so nothing is ever lost.
+    let raw_value: serde_json::Value = serde_json::from_str(raw_transcript)
+        .unwrap_or_else(|_| serde_json::Value::String(raw_transcript.to_string()));
+    let distinct: Vec<i64> = speakers.into_iter().collect();
+    serde_json::json!({
+        "request": {
+            "model": request.model,
+            "enable_speaker_diarization": request.diarization,
+            "language_hints": request.language_hints,
+            "file_name": request.file_name,
+        },
+        "audio_duration_ms": request.audio_duration_ms,
+        "diarization_summary": {
+            "token_count": tokens.len(),
+            "tokens_with_speaker": with_speaker,
+            "distinct_speakers": distinct,
+            "distinct_speaker_count": distinct.len(),
+        },
+        "raw_transcript": raw_value,
+    })
+}
+
 /// Run one Soniox realtime session: stream PCM from `pcm_rx`, parse the token
 /// stream, and emit `transcript://segment` events tagged with `source`
 /// ("me" for mic, "them" for system audio).
@@ -424,6 +732,26 @@ mod tests {
             steps[0].as_ref().unwrap_err().to_string(),
             "server error 401: Invalid API key"
         );
+    }
+
+    #[test]
+    fn the_batch_grouper_still_drops_markers() {
+        let tokens = vec![
+            BatchToken {
+                text: "hi".into(),
+                start_ms: 0,
+                end_ms: 10,
+                speaker: Some(SpeakerId::Str("1".into())),
+            },
+            BatchToken {
+                text: "<end>".into(),
+                ..BatchToken::default()
+            },
+        ];
+        let segments = group_tokens(&tokens);
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].text, "hi");
+        assert_eq!(segments[0].speaker, 1);
     }
 
     #[test]

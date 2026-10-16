@@ -8,6 +8,10 @@ use tauri::AppHandle;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::tungstenite::Message;
 
+use super::batch::{
+    group_words, guess_audio_mime, last_end, read_json, BatchRequest, BatchWord,
+    TranscriptionResult,
+};
 use super::common::{
     clean_vocabulary, connect_with_headers, drive_session, note_connected, urlencode, LevelMeter,
     SegmentBuilder, Timeline, TranscribeConfig, LEVEL_EVENT,
@@ -198,6 +202,101 @@ fn on_payload(builder: &mut SegmentBuilder, source: &str, payload: &str) -> Resu
         Err(e) => eprintln!("[deepgram:{source}] parse error: {e}"),
     }
     Ok(Next::Continue)
+}
+
+// --- Batch (pre-recorded) ------------------------------------------------------
+
+const DEEPGRAM_BATCH_BASE: &str = "https://api.deepgram.com";
+/// The pre-recorded path pins its model.
+const BATCH_MODEL: &str = "nova-3";
+
+#[derive(Deserialize, Default)]
+struct BatchResponse {
+    #[serde(default)]
+    metadata: BatchMeta,
+    #[serde(default)]
+    results: BatchResults,
+}
+#[derive(Deserialize, Default)]
+struct BatchMeta {
+    #[serde(default)]
+    duration: f64,
+}
+#[derive(Deserialize, Default)]
+struct BatchResults {
+    #[serde(default)]
+    channels: Vec<BatchChannel>,
+}
+#[derive(Deserialize, Default)]
+struct BatchChannel {
+    #[serde(default)]
+    alternatives: Vec<BatchAlternative>,
+}
+#[derive(Deserialize, Default)]
+struct BatchAlternative {
+    #[serde(default)]
+    words: Vec<DgWord>,
+}
+
+/// The pre-recorded `/v1/listen` URL: the pinned model, diarization, the
+/// language (or auto-detection) and the custom vocabulary.
+fn batch_url(
+    base: &str,
+    language_hints: &[String],
+    diarization: bool,
+    vocabulary: &[String],
+) -> String {
+    let mut url = format!(
+        "{base}/v1/listen?model={BATCH_MODEL}&smart_format=true&punctuate=true&diarize={diarization}"
+    );
+    // One language hint pins the language; otherwise let Deepgram auto-detect.
+    match language_hints.first() {
+        Some(lang) => url.push_str(&format!("&language={lang}")),
+        None => url.push_str("&detect_language=true"),
+    }
+    // Same keyterm/keywords split as the realtime adapter, keyed off the model
+    // this path pins.
+    url.push_str(&vocabulary_params(BATCH_MODEL, vocabulary));
+    url
+}
+
+/// Deepgram pre-recorded API: POST the raw (compressed) bytes to /v1/listen and
+/// group the returned diarized word stream. Shape verified vs docs, not live-tested.
+pub(crate) async fn transcribe_file(req: BatchRequest<'_>) -> Result<TranscriptionResult, String> {
+    let url = batch_url(
+        req.base_or(DEEPGRAM_BATCH_BASE),
+        req.language_hints,
+        req.diarization,
+        req.vocabulary,
+    );
+    let resp = req
+        .client
+        .post(url)
+        .header("Authorization", format!("Token {}", req.credential))
+        .header("Content-Type", guess_audio_mime(req.upload_path))
+        .body(req.audio)
+        .send()
+        .await
+        .map_err(|e| format!("Deepgram request failed: {e}"))?;
+    let dg: BatchResponse = read_json(resp, "deepgram transcribe").await?;
+    let words: Vec<BatchWord> = dg
+        .results
+        .channels
+        .first()
+        .and_then(|c| c.alternatives.first())
+        .map(|a| a.words.as_slice())
+        .unwrap_or(&[])
+        .iter()
+        .map(|w| BatchWord {
+            speaker: w.speaker,
+            text: w.punctuated_word.clone().unwrap_or_else(|| w.word.clone()),
+            start_ms: (w.start * 1000.0) as u64,
+            end_ms: (w.end * 1000.0) as u64,
+        })
+        .collect();
+    let segments = group_words(&words);
+    let duration_ms = ((dg.metadata.duration * 1000.0) as u64).max(last_end(&segments));
+    Ok(TranscriptionResult::fresh(segments, duration_ms))
 }
 
 pub async fn run_session(

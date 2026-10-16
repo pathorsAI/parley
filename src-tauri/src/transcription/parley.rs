@@ -22,6 +22,11 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::tungstenite::Message;
 
+use super::batch::{
+    group_runs, last_end, poll_job, read_json, BatchRequest, JobState, PollPolicy, ReplaySegment,
+    RunToken, TranscriptionResult,
+};
+use super::common::urlencode;
 use super::common::{
     clean_vocabulary, connect_with_headers, drive_session, note_connected, LevelMeter,
     SegmentBuilder, Timeline, TranscribeConfig, CONNECT_TIMEOUT, LEVEL_EVENT,
@@ -422,6 +427,254 @@ fn on_payload(
     }
 }
 
+// --- Batch (hosted upload) ------------------------------------------------------
+// Parley's own batch contract (`docs/design/stt-protocol.md`): neutral option
+// names on upload, and `?format=parley` on the transcript route for Parley's
+// token shape. Deliberately its own types — nothing here is shared with a BYOK
+// vendor's wire format.
+
+/// Job created by the upload route.
+#[derive(Deserialize)]
+struct CloudJobCreated {
+    id: String,
+}
+
+/// Job status from the cloud. camelCase on the wire (the cloud is TypeScript);
+/// `durationMs` is null until the job completes, `errorMessage` only ever set on
+/// the "error" status.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CloudJobStatus {
+    status: String,
+    #[serde(default)]
+    error_message: Option<String>,
+    #[serde(default)]
+    duration_ms: Option<u64>,
+}
+
+/// One token of a hosted transcript (`?format=parley`): the streaming token
+/// shape minus `final`. `speaker` (≥1) is present only with diarization.
+#[derive(Deserialize, Default)]
+struct CloudToken {
+    #[serde(default)]
+    text: String,
+    #[serde(default)]
+    start_ms: u64,
+    #[serde(default)]
+    end_ms: u64,
+    #[serde(default)]
+    speaker: Option<i64>,
+}
+
+#[derive(Deserialize, Default)]
+struct CloudTranscript {
+    #[serde(default)]
+    tokens: Vec<CloudToken>,
+}
+
+/// Parse a `?format=parley` transcript body into segments. Pure, for tests.
+fn parse_cloud_transcript(body: &str) -> Result<Vec<ReplaySegment>, String> {
+    let transcript: CloudTranscript =
+        serde_json::from_str(body).map_err(|e| format!("Unreadable hosted transcript: {e}"))?;
+    Ok(group_runs(transcript.tokens.iter().map(|tok| RunToken {
+        text: &tok.text,
+        speaker: tok.speaker,
+        start_ms: tok.start_ms,
+        end_ms: tok.end_ms,
+    })))
+}
+
+/// The upload URL: the options ride as query params under their neutral
+/// names (see the protocol doc's batch clarifications) — `languages`
+/// comma-separated, one `terms` param per dictionary term, each value
+/// percent-encoded and each omitted when empty so the cloud auto-detects /
+/// applies no biasing. The server splits `terms` on commas too, so a comma
+/// inside a term becomes a space rather than splitting it in two.
+fn cloud_upload_url(
+    base: &str,
+    languages: &[String],
+    diarization: bool,
+    vocabulary: &[String],
+) -> String {
+    let mut url = format!("{base}?diarization={}", if diarization { "1" } else { "0" });
+    if !languages.is_empty() {
+        let languages: Vec<String> = languages.iter().map(|l| urlencode(l)).collect();
+        url.push_str(&format!("&languages={}", languages.join(",")));
+    }
+    for term in clean_vocabulary(vocabulary) {
+        url.push_str(&format!("&terms={}", urlencode(&term.replace(',', " "))));
+    }
+    url
+}
+
+/// Hosted batch transcription through Parley Cloud.
+///
+/// The cloud owns recognition, so uploading the file and creating the job
+/// collapse into a single POST, and no model name is ever sent (picking it is
+/// the cloud's business, not ours). The credential is the cloud session
+/// bearer; the endpoint is `${CLOUD_URL}/stt/batch`.
+pub(crate) async fn transcribe_file(req: BatchRequest<'_>) -> Result<TranscriptionResult, String> {
+    let base = req
+        .endpoint
+        .ok_or_else(|| "hosted transcription requires the cloud batch URL".to_string())?;
+    let (client, token) = (req.client, req.credential);
+
+    // 1. Upload the raw (already compressed) bytes; the response is the job id.
+    log::info!(
+        "replay: uploading to parley cloud bytes={} diarization={} terms={}",
+        req.audio.len(),
+        req.diarization,
+        req.vocabulary.len()
+    );
+    let create_resp = client
+        .post(cloud_upload_url(
+            base,
+            req.language_hints,
+            req.diarization,
+            req.vocabulary,
+        ))
+        .bearer_auth(token)
+        .header("Content-Type", "application/octet-stream")
+        .body(req.audio)
+        .send()
+        .await
+        .map_err(|e| format!("Upload to Parley Cloud failed: {e}"))?;
+    let status = create_resp.status();
+    if !status.is_success() {
+        let body = create_resp.text().await.unwrap_or_default();
+        log::error!("replay: parley batch create failed status={}", status);
+        return Err(parley_batch_error(status, &body));
+    }
+    let created: CloudJobCreated = read_json(create_resp, "parley batch create").await?;
+    let job_id = created.id;
+    log::info!("replay: parley cloud job created jobId={}", job_id);
+
+    // 2. Poll until the job settles. Same cadence and cap as the BYOK adapters.
+    let audio_duration_ms = poll_cloud_job(client, token, base, &job_id, req.poll).await?;
+
+    // 3. Fetch the tokens in Parley's own shape.
+    let transcript_resp = client
+        .get(format!("{base}/{job_id}/transcript?format=parley"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| format!("Fetch transcript failed: {e}"))?;
+    let transcript_status = transcript_resp.status();
+    let body = transcript_resp
+        .text()
+        .await
+        .map_err(|e| format!("Fetch transcript failed: {e}"))?;
+    if !transcript_status.is_success() {
+        log::error!(
+            "replay: parley batch transcript failed status={}",
+            transcript_status
+        );
+        return Err(parley_batch_error(transcript_status, &body));
+    }
+    let segments = parse_cloud_transcript(&body)?;
+
+    // 4. Best-effort cleanup so the cloud isn't left holding the audio. Fire and
+    // forget — we already have the transcript, so a failure here must not fail
+    // the transcription.
+    let _ = client
+        .delete(format!("{base}/{job_id}"))
+        .bearer_auth(token)
+        .send()
+        .await;
+
+    let duration_ms = last_end(&segments).max(audio_duration_ms);
+    Ok(TranscriptionResult::fresh(segments, duration_ms))
+}
+
+/// Poll a hosted job until it completes (returns its reported duration). The
+/// cloud normalizes job states into four, so a status we don't recognize is
+/// treated as "still working" rather than a hard failure.
+async fn poll_cloud_job(
+    client: &reqwest::Client,
+    token: &str,
+    base: &str,
+    job_id: &str,
+    policy: PollPolicy,
+) -> Result<u64, String> {
+    let settled = poll_job(policy, move || async move {
+        let status_resp = client
+            .get(format!("{base}/{job_id}"))
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(|e| format!("Poll request failed: {e}"))?;
+        let job: CloudJobStatus = read_json(status_resp, "parley batch status").await?;
+        Ok(match job.status.as_str() {
+            "completed" => JobState::Done(job.duration_ms.unwrap_or(0)),
+            "error" => {
+                let msg = job.error_message.unwrap_or_else(|| "unknown error".into());
+                log::error!("replay: parley cloud job error errorMessage={}", msg);
+                JobState::Failed(format!("Transcription failed: {msg}"))
+            }
+            // "queued" | "processing" | anything else → keep polling.
+            _ => JobState::Pending,
+        })
+    })
+    .await?;
+    match settled {
+        Some((duration_ms, polls)) => {
+            log::info!(
+                "replay: parley cloud job completed durationMs={} polls={}",
+                duration_ms,
+                polls
+            );
+            Ok(duration_ms)
+        }
+        None => {
+            log::error!(
+                "replay: parley cloud job timed out maxPolls={}",
+                policy.max_polls
+            );
+            Err("Transcription timed out".to_string())
+        }
+    }
+}
+
+/// Turn a failed batch-create response into something the user can act on. These
+/// strings land in a toast, so each one names the next step: the status is what
+/// distinguishes "your session died" from "you're out of quota" from "this file
+/// is simply too big", and those need different actions. Unrecognized statuses
+/// keep the cloud's own `{"error": …}` code so a bug report still carries detail.
+fn parley_batch_error(status: reqwest::StatusCode, body: &str) -> String {
+    let code = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| {
+            v.get("error")
+                .and_then(|e| e.as_str())
+                .map(|s| s.to_string())
+        })
+        .unwrap_or_default();
+    match status.as_u16() {
+        401 => "Sign in to Parley Cloud to transcribe recordings.".to_string(),
+        402 => {
+            "Your monthly hosted transcription quota is used up — upgrade your plan or wait for it to reset."
+                .to_string()
+        }
+        // The cloud caps how many transcriptions one account can have in flight,
+        // counting live meetings too — so this usually means "you're recording
+        // right now", which is a wait, not a failure.
+        429 => {
+            "Too many transcriptions running at once — wait for a meeting or an earlier upload to finish, then try again."
+                .to_string()
+        }
+        413 => {
+            "This recording is too large for hosted transcription — split it into shorter files and upload them separately."
+                .to_string()
+        }
+        502 => {
+            "Parley Cloud couldn't reach the transcription service — try again in a few minutes."
+                .to_string()
+        }
+        _ if code.is_empty() => format!("Hosted transcription failed (HTTP {status})"),
+        _ => format!("Hosted transcription failed (HTTP {status}): {code}"),
+    }
+}
+
 /// Run one hosted session: dial the cloud, send `start`, wait for `ready`,
 /// then stream PCM from `pcm_rx` and emit `transcript://segment` events tagged
 /// with `source`.
@@ -795,6 +1048,85 @@ mod tests {
             on_payload(&mut b, "me", late, true).unwrap(),
             Next::Stop
         ));
+    }
+
+    #[test]
+    fn hosted_upload_url_uses_neutral_option_names() {
+        let languages = vec!["zh".to_string(), "en".to_string()];
+        let vocabulary = vec![" Parley ".to_string(), "派斯".to_string(), "".to_string()];
+        let url = cloud_upload_url(
+            "https://api.parley.tw/stt/batch",
+            &languages,
+            true,
+            &vocabulary,
+        );
+        assert_eq!(
+            url,
+            "https://api.parley.tw/stt/batch?diarization=1&languages=zh,en&terms=Parley&terms=%E6%B4%BE%E6%96%AF"
+        );
+    }
+
+    #[test]
+    fn a_comma_never_splits_a_hosted_term() {
+        let url = cloud_upload_url(
+            "https://x/stt/batch",
+            &[],
+            true,
+            &["Smith, John".to_string()],
+        );
+        assert_eq!(
+            url,
+            "https://x/stt/batch?diarization=1&terms=Smith%20%20John"
+        );
+    }
+
+    #[test]
+    fn hosted_upload_url_omits_empty_options() {
+        let url = cloud_upload_url(
+            "https://api.parley.tw/stt/batch",
+            &[],
+            false,
+            &["  ".to_string()],
+        );
+        assert_eq!(url, "https://api.parley.tw/stt/batch?diarization=0");
+    }
+
+    #[test]
+    fn parses_the_hosted_token_shape_into_speaker_runs() {
+        let body = r#"{"tokens":[
+            {"text":"Hello","start_ms":0,"end_ms":300,"speaker":1,"language":"en","confidence":0.9},
+            {"text":" there","start_ms":300,"end_ms":600,"speaker":1},
+            {"text":",","start_ms":600,"end_ms":610},
+            {"text":"你好","start_ms":700,"end_ms":1000,"speaker":2}
+        ]}"#;
+        let segments = parse_cloud_transcript(body).unwrap();
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[0].id, "them-0");
+        assert_eq!(segments[0].speaker, 1);
+        // A speakerless token stays in the current run.
+        assert_eq!(segments[0].text, "Hello there,");
+        assert_eq!((segments[0].start_ms, segments[0].end_ms), (0, 610));
+        assert_eq!(segments[1].id, "them-1");
+        assert_eq!(segments[1].speaker, 2);
+        assert_eq!(segments[1].text, "你好");
+    }
+
+    #[test]
+    fn a_hosted_transcript_without_diarization_is_one_speaker_zero_run() {
+        let body = r#"{"tokens":[{"text":"a","start_ms":0,"end_ms":1},{"text":" b","start_ms":1,"end_ms":2}]}"#;
+        let segments = parse_cloud_transcript(body).unwrap();
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].speaker, 0);
+        assert_eq!(segments[0].text, "a b");
+    }
+
+    #[test]
+    fn an_empty_or_unreadable_hosted_transcript() {
+        assert!(parse_cloud_transcript(r#"{"tokens":[]}"#)
+            .unwrap()
+            .is_empty());
+        assert!(parse_cloud_transcript("{}").unwrap().is_empty());
+        assert!(parse_cloud_transcript("nope").is_err());
     }
 
     #[test]
