@@ -37,7 +37,7 @@ export async function runDeliveryAnalysis(): Promise<void> {
   if (state.deliveryStatus === "running") return;
 
   const run = guard.begin();
-  useStore.setState({ deliveryError: null });
+  state.setDeliveryError(null);
   state.setDeliveryStatus("running");
   try {
     const res = await analyzeDelivery({
@@ -67,7 +67,7 @@ export async function runDeliveryAnalysis(): Promise<void> {
       stage: "delivery",
       error: message,
       apply: () => {
-        useStore.setState({ deliveryError: message });
+        useStore.getState().setDeliveryError(message);
         useStore.getState().setDeliveryStatus("error");
       },
       patch: null,

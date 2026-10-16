@@ -221,10 +221,7 @@ export function regenerateArtifact(key: StudyStageKey): void {
   const s = useStore.getState();
   if (s[STATUS_FIELD[key]] === "running") cancelRunning(key);
   if (key === "findings") forceNextFindings = true;
-  useStore.setState({
-    [STATUS_FIELD[key]]: "idle",
-    studyManualForId: s.replay?.id ?? null,
-  } as Partial<StoreState>);
+  s.restartStudyStage(STATUS_FIELD[key], s.replay?.id ?? null);
 }
 
 /** The stages "regenerate all" invalidates once the fresh findings land. */
@@ -272,11 +269,11 @@ export async function reanalyzeAll(): Promise<void> {
   }
   // Pin BEFORE the pass: with auto-analysis off, the downstream invalidation
   // below would otherwise never be picked up by the scheduler.
-  useStore.setState({ studyManualForId: startedFor });
+  useStore.getState().setStudyManualForId(startedFor);
   if (useStore.getState().analysisStatus === "running") {
     cancelRunning("findings");
     forceNextFindings = true;
-    useStore.setState({ analysisStatus: "idle" });
+    useStore.getState().setAnalysisStatus("idle");
     // Not consumed when the scheduler did not dispatch (auto-analysis off, no
     // key…): the direct call below is forced anyway.
     forceNextFindings = false;
@@ -300,12 +297,7 @@ export async function reanalyzeAll(): Promise<void> {
   for (const key of DOWNSTREAM) {
     if (CANCELLERS[key]()) log.info("study: regenerate all cancelled a running stage", { stage: key });
   }
-  useStore.setState({
-    actionItemsStatus: "idle",
-    brief: null,
-    briefStatus: "idle",
-    deliveryStatus: "idle",
-  });
+  useStore.getState().invalidateDownstreamStudy();
 }
 
 // Fields the subscription reacts to — everything factsOf and the auto-save

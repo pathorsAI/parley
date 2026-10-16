@@ -1,4 +1,4 @@
-import { useStore, type SettingsCategory } from "./store";
+import { setSettingsBroadcaster, useStore, type SettingsCategory } from "./store";
 import { isTauri } from "./tauriEvents";
 import { log } from "./log";
 import type { Settings } from "./types";
@@ -50,6 +50,17 @@ export async function openSettingsWindow(category?: SettingsCategory): Promise<v
 export async function broadcastSettings(settings: Settings): Promise<void> {
   if (!isTauri()) return;
   await emitEvent(SETTINGS_EVENT, settings);
+}
+
+/**
+ * Make THIS window the one that broadcasts: from now on every store
+ * `updateSettings` here sends its result to the other windows. Installed once,
+ * by the Settings window — the window settings are edited in. Every other
+ * window only listens ({@link listenForSettings}), and what it applies never
+ * broadcasts back.
+ */
+export function installSettingsBroadcast(): void {
+  setSettingsBroadcaster(broadcastSettings);
 }
 
 /** localStorage key zustand persists settings under (see store `persist` name). */

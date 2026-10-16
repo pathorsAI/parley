@@ -41,7 +41,7 @@ export async function runBriefGeneration(opts?: { force?: boolean }): Promise<vo
 
   const run = guard.begin();
   state.setBrief("");
-  useStore.setState({ briefError: null });
+  state.setBriefError(null);
   state.setBriefStatus("running");
   // The run keeps the whole text itself: if the user leaves and comes back
   // mid-stream, the store was reset in between, so appending would lose the
@@ -84,7 +84,7 @@ export async function runBriefGeneration(opts?: { force?: boolean }): Promise<vo
       apply: () => {
         // Don't leave a truncated stream on screen under the error.
         useStore.getState().setBrief(null);
-        useStore.setState({ briefError: message });
+        useStore.getState().setBriefError(message);
         useStore.getState().setBriefStatus("error");
       },
       patch: { briefFailed: true },

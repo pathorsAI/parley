@@ -40,14 +40,11 @@ export async function trimRecording(trim: ReplayTrim): Promise<void> {
   const audioOffsetMs = (replay.audioOffsetMs ?? 0) + startMs;
   const durationMs = endMs - startMs;
 
-  useStore.setState({
+  s.applyTrimmedRecording({
     replay: { ...replay, durationMs, segments, audioOffsetMs },
     segments,
     findings,
     actionItems,
-    replayTrim: null,
-    replayPlayheadMs: 0,
-    selectedFindingId: null,
   });
 
   log.info("trim: applied", { durationMs, audioOffsetMs, segments: segments.length });

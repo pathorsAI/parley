@@ -118,7 +118,7 @@ function applyFindings(events: TimelineEvent[], kind: MeetingKind | null, evalSi
   }
   store.setFindings(events);
   store.setAnalysisStatus("done");
-  useStore.setState({ analyzedEvalSig: evalSig });
+  store.setAnalyzedEvalSig(evalSig);
 }
 
 /**

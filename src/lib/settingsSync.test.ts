@@ -41,19 +41,22 @@ afterAll(() => {
   delete (g as Partial<typeof g>).removeEventListener;
 });
 
-import { useStore } from "./store";
-import { broadcastSettings, listenForSettings } from "./settingsSync";
+import { setSettingsBroadcaster, settingsBroadcastSettled, useStore } from "./store";
+import { installSettingsBroadcast, listenForSettings } from "./settingsSync";
+import { log } from "./log";
 
 const INITIAL = useStore.getInitialState();
 
-/** What every Settings-window edit does: apply it, then hand the result to the
- *  other windows. */
+/** What every Settings-window edit does: the store applies it and broadcasts
+ *  the result to the other windows itself. */
 function settingsWindowEdit(patch: Parameters<ReturnType<typeof useStore.getState>["updateSettings"]>[0]) {
+  installSettingsBroadcast();
   useStore.getState().updateSettings(patch);
-  return broadcastSettings({ ...useStore.getState().settings });
+  return settingsBroadcastSettled();
 }
 
 beforeEach(() => {
+  setSettingsBroadcaster(null);
   useStore.setState(INITIAL, true);
   emit.mockClear();
   listen.mockClear();
@@ -85,9 +88,25 @@ describe("settings broadcast", () => {
     expect(emit).not.toHaveBeenCalled();
   });
 
-  it("applySettings never broadcasts", () => {
+  it("applySettings never broadcasts, even in the Settings window", () => {
+    installSettingsBroadcast();
     useStore.getState().applySettings({ ...useStore.getState().settings, userName: "Z" });
+    useStore.getState().setCloudAuth(null);
     expect(emit).not.toHaveBeenCalled();
+  });
+
+  it("emits synchronously with the update, before anything awaits", () => {
+    installSettingsBroadcast();
+    useStore.getState().updateSettings({ userName: "Sync" });
+    expect(emit).toHaveBeenCalledTimes(1);
+  });
+
+  it("a failed broadcast is logged and settles", async () => {
+    installSettingsBroadcast();
+    emit.mockRejectedValueOnce(new Error("gone"));
+    useStore.getState().updateSettings({ userName: "X" });
+    await expect(settingsBroadcastSettled()).resolves.toBeUndefined();
+    expect(log.warn).toHaveBeenCalledWith("settings: broadcast failed", { error: "Error: gone" });
   });
 });
 

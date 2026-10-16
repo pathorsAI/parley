@@ -6,10 +6,10 @@ import { toast } from "sonner";
 import { log } from "../lib/log";
 import { Check, ChevronRight, Download, Loader2, LogIn, LogOut, Monitor, Moon, PlugZap, Plus, ScrollText, Sun, Trash2 } from "lucide-react";
 import { isMac } from "../lib/platform";
-import { useStore } from "../lib/store";
+import { settingsBroadcastSettled, useStore } from "../lib/store";
 import { resetGettingStarted } from "../lib/onboarding/gettingStarted";
 import { LANGUAGE_OPTIONS, useI18n, type TranslationKey } from "../i18n";
-import { broadcastSettings, SETTINGS_NAVIGATE_EVENT } from "../lib/settingsSync";
+import { SETTINGS_NAVIGATE_EVENT } from "../lib/settingsSync";
 import { signInWithGoogle, signOut } from "../lib/cloud/client";
 import { CLOUD_ENABLED } from "../lib/flags";
 import { isProviderListed } from "../lib/providerListing";
@@ -237,12 +237,9 @@ export function SettingsApp() {
     }
   }
 
-  function patch(p: Partial<Settings>) {
-    updateSettings(p);
-    broadcastSettings({ ...useStore.getState().settings }).catch((error) =>
-      log.warn("settings: broadcast failed", { error: String(error) }),
-    );
-  }
+  // Every edit here reaches the other windows: this window's store broadcasts
+  // each settings update itself (settingsSync.installSettingsBroadcast).
+  const patch = updateSettings;
 
   // Enumerate mic devices only on the Transcription tab — doing it on every
   // Settings open can trip the macOS microphone permission prompt.
@@ -583,9 +580,7 @@ export function SettingsApp() {
                   onClick={async () => {
                     // The checklist lives on the main window's Home — same hand-off.
                     resetGettingStarted();
-                    await broadcastSettings({ ...useStore.getState().settings }).catch((error) =>
-                      log.warn("settings: broadcast failed", { error: String(error) }),
-                    );
+                    await settingsBroadcastSettled();
                     await focusMainWindow();
                   }}
                 >

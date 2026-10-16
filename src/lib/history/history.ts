@@ -423,7 +423,7 @@ export async function saveLiveToHistory(audioTempPath: string, durationMs: numbe
   // never sees an un-gated tick for this entry and never dispatches a deep pass
   // on the provider's labels (filing still runs — it reads only the text).
   const correcting = qualifiesForRediarization(entry.segments);
-  if (correcting) useStore.setState({ postSaveDiarizingId: entry.id });
+  if (correcting) useStore.getState().setPostSaveDiarizingId(entry.id);
   try {
     const now = useStore.getState();
     if (!isMeetingActive(now.meetingStatus) && now.appMode === "live") {
@@ -458,7 +458,7 @@ async function correctSpeakersThenShare(entry: HistoryEntry, save: MeetingSaveTa
 }
 
 async function correctSpeakers(entry: HistoryEntry): Promise<void> {
-  useStore.setState({ postSaveDiarizingId: entry.id });
+  useStore.getState().setPostSaveDiarizingId(entry.id);
   try {
     await applyPostSaveDiarization(entry);
   } catch (e) {
@@ -468,7 +468,7 @@ async function correctSpeakers(entry: HistoryEntry): Promise<void> {
   } finally {
     // Only drop OUR gate — a newer meeting's save may already have raised its own.
     if (useStore.getState().postSaveDiarizingId === entry.id) {
-      useStore.setState({ postSaveDiarizingId: null });
+      useStore.getState().setPostSaveDiarizingId(null);
     }
   }
 }
@@ -546,7 +546,7 @@ async function applyPostSaveDiarization(entry: HistoryEntry): Promise<void> {
   if (showsThisMeeting) {
     const segments = applyCorrectedSpeakers(st.segments, result.segments);
     // `speakerNames` deliberately untouched — see applyCorrectedSpeakers.
-    if (segments !== st.segments) useStore.setState({ segments });
+    if (segments !== st.segments) st.setSegments(segments);
     toast.message(translate(st.settings.language, "speakers.postRefined"));
   }
   log.info("history: post-save re-diarization applied", { id: entry.id, changed: result.changed });

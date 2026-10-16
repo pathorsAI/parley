@@ -4,7 +4,6 @@ import { DEFAULT_VOICE_TYPING_SHORTCUT, useStore } from "../lib/store";
 import { useI18n, type TranslationKey } from "../i18n";
 import { isMac } from "../lib/platform";
 import { isTauri } from "../lib/tauriEvents";
-import { broadcastSettings } from "../lib/settingsSync";
 import { log } from "../lib/log";
 import { hasProviderKey } from "../lib/ai/settings";
 import { CANCEL_UNDO_MS } from "../lib/voiceTyping/cancel";
@@ -314,9 +313,6 @@ export const VoiceTypingSettings = () => {
     setSaving(true);
     try {
       updateSettings({ voiceTypingShortcut: shortcut });
-      broadcastSettings({ ...useStore.getState().settings }).catch((error) =>
-        log.warn("voice typing settings: broadcast failed", { error: String(error) }),
-      );
       const s = await applyShortcut(shortcut);
       if (s) setStatus(s);
     } finally {
@@ -372,9 +368,6 @@ export const VoiceTypingSettings = () => {
 
   const setVoiceTypingEnabled = (enabled: boolean) => {
     updateSettings({ voiceTypingEnabled: enabled });
-    broadcastSettings({ ...useStore.getState().settings }).catch((error) =>
-      log.warn("settings: broadcast failed", { error: String(error) }),
-    );
     // Voice typing always auto-pastes, which on macOS needs Accessibility —
     // enabling the feature is the moment to ask for its permission. Windows
     // has no equivalent grant, so there is nothing to ask for there.
@@ -387,17 +380,11 @@ export const VoiceTypingSettings = () => {
 
   const setVoiceTypingMode = (mode: VoiceTypingMode) => {
     updateSettings({ voiceTypingMode: mode });
-    broadcastSettings({ ...useStore.getState().settings }).catch((error) =>
-      log.warn("voice typing settings: broadcast failed", { error: String(error) }),
-    );
   };
   const mode = settings.voiceTypingMode;
 
   const setVoiceTypingPolishStyle = (style: VoiceTypingPolishStyle) => {
     updateSettings({ voiceTypingPolishStyle: style });
-    broadcastSettings({ ...useStore.getState().settings }).catch((error) =>
-      log.warn("voice typing settings: broadcast failed", { error: String(error) }),
-    );
   };
   // The picker stays operable without a realtime provider — choosing a style
   // is how someone decides they want this, and the note tells them the one

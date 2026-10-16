@@ -71,7 +71,7 @@ export async function runVoiceDiarize(opts: {
   // first time the recording is named.
   const { readSpeakerNames, speakerCountOf } = await import("./namesCache");
   const restored = readSpeakerNames(replay.audioPath, speakerCountOf(updated)) ?? {};
-  useStore.setState({ segments: updated, speakerNames: restored });
+  useStore.getState().applyDiarizedSpeakers(updated, restored);
 
   log.info("diarize: applied", {
     assigned: idToSpeaker.size,

@@ -5,7 +5,6 @@ import { useI18n, type TranslationKey } from "../i18n";
 import { translate } from "../i18n/messages";
 import { useStore } from "../lib/store";
 import { log } from "../lib/log";
-import { broadcastSettings } from "../lib/settingsSync";
 import { CloudError } from "../lib/cloud/client";
 import {
   acceptInvitation,
@@ -142,9 +141,6 @@ function guardDefaultSave(orgIds: readonly string[]) {
   const def = settings.defaultSaveLocation;
   if (def.scope !== "org" || !def.orgId || orgIds.includes(def.orgId)) return;
   updateSettings({ defaultSaveLocation: { scope: "personal", folderId: null } });
-  broadcastSettings({ ...useStore.getState().settings }).catch((error) =>
-    log.warn("settings: broadcast failed", { error: String(error) }),
-  );
   toast.message(translate(settings.language, "settings.org.defaultSaveReset"));
 }
 
