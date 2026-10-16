@@ -1,6 +1,4 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen, emit } from "@tauri-apps/api/event";
 import { Check, Loader2, Mic, Sparkles, X } from "lucide-react";
 import { preloadZhConverter } from "../lib/zhConvert";
 import { normalizeTranscriptText } from "../lib/textNormalize";
@@ -11,7 +9,7 @@ import { formatChordLabel, modChordCap } from "../lib/commands/format";
 import { log } from "../lib/log";
 import { isTauri } from "../lib/platform";
 import { sameHitRects, toHitRects, type HitRect } from "../lib/voiceTyping/hitRegions";
-import { SessionTranscript, type Segment, type SessionEvent } from "../lib/voiceTyping/transcript";
+import { SessionTranscript } from "../lib/voiceTyping/transcript";
 import {
   DONE_ACTION_EVENT,
   donePill,
@@ -30,6 +28,15 @@ import {
   type SuggestPayload,
   type SuggestStatePayload,
 } from "../lib/voiceTyping/suggestEvents";
+import * as ipc from "../lib/ipc/commands";
+import {
+  AUDIO_LEVEL_EVENT,
+  TRANSCRIPT_SEGMENT_EVENT,
+  VOICE_TYPING_SESSION_EVENT,
+  createListenerScope,
+  emitEvent,
+  listenEvent,
+} from "../lib/ipc/events";
 
 const BAR_COUNT = 20;
 const BAR_FLOOR = 0.05;
@@ -50,12 +57,6 @@ const WAVE_PROFILE = [
 const DONE_DWELL_MS = 2150;
 const FADE_MS = 450;
 
-interface LevelPayload {
-  source: string;
-  level: number;
-  session: number | null;
-}
-
 /** listening = recording; finalizing = waiting for the STT's answer to the
  *  release; cancelled = Esc called it off, and Undo is on offer until the host
  *  takes the overlay down (see cancel.ts); done = delivered (or nothing was
@@ -69,7 +70,7 @@ type Phase = "listening" | "finalizing" | "polishing" | "cancelled" | "done";
 
 /** Report a bubble button back to the host, which owns every decision. */
 function suggestAct(action: SuggestActionPayload["action"]): void {
-  emit(SUGGEST_ACTION_EVENT, { action } satisfies SuggestActionPayload).catch((error) =>
+  emitEvent(SUGGEST_ACTION_EVENT, { action } satisfies SuggestActionPayload).catch((error) =>
     log.warn("voice typing overlay: suggest action emit failed", {
       action,
       error: String(error),
@@ -79,7 +80,7 @@ function suggestAct(action: SuggestActionPayload["action"]): void {
 
 /** Report the confirmation's Copy to the host, which owns every decision. */
 function doneAct(action: DoneActionPayload["action"]): void {
-  emit(DONE_ACTION_EVENT, { action } satisfies DoneActionPayload).catch((error) =>
+  emitEvent(DONE_ACTION_EVENT, { action } satisfies DoneActionPayload).catch((error) =>
     log.warn("voice typing overlay: done action emit failed", {
       action,
       error: String(error),
@@ -89,7 +90,7 @@ function doneAct(action: DoneActionPayload["action"]): void {
 
 /** Report the cancelled pill's Undo to the host, which owns every decision. */
 function cancelAct(action: CancelActionPayload["action"]): void {
-  emit(CANCEL_ACTION_EVENT, { action } satisfies CancelActionPayload).catch((error) =>
+  emitEvent(CANCEL_ACTION_EVENT, { action } satisfies CancelActionPayload).catch((error) =>
     log.warn("voice typing overlay: cancel action emit failed", {
       action,
       error: String(error),
@@ -112,7 +113,7 @@ let hitSeq = 0;
 function sendHitRects(rects: HitRect[]): void {
   if (!isTauri()) return;
   hitSeq += 1;
-  invoke("set_voice_overlay_hit_rects", { rects, page: HIT_PAGE, seq: hitSeq }).catch((error) =>
+  ipc.setVoiceOverlayHitRects({ rects, page: HIT_PAGE, seq: hitSeq }).catch((error) =>
     log.warn("voice typing overlay: hit rects report failed", {
       count: rects.length,
       error: String(error),
@@ -268,22 +269,15 @@ export const VoiceTypingApp = () => {
   };
 
   useEffect(() => {
-    const unsubs: Array<() => void> = [];
     // listen() resolves asynchronously, so an unmount that lands before it
     // resolves (StrictMode's dev double-mount, any overlay remount) would push
     // the unlisten into an already-drained array — a leaked duplicate listener
     // that double-fires setState for the lifetime of this long-lived window.
-    // Track through a cancellation flag instead: late arrivals unlisten
-    // themselves immediately.
-    let cancelled = false;
-    const track = (p: Promise<() => void>) => {
-      p.then((u) => {
-        if (cancelled) u();
-        else unsubs.push(u);
-      }).catch((error) =>
-        log.warn("voice typing overlay: listener setup failed", { error: String(error) }),
-      );
-    };
+    // The listener scope unlistens such late arrivals immediately.
+    const listeners = createListenerScope((error) =>
+      log.warn("voice typing overlay: listener setup failed", { error: String(error) }),
+    );
+    const track = listeners.track;
 
     const enterPhase = (p: Phase) => {
       phaseRef.current = p;
@@ -295,7 +289,7 @@ export const VoiceTypingApp = () => {
     preloadZhConverter();
 
     track(
-      listen<Segment>("transcript://segment", (e) => {
+      listenEvent(TRANSCRIPT_SEGMENT_EVENT, (e) => {
         const p = e.payload;
         if (frozen.current) return;
         if (!transcript.current.accept(p)) return;
@@ -311,7 +305,7 @@ export const VoiceTypingApp = () => {
     // Only while listening: Rust keeps streaming a short tail of audio after
     // the release, which would otherwise flicker the bars under "finalizing".
     track(
-      listen<LevelPayload>("audio://level", (e) => {
+      listenEvent(AUDIO_LEVEL_EVENT, (e) => {
         if (phaseRef.current !== "listening") return;
         if (!transcript.current.owns(e.payload)) return;
         setBars(instantWaveform(e.payload.level));
@@ -319,7 +313,7 @@ export const VoiceTypingApp = () => {
     );
 
     track(
-      listen<SessionEvent>("voicetyping://session", (e) => {
+      listenEvent(VOICE_TYPING_SESSION_EVENT, (e) => {
         const ev = e.payload;
         if (ev.phase === "start") {
           transcript.current.reset(ev.session);
@@ -378,7 +372,7 @@ export const VoiceTypingApp = () => {
     // showing (and fading out) the last dictation — reset that presentation so
     // the question is what's on screen.
     track(
-      listen<SuggestPayload>(SUGGEST_EVENT, (e) => {
+      listenEvent<SuggestPayload>(SUGGEST_EVENT, (e) => {
         resetPresentation();
         setSuggest(e.payload);
         enterPhase("done");
@@ -386,7 +380,7 @@ export const VoiceTypingApp = () => {
     );
 
     track(
-      listen<SuggestStatePayload>(SUGGEST_STATE_EVENT, (e) => {
+      listenEvent<SuggestStatePayload>(SUGGEST_STATE_EVENT, (e) => {
         if (e.payload.state === "added") {
           setSuggestAdded(true);
         } else {
@@ -396,10 +390,7 @@ export const VoiceTypingApp = () => {
       }),
     );
 
-    return () => {
-      cancelled = true;
-      unsubs.forEach((u) => u());
-    };
+    return listeners.dispose;
   }, []);
 
   // Let the waveform settle back to the floor when not actively listening.

@@ -1,8 +1,8 @@
-import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "../tauriEvents";
 import { log } from "../log";
 import { runCommand } from "./bind";
 import { COMMANDS, type CommandId } from "./registry";
+import { listenEvent } from "../ipc/events";
 
 /**
  * The macOS menu bar's way back into the command table.
@@ -30,7 +30,7 @@ const KNOWN_IDS: ReadonlySet<string> = new Set(COMMANDS.map((c) => c.id));
  */
 export function initMenuCommands(): void {
   if (!isTauri()) return;
-  listen<string>(MENU_COMMAND, (event) => {
+  listenEvent<string>(MENU_COMMAND, (event) => {
     const id = event.payload;
     if (!KNOWN_IDS.has(id)) {
       log.warn("menu: unknown command", { id });

@@ -22,7 +22,7 @@
  * both `tauri://localhost` and `http://tauri.localhost`), the timed manifests
  * are mirrored into ./sampleManifests/ so they can be imported as JSON modules.
  */
-import { invoke } from "@tauri-apps/api/core";
+import * as ipc from "../ipc/commands";
 import { toast } from "sonner";
 
 import { buildSummary, emitHistoryUpdated, listHistory } from "../history/history";
@@ -253,8 +253,8 @@ async function loadOnce(): Promise<string | null> {
     const entry = buildSampleEntry(manifest, Date.now(), recentFolders(listLocalFolders(), existing));
     // Audio first, then meta/summary — a summary claiming hasAudio must always
     // have its audio.ogg (the same order every other save path keeps).
-    await invoke("write_sample_audio", audio, { headers: { "x-entry-id": entry.id } });
-    await invoke("save_history_entry", {
+    await ipc.writeSampleAudio(audio, { headers: { "x-entry-id": entry.id } });
+    await ipc.saveHistoryEntry({
       id: entry.id,
       summaryJson: JSON.stringify(buildSummary(entry)),
       metaJson: JSON.stringify(entry),

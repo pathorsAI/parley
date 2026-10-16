@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import { useStore } from "./store";
 import { isTauri } from "./tauriEvents";
 import { reconcileTemplates } from "./templates";
@@ -6,6 +5,7 @@ import { buildPresetEvalTemplates } from "./evaluations/presets";
 import { buildPresetTodoTemplates } from "./todoTemplates";
 import { translate, type TranslationKey } from "../i18n/messages";
 import type { EvalTemplate, TodoTemplate } from "./types";
+import * as ipc from "./ipc/commands";
 
 /**
  * Sync eval/TODO templates with a shared on-disk JSON file
@@ -24,7 +24,7 @@ let applyingFromFile = false;
 
 async function loadFromFile(): Promise<void> {
   try {
-    const raw = await invoke<string>("read_templates");
+    const raw = await ipc.readTemplates();
     if (!raw.trim()) {
       await saveToFile(); // seed the file from current (preset) templates
       return;
@@ -57,7 +57,7 @@ async function loadFromFile(): Promise<void> {
 async function saveToFile(): Promise<void> {
   const { evalTemplates, todoTemplates } = useStore.getState().settings;
   try {
-    await invoke("write_templates", {
+    await ipc.writeTemplates({
       json: JSON.stringify({ evalTemplates, todoTemplates }, null, 2),
     });
   } catch (e) {

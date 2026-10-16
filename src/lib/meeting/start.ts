@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { useStore } from "../store";
 import { prepareTranscription, type TranscriptionRequest } from "../transcription/prepare";
@@ -8,6 +7,7 @@ import { translate, type TranslationKey } from "../../i18n/messages";
 import type { Settings } from "../types";
 import { log } from "../log";
 import { openSettings } from "../nav/settings";
+import * as ipc from "../ipc/commands";
 
 /** In-flight latch: a double-click (or two start buttons hit in quick
  *  succession) would otherwise race two transcription sessions open. */
@@ -98,7 +98,7 @@ async function openCaptureSession(settings: Settings, request: TranscriptionRequ
     // Unlike voice typing and uploads, a meeting does not send
     // `request.languageHints` (start_meeting accepts them). Kept as is here:
     // closing that gap is a behavior change of its own.
-    await invoke("start_meeting", {
+    await ipc.startMeeting({
       provider: request.provider,
       apiKey: request.apiKey,
       diarization: request.diarization,

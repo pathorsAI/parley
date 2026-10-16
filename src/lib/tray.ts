@@ -6,12 +6,12 @@
 // Windows only. macOS keeps its Dock (the close button hides the window there
 // too, and a Dock click brings it back), so nothing here runs on a Mac.
 
-import { invoke } from "@tauri-apps/api/core";
 import { translate } from "../i18n/messages";
 import type { AppLanguage } from "./types";
 import { isTauri, isWindows } from "./platform";
 import { useStore } from "./store";
 import { log } from "./log";
+import * as ipc from "./ipc/commands";
 
 /** Rust → main window: the tray's Quit item was clicked. */
 export const TRAY_QUIT_EVENT = "app://quit-requested";
@@ -35,7 +35,7 @@ export function trayLabels(language: AppLanguage) {
 /** Relabel the tray menu in the app's language. No-op off Windows. */
 export function syncTrayLabels(language: AppLanguage): void {
   if (!isTauri() || !isWindows()) return;
-  invoke("set_tray_labels", { labels: trayLabels(language) }).catch((error) =>
+  ipc.setTrayLabels({ labels: trayLabels(language) }).catch((error) =>
     log.warn("tray: relabel failed", { error: String(error) }),
   );
 }
@@ -47,7 +47,7 @@ export function syncTrayLabels(language: AppLanguage): void {
  */
 export async function trayActive(): Promise<boolean> {
   try {
-    return await invoke<boolean>("tray_active");
+    return await ipc.trayActive();
   } catch (error) {
     log.warn("tray: status check failed", { error: String(error) });
     return false;

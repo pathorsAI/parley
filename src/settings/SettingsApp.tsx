@@ -1,6 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { appLogDir, join } from "@tauri-apps/api/path";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -56,6 +54,14 @@ import {
 } from "../lib/ai/providers";
 import { missingProviderRequirement } from "../lib/ai/settings";
 import { runConnectionTest, type ConnectionTestResult } from "../lib/ai/connectionTest";
+import * as ipc from "../lib/ipc/commands";
+import {
+  DIARIZE_PROGRESS_EVENT,
+  MEETING_STATUS_EVENT,
+  createListenerScope,
+  listenEvent,
+  listenIfTauri,
+} from "../lib/ipc/events";
 
 /** Tailwind classes for each provider tag tone (status tokens adapt to light/dark). */
 const PROVIDER_TAG_TONES: Record<ProviderTagTone, string> = {
@@ -131,21 +137,17 @@ export function SettingsApp() {
   const updateSettings = useStore((s) => s.updateSettings);
   const [cat, setCat] = useState<Category>(() => categoryFromHash() ?? "basic");
   useEffect(() => {
-    if (!isTauri()) return;
-    // Guard the cleanup-beats-listen() race: if unmount wins, detach the
-    // listener the moment the promise resolves instead of leaving it attached.
-    let active = true;
-    let unlisten: (() => void) | undefined;
-    listen<Category>(SETTINGS_NAVIGATE_EVENT, (e) => {
-      if (NAV.some((n) => n.id === e.payload)) setCat(e.payload);
-    }).then((un) => {
-      if (active) unlisten = un;
-      else un();
-    }).catch((error) => log.warn("settings: navigate listener failed", { error: String(error) }));
-    return () => {
-      active = false;
-      unlisten?.();
-    };
+    // The scope guards the cleanup-beats-listen() race: if unmount wins, the
+    // listener is detached the moment it resolves instead of left attached.
+    const listeners = createListenerScope((error) =>
+      log.warn("settings: navigate listener failed", { error: String(error) }),
+    );
+    listeners.track(
+      listenIfTauri<Category>(SETTINGS_NAVIGATE_EVENT, (e) => {
+        if (NAV.some((n) => n.id === e.payload)) setCat(e.payload);
+      }),
+    );
+    return listeners.dispose;
   }, []);
   // Nav search (⑥): label OR translated keywords, so "金鑰"/"key" finds the
   // provider panel and "麥克風"/"mic" finds transcription.
@@ -245,7 +247,7 @@ export function SettingsApp() {
   // Settings open can trip the macOS microphone permission prompt.
   useEffect(() => {
     if (!isTauri() || cat !== "transcription") return;
-    invoke<string[]>("list_input_devices")
+    ipc.listInputDevices()
       .then(setDevices)
       .catch((error) =>
         log.warn("settings: input device list failed", { error: String(error) }),
@@ -257,7 +259,7 @@ export function SettingsApp() {
     getVersion()
       .then(setAppVersion)
       .catch((error) => log.warn("settings: app version lookup failed", { error: String(error) }));
-    invoke<string>("get_templates_path")
+    ipc.getTemplatesPath()
       .then(setTemplatesPath)
       .catch((error) =>
         log.warn("settings: templates path lookup failed", { error: String(error) }),
@@ -267,7 +269,7 @@ export function SettingsApp() {
       .then(setLogPath)
       .catch((error) => log.warn("settings: log path lookup failed", { error: String(error) }));
     const refreshMcpInfo = () => {
-      invoke<McpServerInfo>("get_mcp_server_info")
+      ipc.getMcpServerInfo()
         .then(setMcpInfo)
         .catch((error) =>
           log.warn("settings: MCP server info lookup failed", { error: String(error) }),
@@ -279,7 +281,7 @@ export function SettingsApp() {
     }, 1000);
     return () => {
       globalThis.clearInterval(mcpTimer);
-      invoke("stop_mic_test").catch((error) => log.warn("settings: stop mic test on cleanup failed", { error: String(error) }));
+      ipc.stopMicTest().catch((error) => log.warn("settings: stop mic test on cleanup failed", { error: String(error) }));
     };
   }, [mcpInfo?.running]);
 
@@ -289,7 +291,7 @@ export function SettingsApp() {
     if (!isTauri() || cat !== "mcp") return;
     let alive = true;
     const refresh = () => {
-      invoke<McpActivityInfo>("get_mcp_activity")
+      ipc.getMcpActivity()
         .then((a) => {
           if (alive) setMcpActivity(a);
         })
@@ -308,10 +310,10 @@ export function SettingsApp() {
   useEffect(() => {
     if (!isTauri()) return;
     let alive = true;
-    invoke<boolean>("meeting_active")
+    ipc.meetingActive()
       .then((a) => alive && setRecording(a))
       .catch((error) => log.warn("settings: meeting status query failed", { error: String(error) }));
-    const un = listen<string>("meeting://status", (e) => {
+    const un = listenEvent(MEETING_STATUS_EVENT, (e) => {
       if (alive) setRecording(e.payload === "recording");
     });
     return () => {
@@ -325,7 +327,7 @@ export function SettingsApp() {
   async function toggleTest() {
     if (recording) return; // the mic belongs to the meeting while recording
     if (testing) {
-      await invoke("stop_mic_test").catch((error) =>
+      await ipc.stopMicTest().catch((error) =>
         log.warn("settings: stop mic test failed", { error: String(error) }),
       );
       setTesting(false);
@@ -336,7 +338,7 @@ export function SettingsApp() {
       // test with the level meter pinned at 0 — the same silent lie a meeting told
       // when the mic was denied or held by another app.
       try {
-        await invoke("start_mic_test", { inputDevice: settings.inputDevice });
+        await ipc.startMicTest({ inputDevice: settings.inputDevice });
         setTesting(true);
       } catch (error) {
         log.warn("settings: start mic test failed", {
@@ -782,12 +784,12 @@ export function SettingsApp() {
                     const dev = v === "__default__" ? "" : v;
                     patch({ inputDevice: dev });
                     if (testing) {
-                      await invoke("stop_mic_test").catch((error) =>
+                      await ipc.stopMicTest().catch((error) =>
                         log.warn("settings: stop mic test before device switch failed", {
                           error: String(error),
                         }),
                       );
-                      await invoke("start_mic_test", { inputDevice: dev }).catch((error) =>
+                      await ipc.startMicTest({ inputDevice: dev }).catch((error) =>
                         log.warn("settings: restart mic test after device switch failed", {
                           inputDevice: dev,
                           error: String(error),
@@ -1705,7 +1707,7 @@ function DiarizeModelField() {
     if (!isTauri()) return;
     let alive = true;
     let unlisten: (() => void) | undefined;
-    listen<{ stage: string; received: number; total: number }>("diarize://progress", (e) => {
+    listenEvent(DIARIZE_PROGRESS_EVENT, (e) => {
       if (alive && e.payload.stage === "downloading-model" && e.payload.total > 0) {
         setPct(Math.min(100, Math.round((e.payload.received / e.payload.total) * 100)));
       }

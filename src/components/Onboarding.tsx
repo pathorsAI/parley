@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, Loader2, LogIn, Mic, Volume2, X } from "lucide-react";
 import { useStore } from "../lib/store";
 import { isMac, isWindows } from "../lib/platform";
@@ -39,9 +38,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { LlmProvider, Settings, SttProviderId } from "../lib/types";
+import * as ipc from "../lib/ipc/commands";
 
 // systemAudio: unknown | granted | denied | unsupported (macOS < 14.2).
-type Perms = { microphone: string; systemAudio: string };
+type Perms = ipc.Permissions;
 
 type StepId = "intro" | "account" | "perms" | "done";
 
@@ -105,7 +105,7 @@ export function Onboarding() {
     try {
       // Side-effect free: check_permissions never triggers an OS prompt, so
       // polling it below is safe.
-      setPerms(await invoke<Perms>("check_permissions"));
+      setPerms(await ipc.checkPermissions());
     } catch {
       /* command unavailable (plain-browser dev, or an unsupported OS) */
     }
@@ -242,11 +242,11 @@ export function Onboarding() {
                   // — request_microphone() is a stub there — so its only useful
                   // click is the deep link into the privacy pane.
                   if (!isMac() || perms?.microphone === "denied") {
-                    await invoke("open_privacy_settings", { pane: "microphone" }).catch((error) =>
+                    await ipc.openPrivacySettings({ pane: "microphone" }).catch((error) =>
                       log.warn("permissions: open microphone settings failed", { error: String(error) }),
                     );
                   } else {
-                    await invoke("request_microphone").catch((error) =>
+                    await ipc.requestMicrophone().catch((error) =>
                       log.warn("permissions: microphone request failed", { error: String(error) }),
                     );
                   }
@@ -268,9 +268,9 @@ export function Onboarding() {
                     // probe shows the "record system audio" consent prompt.
                     // Windows: only checks for a default output device, and
                     // when there is none the fix lives in Sound settings.
-                    const s = await invoke<string>("probe_system_audio").catch(() => null);
+                    const s = await ipc.probeSystemAudio().catch(() => null);
                     if (s === "denied" || (!isMac() && s !== "granted")) {
-                      await invoke("open_privacy_settings", { pane: "system-audio" }).catch((error) =>
+                      await ipc.openPrivacySettings({ pane: "system-audio" }).catch((error) =>
                         log.warn("permissions: open system-audio settings failed", { error: String(error) }),
                       );
                     }

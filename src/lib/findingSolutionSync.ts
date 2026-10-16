@@ -1,8 +1,8 @@
-import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { isTauri } from "./tauriEvents";
 import { log } from "./log";
 import type { FindingSolutionEntry, TimelineEvent } from "./types";
 import { fitWindowSize } from "./windowBounds";
+import { emitEvent, listenEvent, type UnlistenFn } from "./ipc/events";
 
 // Cross-window protocol for the standalone "how to reply" window. The MAIN
 // window is the source of truth and the only generator (it holds the transcript
@@ -49,7 +49,7 @@ export async function openFindingSolutionWindow(): Promise<void> {
 /** Push the current selected finding + solution to the window. */
 export async function broadcastFindingSolution(state: FindingSolutionState): Promise<void> {
   if (!isTauri()) return;
-  await emit(FS_STATE, state);
+  await emitEvent(FS_STATE, state);
 }
 
 /** Subscribe to the window's requests (hello / generate / close). */
@@ -59,11 +59,11 @@ export async function listenForFindingSolutionRequests(handlers: {
   onClose: () => void;
 }): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
-  const un1 = await listen(FS_HELLO, () => handlers.onHello());
-  const un2 = await listen<{ findingId: string }>(FS_GENERATE, (e) =>
+  const un1 = await listenEvent(FS_HELLO, () => handlers.onHello());
+  const un2 = await listenEvent<{ findingId: string }>(FS_GENERATE, (e) =>
     handlers.onGenerate(e.payload.findingId)
   );
-  const un3 = await listen(FS_CLOSE, () => handlers.onClose());
+  const un3 = await listenEvent(FS_CLOSE, () => handlers.onClose());
   return () => {
     un1();
     un2();
@@ -77,20 +77,20 @@ export async function listenForFindingSolutionState(
   onState: (s: FindingSolutionState) => void
 ): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
-  return listen<FindingSolutionState>(FS_STATE, (e) => onState(e.payload));
+  return listenEvent<FindingSolutionState>(FS_STATE, (e) => onState(e.payload));
 }
 
 /** Announce on mount so the main window pushes the current state (open race). */
 export async function helloFindingSolution(): Promise<void> {
-  if (isTauri()) await emit(FS_HELLO);
+  if (isTauri()) await emitEvent(FS_HELLO);
 }
 
 /** Ask the main window to (re)generate the solution for a finding. */
 export async function requestFindingSolutionGenerate(findingId: string): Promise<void> {
-  if (isTauri()) await emit(FS_GENERATE, { findingId });
+  if (isTauri()) await emitEvent(FS_GENERATE, { findingId });
 }
 
 /** Tell the main window the user dismissed the window → clear the selection. */
 export async function closeFindingSolution(): Promise<void> {
-  if (isTauri()) await emit(FS_CLOSE);
+  if (isTauri()) await emitEvent(FS_CLOSE);
 }

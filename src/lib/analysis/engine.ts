@@ -78,8 +78,8 @@ export function clearAnalysisCache(): number {
  */
 export async function listenForCacheClear(): Promise<() => void> {
   if (!isTauri()) return () => {};
-  const { listen } = await import("@tauri-apps/api/event");
-  return listen("cache://clear-analysis", () => {
+  const { CACHE_CLEAR_ANALYSIS_EVENT, listenEvent } = await import("../ipc/events");
+  return listenEvent(CACHE_CLEAR_ANALYSIS_EVENT, () => {
     const n = clearAnalysisCache() + clearStudyCache();
     console.info(`[cache] cleared ${n} cached analyses`);
   });

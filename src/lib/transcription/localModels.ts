@@ -1,6 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
 import { isTauri } from "../platform";
 import type { TranslationKey } from "../../i18n/messages";
+import * as ipc from "../ipc/commands";
 
 /**
  * On-device transcription (whisper.cpp) — the frontend half of the "local"
@@ -103,10 +103,10 @@ export interface LocalSttProgress {
   message?: string;
 }
 
-export const LOCAL_STT_PROGRESS_EVENT = "local-stt://progress";
-
-/** Emitted (at most once per session) when decoding falls behind real time. */
-export const LOCAL_STT_SLOW_EVENT = "local-stt://slow";
+/** The progress and slow-decoder event names live with the rest of the
+ *  backend events (lib/ipc/events.ts); re-exported for the code that has
+ *  always read them from here. */
+export { LOCAL_STT_PROGRESS_EVENT, LOCAL_STT_SLOW_EVENT } from "../ipc/events";
 
 /** Payload of {@link LOCAL_STT_SLOW_EVENT}: the model and its median real-time
  *  factor (decode time ÷ audio time; above 0.9 = can't keep up). */
@@ -470,20 +470,20 @@ export function sortLocalModels(models: readonly LocalSttModel[]): LocalSttModel
  *  no backend, so the list is empty and nothing local is ever ready. */
 export async function fetchLocalSttModels(): Promise<LocalSttModel[]> {
   if (!isTauri()) return [];
-  return invoke<LocalSttModel[]>("local_stt_models");
+  return ipc.localSttModels();
 }
 
 /** Resolves once downloaded AND checksum-verified; rejects with a string error. */
 export function downloadLocalSttModel(modelId: string): Promise<void> {
-  return invoke<void>("local_stt_download", { modelId });
+  return ipc.localSttDownload({ modelId });
 }
 
 export function cancelLocalSttDownload(modelId: string): Promise<void> {
-  return invoke<void>("local_stt_cancel", { modelId });
+  return ipc.localSttCancel({ modelId });
 }
 
 export function deleteLocalSttModel(modelId: string): Promise<void> {
-  return invoke<void>("local_stt_delete", { modelId });
+  return ipc.localSttDelete({ modelId });
 }
 
 /** This machine's memory, free disk, acceleration and the recommended model.
@@ -491,7 +491,7 @@ export function deleteLocalSttModel(modelId: string): Promise<void> {
  *  callers treat that as "fit unknown". */
 export async function fetchLocalSttHardware(): Promise<LocalSttHardware | null> {
   if (!isTauri()) return null;
-  return invoke<LocalSttHardware>("local_stt_hardware");
+  return ipc.localSttHardware();
 }
 
 /**

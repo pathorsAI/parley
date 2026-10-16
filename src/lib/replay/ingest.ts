@@ -9,7 +9,7 @@
 // qualifies, including hosted Parley Cloud, which batch-transcribes through its
 // own endpoint (`sttBatchUrl`) on the signed-in session rather than an API key.
 
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 
 import type { Settings, TranscriptSegment } from "../types";
@@ -24,6 +24,7 @@ import { log } from "../log";
 import { recordUsage } from "../usage/log";
 import { sttCostUsd } from "../usage/pricing";
 import { translate } from "../../i18n/messages";
+import * as ipc from "../ipc/commands";
 
 /** Coarse progress stages surfaced to the UI while a recording is ingested. */
 export type IngestStage = "decoding" | "uploading" | "transcribing";
@@ -65,23 +66,6 @@ const AUDIO_RE = new RegExp(String.raw`\.(${AUDIO_EXTENSIONS.join("|")})$`, "i")
 /** Whether a picked/dropped path is an audio recording we can transcribe. */
 export function isAudioPath(path: string): boolean {
   return AUDIO_RE.test(path);
-}
-
-/** Shape returned by the Rust `transcribe_file` command (serde camelCase). */
-interface RustSegment {
-  id: string;
-  speaker: number;
-  text: string;
-  startMs: number;
-  endMs: number;
-}
-interface RustTranscriptionResult {
-  segments: RustSegment[];
-  durationMs: number;
-  /** True when served from the on-disk cache (no provider call → don't bill it). */
-  cached: boolean;
-  /** Acoustically measured articulation rate (syllables/sec); 0 if unmeasurable. */
-  speechRateHz: number;
 }
 
 /**
@@ -248,7 +232,7 @@ export async function transcribeRecording(
   // token rather than a provider key.
   reportStage(opts, { stage: "transcribing" });
   log.info("ingest: transcribe invoke", { provider, languageHints, diarization: request.diarization });
-  const result = await invoke<RustTranscriptionResult>("transcribe_file", {
+  const result = await ipc.transcribeFile({
     path: audioPath,
     provider,
     apiKey: request.apiKey.trim(),

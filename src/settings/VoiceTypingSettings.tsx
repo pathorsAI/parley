@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { AlertTriangle, CheckCircle2, Circle, Keyboard, Loader2, RotateCcw } from "lucide-react";
 import { DEFAULT_VOICE_TYPING_SHORTCUT, useStore } from "../lib/store";
@@ -18,6 +17,7 @@ import type {
 } from "../lib/types";
 import { Button } from "@/components/ui/button";
 import { InfoTip } from "@/components/ui/info-tip";
+import * as ipc from "../lib/ipc/commands";
 
 /** The polish styles in the order the picker shows them, with their name and
  *  the one line saying what each does to the words. */
@@ -43,16 +43,7 @@ const POLISH_STYLE_OPTIONS: readonly {
   },
 ];
 
-interface HotkeyStatus {
-  authorized: boolean;
-  active: boolean;
-  shortcut: string;
-  /** How the trigger is wired: "combo" (OS global shortcut) | "tap-active"
-   *  (HID tap, can swallow the key) | "tap-listen" (HID tap can only observe
-   *  the key — matters for fn, whose native 🌐 action still fires) | "hook"
-   *  (Windows low-level keyboard hook, observes only) | "none". */
-  mode: string;
-}
+type HotkeyStatus = ipc.HotkeyStatus;
 
 /** The combo id a recorded keydown selects, or null when the press needs a
  *  modifier (a bare letter would swallow ordinary typing system-wide). */
@@ -76,7 +67,7 @@ function comboFromEvent(e: KeyboardEvent): VoiceTypingShortcut | null {
  * without a relaunch.
  */
 async function applyShortcut(shortcut: VoiceTypingShortcut): Promise<HotkeyStatus | null> {
-  const s = await invoke<HotkeyStatus>("set_voice_typing_shortcut", { shortcut }).catch(
+  const s = await ipc.setVoiceTypingShortcut({ shortcut }).catch(
     (error) => {
       log.warn("voice typing settings: shortcut apply failed", {
         shortcut,
@@ -86,13 +77,13 @@ async function applyShortcut(shortcut: VoiceTypingShortcut): Promise<HotkeyStatu
     },
   );
   if (!s || !isModifierId(shortcut) || s.authorized) return s;
-  await invoke("request_input_monitoring").catch((error) =>
+  await ipc.requestInputMonitoring().catch((error) =>
     log.warn("voice typing settings: input monitoring request failed", {
       shortcut,
       error: String(error),
     }),
   );
-  return invoke<HotkeyStatus>("set_voice_typing_shortcut", { shortcut }).catch((error) => {
+  return ipc.setVoiceTypingShortcut({ shortcut }).catch((error) => {
     log.warn("voice typing settings: shortcut reapply failed", {
       shortcut,
       error: String(error),
@@ -192,12 +183,7 @@ function recorderIcon(saving: boolean, recording: boolean): ReactNode {
   return <Keyboard className="size-3.5" />;
 }
 
-interface AppIdentity {
-  bundleIdentifier: string;
-  executablePath: string;
-  runningFromAppBundle: boolean;
-  likelyDevBinary: boolean;
-}
+type AppIdentity = ipc.AppIdentity;
 
 /** Whether the trigger the user picked can actually fire, and what stands in
  *  its way. */
@@ -282,7 +268,7 @@ export const VoiceTypingSettings = () => {
   const [recordHint, setRecordHint] = useState<TranslationKey | null>(null);
 
   const refreshStatus = useCallback(() => {
-    invoke<HotkeyStatus>("voice_typing_hotkey_status")
+    ipc.voiceTypingHotkeyStatus()
       .then((s) => setStatus(s))
       .catch((error) =>
         log.warn("voice typing settings: hotkey status refresh failed", { error: String(error) }),
@@ -293,7 +279,7 @@ export const VoiceTypingSettings = () => {
     // macOS only — Windows has no such grant to be missing (the backend always
     // answers true), so asking would just be a round trip to a constant.
     if (!isMac()) return;
-    invoke<boolean>("accessibility_status", { prompt: false })
+    ipc.accessibilityStatus({ prompt: false })
       .then(setAxTrusted)
       .catch((error) =>
         log.warn("voice typing settings: accessibility status refresh failed", {
@@ -308,7 +294,7 @@ export const VoiceTypingSettings = () => {
   useEffect(() => {
     if (!isTauri()) return;
     refreshStatus();
-    invoke<AppIdentity>("app_identity")
+    ipc.appIdentity()
       .then(setIdentity)
       .catch((error) =>
         log.warn("voice typing settings: app identity lookup failed", { error: String(error) }),
@@ -341,15 +327,15 @@ export const VoiceTypingSettings = () => {
   /** Re-request Input Monitoring from the inline warning (repeat clicks land in
    *  the right System Settings pane since the OS prompt only fires once). */
   const grantInputMonitoring = async () => {
-    await invoke("request_input_monitoring").catch((error) =>
+    await ipc.requestInputMonitoring().catch((error) =>
       log.warn("voice typing settings: input monitoring request failed", { error: String(error) }),
     );
-    await invoke("open_privacy_settings", { pane: "input-monitoring" }).catch((error) =>
+    await ipc.openPrivacySettings({ pane: "input-monitoring" }).catch((error) =>
       log.warn("voice typing settings: open input monitoring settings failed", {
         error: String(error),
       }),
     );
-    await invoke("ensure_fn_listener").catch((error) =>
+    await ipc.ensureFnListener().catch((error) =>
       log.warn("voice typing settings: fn listener setup failed", { error: String(error) }),
     );
     refreshStatus();
@@ -360,10 +346,10 @@ export const VoiceTypingSettings = () => {
    *  repeat clicks land the user in the right System Settings pane instead of
    *  appearing dead. */
   const grantAccessibility = async () => {
-    await invoke("accessibility_status", { prompt: true }).catch((error) =>
+    await ipc.accessibilityStatus({ prompt: true }).catch((error) =>
       log.warn("voice typing settings: accessibility request failed", { error: String(error) }),
     );
-    await invoke("open_privacy_settings", { pane: "accessibility" }).catch((error) =>
+    await ipc.openPrivacySettings({ pane: "accessibility" }).catch((error) =>
       log.warn("voice typing settings: open accessibility settings failed", {
         error: String(error),
       }),
@@ -393,7 +379,7 @@ export const VoiceTypingSettings = () => {
     // enabling the feature is the moment to ask for its permission. Windows
     // has no equivalent grant, so there is nothing to ask for there.
     if (enabled && isMac()) {
-      invoke("accessibility_status", { prompt: true }).catch((error) =>
+      ipc.accessibilityStatus({ prompt: true }).catch((error) =>
         log.warn("permissions: accessibility prompt failed", { error: String(error) }),
       );
     }
@@ -677,7 +663,7 @@ export const VoiceTypingSettings = () => {
               type="button"
               className="font-medium text-foreground underline underline-offset-2"
               onClick={() => {
-                invoke("open_privacy_settings", { pane: "keyboard" }).catch((error) =>
+                ipc.openPrivacySettings({ pane: "keyboard" }).catch((error) =>
                   log.warn("permissions: open keyboard settings failed", { error: String(error) }),
                 );
               }}

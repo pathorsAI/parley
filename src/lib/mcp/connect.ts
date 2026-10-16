@@ -3,8 +3,8 @@
  * report's "hand off to your AI" section both hand out these strings, so they are
  * built in one place and can never disagree about the port or the server name.
  */
+import * as ipc from "../ipc/commands";
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { isTauri } from "../tauriEvents";
 
 /** Where the server listens when the live endpoint hasn't been reported yet. */
@@ -44,7 +44,7 @@ export function useMcpEndpoint(): string | null {
     if (!isTauri() || endpoint) return;
     let alive = true;
     const lookup = () => {
-      invoke<McpServerInfo>("get_mcp_server_info")
+      ipc.getMcpServerInfo()
         .then((info) => {
           if (alive && info.running && info.endpoint) setEndpoint(info.endpoint);
         })

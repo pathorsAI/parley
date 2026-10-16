@@ -54,8 +54,11 @@ export function describeMediaError(err: { code?: number | null; message?: string
 
 /** Ask Rust for the recording decoded to WAV; resolves with the URL to play. */
 export async function prepareFallbackSrc(audioPath: string): Promise<string> {
-  const { invoke, convertFileSrc } = await import("@tauri-apps/api/core");
-  const wavPath = await invoke<string>("prepare_playback_fallback", { audioPath });
+  const [ipc, { convertFileSrc }] = await Promise.all([
+    import("../../lib/ipc/commands"),
+    import("@tauri-apps/api/core"),
+  ]);
+  const wavPath = await ipc.preparePlaybackFallback({ audioPath });
   return convertFileSrc(wavPath);
 }
 

@@ -1,4 +1,3 @@
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { useStore } from "./store";
 import { normalizeTranscriptText } from "./textNormalize";
@@ -8,17 +7,16 @@ import type { Source } from "./types";
 import { isLocalFailureCode, showLocalFailureToast } from "./transcription/localAlerts";
 import { failureMessageKey } from "./transcription/errors";
 import { stopBackendMeeting } from "./meeting/controls";
-
-/** Shape of the `transcript://segment` payload emitted by the Rust backend. */
-interface TranscriptEventPayload {
-  id: string;
-  source: Source;
-  speaker: number;
-  text: string;
-  is_final: boolean;
-  start_ms: number;
-  end_ms: number;
-}
+import {
+  AUDIO_PROSODY_EVENT,
+  MEETING_ERROR_EVENT,
+  MEETING_STATUS_EVENT,
+  MEETING_TRANSCRIPTION_EVENT,
+  MEETING_WARNING_EVENT,
+  TRANSCRIPT_SEGMENT_EVENT,
+  listenIfTauri,
+  type UnlistenFn,
+} from "./ipc/events";
 
 /**
  * Subscribe to backend transcript events and feed them into the store. Returns
@@ -26,19 +24,17 @@ interface TranscriptEventPayload {
  * Tauri (e.g. plain `vite` in a browser) — it just resolves to a no-op.
  */
 export async function listenForTranscript(): Promise<UnlistenFn> {
-  if (!("__TAURI_INTERNALS__" in globalThis)) {
-    return () => {};
-  }
-  return listen<TranscriptEventPayload>("transcript://segment", (event) => {
+  return listenIfTauri(TRANSCRIPT_SEGMENT_EVENT, (event) => {
     const p = event.payload;
     // Voice-typing dictation streams over the same event but belongs to the
     // floating overlay, not the meeting transcript — keep it out of the store.
-    if ((p.source as string) === "voice-typing") return;
+    if (p.source === "voice-typing") return;
     normalizeTranscriptText(p.text)
       .then((text) => {
         useStore.getState().upsertSegment({
           id: p.id,
-          source: p.source,
+          // A meeting's segments are "me" | "them".
+          source: p.source as Source,
           speaker: p.speaker,
           text,
           isFinal: p.is_final,
@@ -52,32 +48,13 @@ export async function listenForTranscript(): Promise<UnlistenFn> {
   });
 }
 
-/** Shape of the `audio://prosody` payload (snake_case on the wire). */
-interface ProsodyEventPayload {
-  source: Source;
-  f0_hz: number;
-  pitch_var_semitones: number;
-  monotony_score: number;
-  speech_rate_hz: number;
-  session_rate_hz: number;
-  voiced_ratio: number;
-  silence_ms: number;
-  longest_pause_ms: number;
-  speaking: boolean;
-  filled_pause: boolean;
-  farend_active: boolean;
-}
-
 /**
  * Subscribe to backend prosody events (live delivery coaching on the "me" mic)
  * and feed them into the store. Mirrors {@link listenForTranscript}; no-op
  * outside Tauri. Only "me" is ever emitted, but we filter defensively.
  */
 export async function listenForProsody(): Promise<UnlistenFn> {
-  if (!("__TAURI_INTERNALS__" in globalThis)) {
-    return () => {};
-  }
-  return listen<ProsodyEventPayload>("audio://prosody", (event) => {
+  return listenIfTauri(AUDIO_PROSODY_EVENT, (event) => {
     const p = event.payload;
     if (p.source !== "me") return;
     useStore.getState().setProsody({
@@ -96,16 +73,6 @@ export async function listenForProsody(): Promise<UnlistenFn> {
   });
 }
 
-/** Shape of the `meeting://error` payload (a transcription session failed). */
-interface MeetingErrorPayload {
-  source: string;
-  /** Hosted: "quota" (402) | "auth" (401 expired session). BYOK: "key"
-   *  (rejected vendor key). On-device: "local-missing" | "local-memory" |
-   *  "local" (see localAlerts.ts). Any: "capture" (no audio source) | "connect". */
-  code: string;
-  message: string;
-}
-
 /**
  * Subscribe to backend transcription-FAILURE events — the ones a redial can't
  * fix. Hosted mode makes 402 (out of credits) and 401 (expired session)
@@ -120,10 +87,7 @@ interface MeetingErrorPayload {
  * here. No-op outside Tauri.
  */
 export async function listenForMeetingError(): Promise<UnlistenFn> {
-  if (!("__TAURI_INTERNALS__" in globalThis)) {
-    return () => {};
-  }
-  return listen<MeetingErrorPayload>("meeting://error", (event) => {
+  return listenIfTauri(MEETING_ERROR_EVENT, (event) => {
     const { code } = event.payload;
     // Tear the (transcript-less) meeting down so the UI leaves "recording".
     useStore.getState().stopMeeting();
@@ -140,15 +104,6 @@ export async function listenForMeetingError(): Promise<UnlistenFn> {
   });
 }
 
-/** Shape of the `meeting://transcription` payload: one STT leg's link state. */
-type TranscriptionLinkPayload =
-  /** A leg died or a handshake failed and a redial is scheduled. Fires once per
-   *  attempt while offline; `attempt` is 1-based and consecutive. */
-  | { source: string; state: "reconnecting"; attempt: number }
-  /** A leg's handshake completed — including the meeting's very first one
-   *  (leg 0), which the store ignores because nothing was reconnecting. */
-  | { source: string; state: "live"; leg: number };
-
 /**
  * Subscribe to the live transcript's link health (#570). Losing the network
  * mid-meeting used to end the whole recording; now the backend keeps the mic
@@ -160,10 +115,7 @@ type TranscriptionLinkPayload =
  * as reconnecting until every source that dropped is back. No-op outside Tauri.
  */
 export async function listenForTranscriptionLink(): Promise<UnlistenFn> {
-  if (!("__TAURI_INTERNALS__" in globalThis)) {
-    return () => {};
-  }
-  return listen<TranscriptionLinkPayload>("meeting://transcription", (event) => {
+  return listenIfTauri(MEETING_TRANSCRIPTION_EVENT, (event) => {
     const p = event.payload;
     const store = useStore.getState();
     if (p.state === "reconnecting") {
@@ -185,13 +137,6 @@ export async function listenForTranscriptionLink(): Promise<UnlistenFn> {
   });
 }
 
-/** Shape of the `meeting://warning` payload (meeting keeps running). */
-interface MeetingWarningPayload {
-  /** "system-audio-silent" | "system-audio-unavailable" */
-  code: string;
-  message?: string;
-}
-
 /**
  * Subscribe to NON-fatal meeting warnings. Today that's the system-audio
  * capture reporting it can't deliver the other party's audio (macOS: usually
@@ -202,13 +147,10 @@ interface MeetingWarningPayload {
  */
 let warnedSystemAudio = false;
 export async function listenForMeetingWarning(): Promise<UnlistenFn> {
-  if (!("__TAURI_INTERNALS__" in globalThis)) {
-    return () => {};
-  }
-  const unStatus = await listen<string>("meeting://status", () => {
+  const unStatus = await listenIfTauri(MEETING_STATUS_EVENT, () => {
     warnedSystemAudio = false;
   });
-  const unWarn = await listen<MeetingWarningPayload>("meeting://warning", (event) => {
+  const unWarn = await listenIfTauri(MEETING_WARNING_EVENT, (event) => {
     const { code } = event.payload;
     if (code !== "system-audio-silent" && code !== "system-audio-unavailable") return;
     if (warnedSystemAudio) return;

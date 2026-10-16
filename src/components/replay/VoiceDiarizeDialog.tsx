@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { AudioLines, Loader2, X } from "lucide-react";
-import { listen } from "@tauri-apps/api/event";
 import { useStore, speakerKey, defaultSpeakerLabel } from "../../lib/store";
 import { speakerDotClass } from "../../lib/speakerColors";
 import { runVoiceDiarize } from "../../lib/speakers/diarize";
@@ -9,18 +8,13 @@ import { log } from "../../lib/log";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { Source } from "../../lib/types";
+import { DIARIZE_PROGRESS_EVENT, listenEvent, type DiarizeProgressPayload } from "../../lib/ipc/events";
 
 /** Speaker-count presets: `null` = auto-detect, then 2–8. */
 const COUNT_OPTIONS: (number | null)[] = [null, 2, 3, 4, 5, 6, 7, 8];
 
 /** Payload of the Rust `diarize://progress` event. */
-interface DiarizeProgress {
-  stage: string;
-  /** Items done (segments embedded, or bytes downloaded). */
-  received: number;
-  /** Total (0 ⇒ indeterminate stage). */
-  total: number;
-}
+type DiarizeProgress = DiarizeProgressPayload;
 
 interface SpeakerEntry {
   key: string;
@@ -55,7 +49,7 @@ export function VoiceDiarizeDialog({ onClose }: Readonly<{ onClose: () => void }
   useEffect(() => {
     let alive = true;
     let unlisten: (() => void) | undefined;
-    listen<DiarizeProgress>("diarize://progress", (e) => {
+    listenEvent(DIARIZE_PROGRESS_EVENT, (e) => {
       if (alive) setProgress(e.payload);
     }).then((u) => {
       if (alive) unlisten = u;

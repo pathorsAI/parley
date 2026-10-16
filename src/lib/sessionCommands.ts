@@ -1,11 +1,11 @@
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useStore } from "./store";
 import { isTauri } from "./tauriEvents";
 import { CLOUD_ENABLED } from "./flags";
 import { syncEnabled } from "./cloud/client";
 import { log } from "./log";
 import type { ActionItem, EvalDef, TimelineEvent } from "./types";
+import * as ipc from "./ipc/commands";
+import { SESSION_COMMANDS_EVENT, listenEvent, type UnlistenFn } from "./ipc/events";
 
 /**
  * Apply mutation commands the MCP server enqueues (add/check/remove todo,
@@ -689,7 +689,7 @@ async function applyRpcCommand(action: string, a: RpcArgs): Promise<unknown> {
 /** Report an RPC command's outcome for the MCP server to pick up. */
 async function writeResult(id: string, result: { ok: boolean; data?: unknown; error?: string }): Promise<void> {
   try {
-    await invoke("append_session_command_result", { json: JSON.stringify({ id, ...result }) });
+    await ipc.appendSessionCommandResult({ json: JSON.stringify({ id, ...result }) });
   } catch (e) {
     console.warn("[session] result write failed", e);
   }
@@ -731,7 +731,7 @@ async function runQueuedLine(line: string): Promise<void> {
 
 async function poll(): Promise<void> {
   try {
-    const all = lines(await invoke<string>("read_session_commands"));
+    const all = lines(await ipc.readSessionCommands());
     if (all.length <= cursor) return;
     const fresh = all.slice(cursor);
     cursor = all.length;
@@ -749,14 +749,14 @@ export function initSessionCommands(): () => void {
   // endpoint, THEN start polling — so commands appended after this snapshot are
   // applied, the backlog is skipped, and instance-scoped commands are never
   // misjudged during a startup race.
-  const seedCursor = invoke<string>("read_session_commands")
+  const seedCursor = ipc.readSessionCommands()
     .then((raw) => {
       cursor = lines(raw).length;
     })
     .catch(() => {
       cursor = 0;
     });
-  const seedEndpoint = invoke<{ endpoint?: string }>("get_mcp_server_info")
+  const seedEndpoint = ipc.getMcpServerInfo()
     .then((info) => {
       ownEndpoint = info.endpoint || null;
     })
@@ -768,7 +768,7 @@ export function initSessionCommands(): () => void {
   // interval alone can stall past the server's 20s RPC deadline (observed
   // during the first bulk import). The interval stays as the fallback sweep.
   let unlistenKick: UnlistenFn | null = null;
-  const seedKick = listen("session://commands", () => {
+  const seedKick = listenEvent(SESSION_COMMANDS_EVENT, () => {
     void poll();
   }).then((u) => {
     if (cancelled) u();

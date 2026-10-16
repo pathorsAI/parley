@@ -21,7 +21,7 @@
 // truth for anything the cloud never had. An older server reports no tombstones,
 // which leaves today's behaviour in place.
 
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { isTauri } from "../tauriEvents";
 import { log } from "../log";
 import { CLOUD_URL, CloudError, cloudFetch, cloudToken, isAuthError, syncEnabled } from "./client";
@@ -40,6 +40,7 @@ import { isSampleEntry } from "../onboarding/sample";
 import { useStore } from "../store";
 import type { HistoryEntry, HistoryEntrySummary } from "../history/types";
 import type { CloudRecordingSummary } from "./types";
+import * as ipc from "../ipc/commands";
 
 /**
  * Where a card lives. "stale" = present both places but the cloud copy is newer
@@ -287,9 +288,7 @@ async function pushLocalEntryNow(id: string): Promise<PushOutcome> {
     logGoneOnce(id);
     return "gone";
   }
-  const { meta, audioPath } = await invoke<{ meta: HistoryEntry; audioPath: string | null }>(
-    "read_history_entry",
-    { id }
+  const { meta, audioPath } = await ipc.readHistoryEntry({ id }
   );
   let res: Response;
   try {
@@ -350,7 +349,7 @@ export async function downloadCloudEntry(rec: {
   const t = cloudToken();
   if (!isTauri() || !t) throw new Error("not signed in");
   const meta = (await (await cloudFetch(`/recordings/${rec.id}/meta`)).json()) as HistoryEntry;
-  await invoke("save_remote_history_entry", {
+  await ipc.saveRemoteHistoryEntry({
     id: rec.id,
     summaryJson: JSON.stringify(buildSummary(meta)),
     metaJson: JSON.stringify(meta),
@@ -601,7 +600,7 @@ export async function saveOrgRecordingToPersonal(orgId: string, id: string): Pro
   const meta = (await (await cloudFetch(`${base}/meta`)).json()) as HistoryEntry;
   const entry: HistoryEntry = { ...meta, folderId: null };
   const t = cloudToken();
-  await invoke("save_remote_history_entry", {
+  await ipc.saveRemoteHistoryEntry({
     id: entry.id,
     summaryJson: JSON.stringify(buildSummary(entry)),
     metaJson: JSON.stringify(entry),

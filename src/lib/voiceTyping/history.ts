@@ -2,11 +2,11 @@
 //! Traditional-Chinese text + timestamp). The Rust side just appends/reads/writes
 //! the file; filtering for delete/clear happens here.
 
-import { invoke } from "@tauri-apps/api/core";
-import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { isTauri } from "../tauriEvents";
 import { log } from "../log";
 import type { VoiceTypingPolishStyle } from "../types";
+import * as ipc from "../ipc/commands";
+import { emitEvent, listenEvent, type UnlistenFn } from "../ipc/events";
 
 /** A style that produced text — never `off`, which produces none. */
 export type PolishedStyle = Exclude<VoiceTypingPolishStyle, "off">;
@@ -45,7 +45,7 @@ export interface VoiceHistoryChangedPayload {
  *  host's fire-and-forget append must not report a missed broadcast as a
  *  failed save. */
 async function emitVoiceHistoryChanged(payload: VoiceHistoryChangedPayload): Promise<void> {
-  await emit(VOICE_HISTORY_CHANGED_EVENT, payload).catch((error) =>
+  await emitEvent(VOICE_HISTORY_CHANGED_EVENT, payload).catch((error) =>
     log.warn("voice typing history: change broadcast failed", {
       kind: payload.kind,
       error: String(error),
@@ -59,7 +59,7 @@ export async function listenForVoiceHistoryChanged(
   onChanged: (payload: VoiceHistoryChangedPayload) => void,
 ): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
-  return listen<VoiceHistoryChangedPayload>(VOICE_HISTORY_CHANGED_EVENT, (e) => onChanged(e.payload));
+  return listenEvent<VoiceHistoryChangedPayload>(VOICE_HISTORY_CHANGED_EVENT, (e) => onChanged(e.payload));
 }
 
 /** Record one dictation (no-op for empty text / outside Tauri). */
@@ -75,7 +75,7 @@ export async function appendVoiceEntry(
   if (appBundleId) entry.appBundleId = appBundleId;
   if (polishStyle) entry.polishStyle = polishStyle;
   try {
-    await invoke("append_voice_history", { line: JSON.stringify(entry) });
+    await ipc.appendVoiceHistory({ line: JSON.stringify(entry) });
   } catch (error) {
     log.warn("voice typing history: append failed", { id: entry.id, error: String(error) });
     return;
@@ -87,7 +87,7 @@ export async function appendVoiceEntry(
 export async function listVoiceEntries(): Promise<VoiceEntry[]> {
   if (!isTauri()) return [];
   try {
-    const raw = await invoke<string>("read_voice_history");
+    const raw = await ipc.readVoiceHistory();
     return raw
       .split("\n")
       .map((l) => l.trim())
@@ -134,7 +134,7 @@ export async function deleteVoiceEntry(id: string): Promise<void> {
 export async function clearVoiceEntries(): Promise<void> {
   if (!isTauri()) return;
   try {
-    await invoke("write_voice_history", { content: "" });
+    await ipc.writeVoiceHistory({ content: "" });
   } catch (error) {
     log.warn("voice typing history: clear failed", { error: String(error) });
     return;
@@ -151,7 +151,7 @@ async function writeAll(entries: VoiceEntry[]): Promise<boolean> {
     .map((e) => JSON.stringify(e))
     .join("\n");
   try {
-    await invoke("write_voice_history", { content: content ? `${content}\n` : "" });
+    await ipc.writeVoiceHistory({ content: content ? `${content}\n` : "" });
     return true;
   } catch (error) {
     log.warn("voice typing history: write failed", {

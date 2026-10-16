@@ -10,18 +10,9 @@
 // and only wrongly-labelled lines move. history.ts calls this right after the
 // entry is persisted (see saveLiveToHistory).
 
-import { invoke } from "@tauri-apps/api/core";
 import { log } from "../log";
 import type { TranscriptSegment } from "../types";
-
-/** One segment's speaker assignment from the Rust `diarize_audio` command. */
-interface RustSegSpeaker {
-  id: string;
-  /** 1-based speaker number (cluster + 1). */
-  speaker: number;
-  /** Cosine margin to the next-nearest cluster; 0 for inherited short segments. */
-  confidence: number;
-}
+import * as ipc from "../ipc/commands";
 
 /** A segment's PRIOR (provider-assigned) speaker and its speech duration. */
 export interface PriorSeg {
@@ -121,7 +112,7 @@ export async function rediarizeSegments(
     startMs: Math.max(0, Math.round(s.startMs)),
     endMs: Math.max(0, Math.round(s.endMs)),
   }));
-  const assigned = await invoke<RustSegSpeaker[]>("diarize_audio", {
+  const assigned = await ipc.diarizeAudio({
     audioPath,
     segments: spans,
     numSpeakers: null,

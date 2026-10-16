@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AudioLines, Check, Loader2, Mic, Pause, Play, Scissors } from "lucide-react";
-import { listen } from "@tauri-apps/api/event";
 import { useStore, speakerKey, defaultSpeakerLabel, formatClock, hasSpokenSegment, type ReplayTrim } from "../lib/store";
 import { speakerDotClass } from "../lib/speakerColors";
 import { hasProviderKey } from "../lib/ai/settings";
@@ -24,15 +23,12 @@ import {
   type LibraryDestination,
   type OrgHandoffMode,
 } from "../lib/library/destination";
+import { DIARIZE_PROGRESS_EVENT, listenEvent, type DiarizeProgressPayload } from "../lib/ipc/events";
 
 /** Speaker-count presets: `null` = auto-detect, then 2–8. */
 const COUNT_OPTIONS: (number | null)[] = [null, 2, 3, 4, 5, 6, 7, 8];
 
-interface DiarizeProgress {
-  stage: string;
-  received: number;
-  total: number;
-}
+type DiarizeProgress = DiarizeProgressPayload;
 
 interface SpeakerEntry {
   key: string;
@@ -96,7 +92,7 @@ export function IngestWizard() {
     if (!open) return;
     let alive = true;
     let unlisten: (() => void) | undefined;
-    listen<DiarizeProgress>("diarize://progress", (e) => {
+    listenEvent(DIARIZE_PROGRESS_EVENT, (e) => {
       if (alive) setDz(e.payload);
     }).then((u) => {
       if (alive) {

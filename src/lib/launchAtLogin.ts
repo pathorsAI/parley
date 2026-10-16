@@ -4,9 +4,9 @@
 // is deliberately no Settings field for it: the toggle asks Rust every time it
 // is shown. Rust owns the login item (src-tauri/src/autostart.rs); the
 // autostart plugin's own JS commands are not granted to the webview.
-import { invoke } from "@tauri-apps/api/core";
 import { isTauri } from "./platform";
 import { log } from "./log";
+import * as ipc from "./ipc/commands";
 
 /**
  * What `set_launch_at_login` rejects with when macOS runs Parley from a
@@ -20,7 +20,7 @@ export const LAUNCH_AT_LOGIN_TRANSLOCATED = "translocated";
 export async function launchAtLoginStatus(): Promise<boolean | null> {
   if (!isTauri()) return null;
   try {
-    return await invoke<boolean>("launch_at_login_status");
+    return await ipc.launchAtLoginStatus();
   } catch (error) {
     log.warn("autostart: status check failed", { error: String(error) });
     return null;
@@ -29,7 +29,7 @@ export async function launchAtLoginStatus(): Promise<boolean | null> {
 
 /** Resolves to the OS state AFTER the change (Rust re-reads it); rejects when the OS did not take it. */
 export function setLaunchAtLogin(enabled: boolean): Promise<boolean> {
-  return invoke<boolean>("set_launch_at_login", { enabled });
+  return ipc.setLaunchAtLogin({ enabled });
 }
 
 /** Whether a `setLaunchAtLogin` rejection is the translocated-app refusal. */

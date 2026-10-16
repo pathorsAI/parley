@@ -23,10 +23,10 @@
 // ARCHIVING a folder keeps it in this registry: an archived folder is still a
 // home, so the recordings inside it stay where they are instead of falling out.
 
-import { invoke } from "@tauri-apps/api/core";
-import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { isTauri } from "../tauriEvents";
 import { log } from "../log";
+import * as ipc from "../ipc/commands";
+import { emitEvent, listenEvent, type UnlistenFn } from "../ipc/events";
 
 const KEY = "parley:folders";
 const FOLDERS_UPDATED_EVENT = "history://folders-updated";
@@ -124,7 +124,7 @@ function persist(folders: Folder[]): void {
   cache = folders;
   writeLocalStorage(folders);
   if (isTauri()) {
-    invoke("write_folders", { json: JSON.stringify(folders) }).catch((e) =>
+    ipc.writeFolders({ json: JSON.stringify(folders) }).catch((e) =>
       log.error("folders: registry write failed", { error: String(e) })
     );
   }
@@ -134,7 +134,7 @@ function persist(folders: Folder[]): void {
 async function refreshFromDisk(): Promise<void> {
   if (!isTauri()) return;
   try {
-    const raw = await invoke<string>("read_folders");
+    const raw = await ipc.readFolders();
     if (raw.trim()) {
       const v = parseFolders(raw);
       if (v) cache = v;
@@ -155,7 +155,7 @@ async function refreshFromDisk(): Promise<void> {
 export async function initFolderRegistry(): Promise<void> {
   if (!isTauri()) return;
   try {
-    const raw = await invoke<string>("read_folders");
+    const raw = await ipc.readFolders();
     if (raw.trim()) {
       const v = parseFolders(raw);
       if (v) {
@@ -305,7 +305,7 @@ export function deleteLocalFolder(id: string): void {
 /** Tell other windows the personal folder list changed (History grid, Settings picker). */
 export async function emitFoldersUpdated(): Promise<void> {
   if (!isTauri()) return;
-  await emit(FOLDERS_UPDATED_EVENT, {});
+  await emitEvent(FOLDERS_UPDATED_EVENT, {});
 }
 
 /** Listen for personal-folder changes broadcast from another window. The cache
@@ -314,7 +314,7 @@ export async function emitFoldersUpdated(): Promise<void> {
  *  across same-origin windows implicitly; the disk cache needs this re-read). */
 export async function listenForFoldersUpdated(cb: () => void): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
-  return listen(FOLDERS_UPDATED_EVENT, () => {
+  return listenEvent(FOLDERS_UPDATED_EVENT, () => {
     refreshFromDisk()
       .catch(() => {})
       .finally(cb);

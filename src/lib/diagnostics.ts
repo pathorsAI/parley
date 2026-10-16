@@ -1,7 +1,7 @@
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { isTauri } from "./tauriEvents";
 import { log } from "./log";
 import { fitWindowSize } from "./windowBounds";
+import { listenEvent, type UnlistenFn } from "./ipc/events";
 
 /** Emitted by the native Diagnostics → View Logs menu item (see menu.rs). */
 const VIEW_LOGS_MENU = "menu://view-logs";
@@ -42,5 +42,5 @@ export async function openDiagnosticsWindow(): Promise<void> {
  */
 export async function listenForViewLogsMenu(): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
-  return listen(VIEW_LOGS_MENU, () => void openDiagnosticsWindow());
+  return listenEvent(VIEW_LOGS_MENU, () => void openDiagnosticsWindow());
 }

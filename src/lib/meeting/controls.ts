@@ -1,8 +1,8 @@
-import { invoke } from "@tauri-apps/api/core";
 import { useStore } from "../store";
 import { stopMockStream } from "../mockStream";
 import { meetingUsesRealPipeline } from "../transcription/prepare";
 import { log } from "../log";
+import * as ipc from "../ipc/commands";
 
 /**
  * The live meeting's recorder controls — end, pause/resume, cancel — and the
@@ -20,7 +20,7 @@ import { log } from "../log";
  * window closing) just sends it. A failure is logged as `failureLog`.
  */
 export function stopBackendMeeting(failureLog: string, fields: Record<string, unknown> = {}): Promise<void> {
-  return invoke<void>("stop_meeting").catch((error) => log.warn(failureLog, { ...fields, error: String(error) }));
+  return ipc.stopMeeting().catch((error) => log.warn(failureLog, { ...fields, error: String(error) }));
 }
 
 /**
@@ -46,7 +46,7 @@ export async function endMeeting(): Promise<void> {
   // listenForRecordingSaved).
   store.setFinalizingMeeting(true);
   try {
-    await invoke("stop_meeting");
+    await ipc.stopMeeting();
   } catch (e) {
     log.error("meeting: stop failed", { error: String(e) });
     useStore.getState().setFinalizingMeeting(false);
@@ -68,7 +68,7 @@ export function toggleMeetingPause(): void {
     store.pauseMeeting();
   }
   if (meetingUsesRealPipeline(store.settings)) {
-    invoke("set_meeting_paused", { paused: !paused }).catch((e) =>
+    ipc.setMeetingPaused({ paused: !paused }).catch((e) =>
       log.error("meeting: pause toggle failed", { error: String(e) }),
     );
   }
@@ -86,7 +86,7 @@ export async function cancelActiveMeeting(): Promise<void> {
     return;
   }
   try {
-    await invoke("cancel_meeting");
+    await ipc.cancelMeeting();
   } catch (e) {
     log.error("meeting: cancel failed", { error: String(e) });
   }

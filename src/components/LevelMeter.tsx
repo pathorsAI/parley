@@ -1,11 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "../lib/tauriEvents";
-
-interface LevelPayload {
-  source: string;
-  level: number;
-}
+import { AUDIO_LEVEL_EVENT, listenEvent, type AudioLevelPayload } from "../lib/ipc/events";
 
 /**
  * Live input-level meter fed by the backend `audio://level` event. Speech peaks
@@ -14,7 +9,7 @@ interface LevelPayload {
 export const LevelMeter = ({
   source,
   className,
-  eventName = "audio://level",
+  eventName = AUDIO_LEVEL_EVENT,
 }: Readonly<{
   source: string;
   className?: string;
@@ -31,7 +26,7 @@ export const LevelMeter = ({
     // the app uses (IngestWizard, Onboarding, VoiceDiarizeDialog…).
     let alive = true;
     let unlisten: (() => void) | undefined;
-    listen<LevelPayload>(eventName, (e) => {
+    listenEvent<AudioLevelPayload>(eventName, (e) => {
       if (e.payload.source === source) setLevel(e.payload.level);
     }).then((u) => {
       if (alive) unlisten = u;

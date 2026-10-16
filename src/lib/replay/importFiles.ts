@@ -2,7 +2,6 @@
 // the import dialog (TranscriptImportDialog) and the MCP `import_transcript`
 // RPC (sessionCommands), so both entrances produce identical entries.
 
-import { invoke } from "@tauri-apps/api/core";
 import {
   dateFromFileName,
   parseTranscript,
@@ -12,12 +11,7 @@ import {
 import { toTraditional } from "../zhConvert";
 import { normalizeTranscriptText } from "../textNormalize";
 import { log } from "../log";
-
-/** Shape returned by the Rust `read_transcript_file` command. */
-interface TranscriptFile {
-  text: string;
-  modifiedMs: number | null;
-}
+import * as ipc from "../ipc/commands";
 
 export interface PreparedTranscriptFile {
   path: string;
@@ -44,7 +38,7 @@ export async function prepareTranscriptFile(path: string): Promise<PreparedTrans
     error: null,
   };
   try {
-    const file = await invoke<TranscriptFile>("read_transcript_file", { path });
+    const file = await ipc.readTranscriptFile({ path });
     const parsed = parseTranscript(file.text);
     if (!parsed) return { ...base, error: "empty" };
     // Match both ingest paths: transcripts often arrive Simplified (exports,

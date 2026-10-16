@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { appLogDir, join } from "@tauri-apps/api/path";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { FolderOpen, Search } from "lucide-react";
@@ -10,6 +9,7 @@ import { log } from "../lib/log";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import * as ipc from "../lib/ipc/commands";
 
 /** Levels we colour + filter on. "all" = no level filter. */
 type Level = "error" | "warn" | "info" | "debug";
@@ -104,7 +104,7 @@ export function DiagnosticsApp() {
     if (!isTauri()) return;
     let alive = true;
     const tick = () => {
-      invoke<string>("read_log_tail", { maxBytes: TAIL_BYTES })
+      ipc.readLogTail({ maxBytes: TAIL_BYTES })
         .then((text) => {
           if (!alive) return;
           setLines(parseLogLines(text));

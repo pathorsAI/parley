@@ -1,10 +1,10 @@
-import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useStore, type SettingsCategory } from "./store";
 import { isTauri } from "./tauriEvents";
 import { log } from "./log";
 import type { Settings } from "./types";
 import type { CloudAuth } from "./cloud/types";
 import { fitWindowSize } from "./windowBounds";
+import { emitEvent, listenEvent, type UnlistenFn } from "./ipc/events";
 
 const SETTINGS_EVENT = "settings://updated";
 
@@ -29,7 +29,7 @@ export async function openSettingsWindow(category?: SettingsCategory): Promise<v
   log.info("settings: open window", { existing: !!existing, category });
   if (existing) {
     await existing.setFocus();
-    if (category) await emit(SETTINGS_NAVIGATE_EVENT, category);
+    if (category) await emitEvent(SETTINGS_NAVIGATE_EVENT, category);
     return;
   }
   // 880x760 was chosen on a Mac. On a Windows display at 150% scaling that is
@@ -49,7 +49,7 @@ export async function openSettingsWindow(category?: SettingsCategory): Promise<v
 /** Broadcast updated settings so the main window can apply them live. */
 export async function broadcastSettings(settings: Settings): Promise<void> {
   if (!isTauri()) return;
-  await emit(SETTINGS_EVENT, settings);
+  await emitEvent(SETTINGS_EVENT, settings);
 }
 
 /** localStorage key zustand persists settings under (see store `persist` name). */
@@ -109,7 +109,7 @@ export async function listenForSettings(): Promise<UnlistenFn> {
   if (!isTauri()) return () => globalThis.removeEventListener("storage", onStorage);
 
   // Channel 1: the Tauri broadcast (fast path).
-  const unlisten = await listen<Settings>(SETTINGS_EVENT, (e) => {
+  const unlisten = await listenEvent<Settings>(SETTINGS_EVENT, (e) => {
     log.info("settings: applied (tauri event)", {
       llm: e.payload.llmProviders,
       language: e.payload.language,

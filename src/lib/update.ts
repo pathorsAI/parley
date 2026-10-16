@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { toast } from "sonner";
@@ -7,6 +6,7 @@ import { useStore } from "./store";
 import { translate, type TranslationKey } from "../i18n/messages";
 import { log } from "./log";
 import { rememberPendingReleaseNotes } from "./releaseNotes";
+import * as ipc from "./ipc/commands";
 
 /**
  * In-app auto-updater. Checks the GitHub releases endpoint (see
@@ -78,7 +78,7 @@ async function runUpdate(): Promise<void> {
     // Written BEFORE downloadAndInstall: on Windows the install exits the
     // process from inside that call, so relaunch() below never runs there.
     // Best effort — a missing marker costs a hidden window, not the update.
-    await invoke("mark_show_on_next_launch").catch((error: unknown) => {
+    await ipc.markShowOnNextLaunch().catch((error: unknown) => {
       log.warn("update: could not mark the next launch to show the window", { error: String(error) });
     });
     await pending.downloadAndInstall((e) => {
@@ -101,7 +101,7 @@ async function runUpdate(): Promise<void> {
     // rather than let it surface the window at some unrelated later launch. A
     // failed relaunch() keeps it — the update is staged and the user reopens
     // by hand, which shows the window anyway.
-    if (!installed) void invoke("clear_show_on_next_launch").catch(() => {});
+    if (!installed) void ipc.clearShowOnNextLaunch().catch(() => {});
     // Install finished but the auto-relaunch failed (e.g. App Translocation) —
     // the new version IS staged, so tell the user to reopen rather than fail silently.
     log.warn("update: relaunch failed", { error: String(e) });

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { Loader2, Trash2 } from "lucide-react";
 import { useI18n, type TranslationKey } from "../i18n";
@@ -22,15 +21,13 @@ import {
   AlertDialogFooter,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import * as ipc from "../lib/ipc/commands";
 
 /** Matches `CacheKind` in src-tauri/src/cache.rs. */
-type CacheKind = "transcription" | "diarization" | "analysis" | "all";
+type CacheKind = ipc.CacheKind;
 
 /** On-disk sizes, from the `cache_sizes` command. */
-interface DiskSizes {
-  transcription: number;
-  diarization: number;
-}
+type DiskSizes = ipc.CacheSizes;
 
 const ROWS: { kind: Exclude<CacheKind, "all">; labelKey: TranslationKey; helpKey: TranslationKey }[] = [
   { kind: "transcription", labelKey: "settings.caches.transcription", helpKey: "settings.caches.transcriptionHelp" },
@@ -74,7 +71,7 @@ export function CachesPanel() {
 
   const refresh = useCallback(() => {
     if (!isTauri()) return;
-    invoke<DiskSizes>("cache_sizes")
+    ipc.cacheSizes()
       .then(setDisk)
       .catch((error) => log.warn("caches: size check failed", { error: String(error) }));
   }, []);
@@ -87,7 +84,7 @@ export function CachesPanel() {
   async function clear(kind: CacheKind) {
     setBusy(kind);
     try {
-      await invoke("clear_cache", { kind });
+      await ipc.clearCache({ kind });
       const row = ROWS.find((r) => r.kind === kind);
       toast.success(
         row ? t("settings.caches.cleared", { name: t(row.labelKey) }) : t("settings.caches.clearedAll"),

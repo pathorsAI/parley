@@ -1,9 +1,9 @@
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { LanguageModelUsage } from "ai";
 import { isTauri } from "../tauriEvents";
 import { llmCostUsd, sttCostUsd } from "./pricing";
 import type { LlmWorkload, Settings } from "../types";
+import * as ipc from "../ipc/commands";
+import { STT_USAGE_EVENT, listenEvent, type UnlistenFn } from "../ipc/events";
 
 /**
  * One usage record. Written as a single JSON line to `usage.jsonl` by the Rust
@@ -39,7 +39,7 @@ export async function recordUsage(event: Omit<UsageEvent, "ts">): Promise<void> 
   if (!isTauri()) return;
   const full: UsageEvent = { ts: Date.now(), ...event };
   try {
-    await invoke("append_usage_event", { line: JSON.stringify(full) });
+    await ipc.appendUsageEvent({ line: JSON.stringify(full) });
   } catch (e) {
     // Usage logging is best-effort; never break a call because logging failed.
     console.warn("[usage] failed to record event", e);
@@ -100,7 +100,7 @@ export async function recordLlmUsage(
  */
 export async function listenForSttUsage(): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
-  return listen<{ provider: string; source: string; seconds: number }>("usage://stt", (e) => {
+  return listenEvent(STT_USAGE_EVENT, (e) => {
     const { provider, source, seconds } = e.payload;
     if (!seconds || seconds <= 0) return;
     void recordUsage({
@@ -120,7 +120,7 @@ export async function listenForSttUsage(): Promise<UnlistenFn> {
 export async function readUsageEvents(): Promise<UsageEvent[]> {
   if (!isTauri()) return [];
   try {
-    const raw = await invoke<string>("read_usage_events");
+    const raw = await ipc.readUsageEvents();
     return raw
       .split("\n")
       .map((line) => line.trim())

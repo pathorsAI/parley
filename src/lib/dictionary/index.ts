@@ -23,11 +23,11 @@
 //! mirrors the entries to their Parley account (and so to the iPhone). That is
 //! why every content change stamps `updatedAt`: sync is last-write-wins on it.
 
-import { invoke } from "@tauri-apps/api/core";
-import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { isTauri } from "../tauriEvents";
 import { log } from "../log";
 import type { Settings } from "../types";
+import * as ipc from "../ipc/commands";
+import { emitEvent, listenEvent, type UnlistenFn } from "../ipc/events";
 
 /** Broadcast whenever the dictionary file changed: by a window's own write, by
  *  a window that found a change on focus, or by the MCP server (Rust, see
@@ -165,8 +165,8 @@ function persist(next: DictionaryFile): void {
   localEdits += 1;
   if (!isTauri()) return;
   writeChain = writeChain
-    .then(() => invoke("write_dictionary", { contents: JSON.stringify(next, null, 2) }))
-    .then(() => emit(DICTIONARY_UPDATED_EVENT, { origin: ORIGIN } satisfies UpdatedPayload))
+    .then(() => ipc.writeDictionary({ contents: JSON.stringify(next, null, 2) }))
+    .then(() => emitEvent(DICTIONARY_UPDATED_EVENT, { origin: ORIGIN } satisfies UpdatedPayload))
     .then(() => {})
     .catch((error) => log.error("dictionary: write failed", { error: String(error) }));
 }
@@ -177,7 +177,7 @@ async function refreshFromDisk(): Promise<boolean> {
   if (!isTauri()) return false;
   const editsBefore = localEdits;
   try {
-    const raw = await invoke<string>("read_dictionary");
+    const raw = await ipc.readDictionary();
     // This window changed the dictionary while the read was in flight, so the
     // file we got predates the cache. Its write is queued and will land as the
     // newer state; applying this read would roll the cache back to a file
@@ -223,7 +223,7 @@ function refreshAfterWrites(): Promise<boolean> {
  *  an MCP write whose broadcast was missed), tell the other windows too. */
 export async function refreshDictionary(): Promise<void> {
   if (await refreshAfterWrites()) {
-    await emit(DICTIONARY_UPDATED_EVENT, { origin: ORIGIN } satisfies UpdatedPayload);
+    await emitEvent(DICTIONARY_UPDATED_EVENT, { origin: ORIGIN } satisfies UpdatedPayload);
   }
 }
 
@@ -253,7 +253,7 @@ export async function initDictionary(): Promise<void> {
     hydrated = true; // browser dev: an in-memory dictionary is all there is
     return;
   }
-  listen<UpdatedPayload>(DICTIONARY_UPDATED_EVENT, (e) => {
+  listenEvent<UpdatedPayload>(DICTIONARY_UPDATED_EVENT, (e) => {
     if (!isOwn(e.payload)) void refreshAfterWrites();
   }).catch((error) => log.warn("dictionary: update listener failed", { error: String(error) }));
   ready = refreshFromDisk().then(() => {});
@@ -297,7 +297,7 @@ export function whenDictionaryReady(): Promise<void> {
  *  the cache is already current, so the callback runs without a re-read. */
 export async function listenForDictionaryUpdated(cb: () => void): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
-  return listen<UpdatedPayload>(DICTIONARY_UPDATED_EVENT, (e) => {
+  return listenEvent<UpdatedPayload>(DICTIONARY_UPDATED_EVENT, (e) => {
     (isOwn(e.payload) ? Promise.resolve(false) : refreshAfterWrites())
       .catch(() => false)
       .finally(cb);

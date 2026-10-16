@@ -4,8 +4,8 @@
  * calls. The titlebar chip and the report's hand-off section both read it
  * through {@link useMcpActivity}, so they always agree on "connected".
  */
+import * as ipc from "../ipc/commands";
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { isTauri } from "../tauriEvents";
 import { markGettingStarted } from "../onboarding/gettingStarted";
 
@@ -68,7 +68,7 @@ export function useMcpActivity(opts: { fast?: boolean } = {}): {
     let alive = true;
     async function refresh() {
       try {
-        const a = await invoke<McpActivityInfo>("get_mcp_activity");
+        const a = await ipc.getMcpActivity();
         if (!alive) return;
         setInfo(a);
         setNow(Date.now());

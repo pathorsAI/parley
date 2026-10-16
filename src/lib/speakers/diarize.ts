@@ -1,15 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
 import { useStore, isTrimmed } from "../store";
 import { log } from "../log";
-
-/** One segment's speaker assignment from the Rust `diarize_audio` command. */
-interface RustSegSpeaker {
-  id: string;
-  /** 1-based speaker number (cluster + 1). */
-  speaker: number;
-  /** Cosine margin to the next-nearest cluster; 0 for inherited short segments. */
-  confidence: number;
-}
+import * as ipc from "../ipc/commands";
 
 /**
  * Re-derive speakers from the AUDIO of the loaded recording (not the STT's
@@ -55,7 +46,7 @@ export async function runVoiceDiarize(opts: {
     endMs: Math.max(0, Math.round(s.endMs + offsetMs)),
   }));
 
-  const result = await invoke<RustSegSpeaker[]>("diarize_audio", {
+  const result = await ipc.diarizeAudio({
     audioPath: replay.audioPath,
     segments: spans,
     numSpeakers: opts.numSpeakers,
@@ -97,7 +88,7 @@ export async function runVoiceDiarize(opts: {
  * progress bar. Invoked from onboarding.
  */
 export async function prefetchDiarizeModel(): Promise<void> {
-  await invoke("download_diarize_model");
+  await ipc.downloadDiarizeModel();
 }
 
 /** Presence of the on-device speaker model, mirroring Rust `DiarizeModelStatus`. */
@@ -116,5 +107,5 @@ export interface DiarizeModelStatus {
  * indicator and offer a manual download when onboarding was skipped.
  */
 export async function diarizeModelStatus(): Promise<DiarizeModelStatus> {
-  return invoke<DiarizeModelStatus>("diarize_model_status");
+  return ipc.diarizeModelStatus();
 }

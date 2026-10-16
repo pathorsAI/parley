@@ -32,11 +32,11 @@ export async function fetchMe(token: string): Promise<Me> {
 export async function signInWithGoogle(signal?: AbortSignal): Promise<void> {
   if (!isTauri()) throw new Error("desktop only");
   if (signal?.aborted) throw new Error("cancelled");
-  const { invoke } = await import("@tauri-apps/api/core");
-  const { listen } = await import("@tauri-apps/api/event");
+  const ipc = await import("../ipc/commands");
+  const { AUTH_CALLBACK_EVENT, listenEvent } = await import("../ipc/events");
   const { openUrl } = await import("@tauri-apps/plugin-opener");
 
-  const port = await invoke<number>("start_oauth_loopback");
+  const port = await ipc.startOauthLoopback();
 
   const token = await new Promise<string>((resolve, reject) => {
     let unlisten: (() => void) | undefined;
@@ -54,7 +54,7 @@ export async function signInWithGoogle(signal?: AbortSignal): Promise<void> {
     timer = setTimeout(() => settle(() => reject(new Error("timed out"))), 2 * 60 * 1000);
     signal?.addEventListener("abort", onAbort);
 
-    listen<{ token?: string; error?: string }>("auth://callback", (e) => {
+    listenEvent(AUTH_CALLBACK_EVENT, (e) => {
       const received = e.payload.token;
       if (received) settle(() => resolve(received));
       else settle(() => reject(new Error(e.payload.error || "sign-in failed")));

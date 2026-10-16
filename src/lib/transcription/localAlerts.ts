@@ -1,14 +1,13 @@
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { useStore } from "../store";
 import { log } from "../log";
-import { isTauri } from "../platform";
 import { openSettings } from "../nav/settings";
 import { translate } from "../../i18n/messages";
 import { failureMessageKey } from "./errors";
 import type { AppLanguage, SttProviderId } from "../types";
-import { LOCAL_STT_SLOW_EVENT, type LocalFailureCode, type LocalSttSlowPayload } from "./localModels";
+import type { LocalFailureCode } from "./localModels";
 import { usesLocalModel } from "./registry";
+import { LOCAL_STT_SLOW_EVENT, listenIfTauri, type UnlistenFn } from "../ipc/events";
 
 /**
  * The on-device provider's two runtime alerts, both pointing at Settings ›
@@ -53,8 +52,7 @@ const slowToastGate = createSlowToastGate();
  * model" toast once. No-op outside Tauri.
  */
 export async function listenForLocalSttSlow(): Promise<UnlistenFn> {
-  if (!isTauri()) return () => {};
-  return listen<LocalSttSlowPayload>(LOCAL_STT_SLOW_EVENT, (event) => {
+  return listenIfTauri(LOCAL_STT_SLOW_EVENT, (event) => {
     const { settings } = useStore.getState();
     log.warn("local-stt: decoding slower than real time", {
       model: event.payload.model,

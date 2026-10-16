@@ -1,6 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
 import { useStore, transcriptAsText } from "./store";
 import { isTauri } from "./tauriEvents";
+import * as ipc from "./ipc/commands";
 
 /**
  * Mirror the live meeting state to `<appConfigDir>/session.json`, which the
@@ -65,7 +65,7 @@ let timer: ReturnType<typeof setTimeout> | null = null;
 
 async function writeSession(): Promise<void> {
   try {
-    await invoke("write_session", { json: JSON.stringify(snapshot()) });
+    await ipc.writeSession({ json: JSON.stringify(snapshot()) });
   } catch (e) {
     console.warn("[session] write failed", e);
   }

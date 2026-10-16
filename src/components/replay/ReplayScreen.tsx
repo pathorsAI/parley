@@ -122,8 +122,8 @@ export function ReplayScreen() {
         filters: [{ name: "Audio", extensions: [ext] }],
       });
       if (!dst) return;
-      const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("export_recording", { src: session!.audioPath, dst });
+      const ipc = await import("../../lib/ipc/commands");
+      await ipc.exportRecording({ src: session!.audioPath, dst });
       const { revealItemInDir } = await import("@tauri-apps/plugin-opener");
       await revealItemInDir(dst);
     } catch (e) {

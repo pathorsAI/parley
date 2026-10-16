@@ -93,8 +93,8 @@ export function clearSpeakerNamesCache(): number {
  */
 export async function listenForSpeakerCacheClear(): Promise<() => void> {
   if (!isTauri()) return () => {};
-  const { listen } = await import("@tauri-apps/api/event");
-  return listen("cache://clear-speakers", () => {
+  const { CACHE_CLEAR_SPEAKERS_EVENT, listenEvent } = await import("../ipc/events");
+  return listenEvent(CACHE_CLEAR_SPEAKERS_EVENT, () => {
     const n = clearSpeakerNamesCache();
     console.info(`[cache] cleared ${n} cached speaker-name sets`);
   });

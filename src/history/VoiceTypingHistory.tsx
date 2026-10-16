@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { UnlistenFn } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { Copy, Mic, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { useI18n } from "../i18n";
@@ -23,6 +22,7 @@ import {
   recognitionTerms,
   whenDictionaryReady,
 } from "../lib/dictionary";
+import { type UnlistenFn } from "../lib/ipc/events";
 
 /**
  * Past voice-typing dictations: search, copy, delete one, clear all — and fix

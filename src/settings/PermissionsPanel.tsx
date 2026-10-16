@@ -1,19 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { RefreshCw } from "lucide-react";
 import { useI18n } from "../i18n";
 import { isMac, isWindows } from "../lib/platform";
 import { isTauri } from "../lib/tauriEvents";
 import { log } from "../lib/log";
 import { Button } from "@/components/ui/button";
-
-interface Perms {
-  microphone: string;
-  // The Rust struct serializes camelCase (#[serde(rename_all = "camelCase")]).
-  // unknown | granted | denied | unsupported (macOS < 14.2). Windows reports
-  // granted when there is a default output device to loop back, else unknown.
-  systemAudio: string;
-}
+import * as ipc from "../lib/ipc/commands";
 
 type Status = "granted" | "denied" | "pending";
 
@@ -69,7 +61,7 @@ export function PermissionsPanel() {
   async function refresh() {
     if (!isTauri()) return;
     try {
-      const p = await invoke<Perms>("check_permissions");
+      const p = await ipc.checkPermissions();
       setMicrophone(micStatus(p.microphone));
       applySystemAudio(p.systemAudio);
     } catch (error) {
@@ -92,7 +84,7 @@ export function PermissionsPanel() {
   const requested = useRef<Set<string>>(new Set());
   async function grant(key: string, pane: string, request: () => Promise<void>) {
     if (!isMac() || requested.current.has(key)) {
-      await invoke("open_privacy_settings", { pane }).catch((error) =>
+      await ipc.openPrivacySettings({ pane }).catch((error) =>
         log.warn("permissions: open privacy settings failed", { error: String(error), pane }),
       );
     } else {
@@ -133,7 +125,7 @@ export function PermissionsPanel() {
         // there the one and only step is the Settings pane, so the button says
         // where it goes.
         actionLabel={t(isMac() ? "settings.voiceTyping.grant" : "settings.permissions.openSettings")}
-        onGrant={() => grant("mic", "microphone", () => invoke("request_microphone"))}
+        onGrant={() => grant("mic", "microphone", () => ipc.requestMicrophone())}
       />
       {isWindows() && (
         <Row
@@ -156,7 +148,7 @@ export function PermissionsPanel() {
             grant("system-audio", "system-audio", async () => {
               // Real probe: creates (and tears down) a process tap. First run
               // shows the native "record system audio" consent prompt.
-              applySystemAudio(await invoke<string>("probe_system_audio"));
+              applySystemAudio(await ipc.probeSystemAudio());
             })
           }
           help={systemAudio === "pending" ? t("settings.permissions.systemAudioHelp") : undefined}

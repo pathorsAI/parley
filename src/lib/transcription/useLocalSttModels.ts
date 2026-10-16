@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "../platform";
 import { log } from "../log";
 import {
@@ -13,8 +12,8 @@ import {
   type LocalDownloads,
   type LocalSttHardware,
   type LocalSttModel,
-  type LocalSttProgress,
 } from "./localModels";
+import { listenEvent } from "../ipc/events";
 
 export interface LocalSttModelsState {
   /** null while the catalog is loading (or when the command failed). */
@@ -100,7 +99,7 @@ export function useLocalSttModels(enabled = true): LocalSttModelsState {
     if (!enabled || !isTauri()) return;
     let live = true;
     let unlisten: (() => void) | undefined;
-    listen<LocalSttProgress>(LOCAL_STT_PROGRESS_EVENT, (e) => {
+    listenEvent(LOCAL_STT_PROGRESS_EVENT, (e) => {
       if (!live) return;
       const ev = e.payload;
       setDownloads((s) => reduceLocalProgress(s, ev));

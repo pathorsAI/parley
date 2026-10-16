@@ -7,8 +7,7 @@
 // in the main window, so opening one is a plain `loadHistoryEntry` call rather
 // than a `history://open` message from a second window.
 
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
-import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { toast } from "sonner";
@@ -37,6 +36,8 @@ import type {
 } from "../types";
 import type { StudyCacheEntry } from "./studyCache";
 import type { HistoryEntry, HistoryEntrySummary } from "./types";
+import * as ipc from "../ipc/commands";
+import { emitEvent, listenEvent, type UnlistenFn } from "../ipc/events";
 
 const HISTORY_UPDATED_EVENT = "history://updated";
 const RECORDING_SAVED_EVENT = "meeting://recording-saved";
@@ -134,7 +135,7 @@ export function snapshotAnalysis() {
 async function measureRecordingRate(path: string): Promise<number | null> {
   if (!isTauri()) return null;
   try {
-    const hz = await invoke<number>("measure_audio_speech_rate", { path });
+    const hz = await ipc.measureAudioSpeechRate({ path });
     return hz > 0 ? hz : null;
   } catch (e) {
     log.warn("history: live speech-rate measure failed", { error: String(e) });
@@ -192,7 +193,7 @@ async function persist(
   audioSourcePath: string | null,
   compress: boolean,
 ): Promise<void> {
-  await invoke("save_history_entry", {
+  await ipc.saveHistoryEntry({
     id: entry.id,
     summaryJson: JSON.stringify(buildSummary(entry)),
     metaJson: JSON.stringify(entry),
@@ -346,7 +347,7 @@ export async function saveLiveToHistory(audioTempPath: string, durationMs: numbe
     // temp recording so it doesn't orphan in the temp dir (an entry would
     // normally consume it on save).
     log.info("history: live save skipped (no transcript)");
-    await invoke("discard_recording", { path: audioTempPath }).catch((error) =>
+    await ipc.discardRecording({ path: audioTempPath }).catch((error) =>
       log.warn("history: discard empty live recording failed", {
         path: audioTempPath,
         error: String(error),
@@ -511,15 +512,15 @@ export function applyCorrectedSpeakers(
  * and the store keeps its own speaker names.
  */
 async function applyPostSaveDiarization(entry: HistoryEntry): Promise<void> {
-  const { audioPath } = await invoke<HistoryReadResult>("read_history_entry", { id: entry.id });
+  const { audioPath } = await ipc.readHistoryEntry({ id: entry.id });
   if (!audioPath) return;
   const result = await rediarizeSegments(entry.segments, audioPath);
   if (!result) return;
 
   await withEntryWrite(entry.id, async () => {
-    const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id: entry.id });
+    const { meta } = await ipc.readHistoryEntry({ id: entry.id });
     const updated: HistoryEntry = { ...meta, segments: applyCorrectedSpeakers(meta.segments, result.segments) };
-    await invoke("save_history_entry", {
+    await ipc.saveHistoryEntry({
       id: entry.id,
       summaryJson: JSON.stringify(buildSummary(updated)),
       metaJson: JSON.stringify(updated),
@@ -678,9 +679,9 @@ export async function updateHistoryEntry(id: string, snapshot?: AnalysisSnapshot
   // live store may since have been cleared); otherwise snapshot now.
   const analysis = snapshot ?? snapshotAnalysis();
   const updated = await withEntryWrite(id, async () => {
-    const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
+    const { meta } = await ipc.readHistoryEntry({ id });
     const next = mergeAnalysisSnapshot(meta, analysis);
-    await invoke("save_history_entry", {
+    await ipc.saveHistoryEntry({
       id,
       summaryJson: JSON.stringify(buildSummary(next)),
       metaJson: JSON.stringify(next),
@@ -770,9 +771,9 @@ export async function patchEntryOutputs(
   await withEntryWrite(id, async () => {
     // An upload's initial save may still be compressing — wait so the entry exists.
     await Promise.resolve(uploadSaveInFlight).catch(() => {});
-    const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
+    const { meta } = await ipc.readHistoryEntry({ id });
     const updated = mergeStageOutputs(meta, patch);
-    await invoke("save_history_entry", {
+    await ipc.saveHistoryEntry({
       id,
       summaryJson: JSON.stringify(buildSummary(updated)),
       metaJson: JSON.stringify(updated),
@@ -843,14 +844,14 @@ export async function persistFilingSuggestion(): Promise<void> {
   // An upload's initial save may still be compressing — wait so the entry exists.
   await Promise.resolve(uploadSaveInFlight).catch(() => {});
   const updated = await withEntryWrite(id, async () => {
-    const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
+    const { meta } = await ipc.readHistoryEntry({ id });
     const next: HistoryEntry = {
       ...meta,
       filingSuggestion: s.filingSuggestion,
       // The pass ran, whatever it produced — so reopening never pays for it twice.
       filingSuggested: true,
     };
-    await invoke("save_history_entry", {
+    await ipc.saveHistoryEntry({
       id,
       summaryJson: JSON.stringify(buildSummary(next)),
       metaJson: JSON.stringify(next),
@@ -868,7 +869,7 @@ export async function persistFilingSuggestion(): Promise<void> {
 /** All saved summaries, newest first. */
 export async function listHistory(): Promise<HistoryEntrySummary[]> {
   if (!isTauri()) return [];
-  const raw = await invoke<string[]>("list_history");
+  const raw = await ipc.listHistory();
   const summaries: HistoryEntrySummary[] = [];
   for (const s of raw) {
     try {
@@ -901,7 +902,7 @@ export function clearSuggestedTitle(suggestion: FilingSuggestion | null): Filing
  */
 export async function renameHistoryEntry(id: string, title: string): Promise<void> {
   if (!isTauri()) return;
-  await withEntryWrite(id, () => invoke("rename_history_entry", { id, title: title.trim() }));
+  await withEntryWrite(id, () => ipc.renameHistoryEntry({ id, title: title.trim() }));
   log.info("history: entry renamed", { id });
   const s = useStore.getState();
   if (s.loadedHistoryId === id && s.filingSuggestion?.title) {
@@ -932,10 +933,10 @@ export async function renameHistoryEntry(id: string, title: string): Promise<voi
 export async function setEntryFolder(id: string, folderId: string | null): Promise<void> {
   if (!isTauri()) return;
   const changed = await withEntryWrite(id, async () => {
-    const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
+    const { meta } = await ipc.readHistoryEntry({ id });
     if ((meta.folderId ?? null) === folderId) return false;
     const updated: HistoryEntry = { ...meta, folderId };
-    await invoke("save_history_entry", {
+    await ipc.saveHistoryEntry({
       id,
       summaryJson: JSON.stringify(buildSummary(updated)),
       metaJson: JSON.stringify(updated),
@@ -970,7 +971,7 @@ export interface EntryMetaPatch {
  */
 export async function updateEntryMeta(id: string, patch: EntryMetaPatch): Promise<HistoryEntry> {
   const updated = await withEntryWrite(id, async () => {
-    const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
+    const { meta } = await ipc.readHistoryEntry({ id });
     const speakerNames = patch.speakerNames
       ? mergeSpeakerNames(meta.speakerNames ?? {}, patch.speakerNames)
       : meta.speakerNames;
@@ -979,7 +980,7 @@ export async function updateEntryMeta(id: string, patch: EntryMetaPatch): Promis
       ...(patch.meetingContext === undefined ? {} : { meetingContext: patch.meetingContext }),
       speakerNames,
     };
-    await invoke("save_history_entry", {
+    await ipc.saveHistoryEntry({
       id,
       summaryJson: JSON.stringify(buildSummary(next)),
       metaJson: JSON.stringify(next),
@@ -1037,7 +1038,7 @@ export async function setEntryAnalysis(
   patch: EntryAnalysisPatch,
 ): Promise<{ id: string; findings: number; actionItems: number; brief: boolean; analyzed: boolean | null }> {
   const updated = await withEntryWrite(id, async () => {
-    const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
+    const { meta } = await ipc.readHistoryEntry({ id });
     const next: HistoryEntry = {
       ...meta,
       ...(patch.findings ? { findings: patch.findings } : {}),
@@ -1047,7 +1048,7 @@ export async function setEntryAnalysis(
       ...(patch.brief ? { briefFailed: false } : {}),
       ...(patch.analyzed === undefined ? {} : { analyzed: patch.analyzed }),
     };
-    await invoke("save_history_entry", {
+    await ipc.saveHistoryEntry({
       id,
       summaryJson: JSON.stringify(buildSummary(next)),
       metaJson: JSON.stringify(next),
@@ -1097,9 +1098,9 @@ export async function setEntryAnalysis(
 async function repointEntryFolder(id: string, target: string): Promise<boolean> {
   try {
     await withEntryWrite(id, async () => {
-      const { meta } = await invoke<HistoryReadResult>("read_history_entry", { id });
+      const { meta } = await ipc.readHistoryEntry({ id });
       const updated: HistoryEntry = { ...meta, folderId: target };
-      await invoke("save_history_entry", {
+      await ipc.saveHistoryEntry({
         id,
         summaryJson: JSON.stringify(buildSummary(updated)),
         metaJson: JSON.stringify(updated),
@@ -1166,14 +1167,8 @@ export async function migrateDuplicateFolders(): Promise<number> {
 /** Delete one entry's folder. */
 export async function deleteHistoryEntry(id: string): Promise<void> {
   if (!isTauri()) return;
-  await invoke("delete_history_entry", { id });
+  await ipc.deleteHistoryEntry({ id });
   log.info("history: entry deleted", { id });
-}
-
-/** Shape returned by the Rust `read_history_entry` command. */
-interface HistoryReadResult {
-  meta: HistoryEntry;
-  audioPath: string | null;
 }
 
 /**
@@ -1215,7 +1210,7 @@ export async function loadHistoryEntry(id: string): Promise<void> {
   // onto this entry — read after it lands, or the open would restore the stale
   // meta and re-run that stage.
   await entryWritesSettled(id);
-  const { meta, audioPath } = await invoke<HistoryReadResult>("read_history_entry", { id });
+  const { meta, audioPath } = await ipc.readHistoryEntry({ id });
   const audioSrc = audioPath ? convertFileSrc(audioPath) : "";
   const session = replaySessionFor(meta, audioPath ?? "", audioSrc);
   useStore.getState().loadHistory({ ...meta, segments: session.segments }, session);
@@ -1268,7 +1263,7 @@ export async function loadOrgEntry(orgId: string, id: string): Promise<void> {
   let audioPath = "";
   const t = cloudToken();
   if (meta.audio && t) {
-    audioPath = await invoke<string>("download_remote_audio", {
+    audioPath = await ipc.downloadRemoteAudio({
       id,
       url: `${CLOUD_URL}${base}/audio`,
       token: t,
@@ -1316,7 +1311,7 @@ export function leaveStoppedCockpit(reasonKey: "meeting.notSaved.tooShort" | "me
  *  was discarded clears it too, so the spinner can't hang forever. */
 export async function listenForRecordingSaved(): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
-  const unlistenSaved = await listen<{ path: string; durationMs: number }>(RECORDING_SAVED_EVENT, (e) => {
+  const unlistenSaved = await listenEvent<{ path: string; durationMs: number }>(RECORDING_SAVED_EVENT, (e) => {
     saveLiveToHistory(e.payload.path, e.payload.durationMs)
       .catch((err) => {
         log.error("history: live save failed", { error: String(err) });
@@ -1327,7 +1322,7 @@ export async function listenForRecordingSaved(): Promise<UnlistenFn> {
       })
       .finally(clearFinalizing);
   });
-  const unlistenDiscarded = await listen(RECORDING_DISCARDED_EVENT, () => {
+  const unlistenDiscarded = await listenEvent(RECORDING_DISCARDED_EVENT, () => {
     clearFinalizing();
     leaveStoppedCockpit("meeting.notSaved.tooShort");
   });
@@ -1340,13 +1335,13 @@ export async function listenForRecordingSaved(): Promise<UnlistenFn> {
 /** Tell other windows (the History grid) that an entry's saved analysis changed. */
 export async function emitHistoryUpdated(id?: string): Promise<void> {
   if (!isTauri()) return;
-  await emit(HISTORY_UPDATED_EVENT, { id });
+  await emitEvent(HISTORY_UPDATED_EVENT, { id });
 }
 
 /** History-window listener: re-list after the main window overwrites an entry. */
 export async function listenForHistoryUpdated(onUpdated: (id: string) => void): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
-  return listen<{ id: string }>(HISTORY_UPDATED_EVENT, (e) => onUpdated(e.payload.id));
+  return listenEvent<{ id: string }>(HISTORY_UPDATED_EVENT, (e) => onUpdated(e.payload.id));
 }
 
 /**
