@@ -4,7 +4,6 @@ import { toast } from "sonner";
 import {
   createLocalFolder,
   emitFoldersUpdated,
-  filingChoices,
   listLocalFolders,
   listenForFoldersUpdated,
   type Folder as LocalFolder,
@@ -26,15 +25,18 @@ import {
   canCreateFolder,
   filterFolders,
   formatBreadcrumb,
-  initialDestination,
+  handoffMode,
   inWorkspace,
   loadLastDestination,
   needsFolderSearch,
   offersKeepCopy,
+  openingDestination,
+  orgNameOf,
   primaryAction,
   revealsToOrg,
   saveLastDestination,
   workspaceControl,
+  workspaceFolders,
   workspaceOf,
   workspaceRoot,
   type DestinationVerb,
@@ -151,42 +153,6 @@ function useCrumb(sources: DestinationSources) {
   };
 }
 
-/** A workspace's filing folders; null while an org's are still loading. */
-function workspaceFolders(
-  ws: string,
-  sources: DestinationSources,
-  personalFolders: boolean,
-  current: LibraryDestination | null
-): NamedFolder[] | null {
-  if (ws !== PERSONAL_WORKSPACE) return sources.orgFolders[ws] ?? null;
-  if (!personalFolders) return [];
-  // An archived folder is not a destination — except the one the recording is in.
-  return filingChoices(sources.personalFolders, current?.scope === "personal" ? current.folderId : null);
-}
-
-/**
- * Where the sheet opens: the recording's place, else the caller's pick so far,
- * else (nothing yet) the last-used place. A remembered folder that has since
- * gone opens on its workspace root instead of a pick the list cannot show.
- */
-function openingDestination(o: {
-  current: LibraryDestination | null;
-  initial: LibraryDestination | null;
-  lastUsed: LibraryDestination | null;
-  orgs: WorkspaceRef[] | null;
-  lockWorkspace: string | undefined;
-  foldersOf: (ws: string) => NamedFolder[] | null;
-}): LibraryDestination {
-  const known = o.current ?? o.initial;
-  let proposed: LibraryDestination;
-  if (o.lockWorkspace) proposed = known ?? workspaceRoot(o.lockWorkspace);
-  else proposed = initialDestination(known, known ? null : o.lastUsed, o.orgs);
-  const ws = workspaceOf(proposed);
-  const folders = o.foldersOf(ws);
-  const gone = !!proposed.folderId && !!folders && !folders.some((f) => f.id === proposed.folderId);
-  return gone ? workspaceRoot(ws) : proposed;
-}
-
 /** Create the staged new folder (if any) in the picked workspace. */
 async function createStagedFolder(
   selected: LibraryDestination,
@@ -203,22 +169,6 @@ async function createStagedFolder(
   const created = await createOrgFolder(selected.orgId, name);
   reload();
   return { scope: "org", orgId: selected.orgId, folderId: created.id };
-}
-
-/** Into an org from Personal is a handoff — a copy when the personal original
- *  is kept, else a move. Anything else is not a handoff at all. */
-function handoffMode(
-  dest: LibraryDestination,
-  current: LibraryDestination | null,
-  keepCopy: boolean
-): OrgHandoffMode | null {
-  if (dest.scope !== "org" || current?.scope === "org") return null;
-  return keepCopy ? "copy" : "move";
-}
-
-function orgNameOf(orgs: WorkspaceRef[] | null, d: LibraryDestination): string {
-  if (d.scope !== "org") return "";
-  return orgs?.find((o) => o.id === d.orgId)?.name ?? "";
 }
 
 // ── The sheet ───────────────────────────────────────────────────────────────
