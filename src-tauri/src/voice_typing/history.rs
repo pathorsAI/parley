@@ -3,7 +3,7 @@
 
 use tauri::AppHandle;
 
-use crate::commands::{read_config_file, write_config_file};
+use crate::commands::config::{app_config_file, append_line, read_config_file, write_config_file};
 
 /// Name of the voice-typing history file (one JSON object per line) in the app
 /// config dir.
@@ -12,17 +12,7 @@ const HISTORY_FILE: &str = "voice_typing_history.jsonl";
 /// Append one history entry (a JSON line: `{ id, text, ts }`).
 #[tauri::command]
 pub fn append_voice_history(app: AppHandle, line: String) -> Result<(), String> {
-    use std::io::Write;
-    let path = crate::commands::app_config_file(&app, HISTORY_FILE)?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let mut f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(|e| e.to_string())?;
-    writeln!(f, "{line}").map_err(|e| e.to_string())
+    append_line(&app_config_file(&app, HISTORY_FILE)?, &line)
 }
 
 /// Read the whole history file (empty string if none yet). The frontend parses
