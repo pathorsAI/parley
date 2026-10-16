@@ -55,6 +55,11 @@ jobs:
     name: Rust (macOS)
     runs-on: macos-latest
     timeout-minutes: 45
+    env:
+      # What `tauri build` exports from bundle.macOS.minimumSystemVersion, so
+      # CI compiles the C++ deps (whisper.cpp needs std::filesystem, 10.15+)
+      # against the same deployment target as the release build.
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

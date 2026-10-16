@@ -47,6 +47,7 @@
     "createUpdaterArtifacts": true,
     "targets": "all",
     "macOS": {
+      "minimumSystemVersion": "11.0",
       "entitlements": "entitlements.plist",
       "signingIdentity": null,
       "hardenedRuntime": true
