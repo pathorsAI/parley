@@ -1,6 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   AudioLines,
   Check,
@@ -22,16 +21,17 @@ import {
   UsersRound,
   X,
 } from "lucide-react";
-import { useStore, meetingElapsedMs, type AppMode } from "../lib/store";
-import { listLocalFolders, listenForFoldersUpdated, type Folder } from "../lib/history/folders";
+import { useStore, type AppMode } from "../lib/store";
+import { usePersonalFolders, useOrgFolders } from "../lib/library/useFolders";
+import { useWindowFocused, useWindowMaximized, controlWindow, type WindowAction } from "../lib/shell/windowState";
+import { useMeetingElapsed } from "../lib/meeting/elapsed";
+import { renameLoadedRecording, renameTarget } from "../lib/replay/rename";
 import { breadcrumbParents, type CrumbIcon, type ParentCrumb } from "../lib/library/breadcrumb";
 import { leaveRecordingTo } from "../lib/nav/navigate";
-import { CLOUD_ENABLED } from "../lib/flags";
 import type { Settings as AppSettings } from "../lib/types";
 import { log } from "../lib/log";
 import { toast } from "sonner";
 import { isMac } from "../lib/platform";
-import { isTauri } from "../lib/tauriEvents";
 import { beginMeeting } from "../lib/meeting/start";
 import { cancelActiveMeeting, endMeeting, toggleMeetingPause } from "../lib/meeting/controls";
 import { useCommandShortcut } from "../lib/commands/bind";
@@ -50,91 +50,8 @@ import { StudyGenerationChip } from "./study/StudyGenerationChip";
 
 
 type TFn = ReturnType<typeof useI18n>["t"];
-type WindowAction = "close" | "minimize" | "fullscreen" | "maximize";
 type StudyTab = "report" | "replay";
 type Layout = AppSettings["layout"];
-
-/**
- * Track main-window focus so the traffic lights can dim to grey when the window
- * is inactive — matching native macOS behaviour. Defaults to focused (and stays
- * focused in browser dev, where there's no window to query).
- */
-function useWindowFocused(): boolean {
-  const [focused, setFocused] = useState(true);
-  useEffect(() => {
-    if (!isTauri()) return;
-    let active = true;
-    let unlisten: (() => void) | undefined;
-    async function connectFocusEvents() {
-      const win = getCurrentWindow();
-      try {
-        const initial = await win.isFocused();
-        if (active) setFocused(initial);
-      } catch {
-        /* ignore — keep default */
-      }
-      const un = await win.onFocusChanged(({ payload }) => {
-        if (active) setFocused(payload);
-      });
-      if (active) unlisten = un;
-      else un();
-    }
-    connectFocusEvents().catch((error) => log.warn("window: focus listener failed", { error: String(error) }));
-    return () => {
-      active = false;
-      unlisten?.();
-    };
-  }, []);
-  return focused;
-}
-
-/**
- * Track whether the main window is maximized, so the Windows caption cluster
- * can offer restore instead of a second maximize.
- *
- * Driven by the window's own resize event rather than by our click handler:
- * Windows Snap, a double-click on the drag region and the system menu all
- * maximize without ever passing through the button, and a button that lied
- * about the window state would be worse than the one that never changed. Tauri
- * has no dedicated maximize event, so onResized is the signal and isMaximized()
- * is the question — the payload only carries the new size.
- *
- * macOS never renders this cluster (the traffic lights do zoom instead), so
- * there's no listener to keep alive there.
- */
-function useWindowMaximized(): boolean {
-  const [maximized, setMaximized] = useState(false);
-  useEffect(() => {
-    if (!isTauri() || isMac()) return;
-    let active = true;
-    let unlisten: (() => void) | undefined;
-    async function connectResizeEvents() {
-      const win = getCurrentWindow();
-      const read = async () => {
-        try {
-          const now = await win.isMaximized();
-          if (active) setMaximized(now);
-        } catch {
-          /* ignore — keep the last known state */
-        }
-      };
-      // Seed from the current value: the window can already be maximized when
-      // this mounts (a reload, or a size restored from the last session).
-      await read();
-      const un = await win.onResized(() => void read());
-      if (active) unlisten = un;
-      else un();
-    }
-    connectResizeEvents().catch((error) =>
-      log.warn("window: maximize listener failed", { error: String(error) })
-    );
-    return () => {
-      active = false;
-      unlisten?.();
-    };
-  }, []);
-  return maximized;
-}
 
 
 function TrafficLights({
@@ -192,47 +109,6 @@ function TrafficLights({
       </button>
     </div>
   );
-}
-
-/**
- * The personal folder registry, kept live while the breadcrumb is on screen: a
- * rename in the sidebar (this window) or in another window broadcasts the
- * folders-updated event, and a cloud mirror-down lands on window focus.
- */
-function usePersonalFolders(): Folder[] {
-  const [folders, setFolders] = useState<Folder[]>(() => listLocalFolders());
-  useEffect(() => {
-    const refresh = () => setFolders(listLocalFolders());
-    const un = listenForFoldersUpdated(refresh);
-    window.addEventListener("focus", refresh);
-    return () => {
-      window.removeEventListener("focus", refresh);
-      un.then((fn) => fn()).catch(() => {});
-    };
-  }, []);
-  return folders;
-}
-
-/** One org's folders, fetched only when a crumb needs one of their names. The
- *  cloud module is imported dynamically so the OSS bundle never reaches it. */
-function useOrgFolders(orgId: string | null): { id: string; name: string }[] | null {
-  const [state, setState] = useState<{ orgId: string; folders: { id: string; name: string }[] } | null>(
-    null
-  );
-  useEffect(() => {
-    if (!orgId || !CLOUD_ENABLED) return;
-    let active = true;
-    import("../lib/cloud/folders")
-      .then((m) => m.listOrgFolders(orgId))
-      .then((folders) => {
-        if (active) setState({ orgId, folders });
-      })
-      .catch((e) => log.warn("titlebar: org folders failed", { orgId, error: String(e) }));
-    return () => {
-      active = false;
-    };
-  }, [orgId]);
-  return state?.orgId === orgId ? state.folders : null;
 }
 
 /** The same icon the sidebar row for that node wears. */
@@ -321,7 +197,6 @@ function RecordingBreadcrumb({ t }: Readonly<{ t: TFn }>) {
 function RecordingName({ t }: Readonly<{ t: TFn }>) {
   const replayName = useStore((s) => s.replay?.name ?? "");
   const loadedHistoryId = useStore((s) => s.loadedHistoryId);
-  const renameReplay = useStore((s) => s.renameReplay);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(replayName);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -333,12 +208,10 @@ function RecordingName({ t }: Readonly<{ t: TFn }>) {
   }
   async function commit() {
     setEditing(false);
-    const clean = draft.trim();
-    if (!clean || clean === replayName || !loadedHistoryId) return;
+    const clean = renameTarget(draft, replayName, loadedHistoryId);
+    if (!clean || !loadedHistoryId) return;
     try {
-      const { renameHistoryEntry } = await import("../lib/history/history");
-      await renameHistoryEntry(loadedHistoryId, clean);
-      renameReplay(clean);
+      await renameLoadedRecording(loadedHistoryId, clean);
     } catch (e) {
       log.error("replay: rename failed", { error: String(e) });
       const message = e instanceof Error ? e.message : String(e);
@@ -765,7 +638,6 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const meetingStartedAt = useStore((s) => s.meetingStartedAt);
   const studyTab = useStore((s) => s.studyTab);
   const setStudyTab = useStore((s) => s.setStudyTab);
-  const [elapsed, setElapsed] = useState("00:00");
   const appMode = useStore((s) => s.appMode);
   const openLibrary = useStore((s) => s.openLibrary);
   const showReplay = useStore((s) => s.showReplay);
@@ -793,22 +665,8 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const meetingActive = recording || paused;
   const studyMode = appMode === "study";
 
-  // Vitals timer (top-left): elapsed RECORDED time (wall time minus pauses —
-  // matching the pause-compacted recording), ticking 1 Hz. While paused the
-  // value is frozen, so ticking is pointless; the transition re-renders it once.
-  useEffect(() => {
-    if (!meetingActive) return;
-    const tick = () => {
-      const sec = Math.floor(meetingElapsedMs(useStore.getState()) / 1000);
-      setElapsed(
-        `${String(Math.floor(sec / 60)).padStart(2, "0")}:${String(sec % 60).padStart(2, "0")}`
-      );
-    };
-    tick();
-    if (paused) return;
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
-  }, [meetingActive, paused, meetingStartedAt]);
+  // Vitals timer (top-left): elapsed RECORDED time, ticking 1 Hz.
+  const elapsed = useMeetingElapsed(meetingActive, paused, meetingStartedAt);
 
   /** Run `fn` under the shared re-entrancy guard: rapid clicks across the
    *  recorder controls (start/end/cancel) can't overlap two mutating invokes. */
@@ -863,21 +721,6 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   async function cancel() {
     setConfirmCancel(false);
     await guarded(cancelActiveMeeting);
-  }
-
-  async function controlWindow(action: WindowAction) {
-    if (!isTauri()) return;
-    const appWindow = getCurrentWindow();
-    try {
-      if (action === "close") await appWindow.close();
-      if (action === "minimize") await appWindow.minimize();
-      // Native macOS maps the green button to full screen (not window zoom).
-      if (action === "fullscreen") await appWindow.setFullscreen(!(await appWindow.isFullscreen()));
-      // Windows caption button semantics: maximize/restore, not fullscreen.
-      if (action === "maximize") await appWindow.toggleMaximize();
-    } catch (e) {
-      log.warn("window: action failed", { action, error: String(e) });
-    }
   }
 
   // Reserve the leading gutter for macOS traffic lights and the trailing one
