@@ -11,6 +11,7 @@ mod hotkey;
 mod local_stt;
 mod mcp;
 mod menu;
+mod model_download;
 mod permissions;
 mod playback;
 mod replay;

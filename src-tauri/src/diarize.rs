@@ -30,6 +30,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::model_download::{self, to_hex, DownloadError, Stage, Throttle};
 use crate::replay_audio::decode_to_16k_mono;
 
 /// 3D-Speaker CAM++ speaker-verification model (Chinese+English, common-advanced).
@@ -41,6 +42,21 @@ const MODEL_FILE: &str = "campplus_zh_en_16k.onnx";
 const MODEL_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx";
 const MODEL_SHA256: &str = "aa3cfc16963a10586a9393f5035d6d6b57e98d358b347f80c2a30bf4f00ceba2";
 const MODEL_BYTES: u64 = 28_281_164;
+
+/// The speaker model as a download: where it comes from and what it must be.
+struct ModelSource<'a> {
+    url: &'a str,
+    file: &'a str,
+    bytes: u64,
+    sha256: &'a str,
+}
+
+const MODEL: ModelSource<'static> = ModelSource {
+    url: MODEL_URL,
+    file: MODEL_FILE,
+    bytes: MODEL_BYTES,
+    sha256: MODEL_SHA256,
+};
 
 /// Model output tensor name (the input tensor is `x`; see the doc comment above).
 const OUTPUT_NAME: &str = "embedding";
@@ -199,12 +215,7 @@ pub struct DiarizeModelStatus {
 
 #[tauri::command]
 pub fn diarize_model_status(app: AppHandle) -> Result<DiarizeModelStatus, String> {
-    let path = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("resolve app data dir: {e}"))?
-        .join("models")
-        .join(MODEL_FILE);
+    let path = model_download::models_root(&app)?.join(MODEL_FILE);
     let size_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
     Ok(DiarizeModelStatus {
         present: size_bytes == MODEL_BYTES,
@@ -1135,62 +1146,80 @@ fn locate_and_set_dylib(app: &AppHandle) -> Result<PathBuf> {
 
 /// Ensure the speaker model is present + intact, downloading it once on first use
 /// to `app_data_dir()/models/`. Verifies SHA-256; a stale/partial file is
-/// re-downloaded. Emits `diarize://progress` while downloading.
+/// re-downloaded. Emits `diarize://progress` (stage `downloading-model`) while
+/// downloading.
 async fn ensure_model(app: &AppHandle) -> Result<PathBuf> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .context("resolve app data dir")?
-        .join("models");
-    std::fs::create_dir_all(&dir).context("create models dir")?;
-    let path = dir.join(MODEL_FILE);
+    let dir = model_download::models_root(app).map_err(|e| anyhow!(e))?;
+    let client = model_download::http_client().map_err(|e| anyhow!(e))?;
+    ensure_model_in(&dir, &client, &MODEL, |received| {
+        let _ = app.emit(
+            "diarize://progress",
+            Progress {
+                stage: "downloading-model",
+                received,
+                total: MODEL_BYTES,
+            },
+        );
+    })
+    .await
+}
+
+/// [`ensure_model`] for `source` in `dir`, reporting downloaded bytes to
+/// `progress`. The download is the shared verified one
+/// ([`model_download::download_verified`]): bounded by the client's timeouts,
+/// refused once it outgrows the expected size, and never left half-written
+/// under the model's name. Progress is throttled the same way, with a last
+/// report at the full size once everything has arrived.
+async fn ensure_model_in(
+    dir: &Path,
+    client: &reqwest::Client,
+    source: &ModelSource<'_>,
+    mut progress: impl FnMut(u64),
+) -> Result<PathBuf> {
+    std::fs::create_dir_all(dir).context("create models dir")?;
+    let path = dir.join(source.file);
 
     if path.exists() {
         match file_sha256(&path) {
-            Ok(sum) if sum == MODEL_SHA256 => return Ok(path),
+            Ok(sum) if sum == source.sha256 => return Ok(path),
             Ok(_) => log::warn!("diarize: cached model checksum mismatch, re-downloading"),
             Err(e) => log::warn!("diarize: cannot hash cached model ({e}), re-downloading"),
         }
     }
 
     log::info!("diarize: downloading speaker model (~27 MB)…");
-    let resp = reqwest::get(MODEL_URL)
-        .await
-        .context("request speaker model")?
-        .error_for_status()
-        .context("speaker model download")?;
-    let total = resp.content_length().unwrap_or(MODEL_BYTES);
-
-    let tmp = path.with_extension("part");
-    let mut file = std::fs::File::create(&tmp).context("create model temp file")?;
-    let mut hasher = Sha256::new();
-    let mut received: u64 = 0;
-    let mut stream = resp.bytes_stream();
-    use futures_util::StreamExt;
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.context("download model chunk")?;
-        std::io::Write::write_all(&mut file, &chunk).context("write model chunk")?;
-        hasher.update(&chunk);
-        received += chunk.len() as u64;
-        let _ = app.emit(
-            "diarize://progress",
-            Progress {
-                stage: "downloading-model",
-                received,
-                total,
-            },
-        );
+    let mut throttle = Throttle::new();
+    let result = model_download::download_verified(
+        client,
+        source.url,
+        &path,
+        source.bytes,
+        source.sha256,
+        // Nothing cancels the speaker model's download (no command for it).
+        &std::sync::atomic::AtomicBool::new(false),
+        |stage, received| {
+            let due = match stage {
+                Stage::Downloading => {
+                    throttle.should_emit(std::time::Instant::now(), received, source.bytes)
+                }
+                // Everything arrived: the bar's last step.
+                Stage::Verifying => true,
+                _ => false,
+            };
+            if due {
+                progress(received);
+            }
+        },
+    )
+    .await;
+    match result {
+        Ok(()) => {
+            log::info!("diarize: speaker model ready ({} bytes)", source.bytes);
+            Ok(path)
+        }
+        Err(DownloadError::Failed(msg)) => bail!("speaker model {msg}"),
+        Err(DownloadError::Cancelled) => bail!("speaker model download cancelled"),
     }
-    drop(file);
-
-    let got = to_hex(&hasher.finalize());
-    if got != MODEL_SHA256 {
-        let _ = std::fs::remove_file(&tmp);
-        bail!("speaker model checksum mismatch (expected {MODEL_SHA256}, got {got})");
-    }
-    std::fs::rename(&tmp, &path).context("finalize model file")?;
-    log::info!("diarize: speaker model ready ({} bytes)", received);
-    Ok(path)
 }
 
 /// SHA-256 of a file as lowercase hex, read in chunks.
@@ -1201,17 +1230,112 @@ fn file_sha256(path: &Path) -> Result<String> {
     Ok(to_hex(&hasher.finalize()))
 }
 
-fn to_hex(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        s.push_str(&format!("{b:02x}"));
-    }
-    s
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Serve `body` at `/model.onnx` from a throwaway local server.
+    async fn serve_model(body: Vec<u8>) -> String {
+        let app = axum::Router::new().route(
+            "/model.onnx",
+            axum::routing::get(move || {
+                let body = body.clone();
+                async move { body }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{addr}/model.onnx")
+    }
+
+    fn sha_hex(data: &[u8]) -> String {
+        to_hex(&Sha256::digest(data))
+    }
+
+    fn source<'a>(url: &'a str, body: &[u8], sha256: &'a str) -> ModelSource<'a> {
+        ModelSource {
+            url,
+            file: "m.onnx",
+            bytes: body.len() as u64,
+            sha256,
+        }
+    }
+
+    #[tokio::test]
+    async fn the_model_downloads_verified_with_a_final_full_progress() {
+        let body: Vec<u8> = (0..300_000u32).map(|i| (i % 249) as u8).collect();
+        let url = serve_model(body.clone()).await;
+        let sha = sha_hex(&body);
+        let dir = crate::test_http::scratch_dir("diarize-model");
+        let mut reports = Vec::new();
+        let path = ensure_model_in(
+            &dir,
+            &reqwest::Client::new(),
+            &source(&url, &body, &sha),
+            |received| reports.push(received),
+        )
+        .await
+        .unwrap();
+        assert_eq!(path, dir.join("m.onnx"));
+        assert_eq!(std::fs::read(&path).unwrap(), body);
+        assert!(!model_download::part_path(&path).exists());
+        assert_eq!(reports.first(), Some(&0));
+        assert_eq!(reports.last(), Some(&(body.len() as u64)));
+        assert!(reports.windows(2).all(|w| w[0] <= w[1]));
+
+        // Present and intact: no download, no progress.
+        let mut again = Vec::new();
+        let unreachable = ModelSource {
+            url: "http://127.0.0.1:9/never",
+            ..source(&url, &body, &sha)
+        };
+        ensure_model_in(&dir, &reqwest::Client::new(), &unreachable, |r| {
+            again.push(r)
+        })
+        .await
+        .unwrap();
+        assert!(again.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_corrupt_model_is_replaced_and_a_bad_download_leaves_nothing() {
+        let body = vec![5u8; 20_000];
+        let url = serve_model(body.clone()).await;
+        let sha = sha_hex(&body);
+        let dir = crate::test_http::scratch_dir("diarize-model-bad");
+        std::fs::write(dir.join("m.onnx"), b"stale").unwrap();
+        let path = ensure_model_in(
+            &dir,
+            &reqwest::Client::new(),
+            &source(&url, &body, &sha),
+            |_| {},
+        )
+        .await
+        .unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), body);
+
+        std::fs::remove_file(&path).unwrap();
+        let wrong = "0".repeat(64);
+        let err = ensure_model_in(
+            &dir,
+            &reqwest::Client::new(),
+            &source(&url, &body, &wrong),
+            |_| {},
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            format!("{err:#}"),
+            format!("speaker model checksum mismatch (expected {wrong}, got {sha})")
+        );
+        assert!(!path.exists());
+        assert!(!model_download::part_path(&path).exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// NME-SC on two well-separated speaker-like blobs (realistic within-speaker
     /// spread, not degenerate near-identical points) must auto-detect 2 speakers

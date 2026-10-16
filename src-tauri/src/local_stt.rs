@@ -6,8 +6,9 @@
 //! - the model catalog ([`CATALOG`]): one row per downloadable GGML model;
 //! - where models live (`app_data_dir()/models/stt/` — deliberately NOT the app
 //!   cache dir, whose "Clear all" must never delete a gigabyte of model);
-//! - the download flow (stream to `<file>.part`, verify size + SHA-256, then an
-//!   atomic rename), its progress events and cancellation;
+//! - the download command (the verified stream-to-`.part`-then-rename itself is
+//!   `model_download`, shared with the speaker-diarization model), its
+//!   progress events and cancellation;
 //! - the loaded-model cache shared by every session (meeting mic + system audio,
 //!   voice typing, file transcription), and the leases that keep a model from
 //!   being deleted while a session uses it;
@@ -21,16 +22,16 @@
 //! The recognizer itself lives in `transcription/local.rs`.
 
 use std::collections::HashMap;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use serde::Serialize;
-use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 use whisper_rs::{WhisperContext, WhisperContextParameters};
+
+use crate::model_download::{download_verified, part_path, DownloadError, Stage, Throttle};
 
 /// Event the Settings UI listens on for download progress.
 pub const PROGRESS_EVENT: &str = "local-stt://progress";
@@ -274,19 +275,7 @@ fn unknown_model_error(id: &str) -> String {
 
 /// `app_data_dir()/models/stt/`.
 pub fn models_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("resolve app data dir: {e}"))?
-        .join("models")
-        .join("stt"))
-}
-
-/// The in-progress download next to the final file: `<file>.part`.
-fn part_path(final_path: &Path) -> PathBuf {
-    let mut name = final_path.as_os_str().to_owned();
-    name.push(".part");
-    PathBuf::from(name)
+    Ok(crate::model_download::models_root(app)?.join("stt"))
 }
 
 /// Whether `entry` is installed in `dir`: the final file exists with exactly the
@@ -840,17 +829,6 @@ impl Drop for DownloadSlot {
     }
 }
 
-/// Stage of a download, as sent in [`Progress::stage`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Stage {
-    Downloading,
-    Verifying,
-    Done,
-    Error,
-    Cancelled,
-}
-
 /// `local-stt://progress` payload.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -860,170 +838,6 @@ struct Progress {
     received: u64,
     total: u64,
     message: Option<String>,
-}
-
-/// Rate-limits progress events: one per [`Throttle::INTERVAL`] or per percent of
-/// progress, whichever comes first — a gigabyte arrives in tens of thousands of
-/// chunks, and an event per chunk would flood the webview.
-struct Throttle {
-    last_at: Option<Instant>,
-    last_received: u64,
-}
-
-impl Throttle {
-    const INTERVAL: Duration = Duration::from_millis(100);
-
-    fn new() -> Self {
-        Self {
-            last_at: None,
-            last_received: 0,
-        }
-    }
-
-    fn should_emit(&mut self, now: Instant, received: u64, total: u64) -> bool {
-        let step = (total / 100).max(1);
-        let due = match self.last_at {
-            None => true,
-            Some(at) => {
-                now.duration_since(at) >= Self::INTERVAL
-                    || received.saturating_sub(self.last_received) >= step
-            }
-        };
-        if due {
-            self.last_at = Some(now);
-            self.last_received = received;
-        }
-        due
-    }
-}
-
-/// Why a download did not produce a verified file.
-#[derive(Debug, PartialEq, Eq)]
-enum DownloadError {
-    Cancelled,
-    Failed(String),
-}
-
-/// Stream `url` into `dest` via `<dest>.part`: hash while writing, check the
-/// byte count and SHA-256, then rename into place. The `.part` file is removed
-/// on every failure and on cancel, so a half-written model never sits under its
-/// final name. `progress(stage, received)` reports the downloading and
-/// verifying stages.
-async fn download_verified(
-    client: &reqwest::Client,
-    url: &str,
-    dest: &Path,
-    expected_bytes: u64,
-    expected_sha256: &str,
-    cancel: &AtomicBool,
-    mut progress: impl FnMut(Stage, u64),
-) -> Result<(), DownloadError> {
-    let part = part_path(dest);
-    let resp = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| DownloadError::Failed(format!("request failed: {e}")))?;
-    let resp = resp
-        .error_for_status()
-        .map_err(|e| DownloadError::Failed(format!("download failed: {e}")))?;
-    if let Some(dir) = dest.parent() {
-        std::fs::create_dir_all(dir)
-            .map_err(|e| DownloadError::Failed(format!("create models dir: {e}")))?;
-    }
-    let file = std::fs::File::create(&part)
-        .map_err(|e| DownloadError::Failed(format!("create temp file: {e}")))?;
-    let file = std::io::BufWriter::with_capacity(1 << 20, file);
-    // `write_part` has closed the file by the time it returns, so a failure
-    // can remove it right away.
-    let written = write_part(resp, file, expected_bytes, cancel, &mut progress)
-        .await
-        .and_then(|(received, sha256)| {
-            check_download(received, &sha256, expected_bytes, expected_sha256)
-        });
-    if let Err(e) = written {
-        let _ = std::fs::remove_file(&part);
-        return Err(e);
-    }
-    std::fs::rename(&part, dest).map_err(|e| {
-        let _ = std::fs::remove_file(&part);
-        DownloadError::Failed(format!("finalize model file: {e}"))
-    })
-}
-
-/// `download_verified`'s streaming half: write the body into `file` while
-/// hashing it, stop on cancel, on a stream or write error, or as soon as it
-/// grows past `expected_bytes`, then flush it to disk. Returns the byte count
-/// and the lowercase hex SHA-256 of what was written.
-async fn write_part(
-    resp: reqwest::Response,
-    mut file: std::io::BufWriter<std::fs::File>,
-    expected_bytes: u64,
-    cancel: &AtomicBool,
-    progress: &mut impl FnMut(Stage, u64),
-) -> Result<(u64, String), DownloadError> {
-    use futures_util::StreamExt;
-
-    let mut hasher = Sha256::new();
-    let mut received: u64 = 0;
-    let mut stream = resp.bytes_stream();
-    progress(Stage::Downloading, 0);
-    while let Some(chunk) = stream.next().await {
-        if cancel.load(Ordering::SeqCst) {
-            return Err(DownloadError::Cancelled);
-        }
-        let chunk =
-            chunk.map_err(|e| DownloadError::Failed(format!("download interrupted: {e}")))?;
-        received += chunk.len() as u64;
-        if received > expected_bytes {
-            return Err(DownloadError::Failed(format!(
-                "download is larger than expected ({expected_bytes} bytes)"
-            )));
-        }
-        file.write_all(&chunk)
-            .map_err(|e| DownloadError::Failed(format!("write failed: {e}")))?;
-        hasher.update(&chunk);
-        progress(Stage::Downloading, received);
-    }
-    if cancel.load(Ordering::SeqCst) {
-        return Err(DownloadError::Cancelled);
-    }
-    progress(Stage::Verifying, received);
-    file.into_inner()
-        .map_err(|e| e.into_error())
-        .and_then(|f| f.sync_all())
-        .map_err(|e| DownloadError::Failed(format!("write failed: {e}")))?;
-    Ok((received, to_hex(&hasher.finalize())))
-}
-
-/// `download_verified`'s verdict on a finished download: the full size and
-/// the expected checksum.
-fn check_download(
-    received: u64,
-    sha256: &str,
-    expected_bytes: u64,
-    expected_sha256: &str,
-) -> Result<(), DownloadError> {
-    if received != expected_bytes {
-        return Err(DownloadError::Failed(format!(
-            "download ended early ({received} of {expected_bytes} bytes)"
-        )));
-    }
-    if !sha256.eq_ignore_ascii_case(expected_sha256) {
-        return Err(DownloadError::Failed(format!(
-            "checksum mismatch (expected {expected_sha256}, got {sha256})"
-        )));
-    }
-    Ok(())
-}
-
-fn to_hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        let _ = write!(s, "{b:02x}");
-    }
-    s
 }
 
 // --- Commands -----------------------------------------------------------------
@@ -1172,12 +986,7 @@ pub async fn local_stt_download(app: AppHandle, model_id: String) -> Result<(), 
         entry.id,
         entry.bytes
     );
-    let client = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(15))
-        // A stalled transfer fails instead of hanging the progress bar forever.
-        .read_timeout(Duration::from_secs(60))
-        .build()
-        .map_err(|e| format!("http client: {e}"))?;
+    let client = crate::model_download::http_client()?;
     let mut throttle = Throttle::new();
     let result = download_verified(
         &client,
@@ -1299,12 +1108,6 @@ mod tests {
             serde_json::to_value(ModelFamily::Breeze).unwrap(),
             serde_json::json!("breeze")
         );
-    }
-
-    #[test]
-    fn the_part_file_sits_next_to_the_model() {
-        let p = part_path(Path::new("/x/models/stt/ggml-small-q5_1.bin"));
-        assert_eq!(p, PathBuf::from("/x/models/stt/ggml-small-q5_1.bin.part"));
     }
 
     #[test]
@@ -1909,20 +1712,6 @@ mod tests {
     }
 
     #[test]
-    fn the_throttle_emits_per_interval_or_percent() {
-        let mut t = Throttle::new();
-        let t0 = Instant::now();
-        assert!(t.should_emit(t0, 0, 10_000));
-        // Same instant, under 1 %: suppressed.
-        assert!(!t.should_emit(t0, 50, 10_000));
-        // 1 % of progress: emitted even without time passing.
-        assert!(t.should_emit(t0, 100, 10_000));
-        // Time passing alone also emits.
-        assert!(t.should_emit(t0 + Duration::from_millis(150), 101, 10_000));
-        assert!(!t.should_emit(t0 + Duration::from_millis(160), 102, 10_000));
-    }
-
-    #[test]
     fn leases_count_sessions() {
         let id = "lease-test-model";
         assert!(!is_leased(id));
@@ -1932,118 +1721,6 @@ mod tests {
         assert!(is_leased(id));
         drop(b);
         assert!(!is_leased(id));
-    }
-
-    /// Serve `body` from a throwaway local HTTP server; returns its URL.
-    async fn serve(body: Vec<u8>) -> String {
-        let app = axum::Router::new().route(
-            "/model.bin",
-            axum::routing::get(move || {
-                let body = body.clone();
-                async move { body }
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        format!("http://{addr}/model.bin")
-    }
-
-    fn sha_hex(data: &[u8]) -> String {
-        to_hex(&Sha256::digest(data))
-    }
-
-    #[tokio::test]
-    async fn a_verified_download_lands_under_its_final_name() {
-        let body: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
-        let url = serve(body.clone()).await;
-        let dir = scratch_dir("ok");
-        let dest = dir.join("m.bin");
-        let mut stages = Vec::new();
-        let r = download_verified(
-            &reqwest::Client::new(),
-            &url,
-            &dest,
-            body.len() as u64,
-            &sha_hex(&body),
-            &AtomicBool::new(false),
-            |stage, _| stages.push(stage),
-        )
-        .await;
-        assert_eq!(r, Ok(()));
-        assert_eq!(std::fs::read(&dest).unwrap(), body);
-        assert!(!part_path(&dest).exists());
-        assert_eq!(stages.first(), Some(&Stage::Downloading));
-        assert_eq!(stages.last(), Some(&Stage::Verifying));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[tokio::test]
-    async fn a_checksum_mismatch_leaves_nothing_behind() {
-        let body = vec![7u8; 10_000];
-        let url = serve(body.clone()).await;
-        let dir = scratch_dir("bad-sha");
-        let dest = dir.join("m.bin");
-        let r = download_verified(
-            &reqwest::Client::new(),
-            &url,
-            &dest,
-            body.len() as u64,
-            &"0".repeat(64),
-            &AtomicBool::new(false),
-            |_, _| {},
-        )
-        .await;
-        assert!(matches!(r, Err(DownloadError::Failed(m)) if m.contains("checksum")));
-        assert!(!dest.exists());
-        assert!(!part_path(&dest).exists());
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[tokio::test]
-    async fn a_short_download_is_rejected() {
-        let body = vec![1u8; 1_000];
-        let url = serve(body.clone()).await;
-        let dir = scratch_dir("short");
-        let dest = dir.join("m.bin");
-        let r = download_verified(
-            &reqwest::Client::new(),
-            &url,
-            &dest,
-            2_000,
-            &sha_hex(&body),
-            &AtomicBool::new(false),
-            |_, _| {},
-        )
-        .await;
-        assert!(matches!(r, Err(DownloadError::Failed(m)) if m.contains("ended early")));
-        assert!(!dest.exists());
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[tokio::test]
-    async fn a_cancelled_download_deletes_its_part_file() {
-        let body = vec![3u8; 50_000];
-        let url = serve(body.clone()).await;
-        let dir = scratch_dir("cancel");
-        let dest = dir.join("m.bin");
-        let cancel = AtomicBool::new(false);
-        let r = download_verified(
-            &reqwest::Client::new(),
-            &url,
-            &dest,
-            body.len() as u64,
-            &sha_hex(&body),
-            &cancel,
-            |_, _| cancel.store(true, Ordering::SeqCst),
-        )
-        .await;
-        assert_eq!(r, Err(DownloadError::Cancelled));
-        assert!(!dest.exists());
-        assert!(!part_path(&dest).exists());
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Real download of the smallest catalog model, skipped by default: run
