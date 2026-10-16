@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => {
     append: vi.fn<(text: string, appBundleId: string | null) => Promise<void>>(async () => {}),
     log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     settings: {} as Record<string, unknown>,
+    /** What `sttApiKey` returns for the configured provider. */
+    sttKey: "token",
     polish: {
       on: false,
       run: vi.fn(),
@@ -51,14 +53,14 @@ vi.mock("@tauri-apps/plugin-global-shortcut", () => ({
   register: vi.fn(async () => {}),
   unregister: vi.fn(async () => {}),
 }));
-vi.mock("../platform", () => ({ isMac: () => false }));
+vi.mock("../platform", () => ({ isMac: () => false, isTauri: () => true }));
 vi.mock("../tray", () => ({ TRAY_VOICE_TOGGLE_EVENT: "voicetyping://toggle" }));
 vi.mock("../tauriEvents", () => ({ isTauri: () => true }));
 vi.mock("../store", () => ({
   useStore: { getState: () => ({ settings: mocks.settings }) },
 }));
 vi.mock("../transcription/providers", () => ({
-  sttApiKey: () => "token",
+  sttApiKey: () => mocks.sttKey,
   sttRelayUrl: () => "wss://relay.test/stt",
   sttModel: () => null,
 }));
@@ -114,6 +116,8 @@ const backend = {
   connectOnStart: true,
   /** What that `stt://connected` says about the finalize's answer. */
   acksFinalize: false,
+  /** The on-device catalog `local_stt_models` reports. */
+  localModels: [] as { id: string; installed: boolean; downloading: boolean }[],
 };
 
 function connect(session: number): void {
@@ -145,6 +149,8 @@ function routeInvoke(): void {
         return { pasted: backend.pasted, appBundleId: backend.pasteApp };
       case "observe_pasted_field":
         return false;
+      case "local_stt_models":
+        return backend.localModels;
       default:
         return undefined;
     }
@@ -246,6 +252,8 @@ beforeEach(async () => {
   backend.startGate = null;
   backend.connectOnStart = true;
   backend.acksFinalize = false;
+  backend.localModels = [];
+  mocks.sttKey = "token";
   routeInvoke();
   vi.resetModules();
   const host = await import("./host");
@@ -1158,5 +1166,77 @@ describe("voice-typing host: Copy on the confirmation", () => {
     expect(dones()).toEqual([{ message: "ok", text: "複製不了" }]);
     await tick(2900);
     expect(mocks.hide).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The start gate: what a press does for each credential state, before the mic
+// opens. A refused start shows its code on the overlay and invokes nothing.
+describe("voice-typing start gate", () => {
+  const errors = () =>
+    mocks.emitted
+      .filter((e) => e.name === "voicetyping://session")
+      .map((e) => e.payload as { phase: string; message?: string })
+      .filter((p) => p.phase === "error")
+      .map((p) => p.message);
+
+  it("refuses a missing credential with no-key", async () => {
+    mocks.sttKey = "";
+    await key(true);
+    expect(errors()).toEqual(["no-key"]);
+    expect(calls("start_voice_typing")).toEqual([]);
+  });
+
+  it("refuses a whitespace-only credential with no-key", async () => {
+    mocks.sttKey = "  ";
+    await key(true);
+    expect(errors()).toEqual(["no-key"]);
+  });
+
+  it.each([
+    ["missing", []],
+    ["downloading", [{ id: "m1", installed: true, downloading: true }]],
+    ["not installed", [{ id: "m1", installed: false, downloading: false }]],
+  ])("refuses a local model that is %s with no-local-model", async (_, models) => {
+    mocks.settings.transcriptionProvider = "local";
+    mocks.settings.localSttModel = "m1";
+    backend.localModels = models;
+    await key(true);
+    expect(errors()).toEqual(["no-local-model"]);
+    expect(calls("start_voice_typing")).toEqual([]);
+  });
+
+  it("starts a ready local model, uncapped", async () => {
+    mocks.settings.transcriptionProvider = "local";
+    mocks.settings.localSttModel = "m1";
+    backend.localModels = [{ id: "m1", installed: true, downloading: false }];
+    await key(true);
+    expect(errors()).toEqual([]);
+    expect(calls("start_voice_typing")).toEqual([
+      expect.objectContaining({ provider: "local", maxDurationSecs: null }),
+    ]);
+  });
+
+  it("sends the full start payload, capped for hosted Parley", async () => {
+    await key(true);
+    expect(calls("start_voice_typing")).toEqual([
+      {
+        provider: "parley",
+        apiKey: "token",
+        languageHints: [],
+        vocabulary: [],
+        inputDevice: null,
+        relayUrl: "wss://relay.test/stt",
+        model: null,
+        maxDurationSecs: 600,
+      },
+    ]);
+  });
+
+  it("does not cap a BYOK provider", async () => {
+    mocks.settings.transcriptionProvider = "soniox";
+    await key(true);
+    expect(calls("start_voice_typing")).toEqual([
+      expect.objectContaining({ provider: "soniox", maxDurationSecs: null }),
+    ]);
   });
 });

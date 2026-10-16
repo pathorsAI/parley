@@ -16,14 +16,14 @@ import type { Settings, TranscriptSegment } from "../types";
 import { useStore } from "../store";
 import type { ReplaySession } from "./types";
 import { STT_BY_ID, sttApiKey, sttBatchUrl, sttModel } from "../transcription/providers";
-import { checkLocalModelReady, localFailureCode } from "../transcription/localModels";
+import { checkLocalModelReady, localFailureCode, type LocalFailureCode } from "../transcription/localModels";
 import { normalizeTranscriptText } from "../textNormalize";
 import { languageHintsFromSettings } from "../transcription/languageHints";
 import { recognitionTerms } from "../dictionary";
 import { log } from "../log";
 import { recordUsage } from "../usage/log";
 import { sttCostUsd } from "../usage/pricing";
-import { translate } from "../../i18n/messages";
+import { translate, type TranslationKey } from "../../i18n/messages";
 
 /** Coarse progress stages surfaced to the UI while a recording is ingested. */
 export type IngestStage = "decoding" | "uploading" | "transcribing";
@@ -205,14 +205,22 @@ export async function pickImportFiles(settings: Settings): Promise<ImportPick | 
   return pick;
 }
 
+/** The upload error text for a local failure code we can explain (out of
+ *  memory, model missing); `null` = keep the backend's own message. */
+export function localUploadErrorKey(code: LocalFailureCode): TranslationKey | null {
+  if (code === "local-memory") return "localStt.error.memory";
+  if (code === "local-missing") return "localStt.error.notReadyUpload";
+  return null;
+}
+
 /** An on-device upload failure in the user's language when it is one we can
  *  explain (out of memory, model missing); anything else keeps its message. */
 function localUploadError(settings: Settings, e: unknown): Error {
   const message = e instanceof Error ? e.message : String(e);
   const code = localFailureCode(message);
   log.warn("ingest: local transcription failed", { code, error: message });
-  if (code === "local-memory") return new Error(translate(settings.language, "localStt.error.memory"));
-  if (code === "local-missing") return new Error(translate(settings.language, "localStt.error.notReadyUpload"));
+  const key = localUploadErrorKey(code);
+  if (key) return new Error(translate(settings.language, key));
   return e instanceof Error ? e : new Error(message);
 }
 

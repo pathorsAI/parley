@@ -113,6 +113,12 @@ const MEETING_ERROR_KEY_BY_CODE: Partial<Record<string, TranslationKey>> = {
   capture: "meeting.error.capture",
 };
 
+/** The toast text for a non-local `meeting://error` code ("connect" for any
+ *  code without its own message). Exported for the error-map tests. */
+export function meetingErrorToastKey(code: string): TranslationKey {
+  return MEETING_ERROR_KEY_BY_CODE[code] ?? "meeting.error.connect";
+}
+
 /**
  * Subscribe to backend transcription-FAILURE events — the ones a redial can't
  * fix. Hosted mode makes 402 (out of credits) and 401 (expired session)
@@ -144,8 +150,7 @@ export async function listenForMeetingError(): Promise<UnlistenFn> {
       showLocalFailureToast(language, code);
       return;
     }
-    const key: TranslationKey = MEETING_ERROR_KEY_BY_CODE[code] ?? "meeting.error.connect";
-    toast.error(translate(language, key));
+    toast.error(translate(language, meetingErrorToastKey(code)));
   });
 }
 

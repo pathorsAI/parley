@@ -14,6 +14,7 @@ import { LANGUAGE_OPTIONS, useI18n, type TranslationKey } from "../i18n";
 import { broadcastSettings, SETTINGS_NAVIGATE_EVENT } from "../lib/settingsSync";
 import { signInWithGoogle, signOut } from "../lib/cloud/client";
 import { CLOUD_ENABLED } from "../lib/flags";
+import { isProviderListed } from "../lib/providerListing";
 import { Flag } from "../components/ui/flag";
 import { listMyInvitations } from "../lib/cloud/orgs";
 import type { CloudAuth } from "../lib/cloud/types";
@@ -148,6 +149,7 @@ export function SettingsApp() {
   // Nav search (⑥): label OR translated keywords, so "金鑰"/"key" finds the
   // provider panel and "麥克風"/"mic" finds transcription.
   const cloudAuth = useStore((s) => s.cloudAuth);
+  const listing = { cloudEnabled: CLOUD_ENABLED, signedIn: !!cloudAuth };
   // Signing out while on a signed-in-only panel (or deep-linking to one while
   // signed out) lands on Account, where signing in happens.
   useEffect(() => {
@@ -670,7 +672,7 @@ export function SettingsApp() {
                           // The hosted "parley" provider only exists in the cloud build
                           // and only when signed in (auth IS the gate) — hide it in the
                           // OSS edition and when signed out.
-                          (p) => p.id !== "parley" || (CLOUD_ENABLED && !!cloudAuth),
+                          (p) => isProviderListed(p, listing),
                         ).map((p) => (
                           <SelectItem key={p.id} value={p.id}>
                             <span className="flex items-center gap-2">
@@ -722,7 +724,7 @@ export function SettingsApp() {
                   {STT_PROVIDERS.filter(
                     // Hosted "parley" STT only exists in the cloud build and only
                     // when signed in (the session token IS the credential).
-                    (p) => p.id !== "parley" || (CLOUD_ENABLED && !!cloudAuth),
+                    (p) => isProviderListed(p, listing),
                   ).map((p) => (
                     <SelectItem key={p.id} value={p.id}>
                       <span className="flex items-center gap-2">

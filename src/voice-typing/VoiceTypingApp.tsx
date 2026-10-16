@@ -4,7 +4,8 @@ import { listen, emit } from "@tauri-apps/api/event";
 import { Check, Loader2, Mic, Sparkles, X } from "lucide-react";
 import { preloadZhConverter } from "../lib/zhConvert";
 import { normalizeTranscriptText } from "../lib/textNormalize";
-import { useI18n, type TranslationKey } from "../i18n";
+import { useI18n } from "../i18n";
+import { overlayErrorKey } from "../lib/voiceTyping/errorKeys";
 import { useThemePreference } from "../lib/theme";
 import { formatChordLabel, modChordCap } from "../lib/commands/format";
 import { log } from "../lib/log";
@@ -54,21 +55,6 @@ interface LevelPayload {
   level: number;
   session: number | null;
 }
-
-/** Overlay message per error phase `message`: the host's own "no-key", or a
- *  backend failure code from `voicetyping://error` (see capture.rs). Anything
- *  unrecognized falls back to the generic error string. */
-const ERROR_KEYS: Record<string, TranslationKey> = {
-  "no-key": "voiceTyping.noKey",
-  "no-local-model": "voiceTyping.noLocalModel",
-  quota: "voiceTyping.error.quota",
-  auth: "voiceTyping.error.auth",
-  key: "voiceTyping.error.key",
-  // On-device failures (local_stt::failure_code).
-  "local-missing": "voiceTyping.noLocalModel",
-  "local-memory": "voiceTyping.error.localMemory",
-  local: "voiceTyping.error.local",
-};
 
 /** listening = recording; finalizing = waiting for the STT's answer to the
  *  release; cancelled = Esc called it off, and Undo is on offer until the host
@@ -454,7 +440,7 @@ export const VoiceTypingApp = () => {
     };
   }, [phase]);
 
-  const errorKey = (error && ERROR_KEYS[error]) || "voiceTyping.error";
+  const errorKey = overlayErrorKey(error);
   const bubble = error ? t(errorKey) : text;
 
   // The "done" confirmation, when the verdict has one.

@@ -5,6 +5,7 @@ import { useStore } from "../lib/store";
 import { isMac, isWindows } from "../lib/platform";
 import { isTauri } from "../lib/tauriEvents";
 import { CLOUD_ENABLED } from "../lib/flags";
+import { isProviderListed } from "../lib/providerListing";
 import { log } from "../lib/log";
 import { PROVIDERS, PROVIDER_BY_ID, type ProviderInfo } from "../lib/ai/providers";
 import { STT_PROVIDERS, STT_BY_ID, sttApiKey, sttLabel } from "../lib/transcription/providers";
@@ -377,6 +378,7 @@ function AccountStep({ local }: Readonly<{ local: LocalSttModelsState }>) {
   const settings = useStore((s) => s.settings);
   const patch = useStore((s) => s.updateSettings);
   const cloudAuth = useStore((s) => s.cloudAuth);
+  const listing = { cloudEnabled: CLOUD_ENABLED, signedIn: !!cloudAuth };
   const [signingIn, setSigningIn] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Start expanded when a BYOK STT key is already there (re-running onboarding)
@@ -466,7 +468,7 @@ function AccountStep({ local }: Readonly<{ local: LocalSttModelsState }>) {
               <SelectContent>
                 {/* Hosted "parley" STT (Parley Cloud) shows only in the
                     official build once signed in. */}
-                {STT_PROVIDERS.filter((p) => p.id !== "parley" || (CLOUD_ENABLED && !!cloudAuth)).map((p) => (
+                {STT_PROVIDERS.filter((p) => isProviderListed(p, listing)).map((p) => (
                   <SelectItem key={p.id} value={p.id}>
                     <span className="flex items-center gap-2">
                       <img src={p.icon} alt="" className="size-4 rounded-sm" />
@@ -522,7 +524,7 @@ function AccountStep({ local }: Readonly<{ local: LocalSttModelsState }>) {
                 {/* The hosted "parley" provider needs a signed-in cloud session:
                     offer it only in the official build once signed in (mirrors
                     the Settings gate). */}
-                {PROVIDERS.filter((p) => p.id !== "parley" || (CLOUD_ENABLED && !!cloudAuth)).map((p) => (
+                {PROVIDERS.filter((p) => isProviderListed(p, listing)).map((p) => (
                   <SelectItem key={p.id} value={p.id}>
                     <span className="flex items-center gap-2">
                       <img src={p.icon} alt="" className="size-4 rounded-sm" />
