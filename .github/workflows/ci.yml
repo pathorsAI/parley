@@ -188,11 +188,16 @@ jobs:
       # once with whatever this runner has and once with the loader forced
       # missing. A delay-load exception escaping ggml crashes the step.
       - name: Delay-loaded Vulkan loader (present and missing)
-        shell: bash
+        # pwsh, not bash: Git Bash puts coreutils' /usr/bin/link ahead of the
+        # MSVC link.exe that the developer environment step added to PATH.
+        shell: pwsh
         run: |
-          set -euxo pipefail
+          $ErrorActionPreference = 'Stop'
           cargo run --manifest-path src-tauri/Cargo.toml --example vulkan_delayload_check --target x86_64-pc-windows-msvc
-          PARLEY_FORCE_NO_VULKAN_LOADER=1 cargo run --manifest-path src-tauri/Cargo.toml --example vulkan_delayload_check --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { throw "vulkan_delayload_check failed ($LASTEXITCODE)" }
+          $env:PARLEY_FORCE_NO_VULKAN_LOADER = '1'
+          cargo run --manifest-path src-tauri/Cargo.toml --example vulkan_delayload_check --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { throw "vulkan_delayload_check (no loader) failed ($LASTEXITCODE)" }
 
       # MSBuild only says "compiler identification is unknown" when a nested
       # CMake configure fails; the reason is in its configure log.
