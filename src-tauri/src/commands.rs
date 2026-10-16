@@ -994,3 +994,70 @@ pub fn append_session_command_result(app: AppHandle, json: String) -> Result<(),
         .map_err(|e| e.to_string())?;
     writeln!(file, "{}", json.trim()).map_err(|e| e.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{discard_recording, parse_loopback_callback, urldecode};
+
+    #[test]
+    fn urldecode_handles_percent_escapes_plus_and_malformed_input() {
+        assert_eq!(urldecode("a%20b+c"), "a b c");
+        assert_eq!(urldecode("%E6%9D%B1%E6%A3%AE"), "東森");
+        // A `%` without two hex digits after it is kept as-is.
+        assert_eq!(urldecode("100%"), "100%");
+        assert_eq!(urldecode("%zz1"), "%zz1");
+        assert_eq!(urldecode("%4"), "%4");
+        // Invalid UTF-8 decodes lossily instead of failing.
+        assert_eq!(urldecode("%FF"), "\u{FFFD}");
+    }
+
+    #[test]
+    fn the_loopback_callback_yields_its_token_and_error() {
+        let req = "GET /cb?token=abc%2Fdef&state=x HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
+        assert_eq!(
+            parse_loopback_callback(req),
+            (Some("abc/def".to_string()), None)
+        );
+        assert_eq!(
+            parse_loopback_callback("GET /cb?error=access+denied HTTP/1.1\r\n"),
+            (None, Some("access denied".to_string()))
+        );
+        // The last of a repeated key wins; a key without `=` is ignored.
+        assert_eq!(
+            parse_loopback_callback("GET /cb?token=a&token=b&error HTTP/1.1"),
+            (Some("b".to_string()), None)
+        );
+        assert_eq!(parse_loopback_callback("GET /cb HTTP/1.1"), (None, None));
+        assert_eq!(parse_loopback_callback(""), (None, None));
+    }
+
+    #[test]
+    fn discard_recording_removes_only_our_temp_recordings() {
+        let ours = std::env::temp_dir().join(format!(
+            "parley-recording-test-{}.ogg",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::write(&ours, b"ogg").unwrap();
+        discard_recording(ours.to_string_lossy().into_owned());
+        assert!(!ours.exists());
+
+        // Right folder, wrong name: refused.
+        let other = std::env::temp_dir().join(format!("not-ours-{}.ogg", uuid::Uuid::new_v4()));
+        std::fs::write(&other, b"keep").unwrap();
+        discard_recording(other.to_string_lossy().into_owned());
+        assert!(other.exists());
+        let _ = std::fs::remove_file(&other);
+
+        // Right name, outside the temp dir: refused.
+        let dir = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join(format!("discard-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let outside = dir.join("parley-recording-1.ogg");
+        std::fs::write(&outside, b"keep").unwrap();
+        discard_recording(outside.to_string_lossy().into_owned());
+        assert!(outside.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

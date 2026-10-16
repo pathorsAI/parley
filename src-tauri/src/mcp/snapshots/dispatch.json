@@ -1,0 +1,2348 @@
+[
+  {
+    "args": {},
+    "result": [
+      {
+        "builtin": true,
+        "evalCount": 1,
+        "id": "eval-1",
+        "name": "Sales basics"
+      },
+      {
+        "builtin": false,
+        "evalCount": 0,
+        "id": "eval-2",
+        "name": "Mine"
+      }
+    ],
+    "tool": "list_eval_templates"
+  },
+  {
+    "args": {
+      "id": "eval-1"
+    },
+    "result": {
+      "builtin": true,
+      "evals": [
+        {
+          "description": "Asks about budget",
+          "id": "d1",
+          "name": "Budget",
+          "prompt": "Did ME ask?"
+        }
+      ],
+      "id": "eval-1",
+      "name": "Sales basics"
+    },
+    "tool": "get_eval_template"
+  },
+  {
+    "args": {
+      "id": "missing"
+    },
+    "error": "eval template not found: missing",
+    "tool": "get_eval_template"
+  },
+  {
+    "args": {},
+    "error": "missing string field: id",
+    "tool": "get_eval_template"
+  },
+  {
+    "args": {
+      "evals": [
+        {
+          "description": "Budget asked",
+          "id": "d1",
+          "name": "Budget",
+          "prompt": "p"
+        },
+        {
+          "description": "When",
+          "name": "Timeline",
+          "prompt": "q"
+        }
+      ],
+      "id": "eval-1",
+      "name": "Sales v2"
+    },
+    "result": {
+      "builtin": false,
+      "evals": [
+        {
+          "description": "Budget asked",
+          "id": "d1",
+          "name": "Budget",
+          "prompt": "p"
+        },
+        {
+          "description": "When",
+          "id": "<uuid>",
+          "name": "Timeline",
+          "prompt": "q"
+        }
+      ],
+      "id": "eval-1",
+      "name": "Sales v2"
+    },
+    "tool": "upsert_eval_template"
+  },
+  {
+    "args": {
+      "evals": [],
+      "name": "Brand new"
+    },
+    "result": {
+      "builtin": false,
+      "evals": [],
+      "id": "<uuid>",
+      "name": "Brand new"
+    },
+    "tool": "upsert_eval_template"
+  },
+  {
+    "args": {
+      "name": "No evals"
+    },
+    "error": "missing field `evals`",
+    "tool": "upsert_eval_template"
+  },
+  {
+    "args": {
+      "id": "eval-2"
+    },
+    "result": {
+      "deleted": true,
+      "id": "eval-2"
+    },
+    "tool": "delete_eval_template"
+  },
+  {
+    "args": {
+      "id": "eval-2"
+    },
+    "result": {
+      "deleted": false,
+      "id": "eval-2"
+    },
+    "tool": "delete_eval_template"
+  },
+  {
+    "args": {},
+    "result": [
+      {
+        "builtin": true,
+        "evalCount": 2,
+        "id": "eval-1",
+        "name": "Sales v2"
+      },
+      {
+        "builtin": false,
+        "evalCount": 0,
+        "id": "<uuid>",
+        "name": "Brand new"
+      }
+    ],
+    "tool": "list_eval_templates"
+  },
+  {
+    "args": {},
+    "result": [
+      {
+        "builtin": true,
+        "id": "todo-1",
+        "itemCount": 2,
+        "name": "Discovery"
+      }
+    ],
+    "tool": "list_todo_templates"
+  },
+  {
+    "args": {
+      "id": "todo-1"
+    },
+    "result": {
+      "builtin": true,
+      "id": "todo-1",
+      "items": [
+        "Budget",
+        "Timeline"
+      ],
+      "name": "Discovery"
+    },
+    "tool": "get_todo_template"
+  },
+  {
+    "args": {
+      "id": "nope"
+    },
+    "error": "todo template not found: nope",
+    "tool": "get_todo_template"
+  },
+  {
+    "args": {
+      "id": "todo-1",
+      "items": [
+        "Budget"
+      ],
+      "name": "Discovery v2"
+    },
+    "result": {
+      "builtin": false,
+      "id": "todo-1",
+      "items": [
+        "Budget"
+      ],
+      "name": "Discovery v2"
+    },
+    "tool": "upsert_todo_template"
+  },
+  {
+    "args": {
+      "items": [
+        "a",
+        "b"
+      ],
+      "name": "Fresh"
+    },
+    "result": {
+      "builtin": false,
+      "id": "<uuid>",
+      "items": [
+        "a",
+        "b"
+      ],
+      "name": "Fresh"
+    },
+    "tool": "upsert_todo_template"
+  },
+  {
+    "args": {
+      "id": "todo-1"
+    },
+    "result": {
+      "deleted": true,
+      "id": "todo-1"
+    },
+    "tool": "delete_todo_template"
+  },
+  {
+    "args": {},
+    "error": "missing string field: id",
+    "tool": "delete_todo_template"
+  },
+  {
+    "args": {},
+    "result": [
+      {
+        "builtin": false,
+        "id": "<uuid>",
+        "itemCount": 2,
+        "name": "Fresh"
+      }
+    ],
+    "tool": "list_todo_templates"
+  },
+  {
+    "args": {},
+    "result": [
+      {
+        "createdAt": 1756000000000,
+        "futureField": 1,
+        "id": "e1",
+        "phrase": "Parley",
+        "source": "settings",
+        "updatedAt": 1756000000000,
+        "variants": [
+          "派勒"
+        ]
+      }
+    ],
+    "tool": "list_dictionary_phrases"
+  },
+  {
+    "args": {
+      "phrase": " Cerana ",
+      "variants": [
+        "色瑞納",
+        " ",
+        "色瑞納"
+      ]
+    },
+    "events": [
+      {
+        "event": "dictionary://updated",
+        "payload": {
+          "origin": "mcp"
+        }
+      }
+    ],
+    "result": {
+      "createdAt": "<now>",
+      "id": "<uuid>",
+      "phrase": "Cerana",
+      "source": "mcp",
+      "updatedAt": "<now>",
+      "variants": [
+        "色瑞納"
+      ]
+    },
+    "tool": "add_dictionary_phrase"
+  },
+  {
+    "args": {
+      "phrase": "  "
+    },
+    "error": "phrase must not be empty",
+    "tool": "add_dictionary_phrase"
+  },
+  {
+    "args": {
+      "variants": []
+    },
+    "error": "missing field `phrase`",
+    "tool": "add_dictionary_phrase"
+  },
+  {
+    "args": {
+      "id": "e1",
+      "variants": [
+        "派樂",
+        "派樂 "
+      ]
+    },
+    "events": [
+      {
+        "event": "dictionary://updated",
+        "payload": {
+          "origin": "mcp"
+        }
+      }
+    ],
+    "result": {
+      "createdAt": 1756000000000,
+      "futureField": 1,
+      "id": "e1",
+      "phrase": "Parley",
+      "source": "settings",
+      "updatedAt": "<now>",
+      "variants": [
+        "派樂"
+      ]
+    },
+    "tool": "update_dictionary_phrase"
+  },
+  {
+    "args": {
+      "id": "missing",
+      "phrase": "x"
+    },
+    "error": "dictionary phrase not found: missing",
+    "tool": "update_dictionary_phrase"
+  },
+  {
+    "args": {
+      "id": "e1",
+      "phrase": " "
+    },
+    "error": "phrase must not be empty",
+    "tool": "update_dictionary_phrase"
+  },
+  {
+    "args": {
+      "id": "e1"
+    },
+    "events": [
+      {
+        "event": "dictionary://updated",
+        "payload": {
+          "origin": "mcp"
+        }
+      }
+    ],
+    "result": {
+      "deleted": true,
+      "id": "e1"
+    },
+    "tool": "delete_dictionary_phrase"
+  },
+  {
+    "args": {
+      "id": "e1"
+    },
+    "events": [
+      {
+        "event": "dictionary://updated",
+        "payload": {
+          "origin": "mcp"
+        }
+      }
+    ],
+    "result": {
+      "deleted": false,
+      "id": "e1"
+    },
+    "tool": "delete_dictionary_phrase"
+  },
+  {
+    "args": {},
+    "result": [
+      {
+        "createdAt": "<now>",
+        "id": "<uuid>",
+        "phrase": "Cerana",
+        "source": "mcp",
+        "updatedAt": "<now>",
+        "variants": [
+          "色瑞納"
+        ]
+      }
+    ],
+    "tool": "list_dictionary_phrases"
+  },
+  {
+    "args": {},
+    "result": {
+      "appMode": "live",
+      "focus": "idle",
+      "focusSummary": "Nothing is happening: no meeting is active and no recording is loaded.",
+      "meetingStatus": "idle",
+      "replay": null,
+      "studyTab": null,
+      "updatedAt": null
+    },
+    "tool": "get_app_context"
+  },
+  {
+    "args": {},
+    "result": {
+      "context": {
+        "appMode": "live",
+        "focus": "idle",
+        "focusSummary": "Nothing is happening: no meeting is active and no recording is loaded.",
+        "meetingStatus": "idle",
+        "replay": null,
+        "studyTab": null,
+        "updatedAt": null
+      },
+      "evalCount": 0,
+      "findingCount": 0,
+      "meetingStatus": "idle",
+      "segmentCount": 0,
+      "todoCount": 0,
+      "updatedAt": null
+    },
+    "tool": "get_session_status"
+  },
+  {
+    "args": {},
+    "result": {
+      "context": {
+        "appMode": "live",
+        "focus": "idle",
+        "focusSummary": "Nothing is happening: no meeting is active and no recording is loaded.",
+        "meetingStatus": "idle",
+        "replay": null,
+        "studyTab": null,
+        "updatedAt": null
+      },
+      "transcript": {
+        "segmentCount": 0,
+        "text": ""
+      }
+    },
+    "tool": "get_transcript"
+  },
+  {
+    "args": {},
+    "result": [],
+    "tool": "list_todos"
+  },
+  {
+    "args": {},
+    "result": [],
+    "tool": "list_evaluations"
+  },
+  {
+    "args": {},
+    "result": [],
+    "tool": "list_findings"
+  },
+  {
+    "args": {},
+    "result": {
+      "analysisNote": "The findings, evaluations, brief, action items, and delivery assessment in this response are Parley's OWN prior analysis, included as CONTEXT — not ground truth. When analyzing or advising, reason from the transcript first; you are free and encouraged to think critically, disagree with these results, or surface angles they missed.",
+      "context": {
+        "appMode": "live",
+        "focus": "idle",
+        "focusSummary": "Nothing is happening: no meeting is active and no recording is loaded.",
+        "meetingStatus": "idle",
+        "replay": null,
+        "studyTab": null,
+        "updatedAt": null
+      },
+      "findings": [],
+      "transcript": {
+        "segmentCount": 0,
+        "text": ""
+      }
+    },
+    "tool": "get_focused_content"
+  },
+  {
+    "session": {
+      "actionItems": null,
+      "brief": "Live brief",
+      "context": {
+        "appMode": "live"
+      },
+      "evaluations": [
+        {
+          "id": "v1",
+          "name": "Budget",
+          "status": "idle"
+        }
+      ],
+      "findings": [
+        {
+          "atMs": 1000,
+          "id": "x1",
+          "title": "Opening"
+        }
+      ],
+      "meetingStatus": "recording",
+      "todos": [
+        {
+          "done": false,
+          "id": "t1",
+          "text": "Ask budget"
+        }
+      ],
+      "transcript": {
+        "segmentCount": 1,
+        "text": "[You] hi"
+      },
+      "updatedAt": 1756000001000
+    }
+  },
+  {
+    "args": {},
+    "result": {
+      "appMode": "live",
+      "focus": "live-meeting",
+      "focusSummary": "A live meeting is being recorded RIGHT NOW; the transcript below is growing in real time.",
+      "meetingStatus": "recording",
+      "replay": null,
+      "studyTab": null,
+      "updatedAt": 1756000001000
+    },
+    "tool": "get_app_context"
+  },
+  {
+    "args": {},
+    "result": {
+      "context": {
+        "appMode": "live",
+        "focus": "live-meeting",
+        "focusSummary": "A live meeting is being recorded RIGHT NOW; the transcript below is growing in real time.",
+        "meetingStatus": "recording",
+        "replay": null,
+        "studyTab": null,
+        "updatedAt": 1756000001000
+      },
+      "evalCount": 1,
+      "findingCount": 1,
+      "meetingStatus": "recording",
+      "segmentCount": 1,
+      "todoCount": 1,
+      "updatedAt": 1756000001000
+    },
+    "tool": "get_session_status"
+  },
+  {
+    "args": {},
+    "result": {
+      "context": {
+        "appMode": "live",
+        "focus": "live-meeting",
+        "focusSummary": "A live meeting is being recorded RIGHT NOW; the transcript below is growing in real time.",
+        "meetingStatus": "recording",
+        "replay": null,
+        "studyTab": null,
+        "updatedAt": 1756000001000
+      },
+      "transcript": {
+        "segmentCount": 1,
+        "text": "[You] hi"
+      }
+    },
+    "tool": "get_transcript"
+  },
+  {
+    "args": {},
+    "result": [
+      {
+        "done": false,
+        "id": "t1",
+        "text": "Ask budget"
+      }
+    ],
+    "tool": "list_todos"
+  },
+  {
+    "args": {},
+    "result": [
+      {
+        "id": "v1",
+        "name": "Budget",
+        "status": "idle"
+      }
+    ],
+    "tool": "list_evaluations"
+  },
+  {
+    "args": {},
+    "result": [
+      {
+        "atMs": 1000,
+        "id": "x1",
+        "title": "Opening"
+      }
+    ],
+    "tool": "list_findings"
+  },
+  {
+    "args": {},
+    "result": {
+      "analysisNote": "The findings, evaluations, brief, action items, and delivery assessment in this response are Parley's OWN prior analysis, included as CONTEXT — not ground truth. When analyzing or advising, reason from the transcript first; you are free and encouraged to think critically, disagree with these results, or surface angles they missed.",
+      "brief": "Live brief",
+      "context": {
+        "appMode": "live",
+        "focus": "live-meeting",
+        "focusSummary": "A live meeting is being recorded RIGHT NOW; the transcript below is growing in real time.",
+        "meetingStatus": "recording",
+        "replay": null,
+        "studyTab": null,
+        "updatedAt": 1756000001000
+      },
+      "evaluations": [
+        {
+          "id": "v1",
+          "name": "Budget",
+          "status": "idle"
+        }
+      ],
+      "findings": [
+        {
+          "atMs": 1000,
+          "id": "x1",
+          "title": "Opening"
+        }
+      ],
+      "todos": [
+        {
+          "done": false,
+          "id": "t1",
+          "text": "Ask budget"
+        }
+      ],
+      "transcript": {
+        "segmentCount": 1,
+        "text": "[You] hi"
+      }
+    },
+    "tool": "get_focused_content"
+  },
+  {
+    "session": {
+      "context": {
+        "appMode": "live"
+      },
+      "meetingStatus": "paused"
+    }
+  },
+  {
+    "args": {},
+    "result": {
+      "appMode": "live",
+      "focus": "live-meeting",
+      "focusSummary": "A live meeting is in progress but PAUSED — audio is not being transcribed or recorded until the user resumes. The transcript below covers the meeting so far.",
+      "meetingStatus": "paused",
+      "replay": null,
+      "studyTab": null,
+      "updatedAt": null
+    },
+    "tool": "get_app_context"
+  },
+  {
+    "args": {},
+    "result": {
+      "analysisNote": "The findings, evaluations, brief, action items, and delivery assessment in this response are Parley's OWN prior analysis, included as CONTEXT — not ground truth. When analyzing or advising, reason from the transcript first; you are free and encouraged to think critically, disagree with these results, or surface angles they missed.",
+      "context": {
+        "appMode": "live",
+        "focus": "live-meeting",
+        "focusSummary": "A live meeting is in progress but PAUSED — audio is not being transcribed or recorded until the user resumes. The transcript below covers the meeting so far.",
+        "meetingStatus": "paused",
+        "replay": null,
+        "studyTab": null,
+        "updatedAt": null
+      },
+      "evaluations": [],
+      "findings": [],
+      "todos": [],
+      "transcript": {
+        "segmentCount": 0,
+        "text": ""
+      }
+    },
+    "tool": "get_focused_content"
+  },
+  {
+    "session": {
+      "context": {
+        "appMode": "live"
+      },
+      "meetingStatus": "stopped",
+      "todos": []
+    }
+  },
+  {
+    "args": {},
+    "result": {
+      "appMode": "live",
+      "focus": "live-post-meeting",
+      "focusSummary": "No meeting is active: the last live meeting has ENDED and the user is looking at its post-meeting state. The transcript and findings below are from that finished meeting — do not treat it as ongoing.",
+      "meetingStatus": "stopped",
+      "replay": null,
+      "studyTab": null,
+      "updatedAt": null
+    },
+    "tool": "get_app_context"
+  },
+  {
+    "args": {},
+    "result": {
+      "analysisNote": "The findings, evaluations, brief, action items, and delivery assessment in this response are Parley's OWN prior analysis, included as CONTEXT — not ground truth. When analyzing or advising, reason from the transcript first; you are free and encouraged to think critically, disagree with these results, or surface angles they missed.",
+      "context": {
+        "appMode": "live",
+        "focus": "live-post-meeting",
+        "focusSummary": "No meeting is active: the last live meeting has ENDED and the user is looking at its post-meeting state. The transcript and findings below are from that finished meeting — do not treat it as ongoing.",
+        "meetingStatus": "stopped",
+        "replay": null,
+        "studyTab": null,
+        "updatedAt": null
+      },
+      "evaluations": [],
+      "findings": [],
+      "todos": [],
+      "transcript": {
+        "segmentCount": 0,
+        "text": ""
+      }
+    },
+    "tool": "get_focused_content"
+  },
+  {
+    "session": {
+      "context": {
+        "appMode": "replay",
+        "replay": {
+          "name": "Pricing call",
+          "savedHistoryId": "rec-1"
+        },
+        "studyTab": "findings"
+      },
+      "findings": [],
+      "meetingStatus": "stopped",
+      "transcript": {
+        "segmentCount": 2,
+        "text": "x"
+      }
+    }
+  },
+  {
+    "args": {},
+    "result": {
+      "appMode": "replay",
+      "focus": "replay",
+      "focusSummary": "The user is REVIEWING a saved recording ('Pricing call', history id rec-1) in the replay/study screen — they are NOT in a live meeting (the last meeting, if any, already ended). The transcript and findings in this session snapshot belong to that recording.",
+      "meetingStatus": "stopped",
+      "replay": {
+        "name": "Pricing call",
+        "savedHistoryId": "rec-1"
+      },
+      "studyTab": "findings",
+      "updatedAt": null
+    },
+    "tool": "get_app_context"
+  },
+  {
+    "args": {},
+    "result": {
+      "actionItems": [
+        {
+          "text": "Send the price sheet"
+        }
+      ],
+      "analysisNote": "The findings, evaluations, brief, action items, and delivery assessment in this response are Parley's OWN prior analysis, included as CONTEXT — not ground truth. When analyzing or advising, reason from the transcript first; you are free and encouraged to think critically, disagree with these results, or surface angles they missed.",
+      "brief": "They want a lower price for 東森.",
+      "context": {
+        "appMode": "replay",
+        "focus": "replay",
+        "focusSummary": "The user is REVIEWING a saved recording ('Pricing call', history id rec-1) in the replay/study screen — they are NOT in a live meeting (the last meeting, if any, already ended). The transcript and findings in this session snapshot belong to that recording.",
+        "meetingStatus": "stopped",
+        "replay": {
+          "name": "Pricing call",
+          "savedHistoryId": "rec-1"
+        },
+        "studyTab": "findings",
+        "updatedAt": null
+      },
+      "deliveryAssessment": {
+        "pace": "ok"
+      },
+      "findings": [],
+      "title": "Pricing call",
+      "transcript": {
+        "segmentCount": 2,
+        "text": "x"
+      }
+    },
+    "tool": "get_focused_content"
+  },
+  {
+    "session": {
+      "context": {
+        "appMode": "replay",
+        "replay": {
+          "name": "Upload"
+        }
+      }
+    }
+  },
+  {
+    "args": {},
+    "result": {
+      "appMode": "replay",
+      "focus": "replay",
+      "focusSummary": "The user is REVIEWING a saved recording ('Upload', not saved to the local library) in the replay/study screen — they are NOT in a live meeting (the last meeting, if any, already ended). The transcript and findings in this session snapshot belong to that recording.",
+      "meetingStatus": "idle",
+      "replay": {
+        "name": "Upload"
+      },
+      "studyTab": null,
+      "updatedAt": null
+    },
+    "tool": "get_app_context"
+  },
+  {
+    "args": {},
+    "result": {
+      "analysisNote": "The findings, evaluations, brief, action items, and delivery assessment in this response are Parley's OWN prior analysis, included as CONTEXT — not ground truth. When analyzing or advising, reason from the transcript first; you are free and encouraged to think critically, disagree with these results, or surface angles they missed.",
+      "context": {
+        "appMode": "replay",
+        "focus": "replay",
+        "focusSummary": "The user is REVIEWING a saved recording ('Upload', not saved to the local library) in the replay/study screen — they are NOT in a live meeting (the last meeting, if any, already ended). The transcript and findings in this session snapshot belong to that recording.",
+        "meetingStatus": "idle",
+        "replay": {
+          "name": "Upload"
+        },
+        "studyTab": null,
+        "updatedAt": null
+      },
+      "findings": [],
+      "note": "This recording is not in the local library (an unsaved upload or an org recording viewed read-only), so saved extras like action items are unavailable here.",
+      "transcript": {
+        "segmentCount": 0,
+        "text": ""
+      }
+    },
+    "tool": "get_focused_content"
+  },
+  {
+    "session": {
+      "context": {
+        "appMode": "replay",
+        "replay": {
+          "savedHistoryId": "gone"
+        }
+      }
+    }
+  },
+  {
+    "args": {},
+    "result": {
+      "analysisNote": "The findings, evaluations, brief, action items, and delivery assessment in this response are Parley's OWN prior analysis, included as CONTEXT — not ground truth. When analyzing or advising, reason from the transcript first; you are free and encouraged to think critically, disagree with these results, or surface angles they missed.",
+      "context": {
+        "appMode": "replay",
+        "focus": "replay",
+        "focusSummary": "The user is REVIEWING a saved recording ('(unnamed)', history id gone) in the replay/study screen — they are NOT in a live meeting (the last meeting, if any, already ended). The transcript and findings in this session snapshot belong to that recording.",
+        "meetingStatus": "idle",
+        "replay": {
+          "savedHistoryId": "gone"
+        },
+        "studyTab": null,
+        "updatedAt": null
+      },
+      "findings": [],
+      "transcript": {
+        "segmentCount": 0,
+        "text": ""
+      }
+    },
+    "tool": "get_focused_content"
+  },
+  {
+    "session": {
+      "context": {
+        "appMode": "library"
+      },
+      "meetingStatus": "recording"
+    }
+  },
+  {
+    "args": {},
+    "result": {
+      "appMode": "library",
+      "focus": "library",
+      "focusSummary": "The user is browsing the saved-recordings library — no meeting is active and no recording is loaded.",
+      "meetingStatus": "recording",
+      "replay": null,
+      "studyTab": null,
+      "updatedAt": null
+    },
+    "tool": "get_app_context"
+  },
+  {
+    "args": {},
+    "result": {
+      "analysisNote": "The findings, evaluations, brief, action items, and delivery assessment in this response are Parley's OWN prior analysis, included as CONTEXT — not ground truth. When analyzing or advising, reason from the transcript first; you are free and encouraged to think critically, disagree with these results, or surface angles they missed.",
+      "context": {
+        "appMode": "library",
+        "focus": "library",
+        "focusSummary": "The user is browsing the saved-recordings library — no meeting is active and no recording is loaded.",
+        "meetingStatus": "recording",
+        "replay": null,
+        "studyTab": null,
+        "updatedAt": null
+      },
+      "findings": [],
+      "transcript": {
+        "segmentCount": 0,
+        "text": ""
+      }
+    },
+    "tool": "get_focused_content"
+  },
+  {
+    "session": {
+      "context": {
+        "appMode": "settings"
+      }
+    }
+  },
+  {
+    "args": {},
+    "result": {
+      "appMode": "settings",
+      "focus": "settings",
+      "focusSummary": "The user is in Settings — no meeting is active and no recording is loaded.",
+      "meetingStatus": "idle",
+      "replay": null,
+      "studyTab": null,
+      "updatedAt": null
+    },
+    "tool": "get_app_context"
+  },
+  {
+    "session": "not json"
+  },
+  {
+    "args": {},
+    "result": {
+      "context": {
+        "appMode": "live",
+        "focus": "idle",
+        "focusSummary": "Nothing is happening: no meeting is active and no recording is loaded.",
+        "meetingStatus": "idle",
+        "replay": null,
+        "studyTab": null,
+        "updatedAt": null
+      },
+      "evalCount": 0,
+      "findingCount": 0,
+      "meetingStatus": "idle",
+      "segmentCount": 0,
+      "todoCount": 0,
+      "updatedAt": null
+    },
+    "tool": "get_session_status"
+  },
+  {
+    "args": {
+      "text": "Follow up"
+    },
+    "events": [
+      {
+        "event": "session://commands",
+        "payload": null
+      }
+    ],
+    "queued": [
+      {
+        "action": "add_todo",
+        "args": {
+          "text": "Follow up"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    ],
+    "result": {
+      "ok": true,
+      "queued": "add_todo"
+    },
+    "tool": "add_todo"
+  },
+  {
+    "args": {},
+    "error": "missing string field: text",
+    "tool": "add_todo"
+  },
+  {
+    "args": {
+      "id": "t1"
+    },
+    "events": [
+      {
+        "event": "session://commands",
+        "payload": null
+      }
+    ],
+    "queued": [
+      {
+        "action": "check_todo",
+        "args": {
+          "done": true,
+          "id": "t1"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    ],
+    "result": {
+      "ok": true,
+      "queued": "check_todo"
+    },
+    "tool": "check_todo"
+  },
+  {
+    "args": {
+      "done": false,
+      "id": "t1"
+    },
+    "events": [
+      {
+        "event": "session://commands",
+        "payload": null
+      }
+    ],
+    "queued": [
+      {
+        "action": "check_todo",
+        "args": {
+          "done": false,
+          "id": "t1"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    ],
+    "result": {
+      "ok": true,
+      "queued": "check_todo"
+    },
+    "tool": "check_todo"
+  },
+  {
+    "args": {
+      "done": true
+    },
+    "error": "missing string field: id",
+    "tool": "check_todo"
+  },
+  {
+    "args": {
+      "id": "t1"
+    },
+    "events": [
+      {
+        "event": "session://commands",
+        "payload": null
+      }
+    ],
+    "queued": [
+      {
+        "action": "remove_todo",
+        "args": {
+          "id": "t1"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    ],
+    "result": {
+      "ok": true,
+      "queued": "remove_todo"
+    },
+    "tool": "remove_todo"
+  },
+  {
+    "args": {
+      "name": "Tone",
+      "prompt": "Was ME calm?"
+    },
+    "events": [
+      {
+        "event": "session://commands",
+        "payload": null
+      }
+    ],
+    "queued": [
+      {
+        "action": "add_evaluation",
+        "args": {
+          "description": "",
+          "name": "Tone",
+          "prompt": "Was ME calm?"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    ],
+    "result": {
+      "ok": true,
+      "queued": "add_evaluation"
+    },
+    "tool": "add_evaluation"
+  },
+  {
+    "args": {
+      "description": "Calm",
+      "name": "Tone",
+      "prompt": "Was ME calm?"
+    },
+    "events": [
+      {
+        "event": "session://commands",
+        "payload": null
+      }
+    ],
+    "queued": [
+      {
+        "action": "add_evaluation",
+        "args": {
+          "description": "Calm",
+          "name": "Tone",
+          "prompt": "Was ME calm?"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    ],
+    "result": {
+      "ok": true,
+      "queued": "add_evaluation"
+    },
+    "tool": "add_evaluation"
+  },
+  {
+    "args": {
+      "name": "Tone"
+    },
+    "error": "missing string field: prompt",
+    "tool": "add_evaluation"
+  },
+  {
+    "args": {
+      "id": "v1"
+    },
+    "events": [
+      {
+        "event": "session://commands",
+        "payload": null
+      }
+    ],
+    "queued": [
+      {
+        "action": "remove_evaluation",
+        "args": {
+          "id": "v1"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    ],
+    "result": {
+      "ok": true,
+      "queued": "remove_evaluation"
+    },
+    "tool": "remove_evaluation"
+  },
+  {
+    "args": {
+      "atMs": 5,
+      "detail": "d",
+      "severity": "info",
+      "title": "t"
+    },
+    "events": [
+      {
+        "event": "session://commands",
+        "payload": null
+      }
+    ],
+    "queued": [
+      {
+        "action": "add_finding",
+        "args": {
+          "atMs": 5,
+          "detail": "d",
+          "severity": "info",
+          "title": "t"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    ],
+    "result": {
+      "ok": true,
+      "queued": "add_finding"
+    },
+    "tool": "add_finding"
+  },
+  {
+    "args": {},
+    "events": [
+      {
+        "event": "session://commands",
+        "payload": null
+      }
+    ],
+    "queued": [
+      {
+        "action": "set_findings",
+        "args": {
+          "events": []
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    ],
+    "result": {
+      "ok": true,
+      "queued": "set_findings"
+    },
+    "tool": "set_findings"
+  },
+  {
+    "args": {
+      "events": [
+        {
+          "atMs": 1,
+          "detail": "b",
+          "severity": "warn",
+          "title": "a"
+        }
+      ]
+    },
+    "events": [
+      {
+        "event": "session://commands",
+        "payload": null
+      }
+    ],
+    "queued": [
+      {
+        "action": "set_findings",
+        "args": {
+          "events": [
+            {
+              "atMs": 1,
+              "detail": "b",
+              "severity": "warn",
+              "title": "a"
+            }
+          ]
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    ],
+    "result": {
+      "ok": true,
+      "queued": "set_findings"
+    },
+    "tool": "set_findings"
+  },
+  {
+    "args": {
+      "title": "no id"
+    },
+    "error": "missing string field: id",
+    "tool": "update_finding"
+  },
+  {
+    "args": {
+      "id": "x1",
+      "resolved": true
+    },
+    "events": [
+      {
+        "event": "session://commands",
+        "payload": null
+      }
+    ],
+    "queued": [
+      {
+        "action": "update_finding",
+        "args": {
+          "id": "x1",
+          "resolved": true
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    ],
+    "result": {
+      "ok": true,
+      "queued": "update_finding"
+    },
+    "tool": "update_finding"
+  },
+  {
+    "args": {
+      "id": "x1"
+    },
+    "events": [
+      {
+        "event": "session://commands",
+        "payload": null
+      }
+    ],
+    "queued": [
+      {
+        "action": "remove_finding",
+        "args": {
+          "id": "x1"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    ],
+    "result": {
+      "ok": true,
+      "queued": "remove_finding"
+    },
+    "tool": "remove_finding"
+  },
+  {
+    "args": {},
+    "error": "missing string field: id",
+    "tool": "remove_finding"
+  },
+  {
+    "args": {},
+    "result": {
+      "recordings": [
+        {
+          "createdAt": 1757000000000,
+          "id": "rec-2",
+          "snippet": "你好",
+          "title": "Phone sync"
+        },
+        {
+          "createdAt": 1756000000000,
+          "folderId": "f1",
+          "id": "rec-1",
+          "snippet": "Hello there",
+          "title": "Pricing call"
+        }
+      ],
+      "returned": 2,
+      "total": 2
+    },
+    "tool": "list_recordings"
+  },
+  {
+    "args": {
+      "query": "PRICING"
+    },
+    "result": {
+      "recordings": [
+        {
+          "createdAt": 1756000000000,
+          "folderId": "f1",
+          "id": "rec-1",
+          "snippet": "Hello there",
+          "title": "Pricing call"
+        }
+      ],
+      "returned": 1,
+      "total": 1
+    },
+    "tool": "list_recordings"
+  },
+  {
+    "args": {
+      "query": "你好"
+    },
+    "result": {
+      "recordings": [
+        {
+          "createdAt": 1757000000000,
+          "id": "rec-2",
+          "snippet": "你好",
+          "title": "Phone sync"
+        }
+      ],
+      "returned": 1,
+      "total": 1
+    },
+    "tool": "list_recordings"
+  },
+  {
+    "args": {
+      "folderId": "f1"
+    },
+    "result": {
+      "recordings": [
+        {
+          "createdAt": 1756000000000,
+          "folderId": "f1",
+          "id": "rec-1",
+          "snippet": "Hello there",
+          "title": "Pricing call"
+        }
+      ],
+      "returned": 1,
+      "total": 1
+    },
+    "tool": "list_recordings"
+  },
+  {
+    "args": {
+      "since": 1756500000000
+    },
+    "result": {
+      "recordings": [
+        {
+          "createdAt": 1757000000000,
+          "id": "rec-2",
+          "snippet": "你好",
+          "title": "Phone sync"
+        }
+      ],
+      "returned": 1,
+      "total": 1
+    },
+    "tool": "list_recordings"
+  },
+  {
+    "args": {
+      "limit": 1
+    },
+    "result": {
+      "recordings": [
+        {
+          "createdAt": 1757000000000,
+          "id": "rec-2",
+          "snippet": "你好",
+          "title": "Phone sync"
+        }
+      ],
+      "returned": 1,
+      "total": 2
+    },
+    "tool": "list_recordings"
+  },
+  {
+    "args": {
+      "query": "price"
+    },
+    "result": {
+      "matched": 2,
+      "query": "price",
+      "recordings": [
+        {
+          "createdAt": 1756000000000,
+          "folderId": "f1",
+          "hitCount": 4,
+          "hits": [
+            {
+              "atMs": 61000,
+              "field": "transcript",
+              "snippet": "The price is too high"
+            },
+            {
+              "field": "brief",
+              "snippet": "They want a lower price for 東森."
+            },
+            {
+              "atMs": 61000,
+              "field": "finding",
+              "snippet": "Price push — They pushed on price"
+            },
+            {
+              "field": "actionItem",
+              "snippet": "Send the price sheet"
+            }
+          ],
+          "id": "rec-1",
+          "title": "Pricing call"
+        },
+        {
+          "createdAt": 1757000000000,
+          "folderId": null,
+          "hitCount": 1,
+          "hits": [
+            {
+              "atMs": 32801,
+              "field": "transcript",
+              "snippet": "OK, let's go over the price."
+            }
+          ],
+          "id": "rec-2",
+          "title": "Phone sync"
+        }
+      ],
+      "returned": 2,
+      "scanned": 2
+    },
+    "tool": "search_meetings"
+  },
+  {
+    "args": {
+      "query": "東森"
+    },
+    "result": {
+      "matched": 1,
+      "query": "東森",
+      "recordings": [
+        {
+          "createdAt": 1756000000000,
+          "folderId": "f1",
+          "hitCount": 1,
+          "hits": [
+            {
+              "field": "brief",
+              "snippet": "They want a lower price for 東森."
+            }
+          ],
+          "id": "rec-1",
+          "title": "Pricing call"
+        }
+      ],
+      "returned": 1,
+      "scanned": 2
+    },
+    "tool": "search_meetings"
+  },
+  {
+    "args": {
+      "hitsPerRecording": 1,
+      "limit": 1,
+      "query": "price"
+    },
+    "result": {
+      "matched": 2,
+      "query": "price",
+      "recordings": [
+        {
+          "createdAt": 1756000000000,
+          "folderId": "f1",
+          "hitCount": 4,
+          "hits": [
+            {
+              "atMs": 61000,
+              "field": "transcript",
+              "snippet": "The price is too high"
+            }
+          ],
+          "id": "rec-1",
+          "title": "Pricing call"
+        }
+      ],
+      "returned": 1,
+      "scanned": 2
+    },
+    "tool": "search_meetings"
+  },
+  {
+    "args": {
+      "folderId": "f1",
+      "query": "price"
+    },
+    "result": {
+      "matched": 1,
+      "query": "price",
+      "recordings": [
+        {
+          "createdAt": 1756000000000,
+          "folderId": "f1",
+          "hitCount": 4,
+          "hits": [
+            {
+              "atMs": 61000,
+              "field": "transcript",
+              "snippet": "The price is too high"
+            },
+            {
+              "field": "brief",
+              "snippet": "They want a lower price for 東森."
+            },
+            {
+              "atMs": 61000,
+              "field": "finding",
+              "snippet": "Price push — They pushed on price"
+            },
+            {
+              "field": "actionItem",
+              "snippet": "Send the price sheet"
+            }
+          ],
+          "id": "rec-1",
+          "title": "Pricing call"
+        }
+      ],
+      "returned": 1,
+      "scanned": 1
+    },
+    "tool": "search_meetings"
+  },
+  {
+    "args": {
+      "query": "renewal"
+    },
+    "result": {
+      "matched": 1,
+      "query": "renewal",
+      "recordings": [
+        {
+          "createdAt": 1756000000000,
+          "folderId": "f1",
+          "hitCount": 1,
+          "hits": [
+            {
+              "field": "context",
+              "snippet": "Renewal negotiation"
+            }
+          ],
+          "id": "rec-1",
+          "title": "Pricing call"
+        }
+      ],
+      "returned": 1,
+      "scanned": 2
+    },
+    "tool": "search_meetings"
+  },
+  {
+    "args": {
+      "query": "absent"
+    },
+    "result": {
+      "matched": 0,
+      "query": "absent",
+      "recordings": [],
+      "returned": 0,
+      "scanned": 2
+    },
+    "tool": "search_meetings"
+  },
+  {
+    "args": {
+      "query": " "
+    },
+    "error": "query is required",
+    "tool": "search_meetings"
+  },
+  {
+    "args": {
+      "id": "rec-1"
+    },
+    "result": {
+      "actionItems": [
+        {
+          "text": "Send the price sheet"
+        }
+      ],
+      "analysisNote": "The findings, evaluations, brief, action items, and delivery assessment in this response are Parley's OWN prior analysis, included as CONTEXT — not ground truth. When analyzing or advising, reason from the transcript first; you are free and encouraged to think critically, disagree with these results, or surface angles they missed.",
+      "analyzed": true,
+      "brief": "They want a lower price for 東森.",
+      "createdAt": 1756000000000,
+      "deliveryAssessment": {
+        "pace": "ok"
+      },
+      "durationMs": 120000,
+      "findings": [
+        {
+          "atMs": 61000,
+          "detail": "They pushed on price",
+          "id": "x1",
+          "severity": "warn",
+          "title": "Price push"
+        }
+      ],
+      "folderId": "f1",
+      "id": "rec-1",
+      "meetingContext": "Renewal negotiation",
+      "source": "live",
+      "speakerNames": {
+        "them-1": "Alice"
+      },
+      "title": "Pricing call",
+      "transcript": "[0:00] [You] Hello there\n[1:01] [Alice] The price is too high"
+    },
+    "tool": "get_recording"
+  },
+  {
+    "args": {
+      "id": "rec-2"
+    },
+    "result": {
+      "analysisNote": "The findings, evaluations, brief, action items, and delivery assessment in this response are Parley's OWN prior analysis, included as CONTEXT — not ground truth. When analyzing or advising, reason from the transcript first; you are free and encouraged to think critically, disagree with these results, or surface angles they missed.",
+      "createdAt": 1757000000000,
+      "durationMs": 95000.0,
+      "id": "rec-2",
+      "speakerNames": {},
+      "title": "Phone sync",
+      "transcript": "(This transcript synced without timestamps; the times below are estimated from the recording's length.)\n[0:00] [Speaker 1] 你好，今天我們討論報價。\n[0:32] [Speaker 1] OK, let's go over the price.\n[1:00] [Speaker 1] 好\n[1:12] [Speaker 1] Sounds good 那就這樣"
+    },
+    "tool": "get_recording"
+  },
+  {
+    "args": {
+      "id": "../rec-1"
+    },
+    "error": "recording not found: ../rec-1 (only locally saved personal recordings are readable here — use list_recordings for valid ids)",
+    "tool": "get_recording"
+  },
+  {
+    "args": {
+      "id": "missing"
+    },
+    "error": "recording not found: missing (only locally saved personal recordings are readable here — use list_recordings for valid ids)",
+    "tool": "get_recording"
+  },
+  {
+    "args": {},
+    "error": "missing string field: id",
+    "tool": "get_recording"
+  },
+  {
+    "args": {},
+    "error": "unknown tool: no_such_tool",
+    "tool": "no_such_tool"
+  },
+  {
+    "args": {
+      "id": "r1"
+    },
+    "error": "missing string field: title",
+    "tool": "rename_recording"
+  },
+  {
+    "args": {},
+    "error": "missing string field: name",
+    "tool": "create_folder"
+  },
+  {
+    "args": {
+      "paths": []
+    },
+    "error": "paths (non-empty array) is required",
+    "tool": "import_transcript"
+  },
+  {
+    "args": {
+      "folder": "f1"
+    },
+    "error": "paths (non-empty array) is required",
+    "tool": "import_transcript"
+  },
+  {
+    "args": {},
+    "error": "missing string field: orgId",
+    "tool": "list_org_recordings"
+  },
+  {
+    "args": {
+      "name": "x",
+      "orgId": "o1"
+    },
+    "error": "missing string field: id",
+    "tool": "rename_org_folder"
+  },
+  {
+    "args": {
+      "id": "r1"
+    },
+    "error": "missing string field: orgId",
+    "tool": "share_recording_to_org"
+  },
+  {
+    "args": {
+      "id": "r1"
+    },
+    "error": "missing string field: orgId",
+    "tool": "delete_org_recording"
+  },
+  {
+    "file": "templates.json",
+    "lines": [
+      "{",
+      "  \"evalTemplates\": [",
+      "    {",
+      "      \"id\": \"eval-1\",",
+      "      \"name\": \"Sales v2\",",
+      "      \"builtin\": true,",
+      "      \"evals\": [",
+      "        {",
+      "          \"id\": \"d1\",",
+      "          \"name\": \"Budget\",",
+      "          \"description\": \"Budget asked\",",
+      "          \"prompt\": \"p\"",
+      "        },",
+      "        {",
+      "          \"id\": \"<uuid>\",",
+      "          \"name\": \"Timeline\",",
+      "          \"description\": \"When\",",
+      "          \"prompt\": \"q\"",
+      "        }",
+      "      ]",
+      "    },",
+      "    {",
+      "      \"id\": \"<uuid>\",",
+      "      \"name\": \"Brand new\",",
+      "      \"builtin\": false,",
+      "      \"evals\": []",
+      "    }",
+      "  ],",
+      "  \"todoTemplates\": [",
+      "    {",
+      "      \"id\": \"<uuid>\",",
+      "      \"name\": \"Fresh\",",
+      "      \"builtin\": false,",
+      "      \"items\": [",
+      "        \"a\",",
+      "        \"b\"",
+      "      ]",
+      "    }",
+      "  ]",
+      "}",
+      ""
+    ]
+  },
+  {
+    "file": "dictionary.json",
+    "lines": [
+      "{",
+      "  \"entries\": [",
+      "    {",
+      "      \"createdAt\": <now>,",
+      "      \"id\": \"<uuid>\",",
+      "      \"phrase\": \"Cerana\",",
+      "      \"source\": \"mcp\",",
+      "      \"updatedAt\": <now>,",
+      "      \"variants\": [",
+      "        \"色瑞納\"",
+      "      ]",
+      "    }",
+      "  ],",
+      "  \"ignored\": [",
+      "    {",
+      "      \"count\": 1,",
+      "      \"phrase\": \"Parley\",",
+      "      \"variant\": \"趴\"",
+      "    }",
+      "  ]",
+      "}",
+      ""
+    ]
+  },
+  {
+    "args": {
+      "extra": 1,
+      "id": "r1",
+      "title": "New title"
+    },
+    "result": {
+      "received": {
+        "action": "rename_recording",
+        "args": {
+          "id": "r1",
+          "title": "New title"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "rename_recording"
+  },
+  {
+    "args": {
+      "id": "r1",
+      "meetingKind": "internal",
+      "speakerNames": {}
+    },
+    "result": {
+      "received": {
+        "action": "update_recording_meta",
+        "args": {
+          "id": "r1",
+          "meetingKind": "internal",
+          "speakerNames": {}
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "update_recording_meta"
+  },
+  {
+    "args": {
+      "brief": "b",
+      "findings": [],
+      "id": "r1"
+    },
+    "result": {
+      "received": {
+        "action": "set_recording_analysis",
+        "args": {
+          "brief": "b",
+          "findings": [],
+          "id": "r1"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "set_recording_analysis"
+  },
+  {
+    "args": {
+      "ignored": true
+    },
+    "result": {
+      "received": {
+        "action": "list_folders",
+        "args": {},
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "list_folders"
+  },
+  {
+    "args": {
+      "name": "Clients"
+    },
+    "result": {
+      "received": {
+        "action": "create_folder",
+        "args": {
+          "name": "Clients"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "create_folder"
+  },
+  {
+    "args": {
+      "id": "f1",
+      "name": "Renamed"
+    },
+    "result": {
+      "received": {
+        "action": "rename_folder",
+        "args": {
+          "id": "f1",
+          "name": "Renamed"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "rename_folder"
+  },
+  {
+    "args": {
+      "id": "f1"
+    },
+    "result": {
+      "received": {
+        "action": "delete_folder",
+        "args": {
+          "id": "f1"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "delete_folder"
+  },
+  {
+    "args": {
+      "id": "fail-me"
+    },
+    "error": "the Parley app could not apply 'delete_folder': refused by the app",
+    "tool": "delete_folder"
+  },
+  {
+    "args": {
+      "id": "r1"
+    },
+    "result": {
+      "received": {
+        "action": "delete_recording",
+        "args": {
+          "id": "r1"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "delete_recording"
+  },
+  {
+    "args": {
+      "paths": [
+        "/tmp/a.txt"
+      ]
+    },
+    "result": {
+      "received": {
+        "action": "import_transcript",
+        "args": {
+          "folder": null,
+          "paths": [
+            "/tmp/a.txt"
+          ]
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "import_transcript"
+  },
+  {
+    "args": {
+      "folder": "f1",
+      "paths": [
+        "/tmp/a.txt",
+        "/tmp/b.srt"
+      ]
+    },
+    "result": {
+      "received": {
+        "action": "import_transcript",
+        "args": {
+          "folder": "f1",
+          "paths": [
+            "/tmp/a.txt",
+            "/tmp/b.srt"
+          ]
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "import_transcript"
+  },
+  {
+    "args": {
+      "id": "r1"
+    },
+    "result": {
+      "received": {
+        "action": "move_recording_to_folder",
+        "args": {
+          "folderId": null,
+          "id": "r1"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "move_recording_to_folder"
+  },
+  {
+    "args": {
+      "folderId": "f2",
+      "id": "r1"
+    },
+    "result": {
+      "received": {
+        "action": "move_recording_to_folder",
+        "args": {
+          "folderId": "f2",
+          "id": "r1"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "move_recording_to_folder"
+  },
+  {
+    "args": {},
+    "result": {
+      "received": {
+        "action": "list_cloud_recordings",
+        "args": {
+          "limit": null,
+          "pending": null,
+          "query": null,
+          "since": null
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "list_cloud_recordings"
+  },
+  {
+    "args": {
+      "limit": 3,
+      "pending": true,
+      "query": "q",
+      "since": 5
+    },
+    "result": {
+      "received": {
+        "action": "list_cloud_recordings",
+        "args": {
+          "limit": 3,
+          "pending": true,
+          "query": "q",
+          "since": 5
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "list_cloud_recordings"
+  },
+  {
+    "args": {
+      "id": "c1"
+    },
+    "result": {
+      "received": {
+        "action": "download_cloud_recording",
+        "args": {
+          "id": "c1"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "download_cloud_recording"
+  },
+  {
+    "args": {},
+    "result": {
+      "received": {
+        "action": "list_orgs",
+        "args": {},
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "list_orgs"
+  },
+  {
+    "args": {
+      "orgId": "o1"
+    },
+    "result": {
+      "received": {
+        "action": "list_org_recordings",
+        "args": {
+          "orgId": "o1"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "list_org_recordings"
+  },
+  {
+    "args": {
+      "orgId": "o1"
+    },
+    "result": {
+      "received": {
+        "action": "list_org_folders",
+        "args": {
+          "orgId": "o1"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "list_org_folders"
+  },
+  {
+    "args": {
+      "name": "Team",
+      "orgId": "o1"
+    },
+    "result": {
+      "received": {
+        "action": "create_org_folder",
+        "args": {
+          "name": "Team",
+          "orgId": "o1"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "create_org_folder"
+  },
+  {
+    "args": {
+      "id": "of1",
+      "name": "Team 2",
+      "orgId": "o1"
+    },
+    "result": {
+      "received": {
+        "action": "rename_org_folder",
+        "args": {
+          "id": "of1",
+          "name": "Team 2",
+          "orgId": "o1"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "rename_org_folder"
+  },
+  {
+    "args": {
+      "id": "of1",
+      "orgId": "o1"
+    },
+    "result": {
+      "received": {
+        "action": "delete_org_folder",
+        "args": {
+          "id": "of1",
+          "orgId": "o1"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "delete_org_folder"
+  },
+  {
+    "args": {
+      "id": "or1",
+      "orgId": "o1"
+    },
+    "result": {
+      "received": {
+        "action": "move_org_recording_to_folder",
+        "args": {
+          "folderId": null,
+          "id": "or1",
+          "orgId": "o1"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "move_org_recording_to_folder"
+  },
+  {
+    "args": {
+      "folderId": "of2",
+      "id": "or1",
+      "orgId": "o1"
+    },
+    "result": {
+      "received": {
+        "action": "move_org_recording_to_folder",
+        "args": {
+          "folderId": "of2",
+          "id": "or1",
+          "orgId": "o1"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "move_org_recording_to_folder"
+  },
+  {
+    "args": {
+      "id": "r1",
+      "orgId": "o1"
+    },
+    "result": {
+      "received": {
+        "action": "share_recording_to_org",
+        "args": {
+          "folderId": null,
+          "id": "r1",
+          "orgId": "o1"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "share_recording_to_org"
+  },
+  {
+    "args": {
+      "folderId": "of1",
+      "id": "r1",
+      "orgId": "o1"
+    },
+    "result": {
+      "received": {
+        "action": "share_recording_to_org",
+        "args": {
+          "folderId": "of1",
+          "id": "r1",
+          "orgId": "o1"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "share_recording_to_org"
+  },
+  {
+    "args": {
+      "id": "r1",
+      "orgId": "o1"
+    },
+    "result": {
+      "received": {
+        "action": "move_recording_to_org",
+        "args": {
+          "folderId": null,
+          "id": "r1",
+          "orgId": "o1"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "move_recording_to_org"
+  },
+  {
+    "args": {
+      "id": "or1",
+      "orgId": "o1"
+    },
+    "result": {
+      "received": {
+        "action": "copy_org_recording_to_personal",
+        "args": {
+          "id": "or1",
+          "orgId": "o1"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "copy_org_recording_to_personal"
+  },
+  {
+    "args": {
+      "id": "or1",
+      "orgId": "o1"
+    },
+    "result": {
+      "received": {
+        "action": "delete_org_recording",
+        "args": {
+          "id": "or1",
+          "orgId": "o1"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "delete_org_recording"
+  }
+]

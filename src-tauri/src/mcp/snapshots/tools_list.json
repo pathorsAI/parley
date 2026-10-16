@@ -1,0 +1,1338 @@
+{
+  "tools": [
+    {
+      "description": "List all Parley evaluation templates as { id, name, builtin, evalCount }.",
+      "inputSchema": {
+        "properties": {},
+        "type": "object"
+      },
+      "name": "list_eval_templates",
+      "title": "List eval templates"
+    },
+    {
+      "description": "Get a full Parley evaluation template by id.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "get_eval_template",
+      "title": "Get eval template"
+    },
+    {
+      "description": "Create or update an evaluation template. Returns the saved template.",
+      "inputSchema": {
+        "properties": {
+          "evals": {
+            "items": {
+              "properties": {
+                "description": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "prompt": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "description",
+                "prompt"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "evals"
+        ],
+        "type": "object"
+      },
+      "name": "upsert_eval_template",
+      "title": "Create or update eval template"
+    },
+    {
+      "description": "Delete an evaluation template by id.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "delete_eval_template",
+      "title": "Delete eval template"
+    },
+    {
+      "description": "List all Parley TODO/checklist templates as { id, name, builtin, itemCount }.",
+      "inputSchema": {
+        "properties": {},
+        "type": "object"
+      },
+      "name": "list_todo_templates",
+      "title": "List TODO templates"
+    },
+    {
+      "description": "Get a full Parley TODO template by id.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "get_todo_template",
+      "title": "Get TODO template"
+    },
+    {
+      "description": "Create or update a TODO template. Returns the saved template.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "items"
+        ],
+        "type": "object"
+      },
+      "name": "upsert_todo_template",
+      "title": "Create or update TODO template"
+    },
+    {
+      "description": "Delete a TODO template by id.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "delete_todo_template",
+      "title": "Delete TODO template"
+    },
+    {
+      "description": "List every phrase in the voice-typing dictionary as { id, phrase, variants, createdAt, source }. These are the terms dictation is biased toward — product names, jargon, people.",
+      "inputSchema": {
+        "properties": {},
+        "type": "object"
+      },
+      "name": "list_dictionary_phrases",
+      "title": "List dictionary phrases"
+    },
+    {
+      "description": "Add a phrase to the voice-typing dictionary so speech recognition spells it this way. `variants` are the mis-transcriptions that should be corrected to it. Returns the new entry.",
+      "inputSchema": {
+        "properties": {
+          "phrase": {
+            "description": "The correct spelling, e.g. \"Parley\".",
+            "type": "string"
+          },
+          "variants": {
+            "description": "Known mis-transcriptions of the phrase, e.g. [\"派勒\"].",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "phrase"
+        ],
+        "type": "object"
+      },
+      "name": "add_dictionary_phrase",
+      "title": "Add dictionary phrase"
+    },
+    {
+      "description": "Update an existing dictionary phrase by id. Omitted fields are left untouched; supplying `variants` REPLACES the whole list. Returns the updated entry.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "phrase": {
+            "type": "string"
+          },
+          "variants": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "update_dictionary_phrase",
+      "title": "Update dictionary phrase"
+    },
+    {
+      "description": "Remove a phrase from the voice-typing dictionary by id.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "delete_dictionary_phrase",
+      "title": "Delete dictionary phrase"
+    },
+    {
+      "description": "ALWAYS CALL THIS FIRST to know what the user is focused on. Returns focus (live / replay / library), meetingStatus, and — when the user is reviewing a recording — which one. IMPORTANT: meetingStatus 'stopped' means the last live meeting ENDED; if focus is 'replay' the user is reviewing a SAVED recording, not sitting in a meeting. Never assume a meeting is happening unless meetingStatus is 'recording'.",
+      "inputSchema": {
+        "properties": {},
+        "type": "object"
+      },
+      "name": "get_app_context",
+      "title": "Get what the user is looking at"
+    },
+    {
+      "description": "Get the data behind whatever screen the user is on right now, plus the focus context: the transcript and EVERYTHING Parley's own analysis produced for it (findings, study brief, action items, delivery assessment; live mode adds todos and evaluations). Those analysis artifacts are CONTEXT from Parley's earlier passes, not ground truth — when giving advice, reason from the transcript yourself and feel free to challenge or go beyond them. Use this to give advice about what the user is currently seeing.",
+      "inputSchema": {
+        "properties": {},
+        "type": "object"
+      },
+      "name": "get_focused_content",
+      "title": "Get the content the user is viewing"
+    },
+    {
+      "description": "Get the current Parley meeting state: meetingStatus (idle/recording/stopped), when it was last updated, counts of transcript segments, todos, evaluations, and timeline-analysis findings — plus the focus context (live vs replay). 'stopped' = the last meeting has ENDED, not an active meeting.",
+      "inputSchema": {
+        "properties": {},
+        "type": "object"
+      },
+      "name": "get_session_status",
+      "title": "Get live session status"
+    },
+    {
+      "description": "Get the transcript currently loaded in the app, labelled by speaker. During a live meeting this is the live transcript so far; in replay it is the transcript of the recording being reviewed; after a meeting ends it is the finished meeting's transcript. Check the returned context to know which one you got.",
+      "inputSchema": {
+        "properties": {},
+        "type": "object"
+      },
+      "name": "get_transcript",
+      "title": "Get the loaded transcript"
+    },
+    {
+      "description": "List the current meeting's checklist items as { id, text, done }.",
+      "inputSchema": {
+        "properties": {},
+        "type": "object"
+      },
+      "name": "list_todos",
+      "title": "List live todos"
+    },
+    {
+      "description": "List the current meeting's evaluations with their latest results: { id, name, description, status, lastRunAt, result }. Results are Parley's own automated reads of the transcript — context you may second-guess, not verdicts.",
+      "inputSchema": {
+        "properties": {},
+        "type": "object"
+      },
+      "name": "list_evaluations",
+      "title": "List live evaluations"
+    },
+    {
+      "description": "Add a checklist item to the current meeting. Applied within ~1.5s.",
+      "inputSchema": {
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "type": "object"
+      },
+      "name": "add_todo",
+      "title": "Add a live todo"
+    },
+    {
+      "description": "Mark a checklist item done (or not) by id. Get ids from list_todos.",
+      "inputSchema": {
+        "properties": {
+          "done": {
+            "description": "true to check, false to uncheck (default true)",
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "check_todo",
+      "title": "Check or uncheck a live todo"
+    },
+    {
+      "description": "Remove a checklist item from the current meeting by id.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "remove_todo",
+      "title": "Remove a live todo"
+    },
+    {
+      "description": "Add an evaluation to the current meeting so it runs on the transcript. Provide a short name, a description, and the prompt describing what to watch for.",
+      "inputSchema": {
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "prompt"
+        ],
+        "type": "object"
+      },
+      "name": "add_evaluation",
+      "title": "Add a live evaluation"
+    },
+    {
+      "description": "Remove an evaluation from the current meeting by id. Get ids from list_evaluations.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "remove_evaluation",
+      "title": "Remove a live evaluation"
+    },
+    {
+      "description": "List the loaded session's timeline-analysis findings (the markers on the replay timeline) as TimelineEvent objects: { id, atMs, side, severity, source, title, detail, quotes?, evalIds?, resolved?, resolution? }. These come from Parley's own analysis pass — treat them as context to build on or challenge, not as settled conclusions.",
+      "inputSchema": {
+        "properties": {},
+        "type": "object"
+      },
+      "name": "list_findings",
+      "title": "List timeline-analysis findings"
+    },
+    {
+      "description": "Insert a SINGLE finding without touching the rest of the list (unlike set_findings, which replaces everything). The new marker is placed in chronological order by atMs. Applied within ~1.5s. Omit id to mint a new one.",
+      "inputSchema": {
+        "properties": {
+          "atMs": {
+            "description": "Moment on the recording timeline (ms).",
+            "type": "number"
+          },
+          "author": {
+            "description": "Which analyst wrote this marker (e.g. 'claude'); omit for Parley's own pass.",
+            "type": "string"
+          },
+          "category": {
+            "description": "Internal-meeting bucket: settled / still open / merely established. Omit when a side is set.",
+            "enum": [
+              "decision",
+              "open",
+              "fact"
+            ],
+            "type": "string"
+          },
+          "detail": {
+            "description": "One or two sentences explaining the moment.",
+            "type": "string"
+          },
+          "evalIds": {
+            "description": "Matching evaluation ids (for source=eval).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "id": {
+            "description": "Stable id; omit to mint a new one.",
+            "type": "string"
+          },
+          "quotes": {
+            "description": "Supporting verbatim quotes.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "resolution": {
+            "description": "One line on how ME handled it (only when resolved).",
+            "type": "string"
+          },
+          "resolved": {
+            "description": "True when ME later addressed/defused this moment.",
+            "type": "boolean"
+          },
+          "severity": {
+            "enum": [
+              "info",
+              "warn",
+              "critical"
+            ],
+            "type": "string"
+          },
+          "side": {
+            "description": "Lane: my problem vs their move. Omit for an internal meeting, which has no opposing side.",
+            "enum": [
+              "me",
+              "them"
+            ],
+            "type": "string"
+          },
+          "source": {
+            "description": "From an eval, or an AI-caught extra moment.",
+            "enum": [
+              "eval",
+              "extra"
+            ],
+            "type": "string"
+          },
+          "title": {
+            "description": "Short label.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "atMs",
+          "severity",
+          "title",
+          "detail"
+        ],
+        "type": "object"
+      },
+      "name": "add_finding",
+      "title": "Add one timeline-analysis finding"
+    },
+    {
+      "description": "Replace the ENTIRE timeline-analysis findings list with the provided events (the markers shown on the replay timeline). Applied within ~1.5s. Use list_findings first to see the current set. Omit an event id to mint a new one.",
+      "inputSchema": {
+        "properties": {
+          "events": {
+            "description": "The full findings list to render on the timeline.",
+            "items": {
+              "properties": {
+                "atMs": {
+                  "description": "Moment on the recording timeline (ms).",
+                  "type": "number"
+                },
+                "author": {
+                  "description": "Which analyst wrote this marker (e.g. 'claude'); omit for Parley's own pass.",
+                  "type": "string"
+                },
+                "category": {
+                  "description": "Internal-meeting bucket: settled / still open / merely established. Omit when a side is set.",
+                  "enum": [
+                    "decision",
+                    "open",
+                    "fact"
+                  ],
+                  "type": "string"
+                },
+                "detail": {
+                  "description": "One or two sentences explaining the moment.",
+                  "type": "string"
+                },
+                "evalIds": {
+                  "description": "Matching evaluation ids (for source=eval).",
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "id": {
+                  "description": "Stable id; omit to mint a new one.",
+                  "type": "string"
+                },
+                "quotes": {
+                  "description": "Supporting verbatim quotes.",
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "resolution": {
+                  "description": "One line on how ME handled it (only when resolved).",
+                  "type": "string"
+                },
+                "resolved": {
+                  "description": "True when ME later addressed/defused this moment.",
+                  "type": "boolean"
+                },
+                "severity": {
+                  "enum": [
+                    "info",
+                    "warn",
+                    "critical"
+                  ],
+                  "type": "string"
+                },
+                "side": {
+                  "description": "Lane: my problem vs their move. Omit for an internal meeting, which has no opposing side.",
+                  "enum": [
+                    "me",
+                    "them"
+                  ],
+                  "type": "string"
+                },
+                "source": {
+                  "description": "From an eval, or an AI-caught extra moment.",
+                  "enum": [
+                    "eval",
+                    "extra"
+                  ],
+                  "type": "string"
+                },
+                "title": {
+                  "description": "Short label.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "atMs",
+                "severity",
+                "title",
+                "detail"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "events"
+        ],
+        "type": "object"
+      },
+      "name": "set_findings",
+      "title": "Overwrite timeline-analysis findings"
+    },
+    {
+      "description": "Patch a single timeline-analysis finding by id. Pass the id plus only the fields to change; the id itself cannot be changed. Get ids from list_findings.",
+      "inputSchema": {
+        "properties": {
+          "atMs": {
+            "description": "Moment on the recording timeline (ms).",
+            "type": "number"
+          },
+          "author": {
+            "type": "string"
+          },
+          "category": {
+            "enum": [
+              "decision",
+              "open",
+              "fact"
+            ],
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "evalIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "id": {
+            "type": "string"
+          },
+          "quotes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "resolution": {
+            "type": "string"
+          },
+          "resolved": {
+            "type": "boolean"
+          },
+          "severity": {
+            "enum": [
+              "info",
+              "warn",
+              "critical"
+            ],
+            "type": "string"
+          },
+          "side": {
+            "enum": [
+              "me",
+              "them"
+            ],
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "eval",
+              "extra"
+            ],
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "update_finding",
+      "title": "Edit one timeline-analysis finding"
+    },
+    {
+      "description": "Delete a single timeline-analysis finding by id. Get ids from list_findings.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "remove_finding",
+      "title": "Remove one timeline-analysis finding"
+    },
+    {
+      "description": "List the user's locally saved recordings (the personal history library), newest first, as summary cards: { id, title, source, createdAt, durationMs, speakerCount, findingsCount, actionItemsCount, hasAudio, analyzed?, snippet, folderId }. `analyzed` mirrors the entry's pipeline-complete flag (absent on cards saved before it existed = state unknown). Optional text query filters by title + transcript snippet; `since` keeps only recordings created at/after that epoch-ms timestamp — the cheap way for an external analyst to poll for new recordings. This is THIS DEVICE only: recordings made on the user's other devices sit in the cloud until pulled down — find those with list_cloud_recordings. Org-shared recordings live in the cloud too — list those with list_org_recordings.",
+      "inputSchema": {
+        "properties": {
+          "folderId": {
+            "description": "Only recordings in this personal folder (get ids from list_folders).",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Max results (default 50).",
+            "type": "number"
+          },
+          "query": {
+            "description": "Case-insensitive text filter over title + snippet.",
+            "type": "string"
+          },
+          "since": {
+            "description": "Only recordings with createdAt >= this epoch-ms timestamp.",
+            "type": "number"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_recordings",
+      "title": "List saved recordings (history)"
+    },
+    {
+      "description": "List the signed-in account's PERSONAL cloud mirror — including recordings made on the user's other devices, which never appear in list_recordings until downloaded. Same summary cards as list_recordings plus `sync`: \"cloud\" (only on another device — not on this one yet), \"stale\" (a local copy exists but the cloud one is newer, e.g. another device re-analyzed it), or \"synced\" (this device is current). Pass pending: true for exactly the set this device is missing or behind on. Pull one down with download_cloud_recording. Requires the user to be signed in with sync enabled. This is the personal library — an org's shared space is list_org_recordings.",
+      "inputSchema": {
+        "properties": {
+          "limit": {
+            "description": "Max results (default 50).",
+            "type": "number"
+          },
+          "pending": {
+            "description": "Only what this device lacks: sync is \"cloud\" or \"stale\".",
+            "type": "boolean"
+          },
+          "query": {
+            "description": "Case-insensitive text filter over title + snippet.",
+            "type": "string"
+          },
+          "since": {
+            "description": "Only recordings with createdAt >= this epoch-ms timestamp.",
+            "type": "number"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_cloud_recordings",
+      "title": "List the account's recordings across all devices"
+    },
+    {
+      "description": "Pull a recording from the account's personal cloud onto THIS device — the transcript, the saved analysis, and the audio when the cloud copy has it. Afterwards it is a normal local recording: it shows up in list_recordings, is readable with get_recording, searchable with search_meetings, and openable in replay. Re-downloading a \"stale\" entry refreshes the local copy from the cloud. Get ids from list_cloud_recordings. This is the personal library — the org equivalent is copy_org_recording_to_personal.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "description": "Cloud recording id (from list_cloud_recordings).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "download_cloud_recording",
+      "title": "Download one of the account's cloud recordings to this device"
+    },
+    {
+      "description": "Full-text search over the saved recordings: what was SAID (every transcript line, each hit carrying an `atMs` seek target) plus what the analysis CONCLUDED (brief, findings, action items, meeting context). This is the tool for questions that span meetings — 'when did we discuss pricing', 'which calls mention 東森', 'what did I promise this customer' — and the only way to reach words spoken mid-meeting: list_recordings' `query` sees only the title and the transcript's first line. Scope it with `folderId` to search one customer's folder (get ids from list_folders). Returns recordings ranked by hit count, each with its matching snippets. Read the full recording with get_recording once you know which one you want.",
+      "inputSchema": {
+        "properties": {
+          "folderId": {
+            "description": "Only search recordings in this personal folder — e.g. one customer's folder.",
+            "type": "string"
+          },
+          "hitsPerRecording": {
+            "description": "Max snippets per recording (default 5).",
+            "type": "number"
+          },
+          "limit": {
+            "description": "Max recordings returned (default 20).",
+            "type": "number"
+          },
+          "query": {
+            "description": "Text to find (case-insensitive substring).",
+            "type": "string"
+          },
+          "since": {
+            "description": "Only recordings created at/after this epoch-ms timestamp.",
+            "type": "number"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "name": "search_meetings",
+      "title": "Search across saved recordings"
+    },
+    {
+      "description": "Read a locally saved recording in full: title, dates, speaker names, the complete timestamped transcript, plus everything Parley's analysis saved with it (findings, action items, study brief, delivery assessment). The saved analysis is CONTEXT — you're encouraged to form your own view from the transcript and disagree where warranted. Use this (over several ids) as the basis for cross-meeting advice or comparisons. Get ids from list_recordings.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "get_recording",
+      "title": "Read one saved recording"
+    },
+    {
+      "description": "Rename a locally saved recording. Applied by the app (which also syncs the new title to the cloud); waits for the app to confirm.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title"
+        ],
+        "type": "object"
+      },
+      "name": "rename_recording",
+      "title": "Rename a saved recording"
+    },
+    {
+      "description": "Update a saved recording's FRAME by id: `meetingContext` (free text) and/or `speakerNames` (merged per key, e.g. {\"them-1\": \"Jamie\"}; an empty string removes that custom name). `meetingContext` is where you say WHAT KIND OF MEETING this was and WHAT MATTERS in it — who was in the room, what was at stake, and what the analysis should look for. It is fed verbatim into every analysis prompt for this recording, so writing it (and then regenerating) is how you re-aim the analysis. Use `speakerNames` to fix a wrong me/them mapping. Applied by the app (which also syncs to cloud); waits for the app to confirm.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "meetingContext": {
+            "description": "Free-text description of what this meeting was and what the analysis should look for. Goes verbatim into every analysis prompt for this recording.",
+            "type": "string"
+          },
+          "speakerNames": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Speaker-key → display-name patch, merged per key (empty string removes). Keys look like 'me-1' / 'them-1' / 'mix-2' — see speakerNames on get_recording.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "update_recording_meta",
+      "title": "Update a saved recording's meeting frame"
+    },
+    {
+      "description": "The write-back surface for an EXTERNAL analyst: write analysis results onto a saved recording by id. Each provided field REPLACES that whole field — `findings` (timeline markers; stamp `author`, e.g. 'claude', so they stay distinguishable from Parley's own pass), `actionItems`, `brief` (markdown debrief), `analyzed` (mark the recording analyzed so list_recordings filtering can skip it). Omitted fields are left untouched. Read get_recording FIRST and carry forward anything worth keeping — findings you omit from the new list are gone. If the recording is open in replay the UI updates immediately. Applied by the app (which also syncs to cloud); waits for the app to confirm.",
+      "inputSchema": {
+        "properties": {
+          "actionItems": {
+            "description": "Full replacement action-item list.",
+            "items": {
+              "properties": {
+                "atMs": {
+                  "description": "Seek target on the recording, if any.",
+                  "type": "number"
+                },
+                "done": {
+                  "type": "boolean"
+                },
+                "id": {
+                  "description": "Stable id; omit to mint a new one.",
+                  "type": "string"
+                },
+                "linkedEventId": {
+                  "description": "The finding this derives from, if any.",
+                  "type": "string"
+                },
+                "severity": {
+                  "enum": [
+                    "info",
+                    "warn",
+                    "critical"
+                  ],
+                  "type": "string"
+                },
+                "text": {
+                  "description": "The concrete next step / follow-up.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "analyzed": {
+            "description": "Mark the analysis pipeline complete for this recording.",
+            "type": "boolean"
+          },
+          "brief": {
+            "description": "Markdown debrief / meeting notes (the 重點 brief).",
+            "type": "string"
+          },
+          "findings": {
+            "description": "Full replacement findings list (see finding fields).",
+            "items": {
+              "properties": {
+                "atMs": {
+                  "description": "Moment on the recording timeline (ms).",
+                  "type": "number"
+                },
+                "author": {
+                  "description": "Which analyst wrote this marker (e.g. 'claude'); omit for Parley's own pass.",
+                  "type": "string"
+                },
+                "category": {
+                  "description": "Internal-meeting bucket: settled / still open / merely established. Omit when a side is set.",
+                  "enum": [
+                    "decision",
+                    "open",
+                    "fact"
+                  ],
+                  "type": "string"
+                },
+                "detail": {
+                  "description": "One or two sentences explaining the moment.",
+                  "type": "string"
+                },
+                "evalIds": {
+                  "description": "Matching evaluation ids (for source=eval).",
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "id": {
+                  "description": "Stable id; omit to mint a new one.",
+                  "type": "string"
+                },
+                "quotes": {
+                  "description": "Supporting verbatim quotes.",
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "resolution": {
+                  "description": "One line on how ME handled it (only when resolved).",
+                  "type": "string"
+                },
+                "resolved": {
+                  "description": "True when ME later addressed/defused this moment.",
+                  "type": "boolean"
+                },
+                "severity": {
+                  "enum": [
+                    "info",
+                    "warn",
+                    "critical"
+                  ],
+                  "type": "string"
+                },
+                "side": {
+                  "description": "Lane: my problem vs their move. Omit for an internal meeting, which has no opposing side.",
+                  "enum": [
+                    "me",
+                    "them"
+                  ],
+                  "type": "string"
+                },
+                "source": {
+                  "description": "From an eval, or an AI-caught extra moment.",
+                  "enum": [
+                    "eval",
+                    "extra"
+                  ],
+                  "type": "string"
+                },
+                "title": {
+                  "description": "Short label.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "atMs",
+                "severity",
+                "title",
+                "detail"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "set_recording_analysis",
+      "title": "Write analysis results onto a saved recording"
+    },
+    {
+      "description": "List the personal history folders as { id, name, archived }. Recordings whose folderId is null (or unknown) live at the personal root. An archived folder is one the user has put away: it still holds the recordings already filed in it, but do not file anything new there unless the user names it.",
+      "inputSchema": {
+        "properties": {},
+        "type": "object"
+      },
+      "name": "list_folders",
+      "title": "List personal folders"
+    },
+    {
+      "description": "Create a personal history folder and return { id, name, existed }. Idempotent by name: when a folder with that name already exists it is returned (existed: true) instead of duplicated. When cloud sync is on the folder is mirrored to the cloud registry.",
+      "inputSchema": {
+        "properties": {
+          "name": {
+            "description": "Folder display name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "name": "create_folder",
+      "title": "Create a personal folder"
+    },
+    {
+      "description": "Rename a personal history folder by id. Get ids from list_folders.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "description": "New display name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object"
+      },
+      "name": "rename_folder",
+      "title": "Rename a personal folder"
+    },
+    {
+      "description": "Delete a personal history folder by id. The recordings it held are NOT deleted — they fall back to the personal root (the orphan→root rule). Get ids from list_folders.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "delete_folder",
+      "title": "Delete a personal folder"
+    },
+    {
+      "description": "Import plain-text transcript files as audio-less personal recordings (issue #130 text-ingest). Speaker labels ('Speaker 1:' / 'Name: …') and [HH:MM:SS] timestamps are auto-detected; unstructured text is chunked at sentence boundaries with a synthesized timeline. Entries save unanalyzed and run their analysis on first open. `folder` files them into that personal folder BY NAME (created if missing); omit it for the personal root. Requires the Parley app to be running. Import in batches (e.g. one customer folder's files per call) to stay inside the RPC timeout.",
+      "inputSchema": {
+        "properties": {
+          "folder": {
+            "description": "Target personal folder NAME (created if missing); omit for the personal root.",
+            "type": "string"
+          },
+          "paths": {
+            "description": "Absolute paths of .txt transcript files.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "paths"
+        ],
+        "type": "object"
+      },
+      "name": "import_transcript",
+      "title": "Import .txt transcripts as recordings"
+    },
+    {
+      "description": "Move a locally saved recording into a personal folder (or to the personal root by omitting folderId). Get folder ids from list_folders.",
+      "inputSchema": {
+        "properties": {
+          "folderId": {
+            "description": "Target folder id; omit for the personal root.",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "move_recording_to_folder",
+      "title": "Move a recording between personal folders"
+    },
+    {
+      "description": "Permanently delete a personal recording: its local files AND its personal cloud copy. The cloud id is tombstoned — it can never be re-uploaded, so this CANNOT be undone. Copies previously shared into an org are NOT affected. Prefer move_recording_to_folder for archiving; only delete when the user explicitly wants the recording gone.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "description": "Personal recording id (from list_recordings).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "delete_recording",
+      "title": "Delete a saved recording (DESTRUCTIVE)"
+    },
+    {
+      "description": "List the organizations the signed-in user belongs to, as { id, name, role }. Requires the user to be signed in to Parley cloud.",
+      "inputSchema": {
+        "properties": {},
+        "type": "object"
+      },
+      "name": "list_orgs",
+      "title": "List organizations"
+    },
+    {
+      "description": "List the recordings shared into an organization (cloud-hosted). Get org ids from list_orgs.",
+      "inputSchema": {
+        "properties": {
+          "orgId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "orgId"
+        ],
+        "type": "object"
+      },
+      "name": "list_org_recordings",
+      "title": "List an org's shared recordings"
+    },
+    {
+      "description": "List an organization's folders as { id, name }. Get org ids from list_orgs.",
+      "inputSchema": {
+        "properties": {
+          "orgId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "orgId"
+        ],
+        "type": "object"
+      },
+      "name": "list_org_folders",
+      "title": "List an org's folders"
+    },
+    {
+      "description": "Create a shared folder in an organization and return { id, name, existed }. Idempotent by name: an existing same-name folder is returned (existed: true) instead of duplicated. Any org member can create; requires the user to be signed in to Parley cloud. Get org ids from list_orgs.",
+      "inputSchema": {
+        "properties": {
+          "name": {
+            "description": "Folder display name.",
+            "type": "string"
+          },
+          "orgId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "orgId",
+          "name"
+        ],
+        "type": "object"
+      },
+      "name": "create_org_folder",
+      "title": "Create an org folder"
+    },
+    {
+      "description": "Rename an organization's shared folder by id (creator or org admin/owner only). Get folder ids from list_org_folders.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "description": "New display name.",
+            "type": "string"
+          },
+          "orgId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "orgId",
+          "id",
+          "name"
+        ],
+        "type": "object"
+      },
+      "name": "rename_org_folder",
+      "title": "Rename an org folder"
+    },
+    {
+      "description": "Delete an organization's shared folder by id (creator or org admin/owner only). The recordings it held are NOT deleted — they fall back to the org root. Get folder ids from list_org_folders.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "orgId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "orgId",
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "delete_org_folder",
+      "title": "Delete an org folder"
+    },
+    {
+      "description": "Move an org-shared recording into one of that org's folders, or back to the org root by omitting folderId. Get recording ids from list_org_recordings and folder ids from list_org_folders.",
+      "inputSchema": {
+        "properties": {
+          "folderId": {
+            "description": "Target org folder id; omit for the org root.",
+            "type": "string"
+          },
+          "id": {
+            "description": "Org recording id (from list_org_recordings).",
+            "type": "string"
+          },
+          "orgId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "orgId",
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "move_org_recording_to_folder",
+      "title": "Move an org recording between org folders"
+    },
+    {
+      "description": "Share (COPY) a personal recording into an organization, optionally into a specific org folder. The personal original stays put. Returns the new org-side summary (note: the org copy gets a NEW id).",
+      "inputSchema": {
+        "properties": {
+          "folderId": {
+            "description": "Org folder id; omit for the org root.",
+            "type": "string"
+          },
+          "id": {
+            "description": "Personal recording id (from list_recordings).",
+            "type": "string"
+          },
+          "orgId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "orgId"
+        ],
+        "type": "object"
+      },
+      "name": "share_recording_to_org",
+      "title": "Copy a recording into an org"
+    },
+    {
+      "description": "MOVE a personal recording into an organization: copy it in, then delete the personal original (local + personal cloud). Destructive for the personal copy — prefer share_recording_to_org to keep it. Returns the new org-side summary.",
+      "inputSchema": {
+        "properties": {
+          "folderId": {
+            "description": "Org folder id; omit for the org root.",
+            "type": "string"
+          },
+          "id": {
+            "description": "Personal recording id (from list_recordings).",
+            "type": "string"
+          },
+          "orgId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "orgId"
+        ],
+        "type": "object"
+      },
+      "name": "move_recording_to_org",
+      "title": "Move a recording into an org"
+    },
+    {
+      "description": "Save a copy of an org-shared recording into the personal library (local disk), so it appears in list_recordings and can be opened in replay. The org copy stays put (remove it with delete_org_recording).",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "description": "Org recording id (from list_org_recordings).",
+            "type": "string"
+          },
+          "orgId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "orgId",
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "copy_org_recording_to_personal",
+      "title": "Copy an org recording to personal"
+    },
+    {
+      "description": "Remove a shared recording from an organization (uploader or org admin/owner only, server-enforced). Only the org copy is deleted — a personal original, if one still exists, is untouched. This cannot be undone; re-share from the personal copy to restore it. Get ids from list_org_recordings.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "description": "Org recording id (from list_org_recordings).",
+            "type": "string"
+          },
+          "orgId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "orgId",
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "delete_org_recording",
+      "title": "Remove a recording from an org (DESTRUCTIVE)"
+    }
+  ]
+}
