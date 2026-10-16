@@ -311,12 +311,14 @@ jobs:
       # src-tauri/target (see the rust-windows job in ci.yml). Final binaries
       # and bundles stay in src-tauri/target, where the steps below look.
       CARGO_BUILD_BUILD_DIR: 'C:\b'
-      # Even under C:\b, the nested vulkan-shaders-gen try-compile writes
-      # MSBuild FileTracker logs 261+ characters long (263 in release),
-      # failing with FTK1011. The tracker only feeds incremental-build
-      # bookkeeping, which a fresh CMake build dir never uses, so turn it
-      # off (MSBuild reads environment variables as properties).
-      TrackFileAccess: "false"
+      # Build whisper.cpp with Ninja instead of the Visual Studio generator.
+      # Under the VS generator, ggml's nested vulkan-shaders-gen project still
+      # writes MSBuild FileTracker logs past MAX_PATH even below C:\b (261
+      # characters in CI, 263 in release: FTK1011), and turning the tracker off
+      # breaks the custom-build scripts instead. Ninja has no tracker logs, and
+      # the nested ExternalProject inherits the generator. Needs cl.exe on PATH
+      # (the MSVC dev environment step below).
+      CMAKE_GENERATOR: Ninja
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -342,6 +344,15 @@ jobs:
           else
             echo "::warning::LLVM not found at C:/Program Files/LLVM; bindgen will search on its own"
           fi
+
+      - name: MSVC developer environment (cl.exe for whisper.cpp's Ninja build)
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+        with:
+          arch: x64
+
+      - name: Ninja
+        shell: bash
+        run: ninja --version || choco install ninja --no-progress -y
 
       - name: Set up the Vulkan SDK (whisper.cpp GPU backend)
         # Build-time only: the Windows app runs whisper.cpp on the GPU through
