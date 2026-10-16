@@ -103,6 +103,18 @@ jobs:
           targets: x86_64-pc-windows-msvc
           components: clippy
 
+      - name: Point bindgen at libclang (whisper-rs)
+        # whisper-rs-sys generates its bindings with bindgen, which needs
+        # libclang. The Windows image ships LLVM; pin the path so a changed
+        # search order cannot silently fall back to stale bundled bindings.
+        shell: bash
+        run: |
+          if [ -f "C:/Program Files/LLVM/bin/libclang.dll" ]; then
+            echo "LIBCLANG_PATH=C:/Program Files/LLVM/bin" >> "$GITHUB_ENV"
+          else
+            echo "::warning::LLVM not found at C:/Program Files/LLVM; bindgen will search on its own"
+          fi
+
       - name: Cache Rust
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:

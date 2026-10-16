@@ -15,7 +15,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import type { Settings, TranscriptSegment } from "../types";
 import { useStore } from "../store";
 import type { ReplaySession } from "./types";
-import { STT_BY_ID, sttApiKey, sttBatchUrl } from "../transcription/providers";
+import { STT_BY_ID, sttApiKey, sttBatchUrl, sttModel } from "../transcription/providers";
+import { checkLocalModelReady } from "../transcription/localModels";
 import { normalizeTranscriptText } from "../textNormalize";
 import { languageHintsFromSettings } from "../transcription/languageHints";
 import { recognitionTerms } from "../dictionary";
@@ -220,6 +221,11 @@ export async function transcribeRecording(
   if (!apiKey) {
     throw new Error(missingCredentialMessage(settings));
   }
+  // On-device STT: the key sentinel passed; the model must also be downloaded.
+  if (provider === "local" && !(await checkLocalModelReady(settings.localSttModel))) {
+    log.warn("ingest: local model not ready", { model: settings.localSttModel });
+    throw new Error(translate(settings.language, "localStt.error.notReadyUpload"));
+  }
 
   const name = fileNameOf(audioPath);
   log.info("ingest: file selected", { name });
@@ -241,7 +247,7 @@ export async function transcribeRecording(
     path: audioPath,
     provider,
     apiKey,
-    model: null,
+    model: sttModel(settings, provider),
     languageHints,
     // The user's name, company and phrase dictionary, as recognition bias —
     // the same terms voice typing feeds the live session.

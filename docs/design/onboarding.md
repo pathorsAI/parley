@@ -50,6 +50,7 @@ The step's job is to make sure the first recording can be transcribed.
 - **Bring your own keys** (我要自備金鑰 / I'll bring my own keys) is a collapsed, secondary path. Expanded, it shows a transcription provider + key (required, with "Test connection") and an AI provider + key (optional, "you can add this later").
 - **Next and Skip are both disabled** until the user is signed in or an STT key is present. An LLM key is never required to proceed.
 - In builds with `CLOUD_ENABLED` false (`src/lib/flags.ts`) there is no sign-in half; the key form is shown expanded and the same STT-key gate applies.
+- **Local (on-device) transcription** is a third way through, offered in every build inside the same form: choosing *Local (whisper.cpp)* as the transcription provider replaces the key field with the model picker (see [local-stt.md](local-stt.md)). The user picks a model first and then clicks **Download**; nothing downloads on its own. Next and Skip stay disabled until the selected model is downloaded and verified and no download is in flight, with the reason shown under the button ("Download the model to continue" / "You can continue once the download finishes"). A failed or cancelled download shows a retry and keeps the gate closed. Signing in does not bypass this gate while Local is selected. The rule is the pure `accountGateBlock` in `src/lib/onboarding/accountGate.ts`.
 
 Accepted cost: someone who wants neither an account nor a key is stopped at step 2. That is better than today, where they get through and then meet a fake transcript.
 
@@ -187,6 +188,7 @@ Also rejected:
 ## Acceptance checklist
 
 - [ ] Fresh install: on the account step, with no sign-in and no STT key, Next and Skip are disabled; an STT key alone enables them; an LLM key is not required.
+- [ ] Choosing Local on the account step keeps Next and Skip disabled until the selected model finishes downloading; cancelling or a failed download shows a retry and keeps them disabled.
 - [ ] The Mac sign-in button reads "Sign in or create an account"; no copy says "with Google".
 - [ ] A production build with no usable transcription does not play a fake conversation on "Start meeting"; it shows a toast with "Open settings".
 - [ ] After the wizard, Home shows the checklist; loading the sample ticks item 1 and creates a real, deletable entry in Unfiled, in the interface language.

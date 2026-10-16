@@ -14,6 +14,7 @@ pub mod bridge;
 pub mod common;
 pub mod deepgram;
 pub mod gemini;
+pub mod local;
 pub mod openai;
 pub mod parley;
 pub mod reconnect;
@@ -38,6 +39,9 @@ pub enum SttProvider {
     /// URL + Bearer session token, no provider key) — see
     /// [`TranscribeConfig::relay_endpoint`] and `parley::run_session`.
     Parley,
+    /// On-device whisper.cpp — no network, no key; `model` is a catalog id
+    /// from `local_stt::CATALOG`. See `local::run_session`.
+    Local,
 }
 
 impl SttProvider {
@@ -51,6 +55,7 @@ impl SttProvider {
             "openai" => Self::OpenAI,
             "gemini" => Self::Gemini,
             "parley" => Self::Parley,
+            "local" => Self::Local,
             other => return Err(anyhow!("unknown stt provider: {other}")),
         })
     }
@@ -64,6 +69,7 @@ impl SttProvider {
             Self::OpenAI => "openai",
             Self::Gemini => "gemini",
             Self::Parley => "parley",
+            Self::Local => "local",
         }
     }
 
@@ -77,6 +83,7 @@ impl SttProvider {
             Self::Gemini => "gemini-2.0-flash-live-001",
             // The cloud picks the model; the protocol carries none.
             Self::Parley => "",
+            Self::Local => crate::local_stt::DEFAULT_MODEL_ID,
         }
     }
 
@@ -103,5 +110,6 @@ pub async fn run_session(
         SttProvider::OpenAI => openai::run_session(app, config, source, pcm_rx).await,
         SttProvider::Gemini => gemini::run_session(app, config, source, pcm_rx).await,
         SttProvider::Parley => parley::run_session(app, config, source, pcm_rx).await,
+        SttProvider::Local => local::run_session(app, config, source, pcm_rx).await,
     }
 }

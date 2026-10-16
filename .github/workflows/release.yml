@@ -106,6 +106,9 @@ jobs:
       APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
       APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
       APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
+      # whisper.cpp (local transcription) must not be tuned to the runner's CPU:
+      # -mcpu=native on a newer runner chip can emit instructions older Macs lack.
+      GGML_NATIVE: "OFF"
 
     steps:
       - name: Checkout
@@ -299,6 +302,10 @@ jobs:
     # write: tauri-action uploads this platform's assets to the release.
     permissions:
       contents: write
+    env:
+      # whisper.cpp (local transcription) must not be built with -march=native:
+      # a runner with AVX-512 would ship a binary that crashes on most PCs.
+      GGML_NATIVE: "OFF"
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -312,6 +319,18 @@ jobs:
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           targets: x86_64-pc-windows-msvc
+
+      - name: Point bindgen at libclang (whisper-rs)
+        # whisper-rs-sys generates its bindings with bindgen, which needs
+        # libclang. The Windows image ships LLVM; pin the path so a changed
+        # search order cannot silently fall back to stale bundled bindings.
+        shell: bash
+        run: |
+          if [ -f "C:/Program Files/LLVM/bin/libclang.dll" ]; then
+            echo "LIBCLANG_PATH=C:/Program Files/LLVM/bin" >> "$GITHUB_ENV"
+          else
+            echo "::warning::LLVM not found at C:/Program Files/LLVM; bindgen will search on its own"
+          fi
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2

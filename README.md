@@ -139,7 +139,7 @@ Conversation content is sensitive, so Parley runs straight from your machine:
 
 ## 🛠️ Build from source
 
-Requires **Rust** (stable) and **Bun** (or Node.js):
+Requires **Rust** (stable), **Bun** (or Node.js), and **CMake** plus **libclang** for the on-device transcription engine (see [CONTRIBUTING.md](CONTRIBUTING.md#native-build-prerequisites)):
 
 ```bash
 git clone https://github.com/pathorsAI/parley.git

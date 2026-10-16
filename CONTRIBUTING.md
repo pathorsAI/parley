@@ -45,3 +45,20 @@ We don't pay bounties, per-fix donations, or pay-on-merge arrangements, and we w
 ## Local Development
 
 See the setup instructions in the main [README.md](README.md).
+
+### Native build prerequisites
+
+On-device transcription (the "Local" provider) compiles [whisper.cpp](https://github.com/ggml-org/whisper.cpp) from source through the `whisper-rs` crate, so the Rust build needs:
+
+- **CMake** (3.5 or newer) on `PATH` — `brew install cmake` on macOS; on Windows, the CMake bundled with Visual Studio or `winget install Kitware.CMake`.
+- **libclang**, used by `bindgen` to generate the whisper.cpp bindings — Xcode's Command Line Tools provide it on macOS; on Windows install LLVM (`winget install LLVM.LLVM`) and, if it is not found automatically, set `LIBCLANG_PATH` to its `bin` directory.
+
+The first build compiles whisper.cpp and takes a few extra minutes; later builds reuse it. Release builds set `GGML_NATIVE=OFF` so the CPU code is not tuned to the build machine (a binary built with `-march=native` on a CI runner can crash on users' CPUs).
+
+Models are not bundled: the app downloads them on demand into `<app data>/models/stt/`. To exercise the recognizer without the app, point the ignored smoke test at a GGML model and an audio file:
+
+```bash
+cd src-tauri
+PARLEY_LOCAL_STT_MODEL=/path/to/ggml-small-q5_1.bin PARLEY_LOCAL_STT_AUDIO=/path/to/clip.wav \
+  cargo test --release --lib smoke_transcribe -- --ignored --nocapture
+```

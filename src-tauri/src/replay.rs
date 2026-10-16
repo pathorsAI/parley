@@ -174,7 +174,8 @@ pub async fn transcribe_file(
     // and flip its flag in the registry — only after a live smoke test.
     let provider = provider.trim().to_ascii_lowercase();
 
-    if api_key.trim().is_empty() {
+    // On-device transcription needs no credential.
+    if provider != "local" && api_key.trim().is_empty() {
         log::warn!("replay: missing api key provider={}", provider);
         // Hosted mode's credential is the signed-in cloud session, not a pasted
         // key, so this one message has to point at both doors.
@@ -188,7 +189,16 @@ pub async fn transcribe_file(
     // reuses the prior SUCCESSFUL transcription — no compression, no provider
     // call, no billing. Failures are never cached, so a previously-failed file
     // re-transcribes.
-    let cache_path = cache_file_path(&app, &path, &provider);
+    // Local results depend on which model ran, so the model is part of the key.
+    let cache_key = if provider == "local" {
+        format!(
+            "local-{}",
+            crate::local_stt::resolve_model_id(model.as_deref().unwrap_or_default())
+        )
+    } else {
+        provider.clone()
+    };
+    let cache_path = cache_file_path(&app, &path, &cache_key);
     if let Some(cp) = &cache_path {
         if let Some(cached) = try_read_cache(cp).await {
             log::info!(
@@ -203,6 +213,20 @@ pub async fn transcribe_file(
                 speech_rate_hz: cached.speech_rate_hz,
             });
         }
+    }
+
+    // On-device: no upload, so no compression either — decode the original
+    // file directly. Checked before any work so a missing model fails fast.
+    if provider == "local" {
+        return local_transcribe(
+            &app,
+            &path,
+            model.as_deref(),
+            &language_hints,
+            &vocabulary,
+            cache_path,
+        )
+        .await;
     }
 
     let client = reqwest::Client::new();
@@ -352,6 +376,58 @@ pub async fn transcribe_file(
     }
 
     result
+}
+
+/// The "local" arm of [`transcribe_file`]: whisper.cpp on this machine (see
+/// `transcription::local::transcribe_file_blocking`). Speaker 0 throughout —
+/// the app re-diarizes uploads from the audio separately (diarize.rs).
+async fn local_transcribe(
+    app: &AppHandle,
+    path: &str,
+    model: Option<&str>,
+    language_hints: &[String],
+    vocabulary: &[String],
+    cache_path: Option<std::path::PathBuf>,
+) -> Result<TranscriptionResult, String> {
+    let model = model.unwrap_or_default().to_string();
+    crate::local_stt::ensure_installed(app, &model)?;
+    let app_for_task = app.clone();
+    let audio_path = std::path::PathBuf::from(path);
+    let hints = language_hints.to_vec();
+    let vocab = vocabulary.to_vec();
+    let (decoded, duration_ms) = tauri::async_runtime::spawn_blocking(move || {
+        crate::transcription::local::transcribe_file_blocking(
+            &app_for_task,
+            &audio_path,
+            &model,
+            &hints,
+            &vocab,
+        )
+    })
+    .await
+    .map_err(|e| format!("Local transcription failed: {e}"))??;
+    let segments: Vec<ReplaySegment> = decoded
+        .into_iter()
+        .enumerate()
+        .map(|(i, d)| ReplaySegment {
+            id: format!("them-{i}"),
+            speaker: 0,
+            text: d.text,
+            start_ms: d.start_ms,
+            end_ms: d.end_ms,
+        })
+        .collect();
+    let speech_rate_hz = measure_speech_rate_blocking(path.to_string()).await;
+    let result = TranscriptionResult {
+        segments,
+        duration_ms,
+        cached: false,
+        speech_rate_hz,
+    };
+    if let Some(cp) = &cache_path {
+        write_cache(cp, &result).await;
+    }
+    Ok(result)
 }
 
 /// Cache file path for an uploaded recording, keyed by file name + byte size (per

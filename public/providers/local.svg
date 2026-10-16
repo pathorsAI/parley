@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="On-device">
+  <!-- A laptop: transcription runs on this computer, not at a vendor. Mid grey
+       (zinc-500) because it is loaded through an <img>, which does not inherit
+       CSS colour (same as custom.svg). -->
+  <rect x="4" y="5" width="16" height="11" rx="1.5" />
+  <path d="M2.5 19h19" />
+</svg>

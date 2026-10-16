@@ -29,7 +29,9 @@ import { ReleaseNotesDialog } from "../components/ReleaseNotesDialog";
 import { UsagePanel } from "./UsagePanel";
 import { CachesPanel } from "./CachesPanel";
 import { LaunchAtLoginField } from "./LaunchAtLoginField";
-import { STT_PROVIDERS, STT_BY_ID } from "../lib/transcription/providers";
+import { STT_PROVIDERS, STT_BY_ID, sttLabel } from "../lib/transcription/providers";
+import { useLocalSttModels } from "../lib/transcription/useLocalSttModels";
+import { LocalSttModelPicker } from "../components/LocalSttModelPicker";
 import { Button } from "@/components/ui/button";
 import { CopyButton } from "@/components/CopyButton";
 import { Toaster } from "@/components/ui/sonner";
@@ -725,7 +727,7 @@ export function SettingsApp() {
                     <SelectItem key={p.id} value={p.id}>
                       <span className="flex items-center gap-2">
                         <img src={p.icon} alt="" className="size-4 rounded-sm" />
-                        {p.label}
+                        {sttLabel(t, p)}
                       </span>
                     </SelectItem>
                   ))}
@@ -733,21 +735,29 @@ export function SettingsApp() {
               </Select>
             </Field>
             {/* Hosted "parley" authenticates with the cloud session token, not a
-                user-entered key — show whose account it bills to instead. */}
+                user-entered key — show whose account it bills to instead. The
+                on-device provider has no key at all: pick (and download) a model. */}
             {settings.transcriptionProvider === "parley" ? (
               <p className="max-w-md text-[11px] text-muted-foreground">
                 {t("settings.account.useParley.note", { email: cloudAuth?.user.email ?? "" })}
               </p>
-            ) : (
-              <Field label={t("settings.transcription.apiKey", { provider: sttInfo.label })}>
-                <PasswordInput
-                  autoComplete="off"
-                  placeholder={sttInfo.keyPlaceholder}
-                  className="max-w-sm"
-                  value={settings[sttInfo.apiKeyField] as string}
-                  onChange={(e) => patch({ [sttInfo.apiKeyField]: e.target.value } as Partial<Settings>)}
+            ) : settings.transcriptionProvider === "local" ? (
+              <Field label={t("localStt.picker.label")}>
+                <LocalSttModelField
+                  value={settings.localSttModel}
+                  onChange={(id) => patch({ localSttModel: id })}
                 />
               </Field>
+            ) : (
+              sttInfo.apiKeyField && (
+                <SttKeyField
+                  label={t("settings.transcription.apiKey", { provider: sttInfo.label })}
+                  field={sttInfo.apiKeyField}
+                  placeholder={sttInfo.keyPlaceholder}
+                  settings={settings}
+                  patch={patch}
+                />
+              )
             )}
             {!sttInfo.diarization && (
               <p className="max-w-md rounded-md border border-warning-border bg-warning px-3 py-2 text-[11px] leading-relaxed text-warning-foreground">
@@ -1623,6 +1633,44 @@ function TodoTemplateEditor({
       <Button variant="ghost" size="sm" className="w-fit text-[11px]" onClick={() => onChange({ items: [...tpl.items, ""] })}>
         <Plus className="size-3.5" /> {t("settings.todos.addItem")}
       </Button>
+    </div>
+  );
+}
+
+/** BYOK transcription key input for the selected provider's settings field. */
+function SttKeyField({
+  label,
+  field,
+  placeholder,
+  settings,
+  patch,
+}: Readonly<{
+  label: string;
+  field: keyof Settings;
+  placeholder: string;
+  settings: Settings;
+  patch: (p: Partial<Settings>) => void;
+}>) {
+  return (
+    <Field label={label}>
+      <PasswordInput
+        autoComplete="off"
+        placeholder={placeholder}
+        className="max-w-sm"
+        value={settings[field] as string}
+        onChange={(e) => patch({ [field]: e.target.value } as Partial<Settings>)}
+      />
+    </Field>
+  );
+}
+
+/** The on-device model picker, owning its catalog/download state — mounted
+ *  only while "local" is the selected provider. */
+function LocalSttModelField({ value, onChange }: Readonly<{ value: string; onChange: (id: string) => void }>) {
+  const local = useLocalSttModels();
+  return (
+    <div className="max-w-md">
+      <LocalSttModelPicker value={value} onChange={onChange} local={local} />
     </div>
   );
 }

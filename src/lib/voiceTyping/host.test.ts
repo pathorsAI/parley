@@ -60,6 +60,7 @@ vi.mock("../store", () => ({
 vi.mock("../transcription/providers", () => ({
   sttApiKey: () => "token",
   sttRelayUrl: () => "wss://relay.test/stt",
+  sttModel: () => null,
 }));
 vi.mock("../transcription/languageHints", () => ({ languageHintsFromSettings: () => [] }));
 vi.mock("../log", () => ({ log: mocks.log }));

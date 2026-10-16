@@ -8,7 +8,7 @@
 export type Source = "me" | "them" | "mix";
 
 /** Speech-to-text providers (mirrors the Rust `SttProvider` ids). */
-export type SttProviderId = "soniox" | "deepgram" | "assemblyai" | "openai" | "gemini" | "parley";
+export type SttProviderId = "soniox" | "deepgram" | "assemblyai" | "openai" | "gemini" | "parley" | "local";
 
 /**
  * A single transcript segment from a realtime transcription session.
@@ -350,6 +350,12 @@ export interface Settings {
   sonioxApiKey: string;
   deepgramApiKey: string;
   assemblyaiApiKey: string;
+  /** On-device (whisper.cpp) model id used when `transcriptionProvider` is
+   *  "local" — one of the catalog ids `local_stt_models` returns. It can name a
+   *  model that is not downloaded yet: the user picks first, then downloads, and
+   *  every start path refuses until it is installed (see
+   *  lib/transcription/localModels.ts). */
+  localSttModel: string;
   /** Microphone input device name; empty = system default. */
   inputDevice: string;
   /** Master switch for the study/replay auto-analysis pipeline (findings →

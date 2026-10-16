@@ -40,6 +40,7 @@ import { inFlightStagesFor, type StudyStage } from "./analysis/runRegistry";
 import { buildPresetTodoTemplates } from "./todoTemplates";
 import { translate, type TranslationKey } from "../i18n/messages";
 import { DEFAULT_MODELS } from "./ai/providers";
+import { DEFAULT_LOCAL_STT_MODEL } from "./transcription/localModels";
 import { countFillerSounds } from "./analysis/fillerWords";
 import { log } from "./log";
 
@@ -233,6 +234,7 @@ const DEFAULT_SETTINGS: Settings = {
   sonioxApiKey: "",
   deepgramApiKey: "",
   assemblyaiApiKey: "",
+  localSttModel: DEFAULT_LOCAL_STT_MODEL,
   inputDevice: "",
   // Recordings analyze themselves as they always have; turning this off hands
   // analysis to an external AI over MCP. See Settings.autoStudyAnalysis.

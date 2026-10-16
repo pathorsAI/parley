@@ -7,7 +7,11 @@ import { isTauri } from "../lib/tauriEvents";
 import { CLOUD_ENABLED } from "../lib/flags";
 import { log } from "../lib/log";
 import { PROVIDERS, PROVIDER_BY_ID, type ProviderInfo } from "../lib/ai/providers";
-import { STT_PROVIDERS, STT_BY_ID, sttApiKey } from "../lib/transcription/providers";
+import { STT_PROVIDERS, STT_BY_ID, sttApiKey, sttLabel } from "../lib/transcription/providers";
+import { accountGateBlock, transcriptionReady, type AccountGateBlock } from "../lib/onboarding/accountGate";
+import { useLocalSttModels, type LocalSttModelsState } from "../lib/transcription/useLocalSttModels";
+import { LocalSttModelPicker } from "./LocalSttModelPicker";
+import type { TranslationKey } from "../i18n/messages";
 import { beginMeeting } from "../lib/meeting/start";
 import { loadSampleRecording } from "../lib/onboarding/sample";
 import { openRecording } from "./home/GettingStarted";
@@ -43,15 +47,12 @@ const STEPS: StepId[] = ["intro", "account", "perms", "done"];
 const STEP_COUNT = STEPS.length;
 const ACCOUNT_STEP = STEPS.indexOf("account");
 
-/**
- * The account gate: transcription must be able to run before the wizard lets
- * the user go. Either a Parley session (hosted STT) or a key for the selected
- * BYOK STT provider — the same check `beginMeeting` makes before it opens a
- * capture session.
- */
-function transcriptionReady(settings: Settings, signedIn: boolean): boolean {
-  return signedIn || !!sttApiKey(settings, settings.transcriptionProvider).trim();
-}
+/** Helper text under the blocked Next button, per reason (see accountGate.ts). */
+const GATE_HINT: Record<AccountGateBlock, TranslationKey> = {
+  credential: "onboarding.account.gate",
+  localDownload: "localStt.gate.download",
+  localDownloading: "localStt.gate.downloading",
+};
 
 export function Onboarding() {
   const { t } = useI18n();
@@ -62,9 +63,13 @@ export function Onboarding() {
     const s = settings.onboardingStep ?? 0;
     const resumed = s >= 0 && s < STEP_COUNT ? s : 0;
     // A step persisted past the account gate (an older, longer wizard, or a
-    // session that has since signed out) must not resume beyond it.
+    // session that has since signed out) must not resume beyond it. The local
+    // model catalog isn't loaded yet here, so a "local" setup resumes at the
+    // account step (fail closed) and the user confirms the downloaded model.
     const { settings: current, cloudAuth: auth } = useStore.getState();
-    return resumed > ACCOUNT_STEP && !transcriptionReady(current, !!auth) ? ACCOUNT_STEP : resumed;
+    return resumed > ACCOUNT_STEP && !transcriptionReady(current, !!auth, { models: null, downloads: {} })
+      ? ACCOUNT_STEP
+      : resumed;
   });
   const current = STEPS[step];
   const [perms, setPerms] = useState<Perms | null>(null);
@@ -75,7 +80,11 @@ export function Onboarding() {
     patch({ onboardingStep: step });
   }, [step, patch]);
 
-  const ready = transcriptionReady(settings, !!cloudAuth);
+  // On-device catalog + download state, live only while "local" is selected;
+  // owned here (not in AccountStep) because it feeds the gate below.
+  const local = useLocalSttModels(settings.transcriptionProvider === "local");
+  const gateBlock = accountGateBlock(settings, !!cloudAuth, local);
+  const ready = gateBlock === null;
   // Neither Next on the account step nor the header X may get past the gate:
   // skipping used to land users in a mock recorder that played a fake
   // transcript and saved nothing, so the first meeting silently failed.
@@ -148,7 +157,7 @@ export function Onboarding() {
             </span>
             {/* The tooltip sits on a wrapper: a disabled button swallows the
                 hover that would show its own title. */}
-            <span title={skipBlocked ? t("onboarding.account.gate") : t("onboarding.skip")}>
+            <span title={skipBlocked && gateBlock ? t(GATE_HINT[gateBlock]) : t("onboarding.skip")}>
               <button
                 type="button"
                 className="text-muted-foreground hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
@@ -197,7 +206,7 @@ export function Onboarding() {
             </div>
           )}
 
-          {current === "account" && <AccountStep />}
+          {current === "account" && <AccountStep local={local} />}
 
           {current === "perms" && (
             <div className="flex flex-col gap-3">
@@ -344,8 +353,8 @@ export function Onboarding() {
                 {t("onboarding.next")}
                 <ChevronRight className="size-3.5" />
               </Button>
-              {nextBlocked && (
-                <span className="text-[11px] text-muted-foreground">{t("onboarding.account.gate")}</span>
+              {nextBlocked && gateBlock && (
+                <span className="text-[11px] text-muted-foreground">{t(GATE_HINT[gateBlock])}</span>
               )}
             </div>
           )}
@@ -363,7 +372,7 @@ export function Onboarding() {
  * OSS build, where it is the only path. The STT key is required; the LLM key
  * is optional (recording works without it, analysis doesn't).
  */
-function AccountStep() {
+function AccountStep({ local }: Readonly<{ local: LocalSttModelsState }>) {
   const { t } = useI18n();
   const settings = useStore((s) => s.settings);
   const patch = useStore((s) => s.updateSettings);
@@ -372,9 +381,11 @@ function AccountStep() {
   const [error, setError] = useState<string | null>(null);
   // Start expanded when a BYOK STT key is already there (re-running onboarding)
   // so the user sees what satisfies the gate.
+  // ("local" always counts: its picker lives in here.)
   const [byokOpen, setByokOpen] = useState(
     () =>
       !CLOUD_ENABLED ||
+      settings.transcriptionProvider === "local" ||
       (settings.transcriptionProvider !== "parley" && !!sttApiKey(settings, settings.transcriptionProvider)),
   );
 
@@ -459,7 +470,7 @@ function AccountStep() {
                   <SelectItem key={p.id} value={p.id}>
                     <span className="flex items-center gap-2">
                       <img src={p.icon} alt="" className="size-4 rounded-sm" />
-                      {p.label}
+                      {sttLabel(t, p)}
                       {!p.diarization && (
                         <span className="rounded bg-warning px-1.5 py-px text-[10px] text-warning-foreground">
                           {t("settings.transcription.noDiarizationTag")}
@@ -472,15 +483,22 @@ function AccountStep() {
             </Select>
             {/* The hosted provider authenticates with the signed-in session, not
                 an API key — so no key field for it. */}
+            {/* On-device: no key — pick a model, then download it; the gate
+                holds Next until the download has finished. */}
             {stt.id === "parley" ? (
               <p className="text-[11px] text-muted-foreground">{t("onboarding.login.signedIn")}</p>
-            ) : (
-              <PasswordInput
-                autoComplete="off"
-                placeholder={stt.keyPlaceholder}
-                value={(settings[stt.apiKeyField] as string) ?? ""}
-                onChange={(e) => patch({ [stt.apiKeyField]: e.target.value } as Partial<Settings>)}
+            ) : stt.id === "local" ? (
+              // The "no diarization" tag on the Select item already flags
+              // that live meetings won't separate speakers.
+              <LocalSttModelPicker
+                value={settings.localSttModel}
+                onChange={(id) => patch({ localSttModel: id })}
+                local={local}
               />
+            ) : (
+              stt.apiKeyField && (
+                <SttKeyInput field={stt.apiKeyField} placeholder={stt.keyPlaceholder} settings={settings} patch={patch} />
+              )
             )}
           </div>
 
@@ -559,6 +577,27 @@ function AccountStep() {
         </div>
       )}
     </div>
+  );
+}
+
+function SttKeyInput({
+  field,
+  placeholder,
+  settings,
+  patch,
+}: Readonly<{
+  field: keyof Settings;
+  placeholder: string;
+  settings: Settings;
+  patch: (p: Partial<Settings>) => void;
+}>) {
+  return (
+    <PasswordInput
+      autoComplete="off"
+      placeholder={placeholder}
+      value={(settings[field] as string) ?? ""}
+      onChange={(e) => patch({ [field]: e.target.value } as Partial<Settings>)}
+    />
   );
 }
 

@@ -1,7 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { useStore } from "../store";
-import { STT_BY_ID, sttApiKey, sttRelayUrl } from "../transcription/providers";
+import { STT_BY_ID, sttApiKey, sttModel, sttRelayUrl } from "../transcription/providers";
+import { checkLocalModelReady } from "../transcription/localModels";
 import { startMockStream } from "../mockStream";
 import { recognitionTerms } from "../dictionary";
 import { isTauri } from "../tauriEvents";
@@ -37,6 +38,18 @@ async function start(): Promise<void> {
   const sttKey = sttApiKey(settings, settings.transcriptionProvider);
   const t = (key: TranslationKey) => translate(settings.language, key);
   const useRealPipeline = isTauri() && !!sttKey.trim();
+
+  // On-device STT: the "local" key sentinel always passes the gate above, so
+  // the real precondition — the selected model is downloaded — is checked
+  // here, before the UI flips to "recording".
+  if (useRealPipeline && settings.transcriptionProvider === "local" && !(await checkLocalModelReady(settings.localSttModel))) {
+    log.info("meeting: start blocked (local model not ready)", { model: settings.localSttModel });
+    toast.error(t("localStt.error.notReady"), {
+      duration: 8000,
+      action: { label: t("ai.fail.openSettings"), onClick: () => openSettings("transcription") },
+    });
+    return;
+  }
 
   s.startMeeting();
 
@@ -88,6 +101,8 @@ async function openCaptureSession(settings: Settings, sttKey: string): Promise<v
       diarization: provider.diarization,
       inputDevice: settings.inputDevice,
       relayUrl: sttRelayUrl(settings.transcriptionProvider, "meeting"),
+      // Which on-device model to run for "local"; null = provider default.
+      model: sttModel(settings, settings.transcriptionProvider),
       // Bias the recognizer with the user's own name and company, then the
       // phrase dictionary — the terms it keeps mishearing in dictation are the
       // same ones it mishears in a meeting.

@@ -221,7 +221,8 @@ pub fn start_meeting(
     vocabulary: Option<Vec<String>>,
 ) -> Result<(), String> {
     let provider = SttProvider::from_id(&provider).map_err(|e| e.to_string())?;
-    if api_key.trim().is_empty() {
+    // The on-device provider has no key (the frontend sends a placeholder).
+    if provider != SttProvider::Local && api_key.trim().is_empty() {
         return Err("missing transcription API key".into());
     }
     let relay_endpoint = relay_url.filter(|u| !u.trim().is_empty());
@@ -231,6 +232,11 @@ pub fn start_meeting(
     // relayUrl is a frontend bug).
     if provider == SttProvider::Parley && relay_endpoint.is_none() {
         return Err("hosted transcription requires the cloud relay URL".into());
+    }
+    // On-device: fail now, before the mic is claimed, when the model is not
+    // downloaded — a session that cannot load it would only fail later.
+    if provider == SttProvider::Local {
+        crate::local_stt::ensure_installed(&app, model.as_deref().unwrap_or_default())?;
     }
     // Claim the mic. A meeting outranks the Settings mic test and voice typing,
     // so the coordinator stops either one first (device released before our

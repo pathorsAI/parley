@@ -60,6 +60,7 @@ interface LevelPayload {
  *  unrecognized falls back to the generic error string. */
 const ERROR_KEYS: Record<string, TranslationKey> = {
   "no-key": "voiceTyping.noKey",
+  "no-local-model": "voiceTyping.noLocalModel",
   quota: "voiceTyping.error.quota",
   auth: "voiceTyping.error.auth",
   key: "voiceTyping.error.key",

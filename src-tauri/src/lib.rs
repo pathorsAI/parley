@@ -7,6 +7,7 @@ mod commands;
 mod diarize;
 mod history;
 mod hotkey;
+mod local_stt;
 mod mcp;
 mod menu;
 mod permissions;
@@ -249,6 +250,10 @@ pub fn run() {
             playback::prepare_playback_fallback,
             diarize::download_diarize_model,
             diarize::diarize_model_status,
+            local_stt::local_stt_models,
+            local_stt::local_stt_download,
+            local_stt::local_stt_cancel,
+            local_stt::local_stt_delete,
             mcp::get_mcp_server_info,
             mcp::get_mcp_activity,
             cache::clear_cache,

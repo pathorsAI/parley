@@ -1,6 +1,8 @@
 import type { Settings, SttProviderId } from "../types";
 import { PROVIDER_BY_ID } from "../ai/providers";
 import { CLOUD_URL, cloudToken } from "../cloud/client";
+import { LOCAL_STT_API_KEY } from "./localModels";
+import type { TranslationKey } from "../../i18n/messages";
 
 /**
  * Single source of truth for speech-to-text providers, mirroring the Rust
@@ -10,7 +12,10 @@ import { CLOUD_URL, cloudToken } from "../cloud/client";
  */
 export interface SttProviderInfo {
   id: SttProviderId;
+  /** Brand name, shown as-is. A non-brand entry also sets `labelKey`. */
   label: string;
+  /** Translated display name for entries that aren't a brand (see sttLabel). */
+  labelKey?: TranslationKey;
   /** Can separate speakers on its own (Soniox / Deepgram). */
   diarization: boolean;
   /**
@@ -25,8 +30,9 @@ export interface SttProviderInfo {
    * diarization.
    */
   supportsFileUpload: boolean;
-  /** Settings field holding this provider's API key. */
-  apiKeyField: keyof Settings;
+  /** Settings field holding this provider's API key; `null` for the on-device
+   *  "local" provider, which has no key at all (see sttApiKey). */
+  apiKeyField: keyof Settings | null;
   keyPlaceholder: string;
   /** Brand icon in /public/providers. */
   icon: string;
@@ -64,12 +70,33 @@ export const STT_PROVIDERS: SttProviderInfo[] = [
     keyPlaceholder: "",
     icon: PROVIDER_BY_ID["parley"].icon,
   },
+  // On-device transcription (whisper.cpp): no key, no network after the model
+  // download. Which model runs is `settings.localSttModel`; it must be
+  // downloaded before anything can start (lib/transcription/localModels.ts).
+  // No diarization — whisper only transcribes. The batch arm of
+  // `transcribe_file` implements it, so uploads work too.
+  {
+    id: "local",
+    label: "Local (whisper.cpp)",
+    labelKey: "stt.local.label",
+    diarization: false,
+    supportsFileUpload: true,
+    apiKeyField: null,
+    keyPlaceholder: "",
+    icon: "/providers/local.svg",
+  },
 ];
 
 export const STT_BY_ID = Object.fromEntries(STT_PROVIDERS.map((p) => [p.id, p])) as Record<
   SttProviderId,
   SttProviderInfo
 >;
+
+/** Display name in the UI language: the translated label when the entry has
+ *  one, the brand name otherwise. */
+export function sttLabel(t: (key: TranslationKey) => string, info: SttProviderInfo): string {
+  return info.labelKey ? t(info.labelKey) : info.label;
+}
 
 /**
  * The credential a given STT provider authenticates with. BYOK providers use
@@ -78,11 +105,24 @@ export const STT_BY_ID = Object.fromEntries(STT_PROVIDERS.map((p) => [p.id, p]))
  */
 export function sttApiKey(settings: Settings, id: SttProviderId): string {
   if (id === "parley") return cloudToken() ?? "";
+  // On-device: no credential. A fixed sentinel keeps every `.trim()` gate
+  // uniform; whether the selected model is downloaded is checked separately.
+  if (id === "local") return LOCAL_STT_API_KEY;
+  const field = STT_BY_ID[id].apiKeyField;
+  if (!field) return "";
   // Trimmed: a pasted key routinely carries a trailing newline, and the callers
   // that gate on `sttApiKey(...).trim()` would then start a session with the
   // untrimmed value and fail auth at the vendor. Same class of bug as the LLM
   // keys (see ai/provider.ts).
-  return ((settings[STT_BY_ID[id].apiKeyField] as string) ?? "").trim();
+  return ((settings[field] as string) ?? "").trim();
+}
+
+/**
+ * The model id a start command should run, or null to let the backend use the
+ * provider's own default. Only the local provider picks one in Settings today.
+ */
+export function sttModel(settings: Settings, id: SttProviderId): string | null {
+  return id === "local" ? settings.localSttModel : null;
 }
 
 /**

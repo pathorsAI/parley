@@ -26,7 +26,8 @@ import { isMac } from "../platform";
 import { TRAY_VOICE_TOGGLE_EVENT } from "../tray";
 import { isTauri } from "../tauriEvents";
 import { useStore } from "../store";
-import { sttApiKey, sttRelayUrl } from "../transcription/providers";
+import { sttApiKey, sttModel, sttRelayUrl } from "../transcription/providers";
+import { checkLocalModelReady } from "../transcription/localModels";
 import { languageHintsFromSettings } from "../transcription/languageHints";
 import { HOSTED_VOICE_TYPING_MAX_SECONDS } from "../limits";
 import { log } from "../log";
@@ -529,6 +530,16 @@ async function startSession() {
     scheduleHide();
     return;
   }
+  // On-device STT passes the key gate with its sentinel; the real
+  // precondition is a downloaded model. One local IPC round trip, before the
+  // mic opens.
+  if (provider === "local" && !(await checkLocalModelReady(settings.localSttModel))) {
+    log.warn("voice-typing: local model not ready", { model: settings.localSttModel });
+    await showOverlay();
+    await emit("voicetyping://session", { phase: "error", message: "no-local-model" });
+    scheduleHide();
+    return;
+  }
   // A new dictation replaces a cancelled one still offering Undo (its text is
   // dropped; one whose Undo was already clicked is still recovered).
   dropCancel();
@@ -571,6 +582,7 @@ async function startSession() {
     vocabulary: recognitionTerms(settings),
     inputDevice: settings.inputDevice ?? null,
     relayUrl: sttRelayUrl(provider, "voice_typing"),
+    model: sttModel(settings, provider),
     maxDurationSecs: hosted ? HOSTED_VOICE_TYPING_MAX_SECONDS : null,
   });
   // Esc cancels from here on — claimed right behind the mic, never before it.

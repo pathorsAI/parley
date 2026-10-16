@@ -607,7 +607,12 @@ impl Failure<'_> {
             || msg.contains("403")
             || low.contains("unauthorized")
             || low.contains("api key");
-        if self.hosted && msg.contains("402") {
+        // On-device failures (model missing or unloadable) are final: a redial
+        // would fail the same way. The frontend maps unknown codes to its
+        // generic message.
+        if low.starts_with("local transcription") {
+            "local"
+        } else if self.hosted && msg.contains("402") {
             "quota"
         } else if self.hosted && msg.contains("401") {
             "auth"

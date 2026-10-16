@@ -63,6 +63,13 @@ sha2 = "0.10"
 # (no LAPACK/BLAS — keeps the no-native-deps posture of the load-dynamic ort setup).
 nalgebra = "0.35"
 tauri-plugin-os = "2.3.2"
+# On-device speech recognition (the "local" STT provider, see local_stt.rs and
+# transcription/local.rs). Builds whisper.cpp from source with CMake, and
+# generates its bindings with bindgen (libclang). CPU everywhere; macOS adds
+# Metal below. Pinned exactly: whisper-rs tracks whisper.cpp's C API closely and
+# minor bumps have broken its Rust surface before.
+# `log_backend` routes whisper.cpp's own logging into `log` instead of stderr.
+whisper-rs = { version = "=0.16.0", features = ["log_backend"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
 # Desktop-only: routes a second app launch to the existing instance. macOS gets
@@ -82,6 +89,9 @@ block2 = "0.6"
 # Adds AbandonProcessGroup to the login item's LaunchAgent (see autostart.rs).
 # Already in the tree: tauri depends on it on macOS.
 plist = "1"
+# The local STT provider runs whisper.cpp on the GPU via Metal on macOS. Cargo
+# unions this feature with the `[dependencies]` entry above for macOS only.
+whisper-rs = { version = "=0.16.0", features = ["log_backend", "metal"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 # The notification-area icon the main window hides to on close (see tray.rs).
