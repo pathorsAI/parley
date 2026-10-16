@@ -240,15 +240,14 @@ function DownloadProgress({ name, percent, onCancel }: Readonly<{ name: string; 
           {t("localStt.cancel")}
         </Button>
       </div>
-      <div
-        className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
-        role="progressbar"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={percent}
-      >
-        <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${percent}%` }} />
-      </div>
+      {/* A native <progress> carries the accessibility semantics on every
+          platform; the pseudo-elements style it in WKWebView and WebView2. */}
+      <progress
+        className="h-1.5 w-full appearance-none overflow-hidden rounded-full [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:rounded-full [&::-webkit-progress-value]:bg-primary [&::-webkit-progress-value]:transition-all"
+        max={100}
+        value={percent}
+        aria-label={t("localStt.downloadingBody", { name, percent })}
+      />
     </div>
   );
 }

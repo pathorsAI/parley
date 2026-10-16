@@ -311,6 +311,12 @@ jobs:
       # src-tauri/target (see the rust-windows job in ci.yml). Final binaries
       # and bundles stay in src-tauri/target, where the steps below look.
       CARGO_BUILD_BUILD_DIR: 'C:\b'
+      # Even under C:\b, the nested vulkan-shaders-gen try-compile writes
+      # MSBuild FileTracker logs 261+ characters long (263 in release),
+      # failing with FTK1011. The tracker only feeds incremental-build
+      # bookkeeping, which a fresh CMake build dir never uses, so turn it
+      # off (MSBuild reads environment variables as properties).
+      TrackFileAccess: "false"
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
