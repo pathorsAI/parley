@@ -306,8 +306,8 @@ exports[`history IPC traffic > saveLiveToHistory: kept, opened, no correction 1`
       "audioSourcePath": "/tmp-rec.ogg",
       "compress": false,
       "id": "uuid-1",
-      "metaJson": "{"id":"uuid-1","title":"即時會議 · 1970/1/1 上午8:00:01","source":"live","createdAt":1000,"durationMs":5000,"audio":"audio.ogg","folderId":null,"segments":[{"id":"m1","source":"me","speaker":0,"text":"spoken words","isFinal":true,"startMs":0,"endMs":1000}],"speakerNames":{},"findings":[],"actionItems":[],"analyzed":false,"meetingContext":"","meetingBatna":"","meetingTarget":"","meetingFloor":"","deliveryAssessment":null,"speechRateHz":2.5,"brief":null,"briefFailed":false,"filingSuggestion":null,"filingSuggested":false,"meetingKind":null}",
-      "summaryJson": "{"id":"uuid-1","title":"即時會議 · 1970/1/1 上午8:00:01","source":"live","createdAt":1000,"durationMs":5000,"speakerCount":1,"findingsCount":0,"actionItemsCount":0,"hasAudio":true,"analyzed":false,"snippet":"spoken words","folderId":null}",
+      "metaJson": "{"id":"uuid-1","title":"即時會議 · 1970/1/1 上午12:00:01","source":"live","createdAt":1000,"durationMs":5000,"audio":"audio.ogg","folderId":null,"segments":[{"id":"m1","source":"me","speaker":0,"text":"spoken words","isFinal":true,"startMs":0,"endMs":1000}],"speakerNames":{},"findings":[],"actionItems":[],"analyzed":false,"meetingContext":"","meetingBatna":"","meetingTarget":"","meetingFloor":"","deliveryAssessment":null,"speechRateHz":2.5,"brief":null,"briefFailed":false,"filingSuggestion":null,"filingSuggested":false,"meetingKind":null}",
+      "summaryJson": "{"id":"uuid-1","title":"即時會議 · 1970/1/1 上午12:00:01","source":"live","createdAt":1000,"durationMs":5000,"speakerCount":1,"findingsCount":0,"actionItemsCount":0,"hasAudio":true,"analyzed":false,"snippet":"spoken words","folderId":null}",
     },
   ],
   [
@@ -340,8 +340,8 @@ exports[`history IPC traffic > saveLiveToHistory: speaker correction rewrites th
       "audioSourcePath": "/tmp-rec.ogg",
       "compress": false,
       "id": "uuid-1",
-      "metaJson": "{"id":"uuid-1","title":"即時會議 · 1970/1/1 上午8:00:01","source":"live","createdAt":1000,"durationMs":5000,"audio":"audio.ogg","folderId":null,"segments":[{"id":"x1","source":"mix","speaker":1,"text":"line one","isFinal":true,"startMs":0,"endMs":1000},{"id":"x2","source":"mix","speaker":2,"text":"line two","isFinal":true,"startMs":1000,"endMs":2000}],"speakerNames":{},"findings":[],"actionItems":[],"analyzed":false,"meetingContext":"","meetingBatna":"","meetingTarget":"","meetingFloor":"","deliveryAssessment":null,"speechRateHz":4,"brief":null,"briefFailed":false,"filingSuggestion":null,"filingSuggested":false,"meetingKind":null}",
-      "summaryJson": "{"id":"uuid-1","title":"即時會議 · 1970/1/1 上午8:00:01","source":"live","createdAt":1000,"durationMs":5000,"speakerCount":2,"findingsCount":0,"actionItemsCount":0,"hasAudio":true,"analyzed":false,"snippet":"line one","folderId":null}",
+      "metaJson": "{"id":"uuid-1","title":"即時會議 · 1970/1/1 上午12:00:01","source":"live","createdAt":1000,"durationMs":5000,"audio":"audio.ogg","folderId":null,"segments":[{"id":"x1","source":"mix","speaker":1,"text":"line one","isFinal":true,"startMs":0,"endMs":1000},{"id":"x2","source":"mix","speaker":2,"text":"line two","isFinal":true,"startMs":1000,"endMs":2000}],"speakerNames":{},"findings":[],"actionItems":[],"analyzed":false,"meetingContext":"","meetingBatna":"","meetingTarget":"","meetingFloor":"","deliveryAssessment":null,"speechRateHz":4,"brief":null,"briefFailed":false,"filingSuggestion":null,"filingSuggested":false,"meetingKind":null}",
+      "summaryJson": "{"id":"uuid-1","title":"即時會議 · 1970/1/1 上午12:00:01","source":"live","createdAt":1000,"durationMs":5000,"speakerCount":2,"findingsCount":0,"actionItemsCount":0,"hasAudio":true,"analyzed":false,"snippet":"line one","folderId":null}",
     },
   ],
   [
@@ -379,8 +379,8 @@ exports[`history IPC traffic > saveLiveToHistory: speaker correction rewrites th
       "audioSourcePath": null,
       "compress": false,
       "id": "uuid-1",
-      "metaJson": "{"id":"uuid-1","title":"即時會議 · 1970/1/1 上午8:00:01","source":"live","createdAt":1000,"durationMs":5000,"audio":"audio.ogg","folderId":null,"segments":[{"id":"x1","source":"mix","speaker":2,"text":"line one","isFinal":true,"startMs":0,"endMs":1000},{"id":"x2","source":"mix","speaker":3,"text":"line two","isFinal":true,"startMs":1000,"endMs":2000}],"speakerNames":{},"findings":[],"actionItems":[],"analyzed":false,"meetingContext":"","meetingBatna":"","meetingTarget":"","meetingFloor":"","deliveryAssessment":null,"speechRateHz":4,"brief":null,"briefFailed":false,"filingSuggestion":null,"filingSuggested":false,"meetingKind":null}",
-      "summaryJson": "{"id":"uuid-1","title":"即時會議 · 1970/1/1 上午8:00:01","source":"live","createdAt":1000,"durationMs":5000,"speakerCount":2,"findingsCount":0,"actionItemsCount":0,"hasAudio":true,"analyzed":false,"snippet":"line one","folderId":null}",
+      "metaJson": "{"id":"uuid-1","title":"即時會議 · 1970/1/1 上午12:00:01","source":"live","createdAt":1000,"durationMs":5000,"audio":"audio.ogg","folderId":null,"segments":[{"id":"x1","source":"mix","speaker":2,"text":"line one","isFinal":true,"startMs":0,"endMs":1000},{"id":"x2","source":"mix","speaker":3,"text":"line two","isFinal":true,"startMs":1000,"endMs":2000}],"speakerNames":{},"findings":[],"actionItems":[],"analyzed":false,"meetingContext":"","meetingBatna":"","meetingTarget":"","meetingFloor":"","deliveryAssessment":null,"speechRateHz":4,"brief":null,"briefFailed":false,"filingSuggestion":null,"filingSuggested":false,"meetingKind":null}",
+      "summaryJson": "{"id":"uuid-1","title":"即時會議 · 1970/1/1 上午12:00:01","source":"live","createdAt":1000,"durationMs":5000,"speakerCount":2,"findingsCount":0,"actionItemsCount":0,"hasAudio":true,"analyzed":false,"snippet":"line one","folderId":null}",
     },
   ],
   [

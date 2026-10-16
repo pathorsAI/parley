@@ -5,6 +5,11 @@ import path from "node:path";
 // server config isn't dragged into the test runner). Tests target the
 // application + domain layer only — pure functions and the zustand store —
 // so a plain Node environment is enough; no jsdom, no Tauri, no real LLM/STT.
+// Every test runs in UTC, as CI does. Snapshots that format a date (history
+// entry titles, for one) would otherwise depend on the machine's time zone and
+// pass locally but fail in CI. Set before the workers start, so they inherit it.
+process.env.TZ = "UTC";
+
 export default defineConfig({
   resolve: {
     alias: { "@": path.resolve(__dirname, "./src") },
