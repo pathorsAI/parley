@@ -97,6 +97,18 @@ jobs:
     env:
       # Same as release.yml: never tune whisper.cpp to the runner's CPU.
       GGML_NATIVE: "OFF"
+      # Same as release.yml: keep Cargo's intermediate artifacts (build-script
+      # OUT_DIRs) on a short path. ggml builds its `vulkan-shaders-gen` host
+      # tool as a nested CMake project (ExternalProject) seven directories
+      # below whisper-rs-sys's OUT_DIR. Under
+      # D:\a\parley\parley\src-tauri\target\<triple>\debug\build\<pkg>-<hash>
+      # that project's compiler checks write files 265-277 characters long,
+      # past MAX_PATH, which cl.exe's PDB writer and MSBuild's file tracker do
+      # not support, so the nested configure fails with "No CMAKE_C_COMPILER
+      # could be found" (ggml-org/whisper.cpp#3973). C:\b saves 29
+      # characters. Final binaries stay in src-tauri/target; only the
+      # intermediates move (stable `build.build-dir`, Cargo 1.91+).
+      CARGO_BUILD_BUILD_DIR: 'C:\b'
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -128,6 +140,8 @@ jobs:
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: src-tauri
+          # Dependency artifacts live in the build dir now, not in target/.
+          cache-directories: ${{ env.CARGO_BUILD_BUILD_DIR }}
 
       - name: Provide placeholder build inputs
         # Same stand-ins as the macOS job, for the Windows resource list in
@@ -162,3 +176,16 @@ jobs:
           set -euxo pipefail
           cargo run --manifest-path src-tauri/Cargo.toml --example vulkan_delayload_check --target x86_64-pc-windows-msvc
           PARLEY_FORCE_NO_VULKAN_LOADER=1 cargo run --manifest-path src-tauri/Cargo.toml --example vulkan_delayload_check --target x86_64-pc-windows-msvc
+
+      # MSBuild only says "compiler identification is unknown" when a nested
+      # CMake configure fails; the reason is in its configure log.
+      - name: Show whisper.cpp's CMake configure logs (on failure)
+        if: failure()
+        shell: bash
+        run: |
+          find "$(cygpath -u "$CARGO_BUILD_BUILD_DIR")" -path '*whisper-rs-sys-*' -name CMakeConfigureLog.yaml 2>/dev/null |
+            while read -r log; do
+              echo "::group::$log"
+              tail -n 200 "$log"
+              echo "::endgroup::"
+            done

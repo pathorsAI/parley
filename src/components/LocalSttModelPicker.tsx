@@ -15,6 +15,7 @@ import {
   presentFit,
   presentLoad,
   sortLocalModels,
+  type DownloadGate,
   type LocalSttHardware,
   type LocalSttModel,
 } from "../lib/transcription/localModels";
@@ -225,6 +226,160 @@ function SlowNote({ model, local }: Readonly<{ model: LocalSttModel; local: Loca
   );
 }
 
+/** Download progress for the selected model, with a cancel button. */
+function DownloadProgress({ name, percent, onCancel }: Readonly<{ name: string; percent: number; onCancel: () => void }>) {
+  const { t } = useI18n();
+  return (
+    <div className="flex flex-col gap-2 rounded-md border bg-muted/20 px-3 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[11px] tabular-nums text-muted-foreground">
+          {t("localStt.downloadingBody", { name, percent })}
+        </span>
+        <Button variant="outline" size="sm" className="h-7 gap-1.5 text-[11px]" onClick={onCancel}>
+          <X className="size-3.5" />
+          {t("localStt.cancel")}
+        </Button>
+      </div>
+      <div
+        className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent}
+      >
+        <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${percent}%` }} />
+      </div>
+    </div>
+  );
+}
+
+/** "Ready" plus the delete button and its confirm dialog, for an installed model. */
+function InstalledModelActions({
+  model,
+  local,
+  name,
+  size,
+  confirmDelete,
+  setConfirmDelete,
+}: Readonly<{
+  model: LocalSttModel;
+  local: LocalSttModelsState;
+  name: string;
+  size: string;
+  confirmDelete: boolean;
+  setConfirmDelete: (open: boolean) => void;
+}>) {
+  const { t } = useI18n();
+  return (
+    <div className="flex flex-col gap-2">
+      <SlowNote model={model} local={local} />
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex items-center gap-1.5 text-[11px] text-success-foreground">
+          <Check className="size-3.5" />
+          {t("localStt.ready", { name })}
+        </span>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 gap-1.5 text-[11px] text-muted-foreground"
+          onClick={() => setConfirmDelete(true)}
+        >
+          <Trash2 className="size-3.5" />
+          {t("localStt.delete")}
+        </Button>
+        <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+          <AlertDialogContent>
+            <AlertDialogTitle>{t("localStt.delete")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("localStt.deleteConfirm", { name, size })}</AlertDialogDescription>
+            <AlertDialogFooter>
+              <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+              <AlertDialogAction
+                variant="destructive"
+                onClick={() =>
+                  local.remove(model.id).catch((e) => {
+                    log.warn("local-stt: delete failed", { modelId: model.id, error: String(e) });
+                    toast.error(t("localStt.deleteFailed", { error: e instanceof Error ? e.message : String(e) }));
+                  })
+                }
+              >
+                {t("localStt.deleteConfirmAction")}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
+    </div>
+  );
+}
+
+/** The download button of a model that is not installed, as `downloadGate`
+ *  allows it: disabled (no room on disk), behind a "Download anyway" confirm
+ *  (too little RAM), or plain — "Retry" after a failed or cancelled attempt. */
+function DownloadControl({
+  model,
+  local,
+  gate,
+  reason,
+  size,
+  retry,
+  confirmDownload,
+  setConfirmDownload,
+}: Readonly<{
+  model: LocalSttModel;
+  local: LocalSttModelsState;
+  gate: DownloadGate;
+  reason: string | null;
+  size: string;
+  retry: boolean;
+  confirmDownload: boolean;
+  setConfirmDownload: (confirming: boolean) => void;
+}>) {
+  const { t } = useI18n();
+  if (gate === "blocked") {
+    return (
+      <>
+        <Button size="sm" className="h-7 w-fit gap-1.5 text-[11px]" disabled>
+          <Download className="size-3.5" />
+          {t("localStt.download", { size })}
+        </Button>
+        {reason && <p className="text-[11px] leading-relaxed">{t("localStt.fit.diskBlocked", { reason })}</p>}
+      </>
+    );
+  }
+  if (gate === "confirm" && confirmDownload) {
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          size="sm"
+          variant="destructive"
+          className="h-7 w-fit gap-1.5 text-[11px]"
+          onClick={() => {
+            setConfirmDownload(false);
+            log.info("local-stt: download despite low RAM", { modelId: model.id });
+            local.download(model.id);
+          }}
+        >
+          <Download className="size-3.5" />
+          {t("localStt.fit.downloadAnyway")}
+        </Button>
+        <Button size="sm" variant="outline" className="h-7 w-fit text-[11px]" onClick={() => setConfirmDownload(false)}>
+          {t("common.cancel")}
+        </Button>
+      </div>
+    );
+  }
+  return (
+    <Button
+      size="sm"
+      className="h-7 w-fit gap-1.5 text-[11px]"
+      onClick={() => (gate === "confirm" ? setConfirmDownload(true) : local.download(model.id))}
+    >
+      {retry ? <RotateCcw className="size-3.5" /> : <Download className="size-3.5" />}
+      {retry ? t("localStt.retry") : t("localStt.download", { size })}
+    </Button>
+  );
+}
+
 /** The download / progress / retry / delete area for the selected model. Keyed
  *  by model id by its caller, so a half-finished "Download anyway" confirm
  *  never carries over to another model. */
@@ -248,70 +403,19 @@ function SelectedModelActions({ model, local }: Readonly<{ model: LocalSttModel;
 
   if (busy) {
     const percent = d?.status === "downloading" ? downloadPercent(d.received, d.total) : 0;
-    return (
-      <div className="flex flex-col gap-2 rounded-md border bg-muted/20 px-3 py-2">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-[11px] tabular-nums text-muted-foreground">
-            {t("localStt.downloadingBody", { name, percent })}
-          </span>
-          <Button variant="outline" size="sm" className="h-7 gap-1.5 text-[11px]" onClick={() => local.cancel(model.id)}>
-            <X className="size-3.5" />
-            {t("localStt.cancel")}
-          </Button>
-        </div>
-        <div
-          className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
-          role="progressbar"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={percent}
-        >
-          <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${percent}%` }} />
-        </div>
-      </div>
-    );
+    return <DownloadProgress name={name} percent={percent} onCancel={() => local.cancel(model.id)} />;
   }
 
   if (model.installed) {
     return (
-      <div className="flex flex-col gap-2">
-        <SlowNote model={model} local={local} />
-        <div className="flex items-center justify-between gap-2">
-          <span className="flex items-center gap-1.5 text-[11px] text-success-foreground">
-            <Check className="size-3.5" />
-            {t("localStt.ready", { name })}
-          </span>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 gap-1.5 text-[11px] text-muted-foreground"
-            onClick={() => setConfirmDelete(true)}
-          >
-            <Trash2 className="size-3.5" />
-            {t("localStt.delete")}
-          </Button>
-          <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
-            <AlertDialogContent>
-              <AlertDialogTitle>{t("localStt.delete")}</AlertDialogTitle>
-              <AlertDialogDescription>{t("localStt.deleteConfirm", { name, size })}</AlertDialogDescription>
-              <AlertDialogFooter>
-                <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
-                <AlertDialogAction
-                  variant="destructive"
-                  onClick={() =>
-                    local.remove(model.id).catch((e) => {
-                      log.warn("local-stt: delete failed", { modelId: model.id, error: String(e) });
-                      toast.error(t("localStt.deleteFailed", { error: e instanceof Error ? e.message : String(e) }));
-                    })
-                  }
-                >
-                  {t("localStt.deleteConfirmAction")}
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-        </div>
-      </div>
+      <InstalledModelActions
+        model={model}
+        local={local}
+        name={name}
+        size={size}
+        confirmDelete={confirmDelete}
+        setConfirmDelete={setConfirmDelete}
+      />
     );
   }
 
@@ -340,48 +444,16 @@ function SelectedModelActions({ model, local }: Readonly<{ model: LocalSttModel;
           </p>
         )}
         {d?.status === "cancelled" && <p className="text-[11px]">{t("localStt.cancelled")}</p>}
-        {gate === "blocked" ? (
-          <>
-            <Button size="sm" className="h-7 w-fit gap-1.5 text-[11px]" disabled>
-              <Download className="size-3.5" />
-              {t("localStt.download", { size })}
-            </Button>
-            {reason && <p className="text-[11px] leading-relaxed">{t("localStt.fit.diskBlocked", { reason })}</p>}
-          </>
-        ) : gate === "confirm" && confirmDownload ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              size="sm"
-              variant="destructive"
-              className="h-7 w-fit gap-1.5 text-[11px]"
-              onClick={() => {
-                setConfirmDownload(false);
-                log.info("local-stt: download despite low RAM", { modelId: model.id });
-                local.download(model.id);
-              }}
-            >
-              <Download className="size-3.5" />
-              {t("localStt.fit.downloadAnyway")}
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-7 w-fit text-[11px]"
-              onClick={() => setConfirmDownload(false)}
-            >
-              {t("common.cancel")}
-            </Button>
-          </div>
-        ) : (
-          <Button
-            size="sm"
-            className="h-7 w-fit gap-1.5 text-[11px]"
-            onClick={() => (gate === "confirm" ? setConfirmDownload(true) : local.download(model.id))}
-          >
-            {retry ? <RotateCcw className="size-3.5" /> : <Download className="size-3.5" />}
-            {retry ? t("localStt.retry") : t("localStt.download", { size })}
-          </Button>
-        )}
+        <DownloadControl
+          model={model}
+          local={local}
+          gate={gate}
+          reason={reason}
+          size={size}
+          retry={retry}
+          confirmDownload={confirmDownload}
+          setConfirmDownload={setConfirmDownload}
+        />
       </div>
     </div>
   );

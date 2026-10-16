@@ -189,16 +189,7 @@ pub async fn transcribe_file(
     // reuses the prior SUCCESSFUL transcription — no compression, no provider
     // call, no billing. Failures are never cached, so a previously-failed file
     // re-transcribes.
-    // Local results depend on which model ran, so the model is part of the key.
-    let cache_key = if provider == "local" {
-        format!(
-            "local-{}",
-            crate::local_stt::resolve_model_id(model.as_deref().unwrap_or_default())
-        )
-    } else {
-        provider.clone()
-    };
-    let cache_path = cache_file_path(&app, &path, &cache_key);
+    let cache_path = cache_file_path(&app, &path, &cache_key(&provider, model.as_deref()));
     if let Some(cp) = &cache_path {
         if let Some(cached) = try_read_cache(cp).await {
             log::info!(
@@ -376,6 +367,19 @@ pub async fn transcribe_file(
     }
 
     result
+}
+
+/// The provider part of an upload's cache key. Local results depend on which
+/// model ran, so for "local" the model is part of the key.
+fn cache_key(provider: &str, model: Option<&str>) -> String {
+    if provider == "local" {
+        format!(
+            "local-{}",
+            crate::local_stt::resolve_model_id(model.unwrap_or_default())
+        )
+    } else {
+        provider.to_string()
+    }
 }
 
 /// The "local" arm of [`transcribe_file`]: whisper.cpp on this machine (see

@@ -485,9 +485,10 @@ function AccountStep({ local }: Readonly<{ local: LocalSttModelsState }>) {
                 an API key — so no key field for it. */}
             {/* On-device: no key — pick a model, then download it; the gate
                 holds Next until the download has finished. */}
-            {stt.id === "parley" ? (
+            {stt.id === "parley" && (
               <p className="text-[11px] text-muted-foreground">{t("onboarding.login.signedIn")}</p>
-            ) : stt.id === "local" ? (
+            )}
+            {stt.id === "local" && (
               // The "no diarization" tag on the Select item already flags
               // that live meetings won't separate speakers.
               <LocalSttModelPicker
@@ -497,10 +498,9 @@ function AccountStep({ local }: Readonly<{ local: LocalSttModelsState }>) {
                 chosen={settings.localSttModelChosen}
                 onAutoSelect={(id) => patch({ localSttModel: id })}
               />
-            ) : (
-              stt.apiKeyField && (
-                <SttKeyInput field={stt.apiKeyField} placeholder={stt.keyPlaceholder} settings={settings} patch={patch} />
-              )
+            )}
+            {stt.id !== "parley" && stt.id !== "local" && stt.apiKeyField && (
+              <SttKeyInput field={stt.apiKeyField} placeholder={stt.keyPlaceholder} settings={settings} patch={patch} />
             )}
           </div>
 

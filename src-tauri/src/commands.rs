@@ -199,6 +199,34 @@ pub fn set_meeting_paused(state: State<MeetingState>, paused: bool) {
     log::info!("meeting: paused={paused}");
 }
 
+/// Refuses a meeting start that cannot work, before `start_meeting` claims
+/// the mic.
+fn check_meeting_start(
+    app: &AppHandle,
+    provider: SttProvider,
+    api_key: &str,
+    has_relay: bool,
+    model: Option<&str>,
+) -> Result<(), String> {
+    // The on-device provider has no key (the frontend sends a placeholder).
+    if provider != SttProvider::Local && api_key.trim().is_empty() {
+        return Err("missing transcription API key".into());
+    }
+    // Hosted mode's api_key is the cloud session token, which only the relay
+    // accepts — streaming it straight to the vendor dies with an opaque
+    // in-band auth error. Refuse loudly instead (a call site that forgot
+    // relayUrl is a frontend bug).
+    if provider == SttProvider::Parley && !has_relay {
+        return Err("hosted transcription requires the cloud relay URL".into());
+    }
+    // On-device: fail now, before the mic is claimed, when the model is not
+    // downloaded — a session that cannot load it would only fail later.
+    if provider == SttProvider::Local {
+        crate::local_stt::ensure_installed(app, model.unwrap_or_default())?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub fn start_meeting(
@@ -221,23 +249,14 @@ pub fn start_meeting(
     vocabulary: Option<Vec<String>>,
 ) -> Result<(), String> {
     let provider = SttProvider::from_id(&provider).map_err(|e| e.to_string())?;
-    // The on-device provider has no key (the frontend sends a placeholder).
-    if provider != SttProvider::Local && api_key.trim().is_empty() {
-        return Err("missing transcription API key".into());
-    }
     let relay_endpoint = relay_url.filter(|u| !u.trim().is_empty());
-    // Hosted mode's api_key is the cloud session token, which only the relay
-    // accepts — streaming it straight to the vendor dies with an opaque
-    // in-band auth error. Refuse loudly instead (a call site that forgot
-    // relayUrl is a frontend bug).
-    if provider == SttProvider::Parley && relay_endpoint.is_none() {
-        return Err("hosted transcription requires the cloud relay URL".into());
-    }
-    // On-device: fail now, before the mic is claimed, when the model is not
-    // downloaded — a session that cannot load it would only fail later.
-    if provider == SttProvider::Local {
-        crate::local_stt::ensure_installed(&app, model.as_deref().unwrap_or_default())?;
-    }
+    check_meeting_start(
+        &app,
+        provider,
+        &api_key,
+        relay_endpoint.is_some(),
+        model.as_deref(),
+    )?;
     // Claim the mic. A meeting outranks the Settings mic test and voice typing,
     // so the coordinator stops either one first (device released before our
     // capture opens); a second start while a meeting runs is an idempotent no-op.

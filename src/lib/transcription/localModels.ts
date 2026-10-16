@@ -165,9 +165,14 @@ export function reduceLocalProgress(state: LocalDownloads, ev: LocalSttProgress)
   return next;
 }
 
+/** `n > 0`, false for NaN — so a missing or garbled number counts as "none". */
+function isPositive(n: number): boolean {
+  return n > 0;
+}
+
 /** Whole-number download percent, clamped to 0–100; 0 when the total is unknown. */
 export function downloadPercent(received: number, total: number): number {
-  if (!(total > 0) || !(received > 0)) return 0;
+  if (!isPositive(total) || !isPositive(received)) return 0;
   return Math.min(100, Math.floor((received / total) * 100));
 }
 
@@ -203,7 +208,7 @@ export function isLocalModelReady(models: readonly LocalSttModel[] | null, model
  * "190 MB", "574 MB", "1.08 GB". Sub-MB sizes round up to "1 MB".
  */
 export function formatModelSize(bytes: number): string {
-  if (!(bytes > 0)) return "—";
+  if (!isPositive(bytes)) return "—";
   const GB = 1_000_000_000;
   const MB = 1_000_000;
   if (bytes >= GB) {
@@ -213,17 +218,19 @@ export function formatModelSize(bytes: number): string {
   return `${Math.max(1, Math.round(bytes / MB))} MB`;
 }
 
+const RAM_ROUNDING = { nearest: Math.round, up: Math.ceil, down: Math.floor } as const;
+
 /**
  * Human RAM size in binary units, labelled "GB" the way an OS shows memory:
  * 8 GiB → "8 GB", 7.7 GiB → "7.7 GB". `round` "up" / "down" for a requirement
  * next to a capacity, so a need of 2.006 GiB against a 2 GiB card reads
  * "2.1 GB" vs "2 GB" rather than "2 GB" vs "2 GB".
  */
-export function formatRam(bytes: number, round: "nearest" | "up" | "down" = "nearest"): string {
-  if (!(bytes > 0)) return "—";
+export function formatRam(bytes: number, round: keyof typeof RAM_ROUNDING = "nearest"): string {
+  if (!isPositive(bytes)) return "—";
   const gib = bytes / 2 ** 30;
   const step = gib >= 10 ? 1 : 10;
-  const fn = round === "up" ? Math.ceil : round === "down" ? Math.floor : Math.round;
+  const fn = RAM_ROUNDING[round];
   // Shave float noise (2.5 GiB * 10 must stay 25, not ceil to 26).
   const rounded = fn(Number((gib * step).toFixed(6))) / step;
   return `${rounded} GB`;

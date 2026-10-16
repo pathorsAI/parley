@@ -550,19 +550,39 @@ pub fn model_fit(
     if !resident && hw.available_ram_bytes < entry.bytes.saturating_mul(2) {
         reasons.push(FitReason::RamTight);
     }
-    if entry.heavy && hw.accel == Accel::Vulkan && hw.gpu_shared == Some(false) {
-        if let Some(vram) = hw.gpu_vram_bytes {
-            if vram < vram_needed_bytes(entry) {
-                reasons.push(FitReason::VramLow);
-            }
-        }
+    if vram_low(entry, hw) {
+        reasons.push(FitReason::VramLow);
     }
-    let strong_cpu =
-        hw.cpu_cores >= STRONG_CPU_CORES && ram_meets(hw.total_ram_bytes, STRONG_CPU_RAM_BYTES);
-    if entry.heavy && hw.accel == Accel::Cpu && !strong_cpu {
+    if cpu_too_weak(entry, hw) {
         reasons.push(FitReason::CpuOnly);
     }
-    let level = if reasons
+    let level = fit_level(&reasons);
+    Fit { level, reasons }
+}
+
+/// `model_fit`'s `vram_low`: a `heavy` model on Vulkan with a discrete GPU
+/// whose (known) dedicated memory is under [`vram_needed_bytes`].
+fn vram_low(entry: &CatalogEntry, hw: &LocalSttHardware) -> bool {
+    entry.heavy
+        && hw.accel == Accel::Vulkan
+        && hw.gpu_shared == Some(false)
+        && hw
+            .gpu_vram_bytes
+            .is_some_and(|vram| vram < vram_needed_bytes(entry))
+}
+
+/// `model_fit`'s `cpu_only`: a `heavy` model without GPU acceleration on a CPU
+/// short of [`STRONG_CPU_CORES`] cores / [`STRONG_CPU_RAM_BYTES`].
+fn cpu_too_weak(entry: &CatalogEntry, hw: &LocalSttHardware) -> bool {
+    let strong_cpu =
+        hw.cpu_cores >= STRONG_CPU_CORES && ram_meets(hw.total_ram_bytes, STRONG_CPU_RAM_BYTES);
+    entry.heavy && hw.accel == Accel::Cpu && !strong_cpu
+}
+
+/// `unsupported` when any reason blocks the model, `slow` when some only slow
+/// it down, else `good`.
+fn fit_level(reasons: &[FitReason]) -> FitLevel {
+    if reasons
         .iter()
         .any(|r| matches!(r, FitReason::DiskLow | FitReason::RamLow))
     {
@@ -571,8 +591,7 @@ pub fn model_fit(
         FitLevel::Good
     } else {
         FitLevel::Slow
-    };
-    Fit { level, reasons }
+    }
 }
 
 /// The model to suggest for this machine: the default when it is a good fit,
@@ -899,98 +918,103 @@ async fn download_verified(
     cancel: &AtomicBool,
     mut progress: impl FnMut(Stage, u64),
 ) -> Result<(), DownloadError> {
-    use futures_util::StreamExt;
-
     let part = part_path(dest);
-    let fail = |part: &Path, e: DownloadError| {
-        let _ = std::fs::remove_file(part);
-        Err(e)
-    };
-    let resp = match client.get(url).send().await {
-        Ok(r) => r,
-        Err(e) => return Err(DownloadError::Failed(format!("request failed: {e}"))),
-    };
-    let resp = match resp.error_for_status() {
-        Ok(r) => r,
-        Err(e) => return Err(DownloadError::Failed(format!("download failed: {e}"))),
-    };
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| DownloadError::Failed(format!("request failed: {e}")))?;
+    let resp = resp
+        .error_for_status()
+        .map_err(|e| DownloadError::Failed(format!("download failed: {e}")))?;
     if let Some(dir) = dest.parent() {
         std::fs::create_dir_all(dir)
             .map_err(|e| DownloadError::Failed(format!("create models dir: {e}")))?;
     }
-    let mut file = match std::fs::File::create(&part) {
-        Ok(f) => std::io::BufWriter::with_capacity(1 << 20, f),
-        Err(e) => return Err(DownloadError::Failed(format!("create temp file: {e}"))),
-    };
+    let file = std::fs::File::create(&part)
+        .map_err(|e| DownloadError::Failed(format!("create temp file: {e}")))?;
+    let file = std::io::BufWriter::with_capacity(1 << 20, file);
+    // `write_part` has closed the file by the time it returns, so a failure
+    // can remove it right away.
+    let written = write_part(resp, file, expected_bytes, cancel, &mut progress)
+        .await
+        .and_then(|(received, sha256)| {
+            check_download(received, &sha256, expected_bytes, expected_sha256)
+        });
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&part);
+        return Err(e);
+    }
+    std::fs::rename(&part, dest).map_err(|e| {
+        let _ = std::fs::remove_file(&part);
+        DownloadError::Failed(format!("finalize model file: {e}"))
+    })
+}
+
+/// `download_verified`'s streaming half: write the body into `file` while
+/// hashing it, stop on cancel, on a stream or write error, or as soon as it
+/// grows past `expected_bytes`, then flush it to disk. Returns the byte count
+/// and the lowercase hex SHA-256 of what was written.
+async fn write_part(
+    resp: reqwest::Response,
+    mut file: std::io::BufWriter<std::fs::File>,
+    expected_bytes: u64,
+    cancel: &AtomicBool,
+    progress: &mut impl FnMut(Stage, u64),
+) -> Result<(u64, String), DownloadError> {
+    use futures_util::StreamExt;
+
     let mut hasher = Sha256::new();
     let mut received: u64 = 0;
     let mut stream = resp.bytes_stream();
     progress(Stage::Downloading, 0);
     while let Some(chunk) = stream.next().await {
         if cancel.load(Ordering::SeqCst) {
-            drop(file);
-            return fail(&part, DownloadError::Cancelled);
+            return Err(DownloadError::Cancelled);
         }
-        let chunk = match chunk {
-            Ok(c) => c,
-            Err(e) => {
-                drop(file);
-                return fail(
-                    &part,
-                    DownloadError::Failed(format!("download interrupted: {e}")),
-                );
-            }
-        };
+        let chunk =
+            chunk.map_err(|e| DownloadError::Failed(format!("download interrupted: {e}")))?;
         received += chunk.len() as u64;
         if received > expected_bytes {
-            drop(file);
-            return fail(
-                &part,
-                DownloadError::Failed(format!(
-                    "download is larger than expected ({expected_bytes} bytes)"
-                )),
-            );
+            return Err(DownloadError::Failed(format!(
+                "download is larger than expected ({expected_bytes} bytes)"
+            )));
         }
-        if let Err(e) = file.write_all(&chunk) {
-            drop(file);
-            return fail(&part, DownloadError::Failed(format!("write failed: {e}")));
-        }
+        file.write_all(&chunk)
+            .map_err(|e| DownloadError::Failed(format!("write failed: {e}")))?;
         hasher.update(&chunk);
         progress(Stage::Downloading, received);
     }
     if cancel.load(Ordering::SeqCst) {
-        drop(file);
-        return fail(&part, DownloadError::Cancelled);
+        return Err(DownloadError::Cancelled);
     }
     progress(Stage::Verifying, received);
-    let flushed = file
-        .into_inner()
+    file.into_inner()
         .map_err(|e| e.into_error())
-        .and_then(|f| f.sync_all());
-    if let Err(e) = flushed {
-        return fail(&part, DownloadError::Failed(format!("write failed: {e}")));
-    }
+        .and_then(|f| f.sync_all())
+        .map_err(|e| DownloadError::Failed(format!("write failed: {e}")))?;
+    Ok((received, to_hex(&hasher.finalize())))
+}
+
+/// `download_verified`'s verdict on a finished download: the full size and
+/// the expected checksum.
+fn check_download(
+    received: u64,
+    sha256: &str,
+    expected_bytes: u64,
+    expected_sha256: &str,
+) -> Result<(), DownloadError> {
     if received != expected_bytes {
-        return fail(
-            &part,
-            DownloadError::Failed(format!(
-                "download ended early ({received} of {expected_bytes} bytes)"
-            )),
-        );
+        return Err(DownloadError::Failed(format!(
+            "download ended early ({received} of {expected_bytes} bytes)"
+        )));
     }
-    let got = to_hex(&hasher.finalize());
-    if !got.eq_ignore_ascii_case(expected_sha256) {
-        return fail(
-            &part,
-            DownloadError::Failed(format!(
-                "checksum mismatch (expected {expected_sha256}, got {got})"
-            )),
-        );
+    if !sha256.eq_ignore_ascii_case(expected_sha256) {
+        return Err(DownloadError::Failed(format!(
+            "checksum mismatch (expected {expected_sha256}, got {sha256})"
+        )));
     }
-    std::fs::rename(&part, dest).map_err(|e| {
-        let _ = std::fs::remove_file(&part);
-        DownloadError::Failed(format!("finalize model file: {e}"))
-    })
+    Ok(())
 }
 
 fn to_hex(bytes: &[u8]) -> String {

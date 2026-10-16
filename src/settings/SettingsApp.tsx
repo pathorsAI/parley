@@ -737,11 +737,12 @@ export function SettingsApp() {
             {/* Hosted "parley" authenticates with the cloud session token, not a
                 user-entered key — show whose account it bills to instead. The
                 on-device provider has no key at all: pick (and download) a model. */}
-            {settings.transcriptionProvider === "parley" ? (
+            {settings.transcriptionProvider === "parley" && (
               <p className="max-w-md text-[11px] text-muted-foreground">
                 {t("settings.account.useParley.note", { email: cloudAuth?.user.email ?? "" })}
               </p>
-            ) : settings.transcriptionProvider === "local" ? (
+            )}
+            {settings.transcriptionProvider === "local" && (
               <Field label={t("localStt.picker.label")}>
                 <LocalSttModelField
                   value={settings.localSttModel}
@@ -750,7 +751,9 @@ export function SettingsApp() {
                   onAutoSelect={(id) => patch({ localSttModel: id })}
                 />
               </Field>
-            ) : (
+            )}
+            {settings.transcriptionProvider !== "parley" &&
+              settings.transcriptionProvider !== "local" &&
               sttInfo.apiKeyField && (
                 <SttKeyField
                   label={t("settings.transcription.apiKey", { provider: sttInfo.label })}
@@ -759,8 +762,7 @@ export function SettingsApp() {
                   settings={settings}
                   patch={patch}
                 />
-              )
-            )}
+              )}
             {!sttInfo.diarization && (
               <p className="max-w-md rounded-md border border-warning-border bg-warning px-3 py-2 text-[11px] leading-relaxed text-warning-foreground">
                 {t("settings.transcription.noDiarizationWarning")}

@@ -306,6 +306,11 @@ jobs:
       # whisper.cpp (local transcription) must not be built with -march=native:
       # a runner with AVX-512 would ship a binary that crashes on most PCs.
       GGML_NATIVE: "OFF"
+      # Keep Cargo's intermediate artifacts on a short path: whisper.cpp's
+      # nested vulkan-shaders-gen CMake build runs past MAX_PATH under
+      # src-tauri/target (see the rust-windows job in ci.yml). Final binaries
+      # and bundles stay in src-tauri/target, where the steps below look.
+      CARGO_BUILD_BUILD_DIR: 'C:\b'
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -342,6 +347,8 @@ jobs:
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: src-tauri
+          # Dependency artifacts live in the build dir, not in target/.
+          cache-directories: ${{ env.CARGO_BUILD_BUILD_DIR }}
 
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile --ignore-scripts

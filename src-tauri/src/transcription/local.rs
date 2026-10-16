@@ -333,7 +333,29 @@ pub fn build_prompt(traditional: bool, vocabulary: &[String], previous: &str) ->
     if traditional {
         prompt.push_str(TRADITIONAL_PREAMBLE);
     }
-    let mut used = prompt.chars().count();
+    let terms = vocabulary_terms(vocabulary, prompt.chars().count());
+    if !terms.is_empty() {
+        if !prompt.is_empty() {
+            prompt.push(' ');
+        }
+        prompt.push_str(&terms);
+        prompt.push('.');
+    }
+    let room = PROMPT_MAX_CHARS.saturating_sub(prompt.chars().count() + 1);
+    if let Some(tail) = previous_tail(previous.trim(), room) {
+        if !prompt.is_empty() {
+            prompt.push(' ');
+        }
+        prompt.push_str(tail.trim_start());
+    }
+    // A NUL would make whisper-rs panic building its C string.
+    prompt.replace('\0', "")
+}
+
+/// The vocabulary as "a, b, c", cut at a term boundary so that a prompt
+/// already `used` characters long, plus this list, its leading space and its
+/// closing period, stays within [`PROMPT_MAX_CHARS`].
+fn vocabulary_terms(vocabulary: &[String], mut used: usize) -> String {
     let mut terms = String::new();
     for term in vocabulary {
         let sep = if terms.is_empty() { 0 } else { 2 };
@@ -348,27 +370,17 @@ pub fn build_prompt(traditional: bool, vocabulary: &[String], previous: &str) ->
         terms.push_str(term);
         used += sep + len;
     }
-    if !terms.is_empty() {
-        if !prompt.is_empty() {
-            prompt.push(' ');
-            used += 1;
-        }
-        prompt.push_str(&terms);
-        prompt.push('.');
-        used += 1;
+    terms
+}
+
+/// The last `room` characters of the (trimmed) previous text, or `None` when
+/// there is no previous text or no room for it.
+fn previous_tail(previous: &str, room: usize) -> Option<String> {
+    if previous.is_empty() || room == 0 {
+        return None;
     }
-    let previous = previous.trim();
-    let room = PROMPT_MAX_CHARS.saturating_sub(used + 1);
-    if !previous.is_empty() && room > 0 {
-        let count = previous.chars().count();
-        let tail: String = previous.chars().skip(count.saturating_sub(room)).collect();
-        if !prompt.is_empty() {
-            prompt.push(' ');
-        }
-        prompt.push_str(tail.trim_start());
-    }
-    // A NUL would make whisper-rs panic building its C string.
-    prompt.replace('\0', "")
+    let count = previous.chars().count();
+    Some(previous.chars().skip(count.saturating_sub(room)).collect())
 }
 
 /// Whisper's well-known inventions on silence and noise, compared after
@@ -802,6 +814,60 @@ impl Emitter {
     }
 }
 
+/// `run_session`'s side of the decode worker's queue: how many jobs are
+/// queued or running, and when the last interim went out.
+struct JobQueue {
+    tx: std::sync::mpsc::Sender<Job>,
+    outstanding: usize,
+    last_interim: Instant,
+}
+
+impl JobQueue {
+    fn new(tx: std::sync::mpsc::Sender<Job>) -> Self {
+        Self {
+            tx,
+            outstanding: 0,
+            last_interim: Instant::now(),
+        }
+    }
+
+    /// Queue a job; false when the worker is gone.
+    fn send(&mut self, job: Job) -> bool {
+        let sent = self.tx.send(job).is_ok();
+        if sent {
+            self.outstanding += 1;
+        }
+        sent
+    }
+
+    fn result_received(&mut self) {
+        self.outstanding = self.outstanding.saturating_sub(1);
+    }
+
+    /// Ask for an interim of the open utterance, at most every
+    /// [`INTERIM_EVERY`] and once it has [`INTERIM_MIN_SAMPLES`]. One decode at
+    /// a time: an interim only goes out when nothing is queued or running, so
+    /// it can never delay a final.
+    fn maybe_send_interim(&mut self, endpointer: &Endpointer) {
+        if self.outstanding > 0 || self.last_interim.elapsed() < INTERIM_EVERY {
+            return;
+        }
+        let Some((id, _, samples)) = endpointer.current() else {
+            return;
+        };
+        if samples.len() < INTERIM_MIN_SAMPLES {
+            return;
+        }
+        let job = Job::Interim {
+            id,
+            samples: samples.to_vec(),
+        };
+        if self.send(job) {
+            self.last_interim = Instant::now();
+        }
+    }
+}
+
 pub async fn run_session(
     app: AppHandle,
     config: TranscribeConfig,
@@ -833,6 +899,7 @@ pub async fn run_session(
         tail_for: None,
     };
     let (job_tx, job_rx) = std::sync::mpsc::channel::<Job>();
+    let mut jobs = JobQueue::new(job_tx);
     let (res_tx, mut res_rx) = tokio::sync::mpsc::unbounded_channel::<JobResult>();
     let worker_app = app.clone();
     let worker_model = model_id.clone();
@@ -843,8 +910,6 @@ pub async fn run_session(
     });
 
     let mut endpointer = Endpointer::new(VadConfig::default());
-    let mut outstanding: usize = 0;
-    let mut last_interim = Instant::now();
     let mut last_audio = Instant::now();
     let mut ticker = tokio::time::interval(Duration::from_millis(250));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -864,7 +929,7 @@ pub async fn run_session(
                 closed = endpointer.push(&chunk);
             }
             Some(result) = res_rx.recv() => {
-                outstanding = outstanding.saturating_sub(1);
+                jobs.result_received();
                 emitter.apply(result, current(&endpointer))?;
             }
             _ = ticker.tick() => {
@@ -874,33 +939,18 @@ pub async fn run_session(
             }
         }
         for utt in closed {
-            if job_tx.send(Job::Final(utt)).is_ok() {
-                outstanding += 1;
-            }
+            jobs.send(Job::Final(utt));
         }
-        // One decode at a time: an interim only goes out when nothing is
-        // queued or running, so it can never delay a final.
-        if interim_tails && outstanding == 0 && last_interim.elapsed() >= INTERIM_EVERY {
-            if let Some((id, _, samples)) = endpointer.current() {
-                if samples.len() >= INTERIM_MIN_SAMPLES {
-                    let job = Job::Interim {
-                        id,
-                        samples: samples.to_vec(),
-                    };
-                    if job_tx.send(job).is_ok() {
-                        outstanding += 1;
-                        last_interim = Instant::now();
-                    }
-                }
-            }
+        if interim_tails {
+            jobs.maybe_send_interim(&endpointer);
         }
     }
 
     // Input closed: a normal stop. Decode what is left, then end.
     if let Some(utt) = endpointer.finish() {
-        let _ = job_tx.send(Job::Final(utt));
+        jobs.send(Job::Final(utt));
     }
-    drop(job_tx);
+    drop(jobs);
     while let Some(result) = res_rx.recv().await {
         emitter.apply(result, None)?;
     }
