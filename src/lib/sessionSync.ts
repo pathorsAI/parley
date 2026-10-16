@@ -1,6 +1,7 @@
 import { useStore, transcriptAsText } from "./store";
 import { isTauri } from "./tauriEvents";
 import * as ipc from "./ipc/commands";
+import { subscribeDebounced } from "./store/subscribe";
 
 /**
  * Mirror the live meeting state to `<appConfigDir>/session.json`, which the
@@ -61,8 +62,6 @@ function snapshot() {
   };
 }
 
-let timer: ReturnType<typeof setTimeout> | null = null;
-
 async function writeSession(): Promise<void> {
   try {
     await ipc.writeSession({ json: JSON.stringify(snapshot()) });
@@ -74,14 +73,7 @@ async function writeSession(): Promise<void> {
 /** Start mirroring session state to disk. Returns a teardown function. */
 export function initSessionSync(): () => void {
   if (!isTauri()) return () => {};
-  const schedule = () => {
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(writeSession, 600); // debounce; transcript updates often
-  };
-  const unsub = useStore.subscribe(schedule);
-  schedule(); // seed once on startup
-  return () => {
-    unsub();
-    if (timer) clearTimeout(timer);
-  };
+  // Any change at all; debounced because transcript updates often. Seeded once
+  // on startup.
+  return subscribeDebounced((s) => s, 600, writeSession, { fireImmediately: true });
 }

@@ -29,6 +29,8 @@
 
 import { log } from "../log";
 import { useStore } from "../store";
+import { subscribeSelected } from "../store/subscribe";
+import { createDebouncer } from "../debounce";
 import { CLOUD_ENABLED } from "../flags";
 import { isTauri } from "../tauriEvents";
 import {
@@ -533,6 +535,12 @@ export function syncDictionary(): Promise<void> {
   return running;
 }
 
+/** {@link syncDictionary} from a trigger nothing awaits: a failure that escapes
+ *  the run's own handling is logged rather than left unhandled. */
+function syncInBackground(): void {
+  syncDictionary().catch((error) => log.warn("dictionary sync: run failed", { error: String(error) }));
+}
+
 /** True when the local dictionary differs from what was last synced. */
 function hasLocalChanges(): boolean {
   const userId = currentUserId();
@@ -548,19 +556,18 @@ function hasLocalChanges(): boolean {
 export function initDictionarySync(): () => void {
   if (!CLOUD_ENABLED || !isTauri()) return () => {};
   let active = true;
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  const debounce = createDebouncer(SYNC_DEBOUNCE_MS);
 
   // Launch.
   void syncDictionary();
 
   // Sign-in, sign-out → sign-in as someone else, or the sync toggle turned on.
-  let enabledFor = currentUserId();
-  const unsubscribe = useStore.subscribe(() => {
-    const now = currentUserId();
-    if (now === enabledFor) return;
-    enabledFor = now;
-    if (now) void syncDictionary();
-  });
+  const unsubscribe = subscribeSelected(
+    () => currentUserId(),
+    (now) => {
+      if (now) syncInBackground();
+    },
+  );
 
   // Any local edit — Settings, the correction bubble, an MCP tool (Rust
   // broadcasts after it writes) — once things have been quiet for a moment.
@@ -569,8 +576,7 @@ export function initDictionarySync(): () => void {
   let unlisten: (() => void) | undefined;
   listenForDictionaryUpdated(() => {
     if (!active || !hasLocalChanges()) return;
-    clearTimeout(timer);
-    timer = setTimeout(() => void syncDictionary(), SYNC_DEBOUNCE_MS);
+    debounce.schedule(syncInBackground);
   })
     .then((fn) => {
       if (active) unlisten = fn;
@@ -585,7 +591,7 @@ export function initDictionarySync(): () => void {
 
   return () => {
     active = false;
-    clearTimeout(timer);
+    debounce.cancel();
     unsubscribe();
     unlisten?.();
     window.removeEventListener("focus", onFocus);

@@ -6,6 +6,7 @@ import { buildPresetTodoTemplates } from "./todoTemplates";
 import { translate, type TranslationKey } from "../i18n/messages";
 import type { EvalTemplate, TodoTemplate } from "./types";
 import * as ipc from "./ipc/commands";
+import { subscribeDebounced } from "./store/subscribe";
 
 /**
  * Sync eval/TODO templates with a shared on-disk JSON file
@@ -18,7 +19,6 @@ interface TemplatesFile {
   todoTemplates?: TodoTemplate[];
 }
 
-let saveTimer: ReturnType<typeof setTimeout> | null = null;
 // Guards against a load → store-change → save echo writing the file right back.
 let applyingFromFile = false;
 
@@ -65,28 +65,25 @@ async function saveToFile(): Promise<void> {
   }
 }
 
-function scheduleSave() {
-  if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => void saveToFile(), 400);
-}
-
 /** Wire up template ↔ file sync. Call once at app start; returns a teardown. */
 export function initTemplatesSync(): () => void {
   if (!isTauri()) return () => {};
 
   void loadFromFile();
 
-  let lastEval = useStore.getState().settings.evalTemplates;
-  let lastTodo = useStore.getState().settings.todoTemplates;
-  const unsub = useStore.subscribe((state) => {
-    const e = state.settings.evalTemplates;
-    const t = state.settings.todoTemplates;
-    if (e !== lastEval || t !== lastTodo) {
-      lastEval = e;
-      lastTodo = t;
-      if (!applyingFromFile) scheduleSave();
-    }
-  });
+  // Save 400 ms after either template list changes — unless the change is the
+  // load above landing (no echo back to the file). A save still pending at
+  // teardown lands anyway, so a last edit is never lost.
+  const unsub = subscribeDebounced(
+    (state) => [state.settings.evalTemplates, state.settings.todoTemplates] as const,
+    400,
+    saveToFile,
+    {
+      equals: (a, b) => a[0] === b[0] && a[1] === b[1],
+      skip: () => applyingFromFile,
+      cancelOnStop: false,
+    },
+  );
 
   // Pick up edits made by the MCP server while the app was unfocused.
   const onFocus = () => void loadFromFile();
