@@ -41,20 +41,21 @@ const { invoke } = vi.hoisted(() => ({
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke, convertFileSrc: (p: string) => `asset://${p}` }));
 vi.mock("@tauri-apps/api/event", () => ({
-  emit: vi.fn(async (...args: unknown[]) => void calls.push(["emit", ...args])),
+  emit: vi.fn(async (...args: unknown[]) => { calls.push(["emit", ...args]); }),
   listen: vi.fn(async () => () => {}),
 }));
 vi.mock("@tauri-apps/api/window", () => ({
-  getCurrentWindow: () => ({ setFocus: async () => void calls.push(["focus"]) }),
-}));
-vi.mock("sonner", () => ({
-  toast: Object.assign((...a: unknown[]) => void calls.push(["toast", ...a]), {
-    message: (...a: unknown[]) => void calls.push(["toast.message", ...a]),
-    success: (...a: unknown[]) => void calls.push(["toast.success", ...a]),
-    error: (...a: unknown[]) => void calls.push(["toast.error", ...a]),
+  getCurrentWindow: () => ({
+    setFocus: async () => {
+      calls.push(["focus"]);
+    },
   }),
 }));
-vi.mock("../cloud/syncState", () => ({ markDirty: (id: string) => void calls.push(["markDirty", id]) }));
+vi.mock("../cloud/syncState", () => ({
+  markDirty: (id: string) => {
+    calls.push(["markDirty", id]);
+  },
+}));
 vi.mock("../cloud/client", async (orig) => ({
   ...(await orig<typeof import("../cloud/client")>()),
   syncEnabled: () => false,
@@ -62,13 +63,13 @@ vi.mock("../cloud/client", async (orig) => ({
 vi.mock("../cloud/folders", () => ({ deleteCloudFolder: vi.fn(async () => {}) }));
 vi.mock("./studyCache", () => ({
   readStudyCache: () => null,
-  writeStudyCache: (...a: unknown[]) => void calls.push(["writeStudyCache", ...a]),
+  writeStudyCache: (...a: unknown[]) => { calls.push(["writeStudyCache", ...a]); },
 }));
 const folders = vi.hoisted(() => ({ list: [] as { id: string; name: string; createdAt: number }[] }));
 vi.mock("./folders", () => ({
   listLocalFolders: () => folders.list,
-  deleteLocalFolder: (id: string) => void calls.push(["deleteLocalFolder", id]),
-  emitFoldersUpdated: async () => void calls.push(["emitFoldersUpdated"]),
+  deleteLocalFolder: (id: string) => { calls.push(["deleteLocalFolder", id]); },
+  emitFoldersUpdated: async () => { calls.push(["emitFoldersUpdated"]); },
 }));
 const diar = vi.hoisted(() => ({ qualifies: false }));
 vi.mock("../speakers/postDiarize", () => ({
@@ -80,12 +81,21 @@ vi.mock("../speakers/postDiarize", () => ({
 }));
 
 import * as history from "./history";
+import { setNotifier } from "../notify";
 import { useStore } from "../store";
 import { seg, replaySession } from "../test/fixtures";
 import type { HistoryEntry } from "./types";
 
 const INITIAL = useStore.getInitialState();
 let uuid = 0;
+
+// Notices reach the user through the installed notifier (main.tsx installs
+// sonner's toast); trace them under the toast names they render as.
+setNotifier({
+  message: (t) => { calls.push(["toast.message", t]); },
+  success: (t) => { calls.push(["toast.success", t]); },
+  error: (t) => { calls.push(["toast.error", t]); },
+});
 
 function baseMeta(id: string, extra: Partial<HistoryEntry> = {}): HistoryEntry {
   return {

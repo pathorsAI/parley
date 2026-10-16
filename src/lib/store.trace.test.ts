@@ -17,7 +17,7 @@ const { storage, writes } = vi.hoisted(() => {
       writes.count++;
       map.set(k, String(v));
     },
-    removeItem: (k: string) => void map.delete(k),
+    removeItem: (k: string) => { map.delete(k); },
     clear: () => map.clear(),
     key: (i: number) => [...map.keys()][i] ?? null,
     get length() {

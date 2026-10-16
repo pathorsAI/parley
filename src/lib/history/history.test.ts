@@ -5,9 +5,6 @@ import { afterEach, describe, it, expect, vi } from "vitest";
 vi.mock("../log", () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
-vi.mock("sonner", () => ({
-  toast: Object.assign(vi.fn(), { message: vi.fn(), error: vi.fn(), success: vi.fn() }),
-}));
 
 import {
   applyCorrectedSpeakers,
@@ -21,7 +18,10 @@ import {
   type AnalysisSnapshot,
 } from "./history";
 import { speakerKey, useStore } from "../store";
-import { toast } from "sonner";
+import { setNotifier } from "../notify";
+
+const toast = { message: vi.fn(), success: vi.fn(), error: vi.fn() };
+setNotifier(toast);
 import type { HistoryEntry } from "./types";
 import type { DeliveryAssessment } from "../types";
 import { seg } from "../test/fixtures";

@@ -34,8 +34,8 @@ const g = globalThis as unknown as {
   addEventListener: (n: string, f: (e: unknown) => void) => void;
   removeEventListener: (n: string, f: (e: unknown) => void) => void;
 };
-g.addEventListener = (n, f) => void domListeners.set(n, f);
-g.removeEventListener = (n) => void domListeners.delete(n);
+g.addEventListener = (n, f) => { domListeners.set(n, f); };
+g.removeEventListener = (n) => { domListeners.delete(n); };
 afterAll(() => {
   delete (g as Partial<typeof g>).addEventListener;
   delete (g as Partial<typeof g>).removeEventListener;

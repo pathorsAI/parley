@@ -7,39 +7,61 @@
 // in the main window, so opening one is a plain `loadHistoryEntry` call rather
 // than a `history://open` message from a second window.
 
-import { convertFileSrc } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-
-import { toast } from "sonner";
-import { useStore, speakerKey, hasSpokenSegment, isMeetingActive } from "../store";
-import { readStudyCache, writeStudyCache } from "./studyCache";
+import { useStore, hasSpokenSegment, isMeetingActive } from "../store";
+import { notify } from "../notify";
+import { writeStudyCache } from "./studyCache";
 import { isTauri } from "../tauriEvents";
 import { log } from "../log";
 import { CLOUD_ENABLED } from "../flags";
 import { markDirty } from "../cloud/syncState";
-import { CLOUD_URL, cloudFetch, cloudToken, syncEnabled } from "../cloud/client";
-import { deleteLocalFolder, emitFoldersUpdated, listLocalFolders } from "./folders";
-import { deleteCloudFolder } from "../cloud/folders";
-import { planFolderDedupe } from "../library/scope";
+import { syncEnabled } from "../cloud/client";
 import type { OrgHandoffMode } from "../library/destination";
 import { qualifiesForRediarization, rediarizeSegments } from "../speakers/postDiarize";
 import { translate } from "../../i18n/messages";
 import { markGettingStarted } from "../onboarding/gettingStarted";
 import type { ReplaySession } from "../replay/types";
-import { withTimingRepaired, withoutEstimatedTiming } from "../replay/timing";
+import { withoutEstimatedTiming } from "../replay/timing";
 import type {
-  ActionItem,
   DefaultSaveLocation,
   FilingSuggestion,
-  TimelineEvent,
   TranscriptSegment,
 } from "../types";
 import type { StudyCacheEntry } from "./studyCache";
-import type { HistoryEntry, HistoryEntrySummary } from "./types";
+import type { HistoryEntry } from "./types";
 import * as ipc from "../ipc/commands";
-import { emitEvent, listenEvent, type UnlistenFn } from "../ipc/events";
+import { listenEvent, type UnlistenFn } from "../ipc/events";
+import {
+  emitHistoryUpdated,
+  readEntry,
+  renameEntryFiles,
+  rewriteEntry,
+  rewriteEntryNow,
+  withEntryWrite,
+  writeEntry,
+} from "./entryStore";
 
-const HISTORY_UPDATED_EVENT = "history://updated";
+import { pushToCloud } from "./cloudPush";
+import { loadHistoryEntry } from "./open";
+
+// Storage access, opening, external writes and the folder repair live in their
+// own modules; these keep their old import path.
+export { loadHistoryEntry, loadOrgEntry, replaySessionFor } from "./open";
+export {
+  setEntryAnalysis,
+  updateEntryMeta,
+  type EntryAnalysisPatch,
+  type EntryMetaPatch,
+} from "./externalWrites";
+export { migrateDuplicateFolders } from "./folderDedupe";
+export {
+  buildSummary,
+  deleteHistoryEntry,
+  emitHistoryUpdated,
+  entryWritesSettled,
+  listHistory,
+  listenForHistoryUpdated,
+} from "./entryStore";
+
 const RECORDING_SAVED_EVENT = "meeting://recording-saved";
 // Rust emits this instead of `recording-saved` when the stopped meeting produced
 // no keepable recording (empty / too short / encode failed). Nothing is saved,
@@ -47,40 +69,6 @@ const RECORDING_SAVED_EVENT = "meeting://recording-saved";
 const RECORDING_DISCARDED_EVENT = "meeting://recording-discarded";
 
 // ── Build helpers ───────────────────────────────────────────────────────────
-
-/** Distinct speaker count among spoken (non-empty) segments. */
-function speakerCountOf(entry: HistoryEntry): number {
-  const keys = new Set<string>();
-  for (const s of entry.segments) if (s.text.trim()) keys.add(speakerKey(s));
-  return keys.size;
-}
-
-/** First spoken line of the transcript (trimmed), for the card preview. */
-function snippetOf(entry: HistoryEntry): string {
-  const first = [...entry.segments]
-    .filter((s) => s.isFinal && s.text.trim())
-    .sort((a, b) => a.startMs - b.startMs)[0];
-  const text = first?.text.trim() ?? "";
-  return text.length > 90 ? `${text.slice(0, 90)}…` : text;
-}
-
-/** The lightweight card derived from a full entry (written to summary.json). */
-export function buildSummary(entry: HistoryEntry): HistoryEntrySummary {
-  return {
-    id: entry.id,
-    title: entry.title,
-    source: entry.source,
-    createdAt: entry.createdAt,
-    durationMs: entry.durationMs,
-    speakerCount: speakerCountOf(entry),
-    findingsCount: entry.findings.length,
-    actionItemsCount: entry.actionItems.length,
-    hasAudio: entry.audio != null,
-    analyzed: entry.analyzed,
-    snippet: snippetOf(entry),
-    folderId: entry.folderId ?? null,
-  };
-}
 
 /** Snapshot the analysis-related slice of the store into a partial entry.
  *  Exported for testing. */
@@ -160,46 +148,13 @@ export function shouldKeepLiveRecording(
   return hasSpokenSegment(s.segments) || s.transcriptionDropped;
 }
 
-// ── Per-entry write serialization ───────────────────────────────────────────
-//
-// Every in-place update is a read-modify-write of meta.json. Two of them for
-// the same entry must not interleave — the later save would write back the
-// meta it read BEFORE the earlier one landed, silently undoing it. That used to
-// be rare (one stage persisting at a time, while the recording was on screen);
-// now a stage can finish after the user left and write while they refile or
-// rename the same recording, so every RMW below goes through this chain.
-const entryWrites = new Map<string, Promise<unknown>>();
-
-function withEntryWrite<T>(id: string, fn: () => Promise<T>): Promise<T> {
-  const prev = entryWrites.get(id) ?? Promise.resolve();
-  const next = prev.catch(() => {}).then(fn);
-  entryWrites.set(id, next);
-  const clear = () => {
-    if (entryWrites.get(id) === next) entryWrites.delete(id);
-  };
-  next.then(clear, clear);
-  return next;
-}
-
-/** Resolves once every queued write for this entry has landed (or failed). */
-export function entryWritesSettled(id: string): Promise<void> {
-  const pending = entryWrites.get(id);
-  return pending ? pending.then(() => {}, () => {}) : Promise.resolve();
-}
-
 /** Persist an entry: write meta + summary and place the audio. */
 async function persist(
   entry: HistoryEntry,
   audioSourcePath: string | null,
   compress: boolean,
 ): Promise<void> {
-  await ipc.saveHistoryEntry({
-    id: entry.id,
-    summaryJson: JSON.stringify(buildSummary(entry)),
-    metaJson: JSON.stringify(entry),
-    audioSourcePath,
-    compress,
-  });
+  await writeEntry(entry, { audioSourcePath, compress });
   log.info("history: entry saved", { id: entry.id, source: entry.source });
   // Every NEW entry — live save, audio upload, transcript import — lands here
   // (cloud pulls write their own files and never pass through), so this is the
@@ -213,19 +168,6 @@ async function persist(
   pushToCloud(entry.id).catch((error) =>
     log.warn("history: cloud push failed", { id: entry.id, error: String(error) }),
   );
-}
-
-/** Fire-and-forget cloud push (gated by the sync toggle); save paths stay simple. */
-async function pushToCloud(id: string): Promise<void> {
-  // Content changed → flag dirty even when sync is off, so flipping sync ON later
-  // makes the background sweep push this entry. pushLocalEntry clears dirty on a
-  // confirmed push.
-  markDirty(id);
-  // Sync toggle off (or signed out / OSS) → don't push now; the sweep handles it
-  // when sync is turned on. This is the save-time half of the syncEnabled chokepoint.
-  if (!syncEnabled()) return;
-  const sync = await import("../cloud/sync");
-  await sync.pushLocalEntrySafe(id);
 }
 
 // ── Save location ─────────────────────────────────────────────────────────────
@@ -301,7 +243,7 @@ export function resolveMeetingSave(): MeetingSaveTarget {
 async function applyDefaultOrgShare(id: string, res: MeetingSaveTarget): Promise<void> {
   const lang = useStore.getState().settings.language;
   if (res.fallback === "syncOff") {
-    toast.message(translate(lang, "history.defaultSave.orgNeedsSync"));
+    notify.message(translate(lang, "history.defaultSave.orgNeedsSync"));
     return;
   }
   if (!res.autoShare || !CLOUD_ENABLED) return;
@@ -314,14 +256,14 @@ async function applyDefaultOrgShare(id: string, res: MeetingSaveTarget): Promise
       if (st.loadedHistoryId === id) st.setLoadedHistoryId(null);
       // Say so: the recording just vanished from the personal library, and a
       // silent disappearance reads as a lost save.
-      toast.success(translate(lang, "history.move.movedToFolder"));
+      notify.success(translate(lang, "history.move.movedToFolder"));
     } else {
       await m.shareRecordingToOrg(id, orgId, folderId);
     }
     markGettingStarted("filed");
   } catch (e) {
     log.error("history: org auto-share failed", { id, error: String(e) });
-    toast.error(translate(lang, "history.defaultSave.orgShareFailed"));
+    notify.error(translate(lang, "history.defaultSave.orgShareFailed"));
   }
 }
 
@@ -512,22 +454,15 @@ export function applyCorrectedSpeakers(
  * and the store keeps its own speaker names.
  */
 async function applyPostSaveDiarization(entry: HistoryEntry): Promise<void> {
-  const { audioPath } = await ipc.readHistoryEntry({ id: entry.id });
+  const { audioPath } = await readEntry(entry.id);
   if (!audioPath) return;
   const result = await rediarizeSegments(entry.segments, audioPath);
   if (!result) return;
 
-  await withEntryWrite(entry.id, async () => {
-    const { meta } = await ipc.readHistoryEntry({ id: entry.id });
-    const updated: HistoryEntry = { ...meta, segments: applyCorrectedSpeakers(meta.segments, result.segments) };
-    await ipc.saveHistoryEntry({
-      id: entry.id,
-      summaryJson: JSON.stringify(buildSummary(updated)),
-      metaJson: JSON.stringify(updated),
-      audioSourcePath: null, // leave the recording untouched
-      compress: false,
-    });
-  });
+  await rewriteEntry(entry.id, (meta) => ({
+    ...meta,
+    segments: applyCorrectedSpeakers(meta.segments, result.segments),
+  }));
   await emitHistoryUpdated(entry.id);
   pushToCloud(entry.id).catch((e) =>
     log.warn("history: cloud push failed", { id: entry.id, error: String(e) }),
@@ -547,7 +482,7 @@ async function applyPostSaveDiarization(entry: HistoryEntry): Promise<void> {
     const segments = applyCorrectedSpeakers(st.segments, result.segments);
     // `speakerNames` deliberately untouched — see applyCorrectedSpeakers.
     if (segments !== st.segments) st.setSegments(segments);
-    toast.message(translate(st.settings.language, "speakers.postRefined"));
+    notify.message(translate(st.settings.language, "speakers.postRefined"));
   }
   log.info("history: post-save re-diarization applied", { id: entry.id, changed: result.changed });
 }
@@ -678,18 +613,7 @@ export async function updateHistoryEntry(id: string, snapshot?: AnalysisSnapshot
   // Use the caller's captured snapshot when given (a deferred/flushed save — the
   // live store may since have been cleared); otherwise snapshot now.
   const analysis = snapshot ?? snapshotAnalysis();
-  const updated = await withEntryWrite(id, async () => {
-    const { meta } = await ipc.readHistoryEntry({ id });
-    const next = mergeAnalysisSnapshot(meta, analysis);
-    await ipc.saveHistoryEntry({
-      id,
-      summaryJson: JSON.stringify(buildSummary(next)),
-      metaJson: JSON.stringify(next),
-      audioSourcePath: null,
-      compress: false,
-    });
-    return next;
-  });
+  const updated = await rewriteEntry(id, (meta) => mergeAnalysisSnapshot(meta, analysis));
   await emitHistoryUpdated(id);
   pushToCloud(id); // re-analysis → refresh the cloud copy too (best-effort)
   log.info("history: entry analysis overwritten", { id, findings: updated.findings.length });
@@ -771,15 +695,7 @@ export async function patchEntryOutputs(
   await withEntryWrite(id, async () => {
     // An upload's initial save may still be compressing — wait so the entry exists.
     await Promise.resolve(uploadSaveInFlight).catch(() => {});
-    const { meta } = await ipc.readHistoryEntry({ id });
-    const updated = mergeStageOutputs(meta, patch);
-    await ipc.saveHistoryEntry({
-      id,
-      summaryJson: JSON.stringify(buildSummary(updated)),
-      metaJson: JSON.stringify(updated),
-      audioSourcePath: null, // leave the recording untouched
-      compress: false,
-    });
+    await rewriteEntryNow(id, (meta) => mergeStageOutputs(meta, patch));
   });
   await emitHistoryUpdated(id).catch(() => {});
   if (opts?.push === false) markDirty(id);
@@ -843,43 +759,17 @@ export async function persistFilingSuggestion(): Promise<void> {
   if (!isTauri() || s.replayReadOnly || !id) return;
   // An upload's initial save may still be compressing — wait so the entry exists.
   await Promise.resolve(uploadSaveInFlight).catch(() => {});
-  const updated = await withEntryWrite(id, async () => {
-    const { meta } = await ipc.readHistoryEntry({ id });
-    const next: HistoryEntry = {
-      ...meta,
-      filingSuggestion: s.filingSuggestion,
-      // The pass ran, whatever it produced — so reopening never pays for it twice.
-      filingSuggested: true,
-    };
-    await ipc.saveHistoryEntry({
-      id,
-      summaryJson: JSON.stringify(buildSummary(next)),
-      metaJson: JSON.stringify(next),
-      audioSourcePath: null, // leave the recording untouched
-      compress: false,
-    });
-    return next;
-  });
+  const updated = await rewriteEntry(id, (meta) => ({
+    ...meta,
+    filingSuggestion: s.filingSuggestion,
+    // The pass ran, whatever it produced — so reopening never pays for it twice.
+    filingSuggested: true,
+  }));
   pushToCloud(id);
   log.info("history: filing suggestion saved", { id, pending: !!updated.filingSuggestion });
 }
 
 // ── List / read / delete ─────────────────────────────────────────────────────
-
-/** All saved summaries, newest first. */
-export async function listHistory(): Promise<HistoryEntrySummary[]> {
-  if (!isTauri()) return [];
-  const raw = await ipc.listHistory();
-  const summaries: HistoryEntrySummary[] = [];
-  for (const s of raw) {
-    try {
-      summaries.push(JSON.parse(s) as HistoryEntrySummary);
-    } catch {
-      // Skip a corrupt summary.json rather than failing the whole list.
-    }
-  }
-  return summaries.sort((a, b) => b.createdAt - a.createdAt);
-}
 
 /**
  * A pending filing suggestion after the recording has been renamed: its title is
@@ -902,7 +792,7 @@ export function clearSuggestedTitle(suggestion: FilingSuggestion | null): Filing
  */
 export async function renameHistoryEntry(id: string, title: string): Promise<void> {
   if (!isTauri()) return;
-  await withEntryWrite(id, () => ipc.renameHistoryEntry({ id, title: title.trim() }));
+  await renameEntryFiles(id, title.trim());
   log.info("history: entry renamed", { id });
   const s = useStore.getState();
   if (s.loadedHistoryId === id && s.filingSuggestion?.title) {
@@ -932,354 +822,14 @@ export async function renameHistoryEntry(id: string, title: string): Promise<voi
  */
 export async function setEntryFolder(id: string, folderId: string | null): Promise<void> {
   if (!isTauri()) return;
-  const changed = await withEntryWrite(id, async () => {
-    const { meta } = await ipc.readHistoryEntry({ id });
-    if ((meta.folderId ?? null) === folderId) return false;
-    const updated: HistoryEntry = { ...meta, folderId };
-    await ipc.saveHistoryEntry({
-      id,
-      summaryJson: JSON.stringify(buildSummary(updated)),
-      metaJson: JSON.stringify(updated),
-      audioSourcePath: null, // leave the recording untouched
-      compress: false,
-    });
-    return true;
-  });
+  const changed = await rewriteEntry(id, (meta) =>
+    (meta.folderId ?? null) === folderId ? null : { ...meta, folderId },
+  );
   if (!changed) return;
   const s = useStore.getState();
   if (s.loadedHistoryId === id) s.setReplayFolderId(folderId);
   log.info("history: entry folder set", { id, folderId });
   pushToCloud(id); // sync the new folderId (best-effort; gated by the sync toggle)
-}
-
-// ── External-analyst writes (MCP) ────────────────────────────────────────────
-
-/** The frame fields an MCP client may retarget on a saved recording. */
-export interface EntryMetaPatch {
-  meetingContext?: string;
-  /** Merged per key into the existing map; an empty-string value removes the
-   *  custom name for that key (same semantics as the store's setSpeakerName). */
-  speakerNames?: Record<string, string>;
-}
-
-/**
- * Patch a saved recording's FRAME — free-text context, speaker display names —
- * without touching its analysis. This is how an MCP client describes what kind
- * of meeting a recording was, or fixes a wrong speaker mapping, so every later
- * read and analysis pass gets the right frame. Same read-modify-write as {@link patchEntryOutputs}; the open replay's
- * store is synced so the UI reflects the fix immediately.
- */
-export async function updateEntryMeta(id: string, patch: EntryMetaPatch): Promise<HistoryEntry> {
-  const updated = await withEntryWrite(id, async () => {
-    const { meta } = await ipc.readHistoryEntry({ id });
-    const speakerNames = patch.speakerNames
-      ? mergeSpeakerNames(meta.speakerNames ?? {}, patch.speakerNames)
-      : meta.speakerNames;
-    const next: HistoryEntry = {
-      ...meta,
-      ...(patch.meetingContext === undefined ? {} : { meetingContext: patch.meetingContext }),
-      speakerNames,
-    };
-    await ipc.saveHistoryEntry({
-      id,
-      summaryJson: JSON.stringify(buildSummary(next)),
-      metaJson: JSON.stringify(next),
-      audioSourcePath: null, // leave the recording untouched
-      compress: false,
-    });
-    return next;
-  });
-  const s = useStore.getState();
-  if (s.loadedHistoryId === id) {
-    if (patch.meetingContext !== undefined) s.setMeetingContext(patch.meetingContext);
-    for (const [key, name] of Object.entries(patch.speakerNames ?? {})) s.setSpeakerName(key, name);
-  }
-  await emitHistoryUpdated(id);
-  pushToCloud(id); // best-effort; gated by the sync toggle
-  log.info("history: entry meta updated", {
-    id,
-    speakerKeys: Object.keys(patch.speakerNames ?? {}).length,
-  });
-  return updated;
-}
-
-/** Empty-string values remove the key; everything else overwrites it. */
-function mergeSpeakerNames(
-  current: Record<string, string>,
-  patch: Record<string, string>,
-): Record<string, string> {
-  const next = { ...current };
-  for (const [key, name] of Object.entries(patch)) {
-    if (name.trim()) next[key] = name.trim();
-    else delete next[key];
-  }
-  return next;
-}
-
-/** The analysis fields an MCP client may replace on a saved recording. */
-export interface EntryAnalysisPatch {
-  findings?: TimelineEvent[];
-  actionItems?: ActionItem[];
-  brief?: string | null;
-  analyzed?: boolean;
-}
-
-/**
- * Write analysis results onto a saved recording — the write-back surface for an
- * EXTERNAL analyst (an MCP client doing its own pass over the transcript).
- * Each provided field replaces that whole field; omitted fields are untouched,
- * so a brief write can't clobber findings and vice versa. The rebuilt
- * summary.json keeps the library card's counts (and the `analyzed` flag other
- * clients filter on) honest. Syncs the open replay's store so the timeline
- * re-renders immediately.
- */
-export async function setEntryAnalysis(
-  id: string,
-  patch: EntryAnalysisPatch,
-): Promise<{ id: string; findings: number; actionItems: number; brief: boolean; analyzed: boolean | null }> {
-  const updated = await withEntryWrite(id, async () => {
-    const { meta } = await ipc.readHistoryEntry({ id });
-    const next: HistoryEntry = {
-      ...meta,
-      ...(patch.findings ? { findings: patch.findings } : {}),
-      ...(patch.actionItems ? { actionItems: patch.actionItems } : {}),
-      ...(patch.brief === undefined ? {} : { brief: patch.brief }),
-      // An externally written brief supersedes an earlier failed generation.
-      ...(patch.brief ? { briefFailed: false } : {}),
-      ...(patch.analyzed === undefined ? {} : { analyzed: patch.analyzed }),
-    };
-    await ipc.saveHistoryEntry({
-      id,
-      summaryJson: JSON.stringify(buildSummary(next)),
-      metaJson: JSON.stringify(next),
-      audioSourcePath: null, // leave the recording untouched
-      compress: false,
-    });
-    return next;
-  });
-  const s = useStore.getState();
-  if (s.loadedHistoryId === id) {
-    if (patch.findings) s.setFindings(patch.findings);
-    if (patch.actionItems) s.setActionItems(patch.actionItems);
-    if (patch.brief !== undefined) s.setBrief(patch.brief);
-  }
-  await emitHistoryUpdated(id);
-  pushToCloud(id); // best-effort; gated by the sync toggle
-  log.info("history: entry analysis written externally", {
-    id,
-    findings: updated.findings.length,
-    actionItems: updated.actionItems.length,
-    brief: !!updated.brief,
-  });
-  return {
-    id,
-    findings: updated.findings.length,
-    actionItems: updated.actionItems.length,
-    brief: !!updated.brief,
-    analyzed: updated.analyzed ?? null,
-  };
-}
-
-/**
- * Merge same-name personal folder twins.
- *
- * The plan comes from {@link planFolderDedupe} (see its comment for how the
- * twins came to exist). This applies it: repoint every recording filed in a
- * twin onto the survivor, delete the twins locally, and delete them in the
- * cloud so the mirror-down in reloadFolders doesn't resurrect them next
- * launch. When sync is off the cloud delete no-ops and the twins WILL come
- * back from the mirror after sign-in — which is fine, because this runs every
- * startup and converges the next time around.
- *
- * Idempotent, no flag, no cloud push of entries (a push re-uploads audio).
- */
-/** Refile one saved recording onto the surviving folder. Returns false when the
- *  entry couldn't be rewritten — logged, never fatal: the sweep goes on. */
-async function repointEntryFolder(id: string, target: string): Promise<boolean> {
-  try {
-    await withEntryWrite(id, async () => {
-      const { meta } = await ipc.readHistoryEntry({ id });
-      const updated: HistoryEntry = { ...meta, folderId: target };
-      await ipc.saveHistoryEntry({
-        id,
-        summaryJson: JSON.stringify(buildSummary(updated)),
-        metaJson: JSON.stringify(updated),
-        audioSourcePath: null, // leave the recording untouched
-        compress: false,
-      });
-    });
-    return true;
-  } catch (e) {
-    log.warn("history: folder dedupe failed for entry", { id, error: String(e) });
-    return false;
-  }
-}
-
-/** Refile every recording filed in a twin folder onto its survivor. `swept` is
- *  false when the pass itself failed, so the twins must be kept for now. */
-async function repointRecordings(
-  survivorOf: ReadonlyMap<string, string>,
-): Promise<{ moved: number; swept: boolean }> {
-  let moved = 0;
-  try {
-    for (const summary of await listHistory()) {
-      const target = summary.folderId ? survivorOf.get(summary.folderId) : undefined;
-      if (!target) continue;
-      if (await repointEntryFolder(summary.id, target)) moved++;
-    }
-  } catch (e) {
-    log.warn("history: folder dedupe sweep failed", { error: String(e) });
-    return { moved, swept: false };
-  }
-  return { moved, swept: true };
-}
-
-export async function migrateDuplicateFolders(): Promise<number> {
-  if (!isTauri()) return 0;
-  const merges = planFolderDedupe(listLocalFolders());
-  if (!merges.length) return 0;
-  const survivorOf = new Map<string, string>();
-  for (const m of merges) for (const twin of m.twinIds) survivorOf.set(twin, m.canonicalId);
-
-  const { moved, swept } = await repointRecordings(survivorOf);
-  // A sweep that blew up may have left recordings on a twin — leave the twins in
-  // place; the next startup runs this again and converges.
-  if (!swept) return moved;
-
-  // Recordings are safely off the twins — now the twins can go.
-  for (const [twin] of survivorOf) {
-    deleteLocalFolder(twin);
-    if (CLOUD_ENABLED) {
-      deleteCloudFolder(twin).catch((e) =>
-        log.warn("history: twin folder cloud delete failed", { twin, error: String(e) })
-      );
-    }
-  }
-  await emitFoldersUpdated().catch(() => {});
-  if (moved) await emitHistoryUpdated();
-  log.info("history: folder dedupe complete", {
-    merged: merges.map((m) => ({ name: m.name, twins: m.twinIds.length })),
-    movedRecordings: moved,
-  });
-  return moved;
-}
-
-/** Delete one entry's folder. */
-export async function deleteHistoryEntry(id: string): Promise<void> {
-  if (!isTauri()) return;
-  await ipc.deleteHistoryEntry({ id });
-  log.info("history: entry deleted", { id });
-}
-
-/**
- * The replay session for a saved entry. A transcript that synced with no timing
- * at all (#576) gets an estimated timeline here, at the one place every opened
- * recording passes through, so the transcript, seek, findings and brief all
- * read the same clock. Pure + exported for testing.
- */
-export function replaySessionFor(meta: HistoryEntry, audioPath: string, audioSrc: string): ReplaySession {
-  const { segments, estimated } = withTimingRepaired(meta.segments ?? [], meta.durationMs);
-  if (estimated) {
-    log.info("history: transcript has no timing; estimating it", {
-      id: meta.id,
-      segments: segments.length,
-      durationMs: meta.durationMs,
-    });
-  }
-  return {
-    id: meta.id,
-    name: meta.title,
-    audioPath,
-    audioSrc,
-    durationMs: meta.durationMs,
-    audioOffsetMs: 0,
-    createdAt: meta.createdAt,
-    segments,
-    speakerNames: meta.speakerNames,
-    speechRateHz: meta.speechRateHz ?? null,
-    ...(estimated ? { timingEstimated: true } : {}),
-  };
-}
-
-/**
- * Read a saved entry and load it into the replay UI (restoring its analysis), then
- * focus the main window. Called by the main-window listener on `history://open`.
- */
-export async function loadHistoryEntry(id: string): Promise<void> {
-  // A stage that finished after the user left may still be writing its result
-  // onto this entry — read after it lands, or the open would restore the stale
-  // meta and re-run that stage.
-  await entryWritesSettled(id);
-  const { meta, audioPath } = await ipc.readHistoryEntry({ id });
-  const audioSrc = audioPath ? convertFileSrc(audioPath) : "";
-  const session = replaySessionFor(meta, audioPath ?? "", audioSrc);
-  useStore.getState().loadHistory({ ...meta, segments: session.segments }, session);
-  log.info("history: entry loaded", { id, hasAudio: !!audioPath });
-  if (isTauri()) {
-    try {
-      await getCurrentWindow().setFocus();
-    } catch (e) {
-      log.warn("history: focus main window failed", { error: String(e) });
-    }
-  }
-}
-
-/**
- * Fold a read-only entry's locally cached study outputs over its fetched meta,
- * filling only what the shared copy lacks (its own saved outputs win).
- */
-function foldStudyCache(meta: HistoryEntry, cached: ReturnType<typeof readStudyCache>): void {
-  if (!cached) return;
-  if (!meta.findings.length && cached.findings?.length) meta.findings = cached.findings;
-  if (!meta.actionItems.length && cached.actionItems?.length) meta.actionItems = cached.actionItems;
-  // The VIEWER's own completed pass also counts as analyzed — a clean-empty
-  // result must restore as done here too, or every open re-spends it.
-  if (cached.analyzed) meta.analyzed = true;
-  meta.brief = meta.brief || cached.brief || null;
-  if (!meta.brief && cached.briefFailed) meta.briefFailed = true;
-  meta.deliveryAssessment = meta.deliveryAssessment ?? cached.deliveryAssessment ?? null;
-  meta.meetingKind = meta.meetingKind ?? cached.meetingKind ?? null;
-}
-
-/**
- * Load an ORG (cloud-shared) recording into replay WITHOUT persisting it to the
- * local history dir — org recordings must never pollute the personal list. The
- * full entry (transcript + analysis) comes over HTTP; the audio is streamed to a
- * temp cache file by Rust (`download_remote_audio`). Loaded read-only so the
- * re-analysis-persist subscription leaves someone else's shared recording alone.
- */
-export async function loadOrgEntry(orgId: string, id: string): Promise<void> {
-  const base = `/orgs/${encodeURIComponent(orgId)}/recordings/${encodeURIComponent(id)}`;
-  const meta = (await (await cloudFetch(`${base}/meta`)).json()) as HistoryEntry;
-  // Server meta shapes vary across versions — never trust the arrays to exist.
-  meta.findings ??= [];
-  meta.actionItems ??= [];
-  // Fold locally-cached study outputs over the fetched meta (read-only entries
-  // persist there instead of back to the org) so restored outputs load as
-  // "done" and the pipeline doesn't re-spend a generation. The shared entry's
-  // own saved GENERATED outputs win — the cache only fills what the org copy
-  // lacks.
-  foldStudyCache(meta, readStudyCache(id));
-  let audioPath = "";
-  const t = cloudToken();
-  if (meta.audio && t) {
-    audioPath = await ipc.downloadRemoteAudio({
-      id,
-      url: `${CLOUD_URL}${base}/audio`,
-      token: t,
-    });
-  }
-  const audioSrc = audioPath ? convertFileSrc(audioPath) : "";
-  const session = replaySessionFor(meta, audioPath, audioSrc);
-  useStore.getState().loadHistory({ ...meta, segments: session.segments }, session, { readOnly: true });
-  log.info("history: org entry loaded", { orgId, id, hasAudio: !!audioPath });
-  if (isTauri()) {
-    try {
-      await getCurrentWindow().setFocus();
-    } catch (e) {
-      log.warn("history: focus main window failed", { error: String(e) });
-    }
-  }
 }
 
 // ── Cross-window events ─────────────────────────────────────────────────────
@@ -1300,7 +850,7 @@ export function leaveStoppedCockpit(reasonKey: "meeting.notSaved.tooShort" | "me
   const s = useStore.getState();
   if (s.appMode !== "live" || isMeetingActive(s.meetingStatus)) return;
   s.openHome();
-  toast.message(translate(s.settings.language, reasonKey));
+  notify.message(translate(s.settings.language, reasonKey));
 }
 
 /** Main-window listener: auto-save the meeting once Rust finishes encoding it,
@@ -1318,7 +868,7 @@ export async function listenForRecordingSaved(): Promise<UnlistenFn> {
         // Stay on the cockpit (its transcript is the only copy left on screen)
         // but say so — a failed save used to look exactly like a slow one.
         const lang = useStore.getState().settings.language;
-        toast.error(translate(lang, "meeting.notSaved.failed", { error: String(err) }));
+        notify.error(translate(lang, "meeting.notSaved.failed", { error: String(err) }));
       })
       .finally(clearFinalizing);
   });
@@ -1330,18 +880,6 @@ export async function listenForRecordingSaved(): Promise<UnlistenFn> {
     unlistenSaved();
     unlistenDiscarded();
   };
-}
-
-/** Tell other windows (the History grid) that an entry's saved analysis changed. */
-export async function emitHistoryUpdated(id?: string): Promise<void> {
-  if (!isTauri()) return;
-  await emitEvent(HISTORY_UPDATED_EVENT, { id });
-}
-
-/** History-window listener: re-list after the main window overwrites an entry. */
-export async function listenForHistoryUpdated(onUpdated: (id: string) => void): Promise<UnlistenFn> {
-  if (!isTauri()) return () => {};
-  return listenEvent<{ id: string }>(HISTORY_UPDATED_EVENT, (e) => onUpdated(e.payload.id));
 }
 
 /**

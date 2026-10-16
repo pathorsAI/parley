@@ -12,6 +12,8 @@ import { restoreZoom } from "./lib/zoom";
 import { installGlobalCommands } from "./lib/commands/bind";
 import { initMenuCommands } from "./lib/commands/menuBridge";
 import { installSettingsBroadcast } from "./lib/settingsSync";
+import { setNotifier } from "./lib/notify";
+import { toast } from "sonner";
 import { ShortcutSheet } from "./components/shell/ShortcutSheet";
 
 // Mirror webview console.* into the rotating log file (no-op outside Tauri).
@@ -30,6 +32,13 @@ const ROUTES = [
 ] as const;
 const window_ = ROUTES.find((r) => route.startsWith(r)) ?? "main";
 log.info("ui: boot", { window: window_ });
+
+// Notices from lib flows (history saves, refiles…) render as toasts here.
+setNotifier({
+  message: (text) => toast.message(text),
+  success: (text) => toast.success(text),
+  error: (text) => toast.error(text),
+});
 
 // Settings are edited in the Settings window, so that window's store edits are
 // the ones broadcast to the others (see settingsSync).

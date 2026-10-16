@@ -22,8 +22,8 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
 const focus = new Map<string, () => void>();
 (globalThis as unknown as { window: unknown }).window = {
-  addEventListener: (n: string, f: () => void) => void focus.set(n, f),
-  removeEventListener: (n: string) => void focus.delete(n),
+  addEventListener: (n: string, f: () => void) => { focus.set(n, f); },
+  removeEventListener: (n: string) => { focus.delete(n); },
 };
 
 import { useStore } from "./store";
