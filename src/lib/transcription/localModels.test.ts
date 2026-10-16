@@ -13,7 +13,9 @@ import {
   fetchLocalSttHardware,
   formatRam,
   localFailureCode,
+  presentAccel,
   presentFit,
+  presentLoad,
   type LocalSttFit,
   type LocalSttHardware,
   checkLocalModelReady,
@@ -219,6 +221,19 @@ describe("formatRam", () => {
     expect(formatRam(24.4 * GIB)).toBe("24 GB");
     expect(formatRam(0)).toBe("—");
   });
+
+  it("rounds a requirement up and a capacity down when asked", () => {
+    // Breeze on a GPU: 1.08 GB of weights + 1 GiB against a 2 GiB card.
+    const need = 1_080_732_091 + GIB;
+    expect(formatRam(need)).toBe("2 GB");
+    expect(formatRam(need, "up")).toBe("2.1 GB");
+    expect(formatRam(2 * GIB, "down")).toBe("2 GB");
+    expect(formatRam(1.99 * GIB, "down")).toBe("1.9 GB");
+    // Exact values do not move.
+    expect(formatRam(2.5 * GIB, "up")).toBe("2.5 GB");
+    expect(formatRam(12 * GIB, "up")).toBe("12 GB");
+    expect(formatRam(12.2 * GIB, "up")).toBe("13 GB");
+  });
 });
 
 describe("downloadGate", () => {
@@ -244,12 +259,19 @@ describe("presentFit", () => {
         [fit("unsupported", "disk_low"), ["1.09 GB", "300 MB"]],
         [fit("unsupported", "ram_low"), ["8 GB", "4 GB"]],
         [fit("slow", "ram_tight"), ["1.5 GB"]],
+        [fit("slow", "vram_low"), ["2.1 GB", "2 GB", "GeForce GTX 1050"]],
         [fit("slow", "cpu_only"), []],
       ];
+      const pc = { ...hw, accel: "vulkan" as const, gpuName: "GeForce GTX 1050", gpuVramBytes: 2 * GIB };
       for (const [f, numbers] of cases) {
         const p = presentFit(
-          model({ fit: f, minRamBytes: 8 * GIB, diskNeededBytes: 1_086_000_000 }),
-          hw,
+          model({
+            fit: f,
+            minRamBytes: 8 * GIB,
+            diskNeededBytes: 1_086_000_000,
+            vramNeededBytes: 1_080_000_000 + GIB,
+          }),
+          pc,
           (k) => translate(lang, k),
         );
         expect(p?.reason).not.toBeNull();
@@ -375,5 +397,90 @@ describe("fetchLocalSttHardware", () => {
     expect(mocks.invoke).toHaveBeenCalledWith("local_stt_hardware");
     mocks.tauri = false;
     await expect(fetchLocalSttHardware()).resolves.toBeNull();
+  });
+});
+
+describe("vram_low", () => {
+  it("is a slow note that blocks nothing, and names the card even without its name", () => {
+    expect(downloadGate(fit("slow", "vram_low"))).toBe("ok");
+    const t = (k: TranslationKey) => translate("en", k);
+    const p = presentFit(
+      model({ fit: fit("slow", "vram_low"), vramNeededBytes: 2.5 * GIB }),
+      hardware({ accel: "vulkan", gpuVramBytes: GIB }),
+      t,
+    );
+    expect(p).toMatchObject({ tone: "warning", badge: "localStt.fit.slow" });
+    expect(p?.reason?.vars).toEqual({ need: "2.5 GB", have: "1 GB", gpu: "the GPU" });
+  });
+});
+
+describe("presentLoad", () => {
+  const line = (lang: "zh-TW" | "en", m: LocalSttModel, hw: LocalSttHardware | null) =>
+    presentLoad(m, hw)
+      .map((p) => translate(lang, p.key, p.vars))
+      .join(" · ");
+
+  it("always shows the load class and memory, fit or no fit", () => {
+    const small = model({ loadClass: "light", ramNeededBytes: GIB, heavy: false });
+    expect(line("en", small, hardware())).toBe("Light load · about 1 GB RAM");
+    expect(line("zh-TW", small, hardware())).toBe("輕量負載 · 約需 1 GB 記憶體");
+    // No hardware info: still shown.
+    expect(line("en", small, null)).toBe("Light load · about 1 GB RAM");
+    // A good fit on a GPU machine: still shown, without the GPU hint.
+    const breeze = model({ loadClass: "heavy", ramNeededBytes: 3.5 * GIB, heavy: true, fit: fit("good") });
+    expect(line("en", breeze, hardware({ accel: "vulkan" }))).toBe("Heavy load · about 3.5 GB RAM");
+  });
+
+  it("recommends a GPU for the large models only when decoding on the CPU", () => {
+    const cpu = hardware({ accel: "cpu", cpuReason: "no_vulkan_driver" });
+    const turbo = model({ loadClass: "medium", ramNeededBytes: 2.5 * GIB, heavy: true });
+    const small = model({ loadClass: "light", ramNeededBytes: GIB, heavy: false });
+    expect(line("en", turbo, cpu)).toBe("Medium load · about 2.5 GB RAM · a GPU is recommended");
+    expect(line("zh-TW", turbo, cpu)).toBe("中等負載 · 約需 2.5 GB 記憶體 · 建議使用 GPU");
+    expect(line("en", small, cpu)).toBe("Light load · about 1 GB RAM");
+    for (const accel of ["metal", "vulkan"] as const) {
+      expect(line("en", turbo, hardware({ accel }))).not.toContain("GPU");
+    }
+    // Unknown hardware: no claim about the GPU.
+    expect(line("en", turbo, null)).not.toContain("GPU");
+  });
+
+  it("shows nothing for a backend that sends no load class", () => {
+    expect(presentLoad(model(), hardware())).toEqual([]);
+  });
+});
+
+describe("presentAccel", () => {
+  for (const lang of ["zh-TW", "en"] as const) {
+    const t = (k: TranslationKey) => translate(lang, k);
+    const text = (hw: LocalSttHardware) => {
+      const a = presentAccel(hw, t)!;
+      return translate(lang, a.text.key, a.text.vars);
+    };
+
+    it(`names the GPU or says why it is CPU only, in ${lang}`, () => {
+      expect(presentAccel(hardware({ accel: "vulkan", gpuName: "NVIDIA GeForce RTX 4060" }), t)?.tone).toBe("gpu");
+      expect(text(hardware({ accel: "vulkan", gpuName: "NVIDIA GeForce RTX 4060" }))).toContain(
+        "NVIDIA GeForce RTX 4060",
+      );
+      expect(text(hardware({ accel: "metal", gpuName: "Apple M4 GPU" }))).toContain("Apple M4 GPU");
+      // A GPU without a name still reads as a sentence.
+      expect(text(hardware({ accel: "metal" }))).toMatch(/GPU$/);
+      const noDriver = hardware({ accel: "cpu", cpuReason: "no_vulkan_driver", gpuName: "Intel(R) UHD Graphics" });
+      expect(presentAccel(noDriver, t)?.tone).toBe("cpu");
+      expect(text(noDriver)).toContain("Vulkan");
+      expect(text(noDriver)).toContain("Intel(R) UHD Graphics");
+      const keys = (["no_gpu", "unsupported_platform", undefined] as const).map(
+        (cpuReason) => presentAccel(hardware({ accel: "cpu", cpuReason }), t)?.text.key,
+      );
+      expect(keys).toEqual(["localStt.accel.cpu.noGpu", "localStt.accel.cpu.platform", "localStt.accel.cpu"]);
+      for (const cpuReason of ["no_gpu", "unsupported_platform", "no_vulkan_driver", undefined] as const) {
+        expect(text(hardware({ accel: "cpu", cpuReason }))).not.toMatch(/[{}]/);
+      }
+    });
+  }
+
+  it("is absent without hardware info", () => {
+    expect(presentAccel(null, (k) => k)).toBeNull();
   });
 });

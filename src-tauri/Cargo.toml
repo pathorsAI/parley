@@ -66,7 +66,7 @@ tauri-plugin-os = "2.3.2"
 # On-device speech recognition (the "local" STT provider, see local_stt.rs and
 # transcription/local.rs). Builds whisper.cpp from source with CMake, and
 # generates its bindings with bindgen (libclang). CPU everywhere; macOS adds
-# Metal below. Pinned exactly: whisper-rs tracks whisper.cpp's C API closely and
+# Metal and Windows adds Vulkan below. Pinned exactly: whisper-rs tracks whisper.cpp's C API closely and
 # minor bumps have broken its Rust surface before.
 # `log_backend` routes whisper.cpp's own logging into `log` instead of stderr.
 whisper-rs = { version = "=0.16.0", features = ["log_backend"] }
@@ -116,14 +116,18 @@ winreg = "0.55"
 # Win32_System_ProcessStatus is not needed. Win32_UI_Accessibility (UI
 # Automation) + Win32_System_Com (the apartment and CoCreateInstance) are the
 # correction watcher's field reads (see ax_observe/windows.rs).
-# Win32_System_SystemInformation (GlobalMemoryStatusEx, core count) and
-# Win32_Storage_FileSystem (GetDiskFreeSpaceExW) are the local STT provider's
+# Win32_System_SystemInformation (GlobalMemoryStatusEx, core count),
+# Win32_Storage_FileSystem (GetDiskFreeSpaceExW), Win32_Graphics_Dxgi (the GPU
+# list) and Win32_System_LibraryLoader (the Vulkan loader probe and the
+# delay-load hooks, see vulkan_delayload.rs) are the local STT provider's
 # hardware probe (see hardware.rs).
 windows = { version = "0.61", features = [
     "Win32_Foundation",
+    "Win32_Graphics_Dxgi",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
     "Win32_System_DataExchange",
+    "Win32_System_LibraryLoader",
     "Win32_System_Memory",
     "Win32_System_SystemInformation",
     "Win32_System_Threading",
@@ -131,3 +135,10 @@ windows = { version = "0.61", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }
+# The local STT provider runs whisper.cpp on the GPU through ggml's Vulkan
+# backend on Windows: one build for NVIDIA, AMD and Intel GPUs, with no CUDA
+# runtime to ship. Building it needs the LunarG Vulkan SDK (VULKAN_SDK set,
+# glslc on PATH; see CONTRIBUTING.md). The app delay-loads vulkan-1.dll (see
+# build.rs and vulkan_delayload.rs) and falls back to the CPU on machines
+# without a Vulkan driver. Linux is not a shipped target and stays CPU-only.
+whisper-rs = { version = "=0.16.0", features = ["log_backend", "vulkan"] }

@@ -6,9 +6,9 @@
 //! pre-roll so word onsets are not clipped), closes after a stretch of trailing
 //! silence, and is force-closed at [`VadConfig::max_utterance`] so a monologue
 //! still reaches the screen. Each closed utterance is decoded on a blocking
-//! worker and emitted as one committed segment. On Apple Silicon (Metal), the
-//! growing utterance is also re-decoded every couple of seconds and shown as
-//! the tentative tail.
+//! worker and emitted as one committed segment. When the model runs on a GPU
+//! (Metal on Apple Silicon, Vulkan on Windows), the growing utterance is also
+//! re-decoded every couple of seconds and shown as the tentative tail.
 //!
 //! The model is loaded once and shared (see `local_stt::load_context`); each
 //! session decodes with its own `WhisperState`. Nothing here touches the
@@ -40,11 +40,9 @@ use crate::local_stt::{self, ModelFamily, ModelLease};
 
 const SAMPLES_PER_MS: u64 = TARGET_SAMPLE_RATE as u64 / 1000;
 
-/// Interim tails re-decode the growing utterance; worth it only where decoding
-/// is fast (Metal on Apple Silicon). On CPU a re-decode can take longer than
-/// the utterance and would hold up the final text behind it.
-const INTERIM_TAILS: bool = local_stt::GPU_ACCEL;
-/// Minimum gap between two interim decodes of the same session.
+/// Minimum gap between two interim decodes of the same session. Interim tails
+/// re-decode the growing utterance, and only when the session's model runs on
+/// a GPU (`local_stt::interim_tails`).
 const INTERIM_EVERY: Duration = Duration::from_secs(2);
 /// An utterance must hold this much audio before it is worth an interim decode.
 const INTERIM_MIN_SAMPLES: usize = TARGET_SAMPLE_RATE as usize;
@@ -750,7 +748,8 @@ fn decode_worker(
 }
 
 /// Load the session's model (blocking, off the runtime), holding a lease on it.
-async fn load(app: &AppHandle, model_id: &str) -> Result<Arc<WhisperContext>> {
+/// Also returns what it runs on (the GPU load may have fallen back to the CPU).
+async fn load(app: &AppHandle, model_id: &str) -> Result<(Arc<WhisperContext>, local_stt::Accel)> {
     let app = app.clone();
     let id = model_id.to_string();
     tauri::async_runtime::spawn_blocking(move || local_stt::load_context(&app, &id))
@@ -814,10 +813,11 @@ pub async fn run_session(
         .ok_or_else(|| anyhow!("Local transcription model '{model_id}' is unknown."))?;
     let _lease = ModelLease::new(&model_id);
     let started = Instant::now();
-    let ctx = load(&app, &model_id).await?;
+    let (ctx, accel) = load(&app, &model_id).await?;
+    let interim_tails = local_stt::interim_tails(accel);
     let settings = DecodeSettings::new(&config.language_hints, &config.vocabulary, entry.family);
     log::info!(
-        "[local:{source}] ready in {}ms, model={model_id} language={:?} traditional={} leg={}",
+        "[local:{source}] ready in {}ms, model={model_id} accel={accel:?} language={:?} traditional={} leg={}",
         started.elapsed().as_millis(),
         settings.language,
         settings.traditional,
@@ -880,7 +880,7 @@ pub async fn run_session(
         }
         // One decode at a time: an interim only goes out when nothing is
         // queued or running, so it can never delay a final.
-        if INTERIM_TAILS && outstanding == 0 && last_interim.elapsed() >= INTERIM_EVERY {
+        if interim_tails && outstanding == 0 && last_interim.elapsed() >= INTERIM_EVERY {
             if let Some((id, _, samples)) = endpointer.current() {
                 if samples.len() >= INTERIM_MIN_SAMPLES {
                     let job = Job::Interim {
@@ -930,7 +930,7 @@ pub fn transcribe_file_blocking(
     let entry = local_stt::entry(model_id)
         .ok_or_else(|| format!("Local transcription model '{model_id}' is unknown."))?;
     let _lease = ModelLease::new(model_id);
-    let ctx = local_stt::load_context(app, model_id)?;
+    let (ctx, _) = local_stt::load_context(app, model_id)?;
     let settings = DecodeSettings::new(language_hints, vocabulary, entry.family);
     let audio = crate::replay_audio::decode_to_16k_mono(path)
         .map_err(|e| format!("Could not decode the recording: {e:#}"))?;
@@ -1305,12 +1305,11 @@ mod tests {
         let hints: Vec<String> = std::env::var("PARLEY_LOCAL_STT_LANG")
             .map(|l| l.split(',').map(str::to_string).collect())
             .unwrap_or_default();
-        let mut params = whisper_rs::WhisperContextParameters::default();
-        params.use_gpu(local_stt::GPU_ACCEL);
-        params.flash_attn(local_stt::GPU_ACCEL);
+        let accel = local_stt::accel();
         let t = Instant::now();
-        let ctx = WhisperContext::new_with_params(&model, params).unwrap();
-        println!("load: {} ms", t.elapsed().as_millis());
+        let ctx =
+            WhisperContext::new_with_params(&model, local_stt::context_params(accel)).unwrap();
+        println!("load on {accel:?}: {} ms", t.elapsed().as_millis());
         let pcm = crate::replay_audio::decode_to_16k_mono(std::path::Path::new(&audio)).unwrap();
         let settings = DecodeSettings::new(&hints, &[], ModelFamily::Whisper);
         let t = Instant::now();

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, Check, Download, Loader2, RotateCcw, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, Cpu, Download, Loader2, RotateCcw, Trash2, X, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { useI18n } from "../i18n";
 import { log } from "../lib/log";
@@ -11,8 +11,11 @@ import {
   formatModelSize,
   isLocalBusy,
   localModelLabel,
+  presentAccel,
   presentFit,
+  presentLoad,
   sortLocalModels,
+  type LocalSttHardware,
   type LocalSttModel,
 } from "../lib/transcription/localModels";
 import type { LocalSttModelsState } from "../lib/transcription/useLocalSttModels";
@@ -35,11 +38,13 @@ import {
  * gates live in lib/transcription/localModels.ts). The caller owns the
  * `useLocalSttModels` state so onboarding can gate its Next button on it too.
  *
- * Hardware fit (docs/design/local-stt.md › Hardware): each card shows how well
- * the model suits this machine, the backend's recommendation is tagged, a full
- * disk disables Download, too little RAM turns Download into a two-step
- * confirm, and "may be slow" is a note that blocks nothing. With no hardware
- * info all of that is simply absent. A user who never picked a model
+ * Hardware fit (docs/design/local-stt.md › Hardware): a line above the list says
+ * what decoding runs on (the GPU, or "CPU only" and why); every card always
+ * says how heavy its model is to run ("Light load · about 1 GB RAM") and, with
+ * hardware info, how well it suits this machine; the backend's recommendation
+ * is tagged, a full disk disables Download, too little RAM turns Download into
+ * a two-step confirm, and "may be slow" is a note that blocks nothing. With no
+ * hardware info the fit parts are simply absent. A user who never picked a model
  * (`chosen` false) is moved to the recommended one via `onAutoSelect`.
  */
 export function LocalSttModelPicker({
@@ -86,6 +91,7 @@ export function LocalSttModelPicker({
 
   return (
     <div className="flex flex-col gap-2.5">
+      <AccelLine hardware={hardware} />
       <div role="radiogroup" aria-label={t("localStt.picker.label")} className="flex flex-col gap-1.5">
         {sortLocalModels(models).map((m) => (
           <ModelCard key={m.id} model={m} selected={m.id === value} local={local} onSelect={() => onChange(m.id)} />
@@ -94,6 +100,21 @@ export function LocalSttModelPicker({
       {selected && <SelectedModelActions key={selected.id} model={selected} local={local} />}
       <p className="text-[11px] leading-relaxed text-muted-foreground">{t("localStt.note")}</p>
     </div>
+  );
+}
+
+/** What decoding runs on: "GPU acceleration: <name>" or "CPU only" with the
+ *  reason. Absent without hardware info. */
+function AccelLine({ hardware }: Readonly<{ hardware: LocalSttHardware | null }>) {
+  const { t } = useI18n();
+  const accel = presentAccel(hardware, t);
+  if (!accel) return null;
+  const Icon = accel.tone === "gpu" ? Zap : Cpu;
+  return (
+    <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-muted-foreground">
+      <Icon className={`mt-px size-3.5 shrink-0 ${accel.tone === "gpu" ? "text-primary" : ""}`} aria-hidden />
+      <span>{t(accel.text.key, accel.text.vars)}</span>
+    </p>
   );
 }
 
@@ -106,6 +127,7 @@ function ModelCard({
   const { t } = useI18n();
   const { name, description } = localModelLabel(t, model.id);
   const fit = presentFit(model, local.hardware, t);
+  const load = presentLoad(model, local.hardware);
   // With hardware info the tag is "recommended for this computer"; without it,
   // the catalog default keeps its plain "recommended".
   const recommendedTag = local.hardware
@@ -140,6 +162,11 @@ function ModelCard({
           {fit && <Badge tone={fit.tone}>{t(fit.badge)}</Badge>}
         </span>
         {description && <span className="text-[11px] text-muted-foreground">{description}</span>}
+        {load.length > 0 && (
+          <span className="text-[11px] text-muted-foreground/80">
+            {load.map((part) => t(part.key, part.vars)).join(" · ")}
+          </span>
+        )}
         {fit?.reason && (
           <span className={`text-[11px] ${fit.tone === "danger" ? "text-danger-foreground" : "text-warning-foreground"}`}>
             {t(fit.reason.key, fit.reason.vars)}

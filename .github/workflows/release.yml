@@ -332,6 +332,12 @@ jobs:
             echo "::warning::LLVM not found at C:/Program Files/LLVM; bindgen will search on its own"
           fi
 
+      - name: Set up the Vulkan SDK (whisper.cpp GPU backend)
+        # Build-time only: the Windows app runs whisper.cpp on the GPU through
+        # Vulkan, delay-loads vulkan-1.dll from the user's GPU driver and falls
+        # back to the CPU without it. Nothing from the SDK is bundled.
+        uses: ./.github/actions/setup-vulkan-sdk
+
       - name: Cache Rust
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:

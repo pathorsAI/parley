@@ -21,8 +21,20 @@ export type LocalSttFitLevel = "good" | "slow" | "unsupported";
  *  - `disk_low`: not enough free disk to download it — the one hard block;
  *  - `ram_low`: total RAM under the model's floor — download needs a confirm;
  *  - `ram_tight`: little memory free right now — a non-blocking note;
+ *  - `vram_low`: Vulkan on a discrete GPU with less video memory than the
+ *    model wants (`vramNeededBytes`) — a non-blocking note;
  *  - `cpu_only`: a large model without GPU acceleration on a modest CPU. */
-export type LocalSttFitReason = "disk_low" | "ram_low" | "ram_tight" | "cpu_only";
+export type LocalSttFitReason = "disk_low" | "ram_low" | "ram_tight" | "vram_low" | "cpu_only";
+
+/** How much work a model is to run (Rust `LoadClass`): shown on every card. */
+export type LocalSttLoadClass = "light" | "medium" | "heavy";
+
+/** What whisper.cpp decodes on: Metal on Apple Silicon, Vulkan on a Windows PC
+ *  with a GPU and a Vulkan driver, else the CPU. */
+export type LocalSttAccel = "metal" | "vulkan" | "cpu";
+
+/** Why decoding runs on the CPU (Rust `CpuReason`). */
+export type LocalSttCpuReason = "unsupported_platform" | "no_gpu" | "no_vulkan_driver";
 
 export interface LocalSttFit {
   level: LocalSttFitLevel;
@@ -42,6 +54,11 @@ export interface LocalSttModel {
   minRamBytes?: number;
   /** Free disk its download needs (model + headroom). */
   diskNeededBytes?: number;
+  /** Typical resident memory while running (the card's "about N GB RAM"). */
+  ramNeededBytes?: number;
+  /** Video memory it wants on a discrete GPU (the `vram_low` threshold). */
+  vramNeededBytes?: number;
+  loadClass?: LocalSttLoadClass;
   /** A large-v3-class model (slow without GPU acceleration). */
   heavy?: boolean;
   /** `null`/absent when the hardware could not be read: fit is unknown, so the
@@ -55,8 +72,17 @@ export interface LocalSttHardware {
   availableRamBytes: number;
   /** Free space on the volume holding the models directory. */
   freeDiskBytes: number;
-  /** "metal" only on Apple Silicon; Intel Macs, Windows and Linux are "cpu". */
-  accel: "metal" | "cpu";
+  /** "metal" on Apple Silicon, "vulkan" on a Windows PC with a usable GPU,
+   *  "cpu" otherwise (Intel Macs, Linux, Windows without a GPU or driver). */
+  accel: LocalSttAccel;
+  /** Why `accel` is "cpu"; absent otherwise (and from older backends). */
+  cpuReason?: LocalSttCpuReason;
+  /** The GPU found — also when it is unused (no Vulkan driver). */
+  gpuName?: string;
+  /** Its dedicated video memory; absent when unknown (Apple Silicon). */
+  gpuVramBytes?: number;
+  /** It shares system RAM (integrated GPU, Apple unified memory). */
+  gpuShared?: boolean;
   /** Physical cores. */
   cpuCores: number;
   os: string;
@@ -189,12 +215,17 @@ export function formatModelSize(bytes: number): string {
 
 /**
  * Human RAM size in binary units, labelled "GB" the way an OS shows memory:
- * 8 GiB → "8 GB", 7.7 GiB → "7.7 GB".
+ * 8 GiB → "8 GB", 7.7 GiB → "7.7 GB". `round` "up" / "down" for a requirement
+ * next to a capacity, so a need of 2.006 GiB against a 2 GiB card reads
+ * "2.1 GB" vs "2 GB" rather than "2 GB" vs "2 GB".
  */
-export function formatRam(bytes: number): string {
+export function formatRam(bytes: number, round: "nearest" | "up" | "down" = "nearest"): string {
   if (!(bytes > 0)) return "—";
   const gib = bytes / 2 ** 30;
-  const rounded = gib >= 10 ? Math.round(gib) : Math.round(gib * 10) / 10;
+  const step = gib >= 10 ? 1 : 10;
+  const fn = round === "up" ? Math.ceil : round === "down" ? Math.floor : Math.round;
+  // Shave float noise (2.5 GiB * 10 must stay 25, not ceil to 26).
+  const rounded = fn(Number((gib * step).toFixed(6))) / step;
   return `${rounded} GB`;
 }
 
@@ -262,6 +293,16 @@ export function presentFit(
         vars: { free: hw ? formatRam(hw.availableRamBytes) : "—" },
       };
       break;
+    case "vram_low":
+      reason = {
+        key: "localStt.fit.reason.vramLow",
+        vars: {
+          need: formatRam(model.vramNeededBytes ?? 0, "up"),
+          have: formatRam(hw?.gpuVramBytes ?? 0, "down"),
+          gpu: hw?.gpuName ?? t("localStt.device.gpu"),
+        },
+      };
+      break;
     case "cpu_only":
       reason = { key: "localStt.fit.reason.cpuOnly", vars: { device } };
       break;
@@ -277,6 +318,63 @@ export function presentFit(
     badge: fit.reasons.includes("disk_low") ? "localStt.fit.noDisk" : "localStt.fit.noMemory",
     reason,
   };
+}
+
+/** One translated piece of a line. */
+export interface TextPart {
+  key: TranslationKey;
+  vars?: Record<string, string>;
+}
+
+const LOAD_KEY: Record<LocalSttLoadClass, TranslationKey> = {
+  light: "localStt.load.light",
+  medium: "localStt.load.medium",
+  heavy: "localStt.load.heavy",
+};
+
+/**
+ * The load hint every model card shows, fit or not: "Light load · about 1 GB
+ * RAM", plus "a GPU is recommended" for the large models (`heavy`) when this
+ * machine decodes on the CPU. Parts are joined with " · ". `[]` for a backend
+ * that sends no load class.
+ */
+export function presentLoad(model: LocalSttModel, hw: LocalSttHardware | null): TextPart[] {
+  if (!model.loadClass) return [];
+  const parts: TextPart[] = [{ key: LOAD_KEY[model.loadClass] }];
+  if (model.ramNeededBytes) {
+    parts.push({ key: "localStt.load.ram", vars: { ram: formatRam(model.ramNeededBytes) } });
+  }
+  if (model.heavy && hw?.accel === "cpu") parts.push({ key: "localStt.load.gpuRecommended" });
+  return parts;
+}
+
+/**
+ * The picker's acceleration line: "GPU acceleration: <name>" on Metal or
+ * Vulkan, else "CPU only" with the reason when the backend gave one. `null`
+ * without hardware info.
+ */
+export function presentAccel(
+  hw: LocalSttHardware | null,
+  t: (key: TranslationKey) => string,
+): { tone: "gpu" | "cpu"; text: TextPart } | null {
+  if (!hw) return null;
+  if (hw.accel === "metal" || hw.accel === "vulkan") {
+    const name = hw.gpuName || t("localStt.accel.gpuUnnamed");
+    return { tone: "gpu", text: { key: "localStt.accel.gpu", vars: { name } } };
+  }
+  switch (hw.cpuReason) {
+    case "no_vulkan_driver":
+      return {
+        tone: "cpu",
+        text: { key: "localStt.accel.cpu.noDriver", vars: { gpu: hw.gpuName || t("localStt.device.gpu") } },
+      };
+    case "no_gpu":
+      return { tone: "cpu", text: { key: "localStt.accel.cpu.noGpu" } };
+    case "unsupported_platform":
+      return { tone: "cpu", text: { key: "localStt.accel.cpu.platform" } };
+    default:
+      return { tone: "cpu", text: { key: "localStt.accel.cpu" } };
+  }
 }
 
 /**

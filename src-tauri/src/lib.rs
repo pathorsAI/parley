@@ -19,6 +19,10 @@ mod transcription;
 mod tray;
 mod usage;
 mod voice_typing;
+// Delay-load hooks for vulkan-1.dll; build.rs links them in under the same
+// condition (Windows, MSVC, not 32-bit x86).
+#[cfg(all(target_os = "windows", target_env = "msvc", not(target_arch = "x86")))]
+mod vulkan_delayload;
 
 use tauri::Manager;
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};

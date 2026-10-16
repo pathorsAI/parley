@@ -92,7 +92,11 @@ jobs:
   rust-windows:
     name: Rust (Windows)
     runs-on: windows-latest
-    timeout-minutes: 60
+    # whisper.cpp's Vulkan backend compiles a few hundred compute shaders.
+    timeout-minutes: 90
+    env:
+      # Same as release.yml: never tune whisper.cpp to the runner's CPU.
+      GGML_NATIVE: "OFF"
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -114,6 +118,11 @@ jobs:
           else
             echo "::warning::LLVM not found at C:/Program Files/LLVM; bindgen will search on its own"
           fi
+
+      - name: Set up the Vulkan SDK (whisper.cpp GPU backend)
+        # The Windows build enables whisper-rs `vulkan`; whisper-rs-sys panics
+        # without VULKAN_SDK, and ggml needs glslc for its shaders.
+        uses: ./.github/actions/setup-vulkan-sdk
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -139,3 +148,17 @@ jobs:
       # the kind of thing nobody would otherwise see.
       - name: Clippy (deny warnings)
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --target x86_64-pc-windows-msvc -- -D warnings
+
+      # Clippy never links, so it cannot see the one Windows-only risk of the
+      # Vulkan backend: vulkan-1.dll is delay-loaded (build.rs) and a PC
+      # without it must still run whisper.cpp on the CPU (vulkan_delayload.rs).
+      # This links a small binary with the same linker arguments as the app and
+      # builds ggml's backend registry — where ggml first calls into the DLL —
+      # once with whatever this runner has and once with the loader forced
+      # missing. A delay-load exception escaping ggml crashes the step.
+      - name: Delay-loaded Vulkan loader (present and missing)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cargo run --manifest-path src-tauri/Cargo.toml --example vulkan_delayload_check --target x86_64-pc-windows-msvc
+          PARLEY_FORCE_NO_VULKAN_LOADER=1 cargo run --manifest-path src-tauri/Cargo.toml --example vulkan_delayload_check --target x86_64-pc-windows-msvc

@@ -1,0 +1,58 @@
+name: Set up the Vulkan SDK (Windows)
+description: >
+  Installs the LunarG Vulkan SDK so whisper-rs-sys can build ggml's Vulkan
+  backend: it reads VULKAN_SDK (headers, Lib\vulkan-1.lib) and CMake's
+  find_package(Vulkan COMPONENTS glslc) needs glslc to compile the shaders.
+  Pinned to one SDK version and its SHA-256 (from LunarG's
+  sdk/sha/<version>/windows/<file>.json); the installer is cached between runs.
+  Only build machines need the SDK — users get vulkan-1.dll from their GPU
+  driver, and the app runs on the CPU without one.
+
+inputs:
+  version:
+    description: Vulkan SDK version.
+    default: "1.4.335.0"
+  sha256:
+    description: SHA-256 of vulkansdk-windows-X64-<version>.exe.
+    default: "15096bafc1488177b094fe5f5c8070e8cb5331d665f6905ebbaa44a75cfa316c"
+
+runs:
+  using: composite
+  steps:
+    - name: Cache the Vulkan SDK installer
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ${{ runner.temp }}/vulkan-sdk-installer
+        key: vulkan-sdk-windows-${{ inputs.version }}-${{ inputs.sha256 }}
+
+    - name: Install the Vulkan SDK
+      shell: pwsh
+      env:
+        VULKAN_VERSION: ${{ inputs.version }}
+        VULKAN_SHA256: ${{ inputs.sha256 }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $dir = Join-Path $env:RUNNER_TEMP 'vulkan-sdk-installer'
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        $exe = Join-Path $dir "vulkansdk-windows-X64-$env:VULKAN_VERSION.exe"
+        if (-not (Test-Path $exe)) {
+          $url = "https://sdk.lunarg.com/sdk/download/$env:VULKAN_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_VERSION.exe"
+          curl.exe --fail --location --retry 3 --silent --show-error -o $exe $url
+          if ($LASTEXITCODE -ne 0) { throw "Vulkan SDK download failed ($LASTEXITCODE)" }
+        }
+        $hash = (Get-FileHash -Algorithm SHA256 -Path $exe).Hash.ToLowerInvariant()
+        if ($hash -ne $env:VULKAN_SHA256) {
+          Remove-Item $exe
+          throw "Vulkan SDK installer checksum mismatch: expected $env:VULKAN_SHA256, got $hash"
+        }
+        $sdk = "C:\VulkanSDK\$env:VULKAN_VERSION"
+        # A GUI-subsystem installer: wait for it explicitly.
+        $p = Start-Process -FilePath $exe -Wait -PassThru -NoNewWindow -ArgumentList @(
+          '--root', $sdk, '--accept-licenses', '--default-answer', '--confirm-command', 'install')
+        if ($p.ExitCode -ne 0) { throw "Vulkan SDK install failed ($($p.ExitCode))" }
+        foreach ($f in @('Bin\glslc.exe', 'Lib\vulkan-1.lib', 'Include\vulkan\vulkan.hpp')) {
+          if (-not (Test-Path (Join-Path $sdk $f))) { throw "Vulkan SDK install is missing $f" }
+        }
+        Add-Content -Path $env:GITHUB_ENV -Value "VULKAN_SDK=$sdk"
+        Add-Content -Path $env:GITHUB_PATH -Value "$sdk\Bin"
+        Write-Host "Vulkan SDK $env:VULKAN_VERSION at $sdk"
