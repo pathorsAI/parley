@@ -16,6 +16,7 @@ use super::common::{
     clean_vocabulary, drive_session, ensure_crypto_provider, note_connected, with_connect_timeout,
     LevelMeter, SegmentBuilder, Timeline, TranscribeConfig, LEVEL_EVENT,
 };
+use super::error::SttError;
 use super::ws::{self, Next, OnClose, Pump, Ws, WsRead, WsWrite};
 use crate::audio::resample::pcm_to_le_bytes;
 use crate::audio::TARGET_SAMPLE_RATE;
@@ -99,7 +100,16 @@ async fn open_socket() -> Result<Ws> {
     let (ws, _) = with_connect_timeout(async {
         tokio_tungstenite::connect_async(SONIOX_WS_URL)
             .await
-            .map_err(|e| anyhow!("connect failed: {e}"))
+            .map_err(|e| {
+                let message = format!("connect failed: {e}");
+                // A refused upgrade carries the status that says why.
+                match &e {
+                    tokio_tungstenite::tungstenite::Error::Http(resp) => {
+                        SttError::from_status(resp.status().as_u16(), message)
+                    }
+                    _ => anyhow!(message),
+                }
+            })
     })
     .await?;
     Ok(ws)

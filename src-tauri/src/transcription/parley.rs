@@ -7,8 +7,8 @@
 //! markers, `done`, or an `error` with a stable code. Authentication is the
 //! signed-in cloud session as a Bearer token on the upgrade request; a refused
 //! upgrade is plain HTTP (401 / 402 / 429), which `connect_with_headers`
-//! preserves in its error so the session's failure classification still sees
-//! the status.
+//! turns into a structured error (`transcription::error`) so the session's
+//! failure classification still sees the status.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -31,6 +31,7 @@ use super::common::{
     clean_vocabulary, connect_with_headers, drive_session, note_connected, LevelMeter,
     SegmentBuilder, Timeline, TranscribeConfig, CONNECT_TIMEOUT, LEVEL_EVENT,
 };
+use super::error::{SttError, SttErrorKind};
 use super::ws::{self, Next, OnClose, Pump, WsRead, WsWrite};
 use crate::audio::resample::pcm_to_le_bytes;
 use crate::audio::TARGET_SAMPLE_RATE;
@@ -170,14 +171,18 @@ fn parse_frame(payload: &str) -> Result<ServerFrame> {
     serde_json::from_str(payload).map_err(|e| anyhow!("unparseable frame: {e}"))
 }
 
-/// Turn an `error` frame into the session error. The text is what the
-/// metered session classifies (see `capture::Failure::classify`): a hosted
-/// failure carrying "402" is the quota UX, "401" the sign-in UX, and anything
-/// else a connection failure a meeting redials through.
+/// Turn an `error` frame into the session error. Quota is structured (the
+/// quota UX); everything else is classified by its text (see
+/// `transcription::error::session_error_code`), where nothing here carries
+/// 401/402, so it is a connection failure a meeting redials through.
 fn error_for(code: &str, message: &str) -> anyhow::Error {
     let detail = if message.is_empty() { code } else { message };
     match code {
-        "quota_exceeded" => anyhow!("hosted transcription quota exceeded (402): {detail}"),
+        "quota_exceeded" => SttError::new(
+            SttErrorKind::QuotaExceeded,
+            format!("hosted transcription quota exceeded (402): {detail}"),
+        )
+        .into(),
         "bad_request" => anyhow!("hosted transcription rejected the session (400): {detail}"),
         "idle_timeout" => anyhow!("hosted transcription idle timeout (408): {detail}"),
         "upstream_unavailable" => {
@@ -934,9 +939,9 @@ mod tests {
 
     #[test]
     fn error_codes_map_onto_the_session_error_kinds() {
-        // `capture::Failure::classify` keys hosted failures on these numbers:
-        // "402" is the quota UX; anything without 401/402 is a retryable
-        // connection failure.
+        // The session's classifier (`transcription::error`) keys unstructured
+        // hosted failures on these numbers: "402" is the quota UX; anything
+        // without 401/402 is a retryable connection failure.
         let quota = step_for(
             &ServerFrame::Error {
                 code: "quota_exceeded".into(),
@@ -963,6 +968,23 @@ mod tests {
             );
             // An empty message still says which code it was.
             assert!(msg.contains(code) || msg.contains("(4"), "{code}: {msg}");
+        }
+    }
+
+    #[test]
+    fn quota_is_a_structured_error() {
+        for err in [
+            error_for("quota_exceeded", "cap"),
+            error_for_close(4402, "cap"),
+        ] {
+            assert_eq!(
+                err.downcast_ref::<SttError>().map(|e| e.kind),
+                Some(SttErrorKind::QuotaExceeded)
+            );
+            assert_eq!(
+                crate::transcription::error::session_error_code(&err, true),
+                "quota"
+            );
         }
     }
 

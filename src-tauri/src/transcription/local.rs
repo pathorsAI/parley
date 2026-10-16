@@ -26,7 +26,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use tauri::AppHandle;
 use tokio::sync::mpsc::UnboundedReceiver;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperState};
@@ -34,6 +34,7 @@ use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperState};
 use super::common::{
     clean_vocabulary, note_connected, LevelMeter, SegmentBuilder, TranscribeConfig, LEVEL_EVENT,
 };
+use super::error::SttError;
 use crate::audio::TARGET_SAMPLE_RATE;
 use crate::local_stt::{self, ModelFamily, ModelLease};
 
@@ -765,8 +766,8 @@ async fn load(app: &AppHandle, model_id: &str) -> Result<(Arc<WhisperContext>, l
     let id = model_id.to_string();
     tauri::async_runtime::spawn_blocking(move || local_stt::load_context(&app, &id))
         .await
-        .map_err(|e| anyhow!("Local transcription model load panicked: {e}"))?
-        .map_err(|e| anyhow!(e))
+        .map_err(|e| SttError::local(format!("Local transcription model load panicked: {e}")))?
+        .map_err(SttError::local)
 }
 
 /// Emits decode results and tracks the tentative tail.
@@ -807,7 +808,7 @@ impl Emitter {
             }
             // Already a final "Local transcription …" message (see
             // local_stt::init_failure_message), memory-specific when it fits.
-            JobResult::Fatal(msg) => return Err(anyhow!(msg)),
+            JobResult::Fatal(msg) => return Err(SttError::local(msg)),
         }
         Ok(())
     }
@@ -874,8 +875,11 @@ pub async fn run_session(
     mut pcm_rx: UnboundedReceiver<Vec<i16>>,
 ) -> Result<()> {
     let model_id = local_stt::resolve_model_id(&config.model).to_string();
-    let entry = local_stt::entry(&model_id)
-        .ok_or_else(|| anyhow!("Local transcription model '{model_id}' is unknown."))?;
+    let entry = local_stt::entry(&model_id).ok_or_else(|| {
+        SttError::local(format!(
+            "Local transcription model '{model_id}' is unknown."
+        ))
+    })?;
     let _lease = ModelLease::new(&model_id);
     let started = Instant::now();
     let (ctx, accel) = load(&app, &model_id).await?;

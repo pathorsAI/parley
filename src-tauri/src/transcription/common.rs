@@ -19,6 +19,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::header::{HeaderName, HeaderValue};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
+use super::error::SttError;
 use crate::audio::TARGET_SAMPLE_RATE;
 
 /// Event the frontend listens on for meeting transcript updates (see tauriEvents.ts).
@@ -369,7 +370,8 @@ pub async fn connect_with_headers(
                 // relay's 402 quota / 401 expired-session) so the caller can surface
                 // an actionable message instead of an opaque "connect failed".
                 tokio_tungstenite::tungstenite::Error::Http(resp) => {
-                    anyhow!("connect failed: HTTP {}", resp.status().as_u16())
+                    let status = resp.status().as_u16();
+                    SttError::from_status(status, format!("connect failed: HTTP {status}"))
                 }
                 _ => anyhow!("connect failed: {e}"),
             })

@@ -15,6 +15,7 @@ pub mod batch;
 pub mod bridge;
 pub mod common;
 pub mod deepgram;
+pub mod error;
 pub mod gemini;
 pub mod local;
 pub mod openai;

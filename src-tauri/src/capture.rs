@@ -27,6 +27,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use crate::audio::AudioSource;
 use crate::transcription::bridge::SttBridge;
 use crate::transcription::common::{LevelMeter, LEVEL_EVENT, TRANSCRIPTION_STATE_EVENT};
+use crate::transcription::error::session_error_code;
 use crate::transcription::reconnect::ReconnectPolicy;
 use crate::transcription::{self, SttProvider, TranscribeConfig};
 
@@ -558,7 +559,7 @@ pub fn run_metered_session(
             {
                 let msg = e.to_string();
                 log::warn!("[stt:{label}] session ended: {msg}");
-                failure.report(failure.classify(&msg), &msg);
+                failure.report(failure.classify(&e), &msg);
             }
             // The count is final once the meter has returned.
             let _ = counter.await;
@@ -581,34 +582,6 @@ pub fn run_metered_session(
     }))
 }
 
-/// The error code a failed session raises, from its message. Hosted mode
-/// routinely hits 402 (out of credits) / 401 (expired cloud session) — the
-/// fix is billing or re-login. BYOK instead fails on a rejected vendor key
-/// (401/403/"unauthorized"), where telling the user to "sign in" is wrong —
-/// the fix is the key in Settings. Everything else is "connect": the network
-/// or the provider, which a meeting retries.
-fn classify_failure(msg: &str, hosted: bool) -> &'static str {
-    let low = msg.to_lowercase();
-    let bad_key = msg.contains("401")
-        || msg.contains("403")
-        || low.contains("unauthorized")
-        || low.contains("api key");
-    // On-device failures (model missing, out of memory, unloadable) are
-    // final: a redial would fail the same way. "local-missing",
-    // "local-memory" or "local" (see local_stt::failure_code).
-    if low.starts_with("local transcription") {
-        crate::local_stt::failure_code(msg)
-    } else if hosted && msg.contains("402") {
-        "quota"
-    } else if hosted && msg.contains("401") {
-        "auth"
-    } else if !hosted && bad_key {
-        "key"
-    } else {
-        "connect"
-    }
-}
-
 /// How a session surfaces a failure: its classification and the
 /// `error_event` (subject to `error_mute`). Shared by the single-shot and
 /// reconnecting paths so the codes the frontend branches on are decided in
@@ -624,9 +597,9 @@ struct Failure<'a> {
 
 impl Failure<'_> {
     /// Classify so the frontend can show an actionable message (see
-    /// [`classify_failure`]).
-    fn classify(&self, msg: &str) -> &'static str {
-        classify_failure(msg, self.hosted)
+    /// [`session_error_code`]).
+    fn classify(&self, err: &anyhow::Error) -> &'static str {
+        session_error_code(err, self.hosted)
     }
 
     fn muted(&self) -> bool {
@@ -715,7 +688,7 @@ async fn run_legs(
         };
         let lived = started.elapsed();
         let msg = e.to_string();
-        let code = failure.classify(&msg);
+        let code = failure.classify(&e);
         if code != "connect" {
             // Quota, an expired session, a rejected key: the next handshake
             // would be refused the same way. Say so once and stop holding
@@ -1030,69 +1003,5 @@ mod meter_tests {
         session.abort();
         assert!(session.await.unwrap_err().is_cancelled());
         assert_eq!(*reported.lock().unwrap(), vec![320]);
-    }
-}
-
-#[cfg(test)]
-mod classify_tests {
-    use super::classify_failure;
-
-    /// Every failure text the adapters and the hosted relay produce today,
-    /// with the code it must keep raising in BYOK and in hosted mode.
-    #[test]
-    fn failure_messages_keep_their_codes() {
-        let cases: &[(&str, &str, &str)] = &[
-            // (message, BYOK code, hosted code)
-            ("connect failed: HTTP 401", "key", "auth"),
-            ("connect failed: HTTP 402", "connect", "quota"),
-            ("connect failed: HTTP 403", "key", "connect"),
-            ("connect failed: HTTP 429", "connect", "connect"),
-            ("connect failed: HTTP 500", "connect", "connect"),
-            ("connect failed: HTTP error: 401 Unauthorized", "key", "auth"),
-            ("connect failed: IO error: connection refused", "connect", "connect"),
-            ("connect timed out", "connect", "connect"),
-            ("server error 401: Invalid API key", "key", "auth"),
-            ("server error 400: bad audio", "connect", "connect"),
-            ("server error: Unauthorized connection", "key", "connect"),
-            ("closed by server: 1008 API key not valid", "key", "connect"),
-            ("closed by server: 1011 NET-0001", "connect", "connect"),
-            ("Incorrect API key provided", "key", "connect"),
-            ("soniox stream ended mid-session", "connect", "connect"),
-            ("deepgram stream died mid-session (send failed)", "connect", "connect"),
-            (
-                "hosted transcription quota exceeded (402): Monthly quota used up",
-                "connect",
-                "quota",
-            ),
-            (
-                "hosted transcription rejected the session (400): bad",
-                "connect",
-                "connect",
-            ),
-            ("hosted transcription idle timeout (408): idle", "connect", "connect"),
-            ("hosted transcription service unavailable: x", "connect", "connect"),
-            ("hosted transcription closed by server (4999): x", "connect", "connect"),
-            ("hosted transcription requires the cloud endpoint", "connect", "connect"),
-            (
-                "Local transcription model 'm' is not downloaded. Download it in Settings › Transcription.",
-                "local-missing",
-                "local-missing",
-            ),
-            (
-                "Local transcription: not enough memory to load model 'm'. Choose a smaller model in Settings › Transcription.",
-                "local-memory",
-                "local-memory",
-            ),
-            ("Local transcription model 'm' is unknown.", "local", "local"),
-            (
-                "Local transcription model 'm' failed to load: init failed 401",
-                "local",
-                "local",
-            ),
-        ];
-        for (msg, byok, hosted) in cases {
-            assert_eq!(classify_failure(msg, false), *byok, "BYOK: {msg}");
-            assert_eq!(classify_failure(msg, true), *hosted, "hosted: {msg}");
-        }
     }
 }
