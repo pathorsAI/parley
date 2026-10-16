@@ -745,7 +745,9 @@ export function SettingsApp() {
               <Field label={t("localStt.picker.label")}>
                 <LocalSttModelField
                   value={settings.localSttModel}
-                  onChange={(id) => patch({ localSttModel: id })}
+                  chosen={settings.localSttModelChosen}
+                  onChange={(id) => patch({ localSttModel: id, localSttModelChosen: true })}
+                  onAutoSelect={(id) => patch({ localSttModel: id })}
                 />
               </Field>
             ) : (
@@ -1666,11 +1668,27 @@ function SttKeyField({
 
 /** The on-device model picker, owning its catalog/download state — mounted
  *  only while "local" is the selected provider. */
-function LocalSttModelField({ value, onChange }: Readonly<{ value: string; onChange: (id: string) => void }>) {
+function LocalSttModelField({
+  value,
+  chosen,
+  onChange,
+  onAutoSelect,
+}: Readonly<{
+  value: string;
+  chosen: boolean;
+  onChange: (id: string) => void;
+  onAutoSelect: (id: string) => void;
+}>) {
   const local = useLocalSttModels();
   return (
     <div className="max-w-md">
-      <LocalSttModelPicker value={value} onChange={onChange} local={local} />
+      <LocalSttModelPicker
+        value={value}
+        onChange={onChange}
+        local={local}
+        chosen={chosen}
+        onAutoSelect={onAutoSelect}
+      />
     </div>
   );
 }

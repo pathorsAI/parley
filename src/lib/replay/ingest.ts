@@ -16,7 +16,7 @@ import type { Settings, TranscriptSegment } from "../types";
 import { useStore } from "../store";
 import type { ReplaySession } from "./types";
 import { STT_BY_ID, sttApiKey, sttBatchUrl, sttModel } from "../transcription/providers";
-import { checkLocalModelReady } from "../transcription/localModels";
+import { checkLocalModelReady, localFailureCode } from "../transcription/localModels";
 import { normalizeTranscriptText } from "../textNormalize";
 import { languageHintsFromSettings } from "../transcription/languageHints";
 import { recognitionTerms } from "../dictionary";
@@ -205,6 +205,17 @@ export async function pickImportFiles(settings: Settings): Promise<ImportPick | 
   return pick;
 }
 
+/** An on-device upload failure in the user's language when it is one we can
+ *  explain (out of memory, model missing); anything else keeps its message. */
+function localUploadError(settings: Settings, e: unknown): Error {
+  const message = e instanceof Error ? e.message : String(e);
+  const code = localFailureCode(message);
+  log.warn("ingest: local transcription failed", { code, error: message });
+  if (code === "local-memory") return new Error(translate(settings.language, "localStt.error.memory"));
+  if (code === "local-missing") return new Error(translate(settings.language, "localStt.error.notReadyUpload"));
+  return e instanceof Error ? e : new Error(message);
+}
+
 /**
  * Transcribe an already-picked recording into a `ReplaySession` (batch
  * transcription via the configured provider, diarized where it supports it).
@@ -254,6 +265,8 @@ export async function transcribeRecording(
     vocabulary: recognitionTerms(settings),
     diarization: info.diarization,
     batchUrl: sttBatchUrl(provider) ?? null,
+  }).catch((e: unknown) => {
+    throw provider === "local" ? localUploadError(settings, e) : e;
   });
   log.info("ingest: transcription ok", {
     segments: result.segments.length,

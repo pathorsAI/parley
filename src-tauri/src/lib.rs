@@ -5,6 +5,7 @@ mod cache;
 mod capture;
 mod commands;
 mod diarize;
+mod hardware;
 mod history;
 mod hotkey;
 mod local_stt;
@@ -254,6 +255,7 @@ pub fn run() {
             local_stt::local_stt_download,
             local_stt::local_stt_cancel,
             local_stt::local_stt_delete,
+            local_stt::local_stt_hardware,
             mcp::get_mcp_server_info,
             mcp::get_mcp_activity,
             cache::clear_cache,

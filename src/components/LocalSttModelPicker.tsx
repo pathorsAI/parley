@@ -1,14 +1,17 @@
-import { useState } from "react";
-import { Check, Download, Loader2, RotateCcw, Trash2, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { AlertTriangle, Check, Download, Loader2, RotateCcw, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { useI18n } from "../i18n";
 import { log } from "../lib/log";
 import {
   DEFAULT_LOCAL_STT_MODEL,
+  autoLocalModelChoice,
+  downloadGate,
   downloadPercent,
   formatModelSize,
   isLocalBusy,
   localModelLabel,
+  presentFit,
   sortLocalModels,
   type LocalSttModel,
 } from "../lib/transcription/localModels";
@@ -31,18 +34,42 @@ import {
  * callout below the list, and nothing local can start until it finishes (the
  * gates live in lib/transcription/localModels.ts). The caller owns the
  * `useLocalSttModels` state so onboarding can gate its Next button on it too.
+ *
+ * Hardware fit (docs/design/local-stt.md › Hardware): each card shows how well
+ * the model suits this machine, the backend's recommendation is tagged, a full
+ * disk disables Download, too little RAM turns Download into a two-step
+ * confirm, and "may be slow" is a note that blocks nothing. With no hardware
+ * info all of that is simply absent. A user who never picked a model
+ * (`chosen` false) is moved to the recommended one via `onAutoSelect`.
  */
 export function LocalSttModelPicker({
   value,
   onChange,
   local,
+  chosen = true,
+  onAutoSelect,
 }: Readonly<{
   value: string;
+  /** An explicit pick (a click on a card). */
   onChange: (modelId: string) => void;
   local: LocalSttModelsState;
+  /** The user has picked a model before; the recommendation never overrides it. */
+  chosen?: boolean;
+  /** Apply the recommended default (not an explicit pick). */
+  onAutoSelect?: (modelId: string) => void;
 }>) {
-  const { t } = useI18n();
-  const { models, loadError } = local;
+  const { t, language } = useI18n();
+  const { models, loadError, hardware } = local;
+
+  const auto = onAutoSelect
+    ? autoLocalModelChoice({ current: value, chosen, models, hardware, language })
+    : null;
+  useEffect(() => {
+    if (auto && onAutoSelect) {
+      log.info("local-stt: default follows the hardware recommendation", { model: auto });
+      onAutoSelect(auto);
+    }
+  }, [auto, onAutoSelect]);
 
   if (!models) {
     return (
@@ -64,7 +91,7 @@ export function LocalSttModelPicker({
           <ModelCard key={m.id} model={m} selected={m.id === value} local={local} onSelect={() => onChange(m.id)} />
         ))}
       </div>
-      {selected && <SelectedModelActions model={selected} local={local} />}
+      {selected && <SelectedModelActions key={selected.id} model={selected} local={local} />}
       <p className="text-[11px] leading-relaxed text-muted-foreground">{t("localStt.note")}</p>
     </div>
   );
@@ -78,6 +105,12 @@ function ModelCard({
 }: Readonly<{ model: LocalSttModel; selected: boolean; local: LocalSttModelsState; onSelect: () => void }>) {
   const { t } = useI18n();
   const { name, description } = localModelLabel(t, model.id);
+  const fit = presentFit(model, local.hardware, t);
+  // With hardware info the tag is "recommended for this computer"; without it,
+  // the catalog default keeps its plain "recommended".
+  const recommendedTag = local.hardware
+    ? model.id === local.hardware.recommendedId && "localStt.recommendedHere"
+    : model.id === DEFAULT_LOCAL_STT_MODEL && "localStt.recommended";
   return (
     <button
       type="button"
@@ -99,13 +132,19 @@ function ModelCard({
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="flex flex-wrap items-center gap-1.5 text-sm font-medium">
           {name}
-          {model.id === DEFAULT_LOCAL_STT_MODEL && (
+          {recommendedTag && (
             <span className="rounded bg-primary/10 px-1.5 py-px text-[10px] font-normal text-primary">
-              {t("localStt.recommended")}
+              {t(recommendedTag)}
             </span>
           )}
+          {fit && <Badge tone={fit.tone}>{t(fit.badge)}</Badge>}
         </span>
         {description && <span className="text-[11px] text-muted-foreground">{description}</span>}
+        {fit?.reason && (
+          <span className={`text-[11px] ${fit.tone === "danger" ? "text-danger-foreground" : "text-warning-foreground"}`}>
+            {t(fit.reason.key, fit.reason.vars)}
+          </span>
+        )}
       </span>
       <span className="flex shrink-0 flex-col items-end gap-1">
         <span className="text-[11px] tabular-nums text-muted-foreground">{formatModelSize(model.sizeBytes)}</span>
@@ -132,19 +171,40 @@ function StateBadge({ model, local }: Readonly<{ model: LocalSttModel; local: Lo
   );
 }
 
-function Badge({ tone, children }: Readonly<{ tone: "success" | "info" | "muted"; children: React.ReactNode }>) {
+function Badge({
+  tone,
+  children,
+}: Readonly<{ tone: "success" | "info" | "muted" | "warning" | "danger"; children: React.ReactNode }>) {
   const cls = {
     success: "bg-success text-success-foreground",
     info: "bg-info text-info-foreground",
     muted: "bg-muted text-muted-foreground",
+    warning: "bg-warning text-warning-foreground",
+    danger: "bg-danger text-danger-foreground",
   }[tone];
   return <span className={`rounded px-1.5 py-px text-[10px] tabular-nums ${cls}`}>{children}</span>;
 }
 
-/** The download / progress / retry / delete area for the selected model. */
+/** "May be slow": an amber note under the selected model that blocks nothing. */
+function SlowNote({ model, local }: Readonly<{ model: LocalSttModel; local: LocalSttModelsState }>) {
+  const { t } = useI18n();
+  if (model.fit?.level !== "slow") return null;
+  const fit = presentFit(model, local.hardware, t);
+  return (
+    <p className="rounded-md border border-warning-border bg-warning px-3 py-2 text-[11px] leading-relaxed text-warning-foreground">
+      {t("localStt.fit.slowNote")}
+      {fit?.reason && <> {t(fit.reason.key, fit.reason.vars)}</>}
+    </p>
+  );
+}
+
+/** The download / progress / retry / delete area for the selected model. Keyed
+ *  by model id by its caller, so a half-finished "Download anyway" confirm
+ *  never carries over to another model. */
 function SelectedModelActions({ model, local }: Readonly<{ model: LocalSttModel; local: LocalSttModelsState }>) {
   const { t } = useI18n();
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmDownload, setConfirmDownload] = useState(false);
   const { name } = localModelLabel(t, model.id);
   const size = formatModelSize(model.sizeBytes);
   const d = local.downloads[model.id];
@@ -187,59 +247,115 @@ function SelectedModelActions({ model, local }: Readonly<{ model: LocalSttModel;
 
   if (model.installed) {
     return (
-      <div className="flex items-center justify-between gap-2">
-        <span className="flex items-center gap-1.5 text-[11px] text-success-foreground">
-          <Check className="size-3.5" />
-          {t("localStt.ready", { name })}
-        </span>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 gap-1.5 text-[11px] text-muted-foreground"
-          onClick={() => setConfirmDelete(true)}
-        >
-          <Trash2 className="size-3.5" />
-          {t("localStt.delete")}
-        </Button>
-        <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
-          <AlertDialogContent>
-            <AlertDialogTitle>{t("localStt.delete")}</AlertDialogTitle>
-            <AlertDialogDescription>{t("localStt.deleteConfirm", { name, size })}</AlertDialogDescription>
-            <AlertDialogFooter>
-              <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
-              <AlertDialogAction
-                variant="destructive"
-                onClick={() =>
-                  local.remove(model.id).catch((e) => {
-                    log.warn("local-stt: delete failed", { modelId: model.id, error: String(e) });
-                    toast.error(t("localStt.deleteFailed", { error: e instanceof Error ? e.message : String(e) }));
-                  })
-                }
-              >
-                {t("localStt.deleteConfirmAction")}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+      <div className="flex flex-col gap-2">
+        <SlowNote model={model} local={local} />
+        <div className="flex items-center justify-between gap-2">
+          <span className="flex items-center gap-1.5 text-[11px] text-success-foreground">
+            <Check className="size-3.5" />
+            {t("localStt.ready", { name })}
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1.5 text-[11px] text-muted-foreground"
+            onClick={() => setConfirmDelete(true)}
+          >
+            <Trash2 className="size-3.5" />
+            {t("localStt.delete")}
+          </Button>
+          <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+            <AlertDialogContent>
+              <AlertDialogTitle>{t("localStt.delete")}</AlertDialogTitle>
+              <AlertDialogDescription>{t("localStt.deleteConfirm", { name, size })}</AlertDialogDescription>
+              <AlertDialogFooter>
+                <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+                <AlertDialogAction
+                  variant="destructive"
+                  onClick={() =>
+                    local.remove(model.id).catch((e) => {
+                      log.warn("local-stt: delete failed", { modelId: model.id, error: String(e) });
+                      toast.error(t("localStt.deleteFailed", { error: e instanceof Error ? e.message : String(e) }));
+                    })
+                  }
+                >
+                  {t("localStt.deleteConfirmAction")}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
       </div>
     );
   }
 
-  // Not installed: the "download it" callout, with the last attempt's outcome.
+  // Not installed: the "download it" callout, with the last attempt's outcome
+  // and what this machine allows (see downloadGate).
   const retry = d?.status === "error" || d?.status === "cancelled";
+  const gate = downloadGate(model.fit);
+  const fit = presentFit(model, local.hardware, t);
+  const reason = fit?.reason ? t(fit.reason.key, fit.reason.vars) : null;
   return (
-    <div className="flex flex-col gap-2 rounded-md border border-warning-border bg-warning px-3 py-2 text-warning-foreground">
-      <p className="text-[11px] leading-relaxed">{t("localStt.callout.missing", { name })}</p>
-      {d?.status === "error" && (
-        <p className="rounded-md bg-danger px-2.5 py-1.5 text-[11px] text-danger-foreground">
-          {t("localStt.failed", { error: d.message })}
-        </p>
-      )}
-      {d?.status === "cancelled" && <p className="text-[11px]">{t("localStt.cancelled")}</p>}
-      <Button size="sm" className="h-7 w-fit gap-1.5 text-[11px]" onClick={() => local.download(model.id)}>
-        {retry ? <RotateCcw className="size-3.5" /> : <Download className="size-3.5" />}
-        {retry ? t("localStt.retry") : t("localStt.download", { size })}
-      </Button>
+    <div className="flex flex-col gap-2">
+      {gate === "ok" && <SlowNote model={model} local={local} />}
+      <div className="flex flex-col gap-2 rounded-md border border-warning-border bg-warning px-3 py-2 text-warning-foreground">
+        <p className="text-[11px] leading-relaxed">{t("localStt.callout.missing", { name })}</p>
+        {gate === "confirm" && (
+          <p className="flex items-start gap-1.5 rounded-md bg-danger px-2.5 py-1.5 text-[11px] leading-relaxed text-danger-foreground">
+            <AlertTriangle className="mt-px size-3.5 shrink-0" />
+            <span>
+              {t("localStt.fit.ramLowWarning")} {reason}
+            </span>
+          </p>
+        )}
+        {d?.status === "error" && (
+          <p className="rounded-md bg-danger px-2.5 py-1.5 text-[11px] text-danger-foreground">
+            {t("localStt.failed", { error: d.message })}
+          </p>
+        )}
+        {d?.status === "cancelled" && <p className="text-[11px]">{t("localStt.cancelled")}</p>}
+        {gate === "blocked" ? (
+          <>
+            <Button size="sm" className="h-7 w-fit gap-1.5 text-[11px]" disabled>
+              <Download className="size-3.5" />
+              {t("localStt.download", { size })}
+            </Button>
+            {reason && <p className="text-[11px] leading-relaxed">{t("localStt.fit.diskBlocked", { reason })}</p>}
+          </>
+        ) : gate === "confirm" && confirmDownload ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              variant="destructive"
+              className="h-7 w-fit gap-1.5 text-[11px]"
+              onClick={() => {
+                setConfirmDownload(false);
+                log.info("local-stt: download despite low RAM", { modelId: model.id });
+                local.download(model.id);
+              }}
+            >
+              <Download className="size-3.5" />
+              {t("localStt.fit.downloadAnyway")}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 w-fit text-[11px]"
+              onClick={() => setConfirmDownload(false)}
+            >
+              {t("common.cancel")}
+            </Button>
+          </div>
+        ) : (
+          <Button
+            size="sm"
+            className="h-7 w-fit gap-1.5 text-[11px]"
+            onClick={() => (gate === "confirm" ? setConfirmDownload(true) : local.download(model.id))}
+          >
+            {retry ? <RotateCcw className="size-3.5" /> : <Download className="size-3.5" />}
+            {retry ? t("localStt.retry") : t("localStt.download", { size })}
+          </Button>
+        )}
+      </div>
     </div>
   );
 }

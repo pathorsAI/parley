@@ -6,6 +6,7 @@ import { normalizeTranscriptText } from "./textNormalize";
 import { log } from "./log";
 import { translate, type TranslationKey } from "../i18n/messages";
 import type { Source } from "./types";
+import { isLocalFailureCode, showLocalFailureToast } from "./transcription/localAlerts";
 
 /** Shape of the `transcript://segment` payload emitted by the Rust backend. */
 interface TranscriptEventPayload {
@@ -98,7 +99,8 @@ export async function listenForProsody(): Promise<UnlistenFn> {
 interface MeetingErrorPayload {
   source: string;
   /** Hosted: "quota" (402) | "auth" (401 expired session). BYOK: "key"
-   *  (rejected vendor key). Either: "capture" (no audio source) | "connect". */
+   *  (rejected vendor key). On-device: "local-missing" | "local-memory" |
+   *  "local" (see localAlerts.ts). Any: "capture" (no audio source) | "connect". */
   code: string;
   message: string;
 }
@@ -135,8 +137,15 @@ export async function listenForMeetingError(): Promise<UnlistenFn> {
     invoke("stop_meeting").catch((error) =>
       log.warn("meeting: stop after backend error failed", { code, error: String(error) }),
     );
+    const language = useStore.getState().settings.language;
+    // On-device failures point at Settings › Transcription (a smaller model,
+    // or the missing download) instead of the generic "can't connect".
+    if (isLocalFailureCode(code)) {
+      showLocalFailureToast(language, code);
+      return;
+    }
     const key: TranslationKey = MEETING_ERROR_KEY_BY_CODE[code] ?? "meeting.error.connect";
-    toast.error(translate(useStore.getState().settings.language, key));
+    toast.error(translate(language, key));
   });
 }
 

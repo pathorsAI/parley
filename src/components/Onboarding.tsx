@@ -492,8 +492,10 @@ function AccountStep({ local }: Readonly<{ local: LocalSttModelsState }>) {
               // that live meetings won't separate speakers.
               <LocalSttModelPicker
                 value={settings.localSttModel}
-                onChange={(id) => patch({ localSttModel: id })}
+                onChange={(id) => patch({ localSttModel: id, localSttModelChosen: true })}
                 local={local}
+                chosen={settings.localSttModelChosen}
+                onAutoSelect={(id) => patch({ localSttModel: id })}
               />
             ) : (
               stt.apiKeyField && (

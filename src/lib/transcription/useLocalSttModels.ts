@@ -7,9 +7,11 @@ import {
   cancelLocalSttDownload,
   deleteLocalSttModel,
   downloadLocalSttModel,
+  fetchLocalSttHardware,
   fetchLocalSttModels,
   reduceLocalProgress,
   type LocalDownloads,
+  type LocalSttHardware,
   type LocalSttModel,
   type LocalSttProgress,
 } from "./localModels";
@@ -21,11 +23,21 @@ export interface LocalSttModelsState {
   downloads: LocalDownloads;
   /** The catalog call failed (backend missing or errored). */
   loadError: string | null;
+  /** This machine (RAM, free disk, acceleration, recommended model); `null`
+   *  until read, or when it could not be read — then fit is unknown and the
+   *  picker shows no fit badges and blocks nothing. */
+  hardware: LocalSttHardware | null;
   refresh: () => void;
   download: (modelId: string) => void;
   cancel: (modelId: string) => void;
   remove: (modelId: string) => Promise<void>;
 }
+
+/** The last hardware report any picker read, so a picker opened later shows
+ *  fit at once (the fresh read then replaces it). Total RAM, cores and
+ *  acceleration never change; free disk and available memory do, which is why
+ *  it is read again on every refresh. */
+let cachedHardware: LocalSttHardware | null = null;
 
 /**
  * The local-model catalog plus live download state, shared by Settings and
@@ -38,6 +50,7 @@ export function useLocalSttModels(enabled = true): LocalSttModelsState {
   const [models, setModels] = useState<LocalSttModel[] | null>(null);
   const [downloads, setDownloads] = useState<LocalDownloads>({});
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [hardware, setHardware] = useState<LocalSttHardware | null>(cachedHardware);
   // Cancels the user asked for: the download promise rejects when cancelled,
   // and that rejection must read as "cancelled", not as an error.
   const cancelRequested = useRef(new Set<string>());
@@ -62,6 +75,20 @@ export function useLocalSttModels(enabled = true): LocalSttModelsState {
         log.warn("local-stt: catalog load failed", { error: String(e) });
         setModels(null);
         setLoadError(String(e));
+      });
+    // Read alongside the catalog: on open, and whenever a download settles
+    // (free disk moved). The catalog's per-model `fit` is computed by the
+    // backend from the same probe; this is for the numbers and the
+    // recommendation.
+    fetchLocalSttHardware()
+      .then((hw) => {
+        cachedHardware = hw;
+        if (alive.current) setHardware(hw);
+      })
+      .catch((e) => {
+        log.warn("local-stt: hardware read failed", { error: String(e) });
+        cachedHardware = null;
+        if (alive.current) setHardware(null);
       });
   }, []);
 
@@ -141,5 +168,5 @@ export function useLocalSttModels(enabled = true): LocalSttModelsState {
     [refresh],
   );
 
-  return { models, downloads, loadError, refresh, download, cancel, remove };
+  return { models, downloads, loadError, hardware, refresh, download, cancel, remove };
 }

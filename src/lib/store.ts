@@ -235,6 +235,7 @@ const DEFAULT_SETTINGS: Settings = {
   deepgramApiKey: "",
   assemblyaiApiKey: "",
   localSttModel: DEFAULT_LOCAL_STT_MODEL,
+  localSttModelChosen: false,
   inputDevice: "",
   // Recordings analyze themselves as they always have; turning this off hands
   // analysis to an external AI over MCP. See Settings.autoStudyAnalysis.

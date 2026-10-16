@@ -64,6 +64,10 @@ const ERROR_KEYS: Record<string, TranslationKey> = {
   quota: "voiceTyping.error.quota",
   auth: "voiceTyping.error.auth",
   key: "voiceTyping.error.key",
+  // On-device failures (local_stt::failure_code).
+  "local-missing": "voiceTyping.noLocalModel",
+  "local-memory": "voiceTyping.error.localMemory",
+  local: "voiceTyping.error.local",
 };
 
 /** listening = recording; finalizing = waiting for the STT's answer to the

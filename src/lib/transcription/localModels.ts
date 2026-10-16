@@ -14,6 +14,21 @@ import type { TranslationKey } from "../../i18n/messages";
 
 export type LocalSttFamily = "whisper" | "breeze";
 
+/** How well a model suits this machine (judged in Rust, `local_stt::model_fit`). */
+export type LocalSttFitLevel = "good" | "slow" | "unsupported";
+
+/** Why a model is not a good fit, most severe first.
+ *  - `disk_low`: not enough free disk to download it — the one hard block;
+ *  - `ram_low`: total RAM under the model's floor — download needs a confirm;
+ *  - `ram_tight`: little memory free right now — a non-blocking note;
+ *  - `cpu_only`: a large model without GPU acceleration on a modest CPU. */
+export type LocalSttFitReason = "disk_low" | "ram_low" | "ram_tight" | "cpu_only";
+
+export interface LocalSttFit {
+  level: LocalSttFitLevel;
+  reasons: LocalSttFitReason[];
+}
+
 /** One catalog entry, as `local_stt_models` returns it (serde camelCase). */
 export interface LocalSttModel {
   id: string;
@@ -23,6 +38,32 @@ export interface LocalSttModel {
   installed: boolean;
   /** A download is in flight right now (possibly started from another window). */
   downloading: boolean;
+  /** Total RAM below which the model is `ram_low`. */
+  minRamBytes?: number;
+  /** Free disk its download needs (model + headroom). */
+  diskNeededBytes?: number;
+  /** A large-v3-class model (slow without GPU acceleration). */
+  heavy?: boolean;
+  /** `null`/absent when the hardware could not be read: fit is unknown, so the
+   *  UI shows no fit badge and blocks nothing. */
+  fit?: LocalSttFit | null;
+}
+
+/** This machine, as `local_stt_hardware` returns it. */
+export interface LocalSttHardware {
+  totalRamBytes: number;
+  availableRamBytes: number;
+  /** Free space on the volume holding the models directory. */
+  freeDiskBytes: number;
+  /** "metal" only on Apple Silicon; Intel Macs, Windows and Linux are "cpu". */
+  accel: "metal" | "cpu";
+  /** Physical cores. */
+  cpuCores: number;
+  os: string;
+  arch: string;
+  /** The backend's pick for this machine: the default when it fits well, else
+   *  the best whisper model that does; `null` when none does. */
+  recommendedId: string | null;
 }
 
 export type LocalSttStage = "downloading" | "verifying" | "done" | "error" | "cancelled";
@@ -37,6 +78,19 @@ export interface LocalSttProgress {
 }
 
 export const LOCAL_STT_PROGRESS_EVENT = "local-stt://progress";
+
+/** Emitted (at most once per session) when decoding falls behind real time. */
+export const LOCAL_STT_SLOW_EVENT = "local-stt://slow";
+
+/** Payload of {@link LOCAL_STT_SLOW_EVENT}: the model and its median real-time
+ *  factor (decode time ÷ audio time; above 0.9 = can't keep up). */
+export interface LocalSttSlowPayload {
+  model: string;
+  rtf: number;
+}
+
+/** The Breeze model: the zh-TW default when this machine runs it well. */
+export const BREEZE_LOCAL_STT_MODEL = "breeze-asr-25-q5_0";
 
 /** Recommended default: fast, accurate, multilingual, and a moderate download. */
 export const DEFAULT_LOCAL_STT_MODEL = "whisper-large-v3-turbo-q5_0";
@@ -133,6 +187,139 @@ export function formatModelSize(bytes: number): string {
   return `${Math.max(1, Math.round(bytes / MB))} MB`;
 }
 
+/**
+ * Human RAM size in binary units, labelled "GB" the way an OS shows memory:
+ * 8 GiB → "8 GB", 7.7 GiB → "7.7 GB".
+ */
+export function formatRam(bytes: number): string {
+  if (!(bytes > 0)) return "—";
+  const gib = bytes / 2 ** 30;
+  const rounded = gib >= 10 ? Math.round(gib) : Math.round(gib * 10) / 10;
+  return `${rounded} GB`;
+}
+
+// ── Hardware fit ───────────────────────────────────────────────────────────
+
+/** What the selected model's Download button does: start it, ask first (too
+ *  little RAM — the user may know better), or refuse (no room on disk). An
+ *  unknown fit never blocks. */
+export type DownloadGate = "ok" | "confirm" | "blocked";
+
+export function downloadGate(fit: LocalSttFit | null | undefined): DownloadGate {
+  if (!fit) return "ok";
+  if (fit.reasons.includes("disk_low")) return "blocked";
+  if (fit.reasons.includes("ram_low")) return "confirm";
+  return "ok";
+}
+
+/** Badge, tone and the one-line reason for a model card. `null` = fit unknown
+ *  (no hardware info): show nothing. */
+export interface FitPresentation {
+  tone: "success" | "warning" | "danger";
+  badge: TranslationKey;
+  /** The most severe reason, with its numbers; `null` for a good fit. */
+  reason: { key: TranslationKey; vars: Record<string, string> } | null;
+}
+
+/** "this Mac" vs "this computer", for the reason lines. */
+function deviceKey(hw: LocalSttHardware | null): TranslationKey {
+  return hw?.os === "macos" ? "localStt.device.mac" : "localStt.device.pc";
+}
+
+export function presentFit(
+  model: LocalSttModel,
+  hw: LocalSttHardware | null,
+  t: (key: TranslationKey) => string,
+): FitPresentation | null {
+  const fit = model.fit;
+  if (!fit) return null;
+  const first = fit.reasons[0];
+  const device = t(deviceKey(hw));
+  let reason: FitPresentation["reason"] = null;
+  switch (first) {
+    case "disk_low":
+      reason = {
+        key: "localStt.fit.reason.diskLow",
+        vars: {
+          need: formatModelSize(model.diskNeededBytes ?? model.sizeBytes),
+          free: hw ? formatModelSize(hw.freeDiskBytes) : "—",
+        },
+      };
+      break;
+    case "ram_low":
+      reason = {
+        key: "localStt.fit.reason.ramLow",
+        vars: {
+          need: formatRam(model.minRamBytes ?? 0),
+          have: hw ? formatRam(hw.totalRamBytes) : "—",
+          device,
+        },
+      };
+      break;
+    case "ram_tight":
+      reason = {
+        key: "localStt.fit.reason.ramTight",
+        vars: { free: hw ? formatRam(hw.availableRamBytes) : "—" },
+      };
+      break;
+    case "cpu_only":
+      reason = { key: "localStt.fit.reason.cpuOnly", vars: { device } };
+      break;
+  }
+  if (fit.level === "good") {
+    return { tone: "success", badge: "localStt.fit.good", reason: null };
+  }
+  if (fit.level === "slow") {
+    return { tone: "warning", badge: "localStt.fit.slow", reason };
+  }
+  return {
+    tone: "danger",
+    badge: fit.reasons.includes("disk_low") ? "localStt.fit.noDisk" : "localStt.fit.noMemory",
+    reason,
+  };
+}
+
+/**
+ * The model a user who has never picked one should be on, or `null` to leave
+ * the setting alone. Never overrides an explicit choice (`chosen`), never moves
+ * off a model that is already downloaded, and does nothing without a
+ * recommendation. zh-TW users get Breeze when this machine runs it well
+ * (Taiwanese Mandarin and code-switching are what it is for); everyone else
+ * gets the backend's `recommendedId`.
+ */
+export function autoLocalModelChoice(input: {
+  current: string;
+  chosen: boolean;
+  models: readonly LocalSttModel[] | null;
+  hardware: LocalSttHardware | null;
+  language: string;
+}): string | null {
+  const { current, chosen, models, hardware, language } = input;
+  if (chosen || !models || !hardware) return null;
+  if (models.find((m) => m.id === current)?.installed) return null;
+  const breeze = models.find((m) => m.id === BREEZE_LOCAL_STT_MODEL);
+  const target =
+    language === "zh-TW" && breeze?.fit?.level === "good" ? breeze.id : hardware.recommendedId;
+  if (!target || target === current) return null;
+  return models.some((m) => m.id === target) ? target : null;
+}
+
+/** The meeting / voice-typing error codes an on-device failure arrives with
+ *  (see `local_stt::failure_code` in Rust). */
+export type LocalFailureCode = "local" | "local-memory" | "local-missing";
+
+/**
+ * The same split for an error MESSAGE (the upload path gets a rejected
+ * `transcribe_file`, not a code). Mirrors the markers `local_stt.rs` writes:
+ * "not enough memory" and "is not downloaded".
+ */
+export function localFailureCode(message: string): LocalFailureCode {
+  const low = message.toLowerCase();
+  if (low.includes("not enough memory")) return "local-memory";
+  if (low.includes("is not downloaded")) return "local-missing";
+  return "local";
+}
+
 /** i18n keys for a model's name and one-line description. Unknown ids (a
  *  catalog entry added in Rust before the frontend learned it) fall back to the
  *  raw id via {@link localModelLabel}. */
@@ -192,6 +379,14 @@ export function cancelLocalSttDownload(modelId: string): Promise<void> {
 
 export function deleteLocalSttModel(modelId: string): Promise<void> {
   return invoke<void>("local_stt_delete", { modelId });
+}
+
+/** This machine's memory, free disk, acceleration and the recommended model.
+ *  `null` outside Tauri. Rejects when the backend cannot read the hardware;
+ *  callers treat that as "fit unknown". */
+export async function fetchLocalSttHardware(): Promise<LocalSttHardware | null> {
+  if (!isTauri()) return null;
+  return invoke<LocalSttHardware>("local_stt_hardware");
 }
 
 /**

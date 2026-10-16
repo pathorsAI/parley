@@ -3400,6 +3400,7 @@ dependencies = [
  "cpal",
  "futures-util",
  "knf-rs",
+ "libc",
  "log",
  "nalgebra",
  "ndarray",

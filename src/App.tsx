@@ -33,6 +33,7 @@ import {
   trayActive,
   TRAY_QUIT_EVENT,
 } from "./lib/tray";
+import { listenForLocalSttSlow } from "./lib/transcription/localAlerts";
 import { listenForSettings } from "./lib/settingsSync";
 import { listenForViewLogsMenu } from "./lib/diagnostics";
 import { listenForSttUsage } from "./lib/usage/log";
@@ -193,6 +194,7 @@ const App = () => {
     track(listenForProsody());
     track(listenForMeetingError());
     track(listenForMeetingWarning());
+    track(listenForLocalSttSlow());
     track(listenForTranscriptionLink());
     track(listenForSettings());
     track(listenForSttUsage());

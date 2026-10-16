@@ -83,6 +83,27 @@ describe("accountGateBlock — local", () => {
     expect(transcriptionReady(localSettings, false, input)).toBe(true);
   });
 
+  it("a hardware warning never blocks an installed model", () => {
+    for (const fit of [
+      { level: "unsupported" as const, reasons: ["ram_low" as const] },
+      { level: "slow" as const, reasons: ["cpu_only" as const, "ram_tight" as const] },
+      { level: "unsupported" as const, reasons: ["disk_low" as const] },
+    ]) {
+      expect(
+        accountGateBlock(localSettings, false, { models: [local({ installed: true, fit })], downloads: {} }),
+      ).toBeNull();
+    }
+  });
+
+  it("a good fit does not stand in for the download", () => {
+    expect(
+      accountGateBlock(localSettings, false, {
+        models: [local({ fit: { level: "good", reasons: [] } })],
+        downloads: {},
+      }),
+    ).toBe("localDownload");
+  });
+
   it("a model installed but not selected doesn't count", () => {
     expect(
       accountGateBlock(localSettings, false, {

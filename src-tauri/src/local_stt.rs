@@ -10,7 +10,11 @@
 //!   atomic rename), its progress events and cancellation;
 //! - the loaded-model cache shared by every session (meeting mic + system audio,
 //!   voice typing, file transcription), and the leases that keep a model from
-//!   being deleted while a session uses it.
+//!   being deleted while a session uses it;
+//! - the hardware fit of each model ([`model_fit`]): whether this machine has
+//!   the memory, the disk and the acceleration to run it (probes in
+//!   `hardware.rs`), and the real-time-factor warning a live session raises
+//!   when decoding cannot keep up ([`SLOW_EVENT`]).
 //!
 //! The recognizer itself lives in `transcription/local.rs`.
 
@@ -28,6 +32,20 @@ use whisper_rs::{WhisperContext, WhisperContextParameters};
 
 /// Event the Settings UI listens on for download progress.
 pub const PROGRESS_EVENT: &str = "local-stt://progress";
+
+/// Event a session emits (at most once) when decoding falls behind real time;
+/// payload `{ model, rtf }`. See `transcription::local::RtfTracker`.
+pub const SLOW_EVENT: &str = "local-stt://slow";
+
+/// Whether whisper.cpp runs on the GPU. Metal on Apple Silicon only: Intel Macs
+/// have the `metal` feature compiled in (Cargo cannot split macOS by arch in a
+/// universal build), but their integrated GPUs are no faster than the CPU, so
+/// they decode on the CPU like Windows and Linux. The hardware report's
+/// `accel`, the context parameters and the live interim tails all key on this.
+pub const GPU_ACCEL: bool = cfg!(all(target_os = "macos", target_arch = "aarch64"));
+
+const MIB: u64 = 1 << 20;
+const GIB: u64 = 1 << 30;
 
 /// The model used when a caller does not name one.
 pub const DEFAULT_MODEL_ID: &str = "whisper-large-v3-turbo-q5_0";
@@ -54,6 +72,11 @@ pub struct CatalogEntry {
     pub file: &'static str,
     pub bytes: u64,
     pub sha256: &'static str,
+    /// Total RAM below which the UI says "not enough memory" (a soft block).
+    pub min_ram_bytes: u64,
+    /// A large-v3-class encoder (turbo, Breeze): too slow for live use without
+    /// GPU acceleration unless the CPU is strong.
+    pub heavy: bool,
 }
 
 impl CatalogEntry {
@@ -67,6 +90,15 @@ impl CatalogEntry {
 
 /// Every model the app offers. Adding a model is one row here (plus its
 /// display strings in the frontend).
+///
+/// `min_ram_bytes` budget: a live meeting runs TWO sessions (mic and system
+/// audio), each with its own `WhisperState`, on one shared set of weights. A
+/// state holds the KV caches and the encoder/decoder compute buffers, roughly
+/// 0.3 GB for small and 0.5–1 GB for the large-v3 class (Breeze, a large-v2
+/// fine-tune with the full 32-layer decoder, sits at the top of that). So
+/// resident use is ≈ 0.8 GB for small, ≈ 2–2.5 GB for turbo and ≈ 3–3.5 GB for
+/// Breeze — next to the webview (~0.5 GB) and an OS that wants several GB of
+/// its own. 4 GiB machines can carry small; the large models need 8 GiB.
 pub const CATALOG: &[CatalogEntry] = &[
     CatalogEntry {
         id: "whisper-small-q5_1",
@@ -75,6 +107,8 @@ pub const CATALOG: &[CatalogEntry] = &[
         file: "ggml-small-q5_1.bin",
         bytes: 190_085_487,
         sha256: "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb",
+        min_ram_bytes: 4 * GIB,
+        heavy: false,
     },
     CatalogEntry {
         id: "whisper-large-v3-turbo-q5_0",
@@ -83,6 +117,8 @@ pub const CATALOG: &[CatalogEntry] = &[
         file: "ggml-large-v3-turbo-q5_0.bin",
         bytes: 574_041_195,
         sha256: "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
+        min_ram_bytes: 8 * GIB,
+        heavy: true,
     },
     CatalogEntry {
         id: "whisper-large-v3-turbo-q8_0",
@@ -91,6 +127,8 @@ pub const CATALOG: &[CatalogEntry] = &[
         file: "ggml-large-v3-turbo-q8_0.bin",
         bytes: 874_188_075,
         sha256: "317eb69c11673c9de1e1f0d459b253999804ec71ac4c23c17ecf5fbe24e259a1",
+        min_ram_bytes: 8 * GIB,
+        heavy: true,
     },
     CatalogEntry {
         id: "breeze-asr-25-q5_0",
@@ -99,6 +137,8 @@ pub const CATALOG: &[CatalogEntry] = &[
         file: "ggml-breeze-asr-25-q5_0.bin",
         bytes: 1_080_732_091,
         sha256: "f51573bd6ef9b1fac0bd09a1652eda58a1a638d824a08771ccdee1102fe5990a",
+        min_ram_bytes: 8 * GIB,
+        heavy: true,
     },
 ];
 
@@ -117,13 +157,74 @@ pub fn resolve_model_id(model: &str) -> &str {
     }
 }
 
+/// In [`not_downloaded_error`]; [`failure_code`] keys on it.
+const NOT_DOWNLOADED_MARKER: &str = "is not downloaded";
+/// In [`not_enough_memory_error`]; [`failure_code`] keys on it.
+const MEMORY_MARKER: &str = "not enough memory";
+
 /// The error a session or command returns for a model that is not on disk.
 /// Starts with "Local transcription" so the session error classifier treats it
 /// as final rather than as a dropped connection to redial.
 pub fn not_downloaded_error(id: &str) -> String {
     format!(
-        "Local transcription model '{id}' is not downloaded. Download it in Settings › Transcription."
+        "Local transcription model '{id}' {NOT_DOWNLOADED_MARKER}. Download it in Settings › Transcription."
     )
+}
+
+/// The error for a model whisper.cpp could not allocate (see
+/// [`init_failure_message`]). Final, like every "Local transcription" error.
+pub fn not_enough_memory_error(id: &str) -> String {
+    format!(
+        "Local transcription: {MEMORY_MARKER} to load model '{id}'. Choose a smaller model in Settings › Transcription."
+    )
+}
+
+/// The `meeting://error` / `voicetyping://error` code for an on-device failure
+/// (a message starting with "Local transcription"): "local-missing" (model not
+/// downloaded), "local-memory" (could not be loaded for lack of memory), or
+/// "local" for anything else. All three are final — a redial would fail the
+/// same way — and each has its own localized message in the frontend.
+pub fn failure_code(msg: &str) -> &'static str {
+    let low = msg.to_lowercase();
+    if low.contains(MEMORY_MARKER) {
+        "local-memory"
+    } else if low.contains(NOT_DOWNLOADED_MARKER) {
+        "local-missing"
+    } else {
+        "local"
+    }
+}
+
+/// Whether a model failing to initialize is most likely out of memory: the
+/// machine is below the model's RAM floor, or less than twice the model's size
+/// is available. whisper.cpp reports an allocation failure as a bare "init
+/// failed", the same as any other, so this is a judgement from the hardware —
+/// the file itself was size- and checksum-verified when it was installed.
+fn memory_suspect(
+    entry: &CatalogEntry,
+    total_ram: Option<u64>,
+    available_ram: Option<u64>,
+) -> bool {
+    total_ram.is_some_and(|t| !ram_meets(t, entry.min_ram_bytes))
+        || available_ram.is_some_and(|a| a < entry.bytes.saturating_mul(2))
+}
+
+/// The error for a model whose context (`what` = "failed to load") or decoding
+/// state ("could not create a decoding state") could not be created: the
+/// memory message when memory is the likely cause, the raw failure otherwise.
+pub fn init_failure_message(id: &str, what: &str, err: impl std::fmt::Display) -> String {
+    let suspect = entry(id).is_some_and(|e| {
+        memory_suspect(
+            e,
+            crate::hardware::total_ram_bytes(),
+            crate::hardware::available_ram_bytes(),
+        )
+    });
+    if suspect {
+        not_enough_memory_error(id)
+    } else {
+        format!("Local transcription model '{id}' {what}: {err}")
+    }
 }
 
 fn unknown_model_error(id: &str) -> String {
@@ -170,6 +271,180 @@ pub fn installed_model_path(app: &AppHandle, id: &str) -> Result<PathBuf, String
 /// Fail-fast check for the start commands: `Ok` only when the model is ready.
 pub fn ensure_installed(app: &AppHandle, model: &str) -> Result<(), String> {
     installed_model_path(app, resolve_model_id(model)).map(|_| ())
+}
+
+// --- Hardware fit -------------------------------------------------------------
+
+/// What whisper.cpp decodes on (see [`GPU_ACCEL`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Accel {
+    Metal,
+    Cpu,
+}
+
+/// The machine, as `local_stt_hardware` reports it and [`model_fit`] judges it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalSttHardware {
+    pub total_ram_bytes: u64,
+    pub available_ram_bytes: u64,
+    /// Free space on the volume that holds the models directory.
+    pub free_disk_bytes: u64,
+    pub accel: Accel,
+    /// Physical cores (logical when the OS will not say).
+    pub cpu_cores: u32,
+    /// `std::env::consts::OS`: "macos", "windows", "linux".
+    pub os: &'static str,
+    /// `std::env::consts::ARCH`: "aarch64", "x86_64".
+    pub arch: &'static str,
+}
+
+/// How well a model suits this machine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FitLevel {
+    Good,
+    Slow,
+    Unsupported,
+}
+
+/// Why a model is not a [`FitLevel::Good`] fit, most severe first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FitReason {
+    /// Not enough free disk to download it: the one hard block.
+    DiskLow,
+    /// Total RAM is below the model's floor: the UI asks for confirmation.
+    RamLow,
+    /// Little memory is free right now (other apps); may stutter.
+    RamTight,
+    /// A large model with no GPU acceleration and a modest CPU.
+    CpuOnly,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Fit {
+    pub level: FitLevel,
+    pub reasons: Vec<FitReason>,
+}
+
+/// Free disk a download needs beyond the model itself: the `.part` file is the
+/// full model, and a volume filled to the last byte breaks everything else.
+pub const DISK_HEADROOM_BYTES: u64 = 512 * MIB;
+/// A CPU this strong runs a heavy model acceptably without a GPU: 8 physical
+/// cores (whisper.cpp uses up to 8 threads, see [`thread_count`]) and 16 GB.
+const STRONG_CPU_CORES: u32 = 8;
+const STRONG_CPU_RAM_BYTES: u64 = 16 * GIB;
+
+/// Whether `total` RAM counts as at least `nominal`. RAM is sold in nominal
+/// sizes, but the OS reports less once firmware and an integrated GPU have
+/// taken their share (an "8 GB" Windows laptop often reports ~7.7 GiB), so a
+/// 1/16 shortfall still counts as the nominal size.
+fn ram_meets(total: u64, nominal: u64) -> bool {
+    total >= nominal - nominal / 16
+}
+
+/// Free disk a model's download needs.
+pub fn disk_needed_bytes(entry: &CatalogEntry) -> u64 {
+    entry.bytes + DISK_HEADROOM_BYTES
+}
+
+/// Judge `entry` against `hw`. Pure: the probing happens elsewhere.
+///
+/// - `disk_low` (not installed, free < size + [`DISK_HEADROOM_BYTES`]) and
+///   `ram_low` (total RAM under `min_ram_bytes`) make it `unsupported`.
+/// - `ram_tight` (available < 2 × size; skipped when the weights are already
+///   `resident`) and `cpu_only` (a `heavy` model without GPU acceleration on a
+///   CPU short of [`STRONG_CPU_CORES`] cores / [`STRONG_CPU_RAM_BYTES`]) make it
+///   `slow`.
+/// - Otherwise `good`.
+pub fn model_fit(
+    entry: &CatalogEntry,
+    hw: &LocalSttHardware,
+    installed: bool,
+    resident: bool,
+) -> Fit {
+    let mut reasons = Vec::new();
+    if !installed && hw.free_disk_bytes < disk_needed_bytes(entry) {
+        reasons.push(FitReason::DiskLow);
+    }
+    if !ram_meets(hw.total_ram_bytes, entry.min_ram_bytes) {
+        reasons.push(FitReason::RamLow);
+    }
+    if !resident && hw.available_ram_bytes < entry.bytes.saturating_mul(2) {
+        reasons.push(FitReason::RamTight);
+    }
+    let strong_cpu =
+        hw.cpu_cores >= STRONG_CPU_CORES && ram_meets(hw.total_ram_bytes, STRONG_CPU_RAM_BYTES);
+    if entry.heavy && hw.accel == Accel::Cpu && !strong_cpu {
+        reasons.push(FitReason::CpuOnly);
+    }
+    let level = if reasons
+        .iter()
+        .any(|r| matches!(r, FitReason::DiskLow | FitReason::RamLow))
+    {
+        FitLevel::Unsupported
+    } else if reasons.is_empty() {
+        FitLevel::Good
+    } else {
+        FitLevel::Slow
+    };
+    Fit { level, reasons }
+}
+
+/// The model to suggest for this machine: the default when it is a good fit,
+/// else the largest good whisper-family model, else none. Breeze is never
+/// picked here — whether its Taiwanese-Mandarin strength matters depends on
+/// the user, which the frontend knows (it may prefer Breeze for zh-TW).
+pub fn recommended_id(fits: &[(&'static CatalogEntry, Fit)]) -> Option<&'static str> {
+    let good = || {
+        fits.iter()
+            .filter(|(e, f)| e.family == ModelFamily::Whisper && f.level == FitLevel::Good)
+    };
+    if good().any(|(e, _)| e.id == DEFAULT_MODEL_ID) {
+        return Some(DEFAULT_MODEL_ID);
+    }
+    good().max_by_key(|(e, _)| e.bytes).map(|(e, _)| e.id)
+}
+
+/// Read this machine. `dir` is the models directory: it is created first so its
+/// own volume is measured (a missing directory falls back to its nearest
+/// existing ancestor). Fails only when total RAM or free disk is unreadable;
+/// unreadable available memory counts as all of it (no `ram_tight`).
+fn probe_hardware(dir: &Path) -> Result<LocalSttHardware, String> {
+    let _ = std::fs::create_dir_all(dir);
+    let total_ram_bytes = crate::hardware::total_ram_bytes()
+        .ok_or_else(|| "could not read the installed memory".to_string())?;
+    let available_ram_bytes = crate::hardware::available_ram_bytes()
+        .unwrap_or(total_ram_bytes)
+        .min(total_ram_bytes);
+    let free_disk_bytes = crate::hardware::free_disk_bytes(dir)
+        .ok_or_else(|| "could not read the free disk space".to_string())?;
+    Ok(LocalSttHardware {
+        total_ram_bytes,
+        available_ram_bytes,
+        free_disk_bytes,
+        accel: if GPU_ACCEL { Accel::Metal } else { Accel::Cpu },
+        cpu_cores: crate::hardware::physical_cores(),
+        os: std::env::consts::OS,
+        arch: std::env::consts::ARCH,
+    })
+}
+
+/// The download refusal for a volume without room for `entry` (free space
+/// unknown = allowed: the write itself would fail cleanly).
+fn check_disk(entry: &CatalogEntry, free: Option<u64>) -> Result<(), String> {
+    match free {
+        Some(free) if free < disk_needed_bytes(entry) => Err(format!(
+            "Not enough free disk space for '{}': it needs {} MB free (the model plus {} MB headroom) and only {} MB are available.",
+            entry.id,
+            disk_needed_bytes(entry).div_ceil(1_000_000),
+            DISK_HEADROOM_BYTES / 1_000_000,
+            free / 1_000_000
+        )),
+        _ => Ok(()),
+    }
 }
 
 // --- Loaded-model cache and leases --------------------------------------------
@@ -234,6 +509,20 @@ pub fn thread_count() -> i32 {
         .min(8) as i32
 }
 
+/// `local-stt://slow` payload.
+#[derive(Clone, Debug, Serialize)]
+struct SlowPayload<'a> {
+    model: &'a str,
+    rtf: f32,
+}
+
+/// Tell the UI that decoding `model` is not keeping up with real time (median
+/// real-time factor `rtf`). Called at most once per session.
+pub fn emit_slow(app: &AppHandle, model: &str, rtf: f32) {
+    log::warn!("local-stt: {model} is decoding slower than real time (median RTF {rtf:.2})");
+    let _ = app.emit(SLOW_EVENT, SlowPayload { model, rtf });
+}
+
 /// The shared context for model `id`, loading it on first use. Blocking (a
 /// large model takes seconds to load): call it from `spawn_blocking`.
 pub fn load_context(app: &AppHandle, id: &str) -> Result<Arc<WhisperContext>, String> {
@@ -250,15 +539,17 @@ pub fn load_context(app: &AppHandle, id: &str) -> Result<Arc<WhisperContext>, St
 
     whisper_rs::install_logging_hooks();
     let mut params = WhisperContextParameters::default();
-    // Metal on macOS (the `metal` feature is only enabled there); CPU elsewhere.
-    params.use_gpu(cfg!(target_os = "macos"));
-    params.flash_attn(cfg!(target_os = "macos"));
+    // Metal on Apple Silicon; CPU elsewhere (see GPU_ACCEL).
+    params.use_gpu(GPU_ACCEL);
+    params.flash_attn(GPU_ACCEL);
     let started = Instant::now();
     let path_str = path
         .to_str()
         .ok_or_else(|| "Local transcription model path is not valid UTF-8".to_string())?;
-    let ctx = WhisperContext::new_with_params(path_str, params)
-        .map_err(|e| format!("Local transcription model '{id}' failed to load: {e}"))?;
+    let ctx = WhisperContext::new_with_params(path_str, params).map_err(|e| {
+        log::warn!("local-stt: {id} failed to load: {e}");
+        init_failure_message(id, "failed to load", e)
+    })?;
     log::info!(
         "local-stt: loaded {id} in {}ms",
         started.elapsed().as_millis()
@@ -266,6 +557,16 @@ pub fn load_context(app: &AppHandle, id: &str) -> Result<Arc<WhisperContext>, St
     let ctx = Arc::new(ctx);
     *loaded().lock().unwrap() = Some((id.to_string(), ctx.clone()));
     Ok(ctx)
+}
+
+/// Whether model `id`'s weights are loaded right now (they no longer count
+/// against available memory).
+fn is_resident(id: &str) -> bool {
+    loaded()
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|(loaded_id, _)| loaded_id == id)
 }
 
 /// Drop the cached context if it is model `id` (sessions still holding it keep
@@ -493,21 +794,78 @@ pub struct LocalSttModel {
     /// The verified file is on disk (exact size; see [`is_installed_in`]).
     installed: bool,
     downloading: bool,
+    /// The model's RAM floor (see [`CatalogEntry::min_ram_bytes`]).
+    min_ram_bytes: u64,
+    /// Free disk its download needs ([`disk_needed_bytes`]).
+    disk_needed_bytes: u64,
+    heavy: bool,
+    /// How well it suits this machine; `null` when the hardware could not be
+    /// read (the UI then shows no fit at all and blocks nothing).
+    fit: Option<Fit>,
+}
+
+/// The catalog judged against `hw` (fits are `None` without it).
+fn catalog_fits(
+    dir: &Path,
+    hw: Option<&LocalSttHardware>,
+) -> Vec<(&'static CatalogEntry, bool, Option<Fit>)> {
+    CATALOG
+        .iter()
+        .map(|e| {
+            let installed = is_installed_in(dir, e);
+            let fit = hw.map(|hw| model_fit(e, hw, installed, is_resident(e.id)));
+            (e, installed, fit)
+        })
+        .collect()
 }
 
 #[tauri::command]
 pub fn local_stt_models(app: AppHandle) -> Result<Vec<LocalSttModel>, String> {
     let dir = models_dir(&app)?;
-    Ok(CATALOG
-        .iter()
-        .map(|e| LocalSttModel {
+    let hw = probe_hardware(&dir)
+        .inspect_err(|e| log::warn!("local-stt: hardware probe failed: {e}"))
+        .ok();
+    Ok(catalog_fits(&dir, hw.as_ref())
+        .into_iter()
+        .map(|(e, installed, fit)| LocalSttModel {
             id: e.id,
             family: e.family,
             size_bytes: e.bytes,
-            installed: is_installed_in(&dir, e),
+            installed,
             downloading: is_downloading(e.id),
+            min_ram_bytes: e.min_ram_bytes,
+            disk_needed_bytes: disk_needed_bytes(e),
+            heavy: e.heavy,
+            fit,
         })
         .collect())
+}
+
+/// `local_stt_hardware` result: the machine plus the model to suggest for it.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalSttHardwareReport {
+    #[serde(flatten)]
+    hardware: LocalSttHardware,
+    /// See [`recommended_id`]; `null` when no whisper model is a good fit.
+    recommended_id: Option<&'static str>,
+}
+
+/// This machine's memory, free disk (on the models volume), acceleration and
+/// cores, and the recommended model. Cheap (a few OS calls), so the UI simply
+/// calls it again whenever the numbers may have moved.
+#[tauri::command]
+pub fn local_stt_hardware(app: AppHandle) -> Result<LocalSttHardwareReport, String> {
+    let dir = models_dir(&app)?;
+    let hardware = probe_hardware(&dir)?;
+    let fits: Vec<(&'static CatalogEntry, Fit)> = catalog_fits(&dir, Some(&hardware))
+        .into_iter()
+        .filter_map(|(e, _, fit)| fit.map(|f| (e, f)))
+        .collect();
+    Ok(LocalSttHardwareReport {
+        recommended_id: recommended_id(&fits),
+        hardware,
+    })
 }
 
 /// Download, verify and install a model. Resolves once the verified file is in
@@ -533,6 +891,14 @@ pub async fn local_stt_download(app: AppHandle, model_id: String) -> Result<(), 
     if is_installed_in(&dir, entry) {
         emit(Stage::Done, entry.bytes, None);
         return Ok(());
+    }
+    // The UI disables Download on a full disk, but its numbers can be stale
+    // (another app filled the volume since): check again here.
+    let _ = std::fs::create_dir_all(&dir);
+    if let Err(msg) = check_disk(entry, crate::hardware::free_disk_bytes(&dir)) {
+        log::warn!("local-stt: {} download refused: {msg}", entry.id);
+        emit(Stage::Error, 0, Some(msg.clone()));
+        return Err(msg);
     }
     let cancel = Arc::new(AtomicBool::new(false));
     {
@@ -713,6 +1079,8 @@ mod tests {
             file: "m.bin",
             bytes: 4,
             sha256: "",
+            min_ram_bytes: 0,
+            heavy: false,
         };
         assert!(!is_installed_in(&dir, &e));
         // A leftover .part never reads as installed.
@@ -723,6 +1091,305 @@ mod tests {
         std::fs::write(dir.join("m.bin"), b"abcd").unwrap();
         assert!(is_installed_in(&dir, &e));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // --- Hardware fit -----------------------------------------------------------
+
+    fn hw(
+        total_gib: u64,
+        available_gib: u64,
+        free_disk_gib: u64,
+        accel: Accel,
+        cores: u32,
+    ) -> LocalSttHardware {
+        LocalSttHardware {
+            total_ram_bytes: total_gib * GIB,
+            available_ram_bytes: available_gib * GIB,
+            free_disk_bytes: free_disk_gib * GIB,
+            accel,
+            cpu_cores: cores,
+            os: "test",
+            arch: "test",
+        }
+    }
+
+    fn small() -> &'static CatalogEntry {
+        entry("whisper-small-q5_1").unwrap()
+    }
+    fn turbo() -> &'static CatalogEntry {
+        entry("whisper-large-v3-turbo-q5_0").unwrap()
+    }
+    fn breeze() -> &'static CatalogEntry {
+        entry("breeze-asr-25-q5_0").unwrap()
+    }
+
+    fn fit(level: FitLevel, reasons: &[FitReason]) -> Fit {
+        Fit {
+            level,
+            reasons: reasons.to_vec(),
+        }
+    }
+
+    #[test]
+    fn catalog_requirements_follow_the_model_class() {
+        assert_eq!(small().min_ram_bytes, 4 * GIB);
+        assert!(!small().heavy);
+        for e in CATALOG.iter().filter(|e| e.id != small().id) {
+            assert_eq!(e.min_ram_bytes, 8 * GIB, "{}", e.id);
+            assert!(e.heavy, "{}", e.id);
+        }
+    }
+
+    #[test]
+    fn an_apple_silicon_mac_runs_everything_well() {
+        let mac = hw(16, 8, 100, Accel::Metal, 8);
+        for e in CATALOG {
+            assert_eq!(
+                model_fit(e, &mac, false, false),
+                fit(FitLevel::Good, &[]),
+                "{}",
+                e.id
+            );
+        }
+        // An 8 GB M1 still runs the large models on Metal.
+        let m1 = hw(8, 4, 100, Accel::Metal, 8);
+        assert_eq!(model_fit(breeze(), &m1, false, false).level, FitLevel::Good);
+    }
+
+    #[test]
+    fn ram_below_the_floor_is_unsupported_with_slack_for_reserved_memory() {
+        // 4 GB machine: small fits, turbo does not.
+        let four = hw(4, 2, 100, Accel::Metal, 8);
+        assert_eq!(
+            model_fit(small(), &four, false, false).level,
+            FitLevel::Good
+        );
+        assert_eq!(
+            model_fit(turbo(), &four, false, false),
+            fit(FitLevel::Unsupported, &[FitReason::RamLow])
+        );
+        // An "8 GB" laptop reporting 7.7 GiB (iGPU carve-out) still counts as 8.
+        let mut laptop = hw(8, 4, 100, Accel::Metal, 8);
+        laptop.total_ram_bytes = 77 * GIB / 10;
+        assert_eq!(
+            model_fit(turbo(), &laptop, false, false).level,
+            FitLevel::Good
+        );
+        // ...but 7 GiB does not.
+        laptop.total_ram_bytes = 7 * GIB;
+        assert_eq!(
+            model_fit(turbo(), &laptop, false, false).reasons,
+            vec![FitReason::RamLow]
+        );
+        // Exactly the floor is enough.
+        let exact = hw(8, 4, 100, Accel::Metal, 8);
+        assert_eq!(
+            model_fit(turbo(), &exact, false, false).level,
+            FitLevel::Good
+        );
+    }
+
+    #[test]
+    fn little_free_memory_is_slow_not_blocked() {
+        // Breeze is ~1.08 GB: under 2.16 GB available is tight.
+        let mut busy = hw(16, 2, 100, Accel::Metal, 8);
+        assert_eq!(
+            model_fit(breeze(), &busy, false, false),
+            fit(FitLevel::Slow, &[FitReason::RamTight])
+        );
+        // Small (190 MB) is fine on the same machine.
+        assert_eq!(
+            model_fit(small(), &busy, false, false).level,
+            FitLevel::Good
+        );
+        // Already loaded: its weights are not part of what must still fit.
+        assert_eq!(model_fit(breeze(), &busy, true, true).level, FitLevel::Good);
+        busy.available_ram_bytes = 3 * GIB;
+        assert_eq!(
+            model_fit(breeze(), &busy, false, false).level,
+            FitLevel::Good
+        );
+    }
+
+    #[test]
+    fn heavy_models_on_cpu_are_slow_unless_the_cpu_is_strong() {
+        let modest = hw(8, 4, 100, Accel::Cpu, 4);
+        assert_eq!(
+            model_fit(turbo(), &modest, false, false),
+            fit(FitLevel::Slow, &[FitReason::CpuOnly])
+        );
+        assert_eq!(
+            model_fit(small(), &modest, false, false).level,
+            FitLevel::Good
+        );
+        // 8 cores and 16 GB: good.
+        let strong = hw(16, 8, 100, Accel::Cpu, 8);
+        assert_eq!(
+            model_fit(turbo(), &strong, false, false).level,
+            FitLevel::Good
+        );
+        assert_eq!(
+            model_fit(breeze(), &strong, false, false).level,
+            FitLevel::Good
+        );
+        // Either half missing keeps it slow.
+        let many_cores_little_ram = hw(8, 4, 100, Accel::Cpu, 16);
+        assert_eq!(
+            model_fit(turbo(), &many_cores_little_ram, false, false).level,
+            FitLevel::Slow
+        );
+        let few_cores_much_ram = hw(32, 16, 100, Accel::Cpu, 6);
+        assert_eq!(
+            model_fit(turbo(), &few_cores_much_ram, false, false).level,
+            FitLevel::Slow
+        );
+        // The same modest machine with Metal (Apple Silicon) is fine.
+        let metal = hw(8, 4, 100, Accel::Metal, 4);
+        assert_eq!(
+            model_fit(turbo(), &metal, false, false).level,
+            FitLevel::Good
+        );
+    }
+
+    #[test]
+    fn disk_needs_the_model_plus_headroom_unless_installed() {
+        let e = turbo();
+        let mut machine = hw(16, 8, 0, Accel::Metal, 8);
+        machine.free_disk_bytes = e.bytes + DISK_HEADROOM_BYTES - 1;
+        assert_eq!(
+            model_fit(e, &machine, false, false),
+            fit(FitLevel::Unsupported, &[FitReason::DiskLow])
+        );
+        machine.free_disk_bytes = e.bytes + DISK_HEADROOM_BYTES;
+        assert_eq!(model_fit(e, &machine, false, false).level, FitLevel::Good);
+        // An installed model needs no more disk.
+        machine.free_disk_bytes = 0;
+        assert_eq!(model_fit(e, &machine, true, false).level, FitLevel::Good);
+    }
+
+    #[test]
+    fn reasons_are_listed_most_severe_first() {
+        let poor = hw(4, 1, 0, Accel::Cpu, 2);
+        assert_eq!(
+            model_fit(breeze(), &poor, false, false),
+            fit(
+                FitLevel::Unsupported,
+                &[
+                    FitReason::DiskLow,
+                    FitReason::RamLow,
+                    FitReason::RamTight,
+                    FitReason::CpuOnly
+                ]
+            )
+        );
+    }
+
+    #[test]
+    fn the_fit_serializes_as_the_frontend_expects() {
+        let poor = hw(4, 1, 0, Accel::Cpu, 2);
+        assert_eq!(
+            serde_json::to_value(model_fit(breeze(), &poor, false, false)).unwrap(),
+            serde_json::json!({
+                "level": "unsupported",
+                "reasons": ["disk_low", "ram_low", "ram_tight", "cpu_only"],
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(hw(8, 4, 1, Accel::Metal, 8)).unwrap(),
+            serde_json::json!({
+                "totalRamBytes": 8 * GIB,
+                "availableRamBytes": 4 * GIB,
+                "freeDiskBytes": GIB,
+                "accel": "metal",
+                "cpuCores": 8,
+                "os": "test",
+                "arch": "test",
+            })
+        );
+    }
+
+    fn fits_for(machine: &LocalSttHardware) -> Vec<(&'static CatalogEntry, Fit)> {
+        CATALOG
+            .iter()
+            .map(|e| (e, model_fit(e, machine, false, false)))
+            .collect()
+    }
+
+    #[test]
+    fn the_recommendation_is_the_default_when_it_fits_else_the_best_good_whisper() {
+        assert_eq!(
+            recommended_id(&fits_for(&hw(16, 8, 100, Accel::Metal, 8))),
+            Some(DEFAULT_MODEL_ID)
+        );
+        // Modest CPU-only PC: turbo is slow, small is the pick.
+        assert_eq!(
+            recommended_id(&fits_for(&hw(8, 4, 100, Accel::Cpu, 4))),
+            Some("whisper-small-q5_1")
+        );
+        // Not enough disk for turbo but enough for small.
+        assert_eq!(
+            recommended_id(&fits_for(&hw(16, 8, 1, Accel::Metal, 8))),
+            Some("whisper-small-q5_1")
+        );
+        // Nothing fits: no recommendation.
+        assert_eq!(
+            recommended_id(&fits_for(&hw(2, 1, 100, Accel::Cpu, 2))),
+            None
+        );
+        // Breeze is never the backend's pick, even when it is the only good one.
+        let only_breeze = vec![
+            (breeze(), fit(FitLevel::Good, &[])),
+            (turbo(), fit(FitLevel::Slow, &[FitReason::CpuOnly])),
+        ];
+        assert_eq!(recommended_id(&only_breeze), None);
+    }
+
+    #[test]
+    fn a_download_is_refused_without_room_for_model_and_headroom() {
+        let e = turbo();
+        let need = e.bytes + DISK_HEADROOM_BYTES;
+        let err = check_disk(e, Some(need - 1)).unwrap_err();
+        assert!(err.contains("Not enough free disk space"), "{err}");
+        assert!(err.contains(e.id));
+        assert_eq!(check_disk(e, Some(need)), Ok(()));
+        // Unknown free space does not block.
+        assert_eq!(check_disk(e, None), Ok(()));
+    }
+
+    #[test]
+    fn failure_codes_split_local_errors() {
+        assert_eq!(failure_code(&not_downloaded_error("x")), "local-missing");
+        assert_eq!(failure_code(&not_enough_memory_error("x")), "local-memory");
+        assert_eq!(
+            failure_code("Local transcription model 'x' failed to load: init failed"),
+            "local"
+        );
+        assert!(not_enough_memory_error("x").starts_with("Local transcription"));
+    }
+
+    #[test]
+    fn memory_is_suspected_only_when_the_machine_is_short() {
+        let e = turbo();
+        assert!(memory_suspect(e, Some(4 * GIB), Some(3 * GIB)));
+        assert!(memory_suspect(e, Some(16 * GIB), Some(e.bytes)));
+        assert!(!memory_suspect(e, Some(16 * GIB), Some(8 * GIB)));
+        assert!(!memory_suspect(e, None, None));
+    }
+
+    /// Prints what `local_stt_hardware` reports on the machine running the
+    /// tests (`cargo test --lib reports_this_machine -- --nocapture`).
+    #[test]
+    fn reports_this_machine() {
+        let dir = scratch_dir("probe").join("models").join("stt");
+        let machine = probe_hardware(&dir).expect("probe");
+        let fits = fits_for(&machine);
+        println!("{}", serde_json::to_string_pretty(&machine).unwrap());
+        for (e, f) in &fits {
+            println!("{}: {:?} {:?}", e.id, f.level, f.reasons);
+        }
+        println!("recommended: {:?}", recommended_id(&fits));
+        assert_eq!(machine.accel == Accel::Metal, GPU_ACCEL);
+        assert!(machine.total_ram_bytes > 0);
     }
 
     #[test]

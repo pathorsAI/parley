@@ -356,6 +356,10 @@ export interface Settings {
    *  every start path refuses until it is installed (see
    *  lib/transcription/localModels.ts). */
   localSttModel: string;
+  /** The user has picked a local model themselves. Until then `localSttModel`
+   *  follows the hardware recommendation (see `autoLocalModelChoice`); after,
+   *  it is never changed for them. */
+  localSttModelChosen: boolean;
   /** Microphone input device name; empty = system default. */
   inputDevice: string;
   /** Master switch for the study/replay auto-analysis pipeline (findings →

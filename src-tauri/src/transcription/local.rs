@@ -6,15 +6,19 @@
 //! pre-roll so word onsets are not clipped), closes after a stretch of trailing
 //! silence, and is force-closed at [`VadConfig::max_utterance`] so a monologue
 //! still reaches the screen. Each closed utterance is decoded on a blocking
-//! worker and emitted as one committed segment. On macOS (Metal), the growing
-//! utterance is also re-decoded every couple of seconds and shown as the
-//! tentative tail.
+//! worker and emitted as one committed segment. On Apple Silicon (Metal), the
+//! growing utterance is also re-decoded every couple of seconds and shown as
+//! the tentative tail.
 //!
 //! The model is loaded once and shared (see `local_stt::load_context`); each
 //! session decodes with its own `WhisperState`. Nothing here touches the
 //! network, so a session never "disconnects": it ends when its input closes,
 //! or fails for good (model missing, load failure) with an error that starts
 //! with "Local transcription", which the session loop never redials.
+//!
+//! Each session also times its final decodes ([`RtfTracker`]): when the
+//! decoder cannot keep up with real time on this machine, it emits
+//! `local-stt://slow` once so the UI can suggest a smaller model.
 //!
 //! Whisper does not diarize, so every segment is speaker 0.
 
@@ -37,9 +41,9 @@ use crate::local_stt::{self, ModelFamily, ModelLease};
 const SAMPLES_PER_MS: u64 = TARGET_SAMPLE_RATE as u64 / 1000;
 
 /// Interim tails re-decode the growing utterance; worth it only where decoding
-/// is fast (Metal). On CPU a re-decode can take longer than the utterance and
-/// would hold up the final text behind it.
-const INTERIM_TAILS: bool = cfg!(target_os = "macos");
+/// is fast (Metal on Apple Silicon). On CPU a re-decode can take longer than
+/// the utterance and would hold up the final text behind it.
+const INTERIM_TAILS: bool = local_stt::GPU_ACCEL;
 /// Minimum gap between two interim decodes of the same session.
 const INTERIM_EVERY: Duration = Duration::from_secs(2);
 /// An utterance must hold this much audio before it is worth an interim decode.
@@ -460,6 +464,71 @@ pub fn is_hallucination(text: &str, no_speech_prob: f32) -> bool {
     is_repetition_loop(&norm)
 }
 
+// --- Real-time factor --------------------------------------------------------------
+
+/// Decodes of utterances shorter than this are not timed: whisper pads every
+/// clip and has a fixed per-decode cost, so short clips overstate the factor.
+const RTF_MIN_AUDIO_MS: u64 = 2_000;
+/// Timed decodes needed before the verdict can fire.
+const RTF_MIN_DECODES: usize = 3;
+/// The rolling window the median is taken over.
+const RTF_WINDOW: usize = 5;
+/// Median decode time ÷ audio time above which the decoder is falling behind
+/// (a little under 1: the session also spends time outside the decode).
+const RTF_SLOW: f32 = 0.9;
+
+/// Watches the real-time factor (decode wall time ÷ audio duration) of a
+/// session's FINAL decodes — interim decodes re-decode a growing utterance and
+/// would skew it. After [`RTF_MIN_DECODES`] decodes of at least
+/// [`RTF_MIN_AUDIO_MS`], a rolling median over the last [`RTF_WINDOW`] above
+/// [`RTF_SLOW`] fires, once per tracker (= once per session). Pure: no clock.
+#[derive(Debug, Default)]
+pub struct RtfTracker {
+    recent: VecDeque<f32>,
+    fired: bool,
+}
+
+impl RtfTracker {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record one final decode; returns the median factor the first time the
+    /// session is judged too slow, `None` otherwise.
+    pub fn record(&mut self, audio_ms: u64, decode_ms: u64) -> Option<f32> {
+        if self.fired || audio_ms < RTF_MIN_AUDIO_MS {
+            return None;
+        }
+        self.recent.push_back(decode_ms as f32 / audio_ms as f32);
+        if self.recent.len() > RTF_WINDOW {
+            self.recent.pop_front();
+        }
+        if self.recent.len() < RTF_MIN_DECODES {
+            return None;
+        }
+        let median = median(self.recent.iter().copied());
+        if median > RTF_SLOW {
+            self.fired = true;
+            Some(median)
+        } else {
+            None
+        }
+    }
+}
+
+fn median(values: impl Iterator<Item = f32>) -> f32 {
+    let mut v: Vec<f32> = values.collect();
+    v.sort_by(f32::total_cmp);
+    let n = v.len();
+    if n == 0 {
+        0.0
+    } else if n % 2 == 1 {
+        v[n / 2]
+    } else {
+        (v[n / 2 - 1] + v[n / 2]) / 2.0
+    }
+}
+
 // --- Decoding -------------------------------------------------------------------
 
 /// One decoded stretch of an utterance, times relative to the clip start.
@@ -609,21 +678,28 @@ enum JobResult {
 }
 
 /// Decodes jobs in order on one blocking thread. Holds the previous final text
-/// so each utterance is prompted with what came just before it.
+/// so each utterance is prompted with what came just before it, and times the
+/// final decodes; `on_slow` is called (once) when they fall behind real time.
 fn decode_worker(
     ctx: Arc<WhisperContext>,
+    model_id: &str,
     settings: DecodeSettings,
     jobs: std::sync::mpsc::Receiver<Job>,
     results: tokio::sync::mpsc::UnboundedSender<JobResult>,
+    mut on_slow: impl FnMut(f32),
 ) {
     let mut state = match ctx.create_state() {
         Ok(s) => s,
         Err(e) => {
-            let _ = results.send(JobResult::Fatal(format!("could not create state: {e}")));
+            log::warn!("local-stt: {model_id} could not create a decoding state: {e}");
+            let msg =
+                local_stt::init_failure_message(model_id, "could not create a decoding state", e);
+            let _ = results.send(JobResult::Fatal(msg));
             return;
         }
     };
     let mut previous = String::new();
+    let mut rtf = RtfTracker::new();
     while let Ok(job) = jobs.recv() {
         let result = match job {
             Job::Final(utt) => {
@@ -641,12 +717,15 @@ fn decode_worker(
                         String::new()
                     }
                 };
+                let audio_ms = utt.end_ms() - utt.start_ms();
+                let decode_ms = started.elapsed().as_millis() as u64;
                 log::debug!(
-                    "local-stt: utterance {} ({} ms audio) decoded in {} ms",
-                    utt.id,
-                    utt.end_ms() - utt.start_ms(),
-                    started.elapsed().as_millis()
+                    "local-stt: utterance {} ({audio_ms} ms audio) decoded in {decode_ms} ms",
+                    utt.id
                 );
+                if let Some(factor) = rtf.record(audio_ms, decode_ms) {
+                    on_slow(factor);
+                }
                 if !text.is_empty() {
                     previous.clone_from(&text);
                 }
@@ -716,7 +795,9 @@ impl Emitter {
                     }
                 }
             }
-            JobResult::Fatal(msg) => return Err(anyhow!("Local transcription failed: {msg}")),
+            // Already a final "Local transcription …" message (see
+            // local_stt::init_failure_message), memory-specific when it fits.
+            JobResult::Fatal(msg) => return Err(anyhow!(msg)),
         }
         Ok(())
     }
@@ -753,8 +834,13 @@ pub async fn run_session(
     };
     let (job_tx, job_rx) = std::sync::mpsc::channel::<Job>();
     let (res_tx, mut res_rx) = tokio::sync::mpsc::unbounded_channel::<JobResult>();
-    let worker =
-        tauri::async_runtime::spawn_blocking(move || decode_worker(ctx, settings, job_rx, res_tx));
+    let worker_app = app.clone();
+    let worker_model = model_id.clone();
+    let worker = tauri::async_runtime::spawn_blocking(move || {
+        decode_worker(ctx, &worker_model, settings, job_rx, res_tx, |rtf| {
+            local_stt::emit_slow(&worker_app, &worker_model, rtf)
+        })
+    });
 
     let mut endpointer = Endpointer::new(VadConfig::default());
     let mut outstanding: usize = 0;
@@ -850,7 +936,9 @@ pub fn transcribe_file_blocking(
         .map_err(|e| format!("Could not decode the recording: {e:#}"))?;
     let duration_ms = audio.len() as u64 / SAMPLES_PER_MS;
     let started = Instant::now();
-    let out = transcribe_samples(&ctx, &settings, &audio)?;
+    let out = transcribe_samples(model_id, &ctx, &settings, &audio, |rtf| {
+        local_stt::emit_slow(app, model_id, rtf)
+    })?;
     log::info!(
         "local-stt: transcribed {} s of audio with {model_id} in {} ms ({} segments)",
         duration_ms / 1000,
@@ -861,21 +949,35 @@ pub fn transcribe_file_blocking(
 }
 
 /// The core of [`transcribe_file_blocking`] over already-decoded 16 kHz audio.
+/// Times each utterance's decode like the live path; `on_slow` is called once
+/// when they fall behind real time.
 fn transcribe_samples(
+    model_id: &str,
     ctx: &WhisperContext,
     settings: &DecodeSettings,
     audio: &[f32],
+    mut on_slow: impl FnMut(f32),
 ) -> Result<Vec<Decoded>, String> {
-    let mut state = ctx
-        .create_state()
-        .map_err(|e| format!("Local transcription failed: {e}"))?;
+    let mut state = ctx.create_state().map_err(|e| {
+        log::warn!("local-stt: {model_id} could not create a decoding state: {e}");
+        local_stt::init_failure_message(model_id, "could not create a decoding state", e)
+    })?;
     let mut endpointer = Endpointer::new(VadConfig::default());
     let mut previous = String::new();
     let mut out: Vec<Decoded> = Vec::new();
+    let mut rtf = RtfTracker::new();
     let mut run = |utt: Utterance, out: &mut Vec<Decoded>, previous: &mut String| {
         let start = utt.start_sample as usize;
         let end = (start + utt.samples.len()).min(audio.len());
-        match decode(&mut state, settings, &audio[start..end], previous, true) {
+        let started = Instant::now();
+        let decoded = decode(&mut state, settings, &audio[start..end], previous, true);
+        if let Some(factor) = rtf.record(
+            utt.end_ms() - utt.start_ms(),
+            started.elapsed().as_millis() as u64,
+        ) {
+            on_slow(factor);
+        }
+        match decoded {
             Ok(segments) => {
                 let text = joined(&segments);
                 if !text.is_empty() {
@@ -1143,6 +1245,55 @@ mod tests {
         assert_eq!(joined(&[d("OK."), d("好")]), "OK.好");
     }
 
+    #[test]
+    fn the_rtf_tracker_needs_three_long_decodes_before_judging() {
+        let mut t = RtfTracker::new();
+        // Slow, but each too short to count.
+        for _ in 0..10 {
+            assert_eq!(t.record(1_500, 3_000), None);
+        }
+        assert_eq!(t.record(4_000, 6_000), None);
+        assert_eq!(t.record(4_000, 6_000), None);
+        // Third long decode: median 1.5 > 0.9.
+        assert_eq!(t.record(4_000, 6_000), Some(1.5));
+    }
+
+    #[test]
+    fn the_rtf_tracker_fires_once_per_session() {
+        let mut t = RtfTracker::new();
+        let fired: Vec<_> = (0..20).filter_map(|_| t.record(3_000, 6_000)).collect();
+        assert_eq!(fired, vec![2.0]);
+    }
+
+    #[test]
+    fn a_fast_decoder_never_fires() {
+        let mut t = RtfTracker::new();
+        for _ in 0..50 {
+            assert_eq!(t.record(5_000, 1_000), None);
+        }
+    }
+
+    #[test]
+    fn the_rtf_tracker_uses_a_rolling_median() {
+        let mut t = RtfTracker::new();
+        // One huge outlier (a model load hiccup) among fast decodes: the median
+        // stays fast.
+        assert_eq!(t.record(5_000, 50_000), None);
+        assert_eq!(t.record(5_000, 1_000), None);
+        assert_eq!(t.record(5_000, 1_000), None);
+        assert_eq!(t.record(5_000, 1_000), None);
+        // The machine then slows down for good: once slow decodes are the
+        // majority of the last five, it fires.
+        assert_eq!(t.record(5_000, 6_000), None);
+        assert_eq!(t.record(5_000, 6_000), None);
+        assert_eq!(t.record(5_000, 6_000), Some(1.2));
+        // The boundary itself (exactly 0.9) is not slow.
+        let mut t = RtfTracker::new();
+        for _ in 0..5 {
+            assert_eq!(t.record(10_000, 9_000), None);
+        }
+    }
+
     /// Real-model smoke test, skipped by default: set PARLEY_LOCAL_STT_MODEL to
     /// a GGML model file and PARLEY_LOCAL_STT_AUDIO to an audio file, then run
     /// `cargo test --lib smoke_transcribe -- --ignored --nocapture`.
@@ -1155,15 +1306,18 @@ mod tests {
             .map(|l| l.split(',').map(str::to_string).collect())
             .unwrap_or_default();
         let mut params = whisper_rs::WhisperContextParameters::default();
-        params.use_gpu(cfg!(target_os = "macos"));
-        params.flash_attn(cfg!(target_os = "macos"));
+        params.use_gpu(local_stt::GPU_ACCEL);
+        params.flash_attn(local_stt::GPU_ACCEL);
         let t = Instant::now();
         let ctx = WhisperContext::new_with_params(&model, params).unwrap();
         println!("load: {} ms", t.elapsed().as_millis());
         let pcm = crate::replay_audio::decode_to_16k_mono(std::path::Path::new(&audio)).unwrap();
         let settings = DecodeSettings::new(&hints, &[], ModelFamily::Whisper);
         let t = Instant::now();
-        let out = transcribe_samples(&ctx, &settings, &pcm).unwrap();
+        let out = transcribe_samples("smoke", &ctx, &settings, &pcm, |rtf| {
+            println!("slow: median RTF {rtf:.2}")
+        })
+        .unwrap();
         println!(
             "transcribe: {} ms for {} ms of audio",
             t.elapsed().as_millis(),

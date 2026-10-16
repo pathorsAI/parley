@@ -607,11 +607,11 @@ impl Failure<'_> {
             || msg.contains("403")
             || low.contains("unauthorized")
             || low.contains("api key");
-        // On-device failures (model missing or unloadable) are final: a redial
-        // would fail the same way. The frontend maps unknown codes to its
-        // generic message.
+        // On-device failures (model missing, out of memory, unloadable) are
+        // final: a redial would fail the same way. "local-missing",
+        // "local-memory" or "local" (see local_stt::failure_code).
         if low.starts_with("local transcription") {
-            "local"
+            crate::local_stt::failure_code(msg)
         } else if self.hosted && msg.contains("402") {
             "quota"
         } else if self.hosted && msg.contains("401") {
