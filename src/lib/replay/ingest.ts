@@ -15,15 +15,15 @@ import { open } from "@tauri-apps/plugin-dialog";
 import type { Settings, TranscriptSegment } from "../types";
 import { useStore } from "../store";
 import type { ReplaySession } from "./types";
-import { STT_BY_ID, sttApiKey, sttBatchUrl, sttModel, usesLocalModel } from "../transcription/providers";
-import { checkLocalModelReady, localFailureCode, type LocalFailureCode } from "../transcription/localModels";
+import { STT_BY_ID, usesLocalModel } from "../transcription/providers";
+import { localFailureCode } from "../transcription/localModels";
+import { prepareTranscription, uploadPickBlock } from "../transcription/prepare";
+import { blockMessageKey, failureMessageKey, type SurfaceBlock } from "../transcription/errors";
 import { normalizeTranscriptText } from "../textNormalize";
-import { languageHintsFromSettings } from "../transcription/languageHints";
-import { recognitionTerms } from "../dictionary";
 import { log } from "../log";
 import { recordUsage } from "../usage/log";
 import { sttCostUsd } from "../usage/pricing";
-import { translate, type TranslationKey } from "../../i18n/messages";
+import { translate } from "../../i18n/messages";
 
 /** Coarse progress stages surfaced to the UI while a recording is ingested. */
 export type IngestStage = "decoding" | "uploading" | "transcribing";
@@ -85,15 +85,19 @@ interface RustTranscriptionResult {
 }
 
 /**
- * The message for a provider whose credential is missing. One wording covers
- * both hosted Parley (which rides the signed-in session, no key field) and the
- * BYOK providers (a key in Settings) — it names both ways out, so a hosted user
- * is never sent hunting for a key box that doesn't exist. Shared by the upload
- * gate and {@link transcribeRecording}, which check the same thing at two
- * different moments (before the picker, and again at invoke time).
+ * The message for an upload start block. The missing-credential wording
+ * ("no-key") covers both hosted Parley (which rides the signed-in session, no
+ * key field) and the BYOK providers (a key in Settings) — it names both ways
+ * out, so a hosted user is never sent hunting for a key box that doesn't
+ * exist. Shared by the pick-time gate and {@link transcribeRecording}, which
+ * check the credential at two different moments (before the picker, and again
+ * at invoke time). "no-upload" names the provider: naming a specific
+ * replacement would go stale the moment the registry changes (it already did
+ * once); every other provider handles uploads today.
  */
-function missingCredentialMessage(settings: Settings): string {
-  return translate(settings.language, "ingest.error.noSttKey");
+function uploadBlockMessage(settings: Settings, code: SurfaceBlock<"upload">): string {
+  const vars = code === "no-upload" ? { provider: STT_BY_ID[settings.transcriptionProvider].label } : undefined;
+  return translate(settings.language, blockMessageKey("upload", code), vars);
 }
 
 /** Throw (with the actionable message) unless the configured STT provider can
@@ -102,19 +106,11 @@ function missingCredentialMessage(settings: Settings): string {
  *  refusal messages. */
 export function assertUploadTranscribable(settings: Settings): void {
   const provider = settings.transcriptionProvider;
-  const info = STT_BY_ID[provider];
-  if (!info.supportsFileUpload) {
-    log.warn("ingest: rejected, provider has no file-upload support", { provider });
-    // Naming a specific replacement would go stale the moment the registry
-    // changes (it already did once); every other provider handles uploads today.
-    throw new Error(
-      translate(settings.language, "ingest.error.providerNoUpload", { provider: info.label }),
-    );
-  }
-  if (!sttApiKey(settings, provider).trim()) {
-    log.warn("ingest: missing stt credential", { provider });
-    throw new Error(missingCredentialMessage(settings));
-  }
+  const code = uploadPickBlock(settings);
+  if (!code) return;
+  if (code === "no-upload") log.warn("ingest: rejected, provider has no file-upload support", { provider });
+  else log.warn("ingest: missing stt credential", { provider });
+  throw new Error(uploadBlockMessage(settings, code));
 }
 
 /** What the combined History "+ Import" picker resolved to: one audio file for
@@ -205,21 +201,13 @@ export async function pickImportFiles(settings: Settings): Promise<ImportPick | 
   return pick;
 }
 
-/** The upload error text for a local failure code we can explain (out of
- *  memory, model missing); `null` = keep the backend's own message. */
-export function localUploadErrorKey(code: LocalFailureCode): TranslationKey | null {
-  if (code === "local-memory") return "localStt.error.memory";
-  if (code === "local-missing") return "localStt.error.notReadyUpload";
-  return null;
-}
-
 /** An on-device upload failure in the user's language when it is one we can
  *  explain (out of memory, model missing); anything else keeps its message. */
 function localUploadError(settings: Settings, e: unknown): Error {
   const message = e instanceof Error ? e.message : String(e);
   const code = localFailureCode(message);
   log.warn("ingest: local transcription failed", { code, error: message });
-  const key = localUploadErrorKey(code);
+  const key = failureMessageKey("upload", code);
   if (key) return new Error(translate(settings.language, key));
   return e instanceof Error ? e : new Error(message);
 }
@@ -234,17 +222,15 @@ export async function transcribeRecording(
   audioPath: string,
   opts: IngestOptions = {},
 ): Promise<ReplaySession> {
-  const provider = settings.transcriptionProvider;
-  const info = STT_BY_ID[provider];
-  const apiKey = sttApiKey(settings, provider).trim();
-  if (!apiKey) {
-    throw new Error(missingCredentialMessage(settings));
+  // The shared start gate: a credential, and for on-device STT a downloaded
+  // model. (Batch support was checked when the file was picked.)
+  const prepared = await prepareTranscription("upload", settings);
+  if (!prepared.ok) {
+    if (prepared.code === "no-local-model") log.warn("ingest: local model not ready", { model: settings.localSttModel });
+    throw new Error(uploadBlockMessage(settings, prepared.code));
   }
-  // On-device STT: the key sentinel passed; the model must also be downloaded.
-  if (usesLocalModel(provider) && !(await checkLocalModelReady(settings.localSttModel))) {
-    log.warn("ingest: local model not ready", { model: settings.localSttModel });
-    throw new Error(translate(settings.language, "localStt.error.notReadyUpload"));
-  }
+  const { request } = prepared;
+  const { provider } = request;
 
   const name = fileNameOf(audioPath);
   log.info("ingest: file selected", { name });
@@ -252,7 +238,7 @@ export async function transcribeRecording(
   reportStage(opts, { stage: "decoding" });
 
   // Language hints come from settings if present; empty lets the provider auto-detect.
-  const languageHints = languageHintsFromSettings(settings);
+  const { languageHints } = request;
 
   reportStage(opts, { stage: "uploading" });
 
@@ -261,18 +247,18 @@ export async function transcribeRecording(
   // `batchUrl` is set only for hosted Parley, where `apiKey` is the cloud session
   // token rather than a provider key.
   reportStage(opts, { stage: "transcribing" });
-  log.info("ingest: transcribe invoke", { provider, languageHints, diarization: info.diarization });
+  log.info("ingest: transcribe invoke", { provider, languageHints, diarization: request.diarization });
   const result = await invoke<RustTranscriptionResult>("transcribe_file", {
     path: audioPath,
     provider,
-    apiKey,
-    model: sttModel(settings, provider),
+    apiKey: request.apiKey.trim(),
+    model: request.model,
     languageHints,
     // The user's name, company and phrase dictionary, as recognition bias —
     // the same terms voice typing feeds the live session.
-    vocabulary: recognitionTerms(settings),
-    diarization: info.diarization,
-    batchUrl: sttBatchUrl(provider) ?? null,
+    vocabulary: request.vocabulary,
+    diarization: request.diarization,
+    batchUrl: request.batchUrl ?? null,
   }).catch((e: unknown) => {
     throw usesLocalModel(provider) ? localUploadError(settings, e) : e;
   });

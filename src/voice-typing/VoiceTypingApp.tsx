@@ -5,7 +5,7 @@ import { Check, Loader2, Mic, Sparkles, X } from "lucide-react";
 import { preloadZhConverter } from "../lib/zhConvert";
 import { normalizeTranscriptText } from "../lib/textNormalize";
 import { useI18n } from "../i18n";
-import { overlayErrorKey } from "../lib/voiceTyping/errorKeys";
+import { failureMessageKey } from "../lib/transcription/errors";
 import { useThemePreference } from "../lib/theme";
 import { formatChordLabel, modChordCap } from "../lib/commands/format";
 import { log } from "../lib/log";
@@ -440,7 +440,9 @@ export const VoiceTypingApp = () => {
     };
   }, [phase]);
 
-  const errorKey = overlayErrorKey(error);
+  // The host's start blocks ("no-key", …) and the backend's failure codes
+  // share this channel; anything else gets the generic line.
+  const errorKey = failureMessageKey("voiceTyping", error);
   const bubble = error ? t(errorKey) : text;
 
   // The "done" confirmation, when the verdict has one.

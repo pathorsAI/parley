@@ -26,10 +26,7 @@ import { isMac } from "../platform";
 import { TRAY_VOICE_TOGGLE_EVENT } from "../tray";
 import { isTauri } from "../tauriEvents";
 import { useStore } from "../store";
-import { sttApiKey, sttModel, sttRelayUrl } from "../transcription/providers";
-import { sttRequiresAccount, usesLocalModel } from "../transcription/registry";
-import { checkLocalModelReady } from "../transcription/localModels";
-import { languageHintsFromSettings } from "../transcription/languageHints";
+import { prepareTranscription } from "../transcription/prepare";
 import { HOSTED_VOICE_TYPING_MAX_SECONDS } from "../limits";
 import { log } from "../log";
 import { normalizeTranscriptText } from "../textNormalize";
@@ -522,25 +519,23 @@ async function startSession() {
   }
   const { settings } = useStore.getState();
   if (!settings.voiceTypingEnabled) return;
-  const provider = settings.transcriptionProvider;
-  const apiKey = sttApiKey(settings, provider);
-  if (!apiKey.trim()) {
-    log.warn("voice-typing: no STT API key configured");
+  // The shared start gate. It answers synchronously unless an on-device model
+  // has to be checked (one local IPC round trip, before the mic opens) — and
+  // only then is it awaited, so a BYOK or hosted start stays free of an await
+  // between the restart hand-off above and the state reset below.
+  const gate = prepareTranscription("voiceTyping", settings);
+  const prepared = gate instanceof Promise ? await gate : gate;
+  if (!prepared.ok) {
+    if (prepared.code === "no-key") log.warn("voice-typing: no STT API key configured");
+    else log.warn("voice-typing: local model not ready", { model: settings.localSttModel });
+    // The overlay maps the code to its message (lib/transcription/errors.ts).
     await showOverlay();
-    await emit("voicetyping://session", { phase: "error", message: "no-key" });
+    await emit("voicetyping://session", { phase: "error", message: prepared.code });
     scheduleHide();
     return;
   }
-  // On-device STT passes the key gate with its sentinel; the real
-  // precondition is a downloaded model. One local IPC round trip, before the
-  // mic opens.
-  if (usesLocalModel(provider) && !(await checkLocalModelReady(settings.localSttModel))) {
-    log.warn("voice-typing: local model not ready", { model: settings.localSttModel });
-    await showOverlay();
-    await emit("voicetyping://session", { phase: "error", message: "no-local-model" });
-    scheduleHide();
-    return;
-  }
+  const { request } = prepared;
+  const { provider } = request;
   // A new dictation replaces a cancelled one still offering Undo (its text is
   // dropped; one whose Undo was already clicked is still recovered).
   dropCancel();
@@ -565,7 +560,7 @@ async function startSession() {
   // the cap to the backend as a safety net (a hung webview can't stream the
   // paid relay forever) and mirror it with a frontend timer that ends the
   // dictation gracefully (delivering the transcript). null = no cap for BYOK.
-  const hosted = sttRequiresAccount(provider);
+  const hosted = request.info.requiresAccount;
   // MIC FIRST, overlay second. Placing the overlay costs four round-trips to
   // the app's main thread (cursor position → monitor list → setPosition →
   // present), and the capture used to wait behind all of them — so roughly the
@@ -575,15 +570,15 @@ async function startSession() {
   // reset it before its window is on screen and it simply catches up.
   const starting = invoke("start_voice_typing", {
     provider,
-    apiKey,
-    languageHints: languageHintsFromSettings(settings),
+    apiKey: request.apiKey,
+    languageHints: request.languageHints,
     // Recognition bias: the user's own name and company (Settings › Basic),
     // then the phrase dictionary — the terms they've taught us are exactly the
     // ones the model keeps getting wrong.
-    vocabulary: recognitionTerms(settings),
+    vocabulary: request.vocabulary,
     inputDevice: settings.inputDevice ?? null,
-    relayUrl: sttRelayUrl(provider, "voice_typing"),
-    model: sttModel(settings, provider),
+    relayUrl: request.relayUrl,
+    model: request.model,
     maxDurationSecs: hosted ? HOSTED_VOICE_TYPING_MAX_SECONDS : null,
   });
   // Esc cancels from here on — claimed right behind the mic, never before it.

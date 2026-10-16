@@ -4,7 +4,8 @@ import { useStore } from "../store";
 import { log } from "../log";
 import { isTauri } from "../platform";
 import { openSettings } from "../nav/settings";
-import { translate, type TranslationKey } from "../../i18n/messages";
+import { translate } from "../../i18n/messages";
+import { failureMessageKey } from "./errors";
 import type { AppLanguage, SttProviderId } from "../types";
 import { LOCAL_STT_SLOW_EVENT, type LocalFailureCode, type LocalSttSlowPayload } from "./localModels";
 import { usesLocalModel } from "./registry";
@@ -21,22 +22,13 @@ import { usesLocalModel } from "./registry";
  *   from says nothing useful).
  */
 
-/** Toast text per local failure code. */
-export const LOCAL_FAILURE_TOAST_KEY: Record<LocalFailureCode, TranslationKey> = {
-  "local-missing": "localStt.error.notReady",
-  "local-memory": "localStt.error.memory",
-  local: "localStt.error.failed",
-};
-
-export function isLocalFailureCode(code: string): code is LocalFailureCode {
-  return Object.prototype.hasOwnProperty.call(LOCAL_FAILURE_TOAST_KEY, code);
-}
+export { isLocalFailureCode } from "./errors";
 
 const openTranscriptionSettings = () => openSettings("transcription");
 
 /** The failure toast for a local code, with the start gates' Open settings action. */
 export function showLocalFailureToast(language: AppLanguage, code: LocalFailureCode): void {
-  toast.error(translate(language, LOCAL_FAILURE_TOAST_KEY[code]), {
+  toast.error(translate(language, failureMessageKey("meeting", code)), {
     duration: 10_000,
     action: { label: translate(language, "ai.fail.openSettings"), onClick: openTranscriptionSettings },
   });

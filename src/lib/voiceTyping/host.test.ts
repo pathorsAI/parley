@@ -63,6 +63,7 @@ vi.mock("../transcription/providers", () => ({
   sttApiKey: () => mocks.sttKey,
   sttRelayUrl: () => "wss://relay.test/stt",
   sttModel: () => null,
+  sttBatchUrl: () => undefined,
 }));
 vi.mock("../transcription/languageHints", () => ({ languageHintsFromSettings: () => [] }));
 vi.mock("../log", () => ({ log: mocks.log }));

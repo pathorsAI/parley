@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
@@ -45,6 +44,7 @@ import { useAnalysisEngine, listenForCacheClear } from "./lib/analysis/engine";
 import { initStudyPipeline } from "./lib/analysis/studyPipeline";
 import { listenForSpeakerCacheClear } from "./lib/speakers/namesCache";
 import { initHistoryPersistSync, listenForRecordingSaved } from "./lib/history/history";
+import { stopBackendMeeting } from "./lib/meeting/controls";
 import { checkForUpdate } from "./lib/update";
 import {
   getPendingInstalledReleaseNotes,
@@ -301,9 +301,7 @@ const App = () => {
     let unlisten: (() => void) | undefined;
     const stopIfRecording = (): Promise<void> => {
       if (!isMeetingActive(useStore.getState().meetingStatus)) return Promise.resolve();
-      return invoke<void>("stop_meeting").catch((error) =>
-        log.warn("meeting: stop on close failed", { error: String(error) }),
-      );
+      return stopBackendMeeting("meeting: stop on close failed");
     };
     // Swallow the promise: a `beforeunload` handler that returns anything
     // non-null asks the webview for a "leave site?" confirmation, which would

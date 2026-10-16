@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   AudioLines,
@@ -30,12 +29,11 @@ import { leaveRecordingTo } from "../lib/nav/navigate";
 import { CLOUD_ENABLED } from "../lib/flags";
 import type { Settings as AppSettings } from "../lib/types";
 import { log } from "../lib/log";
-import { sttApiKey } from "../lib/transcription/providers";
 import { toast } from "sonner";
-import { stopMockStream } from "../lib/mockStream";
 import { isMac } from "../lib/platform";
 import { isTauri } from "../lib/tauriEvents";
 import { beginMeeting } from "../lib/meeting/start";
+import { cancelActiveMeeting, endMeeting, toggleMeetingPause } from "../lib/meeting/controls";
 import { useCommandShortcut } from "../lib/commands/bind";
 import { openSettings } from "../lib/nav/settings";
 import { useI18n } from "../i18n";
@@ -761,13 +759,7 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const focused = useWindowFocused();
   const maximized = useWindowMaximized();
   const status = useStore((s) => s.meetingStatus);
-  const sttKey = useStore((s) => sttApiKey(s.settings, s.settings.transcriptionProvider));
-  const stopMeeting = useStore((s) => s.stopMeeting);
   const isFinalizingMeeting = useStore((s) => s.isFinalizingMeeting);
-  const setFinalizingMeeting = useStore((s) => s.setFinalizingMeeting);
-  const pauseMeeting = useStore((s) => s.pauseMeeting);
-  const resumeMeeting = useStore((s) => s.resumeMeeting);
-  const cancelMeeting = useStore((s) => s.cancelMeeting);
   const layout = useStore((s) => s.settings.layout);
   const updateSettings = useStore((s) => s.updateSettings);
   const meetingStartedAt = useStore((s) => s.meetingStartedAt);
@@ -817,7 +809,6 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
   }, [meetingActive, paused, meetingStartedAt]);
-  const useRealPipeline = isTauri() && !!sttKey.trim();
 
   /** Run `fn` under the shared re-entrancy guard: rapid clicks across the
    *  recorder controls (start/end/cancel) can't overlap two mutating invokes. */
@@ -841,47 +832,11 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   /** End = the meeting's natural finish: save the recording, then the study
    *  pipeline runs the debrief. (The old single stop button, renamed.) */
   async function end() {
-    await guarded(async () => {
-      log.info("meeting: stop requested");
-      stopMeeting();
-      if (useRealPipeline) {
-        // The real save runs async off the `recording-saved` event and takes
-        // seconds (encode → persist → open the report). Flag "finalizing" now
-        // so the button shows a spinner for that window instead of reading as
-        // hung (it also keeps the shell's focused layout up until the report
-        // replaces the cockpit). Cleared the moment the report opens — speaker
-        // correction and the org share continue in the background — or when
-        // the save fails or Rust reports the recording was discarded (see
-        // saveLiveToHistory / listenForRecordingSaved).
-        setFinalizingMeeting(true);
-        try {
-          await invoke("stop_meeting");
-        } catch (e) {
-          log.error("meeting: stop failed", { error: String(e) });
-          setFinalizingMeeting(false);
-        }
-      } else {
-        stopMockStream();
-      }
-    });
+    await guarded(endMeeting);
   }
 
-  /** Pause/resume flips the store first (instant UI) then tells the backend to
-   *  drop/readmit audio. The backend flag is idempotent, so no busy guard. */
-  function togglePause() {
-    if (paused) {
-      log.info("meeting: resume requested");
-      resumeMeeting();
-    } else {
-      log.info("meeting: pause requested");
-      pauseMeeting();
-    }
-    if (useRealPipeline) {
-      invoke("set_meeting_paused", { paused: !paused }).catch((e) =>
-        log.error("meeting: pause toggle failed", { error: String(e) })
-      );
-    }
-  }
+  /** Pause/resume: no busy guard (the backend flag is idempotent). */
+  const togglePause = toggleMeetingPause;
 
   // The keyboard reaches exactly the two recorder actions that are safe to
   // reach blind. Both are gated with `enabled` rather than a bail-out inside
@@ -907,19 +862,7 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   /** Cancel (from the confirm dialog): discard everything, back to idle. */
   async function cancel() {
     setConfirmCancel(false);
-    await guarded(async () => {
-      log.info("meeting: cancel requested");
-      cancelMeeting();
-      if (useRealPipeline) {
-        try {
-          await invoke("cancel_meeting");
-        } catch (e) {
-          log.error("meeting: cancel failed", { error: String(e) });
-        }
-      } else {
-        stopMockStream();
-      }
-    });
+    await guarded(cancelActiveMeeting);
   }
 
   async function controlWindow(action: WindowAction) {

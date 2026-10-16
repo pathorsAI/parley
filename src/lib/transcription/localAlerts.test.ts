@@ -6,7 +6,8 @@ vi.mock("../log", () => ({
 }));
 vi.mock("../nav/settings", () => ({ openSettings: vi.fn() }));
 
-import { LOCAL_FAILURE_TOAST_KEY, createSlowToastGate, isLocalFailureCode } from "./localAlerts";
+import { createSlowToastGate, isLocalFailureCode } from "./localAlerts";
+import { failureMessageKey } from "./errors";
 import { translate } from "../../i18n/messages";
 
 describe("createSlowToastGate", () => {
@@ -37,7 +38,9 @@ describe("local failure codes", () => {
   it("has its own message per code in both languages, not the generic connect one", () => {
     for (const lang of ["zh-TW", "en"] as const) {
       const connect = translate(lang, "meeting.error.connect");
-      const texts = Object.values(LOCAL_FAILURE_TOAST_KEY).map((k) => translate(lang, k));
+      const texts = (["local-missing", "local-memory", "local"] as const).map((c) =>
+        translate(lang, failureMessageKey("meeting", c)),
+      );
       expect(new Set(texts).size).toBe(texts.length);
       for (const text of texts) {
         expect(text).not.toBe(connect);

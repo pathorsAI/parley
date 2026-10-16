@@ -1,11 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { useStore } from "../store";
-import { STT_BY_ID, sttApiKey, sttModel, sttRelayUrl, usesCloudSession, usesLocalModel } from "../transcription/providers";
-import { checkLocalModelReady } from "../transcription/localModels";
+import { prepareTranscription, type TranscriptionRequest } from "../transcription/prepare";
+import { blockMessageKey } from "../transcription/errors";
 import { startMockStream } from "../mockStream";
-import { recognitionTerms } from "../dictionary";
-import { isTauri } from "../tauriEvents";
 import { translate, type TranslationKey } from "../../i18n/messages";
 import type { Settings } from "../types";
 import { log } from "../log";
@@ -21,6 +19,8 @@ let starting = false;
  * THE one start path — the titlebar, Home and the sidebar all call it, because
  * two copies of the provider checks would drift, and those checks are the only
  * thing standing between a missing key and a recorder that isn't recording.
+ * The checks themselves are `prepareTranscription("meeting", …)`, shared with
+ * voice typing and uploads; this only decides how a refusal is shown.
  */
 export async function beginMeeting(): Promise<void> {
   if (starting) return;
@@ -32,35 +32,35 @@ export async function beginMeeting(): Promise<void> {
   }
 }
 
+const openTranscriptionSettings = () => openSettings("transcription");
+
 async function start(): Promise<void> {
   const s = useStore.getState();
   const { settings } = s;
-  const sttKey = sttApiKey(settings, settings.transcriptionProvider);
   const t = (key: TranslationKey) => translate(settings.language, key);
-  const useRealPipeline = isTauri() && !!sttKey.trim();
+  const prepared = await prepareTranscription("meeting", settings);
 
-  // On-device STT: the "local" key sentinel always passes the gate above, so
-  // the real precondition — the selected model is downloaded — is checked
-  // here, before the UI flips to "recording".
-  if (useRealPipeline && usesLocalModel(settings.transcriptionProvider) && !(await checkLocalModelReady(settings.localSttModel))) {
+  // On-device STT whose model isn't downloaded: refused before the UI flips
+  // to "recording".
+  if (!prepared.ok && prepared.code === "no-local-model") {
     log.info("meeting: start blocked (local model not ready)", { model: settings.localSttModel });
-    toast.error(t("localStt.error.notReady"), {
+    toast.error(t(blockMessageKey("meeting", "no-local-model")), {
       duration: 8000,
-      action: { label: t("ai.fail.openSettings"), onClick: () => openSettings("transcription") },
+      action: { label: t("ai.fail.openSettings"), onClick: openTranscriptionSettings },
     });
     return;
   }
 
   s.startMeeting();
 
-  if (useRealPipeline) {
-    await openCaptureSession(settings, sttKey);
-  } else if (usesCloudSession(settings.transcriptionProvider)) {
+  if (prepared.ok) {
+    await openCaptureSession(settings, prepared.request);
+  } else if (prepared.code === "signin") {
     // Hosted STT selected but no usable cloud session — never fake it with a
     // mock transcript; tell the user to sign in and back out of "recording".
     log.info("meeting: start blocked (parley, no session)");
     useStore.getState().stopMeeting();
-    toast.error(t("meeting.error.signin"));
+    toast.error(t(blockMessageKey("meeting", "signin")));
   } else if (import.meta.env.DEV) {
     // Dev-only: a scripted transcript so the UI can be exercised without a key.
     log.info("meeting: start (mock stream)");
@@ -72,9 +72,9 @@ async function start(): Promise<void> {
     // point at the fix instead.
     log.info("meeting: start blocked (no STT key)", { provider: settings.transcriptionProvider });
     useStore.getState().stopMeeting();
-    toast.error(t("meeting.error.noSttKey"), {
+    toast.error(t(blockMessageKey("meeting", "no-key")), {
       duration: 8000,
-      action: { label: t("ai.fail.openSettings"), onClick: () => openSettings("transcription") },
+      action: { label: t("ai.fail.openSettings"), onClick: openTranscriptionSettings },
     });
   }
 }
@@ -82,12 +82,11 @@ async function start(): Promise<void> {
 /** The real capture path: hand the configured provider to Rust. Any failure
  *  backs the UI out of "recording" rather than leaving a recorder that isn't
  *  recording. */
-async function openCaptureSession(settings: Settings, sttKey: string): Promise<void> {
-  const provider = STT_BY_ID[settings.transcriptionProvider];
+async function openCaptureSession(settings: Settings, request: TranscriptionRequest): Promise<void> {
   log.info("meeting: start requested", {
-    provider: settings.transcriptionProvider,
-    model: provider.label,
-    diarization: provider.diarization,
+    provider: request.provider,
+    model: request.info.label,
+    diarization: request.diarization,
     inputDevice: settings.inputDevice,
     pipeline: "real",
   });
@@ -95,18 +94,22 @@ async function openCaptureSession(settings: Settings, sttKey: string): Promise<v
     // Hosted "parley" STT: relay audio through Parley Cloud (cloud WSS URL +
     // the session token as apiKey, via sttApiKey). BYOK providers send no
     // relay URL and connect straight to their vendor.
+    //
+    // Unlike voice typing and uploads, a meeting does not send
+    // `request.languageHints` (start_meeting accepts them). Kept as is here:
+    // closing that gap is a behavior change of its own.
     await invoke("start_meeting", {
-      provider: settings.transcriptionProvider,
-      apiKey: sttKey,
-      diarization: provider.diarization,
+      provider: request.provider,
+      apiKey: request.apiKey,
+      diarization: request.diarization,
       inputDevice: settings.inputDevice,
-      relayUrl: sttRelayUrl(settings.transcriptionProvider, "meeting"),
+      relayUrl: request.relayUrl,
       // Which on-device model to run for "local"; null = provider default.
-      model: sttModel(settings, settings.transcriptionProvider),
+      model: request.model,
       // Bias the recognizer with the user's own name and company, then the
       // phrase dictionary — the terms it keeps mishearing in dictation are the
       // same ones it mishears in a meeting.
-      vocabulary: recognitionTerms(settings),
+      vocabulary: request.vocabulary,
     });
   } catch (e) {
     log.error("meeting: start failed", {

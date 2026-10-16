@@ -1,12 +1,13 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { useStore } from "./store";
 import { normalizeTranscriptText } from "./textNormalize";
 import { log } from "./log";
-import { translate, type TranslationKey } from "../i18n/messages";
+import { translate } from "../i18n/messages";
 import type { Source } from "./types";
 import { isLocalFailureCode, showLocalFailureToast } from "./transcription/localAlerts";
+import { failureMessageKey } from "./transcription/errors";
+import { stopBackendMeeting } from "./meeting/controls";
 
 /** Shape of the `transcript://segment` payload emitted by the Rust backend. */
 interface TranscriptEventPayload {
@@ -105,20 +106,6 @@ interface MeetingErrorPayload {
   message: string;
 }
 
-/** Maps a `meeting://error` `code` to its toast translation key; unmapped codes fall back to "connect". */
-const MEETING_ERROR_KEY_BY_CODE: Partial<Record<string, TranslationKey>> = {
-  quota: "meeting.error.quota",
-  auth: "meeting.error.auth",
-  key: "meeting.error.key",
-  capture: "meeting.error.capture",
-};
-
-/** The toast text for a non-local `meeting://error` code ("connect" for any
- *  code without its own message). Exported for the error-map tests. */
-export function meetingErrorToastKey(code: string): TranslationKey {
-  return MEETING_ERROR_KEY_BY_CODE[code] ?? "meeting.error.connect";
-}
-
 /**
  * Subscribe to backend transcription-FAILURE events — the ones a redial can't
  * fix. Hosted mode makes 402 (out of credits) and 401 (expired session)
@@ -140,9 +127,7 @@ export async function listenForMeetingError(): Promise<UnlistenFn> {
     const { code } = event.payload;
     // Tear the (transcript-less) meeting down so the UI leaves "recording".
     useStore.getState().stopMeeting();
-    invoke("stop_meeting").catch((error) =>
-      log.warn("meeting: stop after backend error failed", { code, error: String(error) }),
-    );
+    void stopBackendMeeting("meeting: stop after backend error failed", { code });
     const language = useStore.getState().settings.language;
     // On-device failures point at Settings › Transcription (a smaller model,
     // or the missing download) instead of the generic "can't connect".
@@ -150,7 +135,8 @@ export async function listenForMeetingError(): Promise<UnlistenFn> {
       showLocalFailureToast(language, code);
       return;
     }
-    toast.error(translate(language, meetingErrorToastKey(code)));
+    // Unmapped codes fall back to "connect" (lib/transcription/errors.ts).
+    toast.error(translate(language, failureMessageKey("meeting", code)));
   });
 }
 
