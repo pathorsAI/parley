@@ -41,7 +41,7 @@ export interface PrepSlice {
   addTodo: (text: string) => void;
   toggleTodo: (id: string) => void;
   removeTodo: (id: string) => void;
-  /** Mark the given todo ids as done (used by the AI auto-checker). */
+  /** Mark the given checklist item ids as done (used by the AI auto-checker). */
   markTodosDone: (ids: string[]) => void;
   /** Replace the checklist with a template's items (all unchecked). */
   applyTodoTemplate: (items: string[]) => void;
