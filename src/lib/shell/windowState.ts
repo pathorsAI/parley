@@ -64,35 +64,44 @@ export function useWindowMaximized(): boolean {
     if (!isTauri() || isMac()) return;
     let active = true;
     let unlisten: (() => void) | undefined;
-    async function connectResizeEvents() {
-      const win = getCurrentWindow();
-      const read = async () => {
-        try {
-          const now = await win.isMaximized();
-          if (active) setMaximized(now);
-        } catch {
-          /* ignore — keep the last known state */
-        }
-      };
-      // Seed from the current value: the window can already be maximized when
-      // this mounts (a reload, or a size restored from the last session).
-      await read();
-      // read() handles its own failure, so the promise it returns cannot reject.
-      const un = await win.onResized(() => {
-        read().catch(() => {});
-      });
-      if (active) unlisten = un;
-      else un();
-    }
-    connectResizeEvents().catch((error) =>
-      log.warn("window: maximize listener failed", { error: String(error) })
-    );
+    const apply = (now: boolean) => {
+      if (active) setMaximized(now);
+    };
+    connectResizeEvents(apply)
+      .then((un) => {
+        if (active) unlisten = un;
+        else un();
+      })
+      .catch((error) => log.warn("window: maximize listener failed", { error: String(error) }));
     return () => {
       active = false;
       unlisten?.();
     };
   }, []);
   return maximized;
+}
+
+type AppWindow = ReturnType<typeof getCurrentWindow>;
+
+/** Read whether the window is maximized into `apply`; a failed read keeps the
+ *  last known state, so the returned promise cannot reject. */
+async function readMaximized(win: AppWindow, apply: (now: boolean) => void) {
+  try {
+    apply(await win.isMaximized());
+  } catch {
+    /* ignore — keep the last known state */
+  }
+}
+
+/** Seed `apply` from the current value — the window can already be maximized
+ *  when this mounts (a reload, or a size restored from the last session) — and
+ *  re-read it on every resize. Resolves to the resize listener's unlisten. */
+async function connectResizeEvents(apply: (now: boolean) => void): Promise<() => void> {
+  const win = getCurrentWindow();
+  await readMaximized(win, apply);
+  return win.onResized(() => {
+    readMaximized(win, apply).catch(() => {});
+  });
 }
 
 /** Carry out a window-control click. A no-op outside the Tauri shell. */

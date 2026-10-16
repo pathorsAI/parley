@@ -37,7 +37,7 @@ export interface PrepSlice {
    *  fields). The ONLY prep-clearing path. */
   resetPrep: () => void;
 
-  // todos
+  // the to-do checklist
   addTodo: (text: string) => void;
   toggleTodo: (id: string) => void;
   removeTodo: (id: string) => void;

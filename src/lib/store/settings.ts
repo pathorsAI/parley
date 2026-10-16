@@ -23,7 +23,7 @@ export interface SettingsSlice {
 }
 
 /**
- * Re-resolve all built-in template content (eval templates, TODO templates, and
+ * Re-resolve all built-in template content (eval templates, to-do templates, and
  * the labels of any active built-in evaluations) into `settings.language`,
  * keeping the user's own custom templates. Called whenever the language changes
  * so built-in content follows the UI language. Custom templates and custom
