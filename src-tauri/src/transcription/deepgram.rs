@@ -10,7 +10,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 use super::common::{
     clean_vocabulary, connect_with_headers, drive_session, note_connected, urlencode, LevelMeter,
-    SegmentBuilder, Timeline, TranscribeConfig, LEVEL_EVENT, TRANSCRIPT_EVENT,
+    SegmentBuilder, Timeline, TranscribeConfig, LEVEL_EVENT,
 };
 use super::ws::{self, Next, OnClose, Pump, WsRead, WsWrite};
 use crate::audio::resample::pcm_to_le_bytes;
@@ -179,21 +179,25 @@ async fn read_transcripts(
     timeline: Timeline,
     read: WsRead,
 ) -> Result<()> {
-    let mut builder = SegmentBuilder::new(app, source, TRANSCRIPT_EVENT, timeline);
+    let mut builder = SegmentBuilder::to_frontend(app, source, timeline);
     ws::read_frames(
         "deepgram",
         source,
         read,
         OnClose::FailIfAbnormal,
-        |payload| {
-            match serde_json::from_str::<DgResponse>(payload) {
-                Ok(resp) => apply_response(&mut builder, resp),
-                Err(e) => eprintln!("[deepgram:{source}] parse error: {e}"),
-            }
-            Ok(Next::Continue)
-        },
+        |payload| on_payload(&mut builder, source, payload),
     )
     .await
+}
+
+/// Fold one server payload into `builder`. Deepgram has no in-band errors,
+/// so every payload continues the stream; an unparseable one is skipped.
+fn on_payload(builder: &mut SegmentBuilder, source: &str, payload: &str) -> Result<Next> {
+    match serde_json::from_str::<DgResponse>(payload) {
+        Ok(resp) => apply_response(builder, resp),
+        Err(e) => eprintln!("[deepgram:{source}] parse error: {e}"),
+    }
+    Ok(Next::Continue)
 }
 
 pub async fn run_session(
@@ -235,6 +239,50 @@ pub async fn run_session(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transcription::common::testing::{builder, rows, seg};
+
+    #[test]
+    fn results_become_runs_interims_become_the_tail() {
+        let (mut b, out) = builder("me");
+        for payload in [
+            r#"{"type":"Results","is_final":false,"channel":{"alternatives":[
+                {"transcript":"hello wor","words":[{"word":"hello","start":0.125,"end":0.5,"speaker":0}]}
+            ]}}"#,
+            r#"{"type":"Results","is_final":true,"speech_final":false,"channel":{"alternatives":[
+                {"transcript":"Hello world.","words":[
+                    {"word":"hello","punctuated_word":"Hello","start":0.125,"end":0.5,"speaker":0},
+                    {"word":"world","punctuated_word":"world.","start":0.5,"end":1.0,"speaker":0}
+                ]}
+            ]}}"#,
+            r#"{"type":"Results","is_final":true,"speech_final":true,"channel":{"alternatives":[
+                {"transcript":"Hi","words":[{"word":"hi","punctuated_word":"Hi","start":1.25,"end":1.5,"speaker":1}]}
+            ]}}"#,
+            r#"{"type":"Metadata","request_id":"x"}"#,
+            r#"{"type":"Results","is_final":false,"channel":{"alternatives":[{"transcript":"  "}]}}"#,
+            "not json",
+            r#"{"type":"Results","is_final":false,"channel":{"alternatives":[{"transcript":"so"}]}}"#,
+        ] {
+            assert!(matches!(
+                on_payload(&mut b, "me", payload).unwrap(),
+                Next::Continue
+            ));
+        }
+        assert_eq!(
+            rows(&out),
+            vec![
+                seg("me-tail", 0, "hello wor", false, 125, 125),
+                seg("me-0", 0, "Hello world. ", true, 125, 1000),
+                seg("me-tail", 0, "", false, 1000, 1000),
+                // The speaker change commits run 0; speech_final commits run 1.
+                seg("me-0", 0, "Hello world. ", true, 125, 1000),
+                seg("me-1", 1, "Hi ", true, 1250, 1500),
+                seg("me-1", 1, "Hi ", true, 1250, 1500),
+                seg("me-tail", 0, "", false, 1500, 1500),
+                // A word-less interim keeps the builder's speaker and end.
+                seg("me-tail", 0, "so", false, 1500, 1500),
+            ]
+        );
+    }
 
     #[test]
     fn nova_3_gets_keyterm_and_older_models_get_keywords() {

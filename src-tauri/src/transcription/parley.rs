@@ -24,7 +24,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 use super::common::{
     clean_vocabulary, connect_with_headers, drive_session, note_connected, LevelMeter,
-    SegmentBuilder, Timeline, TranscribeConfig, CONNECT_TIMEOUT, LEVEL_EVENT, TRANSCRIPT_EVENT,
+    SegmentBuilder, Timeline, TranscribeConfig, CONNECT_TIMEOUT, LEVEL_EVENT,
 };
 use super::ws::{self, Next, OnClose, Pump, WsRead, WsWrite};
 use crate::audio::resample::pcm_to_le_bytes;
@@ -364,34 +364,9 @@ async fn read_transcripts(
     read: WsRead,
     ended: Arc<AtomicBool>,
 ) -> Result<()> {
-    let mut builder = SegmentBuilder::new(app, source, TRANSCRIPT_EVENT, timeline);
+    let mut builder = SegmentBuilder::to_frontend(app, source, timeline);
     let result = ws::read_frames(NAME, source, read, OnClose::FailIfAbnormal, |payload| {
-        let frame = match parse_frame(payload) {
-            Ok(f) => f,
-            Err(e) => {
-                eprintln!("[{NAME}:{source}] RX {e} — payload: {payload}");
-                return Ok(Next::Continue);
-            }
-        };
-        match step_for(&frame, ended.load(Ordering::SeqCst))? {
-            // `tokens: []` is meaningful: the tentative tail is now empty, and
-            // folding it emits the empty tail that clears it.
-            Step::Tokens => {
-                if let ServerFrame::Transcript { tokens } = &frame {
-                    apply_tokens(&mut builder, tokens);
-                }
-                Ok(Next::Continue)
-            }
-            Step::Endpoint => {
-                builder.endpoint();
-                Ok(Next::Continue)
-            }
-            Step::Done => {
-                builder.endpoint();
-                Ok(Next::Stop)
-            }
-            Step::Ignore => Ok(Next::Continue),
-        }
+        on_payload(&mut builder, source, payload, ended.load(Ordering::SeqCst))
     })
     .await;
     // `read_frames` reports an abnormal close as "closed by server: <code>
@@ -409,6 +384,42 @@ async fn read_transcripts(
             None => e,
         }
     })
+}
+
+/// Fold one server payload into `builder`. `ended`: whether `end` was already
+/// sent (see [`step_for`]). An unparseable payload is skipped.
+fn on_payload(
+    builder: &mut SegmentBuilder,
+    source: &str,
+    payload: &str,
+    ended: bool,
+) -> Result<Next> {
+    let frame = match parse_frame(payload) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("[{NAME}:{source}] RX {e} — payload: {payload}");
+            return Ok(Next::Continue);
+        }
+    };
+    match step_for(&frame, ended)? {
+        // `tokens: []` is meaningful: the tentative tail is now empty, and
+        // folding it emits the empty tail that clears it.
+        Step::Tokens => {
+            if let ServerFrame::Transcript { tokens } = &frame {
+                apply_tokens(builder, tokens);
+            }
+            Ok(Next::Continue)
+        }
+        Step::Endpoint => {
+            builder.endpoint();
+            Ok(Next::Continue)
+        }
+        Step::Done => {
+            builder.endpoint();
+            Ok(Next::Stop)
+        }
+        Step::Ignore => Ok(Next::Continue),
+    }
 }
 
 /// Run one hosted session: dial the cloud, send `start`, wait for `ready`,
@@ -729,6 +740,61 @@ mod tests {
         let (finals, tail) = split_tokens(&tokens);
         assert!(finals.is_empty());
         assert_eq!(tail.text, "");
+    }
+
+    #[test]
+    fn frames_fold_into_runs_and_done_stops() {
+        use crate::transcription::common::testing::{builder, rows, seg};
+        let (mut b, out) = builder("mix");
+        let mut stops = Vec::new();
+        for payload in [
+            r#"{"type":"ready","session_id":"s1"}"#,
+            r#"{"type":"transcript","tokens":[
+                {"text":"Hello","start_ms":0,"end_ms":300,"final":true,"speaker":1},
+                {"text":" wor","start_ms":300,"end_ms":400,"final":false,"speaker":1}
+            ]}"#,
+            r#"{"type":"transcript","tokens":[]}"#,
+            r#"{"type":"endpoint"}"#,
+            "not json",
+            r#"{"type":"transcript","tokens":[{"text":"你好","start_ms":500,"end_ms":800,"final":true,"speaker":2}]}"#,
+            r#"{"type":"done"}"#,
+        ] {
+            let next = on_payload(&mut b, "mix", payload, false).unwrap();
+            stops.push(matches!(next, Next::Stop));
+        }
+        assert_eq!(stops, vec![false, false, false, false, false, false, true]);
+        assert_eq!(
+            rows(&out),
+            vec![
+                seg("mix-0", 1, "Hello", true, 0, 300),
+                seg("mix-tail", 1, " wor", false, 300, 300),
+                seg("mix-0", 1, "Hello", true, 0, 300),
+                seg("mix-tail", 1, "", false, 300, 300),
+                seg("mix-0", 1, "Hello", true, 0, 300),
+                seg("mix-1", 2, "你好", true, 500, 800),
+                // The empty tail is labelled from the run as it stands now.
+                seg("mix-tail", 2, "", false, 800, 800),
+                seg("mix-1", 2, "你好", true, 500, 800),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_error_frame_fails_unless_it_is_the_late_upstream_one() {
+        use crate::transcription::common::testing::builder;
+        let (mut b, _) = builder("me");
+        let quota = r#"{"type":"error","code":"quota_exceeded","message":"cap"}"#;
+        assert_eq!(
+            on_payload(&mut b, "me", quota, false)
+                .unwrap_err()
+                .to_string(),
+            "hosted transcription quota exceeded (402): cap"
+        );
+        let late = r#"{"type":"error","code":"upstream_unavailable","message":"x"}"#;
+        assert!(matches!(
+            on_payload(&mut b, "me", late, true).unwrap(),
+            Next::Stop
+        ));
     }
 
     #[test]

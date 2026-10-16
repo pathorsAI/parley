@@ -52,6 +52,7 @@ pub enum OnClose {
 }
 
 /// What the payload handler wants the read loop to do next.
+#[derive(Debug)]
 pub enum Next {
     /// Keep reading.
     Continue,

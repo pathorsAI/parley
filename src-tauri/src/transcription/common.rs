@@ -2,8 +2,9 @@
 //!
 //! Every provider speaks its own wire protocol, but they all funnel results
 //! through the same primitives here: a [`SegmentBuilder`] that groups finalized
-//! tokens into speaker-runs and emits `transcript://segment` events, a
-//! [`LevelMeter`] that emits `audio://level`, and small connect/emit helpers.
+//! tokens into speaker-runs and hands them to a [`SegmentSink`] (in the app,
+//! [`EventSink`]: `transcript://segment` events), a [`LevelMeter`] that emits
+//! `audio://level`, and small connect/emit helpers.
 //!
 //! Diarization is optional: adapters that can't tell speakers apart simply pass
 //! `speaker = 0` for everything, which the UI renders as a single speaker.
@@ -215,6 +216,60 @@ pub fn urlencode(s: &str) -> String {
     out
 }
 
+/// One transcript update as a [`SegmentBuilder`] produces it: a committed
+/// speaker-run (`is_final`) or the tentative tail, already on the meeting's
+/// timeline.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Segment {
+    pub id: String,
+    pub source: &'static str,
+    /// Diarized speaker number within this source (0 = unknown / single speaker).
+    pub speaker: i64,
+    pub text: String,
+    pub is_final: bool,
+    pub start_ms: u64,
+    pub end_ms: u64,
+}
+
+/// Where a [`SegmentBuilder`] delivers its segments. The app's sink is
+/// [`EventSink`]; tests collect them instead, so an adapter's parsing runs
+/// without Tauri.
+pub trait SegmentSink: Send {
+    fn segment(&mut self, segment: Segment);
+}
+
+/// The production [`SegmentSink`]: every segment becomes a `event`
+/// (`transcript://segment`) for the frontend, stamped with the session it
+/// belongs to.
+pub struct EventSink {
+    app: AppHandle,
+    event: &'static str,
+}
+
+impl EventSink {
+    pub fn new(app: AppHandle, event: &'static str) -> Self {
+        Self { app, event }
+    }
+}
+
+impl SegmentSink for EventSink {
+    fn segment(&mut self, segment: Segment) {
+        let _ = self.app.emit(
+            self.event,
+            TranscriptEvent {
+                id: segment.id,
+                source: segment.source.to_string(),
+                speaker: segment.speaker,
+                text: segment.text,
+                is_final: segment.is_final,
+                start_ms: segment.start_ms,
+                end_ms: segment.end_ms,
+                session: session_for(segment.source),
+            },
+        );
+    }
+}
+
 /// Payload emitted to the frontend for each transcript update.
 #[derive(Clone, Serialize)]
 struct TranscriptEvent {
@@ -235,34 +290,6 @@ struct LevelEvent {
     source: String,
     level: f32,
     session: Option<u64>,
-}
-
-/// Emit a single transcript segment update to the frontend.
-#[allow(clippy::too_many_arguments)]
-pub fn emit_segment(
-    app: &AppHandle,
-    event: &str,
-    source: &str,
-    id: String,
-    speaker: i64,
-    text: String,
-    is_final: bool,
-    start_ms: u64,
-    end_ms: u64,
-) {
-    let _ = app.emit(
-        event,
-        TranscriptEvent {
-            id,
-            source: source.to_string(),
-            speaker,
-            text,
-            is_final,
-            start_ms,
-            end_ms,
-            session: session_for(source),
-        },
-    );
 }
 
 /// A leg's handshake completed (and its opening config frame went out, where
@@ -516,9 +543,8 @@ impl LevelMeter {
 /// emits onto the meeting's, so a reconnected leg neither overwrites earlier
 /// segments nor files its words at the start of the meeting.
 pub struct SegmentBuilder {
-    app: AppHandle,
+    sink: Box<dyn SegmentSink>,
     source: &'static str,
-    event: &'static str,
     timeline: Timeline,
     seg_index: u64,
     /// Speaker of the open run, or `None` when no run is open.
@@ -529,16 +555,10 @@ pub struct SegmentBuilder {
 }
 
 impl SegmentBuilder {
-    pub fn new(
-        app: AppHandle,
-        source: &'static str,
-        event: &'static str,
-        timeline: Timeline,
-    ) -> Self {
+    pub fn new(sink: Box<dyn SegmentSink>, source: &'static str, timeline: Timeline) -> Self {
         Self {
-            app,
+            sink,
             source,
-            event,
             timeline,
             seg_index: 0,
             cur_speaker: None,
@@ -546,6 +566,15 @@ impl SegmentBuilder {
             cur_start: 0,
             cur_end: 0,
         }
+    }
+
+    /// A builder whose segments go to the frontend as `transcript://segment`.
+    pub fn to_frontend(app: AppHandle, source: &'static str, timeline: Timeline) -> Self {
+        Self::new(
+            Box::new(EventSink::new(app, TRANSCRIPT_EVENT)),
+            source,
+            timeline,
+        )
     }
 
     /// The current open run's speaker (0 if none open) — useful for tail labels.
@@ -584,18 +613,17 @@ impl SegmentBuilder {
 
     /// Emit the open run under its segment id (settled text), shifted onto
     /// the meeting's timeline.
-    fn emit_open_run(&self) {
-        emit_segment(
-            &self.app,
-            self.event,
-            self.source,
-            self.timeline.segment_id(self.source, self.seg_index),
-            self.current_speaker(),
-            self.cur_final.clone(),
-            true,
-            self.timeline.shift(self.cur_start),
-            self.timeline.shift(self.cur_end),
-        );
+    fn emit_open_run(&mut self) {
+        let segment = Segment {
+            id: self.timeline.segment_id(self.source, self.seg_index),
+            source: self.source,
+            speaker: self.current_speaker(),
+            text: self.cur_final.clone(),
+            is_final: true,
+            start_ms: self.timeline.shift(self.cur_start),
+            end_ms: self.timeline.shift(self.cur_end),
+        };
+        self.sink.segment(segment);
     }
 
     /// Emit the open run under a fresh segment id and advance the index.
@@ -606,7 +634,7 @@ impl SegmentBuilder {
 
     /// Surface the current open run as solid (settled) text without advancing —
     /// it keeps growing under the same id until an endpoint or speaker change.
-    pub fn emit_committed(&self) {
+    pub fn emit_committed(&mut self) {
         if !self.cur_final.trim().is_empty() {
             self.emit_open_run();
         }
@@ -616,19 +644,18 @@ impl SegmentBuilder {
     /// clears the previous tail in the UI). The id carries no leg: there is
     /// only ever one tentative tail, and a new leg's first tail replaces the
     /// dead leg's.
-    pub fn emit_tail(&self, text: &str, speaker: i64, start_ms: u64) {
+    pub fn emit_tail(&mut self, text: &str, speaker: i64, start_ms: u64) {
         let start_ms = self.timeline.shift(start_ms);
-        emit_segment(
-            &self.app,
-            self.event,
-            self.source,
-            format!("{}-tail", self.source),
+        let segment = Segment {
+            id: format!("{}-tail", self.source),
+            source: self.source,
             speaker,
-            text.to_string(),
-            false,
+            text: text.to_string(),
+            is_final: false,
             start_ms,
-            start_ms,
-        );
+            end_ms: start_ms,
+        };
+        self.sink.segment(segment);
     }
 
     /// End-of-utterance: commit the open run (if any) and reset for the next one.
@@ -641,9 +668,142 @@ impl SegmentBuilder {
     }
 }
 
+/// Test support: a [`SegmentBuilder`] whose segments are collected instead of
+/// emitted, so adapter parsing is testable without an `AppHandle`.
+#[cfg(test)]
+pub(crate) mod testing {
+    use std::sync::{Arc, Mutex};
+
+    use super::{Segment, SegmentBuilder, SegmentSink, Timeline};
+
+    /// Collects every segment a builder produced, in order.
+    #[derive(Clone, Default)]
+    pub struct Collected(Arc<Mutex<Vec<Segment>>>);
+
+    impl Collected {
+        /// Everything collected so far, emptying the collection.
+        pub fn take(&self) -> Vec<Segment> {
+            std::mem::take(&mut *self.0.lock().unwrap())
+        }
+    }
+
+    impl SegmentSink for Collected {
+        fn segment(&mut self, segment: Segment) {
+            self.0.lock().unwrap().push(segment);
+        }
+    }
+
+    /// A builder for `source` on `timeline`, and what it collects.
+    pub fn builder_on(source: &'static str, timeline: Timeline) -> (SegmentBuilder, Collected) {
+        let collected = Collected::default();
+        let builder = SegmentBuilder::new(Box::new(collected.clone()), source, timeline);
+        (builder, collected)
+    }
+
+    /// A first-leg builder for `source`, and what it collects.
+    pub fn builder(source: &'static str) -> (SegmentBuilder, Collected) {
+        builder_on(source, Timeline::default())
+    }
+
+    /// `segment` as `(id, speaker, text, is_final, start_ms, end_ms)`, for
+    /// compact assertions.
+    pub fn row(s: &Segment) -> (String, i64, String, bool, u64, u64) {
+        (
+            s.id.clone(),
+            s.speaker,
+            s.text.clone(),
+            s.is_final,
+            s.start_ms,
+            s.end_ms,
+        )
+    }
+
+    /// Shorthand for an expected [`row`].
+    pub fn seg(
+        id: &str,
+        speaker: i64,
+        text: &str,
+        is_final: bool,
+        start_ms: u64,
+        end_ms: u64,
+    ) -> (String, i64, String, bool, u64, u64) {
+        (
+            id.to_string(),
+            speaker,
+            text.to_string(),
+            is_final,
+            start_ms,
+            end_ms,
+        )
+    }
+
+    /// Every collected segment as a [`row`], emptying the collection.
+    pub fn rows(collected: &Collected) -> Vec<(String, i64, String, bool, u64, u64)> {
+        collected.take().iter().map(row).collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::testing::{builder, builder_on, rows, seg};
     use super::*;
+
+    #[test]
+    fn a_speaker_change_commits_the_open_run_under_a_new_id() {
+        let (mut b, out) = builder("mix");
+        b.push_final("Hello", 1, 0, 300);
+        b.push_final(" there", 1, 300, 600);
+        b.emit_committed();
+        b.push_final("Hi", 2, 700, 900);
+        b.emit_committed();
+        b.emit_tail(" and", 2, 900);
+        b.endpoint();
+        b.emit_tail("", 0, 0);
+        assert_eq!(
+            rows(&out),
+            vec![
+                seg("mix-0", 1, "Hello there", true, 0, 600),
+                // The speaker change re-emits the closed run, then advances.
+                seg("mix-0", 1, "Hello there", true, 0, 600),
+                seg("mix-1", 2, "Hi", true, 700, 900),
+                seg("mix-tail", 2, " and", false, 900, 900),
+                seg("mix-1", 2, "Hi", true, 700, 900),
+                seg("mix-tail", 0, "", false, 0, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn whitespace_runs_are_never_committed() {
+        let (mut b, out) = builder("me");
+        b.push_final("  ", 0, 0, 10);
+        b.emit_committed();
+        b.endpoint();
+        b.push_final("ok", 0, 20, 30);
+        b.endpoint();
+        assert_eq!(rows(&out), vec![seg("me-0", 0, "ok", true, 20, 30)]);
+    }
+
+    #[test]
+    fn a_later_leg_shifts_and_namespaces_what_it_builds() {
+        let (mut b, out) = builder_on(
+            "them",
+            Timeline {
+                leg: 1,
+                offset_ms: 60_000,
+            },
+        );
+        b.push_final("late", 0, 100, 200);
+        b.emit_tail("x", 0, 250);
+        b.endpoint();
+        assert_eq!(
+            rows(&out),
+            vec![
+                seg("them-tail", 0, "x", false, 60_250, 60_250),
+                seg("them@1-0", 0, "late", true, 60_100, 60_200),
+            ]
+        );
+    }
 
     /// A connect that never answers fails the session (so the host shows an
     /// error and stops waiting) instead of parking it until the OS gives up.

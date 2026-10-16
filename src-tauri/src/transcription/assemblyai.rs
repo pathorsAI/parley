@@ -13,7 +13,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 use super::common::{
     clean_vocabulary, connect_with_headers, drive_session, note_connected, urlencode, LevelMeter,
-    SegmentBuilder, Timeline, TranscribeConfig, LEVEL_EVENT, TRANSCRIPT_EVENT,
+    SegmentBuilder, Timeline, TranscribeConfig, LEVEL_EVENT,
 };
 use super::ws::{self, Next, OnClose, Pump, WsRead};
 use crate::audio::resample::pcm_to_le_bytes;
@@ -93,28 +93,33 @@ async fn read_transcripts(
     timeline: Timeline,
     read: WsRead,
 ) -> Result<()> {
-    let mut builder = SegmentBuilder::new(app, source, TRANSCRIPT_EVENT, timeline);
+    let mut builder = SegmentBuilder::to_frontend(app, source, timeline);
     ws::read_frames("assemblyai", source, read, OnClose::Stop, |payload| {
-        let m: AaiMessage = match serde_json::from_str(payload) {
-            Ok(m) => m,
-            Err(e) => {
-                eprintln!("[assemblyai:{source}] parse error: {e}");
-                return Ok(Next::Continue);
-            }
-        };
-        if let Some(err) = m.error {
-            // In-band errors are terminal (the server closes after) — the
-            // session is dead, so surface it (see run_metered_session).
-            eprintln!("[assemblyai:{source}] error: {err}");
-            return Err(anyhow!("server error: {err}"));
-        }
-        // Everything that isn't a Turn (Begin, Termination, …) is ignored.
-        if m.msg_type == "Turn" {
-            apply_turn(&mut builder, &m);
-        }
-        Ok(Next::Continue)
+        on_payload(&mut builder, source, payload)
     })
     .await
+}
+
+/// Fold one server payload into `builder`; an in-band error ends the session.
+fn on_payload(builder: &mut SegmentBuilder, source: &str, payload: &str) -> Result<Next> {
+    let m: AaiMessage = match serde_json::from_str(payload) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("[assemblyai:{source}] parse error: {e}");
+            return Ok(Next::Continue);
+        }
+    };
+    if let Some(err) = m.error {
+        // In-band errors are terminal (the server closes after) — the
+        // session is dead, so surface it (see run_metered_session).
+        eprintln!("[assemblyai:{source}] error: {err}");
+        return Err(anyhow!("server error: {err}"));
+    }
+    // Everything that isn't a Turn (Begin, Termination, …) is ignored.
+    if m.msg_type == "Turn" {
+        apply_turn(builder, &m);
+    }
+    Ok(Next::Continue)
 }
 
 pub async fn run_session(
@@ -159,6 +164,42 @@ pub async fn run_session(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transcription::common::testing::{builder, rows, seg};
+
+    #[test]
+    fn turns_become_the_tail_until_formatted() {
+        let (mut b, out) = builder("them");
+        for payload in [
+            r#"{"type":"Begin","id":"s"}"#,
+            r#"{"type":"Turn","transcript":"hello","end_of_turn":false,"words":[{"start":100,"end":400}]}"#,
+            r#"{"type":"Turn","transcript":"hello world","end_of_turn":true,"turn_is_formatted":false,"words":[{"start":100,"end":400},{"start":400,"end":900}]}"#,
+            r#"{"type":"Turn","transcript":" Hello world. ","end_of_turn":true,"turn_is_formatted":true,"words":[{"start":100,"end":400},{"start":400,"end":900}]}"#,
+            r#"{"type":"Turn","transcript":"   ","end_of_turn":true,"turn_is_formatted":true}"#,
+            r#"{"type":"Termination"}"#,
+        ] {
+            assert!(matches!(
+                on_payload(&mut b, "them", payload).unwrap(),
+                Next::Continue
+            ));
+        }
+        assert_eq!(
+            rows(&out),
+            vec![
+                seg("them-tail", 0, "hello", false, 100, 100),
+                seg("them-tail", 0, "hello world", false, 100, 100),
+                seg("them-0", 0, "Hello world.", true, 100, 900),
+                seg("them-0", 0, "Hello world.", true, 100, 900),
+                seg("them-tail", 0, "", false, 900, 900),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_error_message_ends_the_session() {
+        let (mut b, _) = builder("them");
+        let err = on_payload(&mut b, "them", r#"{"error":"Invalid API key"}"#).unwrap_err();
+        assert_eq!(err.to_string(), "server error: Invalid API key");
+    }
 
     #[test]
     fn keyterms_prompt_is_a_url_encoded_json_array() {

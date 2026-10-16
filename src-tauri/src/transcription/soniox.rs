@@ -10,7 +10,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 use super::common::{
     clean_vocabulary, drive_session, ensure_crypto_provider, note_connected, with_connect_timeout,
-    LevelMeter, SegmentBuilder, Timeline, TranscribeConfig, LEVEL_EVENT, TRANSCRIPT_EVENT,
+    LevelMeter, SegmentBuilder, Timeline, TranscribeConfig, LEVEL_EVENT,
 };
 use super::ws::{self, Next, OnClose, Pump, Ws, WsRead, WsWrite};
 use crate::audio::resample::pcm_to_le_bytes;
@@ -210,37 +210,44 @@ async fn read_transcripts(
     timeline: Timeline,
     read: WsRead,
 ) -> Result<()> {
-    let mut builder = SegmentBuilder::new(app, source, TRANSCRIPT_EVENT, timeline);
+    let mut builder = SegmentBuilder::to_frontend(app, source, timeline);
     ws::read_frames("soniox", source, read, OnClose::Stop, |payload| {
-        let resp: SonioxResponse = match serde_json::from_str(payload) {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("[soniox:{source}] RX parse error: {e} — payload: {payload}");
-                return Ok(Next::Continue);
-            }
-        };
-
-        if let Some(code) = resp.error_code {
-            let detail = resp.error_message.unwrap_or_default();
-            eprintln!("[soniox:{source}] error {code}: {detail}");
-            return Err(anyhow!("server error {code}: {detail}"));
-        }
-
-        // Decided before the tokens are applied, but acted on after: the
-        // response that carries `<fin>` also carries the last finals, which
-        // must be emitted (and committed by the endpoint) before we stop.
-        let done = ends_stream(&resp);
-        if apply_tokens(&mut builder, &resp.tokens) {
-            builder.endpoint();
-        }
-        if done && !resp.finished {
-            // Confirms in the field that the finalize was acknowledged; without
-            // this line the session ends on DRAIN_READ_GRACE instead.
-            log::info!("[soniox:{source}] finalize acknowledged; ending the stream");
-        }
-        Ok(if done { Next::Stop } else { Next::Continue })
+        on_payload(&mut builder, source, payload)
     })
     .await
+}
+
+/// Fold one server payload into `builder`: an error frame ends the session
+/// with its error, a `<fin>` / `finished` ends the stream, and an unparseable
+/// payload is skipped.
+fn on_payload(builder: &mut SegmentBuilder, source: &str, payload: &str) -> Result<Next> {
+    let resp: SonioxResponse = match serde_json::from_str(payload) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("[soniox:{source}] RX parse error: {e} — payload: {payload}");
+            return Ok(Next::Continue);
+        }
+    };
+
+    if let Some(code) = resp.error_code {
+        let detail = resp.error_message.unwrap_or_default();
+        eprintln!("[soniox:{source}] error {code}: {detail}");
+        return Err(anyhow!("server error {code}: {detail}"));
+    }
+
+    // Decided before the tokens are applied, but acted on after: the
+    // response that carries `<fin>` also carries the last finals, which
+    // must be emitted (and committed by the endpoint) before we stop.
+    let done = ends_stream(&resp);
+    if apply_tokens(builder, &resp.tokens) {
+        builder.endpoint();
+    }
+    if done && !resp.finished {
+        // Confirms in the field that the finalize was acknowledged; without
+        // this line the session ends on DRAIN_READ_GRACE instead.
+        log::info!("[soniox:{source}] finalize acknowledged; ending the stream");
+    }
+    Ok(if done { Next::Stop } else { Next::Continue })
 }
 
 /// Run one Soniox realtime session: stream PCM from `pcm_rx`, parse the token
@@ -289,7 +296,10 @@ pub async fn run_session(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transcription::common::testing::{builder, rows, seg};
     use serde_json::json;
+
+    type Row = (String, i64, String, bool, u64, u64);
 
     fn config(vocabulary: &[&str]) -> TranscribeConfig {
         TranscribeConfig {
@@ -355,6 +365,65 @@ mod tests {
     fn finished_ends_the_stream() {
         let resp = response(json!({ "tokens": [], "finished": true }));
         assert!(ends_stream(&resp));
+    }
+
+    fn feed(payloads: &[&str]) -> (Vec<Row>, Vec<Result<bool>>) {
+        let (mut b, out) = builder("mix");
+        let steps = payloads
+            .iter()
+            .map(|p| on_payload(&mut b, "mix", p).map(|n| matches!(n, Next::Stop)))
+            .collect();
+        (rows(&out), steps)
+    }
+
+    #[test]
+    fn tokens_become_speaker_runs_and_a_tail() {
+        let (segments, steps) = feed(&[
+            r#"{"tokens":[
+                {"text":"你好","is_final":true,"start_ms":0,"end_ms":300,"speaker":"1"},
+                {"text":"嗎","is_final":false,"start_ms":300,"end_ms":400,"speaker":"1"}
+            ]}"#,
+            r#"{"tokens":[
+                {"text":"嗎","is_final":true,"start_ms":300,"end_ms":400,"speaker":"1"},
+                {"text":"Hi","is_final":true,"start_ms":500,"end_ms":700,"speaker":"2"},
+                {"text":"<end>","is_final":true}
+            ]}"#,
+            "not json",
+            r#"{"tokens":[
+                {"text":"bye","is_final":true,"start_ms":900,"end_ms":1000,"speaker":"2"},
+                {"text":"<fin>","is_final":true}
+            ]}"#,
+        ]);
+        assert_eq!(
+            segments,
+            vec![
+                seg("mix-0", 1, "你好", true, 0, 300),
+                seg("mix-tail", 1, "嗎", false, 300, 300),
+                // The speaker change commits run 0 and opens run 1.
+                seg("mix-0", 1, "你好嗎", true, 0, 400),
+                seg("mix-1", 2, "Hi", true, 500, 700),
+                // No tentative token: the empty tail keeps the speaker and
+                // end the open run had when the response arrived.
+                seg("mix-tail", 1, "", false, 300, 300),
+                // `<end>`: the endpoint commits the open run.
+                seg("mix-1", 2, "Hi", true, 500, 700),
+                seg("mix-2", 2, "bye", true, 900, 1000),
+                seg("mix-tail", 0, "", false, 700, 700),
+                seg("mix-2", 2, "bye", true, 900, 1000),
+            ]
+        );
+        let stops: Vec<bool> = steps.into_iter().map(Result::unwrap).collect();
+        assert_eq!(stops, vec![false, false, false, true]);
+    }
+
+    #[test]
+    fn an_error_frame_ends_the_session_with_its_code() {
+        let (segments, steps) = feed(&[r#"{"error_code":401,"error_message":"Invalid API key"}"#]);
+        assert!(segments.is_empty());
+        assert_eq!(
+            steps[0].as_ref().unwrap_err().to_string(),
+            "server error 401: Invalid API key"
+        );
     }
 
     #[test]

@@ -16,7 +16,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 use super::common::{
     clean_vocabulary, connect_with_headers, drive_session, note_connected, LevelMeter,
-    SegmentBuilder, Timeline, TranscribeConfig, LEVEL_EVENT, TRANSCRIPT_EVENT,
+    SegmentBuilder, Timeline, TranscribeConfig, LEVEL_EVENT,
 };
 use super::ws::{self, Next, OnClose, Pump, WsRead, WsWrite};
 use crate::audio::resample::pcm_to_le_bytes;
@@ -136,18 +136,29 @@ async fn read_transcripts(
     timeline: Timeline,
     read: WsRead,
 ) -> Result<()> {
-    let mut builder = SegmentBuilder::new(app, source, TRANSCRIPT_EVENT, timeline);
+    let mut builder = SegmentBuilder::to_frontend(app, source, timeline);
     let mut interim = String::new();
     ws::read_frames("openai", source, read, OnClose::Stop, |payload| {
-        let Ok(ev) = serde_json::from_str::<OaiEvent>(payload) else {
-            return Ok(Next::Continue);
-        };
-        match apply_event(&mut builder, &mut interim, ev, source, payload) {
-            Some(err) => Err(err),
-            None => Ok(Next::Continue),
-        }
+        on_payload(&mut builder, &mut interim, source, payload)
     })
     .await
+}
+
+/// Fold one server payload into `builder`, growing `interim` with the deltas;
+/// an `error` event ends the session and an unparseable payload is skipped.
+fn on_payload(
+    builder: &mut SegmentBuilder,
+    interim: &mut String,
+    source: &str,
+    payload: &str,
+) -> Result<Next> {
+    let Ok(ev) = serde_json::from_str::<OaiEvent>(payload) else {
+        return Ok(Next::Continue);
+    };
+    match apply_event(builder, interim, ev, source, payload) {
+        Some(err) => Err(err),
+        None => Ok(Next::Continue),
+    }
 }
 
 pub async fn run_session(
@@ -187,4 +198,91 @@ pub async fn run_session(
         read_transcripts(app, source, config.timeline(), read),
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::transcription::common::testing::{builder, rows, seg};
+
+    #[test]
+    fn deltas_grow_the_tail_and_completion_commits_it() {
+        let (mut b, out) = builder("voice-typing");
+        let mut interim = String::new();
+        for payload in [
+            r#"{"type":"transcription_session.created"}"#,
+            r#"{"type":"conversation.item.input_audio_transcription.delta","delta":"Hel"}"#,
+            r#"{"type":"conversation.item.input_audio_transcription.delta","delta":"lo"}"#,
+            r#"{"type":"conversation.item.input_audio_transcription.completed","transcript":" Hello. "}"#,
+            r#"{"type":"conversation.item.input_audio_transcription.delta","delta":"again"}"#,
+            r#"{"type":"conversation.item.input_audio_transcription.completed","transcript":""}"#,
+            "not json",
+        ] {
+            assert!(matches!(
+                on_payload(&mut b, &mut interim, "voice-typing", payload).unwrap(),
+                Next::Continue
+            ));
+        }
+        assert_eq!(
+            rows(&out),
+            vec![
+                seg("voice-typing-tail", 0, "Hel", false, 0, 0),
+                seg("voice-typing-tail", 0, "Hello", false, 0, 0),
+                seg("voice-typing-0", 0, "Hello.", true, 0, 0),
+                seg("voice-typing-0", 0, "Hello.", true, 0, 0),
+                seg("voice-typing-tail", 0, "", false, 0, 0),
+                seg("voice-typing-tail", 0, "again", false, 0, 0),
+                // An empty completion commits what the deltas built.
+                seg("voice-typing-1", 0, "again", true, 0, 0),
+                seg("voice-typing-1", 0, "again", true, 0, 0),
+                seg("voice-typing-tail", 0, "", false, 0, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_error_event_ends_the_session_with_its_message() {
+        let (mut b, _) = builder("me");
+        let mut interim = String::new();
+        let err = on_payload(
+            &mut b,
+            &mut interim,
+            "me",
+            r#"{"type":"error","error":{"message":"Incorrect API key provided"}}"#,
+        )
+        .unwrap_err();
+        assert_eq!(err.to_string(), "Incorrect API key provided");
+        let err = on_payload(&mut b, &mut interim, "me", r#"{"type":"error"}"#).unwrap_err();
+        assert_eq!(err.to_string(), "server error");
+    }
+
+    #[test]
+    fn the_setup_frame_carries_the_language_and_prompt() {
+        let config = TranscribeConfig {
+            api_key: String::new(),
+            model: String::new(),
+            language_hints: vec!["zh".into()],
+            diarization: false,
+            vocabulary: vec!["Parley".into(), " 派斯 ".into()],
+            relay_endpoint: None,
+            leg: 0,
+            time_offset_ms: 0,
+            level_events: true,
+        };
+        assert_eq!(
+            setup_frame(&config, "gpt-4o-transcribe"),
+            json!({
+                "type": "transcription_session.update",
+                "session": {
+                    "input_audio_format": "pcm16",
+                    "input_audio_transcription": {
+                        "model": "gpt-4o-transcribe",
+                        "language": "zh",
+                        "prompt": "Parley, 派斯",
+                    },
+                    "turn_detection": { "type": "server_vad", "silence_duration_ms": 500 }
+                }
+            })
+        );
+    }
 }

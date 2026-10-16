@@ -33,7 +33,6 @@ use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperState};
 
 use super::common::{
     clean_vocabulary, note_connected, LevelMeter, SegmentBuilder, TranscribeConfig, LEVEL_EVENT,
-    TRANSCRIPT_EVENT,
 };
 use crate::audio::TARGET_SAMPLE_RATE;
 use crate::local_stt::{self, ModelFamily, ModelLease};
@@ -895,7 +894,7 @@ pub async fn run_session(
 
     let mut meter = LevelMeter::new(app.clone(), source, LEVEL_EVENT).enabled(config.level_events);
     let mut emitter = Emitter {
-        builder: SegmentBuilder::new(app.clone(), source, TRANSCRIPT_EVENT, config.timeline()),
+        builder: SegmentBuilder::to_frontend(app.clone(), source, config.timeline()),
         tail_for: None,
     };
     let (job_tx, job_rx) = std::sync::mpsc::channel::<Job>();
@@ -1061,6 +1060,46 @@ fn transcribe_samples(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decode_results_become_runs_and_a_tail_for_the_open_utterance() {
+        use crate::transcription::common::testing::{builder, rows, seg};
+        let (builder, out) = builder("me");
+        let mut emitter = Emitter {
+            builder,
+            tail_for: None,
+        };
+        let interim = |id: u64, text: &str| JobResult::Interim {
+            id,
+            text: text.to_string(),
+        };
+        emitter.apply(interim(1, "hel"), Some((1, 200))).unwrap();
+        // Not the open utterance (its final is next in the queue): dropped.
+        emitter.apply(interim(2, "stale"), Some((1, 200))).unwrap();
+        emitter.apply(interim(1, "x"), None).unwrap();
+        let final_result = |id: u64, text: &str| JobResult::Final {
+            id,
+            start_ms: 200,
+            end_ms: 900,
+            text: text.to_string(),
+        };
+        emitter.apply(final_result(1, " hello"), None).unwrap();
+        emitter.apply(final_result(2, ""), None).unwrap();
+        assert_eq!(
+            rows(&out),
+            vec![
+                seg("me-tail", 0, "hel", false, 200, 200),
+                seg("me-0", 0, " hello", true, 200, 900),
+                seg("me-0", 0, " hello", true, 200, 900),
+                seg("me-tail", 0, "", false, 0, 0),
+            ]
+        );
+        let fatal = JobResult::Fatal("Local transcription model 'm' failed to load: x".into());
+        assert_eq!(
+            emitter.apply(fatal, None).unwrap_err().to_string(),
+            "Local transcription model 'm' failed to load: x"
+        );
+    }
 
     const SR: usize = TARGET_SAMPLE_RATE as usize;
 
