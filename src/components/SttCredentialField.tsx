@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ComponentType, ReactNode } from "react";
 import { PasswordInput } from "@/components/ui/password-input";
 import type { SttProviderInfo } from "../lib/transcription/registry";
 import type { Settings } from "../lib/types";
@@ -13,7 +13,8 @@ import type { Settings } from "../lib/types";
  *   account it runs on — there is no key field;
  * - `localModel` (on-device): `localModelPicker`, the model picker;
  * - `apiKey` (BYOK): the key input bound to the provider's settings field,
- *   optionally wrapped (Settings puts it under a labelled field).
+ *   optionally wrapped in `KeyInputWrapper` (Settings puts it under a
+ *   labelled field).
  */
 export function SttCredentialField({
   info,
@@ -21,7 +22,7 @@ export function SttCredentialField({
   patch,
   cloudSessionNote,
   localModelPicker,
-  wrapKeyInput,
+  KeyInputWrapper,
   keyInputClassName,
 }: Readonly<{
   info: SttProviderInfo;
@@ -29,7 +30,7 @@ export function SttCredentialField({
   patch: (p: Partial<Settings>) => void;
   cloudSessionNote: ReactNode;
   localModelPicker: ReactNode;
-  wrapKeyInput?: (input: ReactNode) => ReactNode;
+  KeyInputWrapper?: ComponentType<{ info: SttProviderInfo; children: ReactNode }>;
   keyInputClassName?: string;
 }>) {
   if (info.credential === "cloudSession") return <>{cloudSessionNote}</>;
@@ -45,5 +46,5 @@ export function SttCredentialField({
       onChange={(e) => patch({ [field]: e.target.value } as Partial<Settings>)}
     />
   );
-  return <>{wrapKeyInput ? wrapKeyInput(input) : input}</>;
+  return KeyInputWrapper ? <KeyInputWrapper info={info}>{input}</KeyInputWrapper> : input;
 }

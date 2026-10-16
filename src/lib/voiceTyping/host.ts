@@ -490,6 +490,41 @@ async function onTrayToggle() {
   down = busy; // clear if the start didn't actually take
 }
 
+/**
+ * A press during the previous dictation's settle window. Swallowing it (the
+ * old behavior) left the user talking into nothing — instead hand the pending
+ * dictation over now and fall through to a fresh session. Its delivery is
+ * queued, not awaited: the mic only opens after this, and a polish round trip
+ * in front of it would cost the start of the next utterance. Synchronous on
+ * purpose (see the start gate in startSession).
+ *
+ * A released session is not killed by the next start (Rust lets it finish its
+ * flush under its own id, which the new overlay ignores), so its delivery first
+ * waits for the recognizer's final answer, at most RESTART_DRAIN_MAX_MS; until
+ * then its segments keep landing in its own transcript. Aborting it used to
+ * lose whatever it had not flushed — the end of the previous dictation. The log
+ * records reason "restart".
+ */
+function handOffSettlingDictation() {
+  const settling = owner.session;
+  const stillFlushing = releasedAt > 0 && closedAt === 0 && !failed;
+  const d = settleNow("restart");
+  if (!d) return;
+  if (settling !== null && stillFlushing) d.drain = drains.add(settling, d.t);
+  // Never rejects: the delivery chain catches and logs its own failures.
+  enqueueDelivery(d);
+}
+
+/** The start gate refused: log why and show the code on the overlay, which
+ *  maps it to its message (lib/transcription/errors.ts). */
+async function reportStartRefused(code: string, localModel: string) {
+  if (code === "no-key") log.warn("voice-typing: no STT API key configured");
+  else log.warn("voice-typing: local model not ready", { model: localModel });
+  await showOverlay();
+  await emitEvent(VOICE_TYPING_SESSION_EVENT, { phase: "error", message: code });
+  scheduleHide();
+}
+
 async function startSession() {
   const pressed = Date.now();
   // The recognition bias below is read synchronously from the dictionary
@@ -502,26 +537,7 @@ async function startSession() {
   // overlay is about to be reused for this session, and a stale ⌥↩ must not
   // silently learn a correction the user has moved on from.
   cancelSuggestion();
-  if (busy) {
-    // A press during the previous dictation's settle window. Swallowing it
-    // (the old behavior) left the user talking into nothing — instead hand the
-    // pending dictation over now and fall through to a fresh session. Its
-    // delivery is queued, not awaited: the mic only opens below, and a polish
-    // round trip in front of it would cost the start of the next utterance.
-    // A released session is not killed by the next start (Rust lets it finish
-    // its flush under its own id, which the new overlay ignores), so its
-    // delivery first waits for the recognizer's final answer, at most
-    // RESTART_DRAIN_MAX_MS; until then its segments keep landing in its own
-    // transcript. Aborting it used to lose whatever it had not flushed — the
-    // end of the previous dictation. The log records reason "restart".
-    const settling = owner.session;
-    const stillFlushing = releasedAt > 0 && closedAt === 0 && !failed;
-    const d = settleNow("restart");
-    if (d) {
-      if (settling !== null && stillFlushing) d.drain = drains.add(settling, d.t);
-      void enqueueDelivery(d);
-    }
-  }
+  if (busy) handOffSettlingDictation();
   const { settings } = useStore.getState();
   if (!settings.voiceTypingEnabled) return;
   // The shared start gate. It answers synchronously unless an on-device model
@@ -531,12 +547,7 @@ async function startSession() {
   const gate = prepareTranscription("voiceTyping", settings);
   const prepared = gate instanceof Promise ? await gate : gate;
   if (!prepared.ok) {
-    if (prepared.code === "no-key") log.warn("voice-typing: no STT API key configured");
-    else log.warn("voice-typing: local model not ready", { model: settings.localSttModel });
-    // The overlay maps the code to its message (lib/transcription/errors.ts).
-    await showOverlay();
-    await emitEvent(VOICE_TYPING_SESSION_EVENT, { phase: "error", message: prepared.code });
-    scheduleHide();
+    await reportStartRefused(prepared.code, settings.localSttModel);
     return;
   }
   const { request } = prepared;

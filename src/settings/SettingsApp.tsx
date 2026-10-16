@@ -32,6 +32,7 @@ import { STT_PROVIDERS, STT_BY_ID, sttLabel } from "../lib/transcription/provide
 import { useLocalSttModels } from "../lib/transcription/useLocalSttModels";
 import { LocalSttModelPicker } from "../components/LocalSttModelPicker";
 import { SttCredentialField } from "../components/SttCredentialField";
+import type { SttProviderInfo } from "../lib/transcription/registry";
 import { Button } from "@/components/ui/button";
 import { CopyButton } from "@/components/CopyButton";
 import { Toaster } from "@/components/ui/sonner";
@@ -762,9 +763,7 @@ export function SettingsApp() {
                   />
                 </Field>
               }
-              wrapKeyInput={(input) => (
-                <Field label={t("settings.transcription.apiKey", { provider: sttInfo.label })}>{input}</Field>
-              )}
+              KeyInputWrapper={SttKeyInputField}
               keyInputClassName="max-w-sm"
             />
             {!sttInfo.diarization && (
@@ -1827,6 +1826,12 @@ function CopyRow({
       />
     </div>
   );
+}
+
+/** Settings › Transcription's labelled frame around a BYOK provider's key input. */
+function SttKeyInputField({ info, children }: Readonly<{ info: SttProviderInfo; children: React.ReactNode }>) {
+  const { t } = useI18n();
+  return <Field label={t("settings.transcription.apiKey", { provider: info.label })}>{children}</Field>;
 }
 
 function Field({ label, children }: Readonly<{ label: string; children: React.ReactNode }>) {

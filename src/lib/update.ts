@@ -101,7 +101,7 @@ async function runUpdate(): Promise<void> {
     // rather than let it surface the window at some unrelated later launch. A
     // failed relaunch() keeps it — the update is staged and the user reopens
     // by hand, which shows the window anyway.
-    if (!installed) void ipc.clearShowOnNextLaunch().catch(() => {});
+    if (!installed) ipc.clearShowOnNextLaunch().catch(() => {});
     // Install finished but the auto-relaunch failed (e.g. App Translocation) —
     // the new version IS staged, so tell the user to reopen rather than fail silently.
     log.warn("update: relaunch failed", { error: String(e) });
