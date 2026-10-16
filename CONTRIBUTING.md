@@ -53,6 +53,14 @@ On-device transcription (the "Local" provider) compiles [whisper.cpp](https://gi
 - **CMake** (3.5 or newer) on `PATH` — `brew install cmake` on macOS; on Windows, the CMake bundled with Visual Studio or `winget install Kitware.CMake`.
 - **libclang**, used by `bindgen` to generate the whisper.cpp bindings — Xcode's Command Line Tools provide it on macOS; on Windows install LLVM (`winget install LLVM.LLVM`) and, if it is not found automatically, set `LIBCLANG_PATH` to its `bin` directory.
 - **Windows only: the LunarG Vulkan SDK.** On Windows whisper.cpp is built with ggml's Vulkan backend (GPU decoding on NVIDIA, AMD and Intel GPUs). Install the SDK from <https://vulkan.lunarg.com/sdk/home#windows> (or `winget install KhronosGroup.VulkanSDK`) and open a new terminal: the build needs `VULKAN_SDK` set (whisper-rs-sys refuses to build without it) and `glslc` from `%VULKAN_SDK%\Bin`, which ggml uses to compile its shaders. CI pins the version in `.github/actions/setup-vulkan-sdk/action.yml`. macOS uses Metal and needs no SDK.
+- **Windows only: build whisper.cpp with Ninja, from a short path.** Under the default Visual Studio generator, ggml's nested `vulkan-shaders-gen` project writes files past Windows' 260-character path limit and fails with "No CMAKE_C_COMPILER could be found" ([ggml-org/whisper.cpp#3973](https://github.com/ggml-org/whisper.cpp/issues/3973)). Work from a **Developer PowerShell for VS** (so `cl.exe` is on `PATH`), install Ninja (`winget install Ninja-build.Ninja`), and set:
+
+  ```powershell
+  $env:CMAKE_GENERATOR = "Ninja"
+  $env:CARGO_BUILD_BUILD_DIR = "C:\b"   # any short directory
+  ```
+
+  CI does the same (`.github/workflows/ci.yml`, `rust-windows`). Run cargo from PowerShell rather than Git Bash: Git Bash's `/usr/bin/link` shadows MSVC's `link.exe`.
 
 The first build compiles whisper.cpp and takes a few extra minutes (on Windows longer: the Vulkan backend compiles a few hundred shaders); later builds reuse it. Release builds set `GGML_NATIVE=OFF` so the CPU code is not tuned to the build machine (a binary built with `-march=native` on a CI runner can crash on users' CPUs).
 
