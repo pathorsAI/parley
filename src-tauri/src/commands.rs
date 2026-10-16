@@ -208,17 +208,7 @@ fn check_meeting_start(
     has_relay: bool,
     model: Option<&str>,
 ) -> Result<(), String> {
-    // The on-device provider has no key (the frontend sends a placeholder).
-    if provider != SttProvider::Local && api_key.trim().is_empty() {
-        return Err("missing transcription API key".into());
-    }
-    // Hosted mode's api_key is the cloud session token, which only the relay
-    // accepts — streaming it straight to the vendor dies with an opaque
-    // in-band auth error. Refuse loudly instead (a call site that forgot
-    // relayUrl is a frontend bug).
-    if provider == SttProvider::Parley && !has_relay {
-        return Err("hosted transcription requires the cloud relay URL".into());
-    }
+    crate::transcription::check_live_start(provider, api_key, has_relay)?;
     // On-device: fail now, before the mic is claimed, when the model is not
     // downloaded — a session that cannot load it would only fail later.
     if provider == SttProvider::Local {

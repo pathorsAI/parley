@@ -286,15 +286,10 @@ pub async fn start_voice_typing(
     vocabulary: Option<Vec<String>>,
 ) -> Result<(), String> {
     let provider = SttProvider::from_id(&provider).map_err(|e| e.to_string())?;
-    // The on-device provider has no key (the frontend sends a placeholder).
-    if provider != SttProvider::Local && api_key.trim().is_empty() {
-        return Err("missing transcription API key".into());
-    }
     let relay_endpoint = relay_url.filter(|u| !u.trim().is_empty());
-    // Same guard as start_meeting: the hosted token only works via the relay.
-    if provider == SttProvider::Parley && relay_endpoint.is_none() {
-        return Err("hosted transcription requires the cloud relay URL".into());
-    }
+    // Same guards as start_meeting: a key unless on-device, and the hosted
+    // token only works via the relay.
+    crate::transcription::check_live_start(provider, &api_key, relay_endpoint.is_some())?;
     // Same guard as start_meeting: no dictation on a model that is not on disk.
     if provider == SttProvider::Local {
         crate::local_stt::ensure_installed(&app, model.as_deref().unwrap_or_default())?;

@@ -21,6 +21,10 @@ use crate::transcription::common::{clean_vocabulary, ensure_crypto_provider, url
 use crate::transcription::soniox::{context_for, SonioxContext};
 
 const SONIOX_BASE: &str = "https://api.soniox.com/v1";
+const DEEPGRAM_BASE: &str = "https://api.deepgram.com";
+const ASSEMBLYAI_BASE: &str = "https://api.assemblyai.com";
+const OPENAI_BASE: &str = "https://api.openai.com";
+const GEMINI_BASE: &str = "https://generativelanguage.googleapis.com";
 /// Async batch model (distinct from the realtime `stt-rt-v5`).
 const DEFAULT_ASYNC_MODEL: &str = "stt-async-v5";
 /// How long to wait between status polls.
@@ -28,10 +32,25 @@ const POLL_INTERVAL: Duration = Duration::from_millis(1500);
 /// Safety cap so a stuck job can't poll forever (~20 min at 1.5s/poll).
 const MAX_POLLS: u32 = 800;
 
+/// How a batch adapter polls a job: the production cadence is
+/// [`PollPolicy::DEFAULT`]; tests shorten it so a polled job settles at once.
+#[derive(Clone, Copy, Debug)]
+struct PollPolicy {
+    interval: Duration,
+    max_polls: u32,
+}
+
+impl PollPolicy {
+    const DEFAULT: Self = Self {
+        interval: POLL_INTERVAL,
+        max_polls: MAX_POLLS,
+    };
+}
+
 /// A finished, diarized transcript segment handed to the frontend. Serializes to
 /// camelCase so it matches the TS `TranscriptSegment` shape directly. Also
 /// Deserialize so it can be read back from the on-disk transcription cache.
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ReplaySegment {
     id: String,
@@ -58,7 +77,7 @@ struct CachedTranscription {
 /// Result of `transcribe_file` — segments plus the overall duration. `cached` is
 /// true when this came from the on-disk cache (no provider call, so the frontend
 /// must NOT record STT usage for it).
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptionResult {
     segments: Vec<ReplaySegment>,
@@ -174,16 +193,7 @@ pub async fn transcribe_file(
     // and flip its flag in the registry — only after a live smoke test.
     let provider = provider.trim().to_ascii_lowercase();
 
-    // On-device transcription needs no credential.
-    if provider != "local" && api_key.trim().is_empty() {
-        log::warn!("replay: missing api key provider={}", provider);
-        // Hosted mode's credential is the signed-in cloud session, not a pasted
-        // key, so this one message has to point at both doors.
-        return Err(
-            "Missing transcription credential — add the provider's API key in Settings, or sign in to Parley Cloud."
-                .to_string(),
-        );
-    }
+    check_batch_credential(&provider, &api_key)?;
 
     // Cache: an identical re-upload (same file name + byte size, same provider)
     // reuses the prior SUCCESSFUL transcription — no compression, no provider
@@ -269,20 +279,25 @@ pub async fn transcribe_file(
     // to Parley Cloud, which picks the model itself — hence no model is forwarded
     // there and the endpoint has to be handed in from the frontend.
     let result = match provider.as_str() {
-        "soniox" => run_upload_and_transcribe(
-            &app,
-            &client,
-            &api_key,
-            &upload_path,
-            model.as_deref().unwrap_or(DEFAULT_ASYNC_MODEL),
-            &language_hints,
-            diarization,
-            &vocabulary,
-        )
-        .await,
+        "soniox" => {
+            run_upload_and_transcribe(
+                &client,
+                SONIOX_BASE,
+                PollPolicy::DEFAULT,
+                &api_key,
+                &upload_path,
+                model.as_deref().unwrap_or(DEFAULT_ASYNC_MODEL),
+                &language_hints,
+                diarization,
+                &vocabulary,
+                |ctx| write_soniox_log(&app, ctx),
+            )
+            .await
+        }
         "deepgram" => {
             deepgram_batch(
                 &client,
+                DEEPGRAM_BASE,
                 &api_key,
                 &upload_path,
                 &language_hints,
@@ -294,6 +309,8 @@ pub async fn transcribe_file(
         "assemblyai" => {
             assemblyai_batch(
                 &client,
+                ASSEMBLYAI_BASE,
+                PollPolicy::DEFAULT,
                 &api_key,
                 &upload_path,
                 &language_hints,
@@ -305,6 +322,7 @@ pub async fn transcribe_file(
         "openai" => {
             openai_batch(
                 &client,
+                OPENAI_BASE,
                 &api_key,
                 &upload_path,
                 model.as_deref(),
@@ -316,6 +334,7 @@ pub async fn transcribe_file(
         "gemini" => {
             gemini_batch(
                 &client,
+                GEMINI_BASE,
                 &api_key,
                 &upload_path,
                 model.as_deref(),
@@ -324,10 +343,11 @@ pub async fn transcribe_file(
             )
             .await
         }
-        "parley" => match batch_url.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
-            Some(base) => {
+        "parley" => match hosted_batch_base(batch_url.as_deref()) {
+            Ok(base) => {
                 parley_batch(
                     &client,
+                    PollPolicy::DEFAULT,
                     &api_key,
                     base,
                     &upload_path,
@@ -339,18 +359,9 @@ pub async fn transcribe_file(
                 )
                 .await
             }
-            // Hosted mode's api_key is the cloud session token, which only the
-            // cloud accepts — sending it to a vendor would die with an opaque
-            // auth error. Refuse loudly instead (a call site that forgot
-            // batchUrl is a frontend bug), mirroring start_meeting's relay_url
-            // guard for the streaming path.
-            None => Err("hosted transcription requires the cloud batch URL".to_string()),
+            Err(e) => Err(e),
         },
-        // Only an unknown/misspelled provider id reaches here now — naming a
-        // specific replacement would go stale the way "switch to Soniox" did.
-        other => Err(format!(
-            "File transcription for '{other}' is not supported yet — switch to another transcription provider in Settings."
-        )),
+        other => Err(unsupported_batch_provider(other)),
     }
     .map(|mut r| {
         r.speech_rate_hz = speech_rate_hz;
@@ -367,6 +378,42 @@ pub async fn transcribe_file(
     }
 
     result
+}
+
+/// Refuse an upload that has no credential to send. `provider` is the
+/// normalized (trimmed, lowercase) id; on-device transcription needs none.
+fn check_batch_credential(provider: &str, api_key: &str) -> Result<(), String> {
+    if provider != "local" && api_key.trim().is_empty() {
+        log::warn!("replay: missing api key provider={}", provider);
+        // Hosted mode's credential is the signed-in cloud session, not a pasted
+        // key, so this one message has to point at both doors.
+        return Err(
+            "Missing transcription credential — add the provider's API key in Settings, or sign in to Parley Cloud."
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// The hosted batch endpoint, or the error for a call that forgot it. Hosted
+/// mode's api_key is the cloud session token, which only the cloud accepts —
+/// sending it to a vendor would die with an opaque auth error. Refuse loudly
+/// instead (a call site that forgot batchUrl is a frontend bug), mirroring
+/// start_meeting's relay_url guard for the streaming path.
+fn hosted_batch_base(batch_url: Option<&str>) -> Result<&str, String> {
+    batch_url
+        .map(str::trim)
+        .filter(|u| !u.is_empty())
+        .ok_or_else(|| "hosted transcription requires the cloud batch URL".to_string())
+}
+
+/// The error for a provider id without a batch adapter. Only an
+/// unknown/misspelled id gets here — naming a specific replacement would go
+/// stale the way "switch to Soniox" did.
+fn unsupported_batch_provider(provider: &str) -> String {
+    format!(
+        "File transcription for '{provider}' is not supported yet — switch to another transcription provider in Settings."
+    )
 }
 
 /// The provider part of an upload's cache key. Local results depend on which
@@ -444,6 +491,17 @@ fn cache_file_path(app: &AppHandle, path: &str, provider: &str) -> Option<std::p
         .file_name()?
         .to_string_lossy()
         .into_owned();
+    let dir = app
+        .path()
+        .app_cache_dir()
+        .ok()?
+        .join(crate::cache::TRANSCRIPTIONS_DIR);
+    Some(dir.join(cache_file_name(&name, size, provider)))
+}
+
+/// The cache file name for an upload named `name` of `size` bytes under the
+/// provider part of its key (see [`cache_key`]).
+fn cache_file_name(name: &str, size: u64, provider: &str) -> String {
     // Sanitize the name to a safe single filename component.
     let safe: String = name
         .chars()
@@ -455,19 +513,13 @@ fn cache_file_path(app: &AppHandle, path: &str, provider: &str) -> Option<std::p
             }
         })
         .collect();
-    let dir = app
-        .path()
-        .app_cache_dir()
-        .ok()?
-        .join(crate::cache::TRANSCRIPTIONS_DIR);
     // Soniox keeps its original (provider-less) filename so existing caches stay
     // valid; new providers get a suffixed key.
-    let file = if provider == "soniox" {
+    if provider == "soniox" {
         format!("{safe}-{size}.json")
     } else {
         format!("{safe}-{size}-{provider}.json")
-    };
-    Some(dir.join(file))
+    }
 }
 
 /// Read a cached transcription if present and parseable; otherwise `None`.
@@ -554,14 +606,16 @@ async fn measure_speech_rate_blocking(path: String) -> f32 {
 /// the caller can guarantee temp-file cleanup regardless of outcome.
 #[allow(clippy::too_many_arguments)]
 async fn run_upload_and_transcribe(
-    app: &AppHandle,
     client: &reqwest::Client,
+    base: &str,
+    poll: PollPolicy,
     api_key: &str,
     upload_path: &str,
     model: &str,
     language_hints: &[String],
     diarization: bool,
     vocabulary: &[String],
+    write_log: impl FnOnce(SonioxLogContext),
 ) -> Result<TranscriptionResult, String> {
     // 1. Upload the file → file id.
     let bytes = tokio::fs::read(upload_path)
@@ -582,7 +636,7 @@ async fn run_upload_and_transcribe(
     let form = reqwest::multipart::Form::new().part("file", part);
 
     let upload_resp = client
-        .post(format!("{SONIOX_BASE}/files"))
+        .post(format!("{base}/files"))
         .bearer_auth(api_key)
         .multipart(form)
         .send()
@@ -608,7 +662,7 @@ async fn run_upload_and_transcribe(
         context: context_for(vocabulary),
     };
     let create_resp = client
-        .post(format!("{SONIOX_BASE}/transcriptions"))
+        .post(format!("{base}/transcriptions"))
         .bearer_auth(api_key)
         .json(&create_body)
         .send()
@@ -624,7 +678,7 @@ async fn run_upload_and_transcribe(
     );
 
     // 3. Poll until completed or error.
-    let audio_duration_ms = loop_poll(client, api_key, &transcription_id).await?;
+    let audio_duration_ms = loop_poll(client, base, poll, api_key, &transcription_id).await?;
 
     // 4. Fetch the transcript tokens. We capture the RAW response body text (not
     // just the parsed struct) so we can write it verbatim to a diagnostic log
@@ -632,7 +686,7 @@ async fn run_upload_and_transcribe(
     // speaker labels, distinct speaker count, …) when diarization looks wrong.
     let transcript_resp = client
         .get(format!(
-            "{SONIOX_BASE}/transcriptions/{transcription_id}/transcript"
+            "{base}/transcriptions/{transcription_id}/transcript"
         ))
         .bearer_auth(api_key)
         .send()
@@ -664,29 +718,26 @@ async fn run_upload_and_transcribe(
 
     // Persist a reviewable log of the raw Soniox response + request context.
     // Best-effort: never let a logging failure abort the transcription.
-    write_soniox_log(
-        app,
-        SonioxLogContext {
-            model,
-            enable_speaker_diarization: diarization,
-            language_hints,
-            file_name: &file_name,
-            audio_duration_ms,
-            token_count,
-            tokens_with_speaker,
-            distinct_speakers: &distinct_speakers,
-            raw_transcript: &raw_transcript,
-        },
-    );
+    write_log(SonioxLogContext {
+        model,
+        enable_speaker_diarization: diarization,
+        language_hints,
+        file_name: &file_name,
+        audio_duration_ms,
+        token_count,
+        tokens_with_speaker,
+        distinct_speakers: &distinct_speakers,
+        raw_transcript: &raw_transcript,
+    });
 
     // 5. Best-effort cleanup of the uploaded file + transcription on Soniox.
     let _ = client
-        .delete(format!("{SONIOX_BASE}/transcriptions/{transcription_id}"))
+        .delete(format!("{base}/transcriptions/{transcription_id}"))
         .bearer_auth(api_key)
         .send()
         .await;
     let _ = client
-        .delete(format!("{SONIOX_BASE}/files/{file_id}"))
+        .delete(format!("{base}/files/{file_id}"))
         .bearer_auth(api_key)
         .send()
         .await;
@@ -714,14 +765,16 @@ async fn run_upload_and_transcribe(
 /// duration) or errors. Surfaces a timeout if it never settles.
 async fn loop_poll(
     client: &reqwest::Client,
+    base: &str,
+    policy: PollPolicy,
     api_key: &str,
     transcription_id: &str,
 ) -> Result<u64, String> {
-    for poll in 1..=MAX_POLLS {
-        tokio::time::sleep(POLL_INTERVAL).await;
+    for poll in 1..=policy.max_polls {
+        tokio::time::sleep(policy.interval).await;
 
         let status_resp = client
-            .get(format!("{SONIOX_BASE}/transcriptions/{transcription_id}"))
+            .get(format!("{base}/transcriptions/{transcription_id}"))
             .bearer_auth(api_key)
             .send()
             .await
@@ -749,7 +802,10 @@ async fn loop_poll(
             _ => continue,
         }
     }
-    log::error!("replay: transcription timed out maxPolls={}", MAX_POLLS);
+    log::error!(
+        "replay: transcription timed out maxPolls={}",
+        policy.max_polls
+    );
     Err("Transcription timed out".to_string())
 }
 
@@ -974,6 +1030,7 @@ struct DgWord {
 /// group the returned diarized word stream. Shape verified vs docs, not live-tested.
 async fn deepgram_batch(
     client: &reqwest::Client,
+    base: &str,
     api_key: &str,
     upload_path: &str,
     language_hints: &[String],
@@ -985,7 +1042,7 @@ async fn deepgram_batch(
         .map_err(|e| format!("Failed to read file: {e}"))?;
     const BATCH_MODEL: &str = "nova-3";
     let mut url = format!(
-        "https://api.deepgram.com/v1/listen?model={BATCH_MODEL}&smart_format=true&punctuate=true&diarize={diarization}"
+        "{base}/v1/listen?model={BATCH_MODEL}&smart_format=true&punctuate=true&diarize={diarization}"
     );
     // One language hint pins the language; otherwise let Deepgram auto-detect.
     match language_hints.first() {
@@ -1081,8 +1138,11 @@ fn assemblyai_speaker_index(s: &str) -> i64 {
 /// AssemblyAI batch: upload the bytes, create a transcript job (optionally with
 /// speaker labels), poll to completion, then map utterances to speaker-runs.
 /// Shape verified vs docs, not live-tested.
+#[allow(clippy::too_many_arguments)]
 async fn assemblyai_batch(
     client: &reqwest::Client,
+    base: &str,
+    poll: PollPolicy,
     api_key: &str,
     upload_path: &str,
     language_hints: &[String],
@@ -1094,7 +1154,7 @@ async fn assemblyai_batch(
         .map_err(|e| format!("Failed to read file: {e}"))?;
     // 1. Upload the raw bytes → a temporary upload_url.
     let up_resp = client
-        .post("https://api.assemblyai.com/v2/upload")
+        .post(format!("{base}/v2/upload"))
         .header("authorization", api_key)
         .header("content-type", "application/octet-stream")
         .body(bytes)
@@ -1132,7 +1192,7 @@ async fn assemblyai_batch(
         );
     }
     let create_resp = client
-        .post("https://api.assemblyai.com/v2/transcript")
+        .post(format!("{base}/v2/transcript"))
         .header("authorization", api_key)
         .json(&serde_json::Value::Object(body))
         .send()
@@ -1147,10 +1207,10 @@ async fn assemblyai_batch(
     // 3. Poll until completed or error.
     let final_t: AaiTranscript = {
         let mut done: Option<AaiTranscript> = None;
-        for _ in 0..MAX_POLLS {
-            tokio::time::sleep(POLL_INTERVAL).await;
+        for _ in 0..poll.max_polls {
+            tokio::time::sleep(poll.interval).await;
             let poll_resp = client
-                .get(format!("https://api.assemblyai.com/v2/transcript/{id}"))
+                .get(format!("{base}/v2/transcript/{id}"))
                 .header("authorization", api_key)
                 .send()
                 .await
@@ -1241,6 +1301,7 @@ struct OaiSegment {
 /// speaker. 25 MB request limit (compression helps). Shape verified vs docs.
 async fn openai_batch(
     client: &reqwest::Client,
+    base: &str,
     api_key: &str,
     upload_path: &str,
     model: Option<&str>,
@@ -1276,7 +1337,7 @@ async fn openai_batch(
         form = form.text("prompt", terms.join(", "));
     }
     let resp = client
-        .post("https://api.openai.com/v1/audio/transcriptions")
+        .post(format!("{base}/v1/audio/transcriptions"))
         .bearer_auth(api_key)
         .multipart(form)
         .send()
@@ -1343,6 +1404,7 @@ struct GemPart {
 /// (its length is measured by decoding). NEEDS LIVE SMOKE TEST.
 async fn gemini_batch(
     client: &reqwest::Client,
+    base: &str,
     api_key: &str,
     upload_path: &str,
     model: Option<&str>,
@@ -1355,9 +1417,7 @@ async fn gemini_batch(
         .map_err(|e| format!("Failed to read file: {e}"))?;
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
     let model = model.unwrap_or("gemini-2.5-flash");
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-    );
+    let url = format!("{base}/v1beta/models/{model}:generateContent?key={api_key}");
     // Gemini has no custom-vocabulary field; the transcription is driven by a
     // prompt, so the phrase dictionary becomes one more line of that prompt.
     let mut prompt = "Transcribe this audio verbatim. Output only the transcript text, with no commentary, labels, or timestamps.".to_string();
@@ -1511,6 +1571,7 @@ fn cloud_upload_url(base: &str, opts: &BatchOptions) -> String {
 /// `base` is `${CLOUD_URL}/stt/batch`.
 async fn parley_batch(
     client: &reqwest::Client,
+    poll: PollPolicy,
     token: &str,
     base: &str,
     upload_path: &str,
@@ -1549,8 +1610,8 @@ async fn parley_batch(
     // the cloud normalizes job states into the four below, so a status we don't
     // recognize is treated as "still working" rather than a hard failure.
     let mut reported_duration_ms: Option<u64> = None;
-    for poll in 1..=MAX_POLLS {
-        tokio::time::sleep(POLL_INTERVAL).await;
+    for attempt in 1..=poll.max_polls {
+        tokio::time::sleep(poll.interval).await;
         let status_resp = client
             .get(format!("{base}/{job_id}"))
             .bearer_auth(token)
@@ -1564,7 +1625,7 @@ async fn parley_batch(
                 log::info!(
                     "replay: parley cloud job completed durationMs={} polls={}",
                     duration_ms,
-                    poll
+                    attempt
                 );
                 reported_duration_ms = Some(duration_ms);
                 break;
@@ -1579,7 +1640,10 @@ async fn parley_batch(
         }
     }
     let Some(audio_duration_ms) = reported_duration_ms else {
-        log::error!("replay: parley cloud job timed out maxPolls={}", MAX_POLLS);
+        log::error!(
+            "replay: parley cloud job timed out maxPolls={}",
+            poll.max_polls
+        );
         return Err("Transcription timed out".to_string());
     };
 
@@ -1784,6 +1848,10 @@ fn try_write_soniox_log(app: &AppHandle, ctx: &SonioxLogContext) -> Result<(), S
     log::info!("replay: saved soniox log path={}", path.to_string_lossy());
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "replay_batch_tests.rs"]
+mod batch_tests;
 
 #[cfg(test)]
 mod tests {

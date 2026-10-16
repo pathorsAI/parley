@@ -15,6 +15,8 @@ mod permissions;
 mod playback;
 mod replay;
 mod replay_audio;
+#[cfg(test)]
+mod test_http;
 mod transcription;
 mod tray;
 mod usage;
