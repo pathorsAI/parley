@@ -22,10 +22,12 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::audio::microphone::Microphone;
-use crate::capture::{run_metered_session, spawn_capture, Begin, MicCoordinator, MicTap, MicUser};
+use crate::capture::{
+    run_metered_session, spawn_capture, Begin, MeteredSession, MicCoordinator, MicTap, MicUser,
+};
 use crate::commands::{read_config_file, write_config_file};
 use crate::transcription::common::VOICE_TYPING_SOURCE;
-use crate::transcription::{Credential, SttProvider, TranscribeConfig};
+use crate::transcription::{Entry, SessionRequest, SttProvider, TranscribeConfig};
 
 mod clipboard;
 pub use self::clipboard::ClipboardState;
@@ -287,13 +289,17 @@ pub async fn start_voice_typing(
 ) -> Result<(), String> {
     let provider = SttProvider::from_id(&provider).map_err(|e| e.to_string())?;
     let relay_endpoint = relay_url.filter(|u| !u.trim().is_empty());
-    // Same guards as start_meeting: a key unless on-device, and the hosted
-    // token only works via the relay.
-    crate::transcription::check_live_start(provider, &api_key, relay_endpoint.is_some())?;
-    // Same guard as start_meeting: no dictation on a model that is not on disk.
-    if provider.credential() == Credential::LocalModel {
-        crate::local_stt::ensure_installed(&app, model.as_deref().unwrap_or_default())?;
-    }
+    // The same checks as start_meeting: a key unless on-device, the relay for
+    // the hosted token, and no dictation on a model that is not on disk.
+    SessionRequest::new(
+        Some(provider),
+        &api_key,
+        relay_endpoint.as_deref(),
+        model.as_deref(),
+    )
+    .validate(Entry::Live, |model| {
+        crate::local_stt::ensure_installed(&app, model)
+    })?;
     // A press must always yield a FRESH session. Release any voice-typing mic
     // claim left by a desynced frontend (no-op when idle).
     coord.stop(MicUser::VoiceTyping);
@@ -345,21 +351,24 @@ pub async fn start_voice_typing(
     let cutoff = Arc::new(AtomicBool::new(false));
     let task = run_metered_session(
         &app,
-        provider,
-        config,
-        VOICE_TYPING_SOURCE,
         rx,
-        None,
-        "voicetyping://error",
-        None,
-        Some(cutoff.clone()),
-        // Dictation is not pausable — and must keep working even while a live
-        // meeting (whose mic it taps) is paused.
-        None,
-        Some(session),
-        // Single-shot: a dropped connection ends the dictation with an error
-        // the overlay shows, rather than redialling under someone waiting.
-        false,
+        MeteredSession {
+            provider,
+            config,
+            label: VOICE_TYPING_SOURCE,
+            recorder: None,
+            error_event: "voicetyping://error",
+            error_mute: None,
+            cutoff: Some(cutoff.clone()),
+            // Dictation is not pausable — and must keep working even while a
+            // live meeting (whose mic it taps) is paused.
+            paused: None,
+            session: Some(session),
+            // Single-shot: a dropped connection ends the dictation with an
+            // error the overlay shows, rather than redialling under someone
+            // waiting.
+            reconnect: false,
+        },
     );
     state.adopt(session, task, cutoff, mic_gate);
     // The Windows tray's voice-typing item now reads "Stop" (no-op elsewhere).

@@ -22,7 +22,8 @@ use crate::transcription::batch::{
     read_upload, BatchFn, BatchRequest, PollPolicy, ReplaySegment, ResponseLog, TranscriptionResult,
 };
 use crate::transcription::common::ensure_crypto_provider;
-use crate::transcription::provider::{self, Batch, Credential, ProviderSpec};
+use crate::transcription::provider::{self, Batch, Credential};
+use crate::transcription::{Entry, SessionRequest, SttProvider};
 
 /// Cache payload persisted per uploaded file (keyed by name+size). Holds the
 /// successful transcription so an identical re-upload skips the provider (and billing).
@@ -39,9 +40,10 @@ struct CachedTranscription {
 
 /// What the frontend asked to transcribe, as the dispatch below needs it.
 struct Upload<'a> {
-    /// The normalized (trimmed, lowercase) provider id.
-    provider: &'a str,
-    spec: Option<&'static ProviderSpec>,
+    /// The normalized (trimmed, lowercase) provider id, and its registry row
+    /// when it has one.
+    id: &'a str,
+    provider: Option<SttProvider>,
     path: &'a str,
     credential: &'a str,
     model: Option<&'a str>,
@@ -85,10 +87,9 @@ pub async fn transcribe_file(
     // (transcription/providers.ts); the backend is the source of truth, so an
     // unknown/unimplemented provider is rejected at dispatch.
     let provider = provider.trim().to_ascii_lowercase();
-    check_batch_credential(&provider, &api_key)?;
     let upload = Upload {
-        provider: &provider,
-        spec: provider::spec(&provider),
+        id: &provider,
+        provider: SttProvider::from_id(&provider).ok(),
         path: &path,
         credential: &api_key,
         model: model.as_deref(),
@@ -97,6 +98,15 @@ pub async fn transcribe_file(
         batch_url: batch_url.as_deref(),
         vocabulary: &vocabulary,
     };
+    // The start checks are the live ones, run where each one used to happen
+    // on this path: the credential first, the on-device model after the
+    // cache (a cached result needs no model), the cloud URL at dispatch.
+    upload
+        .request()
+        .check_credential(Entry::Upload)
+        .inspect_err(|_| {
+            log::warn!("replay: missing api key provider={}", provider);
+        })?;
 
     // Cache: an identical re-upload (same file name + byte size, same provider)
     // reuses the prior SUCCESSFUL transcription — no compression, no provider
@@ -108,7 +118,7 @@ pub async fn transcribe_file(
         return Ok(cached);
     }
 
-    let batch = upload.spec.and_then(|s| s.batch.as_ref());
+    let batch = upload.provider.and_then(|p| p.spec().batch.as_ref());
     // On-device: no upload, so no compression either — decode the original
     // file directly. Checked before any work so a missing model fails fast.
     if let Some(Batch::OnDevice) = batch {
@@ -127,32 +137,27 @@ pub async fn transcribe_file(
     result
 }
 
-/// Refuse an upload that has no credential to send. `provider` is the
-/// normalized (trimmed, lowercase) id; on-device transcription needs none.
-fn check_batch_credential(provider: &str, api_key: &str) -> Result<(), String> {
-    let needs_key = provider::spec(provider).is_none_or(|s| s.credential.needs_key());
-    if needs_key && api_key.trim().is_empty() {
-        log::warn!("replay: missing api key provider={}", provider);
-        // Hosted mode's credential is the signed-in cloud session, not a pasted
-        // key, so this one message has to point at both doors.
-        return Err(
-            "Missing transcription credential — add the provider's API key in Settings, or sign in to Parley Cloud."
-                .to_string(),
-        );
+impl Upload<'_> {
+    /// The upload as the shared start checks see it (the batch URL trimmed).
+    fn request(&self) -> SessionRequest<'_> {
+        SessionRequest::new(
+            self.provider,
+            self.credential,
+            self.batch_url.map(str::trim),
+            self.model,
+        )
     }
-    Ok(())
 }
 
-/// The hosted batch endpoint, or the error for a call that forgot it. Hosted
-/// mode's api_key is the cloud session token, which only the cloud accepts —
-/// sending it to a vendor would die with an opaque auth error. Refuse loudly
-/// instead (a call site that forgot batchUrl is a frontend bug), mirroring
-/// start_meeting's relay_url guard for the streaming path.
-fn hosted_batch_base(batch_url: Option<&str>) -> Result<&str, String> {
-    batch_url
-        .map(str::trim)
-        .filter(|u| !u.is_empty())
-        .ok_or_else(|| "hosted transcription requires the cloud batch URL".to_string())
+/// The endpoint a batch adapter is handed: the cloud batch URL for a hosted
+/// upload (refused when missing), `None` for a vendor the adapter addresses
+/// itself.
+fn batch_endpoint<'a>(request: &SessionRequest<'a>) -> Result<Option<&'a str>, String> {
+    request.check_endpoint(Entry::Upload)?;
+    Ok(match request.credential {
+        Credential::CloudSession => request.endpoint,
+        _ => None,
+    })
 }
 
 /// The error for a provider id without a batch adapter. Only an
@@ -193,7 +198,7 @@ async fn transcribe_upload(
     // provider-independent.
     let result = match adapter {
         Some(adapter) => run_adapter(app, upload, adapter, &upload_path).await,
-        None => Err(unsupported_batch_provider(upload.provider)),
+        None => Err(unsupported_batch_provider(upload.id)),
     }
     .map(|mut r| {
         r.speech_rate_hz = speech_rate_hz;
@@ -215,14 +220,7 @@ async fn run_adapter(
     adapter: BatchFn,
     upload_path: &str,
 ) -> Result<TranscriptionResult, String> {
-    let hosted = upload
-        .spec
-        .is_some_and(|s| s.credential == Credential::CloudSession);
-    let endpoint = if hosted {
-        Some(hosted_batch_base(upload.batch_url)?)
-    } else {
-        None
-    };
+    let endpoint = batch_endpoint(&upload.request())?;
     let audio = read_upload(upload_path).await?;
     let client = reqwest::Client::new();
     adapter(BatchRequest {
@@ -281,8 +279,10 @@ async fn local_transcribe(
     upload: &Upload<'_>,
     cache_path: Option<std::path::PathBuf>,
 ) -> Result<TranscriptionResult, String> {
+    upload
+        .request()
+        .check_model(|model| crate::local_stt::ensure_installed(app, model))?;
     let model = upload.model.unwrap_or_default().to_string();
-    crate::local_stt::ensure_installed(app, &model)?;
     let app_for_task = app.clone();
     let audio_path = std::path::PathBuf::from(upload.path);
     let hints = upload.language_hints.to_vec();
@@ -516,6 +516,20 @@ fn write_response_log(
 mod tests {
     use super::*;
 
+    fn upload<'a>(id: &'a str, key: &'a str, batch_url: Option<&'a str>) -> Upload<'a> {
+        Upload {
+            id,
+            provider: SttProvider::from_id(id).ok(),
+            path: "rec.ogg",
+            credential: key,
+            model: None,
+            language_hints: &[],
+            diarization: true,
+            batch_url,
+            vocabulary: &[],
+        }
+    }
+
     #[test]
     fn an_upload_without_a_credential_is_refused_unless_on_device() {
         let missing = "Missing transcription credential — add the provider's API key in Settings, or sign in to Parley Cloud.";
@@ -528,25 +542,37 @@ mod tests {
             "parley",
             "nope",
         ] {
-            assert_eq!(
-                check_batch_credential(provider, " "),
-                Err(missing.to_string()),
-                "{provider}"
-            );
-            assert_eq!(check_batch_credential(provider, "k"), Ok(()));
+            let check = |key| {
+                upload(provider, key, None)
+                    .request()
+                    .check_credential(Entry::Upload)
+            };
+            assert_eq!(check(" "), Err(missing.to_string()), "{provider}");
+            assert_eq!(check("k"), Ok(()));
         }
-        assert_eq!(check_batch_credential("local", ""), Ok(()));
+        assert_eq!(
+            upload("local", "", None)
+                .request()
+                .check_credential(Entry::Upload),
+            Ok(())
+        );
     }
 
     #[test]
     fn hosted_uploads_need_the_batch_url() {
         let missing = Err("hosted transcription requires the cloud batch URL".to_string());
-        assert_eq!(hosted_batch_base(None), missing);
-        assert_eq!(hosted_batch_base(Some("  ")), missing);
+        let endpoint = |id, url| {
+            batch_endpoint(&upload(id, "k", url).request()).map(|e| e.map(str::to_string))
+        };
+        assert_eq!(endpoint("parley", None), missing);
+        assert_eq!(endpoint("parley", Some("  ")), missing);
         assert_eq!(
-            hosted_batch_base(Some(" https://x/stt/batch ")),
-            Ok("https://x/stt/batch")
+            endpoint("parley", Some(" https://x/stt/batch ")),
+            Ok(Some("https://x/stt/batch".to_string()))
         );
+        // A vendor's adapter addresses the vendor itself.
+        assert_eq!(endpoint("deepgram", Some("https://x")), Ok(None));
+        assert_eq!(endpoint("nope", None), Ok(None));
         assert_eq!(
             unsupported_batch_provider("whisperx"),
             "File transcription for 'whisperx' is not supported yet — switch to another transcription provider in Settings."

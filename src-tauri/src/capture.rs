@@ -417,153 +417,88 @@ impl<S: Fn() -> u64, F: FnOnce(u64)> Drop for UsageReport<S, F> {
     }
 }
 
+/// One metered transcription session's wiring (see [`run_metered_session`]).
+pub struct MeteredSession {
+    pub provider: SttProvider,
+    pub config: TranscribeConfig,
+    /// The session's source label ("mix", "me", "them", "voice-typing"),
+    /// stamped on its events and its usage line.
+    pub label: &'static str,
+    /// When `Some`, every chunk is also appended to it so the meeting can be
+    /// saved to history (only the designated session passes a recorder).
+    pub recorder: Option<RecorderBuf>,
+    /// The event a failed session raises, payload `{ source, code, message }`:
+    /// meetings pass `meeting://error` (the meeting UI tears down on it),
+    /// voice typing passes `voicetyping://error` (the host forwards it to the
+    /// overlay's error state).
+    pub error_event: &'static str,
+    /// Session tasks outlive `stop_meeting` by up to the flush/abort grace,
+    /// and the meeting UI tears down on `meeting://error` unconditionally — so
+    /// a failure inside that window (it belongs to a meeting the user already
+    /// ended) would kill the NEXT meeting the user just started, or toast a
+    /// spurious failure for one that completed fine. `stop_meeting` sets the
+    /// flag when it releases its tasks; a muted failure is logged only (and a
+    /// muted reconnecting session stops redialling). Voice typing passes
+    /// `None` — its stale-error guards are abort-on-restart plus the host-side
+    /// busy/generation checks.
+    pub error_mute: Option<Arc<AtomicBool>>,
+    /// Voice typing sets this on release (see `stop_voice_typing`) to HARD CUT
+    /// the audio `RELEASE_TAIL` after the key is let go (at once on the cap) —
+    /// the counter stops forwarding (and billing) new chunks and drops its
+    /// sender, closing the STT input NOW so only what was said up to the
+    /// release, plus the short tail that lets the recognizer close the last
+    /// word, is transcribed and flushed. Meetings pass `None` (they stop by
+    /// dropping the mic sender via the gate).
+    pub cutoff: Option<Arc<AtomicBool>>,
+    /// The meeting's pause switch (see `set_meeting_paused`). While set,
+    /// chunks are DROPPED here — not counted (billed), not recorded, not
+    /// forwarded to the STT adapter. The socket survives on the adapters'
+    /// audio-independent keepalives, and since providers timestamp by
+    /// received-audio time, the transcript timeline stays aligned with the
+    /// pause-compacted recording. Voice typing passes `None`.
+    pub paused: Option<Arc<AtomicBool>>,
+    /// The voice-typing session id, stamped on every event the task emits
+    /// (see `transcription::common::SESSION`). Meetings pass `None`.
+    pub session: Option<u64>,
+    /// Meetings pass `true`. The meter then feeds an [`SttBridge`] instead of
+    /// the adapter directly, so the capture and the recording keep running no
+    /// matter what happens to transcription, and the session runs as a chain
+    /// of legs (see `run_legs`): a connection failure ("connect") no longer
+    /// raises `error_event` at all — the session holds the audio, emits
+    /// `meeting://transcription` `{ source, state: "reconnecting", attempt }`,
+    /// backs off along [`ReconnectPolicy::MEETING`] and redials, and the new
+    /// leg announces `{ source, state: "live", leg }` once its handshake
+    /// completes. Only a failure a redial cannot fix (`quota` / `auth` /
+    /// `key`) still raises `error_event`, and it ends transcription without
+    /// ending the recording. Voice typing passes `false` and keeps the
+    /// single-shot behaviour: one session, and any failure raises
+    /// `error_event`.
+    pub reconnect: bool,
+}
+
 /// Run a transcription session over `rx`, counting the audio streamed so the
 /// frontend can bill it. Emits a `usage://stt` event when the session ends.
-/// When `recorder` is `Some`, every chunk is also appended to it so the meeting
-/// can be saved to history (only the designated session passes a recorder).
-/// `error_event` is the event a failed session raises, payload
-/// `{ source, code, message }`: meetings pass `meeting://error` (the meeting UI
-/// tears down on it), voice typing passes `voicetyping://error` (the host
-/// forwards it to the overlay's error state).
-///
-/// `reconnect`: meetings pass `true`. The meter then feeds an [`SttBridge`]
-/// instead of the adapter directly, so the capture and the recording keep
-/// running no matter what happens to transcription, and the session runs as
-/// a chain of legs (see `run_legs`): a connection failure ("connect") no
-/// longer raises `error_event` at all — the session holds the audio, emits
-/// `meeting://transcription` `{ source, state: "reconnecting", attempt }`,
-/// backs off along [`ReconnectPolicy::MEETING`] and redials, and the new leg
-/// announces `{ source, state: "live", leg }` once its handshake completes.
-/// Only a failure a redial cannot fix (`quota` / `auth` / `key`) still raises
-/// `error_event`, and it ends transcription without ending the recording.
-/// Voice typing passes `false` and keeps the single-shot behaviour: one
-/// session, and any failure raises `error_event`.
-///
-/// `error_mute`: session tasks outlive `stop_meeting` by up to the flush/abort
-/// grace, and the meeting UI tears down on `meeting://error` unconditionally —
-/// so a failure inside that window (it belongs to a meeting the user already
-/// ended) would kill the NEXT meeting the user just started, or toast a
-/// spurious failure for one that completed fine. `stop_meeting` sets the flag
-/// when it releases its tasks; a muted failure is logged only (and a muted
-/// reconnecting session stops redialling). Voice typing passes `None` — its
-/// stale-error guards are abort-on-restart plus the host-side busy/generation
-/// checks.
-///
-/// `cutoff`: voice typing sets this on release (see `stop_voice_typing`) to HARD
-/// CUT the audio `RELEASE_TAIL` after the key is let go (at once on the cap) —
-/// the counter stops forwarding (and billing) new chunks and drops its sender,
-/// closing the STT input NOW so only what was said up to the release, plus the
-/// short tail that lets the recognizer close the last word, is transcribed and
-/// flushed. Meetings pass `None` (they stop by dropping the mic sender via the
-/// gate).
-///
-/// `paused`: the meeting's pause switch (see `set_meeting_paused`). While set,
-/// chunks are DROPPED here — not counted (billed), not recorded, not forwarded
-/// to the STT adapter. The socket survives on the adapters' audio-independent
-/// keepalives, and since providers timestamp by received-audio time, the
-/// transcript timeline stays aligned with the pause-compacted recording.
-/// Voice typing passes `None`.
-///
-/// `session`: the voice-typing session id, stamped on every event the task
-/// emits (see `transcription::common::SESSION`). Meetings pass `None`.
+/// See [`MeteredSession`] for what each part of the wiring means.
 ///
 /// Either way the task ends with `usage://stt` (the audio actually handed to
 /// the provider — for a reconnecting session, every leg's share, excluding
 /// held audio that overflowed or was never delivered) and `stt://closed`.
-#[allow(clippy::too_many_arguments)]
 pub fn run_metered_session(
     app: &AppHandle,
-    provider: SttProvider,
-    config: TranscribeConfig,
-    label: &'static str,
     rx: UnboundedReceiver<Vec<i16>>,
-    recorder: Option<RecorderBuf>,
-    error_event: &'static str,
-    error_mute: Option<Arc<AtomicBool>>,
-    cutoff: Option<Arc<AtomicBool>>,
-    paused: Option<Arc<AtomicBool>>,
-    session: Option<u64>,
-    reconnect: bool,
+    params: MeteredSession,
 ) -> tauri::async_runtime::JoinHandle<()> {
     let app = app.clone();
+    let session = params.session;
     tauri::async_runtime::spawn(transcription::common::SESSION.scope(session, async move {
         // Voice typing only: however this task ends, Esc must not stay
         // claimed for it (see `voice_typing::SessionEndGuard`).
         let _esc_backstop = session.map(|s| crate::voice_typing::SessionEndGuard::new(&app, s));
-        let failure = Failure {
-            app: &app,
-            label,
-            error_event,
-            error_mute: error_mute.as_ref(),
-            session,
-            // Hosted mode and BYOK fail for different reasons and need
-            // different guidance, so classify against the mode (captured
-            // before `config` is moved into the session).
-            hosted: config.relay_endpoint.is_some(),
-        };
-        // Bills the audio duration actually streamed — also when this task is
-        // aborted (the report goes out as it is dropped; see UsageReport).
-        let emit_usage = {
-            let app = app.clone();
-            move |samples: u64| {
-                let seconds = samples as f64 / crate::audio::TARGET_SAMPLE_RATE as f64;
-                let _ = app.emit(
-                    "usage://stt",
-                    serde_json::json!({
-                        "provider": provider.id(),
-                        "source": label,
-                        "seconds": seconds,
-                    }),
-                );
-            }
-        };
-        let streamed = Arc::new(AtomicU64::new(0));
-        if reconnect {
-            // The meter feeds the bridge; the legs come and go behind it. Bill
-            // what the bridge actually handed to a leg.
-            let bridge = Arc::new(SttBridge::default());
-            let mut usage = UsageReport::new(
-                {
-                    let bridge = bridge.clone();
-                    move || bridge.delivered_samples()
-                },
-                emit_usage,
-            );
-            let sink = BridgeSink {
-                bridge: bridge.clone(),
-                level: Some(LevelMeter::new(app.clone(), label, LEVEL_EVENT)),
-            };
-            let counter = tauri::async_runtime::spawn(meter_chunks(
-                rx, sink, recorder, cutoff, paused, streamed,
-            ));
-            run_legs(&app, provider, config, label, &bridge, &failure).await;
-            // The count is final once the meter has returned.
-            let _ = counter.await;
-            usage.send();
+        let label = params.label;
+        if params.reconnect {
+            run_reconnecting(&app, rx, params).await;
         } else {
-            // Interpose a sample counter between capture and the STT adapter:
-            // it forwards every chunk untouched and counts it as it goes.
-            let mut usage = UsageReport::new(
-                {
-                    let streamed = streamed.clone();
-                    move || streamed.load(Ordering::SeqCst)
-                },
-                emit_usage,
-            );
-            let (count_tx, count_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
-            let counter = tauri::async_runtime::spawn(meter_chunks(
-                rx, count_tx, recorder, cutoff, paused, streamed,
-            ));
-            if let Err(e) =
-                transcription::run_session(provider, app.clone(), config, label, count_rx).await
-            {
-                let msg = e.to_string();
-                log::warn!("[stt:{label}] session ended: {msg}");
-                failure.report(failure.classify(&e), &msg);
-            }
-            // The count is final once the meter has returned.
-            let _ = counter.await;
-            usage.send();
+            run_single_shot(&app, rx, params).await;
         }
 
         // The session is over and every token it will ever produce has been
@@ -574,12 +509,128 @@ pub fn run_metered_session(
         // teardown and ignore it. Deliberately NOT reached when the task is
         // aborted (a superseded session must never finalize its successor's
         // overlay), so the host still caps its own wait — unlike the usage
-        // report above, which `usage` still sends as the task is dropped.
+        // report, which `UsageReport` still sends as the task is dropped.
         let _ = app.emit(
             "stt://closed",
             serde_json::json!({ "source": label, "session": session }),
         );
     }))
+}
+
+/// The session's `usage://stt` emitter: bills the audio duration actually
+/// streamed — also when the session task is aborted (the report goes out as
+/// it is dropped; see [`UsageReport`]).
+fn usage_emitter(app: &AppHandle, provider: SttProvider, label: &'static str) -> impl FnOnce(u64) {
+    let app = app.clone();
+    move |samples: u64| {
+        let seconds = samples as f64 / crate::audio::TARGET_SAMPLE_RATE as f64;
+        let _ = app.emit(
+            "usage://stt",
+            serde_json::json!({
+                "provider": provider.id(),
+                "source": label,
+                "seconds": seconds,
+            }),
+        );
+    }
+}
+
+/// How `params` surfaces its failures. Hosted mode and BYOK fail for
+/// different reasons and need different guidance, so classify against the
+/// mode (read before `config` is moved into the session).
+fn failure_of<'a>(app: &'a AppHandle, params: &'a MeteredSession) -> Failure<'a> {
+    Failure {
+        app,
+        label: params.label,
+        error_event: params.error_event,
+        error_mute: params.error_mute.as_ref(),
+        session: params.session,
+        hosted: params.config.relay_endpoint.is_some(),
+    }
+}
+
+/// A meeting's session: the meter feeds the bridge; the legs come and go
+/// behind it. Bills what the bridge actually handed to a leg.
+async fn run_reconnecting(
+    app: &AppHandle,
+    rx: UnboundedReceiver<Vec<i16>>,
+    params: MeteredSession,
+) {
+    let bridge = Arc::new(SttBridge::default());
+    let mut usage = UsageReport::new(
+        {
+            let bridge = bridge.clone();
+            move || bridge.delivered_samples()
+        },
+        usage_emitter(app, params.provider, params.label),
+    );
+    let sink = BridgeSink {
+        bridge: bridge.clone(),
+        level: Some(LevelMeter::new(app.clone(), params.label, LEVEL_EVENT)),
+    };
+    let counter = tauri::async_runtime::spawn(meter_chunks(
+        rx,
+        sink,
+        params.recorder.clone(),
+        params.cutoff.clone(),
+        params.paused.clone(),
+        Arc::new(AtomicU64::new(0)),
+    ));
+    let failure = failure_of(app, &params);
+    run_legs(
+        app,
+        params.provider,
+        params.config.clone(),
+        params.label,
+        &bridge,
+        &failure,
+    )
+    .await;
+    // The count is final once the meter has returned.
+    let _ = counter.await;
+    usage.send();
+}
+
+/// A dictation's session: one adapter session, and any failure raises the
+/// error event.
+async fn run_single_shot(app: &AppHandle, rx: UnboundedReceiver<Vec<i16>>, params: MeteredSession) {
+    // Interpose a sample counter between capture and the STT adapter: it
+    // forwards every chunk untouched and counts it as it goes.
+    let streamed = Arc::new(AtomicU64::new(0));
+    let mut usage = UsageReport::new(
+        {
+            let streamed = streamed.clone();
+            move || streamed.load(Ordering::SeqCst)
+        },
+        usage_emitter(app, params.provider, params.label),
+    );
+    let (count_tx, count_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+    let counter = tauri::async_runtime::spawn(meter_chunks(
+        rx,
+        count_tx,
+        params.recorder.clone(),
+        params.cutoff.clone(),
+        params.paused.clone(),
+        streamed,
+    ));
+    let failure = failure_of(app, &params);
+    let label = params.label;
+    if let Err(e) = transcription::run_session(
+        params.provider,
+        app.clone(),
+        params.config.clone(),
+        label,
+        count_rx,
+    )
+    .await
+    {
+        let msg = e.to_string();
+        log::warn!("[stt:{label}] session ended: {msg}");
+        failure.report(failure.classify(&e), &msg);
+    }
+    // The count is final once the meter has returned.
+    let _ = counter.await;
+    usage.send();
 }
 
 /// How a session surfaces a failure: its classification and the
