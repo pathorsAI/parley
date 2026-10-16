@@ -41,6 +41,7 @@ import { buildPresetTodoTemplates } from "./todoTemplates";
 import { translate, type TranslationKey } from "../i18n/messages";
 import { DEFAULT_MODELS } from "./ai/providers";
 import { DEFAULT_LOCAL_STT_MODEL } from "./transcription/localModels";
+import { FALLBACK_STT_PROVIDER, sttRequiresAccount } from "./transcription/registry";
 import { countFillerSounds } from "./analysis/fillerWords";
 import { log } from "./log";
 
@@ -230,7 +231,7 @@ const DEFAULT_SETTINGS: Settings = {
   customApiKey: "",
   reasoningEffort: { realtime: "low", deep: "medium" },
   models: DEFAULT_MODELS,
-  transcriptionProvider: "soniox",
+  transcriptionProvider: FALLBACK_STT_PROVIDER,
   sonioxApiKey: "",
   deepgramApiKey: "",
   assemblyaiApiKey: "",
@@ -1041,12 +1042,13 @@ export const useStore = create<ParleyState>()(
   setHighlightMs: (ms) => set({ highlightMs: ms }),
   setCloudAuth: (cloudAuth) =>
     set((s) => {
-      // Signing out (or an expired session): a stale hosted "parley" STT
-      // selection can no longer authenticate. Fall back to a BYOK default so the
-      // next meeting fails loud (or works) instead of silently starting a mock
-      // stream, and so the Settings picker doesn't render blank.
-      if (!cloudAuth && s.settings.transcriptionProvider === "parley") {
-        return { cloudAuth, settings: { ...s.settings, transcriptionProvider: "soniox" } };
+      // Signing out (or an expired session): a stale account-only STT
+      // selection (hosted "parley") can no longer authenticate. Fall back to a
+      // BYOK default so the next meeting fails loud (or works) instead of
+      // silently starting a mock stream, and so the Settings picker doesn't
+      // render blank.
+      if (!cloudAuth && sttRequiresAccount(s.settings.transcriptionProvider)) {
+        return { cloudAuth, settings: { ...s.settings, transcriptionProvider: FALLBACK_STT_PROVIDER } };
       }
       return { cloudAuth };
     }),

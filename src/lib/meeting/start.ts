@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { useStore } from "../store";
-import { STT_BY_ID, sttApiKey, sttModel, sttRelayUrl } from "../transcription/providers";
+import { STT_BY_ID, sttApiKey, sttModel, sttRelayUrl, usesCloudSession, usesLocalModel } from "../transcription/providers";
 import { checkLocalModelReady } from "../transcription/localModels";
 import { startMockStream } from "../mockStream";
 import { recognitionTerms } from "../dictionary";
@@ -42,7 +42,7 @@ async function start(): Promise<void> {
   // On-device STT: the "local" key sentinel always passes the gate above, so
   // the real precondition — the selected model is downloaded — is checked
   // here, before the UI flips to "recording".
-  if (useRealPipeline && settings.transcriptionProvider === "local" && !(await checkLocalModelReady(settings.localSttModel))) {
+  if (useRealPipeline && usesLocalModel(settings.transcriptionProvider) && !(await checkLocalModelReady(settings.localSttModel))) {
     log.info("meeting: start blocked (local model not ready)", { model: settings.localSttModel });
     toast.error(t("localStt.error.notReady"), {
       duration: 8000,
@@ -55,7 +55,7 @@ async function start(): Promise<void> {
 
   if (useRealPipeline) {
     await openCaptureSession(settings, sttKey);
-  } else if (settings.transcriptionProvider === "parley") {
+  } else if (usesCloudSession(settings.transcriptionProvider)) {
     // Hosted STT selected but no usable cloud session — never fake it with a
     // mock transcript; tell the user to sign in and back out of "recording".
     log.info("meeting: start blocked (parley, no session)");

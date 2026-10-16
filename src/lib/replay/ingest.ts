@@ -15,7 +15,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import type { Settings, TranscriptSegment } from "../types";
 import { useStore } from "../store";
 import type { ReplaySession } from "./types";
-import { STT_BY_ID, sttApiKey, sttBatchUrl, sttModel } from "../transcription/providers";
+import { STT_BY_ID, sttApiKey, sttBatchUrl, sttModel, usesLocalModel } from "../transcription/providers";
 import { checkLocalModelReady, localFailureCode, type LocalFailureCode } from "../transcription/localModels";
 import { normalizeTranscriptText } from "../textNormalize";
 import { languageHintsFromSettings } from "../transcription/languageHints";
@@ -241,7 +241,7 @@ export async function transcribeRecording(
     throw new Error(missingCredentialMessage(settings));
   }
   // On-device STT: the key sentinel passed; the model must also be downloaded.
-  if (provider === "local" && !(await checkLocalModelReady(settings.localSttModel))) {
+  if (usesLocalModel(provider) && !(await checkLocalModelReady(settings.localSttModel))) {
     log.warn("ingest: local model not ready", { model: settings.localSttModel });
     throw new Error(translate(settings.language, "localStt.error.notReadyUpload"));
   }
@@ -274,7 +274,7 @@ export async function transcribeRecording(
     diarization: info.diarization,
     batchUrl: sttBatchUrl(provider) ?? null,
   }).catch((e: unknown) => {
-    throw provider === "local" ? localUploadError(settings, e) : e;
+    throw usesLocalModel(provider) ? localUploadError(settings, e) : e;
   });
   log.info("ingest: transcription ok", {
     segments: result.segments.length,

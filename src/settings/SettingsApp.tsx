@@ -33,6 +33,7 @@ import { LaunchAtLoginField } from "./LaunchAtLoginField";
 import { STT_PROVIDERS, STT_BY_ID, sttLabel } from "../lib/transcription/providers";
 import { useLocalSttModels } from "../lib/transcription/useLocalSttModels";
 import { LocalSttModelPicker } from "../components/LocalSttModelPicker";
+import { SttCredentialField } from "../components/SttCredentialField";
 import { Button } from "@/components/ui/button";
 import { CopyButton } from "@/components/CopyButton";
 import { Toaster } from "@/components/ui/sonner";
@@ -736,35 +737,34 @@ export function SettingsApp() {
                 </SelectContent>
               </Select>
             </Field>
-            {/* Hosted "parley" authenticates with the cloud session token, not a
-                user-entered key — show whose account it bills to instead. The
-                on-device provider has no key at all: pick (and download) a model. */}
-            {settings.transcriptionProvider === "parley" && (
-              <p className="max-w-md text-[11px] text-muted-foreground">
-                {t("settings.account.useParley.note", { email: cloudAuth?.user.email ?? "" })}
-              </p>
-            )}
-            {settings.transcriptionProvider === "local" && (
-              <Field label={t("localStt.picker.label")}>
-                <LocalSttModelField
-                  value={settings.localSttModel}
-                  chosen={settings.localSttModelChosen}
-                  onChange={(id) => patch({ localSttModel: id, localSttModelChosen: true })}
-                  onAutoSelect={(id) => patch({ localSttModel: id })}
-                />
-              </Field>
-            )}
-            {settings.transcriptionProvider !== "parley" &&
-              settings.transcriptionProvider !== "local" &&
-              sttInfo.apiKeyField && (
-                <SttKeyField
-                  label={t("settings.transcription.apiKey", { provider: sttInfo.label })}
-                  field={sttInfo.apiKeyField}
-                  placeholder={sttInfo.keyPlaceholder}
-                  settings={settings}
-                  patch={patch}
-                />
+            {/* A cloud-session provider (hosted "parley") authenticates with the
+                session token, not a user-entered key — show whose account it
+                bills to instead. The on-device provider has no key at all: pick
+                (and download) a model. */}
+            <SttCredentialField
+              info={sttInfo}
+              settings={settings}
+              patch={patch}
+              cloudSessionNote={
+                <p className="max-w-md text-[11px] text-muted-foreground">
+                  {t("settings.account.useParley.note", { email: cloudAuth?.user.email ?? "" })}
+                </p>
+              }
+              localModelPicker={
+                <Field label={t("localStt.picker.label")}>
+                  <LocalSttModelField
+                    value={settings.localSttModel}
+                    chosen={settings.localSttModelChosen}
+                    onChange={(id) => patch({ localSttModel: id, localSttModelChosen: true })}
+                    onAutoSelect={(id) => patch({ localSttModel: id })}
+                  />
+                </Field>
+              }
+              wrapKeyInput={(input) => (
+                <Field label={t("settings.transcription.apiKey", { provider: sttInfo.label })}>{input}</Field>
               )}
+              keyInputClassName="max-w-sm"
+            />
             {!sttInfo.diarization && (
               <p className="max-w-md rounded-md border border-warning-border bg-warning px-3 py-2 text-[11px] leading-relaxed text-warning-foreground">
                 {t("settings.transcription.noDiarizationWarning")}
@@ -1380,7 +1380,7 @@ function FixedEndpointFields({
   const { t } = useI18n();
   const prov = settings.llmProviders[wl];
   const winfo = PROVIDER_BY_ID[prov];
-  if (prov === "parley") {
+  if (winfo.requiresAccount) {
     // Hosted provider: no key, no model picker — the server forces the real
     // model. Just confirm who the usage bills to.
     return (
@@ -1640,33 +1640,6 @@ function TodoTemplateEditor({
         <Plus className="size-3.5" /> {t("settings.todos.addItem")}
       </Button>
     </div>
-  );
-}
-
-/** BYOK transcription key input for the selected provider's settings field. */
-function SttKeyField({
-  label,
-  field,
-  placeholder,
-  settings,
-  patch,
-}: Readonly<{
-  label: string;
-  field: keyof Settings;
-  placeholder: string;
-  settings: Settings;
-  patch: (p: Partial<Settings>) => void;
-}>) {
-  return (
-    <Field label={label}>
-      <PasswordInput
-        autoComplete="off"
-        placeholder={placeholder}
-        className="max-w-sm"
-        value={settings[field] as string}
-        onChange={(e) => patch({ [field]: e.target.value } as Partial<Settings>)}
-      />
-    </Field>
   );
 }
 

@@ -8,10 +8,18 @@ import { CLOUD_ENABLED } from "../lib/flags";
 import { isProviderListed } from "../lib/providerListing";
 import { log } from "../lib/log";
 import { PROVIDERS, PROVIDER_BY_ID, type ProviderInfo } from "../lib/ai/providers";
-import { STT_PROVIDERS, STT_BY_ID, sttApiKey, sttLabel } from "../lib/transcription/providers";
+import {
+  STT_PROVIDERS,
+  STT_BY_ID,
+  sttApiKey,
+  sttLabel,
+  usesCloudSession,
+  usesLocalModel,
+} from "../lib/transcription/providers";
 import { accountGateBlock, transcriptionReady, type AccountGateBlock } from "../lib/onboarding/accountGate";
 import { useLocalSttModels, type LocalSttModelsState } from "../lib/transcription/useLocalSttModels";
 import { LocalSttModelPicker } from "./LocalSttModelPicker";
+import { SttCredentialField } from "./SttCredentialField";
 import type { TranslationKey } from "../i18n/messages";
 import { beginMeeting } from "../lib/meeting/start";
 import { loadSampleRecording } from "../lib/onboarding/sample";
@@ -83,7 +91,7 @@ export function Onboarding() {
 
   // On-device catalog + download state, live only while "local" is selected;
   // owned here (not in AccountStep) because it feeds the gate below.
-  const local = useLocalSttModels(settings.transcriptionProvider === "local");
+  const local = useLocalSttModels(usesLocalModel(settings.transcriptionProvider));
   const gateBlock = accountGateBlock(settings, !!cloudAuth, local);
   const ready = gateBlock === null;
   // Neither Next on the account step nor the header X may get past the gate:
@@ -387,8 +395,8 @@ function AccountStep({ local }: Readonly<{ local: LocalSttModelsState }>) {
   const [byokOpen, setByokOpen] = useState(
     () =>
       !CLOUD_ENABLED ||
-      settings.transcriptionProvider === "local" ||
-      (settings.transcriptionProvider !== "parley" && !!sttApiKey(settings, settings.transcriptionProvider)),
+      usesLocalModel(settings.transcriptionProvider) ||
+      (!usesCloudSession(settings.transcriptionProvider) && !!sttApiKey(settings, settings.transcriptionProvider)),
   );
 
   const llm = PROVIDER_BY_ID[settings.llmProviders.deep];
@@ -484,26 +492,25 @@ function AccountStep({ local }: Readonly<{ local: LocalSttModelsState }>) {
               </SelectContent>
             </Select>
             {/* The hosted provider authenticates with the signed-in session, not
-                an API key — so no key field for it. */}
-            {/* On-device: no key — pick a model, then download it; the gate
-                holds Next until the download has finished. */}
-            {stt.id === "parley" && (
-              <p className="text-[11px] text-muted-foreground">{t("onboarding.login.signedIn")}</p>
-            )}
-            {stt.id === "local" && (
-              // The "no diarization" tag on the Select item already flags
-              // that live meetings won't separate speakers.
-              <LocalSttModelPicker
-                value={settings.localSttModel}
-                onChange={(id) => patch({ localSttModel: id, localSttModelChosen: true })}
-                local={local}
-                chosen={settings.localSttModelChosen}
-                onAutoSelect={(id) => patch({ localSttModel: id })}
-              />
-            )}
-            {stt.id !== "parley" && stt.id !== "local" && stt.apiKeyField && (
-              <SttKeyInput field={stt.apiKeyField} placeholder={stt.keyPlaceholder} settings={settings} patch={patch} />
-            )}
+                an API key — so no key field for it. On-device: no key — pick a
+                model, then download it; the gate holds Next until the download
+                has finished. (The "no diarization" tag on the Select item
+                already flags that live meetings won't separate speakers.) */}
+            <SttCredentialField
+              info={stt}
+              settings={settings}
+              patch={patch}
+              cloudSessionNote={<p className="text-[11px] text-muted-foreground">{t("onboarding.login.signedIn")}</p>}
+              localModelPicker={
+                <LocalSttModelPicker
+                  value={settings.localSttModel}
+                  onChange={(id) => patch({ localSttModel: id, localSttModelChosen: true })}
+                  local={local}
+                  chosen={settings.localSttModelChosen}
+                  onAutoSelect={(id) => patch({ localSttModel: id })}
+                />
+              }
+            />
           </div>
 
           {/* AI model — optional: recording works without it. */}
@@ -584,27 +591,6 @@ function AccountStep({ local }: Readonly<{ local: LocalSttModelsState }>) {
   );
 }
 
-function SttKeyInput({
-  field,
-  placeholder,
-  settings,
-  patch,
-}: Readonly<{
-  field: keyof Settings;
-  placeholder: string;
-  settings: Settings;
-  patch: (p: Partial<Settings>) => void;
-}>) {
-  return (
-    <PasswordInput
-      autoComplete="off"
-      placeholder={placeholder}
-      value={(settings[field] as string) ?? ""}
-      onChange={(e) => patch({ [field]: e.target.value } as Partial<Settings>)}
-    />
-  );
-}
-
 function FieldLabel({ label, tag }: Readonly<{ label: string; tag: string }>) {
   return (
     <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
@@ -663,7 +649,7 @@ function LlmKeyField({
   if (llm.requiresKey === false) {
     return (
       <p className="text-[11px] text-muted-foreground">
-        {llm.id === "parley" ? t("onboarding.login.signedIn") : t("onboarding.llm.noKey")}
+        {llm.requiresAccount ? t("onboarding.login.signedIn") : t("onboarding.llm.noKey")}
       </p>
     );
   }

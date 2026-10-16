@@ -48,6 +48,13 @@ export interface ProviderInfo {
   /** False for providers that run locally without an API key (Ollama, custom). */
   requiresKey?: boolean;
   /**
+   * Hosted on a Parley account (the signed-in cloud session is the
+   * credential): only offered in the cloud build when signed in, shows whose
+   * account it bills to instead of a key field, and spends the hosted
+   * allowance.
+   */
+  requiresAccount?: boolean;
+  /**
    * True when `baseURL` is NOT fixed by this registry and must be read from
    * Settings instead (the "custom" provider). Such a provider is only usable
    * once the user has supplied both a URL and a model id.
@@ -197,6 +204,7 @@ export const PROVIDERS: ProviderInfo[] = [
     apiKeyField: "parleyApiKey",
     keyPlaceholder: "",
     requiresKey: false,
+    requiresAccount: true,
     // Mirror Groq (the hosted backend) — it accepts the OpenAI json_schema shape.
     supportsStructuredOutputs: true,
     models: ["parley-fast", "parley-smart"],

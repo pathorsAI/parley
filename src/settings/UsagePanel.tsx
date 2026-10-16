@@ -6,6 +6,7 @@ import { CLOUD_ENABLED } from "../lib/flags";
 import { fetchHostedQuota } from "../lib/cloud/usage";
 import type { HostedQuota } from "../lib/cloud/types";
 import { PROVIDER_BY_ID } from "../lib/ai/providers";
+import { sttRequiresAccount } from "../lib/transcription/registry";
 import { readUsageEvents, type UsageEvent } from "../lib/usage/log";
 import { log } from "../lib/log";
 import { PRICING_NOTES } from "../lib/usage/pricing";
@@ -193,10 +194,13 @@ function HostedQuotaMeter() {
   const sttProvider = useStore((s) => s.settings.transcriptionProvider);
   const [quota, setQuota] = useState<HostedQuota | null>(null);
 
-  // The hosted allowance is spent whenever EITHER provider is "parley".
+  // The hosted allowance is spent whenever EITHER provider runs on the Parley
+  // account ("parley").
   const show =
     !!cloudAuth &&
-    (llmProviders.realtime === "parley" || llmProviders.deep === "parley" || sttProvider === "parley");
+    (!!PROVIDER_BY_ID[llmProviders.realtime]?.requiresAccount ||
+      !!PROVIDER_BY_ID[llmProviders.deep]?.requiresAccount ||
+      sttRequiresAccount(sttProvider));
 
   useEffect(() => {
     if (!show) return;

@@ -1,5 +1,6 @@
 import type { Settings } from "../types";
 import { sttApiKey } from "../transcription/providers";
+import { usesLocalModel } from "../transcription/registry";
 import {
   anyLocalBusy,
   isLocalModelReady,
@@ -33,7 +34,7 @@ export function accountGateBlock(
   signedIn: boolean,
   local: LocalGateInput,
 ): AccountGateBlock | null {
-  if (settings.transcriptionProvider === "local") {
+  if (usesLocalModel(settings.transcriptionProvider)) {
     if (anyLocalBusy(local.models, local.downloads)) return "localDownloading";
     return isLocalModelReady(local.models, settings.localSttModel) ? null : "localDownload";
   }

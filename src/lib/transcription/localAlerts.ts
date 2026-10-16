@@ -7,6 +7,7 @@ import { openSettings } from "../nav/settings";
 import { translate, type TranslationKey } from "../../i18n/messages";
 import type { AppLanguage, SttProviderId } from "../types";
 import { LOCAL_STT_SLOW_EVENT, type LocalFailureCode, type LocalSttSlowPayload } from "./localModels";
+import { usesLocalModel } from "./registry";
 
 /**
  * The on-device provider's two runtime alerts, both pointing at Settings ›
@@ -46,7 +47,7 @@ export function showLocalFailureToast(language: AppLanguage, code: LocalFailureC
 export function createSlowToastGate(): (provider: SttProviderId) => boolean {
   let shown = false;
   return (provider) => {
-    if (shown || provider !== "local") return false;
+    if (shown || !usesLocalModel(provider)) return false;
     shown = true;
     return true;
   };

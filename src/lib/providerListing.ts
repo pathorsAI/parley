@@ -11,10 +11,14 @@ export interface ProviderListingContext {
 }
 
 /**
- * The hosted "parley" provider only exists in the cloud build and only when
+ * A provider hosted on a Parley account (`requiresAccount` in the STT and LLM
+ * registries — today "parley") only exists in the cloud build and only when
  * signed in (the session token IS its credential); every other provider is
  * always offered.
  */
-export function isProviderListed(p: { id: string }, ctx: ProviderListingContext): boolean {
-  return p.id !== "parley" || (ctx.cloudEnabled && ctx.signedIn);
+export function isProviderListed(
+  p: { readonly requiresAccount?: boolean },
+  ctx: ProviderListingContext,
+): boolean {
+  return !p.requiresAccount || (ctx.cloudEnabled && ctx.signedIn);
 }

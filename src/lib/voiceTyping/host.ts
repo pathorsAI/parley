@@ -27,6 +27,7 @@ import { TRAY_VOICE_TOGGLE_EVENT } from "../tray";
 import { isTauri } from "../tauriEvents";
 import { useStore } from "../store";
 import { sttApiKey, sttModel, sttRelayUrl } from "../transcription/providers";
+import { sttRequiresAccount, usesLocalModel } from "../transcription/registry";
 import { checkLocalModelReady } from "../transcription/localModels";
 import { languageHintsFromSettings } from "../transcription/languageHints";
 import { HOSTED_VOICE_TYPING_MAX_SECONDS } from "../limits";
@@ -533,7 +534,7 @@ async function startSession() {
   // On-device STT passes the key gate with its sentinel; the real
   // precondition is a downloaded model. One local IPC round trip, before the
   // mic opens.
-  if (provider === "local" && !(await checkLocalModelReady(settings.localSttModel))) {
+  if (usesLocalModel(provider) && !(await checkLocalModelReady(settings.localSttModel))) {
     log.warn("voice-typing: local model not ready", { model: settings.localSttModel });
     await showOverlay();
     await emit("voicetyping://session", { phase: "error", message: "no-local-model" });
@@ -564,7 +565,7 @@ async function startSession() {
   // the cap to the backend as a safety net (a hung webview can't stream the
   // paid relay forever) and mirror it with a frontend timer that ends the
   // dictation gracefully (delivering the transcript). null = no cap for BYOK.
-  const hosted = provider === "parley";
+  const hosted = sttRequiresAccount(provider);
   // MIC FIRST, overlay second. Placing the overlay costs four round-trips to
   // the app's main thread (cursor position → monitor list → setPosition →
   // present), and the capture used to wait behind all of them — so roughly the
