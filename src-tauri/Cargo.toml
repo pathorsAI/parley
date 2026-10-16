@@ -142,3 +142,12 @@ windows = { version = "0.61", features = [
 # build.rs and vulkan_delayload.rs) and falls back to the CPU on machines
 # without a Vulkan driver. Linux is not a shipped target and stays CPU-only.
 whisper-rs = { version = "=0.16.0", features = ["log_backend", "vulkan"] }
+
+# knf-rs-sys (speaker-diarization fbank features) builds its C++ with CMake in
+# Debug whenever its build script has debug assertions, which links the debug
+# CRT (/MDd). whisper-rs-sys always builds Release (/MD), and MSVC refuses to
+# link the two (LNK2038 RuntimeLibrary mismatch), so Windows dev builds failed
+# to link. Rust itself links the release CRT, so build knf's C++ that way too.
+# The package override covers the package's build script as well.
+[profile.dev.package.knf-rs-sys]
+debug-assertions = false
