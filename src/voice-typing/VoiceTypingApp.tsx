@@ -10,11 +10,7 @@ import { log } from "../lib/log";
 import { isTauri } from "../lib/platform";
 import { sameHitRects, toHitRects, type HitRect } from "../lib/voiceTyping/hitRegions";
 import { SessionTranscript } from "../lib/voiceTyping/transcript";
-import {
-  DONE_ACTION_EVENT,
-  donePill,
-  type DoneActionPayload,
-} from "../lib/voiceTyping/overlay";
+import { donePill } from "../lib/voiceTyping/overlay";
 import {
   CANCEL_ACTION_EVENT,
   CANCEL_UNDO_MS,
@@ -72,16 +68,6 @@ type Phase = "listening" | "finalizing" | "polishing" | "cancelled" | "done";
 function suggestAct(action: SuggestActionPayload["action"]): void {
   emitEvent(SUGGEST_ACTION_EVENT, { action } satisfies SuggestActionPayload).catch((error) =>
     log.warn("voice typing overlay: suggest action emit failed", {
-      action,
-      error: String(error),
-    }),
-  );
-}
-
-/** Report the confirmation's Copy to the host, which owns every decision. */
-function doneAct(action: DoneActionPayload["action"]): void {
-  emitEvent(DONE_ACTION_EVENT, { action } satisfies DoneActionPayload).catch((error) =>
-    log.warn("voice typing overlay: done action emit failed", {
       action,
       error: String(error),
     }),
@@ -331,9 +317,8 @@ export const VoiceTypingApp = () => {
           frozen.current = true;
           if (typeof ev.text === "string") setText(ev.text);
           setVerdict(ev.message ?? null);
-          // Every done comes with a fresh hide on the host's side — a Copy's
-          // "copied" too, which can land just as the first confirmation
-          // began to fade — so it is shown in full again.
+          // Every done comes with a fresh hide on the host's side, so it is
+          // shown in full again.
           setFading(false);
           enterPhase("done");
           return;
@@ -406,8 +391,8 @@ export const VoiceTypingApp = () => {
   // the session is dismissed (toggle mode has no release to hide it), so never
   // fade an error out from under the user.
   // A suggestion bubble is interactive and lives on the host's own clock — never
-  // fade one out from under the user's cursor. A new verdict (Copy turning
-  // "Inserted" into "Copied") restarts the dwell, as the host restarts its hide.
+  // fade one out from under the user's cursor. A new verdict restarts the dwell,
+  // as the host restarts its hide.
   useEffect(() => {
     if (phase !== "done" || error || suggest) return;
     const id = setTimeout(() => setFading(true), DONE_DWELL_MS);
@@ -540,9 +525,10 @@ export const VoiceTypingApp = () => {
       )}
 
       {/* The closing confirmation, on the host's word about the delivery (not
-          merely because there is text on screen). "Inserted" — the text went
-          into the field and the clipboard is the user's again — with a Copy
-          for a paste that landed nowhere (no field had focus). When no paste
+          merely because there is text on screen). "Inserted and copied" — the
+          text went into the field and stays on the clipboard, so a paste that
+          landed nowhere (no field had focus) is one ⌘V away; just "Inserted"
+          when the user has the clipboard given back. When no paste
           went out (no Accessibility on macOS, UIPI refusing an elevated
           window on Windows, or Parley's hidden tray window in front after a
           tray Stop) it turns warning and names the paste key: the
@@ -550,8 +536,7 @@ export const VoiceTypingApp = () => {
           where they were typing and assumes the dictation was lost. A
           dictation whose polish did not come back
           still reads as a success, but says it went out as dictated. One
-          row; Copy acts on pointer-down like the other overlay buttons, and
-          stops catching clicks as the pill fades. */}
+          row, which stops catching clicks as the pill fades. */}
       {pill && (
         <div
           data-overlay-hit
@@ -563,22 +548,6 @@ export const VoiceTypingApp = () => {
         >
           {pill.tone === "success" && <Check className="size-2.5" strokeWidth={3} />}
           {t(pill.note, { paste: modChordCap("V") })}
-          {pill.copy && (
-            <>
-              <span className="opacity-60">·</span>
-              <button
-                type="button"
-                tabIndex={-1}
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  doneAct("copy");
-                }}
-                className="underline underline-offset-2"
-              >
-                {t("voiceTyping.copyAction")}
-              </button>
-            </>
-          )}
         </div>
       )}
 

@@ -91,6 +91,8 @@ export const DEFAULT_SETTINGS: Settings = {
   voiceTypingShortcut: DEFAULT_VOICE_TYPING_SHORTCUT,
   voiceTypingMode: "hold",
   voiceTypingPolishStyle: "tidy",
+  // The dictation stays on the clipboard. See Settings.voiceTypingRestoreClipboard.
+  voiceTypingRestoreClipboard: false,
   evaluations: defaultEvalDefs(tDefault),
   evalTemplates: buildPresetEvalTemplates(tDefault),
   todoTemplates: buildPresetTodoTemplates(tDefault),

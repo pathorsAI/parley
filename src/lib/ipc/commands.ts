@@ -57,6 +57,9 @@ export interface HotkeyStatus {
 export interface PasteResult {
   /** False when the text was left on the clipboard instead of pasted. */
   pasted: boolean;
+  /** The text is still on the clipboard: the default, and what any insert
+   *  whose clipboard restore could not be set up leaves behind. */
+  copied: boolean;
   /** The app frontmost at paste time (macOS bundle id, Windows exe name). */
   appBundleId: string | null;
 }
@@ -252,7 +255,8 @@ export const startVoiceTyping = (args: {
   maxDurationSecs?: number | null;
 }) => invoke<void>("start_voice_typing", args);
 export const stopVoiceTyping = (args: { tail?: boolean | null }) => invoke<void>("stop_voice_typing", args);
-export const insertText = (args: { text: string }) => invoke<PasteResult>("insert_text", args);
+export const insertText = (args: { text: string; restoreClipboard: boolean }) =>
+  invoke<PasteResult>("insert_text", args);
 export const copyToClipboard = (args: { text: string }) => invoke<void>("copy_to_clipboard", args);
 export const observePastedField = (args: { insertedText: string }) => invoke<boolean>("observe_pasted_field", args);
 export const presentVoiceOverlay = () => invoke<void>("present_voice_overlay");

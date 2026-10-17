@@ -236,6 +236,10 @@ export async function hideOverlay(): Promise<void> {
  * - `ok-unpolished`: inserted, but as dictated, because the polish pass was
  *   attempted and did not come back (timed out, or the request failed).
  * - `ok`: inserted — polished, or with no polish to expect.
+ * - `ok-copied`, `ok-copied-unpolished`: the same two, and the text is on the
+ *   clipboard too, ready to paste again — the default. The plain `ok`s mean
+ *   the user's earlier clipboard is being put back
+ *   (`voiceTypingRestoreClipboard`).
  *
  * The rest never come from {@link doneMessage}. Three are an Undo's, from
  * {@link recoveredMessage}:
@@ -245,21 +249,17 @@ export async function hideOverlay(): Promise<void> {
  * - `recovered-unpolished`: the same, but as dictated, because the polish the
  *   Undo ran first timed out or failed.
  * - `nothing`: that cancelled dictation had no text to bring back.
- *
- * And one is the Copy button's:
- *
- * - `copied`: the user clicked Copy on an inserted dictation's confirmation,
- *   and its text is on the clipboard now (host.ts, onCopyAction).
  */
 export type DoneMessage =
   | "empty"
   | "clipboard-only"
   | "ok-unpolished"
   | "ok"
+  | "ok-copied-unpolished"
+  | "ok-copied"
   | "recovered"
   | "recovered-unpolished"
-  | "nothing"
-  | "copied";
+  | "nothing";
 
 /**
  * Pick the {@link DoneMessage} for one finalized dictation.
@@ -275,12 +275,14 @@ export type DoneMessage =
 export function doneMessage(d: {
   text: string;
   pasted: boolean;
+  /** The text stayed on the clipboard after the paste. */
+  copied: boolean;
   outcome: PolishOutcome;
 }): DoneMessage {
   if (!d.text) return "empty";
   if (!d.pasted) return "clipboard-only";
-  if (polishBroke(d.outcome)) return "ok-unpolished";
-  return "ok";
+  if (polishBroke(d.outcome)) return d.copied ? "ok-copied-unpolished" : "ok-unpolished";
+  return d.copied ? "ok-copied" : "ok";
 }
 
 /**
@@ -309,40 +311,33 @@ export interface DonePill {
   note: TranslationKey;
   /** Warning when the user has something left to do (paste by hand). */
   tone: "success" | "warning";
-  /** Offer Copy: the text went into a field, and not onto the clipboard. A
-   *  paste can land nowhere — no field had focus — and the clipboard has
-   *  already been given back, so this is the way to get the text then. */
-  copy: boolean;
 }
 
 /**
  * The confirmation pill for the host's verdict, or null when there is none
  * (no verdict yet, or one with its own note: `empty`, `nothing`). An insert
- * says "inserted", not "copied": the text did not stay on the clipboard, and
- * a note that says it did sends the user to ⌘V for nothing.
+ * whose clipboard is being put back says "inserted", not "copied": a note
+ * that says the text is on the clipboard would send the user to ⌘V for
+ * nothing.
  */
 export function donePill(verdict: string | null): DonePill | null {
   switch (verdict) {
     case "ok":
-      return { note: "voiceTyping.inserted", tone: "success", copy: true };
+      return { note: "voiceTyping.inserted", tone: "success" };
     case "ok-unpolished":
-      return { note: "voiceTyping.insertedUnpolished", tone: "success", copy: true };
+      return { note: "voiceTyping.insertedUnpolished", tone: "success" };
+    case "ok-copied":
+      return { note: "voiceTyping.insertedCopied", tone: "success" };
+    case "ok-copied-unpolished":
+      return { note: "voiceTyping.insertedCopiedUnpolished", tone: "success" };
     case "clipboard-only":
-      return { note: "voiceTyping.pasteBlocked", tone: "warning", copy: false };
+      return { note: "voiceTyping.pasteBlocked", tone: "warning" };
     case "recovered":
-    case "copied":
-      return { note: "voiceTyping.copied", tone: "success", copy: false };
+      return { note: "voiceTyping.copied", tone: "success" };
     case "recovered-unpolished":
-      return { note: "voiceTyping.copiedUnpolished", tone: "success", copy: false };
+      return { note: "voiceTyping.copiedUnpolished", tone: "success" };
     default:
       return null;
   }
 }
 
-/** Overlay → main window: a button on the closing confirmation was clicked. */
-export const DONE_ACTION_EVENT = "voicetyping://done-action";
-
-export interface DoneActionPayload {
-  /** Copy the dictation just inserted to the clipboard. */
-  action: "copy";
-}

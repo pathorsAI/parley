@@ -170,11 +170,20 @@ hosted relay's connect time and the model's answers are not. With the hosted
 
 ## Voice typing and the clipboard: what only a person can check
 
-A dictation reaches the field through the clipboard and then gives the
-clipboard back (`insert_text`, `src-tauri/src/voice_typing/clipboard.rs`).
-The bookkeeping is unit-tested against a fake clipboard; what the real
-pasteboard and the apps reading it do is not. On a Mac, and on Windows as
-part of the next section:
+A dictation reaches the field through the clipboard and, by default, stays
+there (`insert_text`, `src-tauri/src/voice_typing/clipboard.rs`). With
+Settings → Voice typing → Clipboard set to **Restore**, it gives the
+clipboard back instead. The bookkeeping is unit-tested against a fake
+clipboard; what the real pasteboard and the apps reading it do is not. On a
+Mac, and on Windows as part of the next section:
+
+- **By default the dictation stays on the clipboard.** With Clipboard on
+  **Keep text**, dictate into Notes: the overlay says "Inserted and copied",
+  and ⌘V in another app pastes the dictation again. The overlay has no Copy
+  button. A clipboard manager (Maccy, Raycast, Paste) lists the dictation
+  like any other copy.
+
+The rest of this section is with Clipboard set to **Restore**:
 
 - **Your clipboard survives a dictation.** Copy an image (from a browser or
   Preview), then a link, and each time dictate into Notes and into a browser
@@ -214,8 +223,8 @@ part of the next section:
   field, and dictate: the text appears there, the overlay says "Inserted"
   (not "press ⌘V"), ⌘V afterwards pastes what you had copied before, and
   Parley does not freeze for a few seconds after the paste. With nothing
-  focused in Parley's window, nothing is inserted and the overlay's Copy
-  still works.
+  focused in Parley's window, nothing is inserted; switch Clipboard back to
+  **Keep text** and the same dictation is one ⌘V away.
 - **Clipboard managers do not keep it.** With Maccy, Raycast or Paste
   running, dictate: the dictation does not appear in their history, and the
   clipboard you had, once it is back, is not listed a second time.
@@ -227,10 +236,9 @@ part of the next section:
 - **Esc is never left claimed.** After any dictation — pasted, cancelled,
   failed — Esc works again in the app in front (close a dialog, leave full
   screen) once the text is in.
-- **Nowhere to paste.** Dictate with no text field focused (click the
-  desktop first): nothing is inserted; the overlay's Copy puts the text on the
-  clipboard and the pill turns into "Copied to clipboard", which ⌘V then
-  pastes.
+- **Nowhere to paste.** With Clipboard on **Keep text**, dictate with no text
+  field focused (click the desktop first): nothing is inserted, and ⌘V then
+  pastes the dictation.
 - **Esc, Undo.** Undo of a cancelled dictation leaves its text on the
   clipboard to stay, also when the previous dictation's restore was still
   pending.

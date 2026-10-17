@@ -7,7 +7,13 @@
 //! copied before (a link, an image, the snippet they were about to paste) was
 //! gone, and copy → dictate → paste gave them their own sentence back.
 //!
-//! So an insert now borrows the clipboard: it saves what is on it, writes the
+//! By default the dictation does stay there — as an ordinary copy, ready to
+//! paste again somewhere else — because that is what people reach for after
+//! dictating, and a Copy button on the overlay to get it back was one click
+//! too many. The borrow below is opt-in (the `voiceTypingRestoreClipboard`
+//! setting, `insert_text`'s `restore_clipboard`).
+//!
+//! When it is on, an insert borrows the clipboard: it saves what is on it, writes the
 //! dictated text marked transient (clipboard managers and the OS history skip
 //! it), posts the paste, and CLIPBOARD_RESTORE_DELAY later puts the saved
 //! contents back — unless anything else has written to the clipboard since,
@@ -20,7 +26,7 @@
 //! the injection) or none would land (Windows' hidden tray window in front,
 //! see [`paste_block`]) the clipboard IS the delivery: the text goes there as
 //! an ordinary copy and stays, and the overlay names the paste key. Explicit
-//! copies (the overlay's Copy, Esc's Undo) are never restored over. Nor is a
+//! copies (Esc's Undo) are never restored over. Nor is a
 //! paste into a remote-desktop or virtual-machine window
 //! ([`reads_clipboard_late`]): those read the clipboard whenever their sync
 //! gets to it, so the dictation goes up as an ordinary copy and stays.
@@ -377,14 +383,17 @@ pub(super) fn reads_clipboard_late(app: &str) -> bool {
 /// Put `text` into the focused field through the clipboard, via `paste`
 /// (which posts the chord and says whether it went out). Runs with the ledger
 /// locked, so neither the restore timer nor an explicit copy can interleave.
-/// `reads_late`: the target is a remote-desktop or VM client (see
-/// [`reads_clipboard_late`]), so the dictation is pasted and left on the
-/// clipboard.
+/// `restore`: the user asked for their clipboard back after the paste;
+/// otherwise the dictation is pasted and left on the clipboard as an ordinary
+/// copy. `reads_late`: the target is a remote-desktop or VM client (see
+/// [`reads_clipboard_late`]), so the dictation is left on the clipboard
+/// either way.
 pub(super) fn insert<P: Pasteboard>(
     ledger: &mut RestoreLedger<P::Snapshot>,
     pb: &mut P,
     text: &str,
     blocked: Option<Blocked>,
+    restore: bool,
     reads_late: bool,
     paste: impl FnOnce() -> bool,
 ) -> Result<Inserted, String> {
@@ -399,10 +408,12 @@ pub(super) fn insert<P: Pasteboard>(
             restore: None,
         });
     }
-    if reads_late {
-        log::info!(
-            "voice-typing: pasting into a remote or virtual machine; the dictation stays on the clipboard"
-        );
+    if !restore || reads_late {
+        if restore {
+            log::info!(
+                "voice-typing: pasting into a remote or virtual machine; the dictation stays on the clipboard"
+            );
+        }
         pb.write_plain(text)?;
         return Ok(Inserted {
             pasted: paste(),
@@ -961,7 +972,7 @@ mod tests {
         let mut board = Board::holding("https://example.com");
         let mut posted = false;
 
-        let done = insert(&mut ledger, &mut board, "你好", None, false, || {
+        let done = insert(&mut ledger, &mut board, "你好", None, true, false, || {
             posted = true;
             true
         })
@@ -986,8 +997,8 @@ mod tests {
     fn a_second_insert_reuses_the_first_snapshot_and_supersedes_its_restore() {
         let mut ledger = RestoreLedger::default();
         let mut board = Board::holding("the user's link");
-        let first = insert(&mut ledger, &mut board, "第一句", None, false, || true).unwrap();
-        let second = insert(&mut ledger, &mut board, "第二句", None, false, || true).unwrap();
+        let first = insert(&mut ledger, &mut board, "第一句", None, true, false, || true).unwrap();
+        let second = insert(&mut ledger, &mut board, "第二句", None, true, false, || true).unwrap();
         let (first, second) = (first.restore.unwrap(), second.restore.unwrap());
 
         // The first restore must not put the user's link back under the
@@ -1016,10 +1027,10 @@ mod tests {
     fn a_copy_made_between_two_inserts_is_what_the_second_gives_back() {
         let mut ledger = RestoreLedger::default();
         let mut board = Board::holding("the user's link");
-        let first = insert(&mut ledger, &mut board, "第一句", None, false, || true).unwrap();
+        let first = insert(&mut ledger, &mut board, "第一句", None, true, false, || true).unwrap();
         // ⌘X in the document while the next dictation is still on its way.
         board.copied_elsewhere("the cut word");
-        let second = insert(&mut ledger, &mut board, "第二句", None, false, || true).unwrap();
+        let second = insert(&mut ledger, &mut board, "第二句", None, true, false, || true).unwrap();
 
         assert_eq!(
             restore_due(&mut ledger, &mut board, first.restore.unwrap()),
@@ -1038,7 +1049,7 @@ mod tests {
     fn an_explicit_copy_calls_off_a_pending_restore() {
         let mut ledger = RestoreLedger::default();
         let mut board = Board::holding("old");
-        let done = insert(&mut ledger, &mut board, "說的話", None, false, || true).unwrap();
+        let done = insert(&mut ledger, &mut board, "說的話", None, true, false, || true).unwrap();
 
         copy(&mut ledger, &mut board, "說的話").unwrap();
         assert!(!board.transient);
@@ -1049,7 +1060,7 @@ mod tests {
         assert_eq!(board.text, "說的話");
 
         // The copy is the user's clipboard now: the next insert saves it.
-        let next = insert(&mut ledger, &mut board, "下一句", None, false, || true).unwrap();
+        let next = insert(&mut ledger, &mut board, "下一句", None, true, false, || true).unwrap();
         restore_due(&mut ledger, &mut board, next.restore.unwrap());
         assert_eq!(board.text, "說的話");
     }
@@ -1058,7 +1069,7 @@ mod tests {
     fn a_copy_made_after_the_paste_is_never_restored_over() {
         let mut ledger = RestoreLedger::default();
         let mut board = Board::holding("old");
-        let done = insert(&mut ledger, &mut board, "dictated", None, false, || true).unwrap();
+        let done = insert(&mut ledger, &mut board, "dictated", None, true, false, || true).unwrap();
 
         board.copied_elsewhere("copied during the second");
         assert_eq!(
@@ -1068,7 +1079,7 @@ mod tests {
         assert_eq!(board.text, "copied during the second");
 
         // Nothing is left pending: the next insert saves the new copy.
-        let next = insert(&mut ledger, &mut board, "again", None, false, || true).unwrap();
+        let next = insert(&mut ledger, &mut board, "again", None, true, false, || true).unwrap();
         restore_due(&mut ledger, &mut board, next.restore.unwrap());
         assert_eq!(board.text, "copied during the second");
     }
@@ -1077,7 +1088,7 @@ mod tests {
     fn a_copy_landing_while_the_restore_takes_the_clipboard_is_kept() {
         let mut ledger = RestoreLedger::default();
         let mut board = Board::holding("old");
-        let done = insert(&mut ledger, &mut board, "dictated", None, false, || true).unwrap();
+        let done = insert(&mut ledger, &mut board, "dictated", None, true, false, || true).unwrap();
 
         // The mark was still ours when the timer fired; the copy lands while
         // the restore waits for the clipboard.
@@ -1094,7 +1105,7 @@ mod tests {
     fn a_failed_restore_stays_pending_and_a_retry_gives_the_clipboard_back() {
         let mut ledger = RestoreLedger::default();
         let mut board = Board::holding("the user's image");
-        let generation = insert(&mut ledger, &mut board, "dictated", None, false, || true)
+        let generation = insert(&mut ledger, &mut board, "dictated", None, true, false, || true)
             .unwrap()
             .restore
             .unwrap();
@@ -1118,7 +1129,7 @@ mod tests {
     fn a_failed_restore_is_not_retried_over_a_later_copy_or_insert() {
         let mut ledger = RestoreLedger::default();
         let mut board = Board::holding("the user's link");
-        let first = insert(&mut ledger, &mut board, "第一句", None, false, || true)
+        let first = insert(&mut ledger, &mut board, "第一句", None, true, false, || true)
             .unwrap()
             .restore
             .unwrap();
@@ -1130,7 +1141,7 @@ mod tests {
 
         // The next dictation takes the pending restore over: the clipboard
         // still holds the first one, so the link is what it gives back.
-        let second = insert(&mut ledger, &mut board, "第二句", None, false, || true)
+        let second = insert(&mut ledger, &mut board, "第二句", None, true, false, || true)
             .unwrap()
             .restore
             .unwrap();
@@ -1158,7 +1169,7 @@ mod tests {
     fn a_restore_given_up_on_is_dropped() {
         let mut ledger = RestoreLedger::default();
         let mut board = Board::holding("old");
-        let generation = insert(&mut ledger, &mut board, "dictated", None, false, || true)
+        let generation = insert(&mut ledger, &mut board, "dictated", None, true, false, || true)
             .unwrap()
             .restore
             .unwrap();
@@ -1183,9 +1194,9 @@ mod tests {
             let mut ledger = RestoreLedger::default();
             let mut board = Board::holding("old");
             // A restore pending from an earlier dictation…
-            let earlier = insert(&mut ledger, &mut board, "earlier", None, false, || true).unwrap();
+            let earlier = insert(&mut ledger, &mut board, "earlier", None, true, false, || true).unwrap();
 
-            let done = insert(&mut ledger, &mut board, "dictated", Some(why), false, || {
+            let done = insert(&mut ledger, &mut board, "dictated", Some(why), true, false, || {
                 panic!("no paste may be posted")
             })
             .unwrap();
@@ -1251,7 +1262,7 @@ mod tests {
     fn a_refused_paste_leaves_the_text_as_a_plain_copy_with_nothing_pending() {
         let mut ledger = RestoreLedger::default();
         let mut board = Board::holding("old");
-        let done = insert(&mut ledger, &mut board, "dictated", None, false, || false).unwrap();
+        let done = insert(&mut ledger, &mut board, "dictated", None, true, false, || false).unwrap();
         assert_eq!(done, not_pasted());
         assert_eq!(board.text, "dictated");
         assert!(!board.transient);
@@ -1263,7 +1274,7 @@ mod tests {
         let mut ledger = RestoreLedger::default();
         let mut board = Board::holding("old");
         board.fail_snapshot = true;
-        let done = insert(&mut ledger, &mut board, "dictated", None, false, || true).unwrap();
+        let done = insert(&mut ledger, &mut board, "dictated", None, true, false, || true).unwrap();
         assert_eq!(
             done,
             Inserted {
@@ -1279,7 +1290,7 @@ mod tests {
         let mut ledger = RestoreLedger::default();
         let mut board = Board::holding("old");
         board.fail_write = true;
-        let result = insert(&mut ledger, &mut board, "dictated", None, false, || {
+        let result = insert(&mut ledger, &mut board, "dictated", None, true, false, || {
             panic!("no paste may be posted")
         });
         assert!(result.is_err());
@@ -1535,7 +1546,7 @@ mod tests {
     fn a_paste_into_a_remote_session_leaves_the_dictation_on_the_clipboard() {
         let mut ledger = RestoreLedger::default();
         let mut board = Board::holding("https://example.com");
-        let done = insert(&mut ledger, &mut board, "遠端", None, true, || true).unwrap();
+        let done = insert(&mut ledger, &mut board, "遠端", None, true, true, || true).unwrap();
         assert_eq!(
             done,
             Inserted {
@@ -1546,5 +1557,42 @@ mod tests {
         assert_eq!(board.text, "遠端");
         assert!(!board.transient, "the remote sync must not skip it");
         assert_eq!(board.snapshots, 0, "nothing to save when nothing is restored");
+    }
+
+    /// The default: the dictation is pasted and stays on the clipboard as an
+    /// ordinary copy, so the user can paste it again elsewhere — nothing is
+    /// saved, nothing is put back.
+    #[test]
+    fn without_restore_the_dictation_is_pasted_and_stays_on_the_clipboard() {
+        let mut ledger = RestoreLedger::default();
+        let mut board = Board::holding("https://example.com");
+        let done = insert(&mut ledger, &mut board, "說的話", None, false, false, || true).unwrap();
+        assert_eq!(
+            done,
+            Inserted {
+                pasted: true,
+                restore: None
+            }
+        );
+        assert_eq!(board.text, "說的話");
+        assert!(!board.transient, "a clipboard manager may keep it like any copy");
+        assert_eq!(board.snapshots, 0, "nothing to save when nothing is restored");
+        assert!(ledger.pending.is_none());
+    }
+
+    /// Turning the restore off between two dictations calls off the earlier
+    /// one's pending restore: it would otherwise land on the new dictation.
+    #[test]
+    fn an_insert_without_restore_calls_off_an_earlier_pending_restore() {
+        let mut ledger = RestoreLedger::default();
+        let mut board = Board::holding("old");
+        let first = insert(&mut ledger, &mut board, "第一句", None, true, false, || true).unwrap();
+        let generation = first.restore.expect("the first insert borrows the clipboard");
+        insert(&mut ledger, &mut board, "第二句", None, false, false, || true).unwrap();
+        assert_eq!(
+            restore_due(&mut ledger, &mut board, generation),
+            RestoreOutcome::Superseded
+        );
+        assert_eq!(board.text, "第二句");
     }
 }

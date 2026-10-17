@@ -150,19 +150,29 @@ describe("monitorContaining", () => {
  */
 describe("doneMessage", () => {
   it("says nothing was inserted when nothing was said", () => {
-    expect(doneMessage({ text: "", pasted: true, outcome: "off" })).toBe("empty");
-    expect(doneMessage({ text: "", pasted: false, outcome: "failed" })).toBe("empty");
+    expect(doneMessage({ text: "", pasted: true, copied: true, outcome: "off" })).toBe("empty");
+    expect(doneMessage({ text: "", pasted: false, copied: true, outcome: "failed" })).toBe(
+      "empty",
+    );
   });
 
   it("names the paste key when the paste was refused, whatever polish did", () => {
     for (const outcome of ["polished", "failed", "timedOut", "off"] as const) {
-      expect(doneMessage({ text: "hi", pasted: false, outcome })).toBe("clipboard-only");
+      expect(doneMessage({ text: "hi", pasted: false, copied: true, outcome })).toBe(
+        "clipboard-only",
+      );
     }
   });
 
   it("flags a polish that timed out or failed", () => {
-    expect(doneMessage({ text: "hi", pasted: true, outcome: "timedOut" })).toBe("ok-unpolished");
-    expect(doneMessage({ text: "hi", pasted: true, outcome: "failed" })).toBe("ok-unpolished");
+    for (const outcome of ["timedOut", "failed"] as const) {
+      expect(doneMessage({ text: "hi", pasted: true, copied: true, outcome })).toBe(
+        "ok-copied-unpolished",
+      );
+      expect(doneMessage({ text: "hi", pasted: true, copied: false, outcome })).toBe(
+        "ok-unpolished",
+      );
+    }
   });
 
   it("stays quiet when polish worked, never ran, or was refused by the guard", () => {
@@ -173,7 +183,8 @@ describe("doneMessage", () => {
       "rejectedLength",
       "rejectedScript",
     ] as const) {
-      expect(doneMessage({ text: "hi", pasted: true, outcome })).toBe("ok");
+      expect(doneMessage({ text: "hi", pasted: true, copied: true, outcome })).toBe("ok-copied");
+      expect(doneMessage({ text: "hi", pasted: true, copied: false, outcome })).toBe("ok");
     }
   });
 });
@@ -207,41 +218,44 @@ describe("recoveredMessage", () => {
 });
 
 /**
- * The confirmation the overlay shows for each verdict. An insert hands the
- * clipboard back, so it must never say "copied" — that sends the user to ⌘V
- * for text that is no longer there — and it is the one that offers Copy.
+ * The confirmation the overlay shows for each verdict. An insert whose
+ * clipboard is being handed back must never say "copied" — that sends the
+ * user to ⌘V for text that is no longer there.
  */
 describe("donePill", () => {
-  it("says inserted, and offers Copy, when the text went into the field", () => {
-    expect(donePill("ok")).toEqual({ note: "voiceTyping.inserted", tone: "success", copy: true });
+  it("says inserted and copied when the text went into the field and stayed on the clipboard", () => {
+    expect(donePill("ok-copied")).toEqual({ note: "voiceTyping.insertedCopied", tone: "success" });
+    expect(donePill("ok-copied-unpolished")).toEqual({
+      note: "voiceTyping.insertedCopiedUnpolished",
+      tone: "success",
+    });
+  });
+
+  it("says only inserted when the clipboard is being put back", () => {
+    expect(donePill("ok")).toEqual({ note: "voiceTyping.inserted", tone: "success" });
     expect(donePill("ok-unpolished")).toEqual({
       note: "voiceTyping.insertedUnpolished",
       tone: "success",
-      copy: true,
     });
   });
 
-  it("names the paste key, with no Copy, when the text was left on the clipboard", () => {
+  it("names the paste key when the text was left on the clipboard", () => {
     expect(donePill("clipboard-only")).toEqual({
       note: "voiceTyping.pasteBlocked",
       tone: "warning",
-      copy: false,
     });
   });
 
-  it("says copied when the text is on the clipboard on the user's request", () => {
-    for (const verdict of ["recovered", "copied"]) {
-      expect(donePill(verdict)).toEqual({ note: "voiceTyping.copied", tone: "success", copy: false });
-    }
+  it("says copied when an Undo put the text on the clipboard", () => {
+    expect(donePill("recovered")).toEqual({ note: "voiceTyping.copied", tone: "success" });
     expect(donePill("recovered-unpolished")).toEqual({
       note: "voiceTyping.copiedUnpolished",
       tone: "success",
-      copy: false,
     });
   });
 
   it("has no pill for the verdicts with their own note, or before there is one", () => {
-    for (const verdict of ["empty", "nothing", null, "unknown"]) {
+    for (const verdict of ["empty", "nothing", "copied", null, "unknown"]) {
       expect(donePill(verdict)).toBeNull();
     }
   });
@@ -249,7 +263,9 @@ describe("donePill", () => {
   it("has a pill for every delivery that put text somewhere", () => {
     for (const outcome of ["polished", "off", "failed", "timedOut"] as const) {
       for (const pasted of [true, false]) {
-        expect(donePill(doneMessage({ text: "hi", pasted, outcome }))).not.toBeNull();
+        for (const copied of [true, false]) {
+          expect(donePill(doneMessage({ text: "hi", pasted, copied, outcome }))).not.toBeNull();
+        }
       }
       expect(donePill(recoveredMessage({ text: "hi", outcome }))).not.toBeNull();
     }

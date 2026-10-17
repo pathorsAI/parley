@@ -382,6 +382,7 @@ export const VoiceTypingSettings = () => {
     updateSettings({ voiceTypingMode: mode });
   };
   const mode = settings.voiceTypingMode;
+  const restoreClipboard = settings.voiceTypingRestoreClipboard;
 
   const setVoiceTypingPolishStyle = (style: VoiceTypingPolishStyle) => {
     updateSettings({ voiceTypingPolishStyle: style });
@@ -488,6 +489,36 @@ export const VoiceTypingSettings = () => {
                   m === "hold"
                     ? "settings.voiceTyping.mode.hold"
                     : "settings.voiceTyping.mode.toggle",
+                )}
+              </Button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center justify-between gap-2">
+          <span className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+            {t("settings.voiceTyping.clipboard")}
+            <InfoTip label={t("settings.info")}>
+              {`${t("settings.voiceTyping.clipboard.keep")}${sep}${t("settings.voiceTyping.clipboard.keepHint")}\n${t("settings.voiceTyping.clipboard.restore")}${sep}${t("settings.voiceTyping.clipboard.restoreHint")}`}
+            </InfoTip>
+          </span>
+          <div className="flex shrink-0 gap-1.5" role="radiogroup">
+            {([false, true] as const).map((restore) => (
+              <Button
+                key={String(restore)}
+                role="radio"
+                aria-checked={restoreClipboard === restore}
+                variant={restoreClipboard === restore ? "secondary" : "outline"}
+                size="sm"
+                className="h-7 px-2.5 text-[11px]"
+                onClick={() => updateSettings({ voiceTypingRestoreClipboard: restore })}
+              >
+                {t(
+                  restore
+                    ? "settings.voiceTyping.clipboard.restore"
+                    : "settings.voiceTyping.clipboard.keep",
                 )}
               </Button>
             ))}

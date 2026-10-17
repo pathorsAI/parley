@@ -130,7 +130,7 @@ function connect(session: number): void {
 }
 
 function routeInvoke(): void {
-  mocks.invoke.mockImplementation(async (cmd: string) => {
+  mocks.invoke.mockImplementation(async (cmd: string, args?: unknown) => {
     switch (cmd) {
       case "start_voice_typing":
         if (backend.startFailure) {
@@ -146,8 +146,16 @@ function routeInvoke(): void {
       case "stop_voice_typing":
         if (backend.stopGate) await backend.stopGate;
         return undefined;
-      case "insert_text":
-        return { pasted: backend.pasted, appBundleId: backend.pasteApp };
+      case "insert_text": {
+        // As Rust: the text stays on the clipboard unless a restore is set up,
+        // and none is for a paste that did not go out.
+        const restore = (args as { restoreClipboard: boolean }).restoreClipboard;
+        return {
+          pasted: backend.pasted,
+          copied: !restore || !backend.pasted,
+          appBundleId: backend.pasteApp,
+        };
+      }
       case "observe_pasted_field":
         return false;
       case "local_stt_models":
@@ -197,7 +205,7 @@ function inserted(): string[] {
   return calls("insert_text").map((a) => (a as { text: string }).text);
 }
 
-/** What was explicitly copied to the clipboard (Undo, the Copy button). */
+/** What was explicitly copied to the clipboard (Undo). */
 function copied(): string[] {
   return calls("copy_to_clipboard").map((a) => (a as { text: string }).text);
 }
@@ -243,6 +251,7 @@ beforeEach(async () => {
     voiceTypingMode: "hold",
     transcriptionProvider: "parley",
     voiceTypingShortcut: "Alt+Space",
+    voiceTypingRestoreClipboard: false,
     inputDevice: null,
   };
   backend.session = 0;
@@ -285,9 +294,10 @@ describe("voice-typing host", () => {
     finish(1, "0", "好");
     await tick();
     expect(inserted()).toEqual(["好"]);
-    // The insert is the delivery: nothing is copied to the clipboard to stay.
+    // The insert is the delivery, and leaves the text on the clipboard
+    // itself: no separate copy.
     expect(copied()).toEqual([]);
-    expect(dones()).toEqual([{ message: "ok", text: "好" }]);
+    expect(dones()).toEqual([{ message: "ok-copied", text: "好" }]);
     expect(settledReasons()).toEqual(["closed"]);
   });
 
@@ -429,7 +439,7 @@ describe("voice-typing host", () => {
     await tick(2000);
     expect(inserted()).toEqual(["第一句話。", "第二句話。"]);
     // Only the dictation that still owns the overlay ends it.
-    expect(dones()).toEqual([{ message: "ok", text: "第二句話。" }]);
+    expect(dones()).toEqual([{ message: "ok-copied", text: "第二句話。" }]);
   });
 
   /** Regression: softening drops the space after a full-width mark, which
@@ -564,7 +574,7 @@ describe("voice-typing host", () => {
     finish(1, "0", "幫我整理待辦事項");
     await tick();
     expect(inserted()).toEqual(["幫我整理待辦事項"]);
-    expect(dones()).toEqual([{ message: "ok", text: "幫我整理待辦事項" }]);
+    expect(dones()).toEqual([{ message: "ok-copied", text: "幫我整理待辦事項" }]);
     expect(calls("observe_pasted_field")).toEqual([{ insertedText: "幫我整理待辦事項" }]);
     expect(mocks.append).toHaveBeenCalledWith("幫我整理待辦事項", "com.pathors.parley");
   });
@@ -1092,81 +1102,37 @@ describe("voice-typing host: Esc cancels, Undo copies", () => {
   });
 });
 
-async function copyAction(): Promise<void> {
-  fire("voicetyping://done-action", { action: "copy" });
-  await tick();
-}
-
-describe("voice-typing host: Copy on the confirmation", () => {
-  it("copies the inserted text, says so, and keeps the overlay up to say it", async () => {
+describe("voice-typing host: the clipboard after an insert", () => {
+  it("leaves the dictation on the clipboard by default, and says so", async () => {
     await key(true);
     await key(false);
-    finish(1, "0", "沒有地方可以貼");
+    finish(1, "0", "留在剪貼簿");
     await tick();
-    expect(dones()).toEqual([{ message: "ok", text: "沒有地方可以貼" }]);
-
-    await tick(2000);
-    await copyAction();
-    expect(copied()).toEqual(["沒有地方可以貼"]);
-    expect(last(dones())).toEqual({ message: "copied", text: "沒有地方可以貼" });
-    // The hide the insert scheduled gives way to a fresh one from the click.
-    await tick(1000);
-    expect(mocks.hide).not.toHaveBeenCalled();
-    await tick(1900);
-    expect(mocks.hide).toHaveBeenCalledTimes(1);
+    expect(calls("insert_text")).toEqual([{ text: "留在剪貼簿", restoreClipboard: false }]);
+    expect(dones()).toEqual([{ message: "ok-copied", text: "留在剪貼簿" }]);
   });
 
-  it("ignores a click that arrives after the next press", async () => {
+  it("asks Rust to put the clipboard back when the setting is on", async () => {
+    mocks.settings.voiceTypingRestoreClipboard = true;
     await key(true);
     await key(false);
-    finish(1, "0", "上一句");
+    finish(1, "0", "還原剪貼簿");
     await tick();
-    await key(true);
-    await copyAction();
-    expect(copied()).toEqual([]);
-    expect(dones()).toEqual([{ message: "ok", text: "上一句" }]);
+    expect(calls("insert_text")).toEqual([{ text: "還原剪貼簿", restoreClipboard: true }]);
+    expect(dones()).toEqual([{ message: "ok", text: "還原剪貼簿" }]);
   });
 
-  it("copies the newest dictation, never an older one", async () => {
+  it("never claims the clipboard when the insert failed", async () => {
     await key(true);
     await key(false);
-    finish(1, "0", "第一句");
-    await tick();
-    await key(true);
-    await key(false);
-    finish(2, "0", "第二句");
-    await tick();
-    await copyAction();
-    expect(copied()).toEqual(["第二句"]);
-  });
-
-  it("has nothing to copy before a dictation was inserted, or after an empty one", async () => {
-    await copyAction();
-    await key(true);
-    await key(false);
-    finish(1, "0", "");
-    await tick();
-    expect(dones()).toEqual([{ message: "empty", text: "" }]);
-    await copyAction();
-    expect(copied()).toEqual([]);
-    // "copied" is a done event's message, not a phase: no confirmation at all.
-    expect(dones()).toEqual([{ message: "empty", text: "" }]);
-  });
-
-  it("does not confirm, or hold the overlay, when the copy fails", async () => {
-    await key(true);
-    await key(false);
-    finish(1, "0", "複製不了");
-    await tick();
-    mocks.invoke.mockImplementationOnce(async () => {
-      throw new Error("clipboard is held by another process");
+    const route = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === "insert_text") throw new Error("clipboard is held by another process");
+      return route(cmd, args);
     });
-    await copyAction();
-    expect(copied()).toEqual(["複製不了"]);
-    expect(mocks.log.error).toHaveBeenCalledWith("voice-typing: copy failed", expect.anything());
-    expect(dones()).toEqual([{ message: "ok", text: "複製不了" }]);
-    await tick(2900);
-    expect(mocks.hide).toHaveBeenCalledTimes(1);
+    finish(1, "0", "貼不上");
+    await tick();
+    expect(dones()).toEqual([{ message: "ok", text: "貼不上" }]);
   });
 });
 

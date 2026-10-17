@@ -10,7 +10,7 @@ use super::clipboard::{self, ClipboardState, SystemPasteboard};
 use super::imp;
 
 /// Copy text to the system clipboard: an explicit copy the user asked for
-/// (Esc's Undo, the overlay's Copy). Through the OS because the webview's
+/// (Esc's Undo). Through the OS because the webview's
 /// `navigator.clipboard` is blocked while Parley isn't focused. Never restored
 /// over — a restore still pending from the last dictation is called off.
 ///
@@ -35,10 +35,16 @@ pub async fn copy_to_clipboard(app: AppHandle, text: String) -> Result<(), Strin
     .map_err(|e| format!("clipboard copy did not run: {e}"))?
 }
 
-/// Outcome of an insert: whether the paste went out, and WHO it went to.
+/// Outcome of an insert: whether the paste went out, WHO it went to, and
+/// whether the text is still on the clipboard.
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PasteResult {
+    /// The dictation stays on the clipboard: the default, and also what a
+    /// restore that could not be set up (a clipboard too slow or too large to
+    /// save, a remote-desktop target, no paste at all) leaves behind. False
+    /// only when the user's earlier clipboard is due to be put back.
+    copied: bool,
     /// False when no paste chord was posted and the text was left on the
     /// clipboard for the user to paste: on macOS because Accessibility isn't
     /// granted, on Windows because UIPI refused the injection (the target
@@ -57,9 +63,12 @@ pub struct PasteResult {
     app_bundle_id: Option<String>,
 }
 
-/// Type `text` into the frontmost app's focused field: borrow the clipboard,
-/// post the paste chord, and give the clipboard back a moment later (see
-/// `clipboard`), so a dictation never costs the user what they had copied.
+/// Type `text` into the frontmost app's focused field: put it on the
+/// clipboard and post the paste chord. The text stays on the clipboard, ready
+/// to paste again — unless `restore_clipboard` (the
+/// `voiceTypingRestoreClipboard` setting): then the clipboard is only
+/// borrowed, and given back a moment later (see `clipboard`), so a dictation
+/// never costs the user what they had copied.
 /// Reports whether the paste went out and which app received it — the
 /// dictionary's correction watcher needs to know which app's field it is
 /// about to observe.
@@ -84,20 +93,28 @@ pub struct PasteResult {
 /// window. Ctrl+V and the foreground-window queries work from any thread.
 #[cfg(not(target_os = "windows"))]
 #[tauri::command]
-pub fn insert_text(app: AppHandle, text: String) -> Result<PasteResult, String> {
-    insert_now(&app, &text)
+pub fn insert_text(
+    app: AppHandle,
+    text: String,
+    restore_clipboard: bool,
+) -> Result<PasteResult, String> {
+    insert_now(&app, &text, restore_clipboard)
 }
 
 #[cfg(target_os = "windows")]
 #[tauri::command]
-pub async fn insert_text(app: AppHandle, text: String) -> Result<PasteResult, String> {
-    tauri::async_runtime::spawn_blocking(move || insert_now(&app, &text))
+pub async fn insert_text(
+    app: AppHandle,
+    text: String,
+    restore_clipboard: bool,
+) -> Result<PasteResult, String> {
+    tauri::async_runtime::spawn_blocking(move || insert_now(&app, &text, restore_clipboard))
         .await
         .map_err(|e| format!("insert did not run: {e}"))?
 }
 
 /// `insert_text`'s work, on whichever thread the platform wants it.
-fn insert_now(app: &AppHandle, text: &str) -> Result<PasteResult, String> {
+fn insert_now(app: &AppHandle, text: &str, restore: bool) -> Result<PasteResult, String> {
     // Sample the frontmost app FIRST: posting the paste can move focus (a
     // paste that opens a sheet, an app that activates on input), so reading
     // it afterward could name the wrong app.
@@ -114,6 +131,7 @@ fn insert_now(app: &AppHandle, text: &str) -> Result<PasteResult, String> {
         &mut SystemPasteboard,
         text,
         blocked,
+        restore,
         reads_late,
         imp::paste_to_frontmost,
     )?;
@@ -121,6 +139,7 @@ fn insert_now(app: &AppHandle, text: &str) -> Result<PasteResult, String> {
         clipboard::schedule_restore(app, generation);
     }
     Ok(PasteResult {
+        copied: done.restore.is_none(),
         pasted: done.pasted,
         app_bundle_id,
     })

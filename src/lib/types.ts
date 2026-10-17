@@ -386,6 +386,12 @@ export interface Settings {
    *  Default `tidy`. Replaced the boolean `voiceTypingPolish` (false → `off`,
    *  true → `tidy`; see `migrateVoiceTypingPolishStyle`). */
   voiceTypingPolishStyle: VoiceTypingPolishStyle;
+  /** Voice typing: after the paste, put back whatever was on the clipboard
+   *  before the dictation. Off by default — the dictation stays on the
+   *  clipboard, ready to paste again elsewhere (there is no Copy button on the
+   *  overlay any more). On borrows the clipboard only for the paste (see
+   *  src-tauri/src/voice_typing/clipboard.rs). */
+  voiceTypingRestoreClipboard: boolean;
   /** The active evaluation set used in meetings (the runtime copy lives in the store). */
   evaluations: EvalDef[];
   /** Library of evaluation templates (built-in + custom) you can apply. */
