@@ -56,6 +56,18 @@ export interface MeetingSlice {
    *  handshake also reports live — is a no-op. */
   reportTranscriptionLink: (source: string, state: TranscriptionLink) => void;
 
+  /** When the silence guard asked "is this meeting over?" (epoch ms), null
+   *  while it isn't asking. Drives the live screen's countdown banner; the
+   *  guard itself (meeting/silenceGuard.ts) decides when to raise and clear
+   *  it. Cleared by every lifecycle change — start, pause, stop, cancel. */
+  silencePromptAt: number | null;
+  setSilencePrompt: (at: number | null) => void;
+  /** The backend is still recording a meeting this window knows nothing about
+   *  (it reloaded under a running capture). Mark the save that its stop will
+   *  trigger as one to keep even without a transcript — the recording is the
+   *  only copy of that meeting — the same way a dropped transcription does. */
+  adoptOrphanedRecording: () => void;
+
   // meeting lifecycle
   startMeeting: () => void;
   stopMeeting: () => void;
@@ -145,7 +157,13 @@ export const createMeetingSlice: SliceCreator<MeetingSlice> = (set) => ({
   systemAudioWarning: false,
   ...CLEARED_TRANSCRIPTION_LINK,
   transcriptionDropped: false,
+  silencePromptAt: null,
 
+  setSilencePrompt: (silencePromptAt) => set({ silencePromptAt }),
+  adoptOrphanedRecording: () => {
+    log.info("store: adopting an orphaned recording");
+    set({ transcriptionDropped: true });
+  },
   setSystemAudioWarning: (systemAudioWarning) => set({ systemAudioWarning }),
   reportTranscriptionLink: (source, linkState) =>
     set((state) => foldTranscriptionLink(state, source, linkState)),
@@ -173,12 +191,17 @@ export const createMeetingSlice: SliceCreator<MeetingSlice> = (set) => ({
       systemAudioWarning: false,
       ...CLEARED_TRANSCRIPTION_LINK,
       transcriptionDropped: false,
+      silencePromptAt: null,
     });
   },
 
   pauseMeeting: () => {
     log.info("store: meeting paused");
-    set((s) => (s.meetingStatus === "recording" ? { meetingStatus: "paused", meetingPausedAt: Date.now() } : {}));
+    set((s) =>
+      s.meetingStatus === "recording"
+        ? { meetingStatus: "paused", meetingPausedAt: Date.now(), silencePromptAt: null }
+        : {}
+    );
   },
 
   resumeMeeting: () => {
@@ -217,6 +240,7 @@ export const createMeetingSlice: SliceCreator<MeetingSlice> = (set) => ({
       // A cancelled meeting saves nothing, so nothing downstream reads these.
       ...CLEARED_TRANSCRIPTION_LINK,
       transcriptionDropped: false,
+      silencePromptAt: null,
     });
   },
 
@@ -231,6 +255,7 @@ export const createMeetingSlice: SliceCreator<MeetingSlice> = (set) => ({
       // here would never clear. `transcriptionDropped` stays: the save that
       // runs after stop reads it.
       ...CLEARED_TRANSCRIPTION_LINK,
+      silencePromptAt: null,
     });
   },
 });

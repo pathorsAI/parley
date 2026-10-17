@@ -138,7 +138,9 @@ export const startMeeting = (args: {
   languageHints?: string[] | null;
   vocabulary?: string[] | null;
 }) => invoke<void>("start_meeting", args);
-export const stopMeeting = () => invoke<void>("stop_meeting");
+/** `keepMs` cuts the saved recording to its first `keepMs` (the silence
+ *  guard's trailing-silence trim); omitted, the whole recording is kept. */
+export const stopMeeting = (args: { keepMs?: number | null } = {}) => invoke<void>("stop_meeting", args);
 export const cancelMeeting = () => invoke<void>("cancel_meeting");
 export const setMeetingPaused = (args: { paused: boolean }) => invoke<void>("set_meeting_paused", args);
 export const meetingActive = () => invoke<boolean>("meeting_active");

@@ -1096,6 +1096,11 @@ export const zhTW = {
   "meeting.notSaved.tooShort": "會議太短，沒有存下來",
   "meeting.notSaved.noTranscript": "沒有轉錄到任何內容，這場沒有存下來",
   "meeting.notSaved.failed": "這場會議沒能存下來：{error}",
+  "meeting.silence.prompt": "已經 {minutes} 分鐘沒有轉錄到任何人說話，會議結束了嗎？{seconds} 秒後會自動結束並儲存。",
+  "meeting.silence.keep": "繼續錄音",
+  "meeting.silence.end": "結束會議",
+  "meeting.silence.autoEnded": "很久沒有人說話，會議已自動結束並儲存（結尾的靜音已剪掉）。",
+  "meeting.orphan.recovered": "有一場會議在 Parley 重新開啟前仍在背景錄音，已停止並存到紀錄裡。",
   "speakers.voiceBusyPostSave": "正在自動依聲紋校正說話者，完成後即可再手動辨識",
   "speakers.hintWhoAmI": "哪一位是你？把那一欄改成你的名字，AI 才知道哪邊是我方。",
 
@@ -2479,6 +2484,11 @@ export const en = {
   "meeting.notSaved.tooShort": "The meeting was too short to save",
   "meeting.notSaved.noTranscript": "Nothing was transcribed, so this meeting wasn't saved",
   "meeting.notSaved.failed": "This meeting couldn't be saved: {error}",
+  "meeting.silence.prompt": "Nobody has been transcribed for {minutes} minutes — is the meeting over? It ends and saves itself in {seconds} s.",
+  "meeting.silence.keep": "Keep recording",
+  "meeting.silence.end": "End meeting",
+  "meeting.silence.autoEnded": "Nobody spoke for a long time, so the meeting was ended and saved (the silence at the end was cut).",
+  "meeting.orphan.recovered": "A meeting was still recording in the background when Parley reopened. It has been stopped and saved to your library.",
   "speakers.voiceBusyPostSave": "Speakers are being corrected from the recording — try again once that finishes",
   "speakers.hintWhoAmI": "Which one is you? Rename that column to your name so the AI knows which side is yours.",
 

@@ -1,4 +1,6 @@
-import { useStore } from "../store";
+import { isMeetingActive, useStore } from "../store";
+import { notify } from "../notify";
+import { translate } from "../../i18n/messages";
 import { stopMockStream } from "../mockStream";
 import { meetingUsesRealPipeline } from "../transcription/prepare";
 import { log } from "../log";
@@ -25,10 +27,11 @@ export function stopBackendMeeting(failureLog: string, fields: Record<string, un
 
 /**
  * End = the meeting's natural finish: save the recording, then the study
- * pipeline runs the debrief.
+ * pipeline runs the debrief. `keepMs` cuts the saved recording to its first
+ * `keepMs` — the silence guard's trim of the quiet stretch it ended on.
  */
-export async function endMeeting(): Promise<void> {
-  log.info("meeting: stop requested");
+export async function endMeeting(opts: { keepMs?: number } = {}): Promise<void> {
+  log.info("meeting: stop requested", opts.keepMs == null ? {} : { keepMs: opts.keepMs });
   const store = useStore.getState();
   const real = meetingUsesRealPipeline(store.settings);
   store.stopMeeting();
@@ -46,7 +49,7 @@ export async function endMeeting(): Promise<void> {
   // listenForRecordingSaved).
   store.setFinalizingMeeting(true);
   try {
-    await ipc.stopMeeting();
+    await ipc.stopMeeting(opts.keepMs == null ? {} : { keepMs: opts.keepMs });
   } catch (e) {
     log.error("meeting: stop failed", { error: String(e) });
     useStore.getState().setFinalizingMeeting(false);
@@ -90,4 +93,24 @@ export async function cancelActiveMeeting(): Promise<void> {
   } catch (e) {
     log.error("meeting: cancel failed", { error: String(e) });
   }
+}
+
+/**
+ * Stop a recording the backend is still making for a meeting this window does
+ * not know about, and save it. A window that reloads under a running capture
+ * (the page crashing, macOS reclaiming the web content process) comes back
+ * idle while Rust keeps recording; nothing else would ever stop it, and the
+ * next Start would be a no-op that silently extends it, so that meeting's End
+ * saved one file spanning both meetings and every hour between them. Run once
+ * at boot, after the recording-saved listener is up. Its transcript died with
+ * the old page, so the save is marked to keep the audio regardless.
+ */
+export async function recoverOrphanedMeeting(): Promise<void> {
+  const active = await ipc.meetingActive();
+  const store = useStore.getState();
+  if (!active || isMeetingActive(store.meetingStatus)) return;
+  log.warn("meeting: the backend is still recording a meeting this window lost; stopping and saving it");
+  store.adoptOrphanedRecording();
+  await ipc.stopMeeting();
+  notify.message(translate(store.settings.language, "meeting.orphan.recovered"));
 }

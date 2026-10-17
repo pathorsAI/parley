@@ -43,7 +43,8 @@ import { useAnalysisEngine, listenForCacheClear } from "./lib/analysis/engine";
 import { initStudyPipeline } from "./lib/analysis/studyPipeline";
 import { listenForSpeakerCacheClear } from "./lib/speakers/namesCache";
 import { initHistoryPersistSync, listenForRecordingSaved } from "./lib/history/history";
-import { stopBackendMeeting } from "./lib/meeting/controls";
+import { endMeeting, recoverOrphanedMeeting } from "./lib/meeting/controls";
+import { initSilenceGuard } from "./lib/meeting/silenceGuard";
 import { checkForUpdate } from "./lib/update";
 import {
   getPendingInstalledReleaseNotes,
@@ -197,7 +198,14 @@ const App = () => {
     track(listenForCacheClear());
     track(listenForSpeakerCacheClear());
     track(listenForViewLogsMenu());
-    track(listenForRecordingSaved());
+    const recordingSaved = listenForRecordingSaved();
+    track(recordingSaved);
+    // A meeting the backend kept recording while this page was gone (it
+    // reloaded under a running capture): stop and save it, once the listener
+    // that saves it is up.
+    void recordingSaved
+      .then(() => recoverOrphanedMeeting())
+      .catch((error) => log.warn("meeting: orphaned recording check failed", { error: String(error) }));
     // The history://open + history://import listeners are gone with the standalone
     // History window (#195): the library is a route in THIS window now, so it
     // opens an entry by calling loadHistoryEntry directly.
@@ -211,6 +219,9 @@ const App = () => {
     // Personal dictionary ↔ cloud (and so the iPhone). Main window only: it lives
     // for the whole session; the other windows just edit the file and broadcast.
     const unDictionarySync = initDictionarySync();
+    // Asks whether a meeting nobody has spoken in for a long time is over,
+    // and ends it when nobody answers (main window only, like the save).
+    const unSilenceGuard = initSilenceGuard();
     return () => {
       listeners.dispose();
       unTemplates();
@@ -220,6 +231,7 @@ const App = () => {
       unStudyPipeline();
       unVoiceTyping();
       unDictionarySync();
+      unSilenceGuard();
     };
   }, []);
 
@@ -293,9 +305,14 @@ const App = () => {
     if (!isTauri()) return;
     let active = true;
     let unlisten: (() => void) | undefined;
+    // A full End, not just the backend stop: hiding the window used to stop
+    // the capture but leave this window in "recording", so the clock kept
+    // running over a meeting that had already been saved, and the next End
+    // found nothing to save.
     const stopIfRecording = (): Promise<void> => {
       if (!isMeetingActive(useStore.getState().meetingStatus)) return Promise.resolve();
-      return stopBackendMeeting("meeting: stop on close failed");
+      log.info("meeting: ending on window close");
+      return endMeeting();
     };
     // Swallow the promise: a `beforeunload` handler that returns anything
     // non-null asks the webview for a "leave site?" confirmation, which would

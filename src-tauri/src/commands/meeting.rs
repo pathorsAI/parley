@@ -116,7 +116,13 @@ pub fn start_meeting(
     // own dead gate) can never be revived by a later start.
     let gate = match coord.begin(MicUser::Meeting) {
         Begin::Started(gate) => gate,
-        Begin::AlreadyActive => return Ok(()),
+        Begin::AlreadyActive => {
+            // The frontend thought nothing was recording. Worth a line: this
+            // is the trace a lost meeting leaves (the window reloaded under a
+            // running capture), and the recording it started keeps growing.
+            log::warn!("meeting: start ignored, a meeting is already recording");
+            return Ok(());
+        }
         // Unreachable today (Meeting outranks everything), kept for safety.
         Begin::Busy(owner) => return Err(format!("microphone is in use by {owner:?}")),
     };
@@ -448,13 +454,35 @@ fn teardown_meeting(
     state.recorder.lock().unwrap().take()
 }
 
+/// Cut a recording down to its first `keep_ms` (16 kHz mono). `None`, or a
+/// length past the end, keeps all of it.
+fn keep_leading(mut pcm: Vec<i16>, keep_ms: Option<u64>) -> Vec<i16> {
+    if let Some(ms) = keep_ms {
+        let keep = (ms * crate::audio::TARGET_SAMPLE_RATE as u64 / 1000) as usize;
+        if keep < pcm.len() {
+            log::info!(
+                "recording: trimming trailing silence ({} ms → {} ms)",
+                pcm.len() as u64 * 1000 / crate::audio::TARGET_SAMPLE_RATE as u64,
+                ms
+            );
+            pcm.truncate(keep);
+        }
+    }
+    pcm
+}
+
+/// End the live meeting and save its recording. `keep_ms` cuts the recording
+/// to its first `keep_ms`: the silence guard passes it when a meeting is ended
+/// because nobody has spoken for a long time, so the saved file stops shortly
+/// after the last words instead of carrying the quiet room that followed.
 #[tauri::command]
 pub fn stop_meeting(
     app: AppHandle,
     state: State<MeetingState>,
     coord: State<MicCoordinator>,
+    keep_ms: Option<u64>,
 ) -> Result<(), String> {
-    let pcm = teardown_meeting(&app, &state, &coord);
+    let pcm = teardown_meeting(&app, &state, &coord).map(|pcm| keep_leading(pcm, keep_ms));
 
     // Encode the captured audio off-thread and tell the frontend where it landed
     // (which then writes the history entry). Skip very short / empty recordings —
@@ -577,4 +605,25 @@ fn spawn_farend_tap(
         }
     });
     out_rx
+}
+
+#[cfg(test)]
+mod tests {
+    use super::keep_leading;
+
+    #[test]
+    fn keep_leading_cuts_the_tail_at_the_requested_length() {
+        // 3 s at 16 kHz, cut to the first 1.5 s.
+        let pcm: Vec<i16> = (0..48_000).map(|i| (i % 100) as i16).collect();
+        let kept = keep_leading(pcm.clone(), Some(1_500));
+        assert_eq!(kept.len(), 24_000);
+        assert_eq!(kept[..], pcm[..24_000]);
+    }
+
+    #[test]
+    fn keep_leading_keeps_everything_without_a_cut_or_past_the_end() {
+        let pcm = vec![1i16; 16_000];
+        assert_eq!(keep_leading(pcm.clone(), None).len(), 16_000);
+        assert_eq!(keep_leading(pcm.clone(), Some(5_000)).len(), 16_000);
+    }
 }

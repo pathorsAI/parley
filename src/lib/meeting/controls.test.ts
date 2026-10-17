@@ -15,7 +15,7 @@ vi.mock("../log", () => ({ log: mocks.log, attachConsoleOnce: vi.fn() }));
 
 import { useStore } from "../store";
 import type { MeetingStatus } from "../types";
-import { cancelActiveMeeting, endMeeting, stopBackendMeeting, toggleMeetingPause } from "./controls";
+import { cancelActiveMeeting, endMeeting, recoverOrphanedMeeting, stopBackendMeeting, toggleMeetingPause } from "./controls";
 
 const base = useStore.getState().settings;
 
@@ -47,7 +47,7 @@ describe("endMeeting", () => {
   it("stops the real session and shows finalizing until the save reports back", async () => {
     setup({ key: "sk" });
     await endMeeting();
-    expect(commands()).toEqual([["stop_meeting"]]);
+    expect(commands()).toEqual([["stop_meeting", {}]]);
     expect(useStore.getState().meetingStatus).toBe("stopped");
     expect(useStore.getState().isFinalizingMeeting).toBe(true);
     expect(mocks.stopMockStream).not.toHaveBeenCalled();
@@ -119,13 +119,46 @@ describe("cancelActiveMeeting", () => {
 });
 
 describe("stopBackendMeeting", () => {
-  it("sends stop_meeting with no arguments and logs a failure with the caller's fields", async () => {
+  it("sends stop_meeting with an empty argument object and logs a failure with the caller's fields", async () => {
     mocks.invoke.mockRejectedValueOnce(new Error("x"));
     await stopBackendMeeting("meeting: stop after backend error failed", { code: "quota" });
-    expect(mocks.invoke.mock.calls).toEqual([["stop_meeting"]]);
+    expect(mocks.invoke.mock.calls).toEqual([["stop_meeting", {}]]);
     expect(mocks.log.warn).toHaveBeenCalledWith("meeting: stop after backend error failed", {
       code: "quota",
       error: "Error: x",
     });
+  });
+});
+
+describe("endMeeting with a trim", () => {
+  it("passes keepMs to the backend stop", async () => {
+    setup({ key: "sk" });
+    await endMeeting({ keepMs: 90_000 });
+    expect(commands()).toEqual([["stop_meeting", { keepMs: 90_000 }]]);
+  });
+});
+
+describe("recoverOrphanedMeeting", () => {
+  it("stops and keeps a recording the backend is making for a meeting this window lost", async () => {
+    setup({ key: "sk", status: "idle" });
+    useStore.setState({ transcriptionDropped: false });
+    mocks.invoke.mockImplementation((cmd: string) => Promise.resolve(cmd === "meeting_active" ? true : undefined));
+    await recoverOrphanedMeeting();
+    expect(commands()).toEqual([["meeting_active"], ["stop_meeting", {}]]);
+    expect(useStore.getState().transcriptionDropped).toBe(true);
+  });
+
+  it("leaves the backend alone when nothing is recording", async () => {
+    setup({ key: "sk", status: "idle" });
+    mocks.invoke.mockResolvedValue(false);
+    await recoverOrphanedMeeting();
+    expect(commands()).toEqual([["meeting_active"]]);
+  });
+
+  it("leaves a meeting this window is running alone", async () => {
+    setup({ key: "sk", status: "recording" });
+    mocks.invoke.mockResolvedValue(true);
+    await recoverOrphanedMeeting();
+    expect(commands()).toEqual([["meeting_active"]]);
   });
 });

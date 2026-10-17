@@ -1,6 +1,7 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useDefaultLayout } from "react-resizable-panels";
-import { Loader2, MicOff, X } from "lucide-react";
+import { Hourglass, Loader2, MicOff, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -8,6 +9,13 @@ import {
 } from "@/components/ui/resizable";
 import { useStore } from "../../lib/store";
 import { isWindows } from "../../lib/platform";
+import {
+  endSilentMeeting,
+  keepRecording,
+  SILENCE_GRACE_MS,
+  SILENCE_PROMPT_MS,
+} from "../../lib/meeting/silenceGuard";
+import { log } from "../../lib/log";
 import { useI18n } from "../../i18n";
 import { MeetingView } from "../MeetingView";
 import { CoachFeed } from "./CoachFeed";
@@ -78,6 +86,53 @@ function TranscriptionLinkBanner() {
 }
 
 /**
+ * The silence guard is asking whether the meeting is over (nothing has been
+ * transcribed for a long time — see meeting/silenceGuard.ts). Counts down to
+ * the automatic End; either button answers it. Speech coming back withdraws it
+ * by itself.
+ */
+function SilencePromptBanner() {
+  const { t } = useI18n();
+  const promptAt = useStore((s) => s.silencePromptAt);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (promptAt == null) return;
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [promptAt]);
+
+  if (promptAt == null) return null;
+  const seconds = Math.max(0, Math.ceil((promptAt + SILENCE_GRACE_MS - now) / 1000));
+  return (
+    <output className="flex shrink-0 items-center gap-2 border-b border-warning-border bg-warning px-3 py-1.5 text-xs text-warning-foreground">
+      <Hourglass className="size-3.5 shrink-0" aria-hidden />
+      <span className="min-w-0 flex-1">
+        {t("meeting.silence.prompt", {
+          minutes: String(Math.round(SILENCE_PROMPT_MS / 60_000)),
+          seconds: String(seconds),
+        })}
+      </span>
+      <Button size="sm" variant="outline" className="h-6 px-2 text-xs" onClick={keepRecording}>
+        {t("meeting.silence.keep")}
+      </Button>
+      <Button
+        size="sm"
+        variant="destructive"
+        className="h-6 px-2 text-xs"
+        onClick={() =>
+          void endSilentMeeting("confirmed").catch((error) =>
+            log.error("meeting: silence prompt end failed", { error: String(error) }),
+          )
+        }
+      >
+        {t("meeting.silence.end")}
+      </Button>
+    </output>
+  );
+}
+
+/**
  * The LIVE screen, in one of two postures (titlebar-center switcher):
  * - coach (default): transcript rail | coach feed | agenda checklist —
  *   the center belongs to the coach's one voice, not a chat pane.
@@ -100,6 +155,7 @@ export function LiveScreen() {
     <div className="flex min-h-0 flex-1 flex-col">
     <SystemAudioBanner />
     <TranscriptionLinkBanner />
+    <SilencePromptBanner />
     <ResizablePanelGroup
       key={layout}
       orientation="horizontal"
