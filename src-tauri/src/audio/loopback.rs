@@ -28,6 +28,15 @@ where
 /// a scheduling hiccup.
 pub const PAD_AFTER: Duration = Duration::from_millis(150);
 
+/// A gap this long between two consecutive [`SilencePadder::pad`] calls means
+/// the capture thread was not running at all — the machine slept (the lid was
+/// closed mid-meeting) or the process was frozen. The supervisor consults the
+/// padder every 20 ms, so no scheduling hiccup comes close. `Instant` keeps
+/// counting through a Windows suspend, so without this the first tick after
+/// waking padded the whole night: an hour-long meeting saved as a 9-hour
+/// recording, the last 8 hours silent and transcribed to nothing.
+pub const SUSPEND_GAP: Duration = Duration::from_secs(2);
+
 /// Keeps the "them" stream continuous in wall-clock time.
 ///
 /// WASAPI loopback only produces packets while something is being rendered;
@@ -41,6 +50,10 @@ pub const PAD_AFTER: Duration = Duration::from_millis(150);
 /// the same contract: once real audio has been absent for [`PAD_AFTER`], zeros
 /// are emitted to cover exactly the wall-clock time that passed.
 ///
+/// Only time the capture was actually running is padded: a gap of
+/// [`SUSPEND_GAP`] or more between ticks is skipped, not filled (the mic
+/// delivered nothing for it either, so it was never part of the meeting).
+///
 /// Times are durations since the capture started, passed in by the caller so
 /// the policy is testable without sleeping.
 pub struct SilencePadder {
@@ -50,6 +63,8 @@ pub struct SilencePadder {
     covered: Duration,
     /// When real audio last arrived.
     last_real: Duration,
+    /// When [`Self::pad`] was last consulted — the suspend detector.
+    last_tick: Duration,
 }
 
 impl SilencePadder {
@@ -58,6 +73,7 @@ impl SilencePadder {
             rate,
             covered: Duration::ZERO,
             last_real: Duration::ZERO,
+            last_tick: Duration::ZERO,
         }
     }
 
@@ -71,6 +87,15 @@ impl SilencePadder {
 
     /// Number of zero samples to emit at `now` (0 while real audio is flowing).
     pub fn pad(&mut self, now: Duration) -> usize {
+        let since_tick = now.saturating_sub(self.last_tick);
+        self.last_tick = self.last_tick.max(now);
+        if since_tick >= SUSPEND_GAP {
+            // The thread was asleep with the machine: account for the gap
+            // without emitting it, and pad normally from here on.
+            log::info!("[system] capture resumed after {since_tick:?} (system sleep?); not padding the gap");
+            self.covered = self.covered.max(now);
+            return 0;
+        }
         if now.saturating_sub(self.last_real) < PAD_AFTER || now <= self.covered {
             return 0;
         }
@@ -271,6 +296,44 @@ mod tests {
         // Late-arriving audio never rewinds what was already covered.
         p.on_audio(ms(1_240));
         assert_eq!(p.pad(ms(1_260)), 0);
+    }
+
+    #[test]
+    fn padder_skips_a_system_sleep_instead_of_filling_it() {
+        let mut p = SilencePadder::new(16_000);
+        // An idle device padded tick by tick for a minute...
+        let mut total = 0;
+        let mut t = 0;
+        while t < 60_000 {
+            t += 20;
+            total += p.pad(ms(t));
+        }
+        assert_eq!(total, 60_000 * 16);
+        // ...then the lid is closed for eight hours: waking pads nothing...
+        let woke = t + 8 * 3_600_000;
+        assert_eq!(p.pad(ms(woke)), 0);
+        // ...and the next tick pads only its own 20 ms.
+        assert_eq!(p.pad(ms(woke + 20)), 320);
+    }
+
+    #[test]
+    fn padder_skips_a_sleep_while_audio_was_playing() {
+        let mut p = SilencePadder::new(16_000);
+        for t in (0..1_000).step_by(20) {
+            p.on_audio(ms(t));
+            assert_eq!(p.pad(ms(t)), 0);
+        }
+        // Asleep mid-playback; on wake nothing renders, so no real audio.
+        assert_eq!(p.pad(ms(3_600_000)), 0);
+        assert_eq!(p.pad(ms(3_600_200)), 3_200);
+    }
+
+    #[test]
+    fn padder_still_fills_a_slow_tick_below_the_suspend_gap() {
+        let mut p = SilencePadder::new(16_000);
+        assert_eq!(p.pad(ms(20)), 0);
+        // A one-second stall is a busy machine, not a sleep: it is padded.
+        assert_eq!(p.pad(ms(1_020)), 1_020 * 16);
     }
 
     #[test]
