@@ -1,9 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   abortableSleep,
   CHAT_RETRY_POLICY,
   ConcurrencyGate,
   createHostedChatFetch,
+  hostedChatFetch,
+  hostedChatGates,
   parseRetryAfter,
   retryDelayMs,
   type HostedChatFetchDeps,
@@ -234,5 +236,42 @@ describe("createHostedChatFetch", () => {
     });
     await expect(failing("u", {})).rejects.toThrow("Failed to fetch");
     expect(gate.inFlight).toBe(0);
+  });
+});
+
+describe("hostedChatFetch lanes", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("does not block a realtime (polish) call while two deep analyses hold the deep gate", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => response(200, {}, "body")));
+    // Two analyses whose (streamed) bodies are still unread: the deep lane is full.
+    const analyses = await Promise.all([hostedChatFetch("deep")("u", {}), hostedChatFetch("deep")("u", {})]);
+    expect(hostedChatGates.deep.inFlight).toBe(2);
+    const third = hostedChatFetch("deep")("u", {});
+    expect(hostedChatGates.deep.queued).toBe(1);
+
+    const polish = await hostedChatFetch("realtime")("u", {});
+    expect(await polish.text()).toBe("body");
+    expect(hostedChatGates.realtime.inFlight).toBe(0);
+
+    await analyses[0].text();
+    await (await third).text();
+    await analyses[1].text();
+    expect(hostedChatGates.deep.inFlight).toBe(0);
+  });
+
+  it("lets a realtime caller's deadline cut a long Retry-After wait short", async () => {
+    const fetch = vi.fn(async () => response(429, { "Retry-After": "25" }));
+    vi.stubGlobal("fetch", fetch);
+    const ctl = new AbortController();
+    const started = Date.now();
+    const pending = hostedChatFetch("realtime")("u", { signal: ctl.signal });
+    setTimeout(() => ctl.abort(new Error("polish deadline")), 20);
+    await expect(pending).rejects.toThrow("polish deadline");
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(hostedChatGates.realtime.inFlight).toBe(0);
   });
 });

@@ -1,5 +1,6 @@
 import { log } from "../log";
 import { webviewFetch } from "./webviewFetch";
+import type { LlmWorkload } from "../types";
 
 /**
  * How hosted (Parley Cloud) chat calls are throttled and retried.
@@ -11,7 +12,7 @@ import { webviewFetch } from "./webviewFetch";
  * multiplied by the SDK's own retries and the format fallbacks) drains that
  * budget for everyone, and once every request fails at once, retrying them all
  * immediately is the worst possible answer. So: at most two hosted chat calls
- * in flight per webview, the rest waiting in arrival order; a 429 waits as long
+ * in flight per workload lane, the rest waiting in arrival order; a 429 waits as long
  * as the server's `Retry-After` says (floored by an exponential backoff, capped,
  * with jitter); a 502 gets two short retries; nothing else is retried here.
  *
@@ -38,7 +39,7 @@ export const CHAT_RETRY_POLICY: ChatRetryPolicy = {
   jitterFraction: 0.5,
 };
 
-/** Hosted chat calls allowed in flight at once, per webview. */
+/** Hosted chat calls allowed in flight at once, per lane per webview. */
 export const HOSTED_CHAT_CONCURRENCY = 2;
 
 function retryLimit(policy: ChatRetryPolicy, status: number): number | null {
@@ -238,17 +239,40 @@ export function createHostedChatFetch(deps: HostedChatFetchDeps): FetchFn {
   };
 }
 
-/** The one gate every hosted chat call in this webview shares. */
-export const hostedChatGate = new ConcurrencyGate(HOSTED_CHAT_CONCURRENCY);
+/**
+ * One gate per workload lane. The deep lane carries the long study passes
+ * (findings, action items, brief); the realtime lane carries the short,
+ * latency-sensitive calls (voice-typing polish, Ask, filing, classification).
+ * Separate gates keep a dictation polish from queueing behind two minute-long
+ * analyses and missing its own few-second deadline; together they still bound
+ * the webview to four hosted calls at once.
+ */
+export const hostedChatGates: Record<LlmWorkload, ConcurrencyGate> = {
+  deep: new ConcurrencyGate(HOSTED_CHAT_CONCURRENCY),
+  realtime: new ConcurrencyGate(HOSTED_CHAT_CONCURRENCY),
+};
+
+function laneFetch(workload: LlmWorkload): FetchFn {
+  return createHostedChatFetch({
+    fetch: webviewFetch,
+    gate: hostedChatGates[workload],
+    policy: CHAT_RETRY_POLICY,
+    jitter: Math.random,
+    sleep: abortableSleep,
+  });
+}
+
+const LANE_FETCH: Record<LlmWorkload, FetchFn> = {
+  deep: laneFetch("deep"),
+  realtime: laneFetch("realtime"),
+};
 
 /**
- * The fetch the hosted Parley provider is built with: {@link webviewFetch},
- * behind the shared gate and the retry policy. BYOK providers do not use it.
+ * The fetch the hosted Parley provider is built with for `workload`:
+ * {@link webviewFetch} behind that lane's gate and the retry policy. A caller's
+ * abort (polish racing its deadline) ends any queue or backoff wait at once.
+ * BYOK providers do not use it.
  */
-export const hostedChatFetch: FetchFn = createHostedChatFetch({
-  fetch: webviewFetch,
-  gate: hostedChatGate,
-  policy: CHAT_RETRY_POLICY,
-  jitter: Math.random,
-  sleep: abortableSleep,
-});
+export function hostedChatFetch(workload: LlmWorkload): FetchFn {
+  return LANE_FETCH[workload];
+}

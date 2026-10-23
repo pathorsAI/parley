@@ -97,7 +97,7 @@ describe("getModel fetch", () => {
       name: "parley",
       baseURL: "https://example.test/v1",
       apiKey: "session-token",
-      fetch: hostedChatFetch,
+      fetch: hostedChatFetch("realtime"),
     });
   });
 

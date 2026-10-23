@@ -110,9 +110,9 @@ export function getModel(
       apiKey: token,
       headers: opts?.feature ? { "X-Parley-Feature": opts.feature } : undefined,
       supportsStructuredOutputs: opts?.forceJsonObject ? false : info.supportsStructuredOutputs ?? false,
-      // One shared gate + bounded 429/502 retries for every hosted chat call
+      // A per-lane gate + bounded 429/502 retries for every hosted chat call
       // (hostedChat.ts) — the cloud's provider budget is shared by all users.
-      fetch: hostedChatFetch,
+      fetch: hostedChatFetch(workload),
     });
     return parley.chatModel(modelId);
   }
