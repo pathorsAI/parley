@@ -51,6 +51,13 @@
             android:exported="false"
             android:foregroundServiceType="microphone" />
 
+        <!-- Drains the transcript backfill queue as a system job, so a batch
+             transcription survives the person leaving the app (upload/BackfillJob). -->
+        <service
+            android:name=".upload.BackfillJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
         <!-- Hears that "Share to AI" reached a share target (the getting-started
              checklist's last item). Only the chooser's own PendingIntent reaches
              it, so it is not exported. -->

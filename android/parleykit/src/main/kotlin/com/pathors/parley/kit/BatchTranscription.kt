@@ -1,7 +1,10 @@
 package com.pathors.parley.kit
 
 import java.io.File
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.descriptors.SerialDescriptor
@@ -196,6 +199,13 @@ interface BatchTranscriptionService {
      * transcription.
      */
     suspend fun deleteBatchJob(id: String)
+
+    /**
+     * Whether [error], thrown by [batchJobStatus] or [batchTranscript], means
+     * the job does not exist (any more) — a `404 not_found`. A remembered job
+     * that answers this is forgotten and the audio uploaded fresh.
+     */
+    fun isJobNotFound(error: Throwable): Boolean = false
 }
 
 // ── errors ───────────────────────────────────────────────────────────────────
@@ -304,44 +314,95 @@ data class BatchTranscriptionResult(
  *
  * The cadence — sleep first, then poll, 1500 ms apart, at most 800 times — is
  * the desktop's, which puts the ceiling a little over 20 minutes of waiting.
+ *
+ * ## Resuming a job instead of uploading again
+ *
+ * Given a `resumeKey` (the recording id), the job id is written to [jobs] as
+ * soon as the upload succeeds, and a later call for the same key polls that job
+ * instead of uploading — provided it is younger than [MAX_RESUME_AGE_MS] and was
+ * made from a file of the same size. A remembered job the cloud no longer knows
+ * (404) or that failed (`status: error`) is forgotten and the audio uploaded
+ * fresh, in the same call. One that is merely slow, or a poll the network
+ * interrupted, stays remembered: the next attempt picks it up where this one
+ * left off. It is forgotten once its transcript is in hand.
  */
 class BatchTranscriber(
     private val service: BatchTranscriptionService,
     private val pollIntervalMs: Long = DEFAULT_POLL_INTERVAL_MS,
     private val maxPolls: Int = DEFAULT_MAX_POLLS,
+    private val jobs: BatchJobStore = BatchJobStore.NONE,
+    private val now: () -> Long = System::currentTimeMillis,
 ) {
 
-    /** Upload → poll → fetch → group → best-effort delete. */
+    /** Upload (or resume) → poll → fetch → group → best-effort delete. */
     suspend fun transcribe(
         audio: File,
         diarization: Boolean = true,
         languageHints: List<String> = emptyList(),
         terms: List<String> = emptyList(),
+        resumeKey: String? = null,
     ): BatchTranscriptionResult {
+        if (resumeKey != null) {
+            resume(resumeKey, audio)?.let { return it }
+        }
+        val audioBytes = withContext(Dispatchers.IO) { audio.length() }
         val jobId = service.startBatchJob(audio, diarization, languageHints, terms)
-
-        // The cloud normalizes job states into the four handled here, so a
-        // status we don't recognize is treated as "still working" rather than a
-        // hard failure.
-        var reportedDurationMs: Long? = null
-        for (poll in 0 until maxPolls) {
-            delay(pollIntervalMs)
-            val job = service.batchJobStatus(jobId)
-            if (job.status == STATUS_COMPLETED) {
-                reportedDurationMs = job.durationMsOrZero
-                break
-            }
-            if (job.status == STATUS_ERROR) {
-                throw BatchTranscriptionException.JobFailed(
-                    job.errorMessage?.takeIf { it.isNotEmpty() }
-                        ?: BatchTranscriptionException.UNKNOWN_REASON
-                )
+        if (resumeKey != null) {
+            withContext(Dispatchers.IO) {
+                jobs.write(resumeKey, PersistedBatchJob(jobId, audioBytes, now()))
             }
         }
-        val audioDurationMs = reportedDurationMs
-            ?: throw BatchTranscriptionException.TimedOut(maxPolls)
+        return finishJob(jobId, resumeKey)
+    }
 
-        val transcript = service.batchTranscript(jobId)
+    /** Drop whatever job is remembered for [key] — the recording is gone. */
+    suspend fun forgetJob(key: String) = withContext(Dispatchers.IO) { jobs.clear(key) }
+
+    /**
+     * The remembered job's result, or null when there is nothing worth resuming
+     * and the caller should upload. Transport failures propagate with the job
+     * still remembered.
+     */
+    private suspend fun resume(key: String, audio: File): BatchTranscriptionResult? {
+        val jobId = resumableJobId(key, audio) ?: return null
+        return try {
+            finishJob(jobId, key)
+        } catch (e: BatchTranscriptionException.JobFailed) {
+            null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (service.isJobNotFound(e)) null else throw e
+        }
+    }
+
+    private suspend fun resumableJobId(key: String, audio: File): String? =
+        withContext(Dispatchers.IO) {
+            val job = jobs.read(key) ?: return@withContext null
+            val age = now() - job.createdAtMs
+            val usable = age in 0 until MAX_RESUME_AGE_MS && job.audioBytes == audio.length()
+            if (!usable) jobs.clear(key)
+            job.jobId.takeIf { usable }
+        }
+
+    /**
+     * Poll [jobId] to completion and fetch its transcript, keeping [key]'s
+     * memory of it exactly as long as the job is still worth coming back to.
+     */
+    private suspend fun finishJob(jobId: String, key: String?): BatchTranscriptionResult {
+        val (audioDurationMs, transcript) = try {
+            val duration = awaitCompletion(jobId)
+            duration to service.batchTranscript(jobId)
+        } catch (e: BatchTranscriptionException.JobFailed) {
+            key?.let { forgetJob(it) }
+            throw e
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (key != null && service.isJobNotFound(e)) forgetJob(key)
+            throw e
+        }
+        key?.let { forgetJob(it) }
 
         // Fire and forget so the cloud isn't left holding the audio.
         service.deleteBatchJob(jobId)
@@ -355,6 +416,26 @@ class BatchTranscriber(
         return BatchTranscriptionResult(segments = segments, durationMs = durationMs)
     }
 
+    /**
+     * Poll until the job settles; its reported duration. The cloud normalizes
+     * job states into the four handled here, so a status we don't recognize is
+     * treated as "still working" rather than a hard failure.
+     */
+    private suspend fun awaitCompletion(jobId: String): Long {
+        repeat(maxPolls) {
+            delay(pollIntervalMs)
+            val job = service.batchJobStatus(jobId)
+            if (job.status == STATUS_COMPLETED) return job.durationMsOrZero
+            if (job.status == STATUS_ERROR) {
+                throw BatchTranscriptionException.JobFailed(
+                    job.errorMessage?.takeIf { it.isNotEmpty() }
+                        ?: BatchTranscriptionException.UNKNOWN_REASON
+                )
+            }
+        }
+        throw BatchTranscriptionException.TimedOut(maxPolls)
+    }
+
     companion object {
         /**
          * A phone records one mixed stream, so every segment it produces carries
@@ -364,6 +445,12 @@ class BatchTranscriber(
 
         const val DEFAULT_POLL_INTERVAL_MS = 1_500L
         const val DEFAULT_MAX_POLLS = 800
+
+        /**
+         * How long a remembered job is worth polling again. Past this the cloud
+         * may well have expired it, and uploading again is the safer bet.
+         */
+        const val MAX_RESUME_AGE_MS = 72L * 60 * 60 * 1000
 
         private const val STATUS_COMPLETED = "completed"
         private const val STATUS_ERROR = "error"

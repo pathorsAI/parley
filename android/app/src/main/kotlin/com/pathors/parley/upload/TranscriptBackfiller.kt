@@ -8,7 +8,9 @@ import com.pathors.parley.cloud.RecordingMetaLocks
 import com.pathors.parley.cloud.RecordingSource
 import com.pathors.parley.cloud.RecordingSummary
 import com.pathors.parley.cloud.toDtos
+import com.pathors.parley.kit.BatchJobStore
 import com.pathors.parley.kit.BatchTranscriber
+import com.pathors.parley.kit.FileBatchJobStore
 import com.pathors.parley.kit.ManualRetryBudget
 import com.pathors.parley.kit.TranscriptCoverage
 import com.pathors.parley.playback.AudioRetention
@@ -178,10 +180,12 @@ class TranscriptBackfiller(
      * Forget a recording: drop anything queued for it and give its budget back.
      * For a deletion, so neither outlives the recording it belongs to.
      */
-    suspend fun forget(id: String) = withContext(Dispatchers.IO) {
-        queue.remove(id)
-        ledger.forget(id)
-        Unit
+    suspend fun forget(id: String) {
+        withContext(Dispatchers.IO) {
+            queue.remove(id)
+            ledger.forget(id)
+        }
+        transcriber.forgetJob(id)
     }
 
     // ── asking for one by hand ───────────────────────────────────────────────
@@ -314,6 +318,21 @@ class TranscriptBackfiller(
     }
 
     /**
+     * [drain], again while a clean pass leaves requests behind — ones queued
+     * while it ran, which a pass started before them never saw. At most
+     * [maxPasses]; stops at the first pass that fails.
+     */
+    suspend fun drainUntilSettled(maxPasses: Int = DEFAULT_MAX_PASSES): BackfillResult {
+        var result = drain()
+        var passes = 1
+        while (result.failure == null && result.remaining > 0 && passes < maxPasses) {
+            result = drain()
+            passes++
+        }
+        return result
+    }
+
+    /**
      * Stamp a request as tried, in its manifest, before the work starts — so a
      * run the system kills still leaves its time behind. Guarded on the
      * manifest still being there, so this never writes one back that
@@ -334,10 +353,15 @@ class TranscriptBackfiller(
         val id = request.id
         // Same call the import path makes: no language hints, so the cloud
         // auto-detects exactly as the desktop does with an empty list.
+        //
+        // Keyed by the recording, so a run that was cut short — the process
+        // frozen or killed in the background — picks up the job it already
+        // uploaded instead of uploading the same hour of audio again.
         val transcript = transcriber.transcribe(
             audio = audio,
             diarization = true,
             languageHints = emptyList(),
+            resumeKey = id,
         )
 
         // The transcription has completed and been billed, so a hand-triggered
@@ -440,6 +464,13 @@ class TranscriptBackfiller(
 
     companion object {
         private const val SOURCE_KEY = "source"
+        private const val DEFAULT_MAX_PASSES = 3
+
+        /** Where the batch jobs a run has uploaded are remembered — see [BatchTranscriber]. */
+        fun jobStore(context: Context): BatchJobStore =
+            FileBatchJobStore(File(context.filesDir, BATCH_JOBS_DIRECTORY))
+
+        private const val BATCH_JOBS_DIRECTORY = "batch-jobs"
 
         fun create(context: Context, cloud: CloudClient): TranscriptBackfiller {
             val retention = AudioRetention(context)
@@ -447,6 +478,7 @@ class TranscriptBackfiller(
                 cloud = cloud,
                 queue = PendingBackfillQueue.default(context),
                 ledger = ManualRetryLedger.default(context),
+                transcriber = BatchTranscriber(cloud, jobs = jobStore(context)),
                 localAudio = LocalAudioStore.default(context),
                 keepsAudioOnPhone = retention::keepsAudioOnPhoneNow,
             )

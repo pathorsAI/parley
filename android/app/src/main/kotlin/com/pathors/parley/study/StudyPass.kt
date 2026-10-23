@@ -9,6 +9,7 @@ import com.pathors.parley.filing.FilingPass
 import com.pathors.parley.kit.ActionItem
 import com.pathors.parley.kit.AnalysisLens
 import com.pathors.parley.kit.ChatCompletions
+import com.pathors.parley.kit.ChatGate
 import com.pathors.parley.kit.CloudChat
 import com.pathors.parley.kit.DeliveryAssessment
 import com.pathors.parley.kit.EvalPresets
@@ -161,6 +162,13 @@ class StudyPass(
     private val newId: () -> String = { UUID.randomUUID().toString() },
     /** Per-call time limits; the generated defaults, shorter in tests. */
     private val timeoutMs: (Call) -> Long = Call::defaultTimeoutMs,
+    /**
+     * Every stage's model call goes through this: at most two in flight, a 429
+     * or 502 retried with bounded backoff. Opening a recording starts every
+     * stage that is ready at once, and the time limit applies to each attempt
+     * rather than to the wait for a turn.
+     */
+    private val gate: ChatGate = ChatGate(),
 ) {
     /** One model call, for its time limit and the feature it bills to. */
     enum class Call(private val seconds: Int, val feature: CloudChat.Feature) {
@@ -530,7 +538,8 @@ class StudyPass(
 
     /** One model call within its time limit; the assistant's text, or a failure. */
     private suspend fun ask(call: Call, request: CloudChat.Request): String {
-        val response = withTimeoutOrNull(timeoutMs(call)) { chat.chatCompletion(CloudChat.encode(request), call.feature) }
+        val body = CloudChat.encode(request)
+        val response = gate.run { withTimeoutOrNull(timeoutMs(call)) { chat.chatCompletion(body, call.feature) } }
             ?: throw StageFailure(StudyFailure.TIMEOUT)
         return CloudChat.content(response) ?: throw StageFailure(StudyFailure.UNREADABLE)
     }

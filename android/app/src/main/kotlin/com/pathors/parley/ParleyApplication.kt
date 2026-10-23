@@ -22,6 +22,8 @@ import com.pathors.parley.feedback.Log
 import com.pathors.parley.feedback.PromptGateStore
 import com.pathors.parley.feedback.SyncFailureLedger
 import com.pathors.parley.feedback.UncaughtCrashRecorder
+import com.pathors.parley.kit.BatchJobStore
+import com.pathors.parley.kit.BatchTranscriber
 import com.pathors.parley.kit.ParleyClientHeader
 import com.pathors.parley.library.SaveLocationStore
 import com.pathors.parley.ime.VoiceTypingSettings
@@ -44,17 +46,21 @@ import com.pathors.parley.playback.AudioRetention
 import com.pathors.parley.playback.LocalAudioStore
 import com.pathors.parley.screenshot.DemoMode
 import com.pathors.parley.upload.AutoSync
+import com.pathors.parley.upload.BackfillJob
+import com.pathors.parley.upload.BackfillResult
 import com.pathors.parley.upload.ManualRetryLedger
 import com.pathors.parley.upload.MeetingUploader
 import com.pathors.parley.upload.PendingBackfillQueue
 import com.pathors.parley.upload.PendingUploadQueue
 import com.pathors.parley.upload.TranscriptBackfiller
 import java.io.File
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -316,10 +322,13 @@ class AppContainer(private val app: Application) {
      * when [uploader] measures the transcript it just pushed against the audio
      * and finds a hole, or because somebody asked.
      */
+    private val batchJobs: BatchJobStore = TranscriptBackfiller.jobStore(app)
+
     val backfiller: TranscriptBackfiller = TranscriptBackfiller(
         cloud = cloud,
         queue = backfillQueue,
         ledger = manualRetries,
+        transcriber = BatchTranscriber(cloud, jobs = batchJobs),
         localAudio = localAudio,
         keepsAudioOnPhone = audioRetention::keepsAudioOnPhoneNow,
     )
@@ -387,6 +396,7 @@ class AppContainer(private val app: Application) {
         uploadQueue.clear()
         backfillQueue.clear()
         manualRetries.clear()
+        batchJobs.clearAll()
     }
 
     /**
@@ -480,8 +490,40 @@ class AppContainer(private val app: Application) {
         appScope.launch {
             if (DemoMode.isActive) return@launch
             if (auth.currentToken() == null) return@launch
-            runCatching { backfiller.drain() }
+            // A system job rather than a drain on this scope, which a frozen or
+            // killed background process takes down mid-poll — see [BackfillJob].
+            BackfillJob.schedule(app)
         }
+    }
+
+    /**
+     * The backfill as [BackfillJobService] runs it: drain until nothing queued
+     * is left untried. Never throws; a pass that failed waits for the next
+     * foreground, network or launch, which schedule the job again.
+     */
+    suspend fun runBackfillJob() {
+        if (DemoMode.isActive) return
+        if (auth.currentToken() == null) return
+        try {
+            backfiller.drainUntilSettled()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "backfill job failed", e)
+        }
+    }
+
+    /**
+     * A drain the recording screen waits on — "Transcribe again" and "Start
+     * now". On the app's scope rather than the screen's, so leaving the screen
+     * stops the wait and not the run; a [BackfillJob] is scheduled beside it,
+     * so leaving the *app* does not freeze the run either (the job waits for
+     * this pass and then runs whatever it left).
+     */
+    suspend fun drainBackfillsNow(): BackfillResult {
+        val pass = appScope.async { backfiller.drain() }
+        BackfillJob.schedule(app)
+        return pass.await()
     }
 
     /**

@@ -138,4 +138,16 @@ class CloudClientBatchTest {
             thrown.asBatchTranscriptionProblem().failure,
         )
     }
+
+    @Test
+    fun `a poll of a job the cloud no longer has reads as not found`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":"not_found"}"""))
+        val client = client()
+
+        val thrown = runCatching { client.batchJobStatus("job-gone") }.exceptionOrNull()
+
+        assertTrue(thrown is CloudException)
+        assertTrue(client.isJobNotFound(thrown!!))
+        assertTrue(!client.isJobNotFound(CloudException(500, "boom")))
+    }
 }

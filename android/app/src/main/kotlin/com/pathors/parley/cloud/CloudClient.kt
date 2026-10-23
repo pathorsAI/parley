@@ -4,8 +4,11 @@ import com.pathors.parley.kit.BatchJobStatus
 import com.pathors.parley.kit.BatchTranscriptResponse
 import com.pathors.parley.kit.BatchTranscriptionService
 import com.pathors.parley.kit.ChatCompletions
+import com.pathors.parley.kit.ChatGate
 import com.pathors.parley.kit.CloudChat
+import com.pathors.parley.kit.HttpStatusFailure
 import com.pathors.parley.kit.ParleyClientHeader
+import com.pathors.parley.kit.RetryAfter
 import com.pathors.parley.util.deleteQuietly
 import java.io.File
 import java.io.IOException
@@ -97,7 +100,11 @@ class CloudException(
     override val message: String,
     /** The backend's own error code (`{ code }` from Better Auth, `{ error }` from the worker). */
     val code: String? = null,
-) : IOException(message) {
+    /** The response's `Retry-After`, in milliseconds, when it sent one (a 429 does). */
+    override val retryAfterMs: Long? = null,
+) : IOException(message), HttpStatusFailure {
+    override val httpStatus: Int get() = status
+
     val isAuthExpired: Boolean get() = status == 401
     val isForbidden: Boolean get() = status == 403
     val isQuotaExhausted: Boolean get() = status == 402
@@ -609,6 +616,9 @@ class CloudClient(
         runCatching { execute(Request.Builder().url(url("stt", "batch", id)).delete()) { } }
     }
 
+    /** A job the cloud answers `404 not_found` for: expired, deleted, or never this account's. */
+    override fun isJobNotFound(error: Throwable): Boolean = (error as? CloudException)?.isNotFound == true
+
     // ── chat (the one-shot LLM passes) ───────────────────────────────────────
 
     /**
@@ -619,7 +629,17 @@ class CloudClient(
      * (the filing suggestion) are testable without a server.
      */
     override suspend fun chatCompletion(requestJson: String, feature: CloudChat.Feature): String =
-        execute(chatRequest(requestJson, feature)) { response -> bodyText(response) }
+        chatGate.run { execute(chatRequest(requestJson, feature)) { response -> bodyText(response) } }
+
+    /**
+     * At most two short chat calls in flight (the filing suggestion, voice
+     * typing's polish), each retried on 429/502 with bounded backoff — see
+     * [ChatGate]. [studyChat] is not behind it: the study stages have their
+     * own gate (`study/StudyPass`), so a voice-typing polish never queues behind
+     * an analysis call that takes minutes, and a stage's time limit is not spent
+     * waiting for its turn.
+     */
+    private val chatGate = ChatGate()
 
     /**
      * [chatCompletion] for the study stages (`study/StudyPass`), which wait far
@@ -706,7 +726,7 @@ class CloudClient(
             if (!response.isSuccessful) {
                 val text = bodyText(response)
                 if (response.code == 401 && signsOutOn401) onUnauthorized()
-                throw errorFor(response.code, text)
+                throw errorFor(response.code, text, RetryAfter.parseMs(response.header(RETRY_AFTER)))
             }
             return onSuccess(response)
         } finally {
@@ -729,7 +749,7 @@ class CloudClient(
     }
 
     /** Pull the backend's own `{ code, message }` / `{ error }` out of an error body. */
-    private fun errorFor(status: Int, body: String): CloudException {
+    private fun errorFor(status: Int, body: String, retryAfterMs: Long? = null): CloudException {
         val obj = runCatching { CloudJson.parseToJsonElement(body) as? JsonObject }.getOrNull()
         val code = obj?.stringOrNull("code") ?: obj?.stringOrNull("error")
         val message = obj?.stringOrNull("message")
@@ -737,6 +757,7 @@ class CloudClient(
             status = status,
             message = message ?: code ?: body.take(300).ifEmpty { "cloud $status" },
             code = code,
+            retryAfterMs = retryAfterMs,
         )
     }
 
@@ -760,6 +781,8 @@ class CloudClient(
 
         /** A hair past the longest study stage's own timeout (240 s), which is what really bounds it. */
         private const val STUDY_READ_TIMEOUT_SECONDS = 260L
+
+        private const val RETRY_AFTER = "Retry-After"
 
         private val APPLICATION_JSON = "application/json".toMediaType()
         private val AUDIO_OGG = "audio/ogg".toMediaType()

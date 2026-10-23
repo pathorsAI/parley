@@ -1169,7 +1169,7 @@ class RecordingDetailViewModel(
      */
     private suspend fun drainAndSettle() {
         val failure = try {
-            container.backfiller.drain().failure
+            container.drainBackfillsNow().failure
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {

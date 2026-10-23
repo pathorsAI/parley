@@ -9,6 +9,8 @@ import com.pathors.parley.cloud.TranscriptSegmentDto
 import com.pathors.parley.kit.BatchJobStatus
 import com.pathors.parley.kit.BatchToken
 import com.pathors.parley.kit.BatchTranscriber
+import com.pathors.parley.kit.PersistedBatchJob
+import com.pathors.parley.kit.FileBatchJobStore
 import com.pathors.parley.kit.BatchTranscriptResponse
 import com.pathors.parley.kit.BatchTranscriptionService
 import com.pathors.parley.playback.LocalAudioStore
@@ -644,6 +646,80 @@ class TranscriptBackfillerTest {
 
         assertEquals(BackfillStatus.Running, probe.seen)
         assertTrue(backfiller.running.value.isEmpty())
+    }
+
+    /**
+     * A run cut short in the background left its batch job on the cloud; the
+     * next drain polls that job rather than uploading the same audio again.
+     */
+    @Test
+    fun `a run resumes the batch job a cut-short run left, without uploading`() = runBlocking {
+        val queue = queue("resume")
+        val file = audio("a.ogg")
+        queue.enqueueMoving(BackfillRequest(pending = pending("rec-1")), file)
+        val jobs = FileBatchJobStore(temporary.newFolder("resume-jobs"))
+        jobs.write("rec-1", PersistedBatchJob("job-left", 512, System.currentTimeMillis()))
+        val backfiller = TranscriptBackfiller(
+            cloud = cloud(),
+            queue = queue,
+            ledger = ledger("resume-l"),
+            // Any upload would fail, so landing proves there was none.
+            transcriber = BatchTranscriber(
+                FakeBatch(fullTranscript(), failStart = true),
+                pollIntervalMs = 1,
+                jobs = jobs,
+            ),
+        )
+
+        val result = backfiller.drain()
+
+        assertEquals(1, result.repaired)
+        assertNull(result.failure)
+        assertNull("the job is forgotten once its transcript is in hand", jobs.read("rec-1"))
+    }
+
+    @Test
+    fun `forgetting a recording forgets its batch job`() = runBlocking {
+        val jobs = FileBatchJobStore(temporary.newFolder("forget-jobs"))
+        jobs.write("rec-1", PersistedBatchJob("job-left", 512, 1))
+        val backfiller = TranscriptBackfiller(
+            cloud = cloud(),
+            queue = queue("forget"),
+            ledger = ledger("forget-l"),
+            transcriber = BatchTranscriber(FakeBatch(fullTranscript()), jobs = jobs),
+        )
+
+        backfiller.forget("rec-1")
+
+        assertNull(jobs.read("rec-1"))
+    }
+
+    @Test
+    fun `a settling drain picks up what was queued while a pass ran`() = runBlocking {
+        val queue = queue("settle")
+        queue.enqueueMoving(BackfillRequest(pending = pending("rec-1")), audio("a.ogg"))
+        val late = audio("b.ogg")
+        val service = object : BatchTranscriptionService by FakeBatch(fullTranscript()) {
+            var enqueued = false
+            override suspend fun startBatchJob(
+                audio: File,
+                diarization: Boolean,
+                languageHints: List<String>,
+                terms: List<String>,
+            ): String {
+                if (!enqueued) {
+                    enqueued = true
+                    queue.enqueueMoving(BackfillRequest(pending = pending("rec-2")), late)
+                }
+                return "job-1"
+            }
+        }
+        val backfiller = backfiller(queue, ledger("settle-l"), service)
+
+        val result = backfiller.drainUntilSettled()
+
+        assertEquals(0, result.remaining)
+        assertEquals(0, queue.count())
     }
 
     private companion object {
