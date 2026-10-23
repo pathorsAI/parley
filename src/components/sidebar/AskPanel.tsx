@@ -108,6 +108,8 @@ export function AskPanel() {
         content = t("ask.error.credits");
       } else if (code === "auth") {
         content = t("ask.error.auth");
+      } else if (code === "busy") {
+        content = t("ask.error.busy");
       }
       setMessages((m) => {
         const next = m.slice();

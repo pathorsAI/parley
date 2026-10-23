@@ -131,3 +131,30 @@ describe("logAiError", () => {
     expect(everythingLogged()).not.toContain("SECRET");
   });
 });
+
+describe("httpStatusOf / isCapacityFailure", () => {
+  const apiError = (statusCode: number) =>
+    new APICallError({ message: "x", url: "u", requestBodyValues: {}, statusCode });
+
+  it("reads the status through a RetryError and a cause chain", async () => {
+    const { httpStatusOf } = await import("./errors");
+    const retry = new RetryError({ message: "m", reason: "maxRetriesExceeded", errors: [apiError(502), apiError(429)] });
+    expect(httpStatusOf(retry)).toBe(429);
+    expect(httpStatusOf(Object.assign(new Error("wrap"), { cause: apiError(503) }))).toBe(503);
+    expect(httpStatusOf(new TypeError("Failed to fetch"))).toBeUndefined();
+  });
+
+  it("is true for 429 and 5xx only", async () => {
+    const { isCapacityFailure } = await import("./errors");
+    expect(isCapacityFailure(apiError(429))).toBe(true);
+    expect(isCapacityFailure(apiError(502))).toBe(true);
+    expect(isCapacityFailure(apiError(400))).toBe(false);
+    expect(isCapacityFailure(new Error("no status"))).toBe(false);
+  });
+
+  it("classifies a hosted 429 as busy", async () => {
+    const { hostedLlmErrorCode } = await import("./errors");
+    expect(hostedLlmErrorCode(apiError(429), "parley")).toBe("busy");
+    expect(hostedLlmErrorCode(apiError(429), "groq")).toBeNull();
+  });
+});

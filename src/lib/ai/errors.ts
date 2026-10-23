@@ -64,8 +64,9 @@ function formatUnknown(value: unknown): string {
  * the generic {@link describeAiError} string. Walks the SDK's `cause` chain
  * because the real status usually sits on a nested APICallError.
  */
-export function hostedLlmErrorCode(err: unknown, provider: string): "credits" | "auth" | null {
+export function hostedLlmErrorCode(err: unknown, provider: string): "credits" | "auth" | "busy" | null {
   if (provider !== "parley") return null;
+  if (httpStatusOf(err) === 429) return "busy";
   const seen = new Set<unknown>();
   let cur: unknown = err;
   let depth = 0;
@@ -80,6 +81,34 @@ export function hostedLlmErrorCode(err: unknown, provider: string): "credits" | 
     depth++;
   }
   return null;
+}
+
+/**
+ * The HTTP status a failed call came back with, walking the SDK's wrappers (a
+ * RetryError's last attempt, `cause` chains). `undefined` for a failure that
+ * never got a response.
+ */
+export function httpStatusOf(err: unknown): number | undefined {
+  const seen = new Set<unknown>();
+  let cur: unknown = err;
+  for (let depth = 0; cur && typeof cur === "object" && !seen.has(cur) && depth < 5; depth++) {
+    seen.add(cur);
+    const e = cur as Record<string, unknown>;
+    if (typeof e.statusCode === "number") return e.statusCode;
+    cur = RetryError.isInstance(cur) ? cur.lastError : e.cause;
+  }
+  return undefined;
+}
+
+/**
+ * Did the server refuse the call for capacity — rate limited (429) or a 5xx?
+ * The format fallbacks (non-streamed, json_object) re-send the same prompt in a
+ * different response shape; that cannot help such a call and only adds more
+ * requests to a provider that is already refusing them, so they skip it.
+ */
+export function isCapacityFailure(err: unknown): boolean {
+  const status = httpStatusOf(err);
+  return status !== undefined && (status === 429 || status >= 500);
 }
 
 /**

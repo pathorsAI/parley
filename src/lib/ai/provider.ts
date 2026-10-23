@@ -6,6 +6,7 @@ import { PROVIDER_BY_ID, isReasoningModel, normalizeBaseUrl, type ProviderInfo }
 import { cloudToken, CLOUD_URL } from "../cloud/client";
 import { CLOUD_ENABLED } from "../flags";
 import { webviewFetch } from "./webviewFetch";
+import { hostedChatFetch } from "./hostedChat";
 import { STUDY } from "./studyPrompt";
 
 export { isReasoningModel } from "./providers";
@@ -109,7 +110,9 @@ export function getModel(
       apiKey: token,
       headers: opts?.feature ? { "X-Parley-Feature": opts.feature } : undefined,
       supportsStructuredOutputs: opts?.forceJsonObject ? false : info.supportsStructuredOutputs ?? false,
-      fetch: webviewFetch,
+      // One shared gate + bounded 429/502 retries for every hosted chat call
+      // (hostedChat.ts) — the cloud's provider budget is shared by all users.
+      fetch: hostedChatFetch,
     });
     return parley.chatModel(modelId);
   }
@@ -127,6 +130,17 @@ export function getModel(
     fetch: webviewFetch,
   });
   return client.chatModel(modelId);
+}
+
+/**
+ * The SDK `maxRetries` option for a call on this lane, to spread into the call.
+ * Hosted calls retry inside {@link hostedChatFetch} (429 honouring
+ * `Retry-After`, 502 twice, behind the shared gate), so the SDK's own retries
+ * are turned off for them: stacked on top they tripled every failing request.
+ * BYOK providers keep the SDK default.
+ */
+export function sdkRetryOptions(settings: Settings, workload: LlmWorkload): { maxRetries?: number } {
+  return settings.llmProviders[workload] === "parley" ? { maxRetries: 0 } : {};
 }
 
 /** Filler credential for a provider that takes no key (see call site). */

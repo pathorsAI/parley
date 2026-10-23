@@ -1,8 +1,8 @@
 import { generateObject, NoObjectGeneratedError, streamObject, type LanguageModelUsage } from "ai";
 import { z } from "zod";
-import { getModel, getProviderOptions } from "./provider";
+import { getModel, getProviderOptions, sdkRetryOptions } from "./provider";
 import { isReasoningModel, PROVIDER_BY_ID } from "./providers";
-import { logAiError } from "./errors";
+import { isCapacityFailure, logAiError } from "./errors";
 import { log } from "../log";
 import {
   createDeadline,
@@ -153,6 +153,7 @@ export async function generateObjectResilient<OBJECT>(opts: {
 /** The inputs one `generateObject` attempt needs, minus the model. */
 type ObjectCall<OBJECT> = {
   providerOptions: ReturnType<typeof getProviderOptions>;
+  maxRetries?: number;
   schema: z.ZodType<OBJECT>;
   system: string;
   prompt: string;
@@ -207,7 +208,16 @@ async function generateObjectWithFallback<OBJECT>(
   const providerOptions = getProviderOptions(settings, workload);
   const maxOutputTokens = maxOutputTokensFor(settings, workload);
   const tag = { provider, workload, model: settings.models[provider][workload] };
-  const call: ObjectCall<OBJECT> = { providerOptions, schema, system, prompt, maxOutputTokens, abortSignal, ...sampling };
+  const call: ObjectCall<OBJECT> = {
+    providerOptions,
+    schema,
+    system,
+    prompt,
+    maxOutputTokens,
+    abortSignal,
+    ...sdkRetryOptions(settings, workload),
+    ...sampling,
+  };
 
   try {
     return await generateObject({ model: getModel(settings, workload, { feature }), ...call });
@@ -215,7 +225,9 @@ async function generateObjectWithFallback<OBJECT>(
     // Out of time or cancelled: nothing to salvage, and no time for a retry.
     if (abortSignal.aborted) throw err;
     const info = PROVIDER_BY_ID[provider];
-    const canFallback = info.kind === "openai-compatible" && (info.supportsStructuredOutputs ?? false);
+    // Rate limited / server down: another response format cannot help.
+    const canFallback =
+      info.kind === "openai-compatible" && (info.supportsStructuredOutputs ?? false) && !isCapacityFailure(err);
     logAiError(canFallback ? "ai.generateObject json_schema (retrying json_object)" : "ai.generateObject", tag, err);
     const salvaged = salvageOrNull(err, schema, tag, "");
     if (salvaged) return salvaged;
@@ -300,6 +312,7 @@ export async function streamObjectResilient<OBJECT>(opts: {
       prompt,
       maxOutputTokens,
       abortSignal: deadline.signal,
+      ...sdkRetryOptions(settings, workload),
       onError: ({ error }) => {
         streamError ??= error;
       },
@@ -320,6 +333,12 @@ export async function streamObjectResilient<OBJECT>(opts: {
     const why = deadline.reason();
     // Cancelled by the caller: no fallback, no error log — the run is dropped.
     if (why === "parent") throw err;
+    // Rate limited / server down: a non-streamed retry is the same request
+    // again. Surface it — the stage reads "error" and can be regenerated.
+    if (isCapacityFailure(err)) {
+      logAiError("ai.streamObject (capacity failure; no fallback)", tag, err);
+      throw err;
+    }
     const timedOut = why === "hard" || why === "stall";
     logAiError(
       timedOut ? `ai.streamObject (${why} deadline; falling back to non-streamed)` : "ai.streamObject (falling back to non-streamed)",

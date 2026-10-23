@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import { APICallError } from "ai";
 import { MockLanguageModelV3 } from "ai/test";
 import type { Settings } from "../types";
 
@@ -14,6 +15,8 @@ const { model } = vi.hoisted(() => ({ model: { current: null as unknown } }));
 vi.mock("./provider", () => ({
   getModel: () => model.current,
   getProviderOptions: () => undefined,
+  // As for a hosted call: the fetch layer retries, the SDK does not.
+  sdkRetryOptions: () => ({ maxRetries: 0 }),
 }));
 
 import { streamObjectResilient } from "./generate";
@@ -88,6 +91,18 @@ describe("streamObjectResilient", () => {
     });
     const res = await call();
     expect(res.object).toEqual({ a: "fallback" });
+  });
+
+  it("surfaces a rate-limited request instead of re-sending it non-streamed", async () => {
+    const doGenerate = vi.fn(async () => generated('{"a":"fallback"}'));
+    model.current = new MockLanguageModelV3({
+      doStream: async () => {
+        throw new APICallError({ message: "rate_limited", url: "u", requestBodyValues: {}, statusCode: 429 });
+      },
+      doGenerate,
+    });
+    await expect(call()).rejects.toMatchObject({ statusCode: 429 });
+    expect(doGenerate).not.toHaveBeenCalled();
   });
 
   it("gives up on a stalled stream and falls back to one non-streamed call", async () => {

@@ -1,5 +1,5 @@
 import { streamText } from "ai";
-import { getModel, getProviderOptions } from "./provider";
+import { getModel, getProviderOptions, sdkRetryOptions } from "./provider";
 import { transcriptAsText } from "../store";
 import { recordLlmUsage } from "../usage/log";
 import { profileContext } from "./profile";
@@ -47,6 +47,7 @@ export async function askAboutMeeting(opts: {
     const result = streamText({
       model: getModel(settings, "realtime", { feature: "ask" }),
       providerOptions: getProviderOptions(settings, "realtime"),
+      ...sdkRetryOptions(settings, "realtime"),
       system: SYSTEM,
       abortSignal: signal,
       prompt: `${contextLine}Transcript so far:\n${transcript}\n\nQuestion: ${question}`,

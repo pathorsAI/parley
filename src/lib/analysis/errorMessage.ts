@@ -14,5 +14,6 @@ export async function studyErrorMessage(err: unknown, provider: string): Promise
   const code = hostedLlmErrorCode(err, provider);
   if (code === "credits") return translate(lang, "analysis.error.credits");
   if (code === "auth") return translate(lang, "analysis.error.auth");
+  if (code === "busy") return translate(lang, "analysis.error.busy");
   return describeAiError(err);
 }

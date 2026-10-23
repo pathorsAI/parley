@@ -1,11 +1,12 @@
 import { generateText, streamText, type FinishReason, type LanguageModelUsage } from "ai";
-import { getModel, getProviderOptions } from "./provider";
+import { getModel, getProviderOptions, sdkRetryOptions } from "./provider";
 import { maxOutputTokensFor } from "./generate";
 import { transcriptWithTimestamps } from "../store";
 import { recordLlmUsage } from "../usage/log";
 import { profileContext, outputLanguageInstruction } from "./profile";
 import { briefIntro, briefSections } from "../analysis/lens";
 import { log } from "../log";
+import { isCapacityFailure } from "./errors";
 import { fillPrompt, meetingContextBlock, STUDY } from "./studyPrompt";
 import {
   createDeadline,
@@ -160,6 +161,7 @@ export async function generatePostMeetingReport(opts: {
     // Reasoning models spend output tokens on hidden reasoning first; without
     // headroom they exhaust the budget before writing a word of the brief.
     maxOutputTokens: maxOutputTokensFor(settings, "deep"),
+    ...sdkRetryOptions(settings, "deep"),
   };
 
   let full = "";
@@ -197,6 +199,9 @@ export async function generatePostMeetingReport(opts: {
       log.warn("ai.report: stream failed mid-brief", { provider, model, chars: full.length, finishReason });
       throw streamError;
     }
+    // Rate limited / server down: the non-streamed retry would be the same
+    // request again, so the failure surfaces instead (the brief can be regenerated).
+    if (!full.trim() && isCapacityFailure(streamError)) throw streamError;
     if (!full.trim()) {
       log.warn("ai.report: empty stream, retrying non-streamed", {
         provider,

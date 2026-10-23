@@ -19,7 +19,8 @@ vi.mock("../cloud/client", () => ({
 
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { getModel } from "./provider";
+import { getModel, sdkRetryOptions } from "./provider";
+import { hostedChatFetch } from "./hostedChat";
 import { webviewFetch } from "./webviewFetch";
 
 /**
@@ -88,7 +89,7 @@ describe("getModel fetch", () => {
     expect(oaiMock.mock.calls[0][0]).toMatchObject({ fetch: webviewFetch });
   });
 
-  it("builds the hosted provider with the cloud URL, session token and webview fetch", () => {
+  it("builds the hosted provider with the cloud URL, session token and the gated hosted fetch", () => {
     cloud.token = "session-token";
     getModel(settingsFor("parley", "parleyApiKey", ""), "realtime");
     expect(oaiMock).toHaveBeenCalledTimes(1);
@@ -96,8 +97,13 @@ describe("getModel fetch", () => {
       name: "parley",
       baseURL: "https://example.test/v1",
       apiKey: "session-token",
-      fetch: webviewFetch,
+      fetch: hostedChatFetch,
     });
+  });
+
+  it("turns the SDK's own retries off for hosted calls only", () => {
+    expect(sdkRetryOptions(settingsFor("parley", "parleyApiKey", ""), "deep")).toEqual({ maxRetries: 0 });
+    expect(sdkRetryOptions(settingsFor("groq", "groqApiKey", "k"), "deep")).toEqual({});
   });
 
   it("refuses to build the hosted provider while signed out", () => {
