@@ -866,7 +866,13 @@ final class MeetingUploader {
     private static func finishBackfill(id: String) {
         retireAudio(id: id, at: try? backfillAudioURL(for: id))
         removeBackfill(id: id)
+        batchJobStore.clear(id)
     }
+
+    /// The hosted batch jobs created and not yet collected, by recording id
+    /// (imports use their own key, see `RecordingImporter`). What lets a
+    /// transcription that iOS suspended resume its job instead of re-uploading.
+    static let batchJobStore: any BatchJobStore = UserDefaultsBatchJobStore()
 
     static var pendingBackfillCount: Int { loadBackfills().count }
 
@@ -1064,10 +1070,17 @@ final class MeetingUploader {
         let audio = try Data(contentsOf: backfillAudioURL(for: id))
         // Same call the import path makes: no language hints, so the cloud
         // auto-detects exactly as the desktop does with an empty list.
-        let transcript = try await BatchTranscriber(service: cloud)
-            .transcribe(
-                audio: audio, diarization: true, languages: [],
-                terms: LexiconStore.recognitionTerms())
+        //
+        // Under a background task, and resumable: the job id is remembered
+        // against the recording, so a pass that iOS suspends mid-poll is picked
+        // up by the next foreground's pass instead of uploading the hour again.
+        let terms = LexiconStore.recognitionTerms()
+        let transcript = try await BackgroundGrace.run("backfill-transcription") {
+            try await BatchTranscriber(service: cloud)
+                .transcribe(
+                    audio: audio, diarization: true, languages: [], terms: terms,
+                    resume: BatchResume(store: batchJobStore, key: id))
+        }
 
         // The transcription has completed and been billed, so a hand-triggered
         // run is charged *here* — after the await that could have thrown, and

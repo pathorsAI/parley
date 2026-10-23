@@ -3,7 +3,15 @@ import Foundation
 public struct CloudError: Error, Equatable {
     public let status: Int
     public let message: String
+    /// The response's `Retry-After`, in seconds, when it carried one.
+    public var retryAfter: TimeInterval?
     public var isAuthExpired: Bool { status == 401 }
+
+    public init(status: Int, message: String, retryAfter: TimeInterval? = nil) {
+        self.status = status
+        self.message = message
+        self.retryAfter = retryAfter
+    }
 }
 
 /// HTTP client for the Parley cloud. Mirrors the desktop's
@@ -308,10 +316,19 @@ public actor CloudClient: BatchTranscriptionService, DictionarySyncTransport {
     /// filing passes use, which own their request/response shapes (`CloudChat`).
     /// Tagged with the feature the call bills to (`X-Parley-Feature`). Same
     /// auth header and same 2xx-or-`CloudError` discipline as every call above.
+    ///
+    /// Every chat call in the process goes through one `ConcurrencyGate` (two
+    /// at a time) and `ChatRetryPolicy` (429 honours `Retry-After`, 502 gets a
+    /// couple of short retries), so a run of passes after a long meeting
+    /// queues instead of hitting the provider's rate limit all at once.
     func chatCompletion(_ body: Data, feature: CloudChat.Feature) async throws -> Data {
-        try await request(
-            CloudChat.path, method: "POST", body: body, contentType: "application/json",
-            headers: [CloudChat.featureHeader: feature.rawValue])
+        try await CloudChat.gate.withSlot {
+            try await CloudChat.retryPolicy.run {
+                try await self.request(
+                    CloudChat.path, method: "POST", body: body, contentType: "application/json",
+                    headers: [CloudChat.featureHeader: feature.rawValue])
+            }
+        }
     }
 
     /// The remote feature-flag document (`HostReturnPolicy` is its only reader
@@ -459,7 +476,9 @@ public actor CloudClient: BatchTranscriptionService, DictionarySyncTransport {
         let http = (resp as? HTTPURLResponse) ?? HTTPURLResponse()
         guard (200..<300).contains(http.statusCode) else {
             let message = String(data: data, encoding: .utf8) ?? ""
-            throw CloudError(status: http.statusCode, message: message)
+            throw CloudError(
+                status: http.statusCode, message: message,
+                retryAfter: ChatRetryPolicy.retryAfter(http.value(forHTTPHeaderField: "Retry-After")))
         }
         return (data, http)
     }

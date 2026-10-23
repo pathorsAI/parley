@@ -305,6 +305,12 @@ public struct BatchTranscriptionResult: Sendable {
 ///
 /// The cadence — sleep first, then poll, 1500 ms apart, at most 800 times — is
 /// the desktop's, which puts the ceiling a little over 20 minutes of waiting.
+///
+/// Given a `BatchResume`, the job id is written down as soon as the upload is
+/// accepted and read back on the next attempt for the same key: a job that is
+/// still on the server is polled again rather than paid for twice. iOS cuts a
+/// poll loop short whenever the app is suspended, so for a long recording the
+/// first attempt rarely sees its own job finish.
 public struct BatchTranscriber: Sendable {
     /// iOS records one mixed stream, so every segment a phone produces carries
     /// this source (see the doc comment on `TranscriptSegment`).
@@ -313,46 +319,77 @@ public struct BatchTranscriber: Sendable {
     private let service: any BatchTranscriptionService
     private let pollInterval: Duration
     private let maxPolls: Int
+    private let now: @Sendable () -> Date
 
     public init(
         service: BatchTranscriptionService,
         pollInterval: Duration = .milliseconds(1500),
-        maxPolls: Int = 800
+        maxPolls: Int = 800,
+        now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.service = service
         self.pollInterval = pollInterval
         self.maxPolls = maxPolls
+        self.now = now
     }
 
-    /// Upload → poll → fetch → group → best-effort delete.
+    /// Upload (or resume) → poll → fetch → group → best-effort delete.
     public func transcribe(
-        audio: Data, diarization: Bool = true, languages: [String] = [], terms: [String] = []
+        audio: Data, diarization: Bool = true, languages: [String] = [], terms: [String] = [],
+        resume: BatchResume? = nil
     ) async throws -> BatchTranscriptionResult {
+        if let resume, let result = try await resumed(audio: audio, resume: resume) {
+            return result
+        }
         let jobId = try await service.startBatchJob(
             audio: audio, diarization: diarization, languages: languages, terms: terms)
-
-        // The cloud normalizes upstream states into the four handled here, so a
-        // status we don't recognize is treated as "still working" rather than a
-        // hard failure.
-        var reportedDurationMs: UInt64?
-        polling: for _ in 0..<maxPolls {
-            try await Task.sleep(for: pollInterval)
-            let job = try await service.batchJobStatus(id: jobId)
-            switch job.status {
-            case "completed":
-                reportedDurationMs = job.durationMs ?? 0
-                break polling
-            case "error":
-                throw BatchTranscriptionError.jobFailed(job.errorMessage ?? "unknown error")
-            default:
-                continue
-            }
+        if let resume {
+            resume.store.save(
+                BatchJobRecord(jobId: jobId, audioBytes: audio.count, createdAt: now()),
+                for: resume.key)
         }
-        guard let audioDurationMs = reportedDurationMs else {
-            throw BatchTranscriptionError.timedOut
+        return try await collect(jobId: jobId, resume: resume)
+    }
+
+    /// The job a previous attempt left behind, carried to the end — or `nil`
+    /// when there is none worth trying, or the server no longer has it (404)
+    /// or reports it failed, in which case the caller uploads afresh. Any
+    /// other failure (no network, the task cancelled again) is thrown with the
+    /// record kept, so the attempt after this one can try the same job.
+    private func resumed(audio: Data, resume: BatchResume) async throws
+        -> BatchTranscriptionResult?
+    {
+        guard let record = resume.store.job(for: resume.key) else { return nil }
+        guard record.isResumable(audioBytes: audio.count, now: now()) else {
+            resume.store.clear(resume.key)
+            return nil
+        }
+        do {
+            return try await collect(jobId: record.jobId, resume: resume)
+        } catch let error as CloudError where error.status == 404 {
+            resume.store.clear(resume.key)
+            return nil
+        } catch BatchTranscriptionError.jobFailed {
+            return nil
+        }
+    }
+
+    /// Poll a created job to completion, fetch and group its transcript, and
+    /// forget it. A job that reports `error` is forgotten too: it will never
+    /// produce a transcript, and the next attempt should upload.
+    private func collect(jobId: String, resume: BatchResume?) async throws
+        -> BatchTranscriptionResult
+    {
+        let audioDurationMs: UInt64
+        do {
+            audioDurationMs = try await poll(jobId: jobId)
+        } catch let error as BatchTranscriptionError {
+            if case .jobFailed = error, let resume { resume.store.clear(resume.key) }
+            throw error
         }
 
         let transcript = try await service.batchTranscript(id: jobId)
+        if let resume { resume.store.clear(resume.key) }
 
         // Fire and forget so the cloud isn't left holding the audio.
         await service.deleteBatchJob(id: jobId)
@@ -364,5 +401,26 @@ public struct BatchTranscriber: Sendable {
         let durationMs = max(segments.map(\.endMs).max() ?? 0, audioDurationMs)
 
         return BatchTranscriptionResult(segments: segments, durationMs: durationMs)
+    }
+
+    /// The job's reported audio duration once it has completed.
+    ///
+    /// The cloud normalizes upstream states into the four handled here, so a
+    /// status we don't recognize is treated as "still working" rather than a
+    /// hard failure.
+    private func poll(jobId: String) async throws -> UInt64 {
+        for _ in 0..<maxPolls {
+            try await Task.sleep(for: pollInterval)
+            let job = try await service.batchJobStatus(id: jobId)
+            switch job.status {
+            case "completed":
+                return job.durationMs ?? 0
+            case "error":
+                throw BatchTranscriptionError.jobFailed(job.errorMessage ?? "unknown error")
+            default:
+                continue
+            }
+        }
+        throw BatchTranscriptionError.timedOut
     }
 }

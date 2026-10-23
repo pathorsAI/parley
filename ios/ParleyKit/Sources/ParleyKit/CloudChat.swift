@@ -12,6 +12,13 @@ enum CloudChat {
     /// The cloud's OpenAI-compatible chat endpoint.
     static let path = "v1/chat/completions"
 
+    /// One gate for the whole process: the provider's rate limit is per
+    /// account, not per screen, so two passes from two different features
+    /// count against the same budget.
+    static let gate = ConcurrencyGate(limit: 2)
+
+    static let retryPolicy = ChatRetryPolicy.standard
+
     /// The header the cloud attributes a call's credit usage by.
     static let featureHeader = "X-Parley-Feature"
 

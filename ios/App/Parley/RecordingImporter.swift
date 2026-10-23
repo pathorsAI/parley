@@ -131,12 +131,8 @@ final class RecordingImporter: ObservableObject {
         let transcript: BatchTranscriptionResult
         do {
             let bytes = try await Self.read(ogg)
-            // No language hints: the phone has no STT language setting, so the
-            // cloud auto-detects, exactly as the desktop does with an empty list.
-            transcript = try await BatchTranscriber(service: app.cloud)
-                .transcribe(
-                    audio: bytes, diarization: true, languages: [],
-                    terms: LexiconStore.recognitionTerms())
+            transcript = try await Self.transcribe(
+                bytes, resumeKey: Self.resumeKey(for: picked), cloud: app.cloud)
         } catch let error as CloudError {
             return .failed(error.batchTranscriptionMessage)
         } catch let error as BatchTranscriptionError {
@@ -227,6 +223,31 @@ final class RecordingImporter: ObservableObject {
             try AudioFileDecoder.encodeToOggOpus(
                 source: source, destination: destination, onProgress: onProgress)
         }.value
+    }
+
+    /// Upload and transcribe under a background task, remembering the job so
+    /// an import the user walked away from can be picked up again: importing
+    /// the same file a second time resumes the job instead of paying for a
+    /// second one. No language hints — the phone has no STT language setting,
+    /// so the cloud auto-detects, exactly as the desktop does with an empty
+    /// list.
+    private nonisolated static func transcribe(
+        _ bytes: Data, resumeKey: String, cloud: CloudClient
+    ) async throws -> BatchTranscriptionResult {
+        let terms = LexiconStore.recognitionTerms()
+        return try await BackgroundGrace.run("import-transcription") {
+            try await BatchTranscriber(service: cloud)
+                .transcribe(
+                    audio: bytes, diarization: true, languages: [], terms: terms,
+                    resume: BatchResume(store: MeetingUploader.batchJobStore, key: resumeKey))
+        }
+    }
+
+    /// An import has no recording id until it is filed, so the job is keyed by
+    /// the file's name; the Ogg's byte count, checked by `BatchJobRecord`,
+    /// keeps a different file under the same name from inheriting it.
+    private nonisolated static func resumeKey(for picked: URL) -> String {
+        "import:" + picked.lastPathComponent
     }
 
     private nonisolated static func read(_ url: URL) async throws -> Data {
