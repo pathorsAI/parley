@@ -6,6 +6,7 @@ import {
   createHostedChatFetch,
   hostedChatFetch,
   hostedChatGates,
+  hostedChatLaneFor,
   parseRetryAfter,
   retryDelayMs,
   type HostedChatFetchDeps,
@@ -244,34 +245,44 @@ describe("hostedChatFetch lanes", () => {
     vi.unstubAllGlobals();
   });
 
-  it("does not block a realtime (polish) call while two deep analyses hold the deep gate", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => response(200, {}, "body")));
-    // Two analyses whose (streamed) bodies are still unread: the deep lane is full.
-    const analyses = await Promise.all([hostedChatFetch("deep")("u", {}), hostedChatFetch("deep")("u", {})]);
-    expect(hostedChatGates.deep.inFlight).toBe(2);
-    const third = hostedChatFetch("deep")("u", {});
-    expect(hostedChatGates.deep.queued).toBe(1);
-
-    const polish = await hostedChatFetch("realtime")("u", {});
-    expect(await polish.text()).toBe("body");
-    expect(hostedChatGates.realtime.inFlight).toBe(0);
-
-    await analyses[0].text();
-    await (await third).text();
-    await analyses[1].text();
-    expect(hostedChatGates.deep.inFlight).toBe(0);
+  it("routes only polish and Ask to the interactive gate", () => {
+    expect(hostedChatLaneFor("voice_typing")).toBe("interactive");
+    expect(hostedChatLaneFor("ask")).toBe("interactive");
+    expect(hostedChatLaneFor("meeting")).toBe("background");
+    expect(hostedChatLaneFor("report")).toBe("background");
+    expect(hostedChatLaneFor(undefined)).toBe("background");
   });
 
-  it("lets a realtime caller's deadline cut a long Retry-After wait short", async () => {
+  it("does not block polish while filing and delivery hold the background gate", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => response(200, {}, "body")));
+    // Filing and delivery (realtime model, billed to "meeting") with unread
+    // streamed bodies fill the background gate; a findings pass queues.
+    const filing = await hostedChatFetch("meeting")("u", {});
+    const delivery = await hostedChatFetch("meeting")("u", {});
+    expect(hostedChatGates.background.inFlight).toBe(2);
+    const findings = hostedChatFetch("meeting")("u", {});
+    expect(hostedChatGates.background.queued).toBe(1);
+
+    const polish = await hostedChatFetch("voice_typing")("u", {});
+    expect(await polish.text()).toBe("body");
+    expect(hostedChatGates.interactive.inFlight).toBe(0);
+
+    await filing.text();
+    await (await findings).text();
+    await delivery.text();
+    expect(hostedChatGates.background.inFlight).toBe(0);
+  });
+
+  it("lets polish's deadline cut a long Retry-After wait short", async () => {
     const fetch = vi.fn(async () => response(429, { "Retry-After": "25" }));
     vi.stubGlobal("fetch", fetch);
     const ctl = new AbortController();
     const started = Date.now();
-    const pending = hostedChatFetch("realtime")("u", { signal: ctl.signal });
+    const pending = hostedChatFetch("voice_typing")("u", { signal: ctl.signal });
     setTimeout(() => ctl.abort(new Error("polish deadline")), 20);
     await expect(pending).rejects.toThrow("polish deadline");
     expect(Date.now() - started).toBeLessThan(1_000);
     expect(fetch).toHaveBeenCalledTimes(1);
-    expect(hostedChatGates.realtime.inFlight).toBe(0);
+    expect(hostedChatGates.interactive.inFlight).toBe(0);
   });
 });

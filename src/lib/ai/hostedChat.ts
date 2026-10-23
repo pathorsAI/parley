@@ -1,6 +1,6 @@
 import { log } from "../log";
 import { webviewFetch } from "./webviewFetch";
-import type { LlmWorkload } from "../types";
+import type { LlmFeature } from "../types";
 
 /**
  * How hosted (Parley Cloud) chat calls are throttled and retried.
@@ -12,7 +12,7 @@ import type { LlmWorkload } from "../types";
  * multiplied by the SDK's own retries and the format fallbacks) drains that
  * budget for everyone, and once every request fails at once, retrying them all
  * immediately is the worst possible answer. So: at most two hosted chat calls
- * in flight per workload lane, the rest waiting in arrival order; a 429 waits as long
+ * in flight per gate (interactive / background), the rest waiting in arrival order; a 429 waits as long
  * as the server's `Retry-After` says (floored by an exponential backoff, capped,
  * with jitter); a 502 gets two short retries; nothing else is retried here.
  *
@@ -39,7 +39,7 @@ export const CHAT_RETRY_POLICY: ChatRetryPolicy = {
   jitterFraction: 0.5,
 };
 
-/** Hosted chat calls allowed in flight at once, per lane per webview. */
+/** Hosted chat calls allowed in flight at once, per gate per webview. */
 export const HOSTED_CHAT_CONCURRENCY = 2;
 
 function retryLimit(policy: ChatRetryPolicy, status: number): number | null {
@@ -240,39 +240,47 @@ export function createHostedChatFetch(deps: HostedChatFetchDeps): FetchFn {
 }
 
 /**
- * One gate per workload lane. The deep lane carries the long study passes
- * (findings, action items, brief); the realtime lane carries the short,
- * latency-sensitive calls (voice-typing polish, Ask, filing, classification).
- * Separate gates keep a dictation polish from queueing behind two minute-long
- * analyses and missing its own few-second deadline; together they still bound
- * the webview to four hosted calls at once.
+ * Which gate a hosted call waits on. Independent of the model lane (workload):
+ * filing, delivery and meeting-kind classification run on the realtime MODEL
+ * but are long background passes, so they share the background gate with the
+ * study passes. Only the calls a person is actively waiting on — voice-typing
+ * polish (a few-second deadline) and Ask — use the interactive gate, so they
+ * never queue behind a long call. Together the two gates bound the webview to
+ * four hosted calls at once.
  */
-export const hostedChatGates: Record<LlmWorkload, ConcurrencyGate> = {
-  deep: new ConcurrencyGate(HOSTED_CHAT_CONCURRENCY),
-  realtime: new ConcurrencyGate(HOSTED_CHAT_CONCURRENCY),
+export type HostedChatLane = "interactive" | "background";
+
+export function hostedChatLaneFor(feature: LlmFeature | undefined): HostedChatLane {
+  return feature === "voice_typing" || feature === "ask" ? "interactive" : "background";
+}
+
+export const hostedChatGates: Record<HostedChatLane, ConcurrencyGate> = {
+  interactive: new ConcurrencyGate(HOSTED_CHAT_CONCURRENCY),
+  background: new ConcurrencyGate(HOSTED_CHAT_CONCURRENCY),
 };
 
-function laneFetch(workload: LlmWorkload): FetchFn {
+function laneFetch(lane: HostedChatLane): FetchFn {
   return createHostedChatFetch({
     fetch: webviewFetch,
-    gate: hostedChatGates[workload],
+    gate: hostedChatGates[lane],
     policy: CHAT_RETRY_POLICY,
     jitter: Math.random,
     sleep: abortableSleep,
   });
 }
 
-const LANE_FETCH: Record<LlmWorkload, FetchFn> = {
-  deep: laneFetch("deep"),
-  realtime: laneFetch("realtime"),
+const LANE_FETCH: Record<HostedChatLane, FetchFn> = {
+  interactive: laneFetch("interactive"),
+  background: laneFetch("background"),
 };
 
 /**
- * The fetch the hosted Parley provider is built with for `workload`:
- * {@link webviewFetch} behind that lane's gate and the retry policy. A caller's
- * abort (polish racing its deadline) ends any queue or backoff wait at once.
- * BYOK providers do not use it.
+ * The fetch the hosted Parley provider is built with for a call billed to
+ * `feature`: {@link webviewFetch} behind that call's gate (see
+ * {@link hostedChatLaneFor}) and the retry policy. A caller's abort (polish
+ * racing its deadline) ends any queue or backoff wait at once. BYOK providers
+ * do not use it.
  */
-export function hostedChatFetch(workload: LlmWorkload): FetchFn {
-  return LANE_FETCH[workload];
+export function hostedChatFetch(feature: LlmFeature | undefined): FetchFn {
+  return LANE_FETCH[hostedChatLaneFor(feature)];
 }

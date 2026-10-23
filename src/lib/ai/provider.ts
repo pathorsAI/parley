@@ -112,7 +112,7 @@ export function getModel(
       supportsStructuredOutputs: opts?.forceJsonObject ? false : info.supportsStructuredOutputs ?? false,
       // A per-lane gate + bounded 429/502 retries for every hosted chat call
       // (hostedChat.ts) — the cloud's provider budget is shared by all users.
-      fetch: hostedChatFetch(workload),
+      fetch: hostedChatFetch(opts?.feature),
     });
     return parley.chatModel(modelId);
   }

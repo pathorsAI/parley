@@ -97,8 +97,18 @@ describe("getModel fetch", () => {
       name: "parley",
       baseURL: "https://example.test/v1",
       apiKey: "session-token",
-      fetch: hostedChatFetch("realtime"),
+      fetch: hostedChatFetch(undefined),
     });
+  });
+
+  it("puts polish on the interactive gate and realtime-model background passes on the background gate", () => {
+    cloud.token = "session-token";
+    const s = settingsFor("parley", "parleyApiKey", "");
+    getModel(s, "realtime", { feature: "voice_typing" });
+    getModel(s, "realtime", { feature: "meeting" });
+    expect(oaiMock.mock.calls[0][0]).toMatchObject({ fetch: hostedChatFetch("voice_typing") });
+    expect(oaiMock.mock.calls[1][0]).toMatchObject({ fetch: hostedChatFetch("report") });
+    expect(hostedChatFetch("voice_typing")).not.toBe(hostedChatFetch("meeting"));
   });
 
   it("turns the SDK's own retries off for hosted calls only", () => {
