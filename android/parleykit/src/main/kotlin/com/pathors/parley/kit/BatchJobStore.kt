@@ -73,8 +73,10 @@ class FileBatchJobStore(private val directory: File) : BatchJobStore {
             val target = fileFor(key)
             val staging = File(directory, target.name + STAGING_SUFFIX)
             staging.writeText(json.encodeToString(PersistedBatchJob.serializer(), job))
-            if (!staging.renameTo(target)) {
-                staging.delete()
+            // A rename that failed leaves the staging copy; one that will not
+            // delete either is left for the JVM to clear on exit.
+            if (!staging.renameTo(target) && !staging.delete()) {
+                staging.deleteOnExit()
             }
         }
     }

@@ -43,22 +43,22 @@ class BatchJobResumeTest {
 
     @Test
     fun `a remembered job is polled instead of uploading again`() = runBlocking {
-        store.write("rec-1", PersistedBatchJob("old-job", 4, clock - 60_000))
+        store.write("rec-1", PersistedBatchJob(OLD_JOB, 4, clock - 60_000))
         val service = ScriptedService(statusFor = { BatchJobStatus("completed", durationMs = 2_000.0) })
 
         val result = transcriber(service).transcribe(audio(), resumeKey = "rec-1")
 
         assertEquals(0, service.uploads)
-        assertEquals(listOf("old-job"), service.polledIds.distinct())
-        assertEquals(listOf("old-job"), service.deletedIds)
+        assertEquals(listOf(OLD_JOB), service.polledIds.distinct())
+        assertEquals(listOf(OLD_JOB), service.deletedIds)
         assertEquals("hello", result.segments.single().text)
     }
 
     @Test
     fun `a job that is gone is forgotten and the audio uploaded fresh`() = runBlocking {
-        store.write("rec-1", PersistedBatchJob("old-job", 4, clock))
+        store.write("rec-1", PersistedBatchJob(OLD_JOB, 4, clock))
         val service = ScriptedService(
-            statusFor = { id -> if (id == "old-job") throw NotFound() else BatchJobStatus("completed") },
+            statusFor = { id -> if (id == OLD_JOB) throw NotFound() else BatchJobStatus("completed") },
         )
 
         transcriber(service).transcribe(audio(), resumeKey = "rec-1")
@@ -70,10 +70,10 @@ class BatchJobResumeTest {
 
     @Test
     fun `a job that errored is forgotten and the audio uploaded fresh`() = runBlocking {
-        store.write("rec-1", PersistedBatchJob("old-job", 4, clock))
+        store.write("rec-1", PersistedBatchJob(OLD_JOB, 4, clock))
         val service = ScriptedService(
             statusFor = { id ->
-                if (id == "old-job") BatchJobStatus("error", errorMessage = "boom") else BatchJobStatus("completed")
+                if (id == OLD_JOB) BatchJobStatus("error", errorMessage = "boom") else BatchJobStatus("completed")
             },
         )
 
@@ -105,7 +105,7 @@ class BatchJobResumeTest {
 
     @Test
     fun `a network failure while resuming keeps the job for next time`() = runBlocking {
-        store.write("rec-1", PersistedBatchJob("old-job", 4, clock))
+        store.write("rec-1", PersistedBatchJob(OLD_JOB, 4, clock))
         val service = ScriptedService(statusFor = { throw IOException("offline") })
 
         val thrown = runCatching { transcriber(service).transcribe(audio(), resumeKey = "rec-1") }.exceptionOrNull()
@@ -117,24 +117,24 @@ class BatchJobResumeTest {
 
     @Test
     fun `a job older than the resume window is not resumed`() = runBlocking {
-        store.write("rec-1", PersistedBatchJob("old-job", 4, clock - BatchTranscriber.MAX_RESUME_AGE_MS))
+        store.write("rec-1", PersistedBatchJob(OLD_JOB, 4, clock - BatchTranscriber.MAX_RESUME_AGE_MS))
         val service = ScriptedService(statusFor = { BatchJobStatus("completed") })
 
         transcriber(service).transcribe(audio(), resumeKey = "rec-1")
 
         assertEquals(1, service.uploads)
-        assertTrue("old-job" !in service.polledIds)
+        assertTrue(OLD_JOB !in service.polledIds)
     }
 
     @Test
     fun `a job made from different audio is not resumed`() = runBlocking {
-        store.write("rec-1", PersistedBatchJob("old-job", 999, clock))
+        store.write("rec-1", PersistedBatchJob(OLD_JOB, 999, clock))
         val service = ScriptedService(statusFor = { BatchJobStatus("completed") })
 
         transcriber(service).transcribe(audio(4), resumeKey = "rec-1")
 
         assertEquals(1, service.uploads)
-        assertTrue("old-job" !in service.polledIds)
+        assertTrue(OLD_JOB !in service.polledIds)
     }
 
     @Test
@@ -151,16 +151,16 @@ class BatchJobResumeTest {
         val files = FileBatchJobStore(temporary.newFolder("jobs"))
         val job = PersistedBatchJob("job-9", 123, 456)
 
-        files.write("3f1c-uuid", job)
-        assertEquals(job, files.read("3f1c-uuid"))
+        files.write(UUID_KEY, job)
+        assertEquals(job, files.read(UUID_KEY))
 
-        files.clear("3f1c-uuid")
-        assertNull(files.read("3f1c-uuid"))
+        files.clear(UUID_KEY)
+        assertNull(files.read(UUID_KEY))
 
-        files.write("a/../b", job)
-        assertEquals(job, files.read("a/../b"))
+        files.write(UNSAFE_KEY, job)
+        assertEquals(job, files.read(UNSAFE_KEY))
         files.clearAll()
-        assertNull(files.read("a/../b"))
+        assertNull(files.read(UNSAFE_KEY))
     }
 
     @Test
@@ -171,6 +171,10 @@ class BatchJobResumeTest {
         assertNull(FileBatchJobStore(dir).read("rec-1"))
     }
 }
+
+private const val OLD_JOB = "old-job"
+private const val UUID_KEY = "3f1c-uuid"
+private const val UNSAFE_KEY = "a/../b"
 
 private class NotFound : IOException("404 not_found")
 
