@@ -717,27 +717,10 @@ async fn run_legs(
     // after the client closed an idle leg itself (nothing failed).
     let mut backoff: Option<Duration> = None;
     loop {
-        if leg > 0 {
-            // Never dial without something to transcribe: wait until audio
-            // is held for the new leg. `false` = the capture ended meanwhile.
-            if !wait_for_audio(app, label, bridge, &is_paused).await {
-                log::info!("[stt:{label}] capture ended while waiting for audio");
-                return;
-            }
-            if let Some(delay) = backoff.take() {
-                let _ = app.emit(
-                    TRANSCRIPTION_STATE_EVENT,
-                    serde_json::json!({ "source": label, "state": "reconnecting", "attempt": attempt }),
-                );
-                // Stopping the meeting must not wait out a backoff.
-                tokio::select! {
-                    _ = tokio::time::sleep(delay) => {}
-                    _ = bridge.closed() => {
-                        log::info!("[stt:{label}] capture ended during reconnect backoff");
-                        return;
-                    }
-                }
-            }
+        if leg > 0
+            && !ready_to_redial(app, label, bridge, &is_paused, backoff.take(), attempt).await
+        {
+            return;
         }
         // The bridge decides the offset, because the bridge is what knows
         // where in the recording the audio it holds was actually spoken. `None`
@@ -767,27 +750,7 @@ async fn run_legs(
             Some(bridge.clone()),
             transcription::run_session(provider, app.clone(), leg_config, label, attached.rx),
         );
-        tokio::pin!(session);
-        let mut idled = false;
-        let result = loop {
-            tokio::select! {
-                result = &mut session => break result,
-                _ = tokio::time::sleep(IDLE_CHECK_EVERY), if !idled => {
-                    if leg_is_idle(bridge.since_last_audio(), started.elapsed(), LEG_IDLE) {
-                        // Close the leg's input: the adapter sends its normal
-                        // `end`, flushes, and the session returns. Audio that
-                        // arrives meanwhile is held for the next leg.
-                        log::info!(
-                            "[stt:{label}] leg {leg} carried no audio for {}s{} — closing it until audio returns",
-                            LEG_IDLE.as_secs(),
-                            if is_paused() { " (paused)" } else { "" }
-                        );
-                        idled = true;
-                        bridge.hold();
-                    }
-                }
-            }
-        };
+        let (result, idled) = drive_leg(session, bridge, label, leg, started, &is_paused).await;
         let lived = started.elapsed();
         let carried_audio = bridge.delivered_samples() > delivered_before;
         if bridge.is_closed() && result.is_ok() {
@@ -805,31 +768,11 @@ async fn run_legs(
             leg += 1;
             continue;
         }
-        let e = match result {
-            Ok(()) => {
-                // Drained without a stop or a park: the input closed some
-                // other way. Nothing to redial for.
-                return;
-            }
-            Err(e) => e,
+        // Drained without a stop or a park (the input closed some other way),
+        // or a failure a redial cannot fix: nothing to redial for.
+        let Some(msg) = redialable_failure(result, bridge, label, leg, failure) else {
+            return;
         };
-        let msg = e.to_string();
-        let code = failure.classify(&e);
-        if code != "connect" {
-            // Quota, an expired session, a rejected key: the next handshake
-            // would be refused the same way. Say so once and stop holding
-            // audio nobody will read — the recording carries on regardless.
-            log::warn!("[stt:{label}] leg {leg} ended ({code}), not redialling: {msg}");
-            bridge.discard();
-            failure.report(code, &msg);
-            return;
-        }
-        if bridge.is_closed() || failure.muted() {
-            // The meeting is stopping, and this is just its socket going down
-            // with it (or dying inside the flush grace). Nothing to redial for.
-            log::info!("[stt:{label}] leg {leg} ended after stop: {msg}");
-            return;
-        }
 
         // Keep the words spoken from here on for the next leg.
         bridge.hold();
@@ -844,6 +787,102 @@ async fn run_legs(
         backoff = Some(delay);
         leg += 1;
     }
+}
+
+/// Before every leg after the first: wait until audio is held for it, then
+/// sit out the `backoff` owed by a failure (announcing the redial). `false` =
+/// the capture ended meanwhile; stopping the meeting never waits out either.
+async fn ready_to_redial(
+    app: &AppHandle,
+    label: &'static str,
+    bridge: &SttBridge,
+    is_paused: &impl Fn() -> bool,
+    backoff: Option<Duration>,
+    attempt: u32,
+) -> bool {
+    // Never dial without something to transcribe.
+    if !wait_for_audio(app, label, bridge, is_paused).await {
+        log::info!("[stt:{label}] capture ended while waiting for audio");
+        return false;
+    }
+    let Some(delay) = backoff else {
+        return true;
+    };
+    let _ = app.emit(
+        TRANSCRIPTION_STATE_EVENT,
+        serde_json::json!({ "source": label, "state": "reconnecting", "attempt": attempt }),
+    );
+    tokio::select! {
+        _ = tokio::time::sleep(delay) => true,
+        _ = bridge.closed() => {
+            log::info!("[stt:{label}] capture ended during reconnect backoff");
+            false
+        }
+    }
+}
+
+/// Run one leg to its end, closing its input once it has carried no audio
+/// for [`LEG_IDLE`]. Returns the leg's result and whether it was closed idle.
+async fn drive_leg(
+    session: impl std::future::Future<Output = anyhow::Result<()>>,
+    bridge: &SttBridge,
+    label: &'static str,
+    leg: u32,
+    started: Instant,
+    is_paused: &impl Fn() -> bool,
+) -> (anyhow::Result<()>, bool) {
+    tokio::pin!(session);
+    let mut idled = false;
+    loop {
+        tokio::select! {
+            result = &mut session => return (result, idled),
+            _ = tokio::time::sleep(IDLE_CHECK_EVERY), if !idled => {
+                if leg_is_idle(bridge.since_last_audio(), started.elapsed(), LEG_IDLE) {
+                    // Close the leg's input: the adapter sends its normal
+                    // `end`, flushes, and the session returns. Audio that
+                    // arrives meanwhile is held for the next leg.
+                    log::info!(
+                        "[stt:{label}] leg {leg} carried no audio for {}s{} — closing it until audio returns",
+                        LEG_IDLE.as_secs(),
+                        if is_paused() { " (paused)" } else { "" }
+                    );
+                    idled = true;
+                    bridge.hold();
+                }
+            }
+        }
+    }
+}
+
+/// The failure message when a leg's end is one to redial after; `None` when
+/// it is not: it drained normally, the failure is one a redial cannot fix
+/// (reported here), or the meeting is stopping.
+fn redialable_failure(
+    result: anyhow::Result<()>,
+    bridge: &SttBridge,
+    label: &'static str,
+    leg: u32,
+    failure: &Failure<'_>,
+) -> Option<String> {
+    let e = result.err()?;
+    let msg = e.to_string();
+    let code = failure.classify(&e);
+    if code != "connect" {
+        // Quota, an expired session, a rejected key: the next handshake
+        // would be refused the same way. Say so once and stop holding
+        // audio nobody will read — the recording carries on regardless.
+        log::warn!("[stt:{label}] leg {leg} ended ({code}), not redialling: {msg}");
+        bridge.discard();
+        failure.report(code, &msg);
+        return None;
+    }
+    if bridge.is_closed() || failure.muted() {
+        // The meeting is stopping, and this is just its socket going down
+        // with it (or dying inside the flush grace). Nothing to redial for.
+        log::info!("[stt:{label}] leg {leg} ended after stop: {msg}");
+        return None;
+    }
+    Some(msg)
 }
 
 /// How often a live leg checks whether it has gone idle (see [`LEG_IDLE`]).
