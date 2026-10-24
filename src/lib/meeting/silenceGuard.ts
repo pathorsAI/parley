@@ -52,7 +52,10 @@ export function silenceStep(
   linkLive = true,
 ): SilenceStep {
   const silent = now - lastActivityAt;
-  if (promptAt == null) return silent >= (linkLive ? SILENCE_PROMPT_MS : RECONNECTING_PROMPT_MS) ? "prompt" : "none";
+  if (promptAt == null) {
+    const promptAfter = linkLive ? SILENCE_PROMPT_MS : RECONNECTING_PROMPT_MS;
+    return silent >= promptAfter ? "prompt" : "none";
+  }
   if (lastActivityAt > promptAt) return "dismiss";
   if (!linkLive && silent < RECONNECTING_PROMPT_MS) return "none";
   return now - promptAt >= SILENCE_GRACE_MS ? "end" : "none";
