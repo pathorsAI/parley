@@ -104,6 +104,76 @@
         }
       }
     },
+    "%lld recordings not uploaded — out of quota. Kept on this phone; tap to retry" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld recording not uploaded — out of quota. Kept on this phone; tap to retry"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld recordings not uploaded — out of quota. Kept on this phone; tap to retry"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hant" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld 筆錄音未上傳（額度已用完），已保存在手機上：點一下重試"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld recordings not uploaded — tap to retry" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld recording not uploaded — tap to retry"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld recordings not uploaded — tap to retry"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hant" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld 筆錄音未上傳：點一下重試"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "%lld recordings waiting to sync" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5169,6 +5239,23 @@
         }
       }
     },
+    "Saved on this phone. It uploads once you sign in." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Saved on this phone. It uploads once you sign in."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已保存在手機上，登入後就會上傳。"
+          }
+        }
+      }
+    },
     "Saving it to your library…" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7119,6 +7206,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "轉錄時數"
+          }
+        }
+      }
+    },
+    "Tries the upload again" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tries the upload again"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新嘗試上傳"
           }
         }
       }

@@ -119,7 +119,12 @@ struct ParleyApp: App {
                     // Coming back to the app is the obvious moment to try
                     // again, and passes are serialized, so this cannot pile up
                     // behind a drain already in flight.
-                    Task { await app.syncPendingBackfills() }
+                    //
+                    // Uploads first, through the same call: a meeting whose
+                    // upload was cut off when the user left the app used to
+                    // wait for the next cold launch, which on a phone that is
+                    // never force-quit could be weeks.
+                    Task { await app.syncPendingUploads() }
                 }
         }
     }

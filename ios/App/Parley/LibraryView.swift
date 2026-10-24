@@ -429,14 +429,27 @@ struct LibraryView: View {
         let items = filtered(folder)
         let checklist = folder == nil && showsChecklist
         return ScrollViewReader { proxy in
-            folderRows(items, checklist: checklist)
+            folderRows(items, checklist: checklist, showsQueue: folder == nil && scope == nil)
                 .onAppear { takeChecklistRequest(proxy) }
                 .onChange(of: router.checklistRequest) { _, _ in takeChecklistRequest(proxy) }
         }
     }
 
-    private func folderRows(_ items: [CloudRecordingSummary], checklist: Bool) -> some View {
+    private func folderRows(
+        _ items: [CloudRecordingSummary], checklist: Bool, showsQueue: Bool
+    ) -> some View {
         List {
+            // Recordings on this phone that the cloud does not have yet — the
+            // only place outside Settings they show up. Personal scope, every
+            // folder: a queued recording has not been filed anywhere yet.
+            if showsQueue && app.pendingUploadCount > 0 {
+                UploadQueueRow(pending: app.pendingUploadCount, parked: app.parkedUploads) {
+                    Task { await app.retryUploadsNow() }
+                }
+                .listRowInsets(EdgeInsets(top: 4, leading: 20, bottom: 4, trailing: 20))
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+            }
             if importer.isRunning || importNotice != nil {
                 importStatus
                     .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))

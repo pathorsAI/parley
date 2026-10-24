@@ -64,7 +64,7 @@ final class MeetingUploader {
     /// the recording that just landed, so it needs the id to write back to and
     /// the name and folder the recording actually carries — which is the state
     /// its suggestion is accepted against.
-    struct Outcome {
+    struct Outcome: Sendable {
         let recordingId: String
         /// The name the recording landed under: the clock name for a live
         /// meeting (`title(for:)`), the file's own name for an import.
@@ -84,9 +84,13 @@ final class MeetingUploader {
     /// about.
     struct SyncResult: @unchecked Sendable {
         let uploaded: Int
-        /// Entries that could never have succeeded and were dropped rather than
-        /// left at the head of the queue. See `hasAudio` and `isTerminal`.
+        /// Manifests whose audio was already gone, dropped rather than left at
+        /// the head of the queue. See `hasAudio`. Nothing with audio is ever
+        /// counted here: a refused recording is parked, not discarded.
         let discarded: Int
+        /// Entries the server refused on this pass, set aside with their audio
+        /// (`UploadParking`) so the queue behind them keeps moving.
+        let parked: Int
         let remaining: Int
         /// Why the pass stopped short, if it did; nil when it reached the end.
         /// Kept rather than swallowed so a caller has something true to say
@@ -94,7 +98,7 @@ final class MeetingUploader {
         let failure: Error?
     }
 
-    private struct PendingUpload: Codable {
+    fileprivate struct PendingUpload: Codable {
         let id: String
         let startedAt: Date
         let durationMs: Double
@@ -120,6 +124,12 @@ final class MeetingUploader {
         /// the entry, and a side table would outlive entries it no longer has.
         var failureCount: Int = 0
         var lastError: String?
+        /// Set when the server refused the upload itself (a 4xx that no later
+        /// action clears — see `UploadFailureDisposition`). The entry keeps its
+        /// audio and waits on `UploadParking`'s ladder instead of guarding the
+        /// head of the queue. Nil for an entry that has only ever failed on
+        /// the network, or never failed at all.
+        var parking: UploadParking?
 
         /// Both new fields decode with a default, because this manifest is
         /// written to disk and read back by a *later build of the app*. Someone
@@ -129,7 +139,7 @@ final class MeetingUploader {
         /// manifest reads as exactly what it was: a clock-named live recording.
         enum CodingKeys: String, CodingKey {
             case id, startedAt, durationMs, segments, defaultSave, source, title
-            case queuedAt, failureCount, lastError
+            case queuedAt, failureCount, lastError, parking
         }
 
         init(
@@ -164,20 +174,31 @@ final class MeetingUploader {
             queuedAt = try container.decodeIfPresent(Date.self, forKey: .queuedAt)
             failureCount = try container.decodeIfPresent(Int.self, forKey: .failureCount) ?? 0
             lastError = try container.decodeIfPresent(String.self, forKey: .lastError)
+            parking = try container.decodeIfPresent(UploadParking.self, forKey: .parking)
         }
 
         /// The name this recording lands under.
         var displayTitle: String { title ?? MeetingUploader.title(for: startedAt) }
     }
 
-    /// Finalize the Ogg stream, place it in the durable queue, then attempt an
-    /// immediate sync. Files are deleted only after every cloud step succeeds.
-    func finishAndUpload(
+    /// A finished recording that is safe in the on-device queue, waiting for
+    /// its first upload attempt.
+    struct Queued: @unchecked Sendable {
+        fileprivate let pending: PendingUpload
+        var id: String { pending.id }
+    }
+
+    /// Finalize the Ogg stream and place it in the durable queue — always,
+    /// signed in or not, online or not. Nothing about the network or the
+    /// account decides whether a meeting is kept; it only decides when it
+    /// reaches the cloud. Files are deleted only after every cloud step
+    /// succeeds, or when the user deletes the recording.
+    ///
+    /// nil means the recording was too short to keep.
+    func finishAndQueue(
         segments: [TranscriptSegment],
-        cloud: CloudClient,
-        defaultSave: SaveDestination,
-        orgs: [CloudOrg]
-    ) async throws -> Outcome? {
+        defaultSave: SaveDestination
+    ) async throws -> Queued? {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             queue.async { [self] in
                 encoder?.finalize()
@@ -203,7 +224,15 @@ final class MeetingUploader {
         // Saved on the phone is saved: whatever the upload does next, the
         // meeting is safe and the queue will deliver it.
         GettingStartedStore.markSoon(.recorded)
-        return try await Self.uploadCountingFailure(pending, cloud: cloud, orgs: orgs)
+        return Queued(pending: pending)
+    }
+
+    /// The first upload attempt for a recording `finishAndQueue` just filed.
+    /// A failure leaves it in the queue exactly as a failed retry would.
+    static func upload(_ queued: Queued, cloud: CloudClient, orgs: [CloudOrg]) async throws
+        -> Outcome
+    {
+        try await uploadCountingFailure(queued.pending, cloud: cloud, orgs: orgs)
     }
 
     /// File an imported recording — audio that was decoded and batch-transcribed
@@ -212,7 +241,7 @@ final class MeetingUploader {
     /// Deliberately the same three moves as `finishAndUpload`: persist the
     /// manifest and the Ogg into Application Support first, then upload. If any
     /// cloud step fails the entry survives in the queue and `syncPending` picks
-    /// it up on the next foreground launch — an import is no more losable than a
+    /// it up on the next foregrounding — an import is no more losable than a
     /// meeting. `ogg` is *moved* out of its temp location, not copied.
     ///
     /// nil means the audio was too short to be worth keeping, matching
@@ -250,56 +279,109 @@ final class MeetingUploader {
         return try await uploadCountingFailure(pending, cloud: cloud, orgs: orgs)
     }
 
-    static func syncPending(cloud: CloudClient, orgs: [CloudOrg]) async -> SyncResult {
+    /// One pass over the upload queue, oldest first.
+    ///
+    /// A parked entry (one the server refused) is tried only when `trigger`
+    /// and its ladder allow it, and its refusal never stops the pass. A
+    /// transport failure or a 5xx stops it, because the next entry would fail
+    /// the same way. Nothing here deletes audio that has not reached the cloud.
+    static func syncPending(
+        cloud: CloudClient, orgs: [CloudOrg], trigger: UploadParking.Trigger = .automatic
+    ) async -> SyncResult {
         var uploaded = 0
         var discarded = 0
+        var parked = 0
         var failure: Error?
-        for item in loadPending() {
+        let now = Date()
+        passLoop: for item in loadPending() {
+            if let parking = item.parking, !parking.isDue(now: now, trigger: trigger) { continue }
             // The manifest outlived its audio — an interrupted `persist`, or
-            // the user clearing storage out from under the queue. `upload`
-            // reads the Ogg with a hard `try`, so this entry throws on every
-            // pass for the life of the install and, because the queue is
-            // oldest-first and stops at the first failure, takes every
-            // recording behind it down with it. There is no meeting left to
-            // send, so drop it instead of guarding the door with it.
+            // the user clearing storage out from under the queue. There is no
+            // meeting left to send, and an entry that throws on every pass
+            // would hold everything behind it hostage, so drop the manifest.
             guard hasAudio(at: try? audioURL(for: item.id)) else {
                 removePending(id: item.id)
                 discarded += 1
                 continue
             }
-            do {
-                _ = try await uploadCountingFailure(item, cloud: cloud, orgs: orgs, isRetry: true)
+            switch await attemptUpload(item, cloud: cloud, orgs: orgs) {
+            case .uploaded:
                 uploaded += 1
-            } catch is CancellationError {
-                // The pass was torn down, not the upload refused. Stop without
-                // marking anything: the queue is exactly as it was.
-                failure = CancellationError()
-                break
-            } catch let error as CloudError where isTerminal(error) {
-                // The server will refuse this request identically forever — the
-                // file is too large, the account is out of credit, the payload
-                // is malformed. Retrying costs an upload of an hour of audio
-                // every launch and blocks everything queued behind it.
-                AppLog.sync.error(
-                    "upload \(item.id, privacy: .public) refused for good: http_\(error.status, privacy: .public)"
-                )
-                DiagnosticsJournal.record("sync_refused_http_\(error.status)", "upload dropped")
-                removePending(id: item.id)
-                discarded += 1
+            case .busy:
+                continue
+            case .parked(let error):
+                parked += 1
                 failure = error
-            } catch {
-                // Transport, or a 5xx: the next item would fail the same way,
-                // so stop the pass and keep the queue in order.
+            case .stopped(let error):
                 failure = error
-                break
+                break passLoop
             }
         }
         // Read back rather than subtracted: `upload` retires an entry itself —
         // to the backfill queue when the transcript came up short — so the only
         // honest count of what is left is the directory's own.
         return SyncResult(
-            uploaded: uploaded, discarded: discarded, remaining: loadPending().count,
-            failure: failure)
+            uploaded: uploaded, discarded: discarded, parked: parked,
+            remaining: loadPending().count, failure: failure)
+    }
+
+    /// How one queued entry's attempt ended.
+    private enum AttemptOutcome {
+        case uploaded
+        /// Another pass, or the end-of-meeting upload, is already sending it.
+        case busy
+        /// Refused by the server and set aside with its audio.
+        case parked(Error)
+        /// Left in place, and the pass should stop here.
+        case stopped(Error)
+    }
+
+    private static func attemptUpload(
+        _ item: PendingUpload, cloud: CloudClient, orgs: [CloudOrg]
+    ) async -> AttemptOutcome {
+        do {
+            _ = try await uploadCountingFailure(item, cloud: cloud, orgs: orgs, isRetry: true)
+            return .uploaded
+        } catch is UploadInFlight {
+            return .busy
+        } catch let error as CloudError
+            where UploadFailureDisposition.of(httpStatus: error.status) == .park
+        {
+            // `noteFailure` has already written the parking onto the entry.
+            AppLog.sync.error(
+                "upload \(item.id, privacy: .public) parked: http_\(error.status, privacy: .public)")
+            DiagnosticsJournal.record("sync_parked_http_\(error.status)", "upload parked, audio kept")
+            return .parked(error)
+        } catch {
+            // Transport, a 5xx, a cancelled pass, or a 4xx somebody's later
+            // action clears: the next item would fail the same way.
+            return .stopped(error)
+        }
+    }
+
+    /// Thrown when an entry is already being uploaded by someone else in this
+    /// process. Not a failure of the recording, and never counted as one.
+    struct UploadInFlight: Error {}
+
+    /// Ids being uploaded right now. The end-of-meeting upload, a
+    /// foregrounding and the network coming back can all reach the same entry
+    /// within a second; without this the same hour of audio went up twice.
+    private static let inFlight = InFlightIds()
+
+    /// Queued entries the server refused, kept with their audio. The library
+    /// shows these as "not uploaded" rows.
+    struct ParkedSummary: Equatable {
+        var count = 0
+        /// How many of them are waiting for quota rather than refused outright.
+        var waitingForQuota = 0
+    }
+
+    static var parkedSummary: ParkedSummary {
+        loadPending().reduce(into: ParkedSummary()) { summary, item in
+            guard let parking = item.parking else { return }
+            summary.count += 1
+            if parking.reason == .quota { summary.waitingForQuota += 1 }
+        }
     }
 
     static var pendingCount: Int { loadPending().count }
@@ -316,13 +398,15 @@ final class MeetingUploader {
     private static func uploadCountingFailure(
         _ pending: PendingUpload, cloud: CloudClient, orgs: [CloudOrg], isRetry: Bool = false
     ) async throws -> Outcome {
+        guard inFlight.claim(pending.id) else { throw UploadInFlight() }
+        defer { inFlight.release(pending.id) }
         do {
             return try await upload(pending, cloud: cloud, orgs: orgs, isRetry: isRetry)
         } catch is CancellationError {
             throw CancellationError()
         } catch {
             let code = FeedbackErrorCode.of(error)
-            noteFailure(id: pending.id, code: code)
+            noteFailure(id: pending.id, code: code, error: error)
             AppLog.sync.error(
                 "upload \(pending.id, privacy: .public) failed: \(code, privacy: .public)")
             DiagnosticsJournal.record("sync_\(code)", "upload failed")
@@ -330,14 +414,23 @@ final class MeetingUploader {
         }
     }
 
-    /// Bump the entry's failure count on disk, if it is still queued.
-    private static func noteFailure(id: String, code: String) {
+    /// Bump the entry's failure count on disk, if it is still queued, and
+    /// park it when the server refused the request itself.
+    private static func noteFailure(id: String, code: String, error: Error) {
         guard let url = try? manifestURL(for: id),
             let data = try? Data(contentsOf: url),
             var entry = try? JSONDecoder().decode(PendingUpload.self, from: data)
         else { return }
         entry.failureCount += 1
         entry.lastError = code
+        if let refusal = error as? CloudError,
+            UploadFailureDisposition.of(httpStatus: refusal.status) == .park
+        {
+            let now = Date()
+            entry.parking =
+                entry.parking?.refusedAgain(httpStatus: refusal.status, at: now)
+                ?? UploadParking(httpStatus: refusal.status, at: now)
+        }
         if let updated = try? JSONEncoder().encode(entry) {
             try? updated.write(to: url, options: .atomic)
         }
@@ -389,28 +482,6 @@ final class MeetingUploader {
         guard let url else { return false }
         let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
         return size > 0
-    }
-
-    /// Whether a server's answer is the end of the road for a queued entry.
-    ///
-    /// A 4xx means the server objected to the request itself — the file is too
-    /// large (413), the account is out of credit (402), the payload is
-    /// malformed (400) — and the identical request will be refused identically
-    /// on every future pass. Left in a stop-at-first-failure queue, one of
-    /// those jams every recording behind it forever, which is the whole reason
-    /// a dead-letter path exists here.
-    ///
-    /// The exceptions are the 4xx that somebody's later action clears: signing
-    /// in again (401), being granted access or paying (403), and simply waiting
-    /// (408, 425, 429). Those stop the pass rather than end the entry. 5xx and
-    /// transport failures are not this function's business — they fall through
-    /// to `false` and stop the pass.
-    private static func isTerminal(_ error: CloudError) -> Bool {
-        switch error.status {
-        case 401, 403, 408, 425, 429: return false
-        case 400..<500: return true
-        default: return false
-        }
     }
 
     /// - Parameter isRetry: this entry has been through the queue before, so
@@ -505,7 +576,7 @@ final class MeetingUploader {
     /// exactly as a failed push would. Any other refusal of the read is taken
     /// as "not there": the push that follows is the request whose answer
     /// decides this entry's fate, and a read the server does not like must not
-    /// get an upload dead-lettered by `isTerminal`.
+    /// get an upload parked over it.
     private static func existingMeta(for id: String, cloud: CloudClient) async throws
         -> RecordingMeta?
     {
@@ -950,9 +1021,10 @@ final class MeetingUploader {
     /// wait for the last one to learn its own transcript changed.
     static func syncPendingBackfills(
         cloud: CloudClient,
+        manual: Bool = false,
         onRepaired: (@MainActor @Sendable (String) -> Void)? = nil
     ) async -> BackfillResult {
-        await BackfillDrainGate.shared.drain(cloud: cloud, onRepaired: onRepaired)
+        await BackfillDrainGate.shared.drain(cloud: cloud, manual: manual, onRepaired: onRepaired)
     }
 
     /// One pass over the queue. Only ever called through the gate.
@@ -1032,7 +1104,7 @@ final class MeetingUploader {
             // catch, where a cancelled launch task was indistinguishable from a
             // flat network. Nothing is charged and nothing is dropped.
             return .stopped(CancellationError())
-        } catch let error as CloudError where isTerminal(error) {
+        } catch let error as CloudError where isFinalBackfillRefusal(error) {
             // `finishBackfill` rather than `removeBackfill`: this request is
             // over, and a request that is over gets its audio retired on the
             // same terms as any other — a phone set to keep audio keeps it.
@@ -1048,6 +1120,19 @@ final class MeetingUploader {
             DiagnosticsJournal.record("backfill_\(code)", "re-transcription stopped")
             return .stopped(error)
         }
+    }
+
+    /// Whether a refusal ends a backfill for good.
+    ///
+    /// The recording and its audio are already in the cloud by the time a
+    /// backfill exists, so ending one never loses a meeting — only the better
+    /// transcript. Two refusals are still not worth ending it over: out of
+    /// quota (402), which the next period clears and which is exactly the
+    /// "transcribed later" the live screen promised, and a body cut off
+    /// mid-transfer (400). Both stay queued and stop the pass.
+    private static func isFinalBackfillRefusal(_ error: CloudError) -> Bool {
+        UploadFailureDisposition.of(httpStatus: error.status) == .park
+            && ![400, 402].contains(error.status)
     }
 
     /// Stamp a request as tried, in the manifest, before the work starts.
@@ -1344,6 +1429,26 @@ private final class RunningBackfills: @unchecked Sendable {
     }
 }
 
+/// Upload ids claimed by a pass in this process. Same locked box as
+/// `RunningBackfills`, but claimed atomically: two passes that both see an
+/// entry must not both send it.
+private final class InFlightIds: @unchecked Sendable {
+    private let lock = NSLock()
+    private var ids: Set<String> = []
+
+    func claim(_ id: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return ids.insert(id).inserted
+    }
+
+    func release(_ id: String) {
+        lock.lock()
+        ids.remove(id)
+        lock.unlock()
+    }
+}
+
 /// Serializes passes over the backfill queue.
 ///
 /// An actor on its own does not do this. A drain suspends on every network
@@ -1371,10 +1476,19 @@ private actor BackfillDrainGate {
     /// life of the process.
     private var tail: Task<MeetingUploader.BackfillResult, Never>?
 
+    /// Set when a pass was refused for quota. Automatic passes skip until it
+    /// has passed, so every foregrounding does not re-send an hour of audio to
+    /// a server that will say 402 again. In memory on purpose: a fresh launch
+    /// tries once more, since the quota may have reset in between.
+    private var quotaPausedUntil: Date?
+    static let quotaPause: TimeInterval = 3_600
+
     func drain(
         cloud: CloudClient,
+        manual: Bool,
         onRepaired: (@MainActor @Sendable (String) -> Void)?
     ) async -> MeetingUploader.BackfillResult {
+        if !manual, let until = quotaPausedUntil, Date() < until { return .skipped }
         let previous = tail
         let pass = Task {
             _ = await previous?.value
@@ -1383,6 +1497,15 @@ private actor BackfillDrainGate {
         tail = pass
         let result = await pass.value
         if tail == pass { tail = nil }
+        noteQuota(result)
         return result
+    }
+
+    private func noteQuota(_ result: MeetingUploader.BackfillResult) {
+        if (result.failure as? CloudError)?.status == 402 {
+            quotaPausedUntil = Date().addingTimeInterval(Self.quotaPause)
+        } else if result.failure == nil {
+            quotaPausedUntil = nil
+        }
     }
 }

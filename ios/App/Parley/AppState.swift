@@ -1,5 +1,6 @@
 import AuthenticationServices
 import Foundation
+import Network
 import ParleyKit
 import SwiftUI
 
@@ -16,6 +17,17 @@ final class AppState: NSObject, ObservableObject {
     @Published var signingIn = false
     @Published var signInError: String?
     @Published var pendingUploadCount = MeetingUploader.pendingCount
+    /// The queued recordings the server refused, kept on the phone with their
+    /// audio. The library shows them as a "not uploaded — tap to retry" row.
+    @Published private(set) var parkedUploads = MeetingUploader.parkedSummary
+
+    /// Re-read both queue counts from disk. Every place that touches the
+    /// upload queue calls this rather than setting one count and forgetting
+    /// the other.
+    func refreshUploadCounts() {
+        pendingUploadCount = MeetingUploader.pendingCount
+        parkedUploads = MeetingUploader.parkedSummary
+    }
 
     /// Bumped once for every backfill that successfully pushes, from whichever
     /// drain ran it — launch, sign-in, a foregrounding, or the Re-transcribe
@@ -128,7 +140,8 @@ final class AppState: NSObject, ObservableObject {
         // holding it. Launch is the only safe moment to claim those — no
         // recording can be writing to one yet.
         _ = MeetingUploader.adoptOrphanedRecordings(defaultSave: defaultSave)
-        pendingUploadCount = MeetingUploader.pendingCount
+        refreshUploadCounts()
+        watchNetwork()
 
         #if DEBUG
             if ScreenshotDemo.isActive {
@@ -174,7 +187,7 @@ final class AppState: NSObject, ObservableObject {
             // awaited — it must never hold up the uploads below.
             DictionarySyncModel.shared.accountChanged(cloud: cloud, userId: user?.id)
             await loadAccountExtras()
-            await syncPendingUploads()
+            await syncPendingUploads(trigger: .launch)
         } catch let err as CloudError where err.isAuthExpired {
             clearStoredToken()
             user = nil
@@ -280,18 +293,58 @@ final class AppState: NSObject, ObservableObject {
         clearLocalSession()
     }
 
-    func syncPendingUploads() async {
-        guard signedIn else {
-            pendingUploadCount = MeetingUploader.pendingCount
-            return
+    /// Drain the upload queue, then the backfill queue.
+    ///
+    /// Gated on `hasAccount`, not `signedIn`, for the reason
+    /// `syncPendingBackfills` gives: a stored token is enough to try with, and
+    /// a meeting recorded while `me()` was failing on a flaky network should
+    /// not wait for the next cold launch to go up. A dead token answers 401,
+    /// which stops the pass and parks nothing.
+    ///
+    /// Called at launch, at sign-in, on every foregrounding and whenever the
+    /// network comes back; passes may overlap, and the uploader's in-flight
+    /// claims keep any one recording from being sent twice.
+    func syncPendingUploads(trigger: UploadParking.Trigger = .automatic) async {
+        if hasAccount {
+            _ = await MeetingUploader.syncPending(cloud: cloud, orgs: orgs, trigger: trigger)
         }
-        let result = await MeetingUploader.syncPending(cloud: cloud, orgs: orgs)
-        pendingUploadCount = result.remaining
+        refreshUploadCounts()
         // Strictly after the uploads, and never in their place: a recording
         // that is not in the cloud yet has a more urgent debt than one whose
         // transcript came up short. Backfills also run for minutes at a time,
         // so putting them first would park a queued meeting behind them.
-        await syncPendingBackfills()
+        await syncPendingBackfills(manual: trigger == .manual)
+    }
+
+    /// Retry everything waiting, parked recordings included — the user asked.
+    func retryUploadsNow() async {
+        await syncPendingUploads(trigger: .manual)
+    }
+
+    // MARK: network
+
+    private var pathMonitor: NWPathMonitor?
+    private var networkWasSatisfied = true
+
+    /// Drain the queue whenever the network comes back, not only at the next
+    /// launch: a meeting that ended in a lift or a basement goes up as soon as
+    /// there is a signal again.
+    private func watchNetwork() {
+        guard pathMonitor == nil else { return }
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in
+            let satisfied = path.status == .satisfied
+            Task { @MainActor in self?.networkChanged(satisfied: satisfied) }
+        }
+        monitor.start(queue: DispatchQueue(label: "com.pathors.parley.uploads.path"))
+        pathMonitor = monitor
+    }
+
+    private func networkChanged(satisfied: Bool) {
+        let cameBack = satisfied && !networkWasSatisfied
+        networkWasSatisfied = satisfied
+        guard cameBack, pendingUploadCount > 0 else { return }
+        Task { await syncPendingUploads() }
     }
 
     /// Re-transcribe recordings whose live transcript did not account for their
@@ -309,10 +362,14 @@ final class AppState: NSObject, ObservableObject {
     /// that state enqueue the work, flip the screen to "Re-transcribing…", and
     /// then return without touching the queue. A token is enough to try with;
     /// if it is dead the server says 401 and that is the authority.
+    ///
+    /// `manual` is a pass somebody asked for, which runs even while automatic
+    /// passes are paused after a quota refusal.
     @discardableResult
-    func syncPendingBackfills() async -> MeetingUploader.BackfillResult {
+    func syncPendingBackfills(manual: Bool = false) async -> MeetingUploader.BackfillResult {
         guard hasAccount else { return .skipped }
-        return await MeetingUploader.syncPendingBackfills(cloud: cloud) { [weak self] _ in
+        return await MeetingUploader.syncPendingBackfills(cloud: cloud, manual: manual) {
+            [weak self] _ in
             self?.backfillRevision += 1
         }
     }

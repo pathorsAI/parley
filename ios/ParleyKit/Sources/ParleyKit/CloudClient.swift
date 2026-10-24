@@ -149,8 +149,13 @@ public actor CloudClient: BatchTranscriptionService, DictionarySyncTransport {
         _ = try await request("recordings/\(id)", method: "POST", body: body, contentType: "application/json")
     }
 
+    /// The timeout grows with the body (`AudioUploadTimeout`): an hour of
+    /// audio on a weak uplink is minutes of transfer, and the 60 s default cut
+    /// those uploads off before the server could answer.
     public func uploadAudio(id: String, ogg: Data) async throws {
-        _ = try await request("recordings/\(id)/audio", method: "PUT", body: ogg, contentType: "audio/ogg")
+        _ = try await request(
+            "recordings/\(id)/audio", method: "PUT", body: ogg, contentType: "audio/ogg",
+            timeout: AudioUploadTimeout.forBody(bytes: ogg.count))
     }
 
     /// The Ogg back again — the same path `uploadAudio` writes to, which is also
