@@ -83,6 +83,12 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.32
+
+Long meetings now finish filling in their transcripts. After a meeting, Parley fills in whatever the live transcript missed in the background. Before, leaving the app stopped that work, and the next try uploaded the whole recording again, so a long meeting could stay unfinished. Now it carries on after you leave, and picks up where it stopped when you come back.
+
+Dictation you finish away from the keyboard now lands in your text. If you tap the mic, stop recording in Parley, from the Live Activity or from the lock screen, and then go back to the app you were typing in, the Parley keyboard types the words into the field when it reappears — no more copying them by hand.
+
 ## What's New — 1.31
 
 Dictation you finish away from the keyboard now lands in your text. If you tap the mic, stop recording in Parley, from the Live Activity or from the lock screen, and then go back to the app you were typing in, the Parley keyboard types the words into the field when it reappears — no more copying them by hand.
