@@ -201,31 +201,7 @@ impl RecordingJournal {
         let id = meta.meeting_id.clone();
         let thread = std::thread::Builder::new()
             .name("recording-journal".into())
-            .spawn(move || {
-                let mut last_sync = Instant::now();
-                while let Ok(chunk) = rx.recv() {
-                    match stream.push(&chunk) {
-                        Ok(true) => {
-                            // A page is complete: hand it to the OS now, so a
-                            // crash loses at most the page being filled.
-                            let _ = stream.inner_mut().flush();
-                            if last_sync.elapsed() >= SYNC_EVERY {
-                                sync(stream.inner_mut());
-                                last_sync = Instant::now();
-                            }
-                        }
-                        Ok(false) => {}
-                        Err(e) => {
-                            log::error!("recording journal: write failed, journal stops here: {e}");
-                            return;
-                        }
-                    }
-                }
-                match stream.finish() {
-                    Ok(mut out) => sync(&mut out),
-                    Err(e) => log::warn!("recording journal: finishing failed: {e}"),
-                }
-            })
+            .spawn(move || write_journal(stream, rx))
             .context("spawn journal thread")?;
         log::info!("recording journal: started {}", path.display());
         Ok(Self {
@@ -263,6 +239,37 @@ impl Drop for RecordingJournal {
     }
 }
 
+/// The writer thread: encode every queued chunk, hand each closed page to the
+/// OS, fsync now and then, and end the stream once the channel closes.
+fn write_journal(
+    mut stream: OpusOggStream<BufWriter<File>>,
+    rx: std::sync::mpsc::Receiver<Vec<i16>>,
+) {
+    let mut last_sync = Instant::now();
+    while let Ok(chunk) = rx.recv() {
+        match stream.push(&chunk) {
+            Ok(closed) => {
+                if closed {
+                    // A page is complete: a crash now loses at most the next one.
+                    let _ = stream.inner_mut().flush();
+                }
+                if closed && last_sync.elapsed() >= SYNC_EVERY {
+                    sync(stream.inner_mut());
+                    last_sync = Instant::now();
+                }
+            }
+            Err(e) => {
+                log::error!("recording journal: write failed, journal stops here: {e}");
+                return;
+            }
+        }
+    }
+    match stream.finish() {
+        Ok(mut out) => sync(&mut out),
+        Err(e) => log::warn!("recording journal: finishing failed: {e}"),
+    }
+}
+
 fn sync(out: &mut BufWriter<File>) {
     if let Err(e) = out.flush().and_then(|()| out.get_ref().sync_data()) {
         log::warn!("recording journal: sync failed: {e}");
@@ -289,28 +296,10 @@ pub fn remove(dir: &Path, id: &str) {
 /// duration in ms (`0` = no audio survived; nothing is written then).
 pub fn repair(journal: &Path, out: &Path) -> Result<u64> {
     let file = File::open(journal).with_context(|| format!("open {}", journal.display()))?;
-    let mut reader = PacketReader::new(BufReader::new(file));
-    let mut packets: Vec<Vec<u8>> = Vec::new();
-    let mut headers = 0;
-    loop {
-        match reader.read_packet() {
-            Ok(Some(p)) => {
-                // The first two packets are OpusHead / OpusTags; rewritten fresh.
-                if headers < 2 {
-                    headers += 1;
-                    continue;
-                }
-                packets.push(p.data);
-            }
-            Ok(None) => break,
-            // A torn final page (the crash) or garbage after it: keep what
-            // came before.
-            Err(e) => {
-                log::info!("recording journal: stopped reading at a damaged page: {e}");
-                break;
-            }
-        }
-    }
+    // The first two packets are OpusHead / OpusTags; they are rewritten fresh.
+    let packets: Vec<Vec<u8>> = intact_packets(PacketReader::new(BufReader::new(file)))
+        .skip(2)
+        .collect();
     if packets.is_empty() {
         return Ok(0);
     }
@@ -333,6 +322,20 @@ pub fn repair(journal: &Path, out: &Path) -> Result<u64> {
     writer.into_inner().flush()?;
     // One packet = one 20 ms frame.
     Ok(total as u64 * 20)
+}
+
+/// Every packet up to the first damaged page: a torn final page (the crash)
+/// or garbage after it ends the stream, and what came before is kept.
+fn intact_packets<R: std::io::Read + std::io::Seek>(
+    mut reader: PacketReader<R>,
+) -> impl Iterator<Item = Vec<u8>> {
+    std::iter::from_fn(move || match reader.read_packet() {
+        Ok(p) => p.map(|p| p.data),
+        Err(e) => {
+            log::info!("recording journal: stopped reading at a damaged page: {e}");
+            None
+        }
+    })
 }
 
 /// A journal recovered into a saveable recording.
@@ -361,56 +364,64 @@ pub fn recover_all(
         return Vec::new();
     };
     let mut ids: Vec<String> = read
-        .filter_map(|e| e.ok())
-        .filter_map(|e| {
-            let name = e.file_name().into_string().ok()?;
-            let id = name.strip_suffix(".ogg")?.to_string();
-            valid_meeting_id(&id).then_some(id)
-        })
+        .filter_map(|e| journal_id_of(&e.ok()?.file_name()))
         .filter(|id| !skip.contains(id))
         .collect();
     ids.sort();
-    let mut out = Vec::new();
-    for id in ids {
-        let journal = audio_path(dir, &id);
-        let started_at_ms = std::fs::read(meta_path(dir, &id))
-            .ok()
-            .and_then(|b| serde_json::from_slice::<JournalMeta>(&b).ok())
-            .map(|m| m.started_at_ms)
-            .or_else(|| {
-                let created = std::fs::metadata(&journal).ok()?.created().ok()?;
-                Some(
-                    created
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .ok()?
-                        .as_millis() as u64,
-                )
+    ids.into_iter()
+        .filter_map(|id| recover_one(dir, id, out_path()))
+        .collect()
+}
+
+/// The meeting id a journal directory entry belongs to, if it is a journal.
+fn journal_id_of(name: &std::ffi::OsStr) -> Option<String> {
+    let id = name.to_str()?.strip_suffix(".ogg")?;
+    valid_meeting_id(id).then(|| id.to_string())
+}
+
+/// When meeting `id` started: its sidecar, else the journal's creation time.
+fn started_at_of(dir: &Path, id: &str) -> u64 {
+    let from_meta = std::fs::read(meta_path(dir, id))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<JournalMeta>(&b).ok())
+        .map(|m| m.started_at_ms);
+    from_meta
+        .or_else(|| {
+            let created = std::fs::metadata(audio_path(dir, id))
+                .ok()?
+                .created()
+                .ok()?;
+            let since = created.duration_since(std::time::UNIX_EPOCH).ok()?;
+            Some(since.as_millis() as u64)
+        })
+        .unwrap_or(0)
+}
+
+/// Repair one journal into `target`. Too-short journals are deleted; an
+/// unreadable one is left for a later launch / a bug report.
+fn recover_one(dir: &Path, id: String, target: PathBuf) -> Option<Recovered> {
+    match repair(&audio_path(dir, &id), &target) {
+        Ok(ms) if ms >= MIN_RECOVER_MS => {
+            log::warn!("recording journal: recovered unfinished meeting {id} ({ms} ms)");
+            Some(Recovered {
+                started_at_ms: started_at_of(dir, &id),
+                meeting_id: id,
+                path: target.to_string_lossy().into_owned(),
+                duration_ms: ms,
             })
-            .unwrap_or(0);
-        let target = out_path();
-        match repair(&journal, &target) {
-            Ok(ms) if ms >= MIN_RECOVER_MS => {
-                log::warn!("recording journal: recovered unfinished meeting {id} ({ms} ms)");
-                out.push(Recovered {
-                    meeting_id: id,
-                    path: target.to_string_lossy().into_owned(),
-                    duration_ms: ms,
-                    started_at_ms,
-                });
-            }
-            Ok(ms) => {
-                log::info!("recording journal: dropping too-short journal {id} ({ms} ms)");
-                let _ = std::fs::remove_file(&target);
-                remove(dir, &id);
-            }
-            Err(e) => {
-                // Unreadable: leave it for a later launch / a bug report.
-                log::error!("recording journal: could not recover {id}: {e}");
-                let _ = std::fs::remove_file(&target);
-            }
+        }
+        Ok(ms) => {
+            log::info!("recording journal: dropping too-short journal {id} ({ms} ms)");
+            let _ = std::fs::remove_file(&target);
+            remove(dir, &id);
+            None
+        }
+        Err(e) => {
+            log::error!("recording journal: could not recover {id}: {e}");
+            let _ = std::fs::remove_file(&target);
+            None
         }
     }
-    out
 }
 
 #[cfg(test)]

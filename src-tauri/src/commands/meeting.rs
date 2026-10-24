@@ -594,44 +594,8 @@ pub fn stop_meeting(
     // it on one of these events; a silent exit would hang that spinner forever.
     let app = app.clone();
     std::thread::spawn(move || {
-        let Recording { pcm, journal } = recording;
-        let journal_id = journal.as_ref().map(|j| j.id().to_string());
-        // Everything captured is on disk before anything else can go wrong.
-        if let Some(j) = journal {
-            j.close();
-        }
-        let outcome = encode_stopped(keep_leading(pcm, keep_ms), || {
-            // The RAM encode failed: the journal holds the same audio.
-            let (dir, id) = (dir.as_ref()?, journal_id.as_ref()?);
-            let out = crate::replay_audio::unique_recording_path();
-            match recording_journal::repair(&recording_journal::audio_path(dir, id), &out) {
-                Ok(ms) if ms > 0 => {
-                    log::warn!("recording: saved from the journal instead ({ms} ms)");
-                    Some((out, ms))
-                }
-                _ => None,
-            }
-        });
-        let mut payload = ids.clone().unwrap_or_else(|| serde_json::json!({}));
-        match outcome {
-            Stopped::Saved(out, duration_ms) => {
-                payload["path"] = out.to_string_lossy().into();
-                payload["durationMs"] = duration_ms.into();
-                let _ = app.emit("meeting://recording-saved", payload);
-                // The journal stays until the frontend has written the entry
-                // (`finish_meeting_journal`): a crash in between recovers it.
-            }
-            Stopped::TooShort => {
-                if let (Some(dir), Some(id)) = (&dir, &journal_id) {
-                    recording_journal::remove(dir, id);
-                }
-                let _ = app.emit("meeting://recording-discarded", payload);
-            }
-            Stopped::Failed => {
-                // Kept on disk: the next launch tries to recover it.
-                let _ = app.emit("meeting://recording-discarded", payload);
-            }
-        }
+        let ids = ids.unwrap_or_else(|| serde_json::json!({}));
+        finish_stopped(&app, recording, keep_ms, dir.as_deref(), ids);
         if let Some(id) = &stopping_id {
             app.state::<MeetingState>()
                 .stopping
@@ -641,6 +605,58 @@ pub fn stop_meeting(
         }
     });
     Ok(())
+}
+
+/// The stop's off-thread half: close the journal, encode the RAM recording
+/// (falling back to the journal), and send the terminal event.
+fn finish_stopped(
+    app: &AppHandle,
+    recording: Recording,
+    keep_ms: Option<u64>,
+    dir: Option<&std::path::Path>,
+    mut payload: serde_json::Value,
+) {
+    let Recording { pcm, journal } = recording;
+    let journal_id = journal.as_ref().map(|j| j.id().to_string());
+    // Everything captured is on disk before anything else can go wrong.
+    if let Some(j) = journal {
+        j.close();
+    }
+    let journal_at = dir.zip(journal_id.as_deref());
+    let outcome = encode_stopped(keep_leading(pcm, keep_ms), || {
+        journal_at.and_then(|(dir, id)| recover_from_journal(dir, id))
+    });
+    match outcome {
+        Stopped::Saved(out, duration_ms) => {
+            payload["path"] = out.to_string_lossy().into();
+            payload["durationMs"] = duration_ms.into();
+            // The journal stays until the frontend has written the entry
+            // (`finish_meeting_journal`): a crash in between recovers it.
+            let _ = app.emit("meeting://recording-saved", payload);
+        }
+        Stopped::TooShort => {
+            if let Some((dir, id)) = journal_at {
+                recording_journal::remove(dir, id);
+            }
+            let _ = app.emit("meeting://recording-discarded", payload);
+        }
+        // Kept on disk: the next launch tries to recover it.
+        Stopped::Failed => {
+            let _ = app.emit("meeting://recording-discarded", payload);
+        }
+    }
+}
+
+/// The RAM encode failed: the journal holds the same audio.
+fn recover_from_journal(dir: &std::path::Path, id: &str) -> Option<(std::path::PathBuf, u64)> {
+    let out = crate::replay_audio::unique_recording_path();
+    match recording_journal::repair(&recording_journal::audio_path(dir, id), &out) {
+        Ok(ms) if ms > 0 => {
+            log::warn!("recording: saved from the journal instead ({ms} ms)");
+            Some((out, ms))
+        }
+        _ => None,
+    }
 }
 
 /// What became of a stopped meeting's audio.

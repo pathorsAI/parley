@@ -24,6 +24,7 @@ import { withoutEstimatedTiming } from "../replay/timing";
 import type {
   DefaultSaveLocation,
   FilingSuggestion,
+  Settings,
   TranscriptSegment,
 } from "../types";
 import type { StudyCacheEntry } from "./studyCache";
@@ -404,19 +405,7 @@ export async function saveLiveToHistory(
   if (!isTauri()) return;
   const { analysis } = snap;
   if (!shouldKeepLiveRecording({ segments: analysis.segments, transcriptionDropped: snap.transcriptionDropped })) {
-    // Nothing was transcribed and the link never dropped — almost certainly an
-    // accidental Start/Stop. Don't save a history entry, and discard the encoded
-    // temp recording so it doesn't orphan in the temp dir (an entry would
-    // normally consume it on save).
-    log.info("history: live save skipped (no transcript)", { id: snap.id });
-    await ipc.discardRecording({ path: audioTempPath }).catch((error) =>
-      log.warn("history: discard empty live recording failed", {
-        path: audioTempPath,
-        error: String(error),
-      }),
-    );
-    finishJournal(snap.id);
-    if (useStore.getState().liveMeetingId === snap.id) leaveStoppedCockpit("meeting.notSaved.noTranscript");
+    await skipEmptyLiveSave(audioTempPath, snap.id);
     return;
   }
   if (snap.transcriptionDropped) {
@@ -438,9 +427,7 @@ export async function saveLiveToHistory(
   // measuring the saved file when the mic rate is missing AND the file can't
   // contain the other side — in diarized meetings the recording is the mic+system
   // MIX, and measuring it would fold the counterpart's pace into the number.
-  const micOnlyRecording = !analysis.segments.some((seg) => seg.source === "mix");
-  const speechRateHz =
-    snap.micSessionRateHz ?? (micOnlyRecording && !snap.orphan ? await measureRecordingRate(audioTempPath) : null);
+  const speechRateHz = await liveSpeechRate(snap, audioTempPath);
   const save = snap.save;
   log.info("history: live save destination", { id: snap.id, origin: save.origin, folderId: save.folderId });
   const entry: HistoryEntry = {
@@ -513,6 +500,32 @@ export async function saveLiveToHistory(
   void correctSpeakersThenShare(entry, save).catch((e) =>
     log.error("history: post-save background work failed", { id: entry.id, error: String(e) }),
   );
+}
+
+/** Nothing was transcribed and the link never dropped — almost certainly an
+ *  accidental Start/Stop. Don't save a history entry, and discard the encoded
+ *  temp recording so it doesn't orphan in the temp dir (an entry would
+ *  normally consume it on save). */
+async function skipEmptyLiveSave(audioTempPath: string, id: string): Promise<void> {
+  log.info("history: live save skipped (no transcript)", { id });
+  await ipc.discardRecording({ path: audioTempPath }).catch((error) =>
+    log.warn("history: discard empty live recording failed", {
+      path: audioTempPath,
+      error: String(error),
+    }),
+  );
+  finishJournal(id);
+  if (useStore.getState().liveMeetingId === id) leaveStoppedCockpit("meeting.notSaved.noTranscript");
+}
+
+/** Mic-only measured pace (issue #22): prefer the whole-session articulation
+ *  rate the live prosody tap accumulated from the user's OWN mic. Only measure
+ *  the saved file when that is missing AND the file can't contain the other
+ *  side — in diarized meetings the recording is the mic+system MIX. */
+async function liveSpeechRate(snap: LiveMeetingSnapshot, audioTempPath: string): Promise<number | null> {
+  if (snap.micSessionRateHz != null) return snap.micSessionRateHz;
+  const micOnlyRecording = !snap.analysis.segments.some((seg) => seg.source === "mix");
+  return micOnlyRecording && !snap.orphan ? measureRecordingRate(audioTempPath) : null;
 }
 
 function clearFinalizing(): void {
@@ -1033,6 +1046,34 @@ export async function listenForRecordingSaved(): Promise<UnlistenFn> {
   };
 }
 
+/** Save one recovered recording as a transcript-less entry — unless its entry
+ *  already exists (the journal outlived the save). Returns whether it saved. */
+async function saveRecovered(
+  r: ipc.RecoveredRecording,
+  alreadySaved: boolean,
+  lang: Settings["language"],
+): Promise<boolean> {
+  if (alreadySaved) {
+    await ipc.discardRecording({ path: r.path });
+    return false;
+  }
+  const snap = orphanSnapshot(r.meetingId, r.startedAtMs);
+  const dateLabel = new Date(snap.createdAt).toLocaleString(localeOf());
+  const entry: HistoryEntry = {
+    id: r.meetingId,
+    title: `${translate(lang, "history.liveTitle")} · ${dateLabel}${translate(lang, "history.recoveredSuffix")}`,
+    source: "live",
+    createdAt: snap.createdAt,
+    durationMs: r.durationMs,
+    audio: "audio.ogg",
+    folderId: snap.save.folderId,
+    ...snap.analysis,
+  };
+  await persist(entry, r.path, /* compress */ false);
+  log.warn("history: recovered an unfinished meeting", { id: r.meetingId, durationMs: r.durationMs });
+  return true;
+}
+
 /** `meeting://recording-saved`: where the encoded recording landed, and which
  *  meeting it is (absent only from a backend that predates the field). */
 interface RecordingSavedPayload {
@@ -1060,31 +1101,11 @@ export async function recoverCrashedMeetings(): Promise<number> {
   const found = await ipc.recoverMeetingJournals();
   if (found.length === 0) return 0;
   const existing = new Set((await listHistory()).map((e) => e.id));
-  const s = useStore.getState();
-  const lang = s.settings.language;
+  const lang = useStore.getState().settings.language;
   let saved = 0;
   for (const r of found) {
     try {
-      if (existing.has(r.meetingId)) {
-        // Its entry made it after all (the journal outlived the save).
-        await ipc.discardRecording({ path: r.path });
-      } else {
-        const snap = orphanSnapshot(r.meetingId, r.startedAtMs);
-        const dateLabel = new Date(snap.createdAt).toLocaleString(localeOf());
-        const entry: HistoryEntry = {
-          id: r.meetingId,
-          title: `${translate(lang, "history.liveTitle")} · ${dateLabel}${translate(lang, "history.recoveredSuffix")}`,
-          source: "live",
-          createdAt: snap.createdAt,
-          durationMs: r.durationMs,
-          audio: "audio.ogg",
-          folderId: snap.save.folderId,
-          ...snap.analysis,
-        };
-        await persist(entry, r.path, /* compress */ false);
-        saved++;
-        log.warn("history: recovered an unfinished meeting", { id: r.meetingId, durationMs: r.durationMs });
-      }
+      if (await saveRecovered(r, existing.has(r.meetingId), lang)) saved++;
       await ipc.finishMeetingJournal({ meetingId: r.meetingId });
     } catch (error) {
       log.error("history: recovering an unfinished meeting failed", { id: r.meetingId, error: String(error) });
