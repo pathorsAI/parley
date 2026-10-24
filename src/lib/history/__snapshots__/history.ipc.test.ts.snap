@@ -280,6 +280,13 @@ exports[`history IPC traffic > saveLiveToHistory: discarded when nothing was sai
     },
   ],
   [
+    "invoke",
+    "finish_meeting_journal",
+    {
+      "meetingId": "uuid-1",
+    },
+  ],
+  [
     "toast.message",
     "沒有轉錄到任何內容，這場沒有存下來",
   ],
@@ -316,6 +323,13 @@ exports[`history IPC traffic > saveLiveToHistory: kept, opened, no correction 1`
   ],
   [
     "invoke",
+    "finish_meeting_journal",
+    {
+      "meetingId": "uuid-1",
+    },
+  ],
+  [
+    "invoke",
     "read_history_entry",
     {
       "id": "uuid-1",
@@ -347,6 +361,13 @@ exports[`history IPC traffic > saveLiveToHistory: speaker correction rewrites th
   [
     "markDirty",
     "uuid-1",
+  ],
+  [
+    "invoke",
+    "finish_meeting_journal",
+    {
+      "meetingId": "uuid-1",
+    },
   ],
   [
     "invoke",
