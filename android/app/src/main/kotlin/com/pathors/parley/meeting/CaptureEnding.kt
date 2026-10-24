@@ -1,5 +1,7 @@
 package com.pathors.parley.meeting
 
+import com.pathors.parley.upload.DrainResult
+
 /**
  * How a live capture came to an end — and from that, the one decision that
  * cannot be taken back: whether the Ogg file written so far is kept or deleted.
@@ -123,4 +125,39 @@ fun terminalStateFor(
 
     // Under two seconds: a tap of the record button, not a meeting.
     else -> MeetingState.Finished(null, pendingUpload = false, dropped = true)
+}
+
+/**
+ * [state], marked as refused by the cloud when [refused] — only a recording
+ * still waiting on the phone can be (a synced one was not refused). Anything
+ * other than [MeetingState.Finished] is returned as is.
+ */
+fun withUploadRefused(state: MeetingState, refused: Boolean): MeetingState =
+    if (state is MeetingState.Finished && state.pendingUpload && refused) {
+        state.copy(uploadRefused = true)
+    } else {
+        state
+    }
+
+/**
+ * What one drain did for one just-queued recording, as the finished screen
+ * needs it.
+ *
+ * Read off [DrainResult.uploadedIds] rather than [DrainResult.remaining]: an
+ * empty queue does not mean this recording made it (it used to mean the
+ * recording had been *deleted* after a refusal), and a non-empty one does not
+ * mean it did not (an older recording may be parked).
+ */
+data class UploadOutcome(val pending: Boolean, val refused: Boolean) {
+    companion object {
+        /** [result] null = the drain itself failed; treat as still waiting. */
+        fun of(id: String?, result: DrainResult?): UploadOutcome {
+            if (id == null) return UploadOutcome(pending = false, refused = false)
+            val uploaded = result != null && id in result.uploadedIds
+            return UploadOutcome(
+                pending = !uploaded,
+                refused = !uploaded && result?.refused?.containsKey(id) == true,
+            )
+        }
+    }
 }

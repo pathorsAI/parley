@@ -1,80 +1,98 @@
 package com.pathors.parley.meeting
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** The backoff ladder, and the reset that makes the budget mean what it says. */
+private const val ONE_SECOND = 1_000L
+private const val MINUTE = 60_000L
+private const val STABLE = 30_000L
+
+/** The reconnect ladder: capped, jittered, never exhausted, and reset only by a leg that held. */
 class ReconnectPolicyTest {
 
-    private fun ladder(policy: ReconnectPolicy, steps: Int): List<Long?> =
+    private var clock = 0L
+
+    /** Jitter pinned to zero, so every delay is its rung's ceiling. */
+    private fun policy(random: () -> Double = { 0.0 }) =
+        ReconnectPolicy(random = random, now = { clock })
+
+    private fun ladder(policy: ReconnectPolicy, steps: Int): List<Long> =
         (0 until steps).map { policy.nextDelayMs() }
 
     @Test
-    fun backoffDoublesAndThenHoldsAtTheCeiling() {
-        val policy = ReconnectPolicy()
+    fun backoffDoublesAndThenHoldsAtTheOneMinuteCeiling() {
         assertEquals(
-            listOf(1_000L, 2_000L, 4_000L, 8_000L, 15_000L, 15_000L, 15_000L, 15_000L),
-            ladder(policy, 8),
+            listOf(1_000L, 2_000L, 4_000L, 8_000L, 16_000L, 32_000L, MINUTE, MINUTE, MINUTE),
+            ladder(policy(), 9),
         )
     }
 
+    /**
+     * The bug: eight failures and the meeting's live transcript was over, for
+     * the rest of a three-hour recording. A relay that is down for a while
+     * must still be redialled once a minute for as long as the meeting runs.
+     */
     @Test
-    fun theBudgetIsSpentAfterTheCap() {
-        val policy = ReconnectPolicy(maxAttempts = 3)
-        repeat(3) { assertNotNull(policy.nextDelayMs()) }
-        assertNull("a relay that is simply gone must stop being dialled", policy.nextDelayMs())
-        assertNull(policy.nextDelayMs())
+    fun itNeverGivesUp() {
+        val policy = policy()
+        val delays = ladder(policy, 500)
+        assertTrue(delays.all { it in ONE_SECOND..MINUTE })
+        assertEquals(MINUTE, delays.last())
+        assertEquals(500, policy.consecutiveFailures)
+    }
+
+    @Test
+    fun jitterStaysInTheTopHalfOfTheRung() {
+        val low = policy(random = { 1.0 })
+        val delays = ladder(low, 8)
+        val ceilings = (1..8).map { low.ceilingFor(it) }
+        delays.zip(ceilings).forEach { (delay, ceiling) ->
+            assertTrue("$delay within [${ceiling / 2}, $ceiling]", delay in (ceiling / 2)..ceiling)
+        }
+        assertEquals(MINUTE / 2, delays.last())
+    }
+
+    @Test
+    fun aRandomOutOfRangeCannotProduceANegativeDelay() {
+        val delays = ladder(policy(random = { 5.0 }), 3)
+        assertTrue(delays.all { it > 0 })
     }
 
     /**
-     * The bug this type was extracted for: nothing ever reset the counter, so a
-     * two-hour meeting that reconnected successfully eight times over its length
-     * gave up on transcription for good — even though every one of those eight
-     * drops had been recovered from.
+     * The "reconnecting every ~15 s" bursts: a relay that accepts the
+     * handshake and drops the leg straight away used to reset the ladder on
+     * every handshake, so it was redialled at 1 s for ever. A leg has to hold.
      */
     @Test
-    fun aSuccessfulHandshakeRefillsTheBudget() {
-        val policy = ReconnectPolicy(maxAttempts = 8)
-        repeat(20) {
-            // Drop, redial, reconnect — over and over, as a train journey does.
-            assertNotNull("attempt $it must still be allowed", policy.nextDelayMs())
-            policy.recordSuccess()
-        }
-    }
-
-    @Test
-    fun aSuccessfulHandshakeAlsoRestartsTheLadderFromTheBottom() {
-        val policy = ReconnectPolicy()
-        repeat(4) { policy.nextDelayMs() } // 1 s, 2 s, 4 s, 8 s
+    fun aHandshakeThatDiesQuicklyDoesNotResetTheLadder() {
+        val policy = policy()
+        ladder(policy, 3) // 1 s, 2 s, 4 s
         policy.recordSuccess()
-        assertEquals(0, policy.consecutiveFailures)
-        assertEquals(1_000L, policy.nextDelayMs())
+        clock += STABLE - 1
+        assertEquals(8_000L, policy.nextDelayMs())
+        assertEquals(4, policy.consecutiveFailures)
     }
 
     @Test
-    fun onlyConsecutiveFailuresCount() {
-        val policy = ReconnectPolicy(maxAttempts = 2)
+    fun aLegThatHeldStartsTheLadderAgain() {
+        val policy = policy()
+        ladder(policy, 5)
+        policy.recordSuccess()
+        clock += STABLE
+        assertEquals(ONE_SECOND, policy.nextDelayMs())
+        assertEquals(1, policy.consecutiveFailures)
+    }
+
+    @Test
+    fun repeatedSuccessReportsForOneLegKeepTheFirstHandshakeTime() {
+        val policy = policy()
         policy.nextDelayMs()
         policy.recordSuccess()
-        policy.nextDelayMs()
+        clock += STABLE / 2
         policy.recordSuccess()
-        // Two failures have happened, but never two in a row.
-        assertNotNull(policy.nextDelayMs())
-        assertNotNull(policy.nextDelayMs())
-        assertNull(policy.nextDelayMs())
-    }
-
-    @Test
-    fun aGenerousBudgetStillProducesSaneDelays() {
-        // The shift must not be allowed to run away and wrap into a negative.
-        val policy = ReconnectPolicy(maxAttempts = 64, maxDelayMs = 30_000)
-        repeat(64) {
-            val delay = policy.nextDelayMs()
-            assertNotNull(delay)
-            assertEquals(true, delay!! in 1_000L..30_000L)
-        }
+        clock += STABLE / 2
+        assertEquals("the leg was up for the full window", ONE_SECOND, policy.nextDelayMs())
     }
 
     @Test

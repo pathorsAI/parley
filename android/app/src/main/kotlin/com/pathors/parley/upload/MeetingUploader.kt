@@ -66,25 +66,33 @@ data class EnqueueRequest(
 data class DrainResult(
     /** Recordings fully uploaded (audio + summary/meta) and removed from the queue. */
     val uploaded: Int,
-    /** Still waiting after the pass — what a "N waiting to upload" badge shows. */
+    /**
+     * Still waiting after the pass, parked ones included — what a "N waiting
+     * to upload" badge shows.
+     */
     val remaining: Int,
     /**
-     * Recordings dropped from the queue because they can never be uploaded:
-     * the audio blob is gone or empty, or the server refused the upload in a
-     * way it will refuse identically forever (see [UploadFailureDisposition]).
+     * Manifests dropped from the queue because their audio blob is gone or
+     * empty — there was nothing left to upload or to lose. A refusal never
+     * lands here: it parks the recording (see [parked]).
      */
     val discarded: Int = 0,
     /**
-     * Why the pass stopped early, or the last refusal it dropped a recording
+     * Why the pass stopped early, or the last refusal it parked a recording
      * over on the way through. Null means nothing went wrong at all.
      */
     val failure: Throwable? = null,
     /**
-     * The recordings this pass dropped because the server refused them for
-     * good, by id, with the refusal. A caller that just queued a recording
-     * checks here before telling anyone it was saved.
+     * The recordings this pass tried and the server refused (a 4xx that
+     * waiting will not clear), by id, with the refusal. They are **parked**
+     * in the queue, audio and all — never deleted. A caller that just queued a
+     * recording checks here so it can say "not uploaded" instead of "synced".
      */
     val refused: Map<String, Throwable> = emptyMap(),
+    /** The recordings this pass actually got into the cloud, by id. */
+    val uploadedIds: Set<String> = emptySet(),
+    /** How many of [remaining] are parked after a refusal (see [PendingUpload.parked]). */
+    val parked: Int = 0,
     /**
      * The recordings this pass uploaded *and* copied into an organization, by
      * id, with the organization's id. A share the org refused for good leaves
@@ -173,11 +181,14 @@ class MeetingUploader(
     /**
      * Told how each recording's turn in a drain pass ended: with the failure
      * that left it in the queue, or with null once it is no longer failing —
-     * uploaded, or dropped for good. Called off the main thread. Feeds the
+     * uploaded, or its manifest dropped because the audio was already gone.
+     * A refusal that parks the recording reports its failure. Called off the main thread. Feeds the
      * "keeps failing to sync" prompt (`feedback/SyncFailureLedger`); a no-op
      * by default so the upload tests need not care.
      */
     private val onSyncAttempt: (id: String, failure: Throwable?) -> Unit = { _, _ -> },
+    /** Wall clock, epoch milliseconds — stamps and schedules parked uploads. */
+    private val now: () -> Long = System::currentTimeMillis,
 ) {
     private val drainMutex = Mutex()
 
@@ -251,40 +262,84 @@ class MeetingUploader(
      *
      * Each recording gets [maxAttempts] tries with exponential backoff for
      * transient failures (network drop, 5xx, 408, 429). What happens when those
-     * are spent, or on a failure retrying cannot fix, is iOS
-     * `MeetingUploader.syncPending`'s rule with one deliberate exception (402,
-     * below) — see [dispositionOf]:
+     * are spent, or on a failure retrying cannot fix, is decided by
+     * [dispositionOf]:
      *
-     * - a refusal the server will repeat forever (most 4xx) **drops that
-     *   recording** and the pass carries on with the next one. Leaving it at the
-     *   head of an oldest-first queue would jam every recording behind it on
-     *   every future pass;
+     * - a refusal waiting alone will not clear (most 4xx) **parks that
+     *   recording** — manifest and audio stay, stamped with the refusal — and
+     *   the pass carries on with the next one. It used to *delete* it, which
+     *   on a flaky network meant deleting a meeting: a body cut off mid-upload
+     *   comes back as a 400. Parked recordings are kept out of the
+     *   oldest-first line so they cannot jam it, and are tried again on
+     *   [ParkedRetrySchedule] (1 h, 6 h, 24 h, then by hand via [retryNow]);
      * - anything a later event can clear (sign in again, the quota resetting,
      *   wait, the network coming back, the server recovering) **stops the pass**
      *   with the queue untouched, because the next recording would fail the same
      *   way. Nothing in that class is retried within the pass beyond what
      *   [CloudException.isRetryable] allows — a 402 gets exactly one request.
+     *
+     * Audio leaves the queue only after a confirmed upload (or with a manifest
+     * whose blob is already gone). Order within a pass: recordings asked for by
+     * hand ([retryNow]), then the ordinary queue, then parked recordings that
+     * are due — the last only if the ordinary queue did not stop the pass.
      */
-    suspend fun drain(): DrainResult = drainMutex.withLock {
+    suspend fun drain(): DrainResult = drain(retryNow = emptySet())
+
+    /**
+     * "Retry" on a recording that is not uploaded: one pass that tries [id]
+     * first, whether or not it is parked or due.
+     */
+    suspend fun retryNow(id: String): DrainResult = drain(retryNow = setOf(id))
+
+    /**
+     * The person deleted a recording that never reached the cloud — the one
+     * deliberate way a queued recording's audio goes without uploading (iOS
+     * `MeetingUploader.discardPending`). Waits for any pass in flight, so it
+     * cannot pull the file out from under an upload.
+     */
+    suspend fun deletePending(id: String) {
+        drainMutex.withLock {
+            withContext(Dispatchers.IO) { queue.remove(id) }
+            pushesAttempted -= id
+        }
+        noteAttempt(id, null)
+    }
+
+    /** The queued audio for [id], when there is any, for "save or share". */
+    fun pendingAudio(id: String): File? = queue.audioFile(id).takeIf { it.isFile && it.length() > 0L }
+
+    private suspend fun drain(retryNow: Set<String>): DrainResult = drainMutex.withLock {
         val pending = withContext(Dispatchers.IO) { queue.list() }
         val tally = DrainTally()
+        val asked = pending.filter { it.id in retryNow }
+        val (parked, active) = pending.filter { it.id !in retryNow }.partition { it.parked != null }
 
-        for (item in pending) {
-            if (!drainOne(item, tally)) break
+        val carriedOn = (asked + active).all { item -> drainOne(item, tally) }
+        if (carriedOn) {
+            val nowMs = now()
+            for (item in parked) {
+                val parking = item.parked ?: continue
+                if (!ParkedRetrySchedule.isDue(parking, nowMs)) continue
+                if (!drainOne(item, tally)) break
+            }
         }
 
+        val left = withContext(Dispatchers.IO) { queue.list() }
         DrainResult(
             uploaded = tally.uploaded,
-            remaining = withContext(Dispatchers.IO) { queue.count() },
+            remaining = left.size,
             discarded = tally.discarded,
             failure = tally.failure,
             refused = tally.refused,
             shared = tally.shared,
+            uploadedIds = tally.uploadedIds,
+            parked = left.count { it.parked != null },
         )
     }
 
     /** What one [drain] pass has done so far. */
     private class DrainTally {
+        val uploadedIds = LinkedHashSet<String>()
         var uploaded = 0
         var discarded = 0
         var failure: Throwable? = null
@@ -311,6 +366,7 @@ class MeetingUploader(
         return try {
             uploadAndRetire(item, audio)?.let { orgId -> tally.shared[item.id] = orgId }
             tally.uploaded++
+            tally.uploadedIds += item.id
             noteAttempt(item.id, null)
             true
         } catch (e: CancellationException) {
@@ -349,17 +405,39 @@ class MeetingUploader(
     ): Boolean {
         tally.failure = e
         return when (dispositionOf(e)) {
-            UploadFailureDisposition.DROP -> {
-                withContext(Dispatchers.IO) { queue.remove(item.id) }
-                pushesAttempted -= item.id
-                tally.discarded++
+            UploadFailureDisposition.PARK -> {
+                park(item, e)
                 tally.refused[item.id] = e
-                noteAttempt(item.id, null)
+                // A failure, not a resolution: the "keeps failing to sync"
+                // prompt is exactly for a recording the cloud keeps refusing.
+                noteAttempt(item.id, e)
                 true
             }
             UploadFailureDisposition.STOP_PASS -> {
                 noteAttempt(item.id, e)
                 false
+            }
+        }
+    }
+
+    /**
+     * Stamp [item] as refused in its manifest. Its audio is not touched.
+     *
+     * A manifest that cannot be rewritten (disk full) leaves the recording an
+     * ordinary pending upload: it is retried — and refused, and parked — on the
+     * next pass. Either way nothing is deleted.
+     */
+    private suspend fun park(item: PendingUpload, e: Throwable) {
+        val status = (e as? CloudException)?.status ?: 0
+        val nowMs = now()
+        val parking = item.parked?.refusedAgain(status, nowMs) ?: ParkedUpload.first(status, nowMs)
+        val updated = item.copy(
+            parked = parking,
+            pushAttempted = item.pushAttempted || item.id in pushesAttempted,
+        )
+        withContext(Dispatchers.IO) {
+            runCatching {
+                if (queue.manifestFile(item.id).exists()) queue.writeManifest(updated)
             }
         }
     }
@@ -531,8 +609,7 @@ class MeetingUploader(
 
     companion object {
         /**
-         * What a failed upload means for the recording it was carrying — iOS
-         * `MeetingUploader.isTerminal`, with one deliberate difference.
+         * What a failed upload means for the recording it was carrying.
          *
          * | Status | Disposition | Why |
          * |---|---|---|
@@ -540,21 +617,22 @@ class MeetingUploader(
          * | 402 | stop the pass | the quota resets; the recording must survive until it does |
          * | 403 | stop the pass | being granted access clears it |
          * | 408, 425, 429 | stop the pass | waiting clears it |
-         * | any other 4xx (400, 404, 413, …) | **drop** the recording | refused identically forever |
+         * | any other 4xx (400, 404, 413, …) | **park** the recording | waiting alone will not clear it |
          * | 5xx, 0, a bare [IOException], anything else | stop the pass | the server or the network recovers |
          *
-         * The difference is 402. iOS drops it — while its own importer tells the
-         * user "the recording is safe on this phone and will sync once the quota
-         * resets". That promise is the contract; the drop is the bug (iOS should
-         * get the same fix). Out of quota is a wait measured in weeks, not a
-         * refusal, so the recording stays queued, manifest and audio, and the
-         * pass stops rather than failing every recording behind it.
+         * Neither outcome deletes anything. iOS's `isTerminal` drops the "other
+         * 4xx" class, and so did this until a three-hour meeting vanished: the
+         * server answers 400 to an upload body that was cut off mid-transfer,
+         * so a flaky network looked like a permanent refusal and the only copy
+         * of the audio was removed. Parking keeps the recording out of the
+         * oldest-first line (so it cannot jam the meetings behind it) without
+         * betting the meeting on the status code meaning what it says.
          */
         fun dispositionOf(failure: Throwable): UploadFailureDisposition {
             val status = (failure as? CloudException)?.status ?: return UploadFailureDisposition.STOP_PASS
             return when (status) {
                 401, 402, 403, 408, 425, 429 -> UploadFailureDisposition.STOP_PASS
-                in 400..499 -> UploadFailureDisposition.DROP
+                in 400..499 -> UploadFailureDisposition.PARK
                 else -> UploadFailureDisposition.STOP_PASS
             }
         }
@@ -678,10 +756,11 @@ class MeetingUploader(
 /** What [MeetingUploader.drain] does with a recording whose upload failed. */
 enum class UploadFailureDisposition {
     /**
-     * The server will refuse this recording the same way forever: remove it
-     * (manifest and audio) and carry on with the rest of the queue.
+     * The server refused this recording in a way waiting alone will not clear:
+     * keep it (manifest and audio), mark it parked, carry on with the rest of
+     * the queue, and try it again on [ParkedRetrySchedule].
      */
-    DROP,
+    PARK,
 
     /** Worth trying again later: keep it, and stop this pass. */
     STOP_PASS,

@@ -195,6 +195,10 @@ class MeetingService : Service() {
         // finalizes the file and uploads it, and must survive `stopSelf()`.
         applicationContext.parleyContainer.appScope.launch {
             runCatching { session.stop() }
+            // Hand whatever is still waiting (an upload that did not make it,
+            // a transcript to backfill) to the system job, which outlives this
+            // process and runs once there is a network.
+            applicationContext.parleyContainer.drainPendingBackfills()
             stopSelfAndForeground()
         }
     }
@@ -257,6 +261,7 @@ class MeetingService : Service() {
                     "the recording service was destroyed",
                 )
             }
+            applicationContext.parleyContainer.drainPendingBackfills()
         }
     }
 

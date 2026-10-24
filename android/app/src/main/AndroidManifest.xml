@@ -120,5 +120,19 @@
             android:exported="true"
             android:label="@string/ime_settings_title"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode" />
+
+        <!-- Hands a not-yet-uploaded recording's Ogg to the share sheet, so a
+             recording the cloud keeps refusing can still be saved elsewhere.
+             Read-only, per-share grants; it serves the upload queue directory
+             and nothing else (res/xml/shared_audio_paths.xml). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.audiofiles"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/shared_audio_paths" />
+        </provider>
     </application>
 </manifest>

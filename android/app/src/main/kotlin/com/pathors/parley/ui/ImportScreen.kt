@@ -298,6 +298,7 @@ private fun phaseLabel(state: ImportState): String = when (state) {
     ImportState.Uploading -> stringResource(R.string.import_phase_uploading)
     is ImportState.Finished -> when {
         state.waitingForQuota -> stringResource(R.string.import_queued_quota)
+        state.uploadRefused -> stringResource(R.string.meeting_upload_refused)
         state.pendingUpload -> stringResource(R.string.meeting_queued)
         state.transcript == ImportTranscript.COMPLETES_IN_BACKGROUND ->
             stringResource(R.string.import_phase_saved)
@@ -320,6 +321,5 @@ private fun failureMessage(reason: ImportFailure): String = when (reason) {
     ImportFailure.DECODE_FAILED -> stringResource(R.string.import_failure_decode)
     ImportFailure.ENCODER_UNAVAILABLE -> stringResource(R.string.failure_encoder_unavailable)
     ImportFailure.UPLOAD_FAILED -> stringResource(R.string.failure_upload)
-    ImportFailure.UPLOAD_REFUSED -> stringResource(R.string.import_failure_upload_refused)
     ImportFailure.UNKNOWN -> stringResource(R.string.failure_unknown)
 }
