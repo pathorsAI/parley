@@ -909,7 +909,7 @@ class MeetingSession(
             // and leave the queue empty, which read here as "synced".
             val outcome = UploadOutcome.of(id, result)
             val sharedTo = id?.let { result?.shared?.get(it) }
-            _state.value = terminalStateFor(
+            val terminal = terminalStateFor(
                 recordingId = id,
                 pendingUpload = outcome.pending,
                 interruptedBy = interruptedBy,
@@ -917,13 +917,13 @@ class MeetingSession(
                 // A 402 keeps the recording queued (MeetingUploader.dispositionOf);
                 // the screen must say it waits for the quota, not the network.
                 waitingForQuota = result?.quotaExhausted == true,
-                uploadRefused = outcome.refused,
                 sharedToOrgName = sharedTo?.let { resolveOrgName(it) },
                 health = CaptureHealth(
                     micRecoveries = mic.recoveries,
                     audioRoute = mic.activeRoute,
                 ),
             )
+            _state.value = withUploadRefused(terminal, outcome.refused)
         }
 
     /**

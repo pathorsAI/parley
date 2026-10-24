@@ -69,20 +69,15 @@ class UploadOutcomeTest {
 
     @Test
     fun `the finished state carries a refusal only while the upload is pending`() {
-        val refused = terminalStateFor(
-            recordingId = THIS_ONE,
-            pendingUpload = true,
-            interruptedBy = null,
-            uploadRefused = true,
-        ) as MeetingState.Finished
+        val waiting = terminalStateFor(recordingId = THIS_ONE, pendingUpload = true, interruptedBy = null)
+        val refused = withUploadRefused(waiting, refused = true) as MeetingState.Finished
         assertTrue(refused.uploadRefused)
 
-        val uploaded = terminalStateFor(
-            recordingId = THIS_ONE,
-            pendingUpload = false,
-            interruptedBy = null,
-            uploadRefused = true,
-        ) as MeetingState.Finished
+        val synced = terminalStateFor(recordingId = THIS_ONE, pendingUpload = false, interruptedBy = null)
+        val uploaded = withUploadRefused(synced, refused = true) as MeetingState.Finished
         assertFalse(uploaded.uploadRefused)
+
+        val failed = MeetingState.Failed(MeetingFailure.UNKNOWN)
+        assertEquals(failed, withUploadRefused(failed, refused = true))
     }
 }

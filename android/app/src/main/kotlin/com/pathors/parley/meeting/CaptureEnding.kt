@@ -98,8 +98,6 @@ data class CaptureHealth(
  *   anything.
  * @param sharedToOrgName the organization the recording was copied into, when
  *   it was. Only meaningful once it is in the cloud.
- * @param uploadRefused the cloud refused this recording and it is parked on
- *   the phone. Only meaningful while [pendingUpload].
  * @param health how the microphone fared, copied onto a saved recording for the
  *   problem-report prompt. Has no say in which state is returned.
  */
@@ -111,7 +109,6 @@ fun terminalStateFor(
     waitingForQuota: Boolean = false,
     sharedToOrgName: String? = null,
     health: CaptureHealth = CaptureHealth.NONE,
-    uploadRefused: Boolean = false,
 ): MeetingState = when {
     recordingId != null -> MeetingState.Finished(
         recordingId = recordingId,
@@ -120,7 +117,6 @@ fun terminalStateFor(
         interruptedBy = interruptedBy,
         waitingForQuota = pendingUpload && waitingForQuota,
         sharedToOrgName = sharedToOrgName.takeIf { !pendingUpload },
-        uploadRefused = pendingUpload && uploadRefused,
         micRecoveries = health.micRecoveries,
         audioRoute = health.audioRoute,
     )
@@ -130,6 +126,18 @@ fun terminalStateFor(
     // Under two seconds: a tap of the record button, not a meeting.
     else -> MeetingState.Finished(null, pendingUpload = false, dropped = true)
 }
+
+/**
+ * [state], marked as refused by the cloud when [refused] — only a recording
+ * still waiting on the phone can be (a synced one was not refused). Anything
+ * other than [MeetingState.Finished] is returned as is.
+ */
+fun withUploadRefused(state: MeetingState, refused: Boolean): MeetingState =
+    if (state is MeetingState.Finished && state.pendingUpload && refused) {
+        state.copy(uploadRefused = true)
+    } else {
+        state
+    }
 
 /**
  * What one drain did for one just-queued recording, as the finished screen
