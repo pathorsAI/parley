@@ -5,6 +5,7 @@ import { stopMockStream } from "../mockStream";
 import { meetingUsesRealPipeline } from "../transcription/prepare";
 import { log } from "../log";
 import * as ipc from "../ipc/commands";
+import { liveSaves, orphanSnapshot, snapshotLiveMeeting } from "../history/history";
 
 /**
  * The live meeting's recorder controls — end, pause/resume, cancel — and the
@@ -101,16 +102,28 @@ export async function cancelActiveMeeting(): Promise<void> {
  * (the page crashing, macOS reclaiming the web content process) comes back
  * idle while Rust keeps recording; nothing else would ever stop it, and the
  * next Start would be a no-op that silently extends it, so that meeting's End
- * saved one file spanning both meetings and every hour between them. Run once
- * at boot, after the recording-saved listener is up. Its transcript died with
- * the old page, so the save is marked to keep the audio regardless.
+ * saved one file spanning both meetings and every hour between them. Run at
+ * boot, after the recording-saved listener is up, and before every Start. Its
+ * transcript died with the old page, so the save is marked to keep the audio
+ * regardless. Returns whether it stopped one.
  */
-export async function recoverOrphanedMeeting(): Promise<void> {
-  const active = await ipc.meetingActive();
+export async function recoverOrphanedMeeting(): Promise<boolean> {
+  const active = await ipc.activeMeeting();
   const store = useStore.getState();
-  if (!active || isMeetingActive(store.meetingStatus)) return;
-  log.warn("meeting: the backend is still recording a meeting this window lost; stopping and saving it");
+  if (!active || isMeetingActive(store.meetingStatus)) return false;
+  log.warn("meeting: the backend is still recording a meeting this window lost; stopping and saving it", {
+    id: active.meetingId,
+  });
   store.adoptOrphanedRecording();
+  // Save it as the meeting it is: this window's own if the store still holds
+  // it (stopped here, never stopped there), else a transcript-less orphan.
+  liveSaves.expect(
+    active.meetingId,
+    store.liveMeetingId === active.meetingId
+      ? snapshotLiveMeeting()
+      : orphanSnapshot(active.meetingId, active.startedAtMs),
+  );
   await ipc.stopMeeting();
   notify.message(translate(store.settings.language, "meeting.orphan.recovered"));
+  return true;
 }

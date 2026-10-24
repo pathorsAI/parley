@@ -32,6 +32,8 @@ export const MEETING_ERROR_EVENT = "meeting://error";
 export const MEETING_WARNING_EVENT = "meeting://warning";
 /** One STT leg's link state (reconnecting / live again). */
 export const MEETING_TRANSCRIPTION_EVENT = "meeting://transcription";
+/** The computer came back from sleep: `{ sleptMs }` (sleep_watch.rs). */
+export const SYSTEM_WAKE_EVENT = "system://wake";
 /** Speaker-diarization progress (model download, decoding, clustering). */
 export const DIARIZE_PROGRESS_EVENT = "diarize://progress";
 /** An STT session's socket opened. */
@@ -161,6 +163,11 @@ export interface PttPayload {
   down: boolean;
 }
 
+export interface SystemWakePayload {
+  /** How long the machine was asleep (ms), as the heartbeat measured it. */
+  sleptMs: number;
+}
+
 export interface AuthCallbackPayload {
   token?: string;
   error?: string;
@@ -184,6 +191,7 @@ export interface BackendEventPayloads {
   [VOICE_TYPING_ERROR_EVENT]: VoiceTypingErrorPayload;
   [VOICE_TYPING_SESSION_EVENT]: SessionEvent;
   [AUTH_CALLBACK_EVENT]: AuthCallbackPayload;
+  [SYSTEM_WAKE_EVENT]: SystemWakePayload;
   [SESSION_COMMANDS_EVENT]: unknown;
   [CACHE_CLEAR_ANALYSIS_EVENT]: unknown;
   [CACHE_CLEAR_SPEAKERS_EVENT]: unknown;

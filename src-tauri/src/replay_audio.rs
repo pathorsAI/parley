@@ -38,12 +38,12 @@ use crate::audio::resample::LinearResampler;
 /// Target rate for the compressed output (also what the realtime path uses).
 const TARGET_RATE: u32 = 16_000;
 /// Opus encode bitrate — ~24 kbps is ample for 16 kHz mono speech.
-const OPUS_BITRATE: i32 = 24_000;
+pub(crate) const OPUS_BITRATE: i32 = 24_000;
 /// 20 ms frame at 16 kHz = 320 samples. Opus only accepts fixed frame sizes.
-const FRAME_SAMPLES: usize = (TARGET_RATE as usize / 1000) * 20;
+pub(crate) const FRAME_SAMPLES: usize = (TARGET_RATE as usize / 1000) * 20;
 /// Opus granule positions are always counted at 48 kHz; a 20 ms frame advances
 /// 960 samples there (48000 / 1000 * 20).
-const GRANULE_PER_FRAME: u64 = 960;
+pub(crate) const GRANULE_PER_FRAME: u64 = 960;
 /// Per the Opus spec the encoder introduces 3.84 ms of look-ahead delay at
 /// 48 kHz = ~312 samples of pre-skip. libopus reports the exact value via a CTL;
 /// we use the conventional default so decoders trim the right amount.
@@ -384,7 +384,7 @@ pub(crate) fn encode_opus_ogg(pcm16: &[i16], out_path: &Path) -> Result<()> {
 }
 
 /// Build the `OpusHead` identification header packet (19 bytes, mapping family 0).
-fn build_opus_head() -> Vec<u8> {
+pub(crate) fn build_opus_head() -> Vec<u8> {
     let mut head = Vec::with_capacity(19);
     head.extend_from_slice(b"OpusHead");
     head.push(1); // version
@@ -397,7 +397,7 @@ fn build_opus_head() -> Vec<u8> {
 }
 
 /// Build the `OpusTags` comment header packet: vendor string + zero comments.
-fn build_opus_tags() -> Vec<u8> {
+pub(crate) fn build_opus_tags() -> Vec<u8> {
     let vendor = b"parley";
     let mut tags = Vec::with_capacity(8 + 4 + vendor.len() + 4);
     tags.extend_from_slice(b"OpusTags");
@@ -420,7 +420,7 @@ pub(crate) fn unique_recording_path() -> PathBuf {
 }
 
 /// A pseudo-unique Ogg stream serial derived from a fresh UUID.
-fn rand_serial() -> u32 {
+pub(crate) fn rand_serial() -> u32 {
     let b = uuid::Uuid::new_v4().into_bytes();
     u32::from_le_bytes([b[0], b[1], b[2], b[3]])
 }

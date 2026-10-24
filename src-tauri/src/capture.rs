@@ -255,11 +255,36 @@ pub fn spawn_capture<S: AudioSource>(
     }
 }
 
-/// Accumulates the live meeting's recorded PCM (16 kHz mono i16) so it can be
-/// encoded to Ogg/Opus on stop and saved into the local history. `None` between
-/// meetings; armed (`Some(empty)`) by `start_meeting` and drained by
-/// `stop_meeting`.
-pub type RecorderBuf = Arc<Mutex<Option<Vec<i16>>>>;
+/// The live meeting's recording: its PCM (16 kHz mono i16) in RAM, encoded to
+/// Ogg/Opus on stop and saved into the local history, and — when the journal
+/// could be opened — the same audio streamed to disk as it is captured, so a
+/// crash or force-quit before stop no longer loses the meeting (see
+/// `recording_journal`).
+#[derive(Default)]
+pub struct Recording {
+    pub pcm: Vec<i16>,
+    pub journal: Option<crate::recording_journal::RecordingJournal>,
+}
+
+impl Recording {
+    pub fn new(journal: Option<crate::recording_journal::RecordingJournal>) -> Self {
+        Self {
+            pcm: Vec::new(),
+            journal,
+        }
+    }
+
+    fn push(&mut self, chunk: &[i16]) {
+        self.pcm.extend_from_slice(chunk);
+        if let Some(j) = &self.journal {
+            j.push(chunk);
+        }
+    }
+}
+
+/// The live meeting's [`Recording`]. `None` between meetings; armed by
+/// `start_meeting` and taken by `stop_meeting` / `cancel_meeting`.
+pub type RecorderBuf = Arc<Mutex<Option<Recording>>>;
 
 /// Where the meter hands each chunk after teeing it into the recording.
 trait ChunkSink {
@@ -357,8 +382,8 @@ async fn meter_chunks<S: ChunkSink>(
         streamed.fetch_add(chunk.len() as u64, Ordering::SeqCst);
         // Tee into the recording buffer (kept while the meeting is armed).
         if let Some(rec) = &recorder {
-            if let Some(buf) = rec.lock().unwrap().as_mut() {
-                buf.extend_from_slice(&chunk);
+            if let Some(recording) = rec.lock().unwrap().as_mut() {
+                recording.push(&chunk);
             }
         }
         if !sink.deliver(chunk) {
@@ -1035,7 +1060,7 @@ mod coordinator_tests {
 
 #[cfg(test)]
 mod meter_tests {
-    use super::{meter_chunks, BridgeSink, RecorderBuf, UsageReport};
+    use super::{meter_chunks, BridgeSink, RecorderBuf, Recording, UsageReport};
     use crate::transcription::bridge::SttBridge;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
@@ -1108,7 +1133,7 @@ mod meter_tests {
     #[tokio::test]
     async fn a_meeting_keeps_recording_after_its_transcription_leg_dies() {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
-        let recorder: RecorderBuf = Arc::new(Mutex::new(Some(Vec::new())));
+        let recorder: RecorderBuf = Arc::new(Mutex::new(Some(Recording::default())));
         let bridge = Arc::new(SttBridge::default());
         let leg = bridge.attach().unwrap();
         drop(leg); // the provider socket died; its input is gone
@@ -1140,8 +1165,8 @@ mod meter_tests {
         let samples = meter.await.unwrap();
         assert_eq!(samples, 5);
         assert_eq!(
-            recorder.lock().unwrap().as_ref().unwrap(),
-            &vec![1, 2, 3, 4, 5]
+            recorder.lock().unwrap().as_ref().unwrap().pcm,
+            vec![1, 2, 3, 4, 5]
         );
         let mut got = Vec::new();
         while let Some(chunk) = next.rx.recv().await {
@@ -1150,6 +1175,51 @@ mod meter_tests {
         // The capture ending closed the bridge, which ended the leg's input.
         assert_eq!(got, vec![1, 2, 3, 4, 5]);
         assert!(bridge.is_closed());
+    }
+
+    /// The crash copy gets exactly what the RAM recording gets: a paused
+    /// stretch is in neither.
+    #[tokio::test]
+    async fn a_meeting_journals_what_it_records() {
+        let dir =
+            std::env::temp_dir().join(format!("parley-meter-journal-{}", uuid::Uuid::new_v4()));
+        let meta = crate::recording_journal::JournalMeta {
+            meeting_id: "m".into(),
+            started_at_ms: 0,
+        };
+        let journal = crate::recording_journal::RecordingJournal::start(&dir, &meta).unwrap();
+        let recorder: RecorderBuf = Arc::new(Mutex::new(Some(Recording::new(Some(journal)))));
+        let paused = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+        let (out_tx, _out_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+        let meter = tokio::spawn(meter_chunks(
+            rx,
+            out_tx,
+            Some(recorder.clone()),
+            None,
+            Some(paused.clone()),
+            Arc::default(),
+        ));
+        tx.send(vec![100; 32_000]).unwrap(); // 2 s recorded
+        while recorder.lock().unwrap().as_ref().unwrap().pcm.len() < 32_000 {
+            tokio::task::yield_now().await;
+        }
+        paused.store(true, Ordering::SeqCst);
+        tx.send(vec![100; 32_000]).unwrap(); // 2 s paused: dropped
+        drop(tx);
+        meter.await.unwrap();
+        let Recording { pcm, journal } = recorder.lock().unwrap().take().unwrap();
+        assert_eq!(pcm.len(), 32_000);
+        journal.unwrap().close();
+        let out = dir.join("out.ogg");
+        let ms = crate::recording_journal::repair(
+            &crate::recording_journal::audio_path(&dir, "m"),
+            &out,
+        )
+        .unwrap();
+        // 100 frames, plus the padded frame that ends the stream.
+        assert_eq!(ms, 2_000 + 20);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
