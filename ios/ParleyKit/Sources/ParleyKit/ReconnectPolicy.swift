@@ -37,6 +37,15 @@ public struct ReconnectPolicy: Sendable, Equatable {
     public static let dictation = ReconnectPolicy(
         maxAttempts: 4, base: .milliseconds(500), cap: .seconds(4))
 
+    /// A meeting keeps redialling for as long as it is recording. The audio
+    /// file never depends on the relay, so giving up only ever cost the live
+    /// transcript — but it cost it for the rest of the meeting, and a relay
+    /// that is back after ten minutes of outage is worth picking up again.
+    /// The ladder stretches to a minute so a long outage is a dial a minute,
+    /// not a dial every fifteen seconds.
+    public static let meeting = ReconnectPolicy(
+        maxAttempts: .max, base: .seconds(1), cap: .seconds(60))
+
     /// What to do after the `attempt`-th consecutive failure (1-based).
     public func decide(attempt: Int) -> Decision {
         guard attempt >= 1, attempt <= maxAttempts else { return .giveUp }

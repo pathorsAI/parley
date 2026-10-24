@@ -263,7 +263,7 @@ struct SettingsView: View {
                 )
                 .foregroundStyle(Theme.warning)
                 Button("Retry sync now") {
-                    Task { await app.syncPendingUploads() }
+                    Task { await app.retryUploadsNow() }
                 }
                 if let stuckUpload {
                     FeedbackPromptCard(

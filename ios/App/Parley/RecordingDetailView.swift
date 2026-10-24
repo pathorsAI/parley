@@ -573,7 +573,7 @@ struct RecordingDetailView: View {
         // this recording. It is also what takes the button off the screen, so
         // the same pass cannot be asked for twice while it is under way.
         backfill = .running
-        let result = await app.syncPendingBackfills()
+        let result = await app.syncPendingBackfills(manual: true)
         refreshReTranscribeState()
         if backfill == .none {
             // Gone from the queue is the one unambiguous "it worked": the new

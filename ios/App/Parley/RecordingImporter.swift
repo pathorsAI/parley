@@ -156,11 +156,11 @@ final class RecordingImporter: ObservableObject {
                 cloud: app.cloud,
                 defaultSave: app.defaultSave,
                 orgs: app.orgs)
-            app.pendingUploadCount = MeetingUploader.pendingCount
+            app.refreshUploadCounts()
             guard let outcome else { return .failed(Self.tooShortMessage) }
             return .landed(title: outcome.title, sharedToOrgName: outcome.sharedToOrgName)
         } catch let error as CloudError where error.status == 402 {
-            app.pendingUploadCount = MeetingUploader.pendingCount
+            app.refreshUploadCounts()
             return .failed(
                 String(
                     localized:
@@ -168,8 +168,8 @@ final class RecordingImporter: ObservableObject {
                 ))
         } catch {
             // Past `fileImported`'s persist step the audio and its transcript
-            // are in the durable queue; the next foreground launch retries them.
-            app.pendingUploadCount = MeetingUploader.pendingCount
+            // are in the durable queue; the next foregrounding or network change retries them.
+            app.refreshUploadCounts()
             return .failed(
                 String(
                     localized:

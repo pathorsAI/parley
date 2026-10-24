@@ -192,8 +192,9 @@ final class MeetingRecorder: ObservableObject {
 
     /// How often and how fast to redial. The offset each new leg needs comes
     /// from the bridge rather than the wall clock — the bridge is what knows
-    /// where in the recording the audio it held was spoken.
-    private static let reconnect = ReconnectPolicy()
+    /// where in the recording the audio it held was spoken. `.meeting` never
+    /// runs out: a meeting redials for as long as it records.
+    private static let reconnect = ReconnectPolicy.meeting
 
     // MARK: control
 
@@ -607,6 +608,15 @@ final class MeetingRecorder: ObservableObject {
 
     // MARK: upload
 
+    /// File the meeting in the on-device queue, then make the first upload
+    /// attempt.
+    ///
+    /// Queued first and unconditionally: being signed out, offline or out of
+    /// quota decides when a meeting reaches the cloud, never whether it is
+    /// kept. The attempt runs under a background task, so locking the phone
+    /// the moment a meeting ends no longer cuts the upload off; if iOS calls
+    /// time anyway the entry stays queued and the next foregrounding or
+    /// network change sends it.
     private func upload(app: AppState) async {
         guard let uploader else {
             phase = .idle
@@ -614,44 +624,64 @@ final class MeetingRecorder: ObservableObject {
             return
         }
         self.uploader = nil
-        guard app.signedIn else {
-            phase = .idle
-            status = String(localized: "Not signed in — the recording was not uploaded")
+        phase = .uploading
+        defer { phase = .idle }
+
+        let queued: MeetingUploader.Queued
+        do {
+            guard
+                let filed = try await uploader.finishAndQueue(
+                    segments: segments, defaultSave: app.defaultSave)
+            else {
+                status = String(localized: "That recording was too short to keep")
+                return
+            }
+            queued = filed
+        } catch {
+            // Could not move the audio into the queue (a full disk). The Ogg
+            // is still in the temporary directory, and the next launch adopts
+            // it as an orphaned recording.
+            AppLog.sync.error("queueing the recording failed: \(error.localizedDescription, privacy: .public)")
+            status = String(
+                localized:
+                    "Sync failed for now. The recording is safe on this phone and will retry automatically."
+            )
             return
         }
-        phase = .uploading
+        // Queued, not lost: the recording exists under this id and will arrive
+        // with it, so a report about it can name it.
+        noteFinished(id: queued.id, durationMs: uploader.durationMs)
+        app.refreshUploadCounts()
+
+        guard app.hasAccount else {
+            status = String(
+                localized: "Saved on this phone. It uploads once you sign in.")
+            return
+        }
         status = String(localized: "Uploading…")
-        defer { phase = .idle }
+        await sendFirstAttempt(queued, app: app)
+        app.refreshUploadCounts()
+    }
+
+    private func sendFirstAttempt(_ queued: MeetingUploader.Queued, app: AppState) async {
+        let cloud = app.cloud
+        let orgs = app.orgs
         do {
-            let outcome = try await uploader.finishAndUpload(
-                segments: segments,
-                cloud: app.cloud,
-                defaultSave: app.defaultSave,
-                orgs: app.orgs)
-            if let outcome {
-                noteFinished(id: outcome.recordingId, durationMs: uploader.durationMs)
-                app.pendingUploadCount = MeetingUploader.pendingCount
-                status =
-                    outcome.sharedToOrgName.map { String(localized: "Synced, and shared to “\($0)”") }
-                    ?? String(localized: "Synced to the cloud")
-                settled = Settled(
-                    id: outcome.recordingId, title: outcome.title,
-                    folderId: outcome.folderId, segments: segments)
-            } else {
-                status = String(localized: "That recording was too short to keep")
+            let outcome = try await BackgroundGrace.run("meeting-upload") {
+                try await MeetingUploader.upload(queued, cloud: cloud, orgs: orgs)
             }
+            status =
+                outcome.sharedToOrgName.map { String(localized: "Synced, and shared to “\($0)”") }
+                ?? String(localized: "Synced to the cloud")
+            settled = Settled(
+                id: outcome.recordingId, title: outcome.title,
+                folderId: outcome.folderId, segments: segments)
         } catch let e as CloudError where e.status == 402 {
-            app.pendingUploadCount = MeetingUploader.pendingCount
-            noteFinished(id: uploader.id, durationMs: uploader.durationMs)
             status = String(
                 localized:
                     "You're out of quota. The recording is safe on this phone and will sync once the quota resets."
             )
         } catch {
-            app.pendingUploadCount = MeetingUploader.pendingCount
-            // Queued, not lost: the recording exists under this id and will
-            // arrive with it, so a report about it can name it.
-            noteFinished(id: uploader.id, durationMs: uploader.durationMs)
             status = String(
                 localized:
                     "Sync failed for now. The recording is safe on this phone and will retry automatically."

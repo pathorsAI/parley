@@ -104,6 +104,76 @@
         }
       }
     },
+    "%lld recordings not uploaded — out of quota. Kept on this phone; tap to see them" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld recording not uploaded — out of quota. Kept on this phone; tap to see it"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld recordings not uploaded — out of quota. Kept on this phone; tap to see them"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hant" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld 筆錄音未上傳（額度已用完），已保存在手機上：點一下查看"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld recordings not uploaded — tap to see them" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld recording not uploaded — tap to see it"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld recordings not uploaded — tap to see them"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hant" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld 筆錄音未上傳：點一下查看"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "%lld recordings waiting to sync" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1465,6 +1535,23 @@
         }
       }
     },
+    "Delete this recording?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete this recording?"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "要刪除這段錄音嗎？"
+          }
+        }
+      }
+    },
     "Delete this saved info?" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2417,6 +2504,23 @@
         }
       }
     },
+    "It has not reached the cloud. Deleting it cannot be undone." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "It has not reached the cloud. Deleting it cannot be undone."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這段錄音還沒上傳到雲端，刪除後無法復原。"
+          }
+        }
+      }
+    },
     "It turns into text as you go, with who said what." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2515,6 +2619,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "讓麥克風保持待命"
+          }
+        }
+      }
+    },
+    "Kept on this phone until it uploads or you delete it." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kept on this phone until it uploads or you delete it."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "錄音會保存在手機上，直到上傳成功或你刪除它。"
           }
         }
       }
@@ -3434,19 +3555,19 @@
         }
       }
     },
-    "Not signed in — the recording was not uploaded" : {
+    "Not uploaded" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Not signed in — the recording was not uploaded"
+            "value" : "Not uploaded"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "未登入——錄音未上傳"
+            "value" : "未上傳"
           }
         }
       }
@@ -3915,6 +4036,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "原文 · 你選擇略過"
+          }
+        }
+      }
+    },
+    "Out of quota" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Out of quota"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "額度用完"
           }
         }
       }
@@ -4793,6 +4931,23 @@
         }
       }
     },
+    "Refused by the server (HTTP %lld)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Refused by the server (HTTP %lld)"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "被拒絕 http %lld"
+          }
+        }
+      }
+    },
     "Reminders" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5101,6 +5256,40 @@
         }
       }
     },
+    "Retry" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Retry"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重試"
+          }
+        }
+      }
+    },
+    "Retry all" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Retry all"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全部重試"
+          }
+        }
+      }
+    },
     "Retry sync now" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5152,6 +5341,23 @@
         }
       }
     },
+    "Save or share audio" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Save or share audio"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "儲存或分享音訊"
+          }
+        }
+      }
+    },
     "Saved info" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5165,6 +5371,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "常用資訊"
+          }
+        }
+      }
+    },
+    "Saved on this phone. It uploads once you sign in." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Saved on this phone. It uploads once you sign in."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已保存在手機上，登入後就會上傳。"
           }
         }
       }
@@ -5692,6 +5915,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "再顯示起步清單"
+          }
+        }
+      }
+    },
+    "Shows the recordings still on this phone" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Shows the recordings still on this phone"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "顯示還在手機上的錄音"
           }
         }
       }
@@ -7407,6 +7647,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "等待重新轉錄。目前沒有任何工作在跑——開啟 Parley 或把它切回前景時就會開始。"
+          }
+        }
+      }
+    },
+    "Waiting to sync" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Waiting to sync"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "等待同步"
           }
         }
       }

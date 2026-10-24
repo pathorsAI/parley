@@ -56,4 +56,24 @@ final class ReconnectPolicyTests: XCTestCase {
         XCTAssertEqual(policy.delay(forAttempt: 0), policy.base)
         XCTAssertEqual(policy.decide(attempt: 0), .giveUp)
     }
+
+    func testAMeetingNeverStopsRedialling() {
+        let meeting = ReconnectPolicy.meeting
+        for attempt in [1, 8, 9, 50, 1_000, 1_000_000] {
+            guard case .retry = meeting.decide(attempt: attempt) else {
+                return XCTFail("gave up at attempt \(attempt)")
+            }
+        }
+    }
+
+    func testAMeetingBacksOffToAMinute() {
+        let meeting = ReconnectPolicy.meeting
+        XCTAssertEqual(
+            (1...8).map { meeting.delay(forAttempt: $0) },
+            [
+                .seconds(1), .seconds(2), .seconds(4), .seconds(8),
+                .seconds(16), .seconds(32), .seconds(60), .seconds(60),
+            ])
+        XCTAssertEqual(meeting.delay(forAttempt: 10_000), .seconds(60))
+    }
 }
