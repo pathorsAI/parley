@@ -28,6 +28,7 @@ import com.pathors.parley.playback.AudioDownloadState
 import com.pathors.parley.playback.AudioDownloads
 import com.pathors.parley.screenshot.DemoMode
 import com.pathors.parley.upload.PendingUpload
+import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -717,6 +718,22 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             refresh()
         }
     }
+
+    /**
+     * "Delete from this phone" on a recording that never uploaded, after the
+     * confirmation. The only copy goes, so it is never called without one.
+     */
+    fun deletePending(id: String) {
+        if (DemoMode.isActive) return
+        viewModelScope.launch {
+            container.uploader.deletePending(id)
+            refresh()
+        }
+    }
+
+    /** The queued Ogg for [id], for "save or share the audio"; null if it is gone. */
+    fun pendingAudio(id: String): File? =
+        if (DemoMode.isActive) null else container.uploader.pendingAudio(id)
 
     /**
      * Delete one recording from the cloud (`DELETE /recordings/{id}`).

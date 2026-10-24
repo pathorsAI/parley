@@ -100,6 +100,7 @@ import androidx.compose.ui.layout.Placeable
 import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
@@ -133,6 +134,7 @@ import com.pathors.parley.playback.AudioDownloadState
 import com.pathors.parley.screenshot.DemoMode
 import com.pathors.parley.ui.theme.ParleyTheme
 import com.pathors.parley.upload.PendingUpload
+import java.io.File
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
@@ -216,6 +218,8 @@ fun HomeScreen(
             onSend = viewModel::sendSyncDiagnostics,
             onDismiss = viewModel::dismissSyncPrompt,
             onRetry = viewModel::retryUpload,
+            onDelete = viewModel::deletePending,
+            audioOf = viewModel::pendingAudio,
         ),
         rowActions = { recording ->
             RecordingRowActions(
@@ -364,6 +368,10 @@ private class SyncPromptActions(
     val onDismiss: (String) -> Unit = {},
     /** Retry one recording the cloud refused (it is parked, not gone). */
     val onRetry: (String) -> Unit = {},
+    /** Delete a never-uploaded recording from the phone, after confirmation. */
+    val onDelete: (String) -> Unit = {},
+    /** Its queued Ogg, for the share sheet. */
+    val audioOf: (String) -> File? = { null },
 )
 
 /** The import notice's parts; [orgName] null is the personal-only wording. */
@@ -1175,7 +1183,7 @@ private fun LazyListScope.libraryHeader(
                 PendingRow(
                     pending = pending,
                     uploading = state.uploading,
-                    onRetry = { syncPrompt.onRetry(pending.id) },
+                    actions = syncPrompt,
                 )
                 // Under the row it is about: this is where sync status is
                 // read, and a recording that will not go up is sync status.
@@ -1337,9 +1345,12 @@ private fun PendingHeader(count: Int, uploading: Boolean, onUpload: () -> Unit) 
  * row is where sync status is read.
  */
 @Composable
-private fun PendingRow(pending: PendingUpload, uploading: Boolean, onRetry: () -> Unit) {
+private fun PendingRow(pending: PendingUpload, uploading: Boolean, actions: SyncPromptActions) {
     val parked = pending.parked
-    val retryLabel = stringResource(R.string.home_pending_retry_one_a11y)
+    val optionsLabel = stringResource(R.string.home_pending_retry_one_a11y)
+    var menuOpen by remember { mutableStateOf(false) }
+    var confirmingDelete by remember { mutableStateOf(false) }
+    val title = pending.title.ifEmpty { stringResource(R.string.recording_untitled) }
     // Plain like the recording rows below it: whitespace, no fill.
     Column(
         Modifier
@@ -1347,9 +1358,9 @@ private fun PendingRow(pending: PendingUpload, uploading: Boolean, onRetry: () -
             .then(
                 if (parked != null && !uploading) {
                     Modifier.clickable(
-                        onClickLabel = retryLabel,
+                        onClickLabel = optionsLabel,
                         role = Role.Button,
-                        onClick = onRetry,
+                        onClick = { menuOpen = true },
                     )
                 } else {
                     Modifier
@@ -1357,8 +1368,28 @@ private fun PendingRow(pending: PendingUpload, uploading: Boolean, onRetry: () -
             )
             .padding(vertical = 4.dp),
     ) {
+        if (parked != null) {
+            PendingRowMenu(
+                expanded = menuOpen,
+                title = title,
+                pendingId = pending.id,
+                actions = actions,
+                onDismiss = { menuOpen = false },
+                onDelete = { confirmingDelete = true },
+            )
+        }
+        if (confirmingDelete) {
+            DeletePendingDialog(
+                title = title,
+                onConfirm = {
+                    confirmingDelete = false
+                    actions.onDelete(pending.id)
+                },
+                onDismiss = { confirmingDelete = false },
+            )
+        }
         Text(
-            text = pending.title.ifEmpty { stringResource(R.string.recording_untitled) },
+            text = title,
             style = MaterialTheme.typography.titleSmall,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -1377,6 +1408,80 @@ private fun PendingRow(pending: PendingUpload, uploading: Boolean, onRetry: () -
             )
         }
     }
+}
+
+/**
+ * What a parked recording offers: retry, get the audio out through the share
+ * sheet, or delete it — so one the cloud keeps refusing (too large, say) is
+ * never trapped on the phone. iOS parity (#627).
+ */
+@Composable
+private fun PendingRowMenu(
+    expanded: Boolean,
+    title: String,
+    pendingId: String,
+    actions: SyncPromptActions,
+    onDismiss: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val context = LocalContext.current
+    val chooserTitle = stringResource(R.string.home_pending_share_title, title)
+    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        DropdownMenuItem(
+            text = { Text(stringResource(R.string.home_pending_action_retry)) },
+            onClick = {
+                onDismiss()
+                actions.onRetry(pendingId)
+            },
+        )
+        DropdownMenuItem(
+            text = { Text(stringResource(R.string.home_pending_action_share)) },
+            onClick = {
+                onDismiss()
+                actions.audioOf(pendingId)?.let { audio ->
+                    PendingAudioShare.share(context, audio, title, chooserTitle)
+                }
+            },
+        )
+        DropdownMenuItem(
+            text = {
+                Text(
+                    text = stringResource(R.string.home_pending_action_delete),
+                    color = MaterialTheme.colorScheme.error,
+                )
+            },
+            onClick = {
+                onDismiss()
+                onDelete()
+            },
+        )
+    }
+}
+
+/** The second press before a never-uploaded recording — the only copy — goes. */
+@Composable
+private fun DeletePendingDialog(title: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.home_pending_delete_title)) },
+        text = {
+            Text(
+                text = stringResource(R.string.home_pending_delete_body, title),
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(
+                    text = stringResource(R.string.home_delete_confirm_action),
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
+        },
+    )
 }
 
 /**

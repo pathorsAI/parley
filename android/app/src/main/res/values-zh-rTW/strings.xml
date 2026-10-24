@@ -54,8 +54,14 @@
     <string name="home_pending_header">等待上傳</string>
     <string name="home_pending_badge">%1$d</string>
     <string name="home_pending_retry">立即上傳</string>
-    <string name="home_pending_not_uploaded">尚未上傳（HTTP %1$d）・點一下重試</string>
-    <string name="home_pending_retry_one_a11y">重新上傳這份錄音</string>
+    <string name="home_pending_not_uploaded">尚未上傳（HTTP %1$d）・點一下查看選項</string>
+    <string name="home_pending_retry_one_a11y">這份錄音的選項</string>
+    <string name="home_pending_action_retry">重新上傳</string>
+    <string name="home_pending_action_share">儲存或分享音檔</string>
+    <string name="home_pending_action_delete">從這支手機刪除</string>
+    <string name="home_pending_share_title">儲存或分享「%1$s」</string>
+    <string name="home_pending_delete_title">要刪除這份錄音嗎？</string>
+    <string name="home_pending_delete_body">「%1$s」沒有上傳到 Parley Cloud，這支手機上是唯一的一份。刪除後無法復原。</string>
     <string name="home_error_network">目前連不上雲端。網路恢復後錄音會自動載入。</string>
     <string name="home_error_server">雲端回傳了錯誤。</string>
     <string name="home_error_signed_out">登入階段已過期，請重新登入。</string>

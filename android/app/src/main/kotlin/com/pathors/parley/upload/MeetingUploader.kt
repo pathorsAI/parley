@@ -291,6 +291,23 @@ class MeetingUploader(
      */
     suspend fun retryNow(id: String): DrainResult = drain(retryNow = setOf(id))
 
+    /**
+     * The person deleted a recording that never reached the cloud — the one
+     * deliberate way a queued recording's audio goes without uploading (iOS
+     * `MeetingUploader.discardPending`). Waits for any pass in flight, so it
+     * cannot pull the file out from under an upload.
+     */
+    suspend fun deletePending(id: String) {
+        drainMutex.withLock {
+            withContext(Dispatchers.IO) { queue.remove(id) }
+            pushesAttempted -= id
+        }
+        noteAttempt(id, null)
+    }
+
+    /** The queued audio for [id], when there is any, for "save or share". */
+    fun pendingAudio(id: String): File? = queue.audioFile(id).takeIf { it.isFile && it.length() > 0L }
+
     private suspend fun drain(retryNow: Set<String>): DrainResult = drainMutex.withLock {
         val pending = withContext(Dispatchers.IO) { queue.list() }
         val tally = DrainTally()

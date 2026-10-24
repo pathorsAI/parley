@@ -56,8 +56,14 @@
     <string name="home_pending_header">Waiting to upload</string>
     <string name="home_pending_badge">%1$d</string>
     <string name="home_pending_retry">Upload now</string>
-    <string name="home_pending_not_uploaded">Not uploaded (HTTP %1$d) · Tap to retry</string>
-    <string name="home_pending_retry_one_a11y">Retry uploading this recording</string>
+    <string name="home_pending_not_uploaded">Not uploaded (HTTP %1$d) · Tap for options</string>
+    <string name="home_pending_retry_one_a11y">Options for this recording</string>
+    <string name="home_pending_action_retry">Retry upload</string>
+    <string name="home_pending_action_share">Save or share the audio</string>
+    <string name="home_pending_action_delete">Delete from this phone</string>
+    <string name="home_pending_share_title">Save or share “%1$s”</string>
+    <string name="home_pending_delete_title">Delete this recording?</string>
+    <string name="home_pending_delete_body">“%1$s” never reached Parley Cloud, so this phone holds the only copy. This can\'t be undone.</string>
     <string name="home_error_network">Can\'t reach the cloud right now. Your recordings load automatically once the network is back.</string>
     <string name="home_error_server">The cloud returned an error.</string>
     <string name="home_error_signed_out">Your session expired. Sign in again.</string>

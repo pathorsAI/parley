@@ -242,6 +242,21 @@ class MeetingUploaderDrainTest {
     }
 
     @Test
+    fun `deleting a parked recording by hand is the one way its audio goes unuploaded`() = runBlocking {
+        val queue = queue(TOO_BIG)
+        val uploader = uploader(queue)
+        respond(413, TOO_LARGE_BODY)
+        uploader.drain()
+        assertTrue("the audio can be handed to the share sheet", uploader.pendingAudio(TOO_BIG) != null)
+
+        uploader.deletePending(TOO_BIG)
+
+        assertEquals(0, queue.count())
+        assertFalse(queue.audioFile(TOO_BIG).exists())
+        assertNull(uploader.pendingAudio(TOO_BIG))
+    }
+
+    @Test
     fun `parked recordings wait while the ordinary queue is stuck`() = runBlocking {
         // A parked head must never jam the queue — and a queue stopped by the
         // network must not then spend requests on parked recordings either.
