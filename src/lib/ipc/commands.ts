@@ -140,6 +140,9 @@ export const startMeeting = (args: {
   model?: string | null;
   languageHints?: string[] | null;
   vocabulary?: string[] | null;
+  /** This meeting's id (store.liveMeetingId): its history entry's id and its
+   *  crash journal's name. Echoed on `meeting://recording-*`. */
+  meetingId?: string | null;
 }) => invoke<void>("start_meeting", args);
 /** `keepMs` cuts the saved recording to its first `keepMs` (the silence
  *  guard's trailing-silence trim); omitted, the whole recording is kept. */
@@ -147,6 +150,22 @@ export const stopMeeting = (args: { keepMs?: number | null } = {}) => invoke<voi
 export const cancelMeeting = () => invoke<void>("cancel_meeting");
 export const setMeetingPaused = (args: { paused: boolean }) => invoke<void>("set_meeting_paused", args);
 export const meetingActive = () => invoke<boolean>("meeting_active");
+/** The meeting the backend is recording right now, or null. */
+export interface BackendMeeting {
+  meetingId: string;
+  startedAtMs: number;
+}
+export const activeMeeting = () => invoke<BackendMeeting | null>("active_meeting");
+/** The meeting's entry is saved (or deliberately not kept): drop its crash journal. */
+export const finishMeetingJournal = (args: { meetingId: string }) => invoke<void>("finish_meeting_journal", args);
+/** A crashed meeting's journal, repaired into a temp recording to save. */
+export interface RecoveredRecording {
+  meetingId: string;
+  path: string;
+  durationMs: number;
+  startedAtMs: number;
+}
+export const recoverMeetingJournals = () => invoke<RecoveredRecording[]>("recover_meeting_journals");
 export const discardRecording = (args: { path: string }) => invoke<void>("discard_recording", args);
 export const exportRecording = (args: { src: string; dst: string }) => invoke<void>("export_recording", args);
 export const listInputDevices = () => invoke<string[]>("list_input_devices");

@@ -25,6 +25,7 @@ import {
   broughtSpeech,
   initSilenceGuard,
   keepRecording,
+  RECONNECTING_PROMPT_MS,
   recordingKeepMs,
   SILENCE_GRACE_MS,
   SILENCE_PROMPT_MS,
@@ -61,6 +62,22 @@ describe("silenceStep", () => {
 
   it("asks straight away when the clock jumped past the window (a Mac waking up)", () => {
     expect(silenceStep(8 * 3_600_000, 0, null)).toBe("prompt");
+  });
+});
+
+describe("silenceStep while the link is reconnecting", () => {
+  it("asks only after the long window", () => {
+    expect(silenceStep(SILENCE_PROMPT_MS * 2, 0, null, false)).toBe("none");
+    expect(silenceStep(RECONNECTING_PROMPT_MS, 0, null, false)).toBe("prompt");
+  });
+
+  it("holds a question asked while live instead of ending mid-outage", () => {
+    const askedAt = SILENCE_PROMPT_MS;
+    expect(silenceStep(askedAt + SILENCE_GRACE_MS * 3, 0, askedAt, false)).toBe("none");
+    // …until the silence is long enough to end on regardless.
+    expect(silenceStep(RECONNECTING_PROMPT_MS, 0, askedAt, false)).toBe("end");
+    // Speech still withdraws it.
+    expect(silenceStep(askedAt + 10_000, askedAt + 5_000, askedAt, false)).toBe("dismiss");
   });
 });
 
@@ -157,18 +174,35 @@ describe("initSilenceGuard", () => {
     expect(mocks.invoke).not.toHaveBeenCalled();
   });
 
-  it("does not count a pause or a reconnecting transcription as silence", async () => {
+  it("does not count a pause as silence", async () => {
     useStore.setState({ meetingStatus: "paused" });
     await vi.advanceTimersByTimeAsync(SILENCE_PROMPT_MS * 2);
     useStore.setState({ meetingStatus: "recording" });
     await vi.advanceTimersByTimeAsync(SILENCE_PROMPT_MS - 10_000);
     expect(useStore.getState().silencePromptAt).toBeNull();
+    expect(mocks.invoke).not.toHaveBeenCalled();
+  });
 
+  // The overnight merge: every reconnect report used to restart the clock, so
+  // a meeting whose link kept dropping was never asked about at all.
+  it("does not let a reconnecting link restart the clock", async () => {
     useStore.setState({ transcriptionLink: "reconnecting" });
     await vi.advanceTimersByTimeAsync(SILENCE_PROMPT_MS * 2);
-    useStore.setState({ transcriptionLink: "live" });
-    await vi.advanceTimersByTimeAsync(SILENCE_PROMPT_MS - 10_000);
+    // Held while the link is down: nothing transcribed proves nothing.
     expect(useStore.getState().silencePromptAt).toBeNull();
-    expect(mocks.invoke).not.toHaveBeenCalled();
+    useStore.setState({ transcriptionLink: "live" });
+    await vi.advanceTimersByTimeAsync(5_000);
+    // Back live with no words for 30 minutes: ask now.
+    expect(useStore.getState().silencePromptAt).not.toBeNull();
+  });
+
+  it("ends a meeting whose link never comes back, keeping the whole recording", async () => {
+    useStore.setState({ segments: [seg("a", "see you", 60_000)], transcriptionLink: "reconnecting" });
+    await vi.advanceTimersByTimeAsync(RECONNECTING_PROMPT_MS + 5_000);
+    expect(useStore.getState().silencePromptAt).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(SILENCE_GRACE_MS + 5_000);
+    // No trim: words after the last transcribed ones may be in the audio.
+    expect(mocks.invoke.mock.calls).toEqual([["stop_meeting", {}]]);
+    expect(useStore.getState().meetingStatus).toBe("stopped");
   });
 });

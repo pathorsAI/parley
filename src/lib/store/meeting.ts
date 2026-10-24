@@ -17,6 +17,12 @@ export interface MeetingSlice {
   isFinalizingMeeting: boolean;
   setFinalizingMeeting: (v: boolean) => void;
   meetingStartedAt: number | null;
+  /** This meeting's id, made at startMeeting: the backend's recording events
+   *  carry it back and it becomes the history entry's id, so a save always
+   *  belongs to the meeting it was recorded for — never to whatever meeting
+   *  the store shows by the time the encode finishes. Kept after stop (the
+   *  save compares against it); cleared by cancel. */
+  liveMeetingId: string | null;
   /** When the CURRENT pause began (epoch ms), null while not paused. */
   meetingPausedAt: number | null;
   /** Total paused time (ms) accumulated by PREVIOUS pauses this meeting —
@@ -171,6 +177,7 @@ export const createMeetingSlice: SliceCreator<MeetingSlice> = (set) => ({
   meetingStatus: "idle",
   isFinalizingMeeting: false,
   meetingStartedAt: null,
+  liveMeetingId: null,
   meetingPausedAt: null,
   meetingPausedTotalMs: 0,
   systemAudioWarning: false,
@@ -201,6 +208,7 @@ export const createMeetingSlice: SliceCreator<MeetingSlice> = (set) => ({
       appMode: "live",
       meetingStatus: "recording",
       meetingStartedAt: Date.now(),
+      liveMeetingId: crypto.randomUUID(),
       meetingPausedAt: null,
       meetingPausedTotalMs: 0,
       loadedHistoryId: null,
@@ -252,6 +260,7 @@ export const createMeetingSlice: SliceCreator<MeetingSlice> = (set) => ({
       appMode: "home",
       meetingStatus: "idle",
       meetingStartedAt: null,
+      liveMeetingId: null,
       meetingPausedAt: null,
       meetingPausedTotalMs: 0,
       segments: [],

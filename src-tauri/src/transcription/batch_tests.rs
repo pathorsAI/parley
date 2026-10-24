@@ -768,9 +768,23 @@ async fn parley_cloud_posts_polls_fetches_and_deletes() {
             "{}",
             r.path
         );
+        // Every call names the build, so the cloud can split by platform/version.
+        let client = crate::transcription::parley::client_id();
+        assert_eq!(
+            r.header("x-parley-client"),
+            Some(client.as_str()),
+            "{}",
+            r.path
+        );
     }
     let create = &server.requests_to("POST", "/stt/batch")[0];
-    assert_eq!(create.query, "diarization=1&languages=zh,en&terms=Parley");
+    assert_eq!(
+        create.query,
+        format!(
+            "diarization=1&languages=zh,en&terms=Parley&client={}",
+            crate::transcription::common::urlencode(&crate::transcription::parley::client_id())
+        )
+    );
     assert_eq!(
         create.header("content-type"),
         Some("application/octet-stream")

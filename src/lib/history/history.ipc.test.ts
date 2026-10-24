@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Every history flow, as the exact IPC traffic it produces: which commands run
 // in what order with which argument objects (meta/summary JSON included,
@@ -16,6 +16,7 @@ vi.mock("../platform", async (orig) => ({
 }));
 
 const calls = vi.hoisted(() => [] as unknown[]);
+const handlers = vi.hoisted(() => new Map<string, (e: { payload: unknown }) => void>());
 const disk = vi.hoisted(() => new Map<string, unknown>());
 
 const { invoke } = vi.hoisted(() => ({
@@ -42,7 +43,10 @@ const { invoke } = vi.hoisted(() => ({
 vi.mock("@tauri-apps/api/core", () => ({ invoke, convertFileSrc: (p: string) => `asset://${p}` }));
 vi.mock("@tauri-apps/api/event", () => ({
   emit: vi.fn(async (...args: unknown[]) => { calls.push(["emit", ...args]); }),
-  listen: vi.fn(async () => () => {}),
+  listen: vi.fn(async (name: string, handler: (e: { payload: unknown }) => void) => {
+    handlers.set(name, handler);
+    return () => {};
+  }),
 }));
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
@@ -153,6 +157,9 @@ const studyState = () =>
     meetingContext: "ctx",
   });
 
+/** The snapshot the recording event would save the just-stopped meeting with. */
+const stoppedMeeting = () => history.liveSnapshotFor(useStore.getState().liveMeetingId ?? undefined, undefined);
+
 describe("history IPC traffic", () => {
   it("saveTranscriptToHistory", async () => {
     expect(
@@ -183,7 +190,7 @@ describe("history IPC traffic", () => {
     useStore.getState().upsertSegment(seg({ id: "m1", source: "me", speaker: 0, text: "spoken words" }));
     useStore.getState().stopMeeting();
     useStore.setState({ meetingStartedAt: 1_000, isFinalizingMeeting: true });
-    expect(await trace(() => history.saveLiveToHistory("/tmp-rec.ogg", 5_000))).toMatchSnapshot();
+    expect(await trace(() => history.saveLiveToHistory("/tmp-rec.ogg", 5_000, stoppedMeeting()))).toMatchSnapshot();
     const s = useStore.getState();
     expect(s.appMode).toBe("study");
     expect(s.isFinalizingMeeting).toBe(false);
@@ -201,7 +208,7 @@ describe("history IPC traffic", () => {
     const un = useStore.subscribe((st, prev) => {
       if (st.postSaveDiarizingId !== prev.postSaveDiarizingId) seen.push(st.postSaveDiarizingId);
     });
-    expect(await trace(() => history.saveLiveToHistory("/tmp-rec.ogg", 5_000))).toMatchSnapshot();
+    expect(await trace(() => history.saveLiveToHistory("/tmp-rec.ogg", 5_000, stoppedMeeting()))).toMatchSnapshot();
     un();
     expect(seen).toEqual(["uuid-1", null]);
     expect(useStore.getState().segments.map((x) => x.speaker)).toEqual([2, 3]);
@@ -210,7 +217,7 @@ describe("history IPC traffic", () => {
   it("saveLiveToHistory: discarded when nothing was said", async () => {
     useStore.getState().startMeeting();
     useStore.getState().stopMeeting();
-    expect(await trace(() => history.saveLiveToHistory("/tmp-rec.ogg", 5_000))).toMatchSnapshot();
+    expect(await trace(() => history.saveLiveToHistory("/tmp-rec.ogg", 5_000, stoppedMeeting()))).toMatchSnapshot();
     expect(useStore.getState().appMode).toBe("home");
   });
 
@@ -306,5 +313,104 @@ describe("history IPC traffic", () => {
     disk.set("e1", baseMeta("e1", { folderId: "twin" }));
     disk.set("e2", baseMeta("e2", { folderId: "old" }));
     expect(await trace(() => history.migrateDuplicateFolders())).toMatchSnapshot();
+  });
+});
+
+// The save race (C1): the recording of a stopped meeting is encoded while the
+// user may already be in the next one. Its save must use what the stopped
+// meeting looked like, never the live store.
+describe("live save race", () => {
+  const fire = (name: string, payload: unknown) => handlers.get(name)!({ payload });
+  const savedEntries = () => [...disk.values()] as HistoryEntry[];
+  let unlisten: () => void = () => {};
+
+  beforeEach(async () => {
+    handlers.clear();
+    unlisten = await history.listenForRecordingSaved();
+  });
+
+  afterEach(() => unlisten());
+
+  /** Start a meeting the backend records, say `words` in it, stop it. */
+  function recordAndStop(words: string, startedAt: number): string {
+    useStore.getState().startMeeting();
+    const id = useStore.getState().liveMeetingId!;
+    history.liveSaves.markRecording(id);
+    useStore.setState({ meetingStartedAt: startedAt });
+    useStore.getState().upsertSegment(seg({ id: `${id}-s`, source: "me", speaker: 0, text: words }));
+    useStore.getState().stopMeeting();
+    return id;
+  }
+
+  it("saves a meeting whose encode finishes after the next one started as itself", async () => {
+    const a = recordAndStop("meeting A words", 1_000);
+    expect(history.liveSaves.hasPending()).toBe(true);
+    // The user is already in meeting B — nothing said yet.
+    useStore.getState().startMeeting();
+    useStore.setState({ meetingStartedAt: 9_000 });
+    const b = useStore.getState().liveMeetingId;
+
+    fire("meeting://recording-saved", { path: "/tmp-a.ogg", durationMs: 4_000, meetingId: a, startedAtMs: 1_000 });
+    await flush();
+
+    // Before: B's start time and empty transcript, or A discarded as empty.
+    const [entry] = savedEntries();
+    expect(entry.id).toBe(a);
+    expect(entry.createdAt).toBe(1_000);
+    expect(entry.segments.map((x) => x.text)).toEqual(["meeting A words"]);
+    expect(calls).toContainEqual(["invoke", "finish_meeting_journal", { meetingId: a }]);
+    // Meeting B is untouched and still on screen.
+    const s = useStore.getState();
+    expect(s.liveMeetingId).toBe(b);
+    expect(s.meetingStatus).toBe("recording");
+    expect(s.appMode).toBe("live");
+    expect(history.liveSaves.hasPending()).toBe(false);
+  });
+
+  it("keeps the final words that land after Stop while the meeting is still on screen", async () => {
+    const a = recordAndStop("first words", 1_000);
+    // The provider's closing flush, after Stop.
+    useStore.getState().upsertSegment(seg({ id: "late", source: "me", speaker: 0, text: "last words", startMs: 2_000, endMs: 2_500 }));
+    fire("meeting://recording-saved", { path: "/tmp-a.ogg", durationMs: 4_000, meetingId: a, startedAtMs: 1_000 });
+    await flush();
+    expect(savedEntries()[0].segments.map((x) => x.text)).toEqual(["first words", "last words"]);
+  });
+
+  it("a discarded recording settles its meeting without touching the next one's screen", async () => {
+    const a = recordAndStop("hi", 1_000);
+    useStore.getState().startMeeting();
+    fire("meeting://recording-discarded", { meetingId: a, startedAtMs: 1_000 });
+    await flush();
+    expect(history.liveSaves.hasPending()).toBe(false);
+    expect(useStore.getState().appMode).toBe("live");
+    expect(calls.filter((c) => (c as unknown[])[0] === "toast.message")).toEqual([]);
+  });
+
+  it("a recording from a meeting this window never saw is kept without a transcript", async () => {
+    fire("meeting://recording-saved", { path: "/tmp-x.ogg", durationMs: 4_000, meetingId: "lost", startedAtMs: 777 });
+    await flush();
+    const [entry] = savedEntries();
+    expect(entry).toMatchObject({ id: "lost", createdAt: 777, segments: [] });
+  });
+});
+
+describe("recoverCrashedMeetings", () => {
+  it("saves each recovered journal once, then drops it", async () => {
+    disk.set("already", baseMeta("already"));
+    invoke.mockImplementationOnce(async (cmd: string) => {
+      calls.push(["invoke", cmd]);
+      return [
+        { meetingId: "crashed", path: "/tmp-c.ogg", durationMs: 600_000, startedAtMs: 1_000 },
+        { meetingId: "already", path: "/tmp-d.ogg", durationMs: 5_000, startedAtMs: 2_000 },
+      ] as never;
+    });
+    expect(await history.recoverCrashedMeetings()).toBe(1);
+    await flush();
+    expect(disk.get("crashed")).toMatchObject({ id: "crashed", createdAt: 1_000, durationMs: 600_000, segments: [] });
+    expect((disk.get("crashed") as HistoryEntry).title).toContain("（已復原）");
+    expect(calls).toContainEqual(["invoke", "discard_recording", { path: "/tmp-d.ogg" }]);
+    expect(calls).toContainEqual(["invoke", "finish_meeting_journal", { meetingId: "crashed" }]);
+    expect(calls).toContainEqual(["invoke", "finish_meeting_journal", { meetingId: "already" }]);
+    expect(calls.filter((c) => (c as unknown[])[0] === "toast.message")).toHaveLength(1);
   });
 });
