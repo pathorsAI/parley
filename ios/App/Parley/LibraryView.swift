@@ -65,6 +65,9 @@ struct LibraryView: View {
     /// Meetings (the cloud library, everything below) or Voice typing (what was
     /// dictated on this phone, `DictationHistoryList`).
     @State private var section: LibrarySection = .meetings
+    /// The list of recordings still on this phone, opened from the
+    /// "not uploaded" row.
+    @State private var showingUploadQueue = false
     #if DEBUG
         @ObservedObject private var demo = ScreenshotDemo.shared
     #endif
@@ -422,6 +425,7 @@ struct LibraryView: View {
             folderList(folderFilter)
         }
         .simultaneousGesture(folderSwipe)
+        .sheet(isPresented: $showingUploadQueue) { UploadQueueSheet() }
     }
 
     /// One folder's worth of the library.
@@ -444,7 +448,7 @@ struct LibraryView: View {
             // folder: a queued recording has not been filed anywhere yet.
             if showsQueue && app.pendingUploadCount > 0 {
                 UploadQueueRow(pending: app.pendingUploadCount, parked: app.parkedUploads) {
-                    Task { await app.retryUploadsNow() }
+                    showingUploadQueue = true
                 }
                 .listRowInsets(EdgeInsets(top: 4, leading: 20, bottom: 4, trailing: 20))
                 .listRowSeparator(.hidden)

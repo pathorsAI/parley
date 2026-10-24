@@ -321,6 +321,17 @@ final class AppState: NSObject, ObservableObject {
         await syncPendingUploads(trigger: .manual)
     }
 
+    /// Retry one queued recording from the queue sheet.
+    func retryUpload(id: String) async {
+        await MeetingUploader.retry(id: id, cloud: cloud, orgs: orgs)
+        refreshUploadCounts()
+    }
+
+    func deleteQueuedUpload(id: String) {
+        MeetingUploader.deleteQueued(id: id)
+        refreshUploadCounts()
+    }
+
     // MARK: network
 
     private var pathMonitor: NWPathMonitor?

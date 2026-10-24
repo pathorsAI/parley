@@ -376,6 +376,50 @@ final class MeetingUploader {
         var waitingForQuota = 0
     }
 
+    /// One recording waiting in the upload queue, as the queue sheet lists it.
+    struct QueueItem: Identifiable, Equatable {
+        let id: String
+        let title: String
+        let startedAt: Date
+        let durationMs: Double
+        /// Nil while it has only ever failed on the network, or not yet tried.
+        let parking: UploadParking?
+        /// The Ogg on this phone, for the share sheet.
+        let audioURL: URL?
+    }
+
+    static func queueItems() -> [QueueItem] {
+        loadPending().map {
+            QueueItem(
+                id: $0.id, title: $0.displayTitle, startedAt: $0.startedAt,
+                durationMs: $0.durationMs, parking: $0.parking,
+                audioURL: try? audioURL(for: $0.id))
+        }
+    }
+
+    /// Try one queued recording now, whatever its parking says — the user
+    /// asked for this one.
+    @discardableResult
+    static func retry(id: String, cloud: CloudClient, orgs: [CloudOrg]) async -> Bool {
+        guard let item = loadPending().first(where: { $0.id == id }),
+            hasAudio(at: try? audioURL(for: id))
+        else { return false }
+        if case .uploaded = await attemptUpload(item, cloud: cloud, orgs: orgs) { return true }
+        return false
+    }
+
+    /// The user deleted a recording that never reached the cloud: the audio
+    /// and the manifest go, and nothing will bring them back. Refused while an
+    /// upload of it is in flight, so a delete can never race a send.
+    @discardableResult
+    static func deleteQueued(id: String) -> Bool {
+        guard inFlight.claim(id) else { return false }
+        defer { inFlight.release(id) }
+        removePending(id: id)
+        DiagnosticsJournal.record("sync_deleted_by_user", "queued recording deleted")
+        return true
+    }
+
     static var parkedSummary: ParkedSummary {
         loadPending().reduce(into: ParkedSummary()) { summary, item in
             guard let parking = item.parking else { return }
