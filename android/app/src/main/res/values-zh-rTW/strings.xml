@@ -54,6 +54,8 @@
     <string name="home_pending_header">等待上傳</string>
     <string name="home_pending_badge">%1$d</string>
     <string name="home_pending_retry">立即上傳</string>
+    <string name="home_pending_not_uploaded">尚未上傳（HTTP %1$d）・點一下重試</string>
+    <string name="home_pending_retry_one_a11y">重新上傳這份錄音</string>
     <string name="home_error_network">目前連不上雲端。網路恢復後錄音會自動載入。</string>
     <string name="home_error_server">雲端回傳了錯誤。</string>
     <string name="home_error_signed_out">登入階段已過期，請重新登入。</string>
@@ -131,6 +133,7 @@
     <string name="meeting_shared_to">已同步，並分享到「%1$s」</string>
     <string name="meeting_queued_quota">額度已用完。錄音已安全保留在手機上，額度恢復後會自動同步。</string>
     <string name="meeting_sync_failed">同步暫時失敗。錄音已安全保留在手機上，稍後會自動重試。</string>
+    <string name="meeting_upload_refused">尚未上傳：Parley Cloud 沒有接受這份錄音。錄音已保留在手機上，稍後會自動重試，也可以在「等待上傳」裡點一下立即重試。</string>
     <string name="meeting_idle_hint">按下錄音，把手機放在桌上收整個房間。</string>
     <string name="meeting_discard_a11y">捨棄錄音。會先請你確認，然後把錄音與逐字稿直接丟掉。</string>
     <string name="meeting_mic_silenced">麥克風被其他 app 佔用中——在它釋放之前，Parley 錄到的是靜音。</string>
@@ -175,7 +178,6 @@
     <string name="import_failure_unsupported">這台裝置無法解碼這種音訊格式。</string>
     <string name="import_failure_decode">這個檔案無法完整解碼。</string>
     <string name="import_failure_session_expired">登入已過期，請重新登入。</string>
-    <string name="import_failure_upload_refused">Parley Cloud 拒絕了這份錄音，所以沒有存下來。請重新匯入檔案再試一次。</string>
     <string name="import_action_sign_in_again">重新登入</string>
     <string name="import_phase_saved">已儲存</string>
     <string name="import_transcript_in_background">轉錄在中途停止了。錄音已儲存，逐字稿會在背景自動補齊。</string>

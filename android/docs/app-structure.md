@@ -155,7 +155,7 @@ meeting: the mic keeps running, the audio is still saved and uploaded, and the U
 shows a `TranscriptionIssue` line. iOS's split applies (`TranscriptionHealth`):
 a dropped socket is `RECONNECTING` — "Transcription dropped — reconnecting…",
 an amber spinner — until a leg is back up or a segment arrives, and only when no
-leg is coming (out of quota, budget spent, signed out) does the line say the
+leg is coming (out of quota, signed out) does the line say the
 live transcript stopped, in ink with a bolt rather than the error red, because
 the recording itself is fine. `MeetingState.Failed` is kept for a
 recording that could not be started or saved at all — not signed in, no
@@ -165,11 +165,15 @@ away mid-meeting, say) still ends `Finished`, with `interruptedBy` saying why;
 see `terminalStateFor` in `meeting/CaptureEnding.kt`.
 
 On an error or unexpected close `MeetingSession` holds the `RelayAudioBridge`,
-retires the dead client and redials on `ReconnectPolicy`'s ladder. The new leg is
+retires the dead client and redials on `ReconnectPolicy`'s ladder — capped
+exponential backoff with jitter (up to 60 s), for as long as the meeting records;
+there is no budget that runs out, and the ladder only restarts from 1 s once a
+leg has stayed up for 30 s, so a relay that accepts and then drops does not
+cause a reconnect burst. The new leg is
 created through `bridge.attach`, so it gets its own id prefix (`mix@N`), a
 `timeOffsetMs` equal to where the first held chunk was captured, and the held
 audio before any live audio — the words spoken during the gap reach the relay
-instead of being dropped. When no leg is coming (budget spent, out of quota,
+instead of being dropped. When no leg is coming (out of quota,
 signed out, stop, discard) the bridge drops what it holds. See
 `api-parleykit.md`.
 
@@ -184,8 +188,8 @@ because the user still holds the source file:
 
 Only a clean `Finished` closes the screen by itself; one still waiting to upload,
 or with a transcript being redone, stays up until it is dismissed. An upload the
-cloud refuses for good (see `api-cloud.md`) is `Failed(UPLOAD_REFUSED)`, not
-"Done". A 402 on upload is not a refusal: the recording stays queued and the
+cloud refuses (see `api-cloud.md`) is parked on the phone, never dropped, and
+the screen says so (`Finished.uploadRefused`) rather than "Done". A 402 on upload is not a refusal: the recording stays queued and the
 screen says it will sync once the quota resets (`Finished.waitingForQuota`).
 
 ### What the meeting screen says about the microphone

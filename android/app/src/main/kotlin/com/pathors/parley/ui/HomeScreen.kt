@@ -215,6 +215,7 @@ fun HomeScreen(
         syncPrompt = SyncPromptActions(
             onSend = viewModel::sendSyncDiagnostics,
             onDismiss = viewModel::dismissSyncPrompt,
+            onRetry = viewModel::retryUpload,
         ),
         rowActions = { recording ->
             RecordingRowActions(
@@ -357,10 +358,12 @@ private class LibraryCallbacks(
     val importNotice: ImportNoticeText? = null,
 )
 
-/** What the sync prompt under a queued recording does. */
+/** What the sync status under a queued recording does: the prompt's send and ×, and retry. */
 private class SyncPromptActions(
     val onSend: (PendingUpload) -> Unit = {},
     val onDismiss: (String) -> Unit = {},
+    /** Retry one recording the cloud refused (it is parked, not gone). */
+    val onRetry: (String) -> Unit = {},
 )
 
 /** The import notice's parts; [orgName] null is the personal-only wording. */
@@ -1169,7 +1172,11 @@ private fun LazyListScope.libraryHeader(
         }
         items(state.pending, key = { "pending-" + it.id }) { pending ->
             Column {
-                PendingRow(pending)
+                PendingRow(
+                    pending = pending,
+                    uploading = state.uploading,
+                    onRetry = { syncPrompt.onRetry(pending.id) },
+                )
                 // Under the row it is about: this is where sync status is
                 // read, and a recording that will not go up is sync status.
                 if (pending.id in state.syncPrompts) {
@@ -1324,12 +1331,30 @@ private fun PendingHeader(count: Int, uploading: Boolean, onUpload: () -> Unit) 
     }
 }
 
+/**
+ * One recording still on the phone. A parked one — the cloud refused it — says
+ * so and is tappable to retry: it is not lost and not silently waiting, and the
+ * row is where sync status is read.
+ */
 @Composable
-private fun PendingRow(pending: PendingUpload) {
+private fun PendingRow(pending: PendingUpload, uploading: Boolean, onRetry: () -> Unit) {
+    val parked = pending.parked
+    val retryLabel = stringResource(R.string.home_pending_retry_one_a11y)
     // Plain like the recording rows below it: whitespace, no fill.
     Column(
         Modifier
             .fillMaxWidth()
+            .then(
+                if (parked != null && !uploading) {
+                    Modifier.clickable(
+                        onClickLabel = retryLabel,
+                        role = Role.Button,
+                        onClick = onRetry,
+                    )
+                } else {
+                    Modifier
+                },
+            )
             .padding(vertical = 4.dp),
     ) {
         Text(
@@ -1344,6 +1369,13 @@ private fun PendingRow(pending: PendingUpload) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        if (parked != null) {
+            Text(
+                text = stringResource(R.string.home_pending_not_uploaded, parked.httpStatus),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
     }
 }
 

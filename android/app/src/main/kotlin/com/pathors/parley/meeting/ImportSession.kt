@@ -70,6 +70,12 @@ sealed interface ImportState {
          * null for personal only — what lets the library say "and shared to".
          */
         val sharedToOrgId: String? = null,
+        /**
+         * The cloud refused the upload: it is parked on this phone (never
+         * deleted) and retried later or from the library. Only with
+         * [pendingUpload].
+         */
+        val uploadRefused: Boolean = false,
     ) : ImportState
 
     data class Failed(val reason: ImportFailure, val detail: String? = null) : ImportState
@@ -117,13 +123,6 @@ enum class ImportFailure {
     DECODE_FAILED,
     ENCODER_UNAVAILABLE,
     UPLOAD_FAILED,
-
-    /**
-     * The cloud refused the upload in a way it will repeat forever (a 4xx other
-     * than the ones a later event clears — 402 is not one of these), so the
-     * uploader dropped it from the queue.
-     */
-    UPLOAD_REFUSED,
     UNKNOWN,
 }
 
@@ -408,15 +407,15 @@ class ImportSession(
         if (id == null) return fail(ImportFailure.UPLOAD_FAILED)
 
         val result = runCatching { uploader.drain() }.getOrNull()
-        result?.refused?.get(id)?.let { refusal ->
-            // Dropped, not queued: saying "saved" here would be the lie.
-            return fail(ImportFailure.UPLOAD_REFUSED, refusal.message)
-        }
+        // A refusal parks the recording on the phone; it is never dropped, so
+        // this is a saved-but-not-uploaded outcome, not a failure — and
+        // "import it again" would only make a duplicate.
+        val outcome = UploadOutcome.of(id, result)
         // A short transcript was just handed to the backfill queue by that
         // drain (or will be, by whichever drain finally uploads it). Start the
         // queue now instead of leaving it for the next launch.
         drainBackfills()
-        val pending = result == null || result.remaining > 0
+        val pending = outcome.pending
         // Imports name a recording after its file, which is the worst title of
         // all; the pass is what gives it an honest one. Only once the cloud has
         // the recording (the pass reads and writes its meta there), only in the
@@ -431,6 +430,7 @@ class ImportSession(
             // say it waits for the quota, not for a network that is fine.
             waitingForQuota = pending && result?.quotaExhausted == true,
             sharedToOrgId = destination?.orgId,
+            uploadRefused = outcome.refused,
         )
     }
 

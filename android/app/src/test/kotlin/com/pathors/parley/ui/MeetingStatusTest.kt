@@ -91,6 +91,13 @@ class MeetingStatusTest {
     }
 
     @Test
+    fun `a refused upload says it is not uploaded, never synced`() {
+        val refused = finished(pendingUpload = true).copy(uploadRefused = true)
+        assertEquals(FinishedOutcome.NotUploaded, finishedOutcome(refused))
+        assertEquals(R.string.meeting_upload_refused, finishedOutcomeRes(FinishedOutcome.NotUploaded))
+    }
+
+    @Test
     fun `a recording copied into an org says so`() {
         val shared = finished().copy(sharedToOrgName = "Pathors")
         assertEquals(FinishedOutcome.SharedTo("Pathors"), finishedOutcome(shared))

@@ -87,6 +87,13 @@ sealed interface MeetingState {
         val waitingForQuota: Boolean = false,
         val sharedToOrgName: String? = null,
         /**
+         * Narrows [pendingUpload] to "the cloud refused it": the recording is
+         * parked on the phone (never deleted) and the screen must say it is
+         * not uploaded, with a way to retry, rather than "synced" or "waiting
+         * for the network".
+         */
+        val uploadRefused: Boolean = false,
+        /**
          * How many times the microphone had to be recovered during the
          * recording — five or more and the screen offers to send diagnostics
          * (`feedback/ProblemSignals.isMicRecoveryWorthAsking`).
@@ -137,7 +144,11 @@ enum class TranscriptionIssue {
     /** Out of quota: the next handshake would be refused the same way. */
     QUOTA_EXCEEDED,
 
-    /** The reconnect budget is spent. */
+    /**
+     * The live transcript ended for a reason other than quota or sign-in.
+     * No longer raised by reconnecting (which never gives up now); kept for the
+     * screenshot fixtures and any future terminal relay verdict.
+     */
     STOPPED,
 
     /** Signed out mid-meeting: there is no token to redial with. */
@@ -500,9 +511,9 @@ class MeetingSession(
      * spending that pass's budget, not deferring to a server that would have
      * done the work anyway.
      *
-     * The budget is [ReconnectPolicy]'s, which counts *consecutive* failures:
-     * see there for why a meeting that reconnects successfully must get its
-     * retries back.
+     * The schedule is [ReconnectPolicy]'s: capped exponential backoff with
+     * jitter for the whole meeting, never a budget that runs out — see there
+     * for why, and for why a handshake alone does not reset the ladder.
      *
      * The gap itself is no longer lost. Until the bridge landed, the dead
      * client kept receiving (and dropping) every chunk until the backoff ran
@@ -523,15 +534,11 @@ class MeetingSession(
         bridge.hold()
         retireRelay()
 
+        // Never gives up: the ladder is capped (60 s, with jitter) instead of
+        // budgeted, so a relay that is down for ten minutes of a three-hour
+        // meeting costs ten minutes of live transcript, not the other 170.
         val backoff = reconnect.nextDelayMs()
-        if (backoff == null) {
-            Log.w(TAG, "relay reconnect budget spent; the live transcript stops here")
-            // Nothing is coming for the held audio; do not carry up to 45 s of
-            // it for the rest of the meeting.
-            bridge.discard()
-            _issue.value = TranscriptionIssue.STOPPED
-            return
-        }
+        Log.i(TAG, "relay dropped; redialling in ${backoff}ms (failure ${reconnect.consecutiveFailures})")
         _issue.value = TranscriptionIssue.RECONNECTING
         reconnectJob = scope.launch {
             delay(backoff)
@@ -557,7 +564,8 @@ class MeetingSession(
             eventsJob = scope.launch { next.events.collect(::onRelayEvent) }
             next.open()
 
-            // Only a handshake that actually completed refills the budget.
+            // Only a handshake that actually completed starts the stability
+            // clock (the ladder resets once the leg has stayed up a while).
             // `awaitOpen` resolves either way — a rejected upgrade arrives as an
             // event, not an exception — so `isTerminated` is what tells an open
             // socket from a refused one. The wait is bounded because a socket
@@ -896,16 +904,20 @@ class MeetingSession(
             }
 
             val result = if (id == null) null else runCatching { uploader.drain() }.getOrNull()
-            val pending = result == null || result.remaining > 0
+            // Whether *this* recording reached the cloud — not whether the
+            // queue happens to be empty. A refusal used to delete the recording
+            // and leave the queue empty, which read here as "synced".
+            val outcome = UploadOutcome.of(id, result)
             val sharedTo = id?.let { result?.shared?.get(it) }
             _state.value = terminalStateFor(
                 recordingId = id,
-                pendingUpload = pending,
+                pendingUpload = outcome.pending,
                 interruptedBy = interruptedBy,
                 detail = detail,
                 // A 402 keeps the recording queued (MeetingUploader.dispositionOf);
                 // the screen must say it waits for the quota, not the network.
                 waitingForQuota = result?.quotaExhausted == true,
+                uploadRefused = outcome.refused,
                 sharedToOrgName = sharedTo?.let { resolveOrgName(it) },
                 health = CaptureHealth(
                     micRecoveries = mic.recoveries,

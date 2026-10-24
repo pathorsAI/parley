@@ -58,7 +58,62 @@ data class PendingUpload(
      * instead of pushing a rebuilt one over it. See `MeetingUploader.pushMeta`.
      */
     val pushAttempted: Boolean = false,
+    /**
+     * Set once the cloud has refused this upload with a 4xx that waiting alone
+     * will not clear (see `MeetingUploader.dispositionOf`). A refused upload is
+     * **parked, never deleted**: the queue's Ogg is the only copy of the
+     * meeting, and a 400 is also what a body cut off mid-transfer comes back as.
+     * Null = an ordinary pending upload.
+     */
+    val parked: ParkedUpload? = null,
 )
+
+/**
+ * Why and since when a [PendingUpload] is parked, and how many times it has
+ * been refused — what [ParkedRetrySchedule] reads to decide when to try again.
+ */
+@Serializable
+data class ParkedUpload(
+    /** The HTTP status of the latest refusal. */
+    val httpStatus: Int,
+    /** When the cloud first refused it, epoch milliseconds. */
+    val firstRefusedAtMs: Long,
+    /** When the cloud last refused it, epoch milliseconds — the schedule's anchor. */
+    val lastRefusedAtMs: Long,
+    /** Refusals so far, including the first. */
+    val refusals: Int = 1,
+) {
+    /** The same parking, refused once more at [nowMs] with [status]. */
+    fun refusedAgain(status: Int, nowMs: Long): ParkedUpload =
+        copy(httpStatus = status, lastRefusedAtMs = nowMs, refusals = refusals + 1)
+
+    companion object {
+        fun first(status: Int, nowMs: Long): ParkedUpload =
+            ParkedUpload(httpStatus = status, firstRefusedAtMs = nowMs, lastRefusedAtMs = nowMs)
+    }
+}
+
+/**
+ * When a parked upload is tried again on its own: 1 h after the first refusal,
+ * 6 h after the second, 24 h after the third, and after that only when someone
+ * taps it. Long on purpose — a refusal that is real will be repeated, and the
+ * point of retrying at all is the refusal that was not (a truncated body, a
+ * server bug that has since been fixed).
+ */
+object ParkedRetrySchedule {
+    private const val HOUR_MS = 60L * 60L * 1_000L
+
+    /** Wait after the Nth refusal (index N-1). Past the end: manual only. */
+    val DELAYS_MS: List<Long> = listOf(1 * HOUR_MS, 6 * HOUR_MS, 24 * HOUR_MS)
+
+    /** When [parked] is next due for an automatic retry; null = manual only. */
+    fun nextRetryAtMs(parked: ParkedUpload): Long? =
+        DELAYS_MS.getOrNull(parked.refusals - 1)?.let { parked.lastRefusedAtMs + it }
+
+    /** Whether [parked] should be tried in a pass running at [nowMs]. */
+    fun isDue(parked: ParkedUpload, nowMs: Long): Boolean =
+        nextRetryAtMs(parked)?.let { nowMs >= it } ?: false
+}
 
 /**
  * The durable pending-upload queue: `filesDir/PendingUploads/{id}.ogg` plus
@@ -133,7 +188,11 @@ class PendingUploadQueue(private val directory: File) {
     fun count(): Int =
         directory.listFiles { file -> file.isFile && file.name.endsWith(".json") }?.size ?: 0
 
-    /** Drop a recording from the queue — called only after a fully successful upload. */
+    /**
+     * Drop a recording from the queue — called only after a fully successful
+     * upload, or for a manifest whose audio is already gone. Never for a
+     * refusal: that parks the recording instead (see [PendingUpload.parked]).
+     */
     fun remove(id: String) {
         audioFile(id).deleteQuietly()
         manifestFile(id).deleteQuietly()

@@ -56,6 +56,8 @@
     <string name="home_pending_header">Waiting to upload</string>
     <string name="home_pending_badge">%1$d</string>
     <string name="home_pending_retry">Upload now</string>
+    <string name="home_pending_not_uploaded">Not uploaded (HTTP %1$d) · Tap to retry</string>
+    <string name="home_pending_retry_one_a11y">Retry uploading this recording</string>
     <string name="home_error_network">Can\'t reach the cloud right now. Your recordings load automatically once the network is back.</string>
     <string name="home_error_server">The cloud returned an error.</string>
     <string name="home_error_signed_out">Your session expired. Sign in again.</string>
@@ -133,6 +135,7 @@
     <string name="meeting_shared_to">Synced, and shared to “%1$s”</string>
     <string name="meeting_queued_quota">You\'re out of quota. The recording is safe on this phone and will sync once the quota resets.</string>
     <string name="meeting_sync_failed">Sync failed for now. The recording is safe on this phone and will retry automatically.</string>
+    <string name="meeting_upload_refused">Not uploaded — Parley Cloud didn\'t accept it. The recording is kept on this phone and retries later; tap it under “Waiting to upload” to retry now.</string>
     <string name="meeting_idle_hint">Hit record and put the phone on the table to catch the whole room.</string>
     <string name="meeting_discard_a11y">Discard recording. Asks you to confirm, then throws the audio and transcript away.</string>
     <string name="meeting_mic_silenced">Another app has taken the microphone — Parley is recording silence until it gives it back.</string>
@@ -177,7 +180,6 @@
     <string name="import_failure_unsupported">This device can\'t decode that audio format.</string>
     <string name="import_failure_decode">The file couldn\'t be decoded all the way through.</string>
     <string name="import_failure_session_expired">Your session expired. Please sign in again.</string>
-    <string name="import_failure_upload_refused">Parley Cloud refused this recording, so it wasn\'t saved. Import the file again to retry.</string>
     <string name="import_action_sign_in_again">Sign in again</string>
     <string name="import_phase_saved">Saved</string>
     <string name="import_transcript_in_background">Transcription stopped partway through. The recording is saved, and the transcript will be completed in the background.</string>

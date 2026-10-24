@@ -504,6 +504,13 @@ class AppContainer(private val app: Application) {
     suspend fun runBackfillJob() {
         if (DemoMode.isActive) return
         if (auth.currentToken() == null) return
+        // Uploads first, and in the same system job: this is what drains a
+        // recording that was waiting for the network after the process has
+        // been frozen or killed — AutoSync only lives as long as the process.
+        // An upload that lands here may also queue a backfill, which is why
+        // it runs before the backfill drain and not after.
+        runCatching { uploader.drain() }
+            .onFailure { if (it is CancellationException) throw it }
         try {
             backfiller.drainUntilSettled()
         } catch (e: CancellationException) {

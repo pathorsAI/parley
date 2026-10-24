@@ -89,6 +89,9 @@ internal sealed interface FinishedOutcome {
     /** Still on the phone because the cloud said 402; it waits for the quota. */
     data object WaitingForQuota : FinishedOutcome
 
+    /** Still on the phone because the cloud refused it; parked, retried later or by hand. */
+    data object NotUploaded : FinishedOutcome
+
     /** Still on the phone for any other reason; the queue retries it. */
     data object Queued : FinishedOutcome
 }
@@ -98,6 +101,7 @@ internal fun finishedOutcome(finished: MeetingState.Finished): FinishedOutcome {
     return when {
         finished.dropped -> FinishedOutcome.TooShort
         finished.pendingUpload && finished.waitingForQuota -> FinishedOutcome.WaitingForQuota
+        finished.pendingUpload && finished.uploadRefused -> FinishedOutcome.NotUploaded
         finished.pendingUpload -> FinishedOutcome.Queued
         org != null -> FinishedOutcome.SharedTo(org)
         else -> FinishedOutcome.Synced
@@ -111,6 +115,7 @@ internal fun finishedOutcomeRes(outcome: FinishedOutcome): Int = when (outcome) 
     FinishedOutcome.Synced -> R.string.meeting_uploaded
     is FinishedOutcome.SharedTo -> R.string.meeting_shared_to
     FinishedOutcome.WaitingForQuota -> R.string.meeting_queued_quota
+    FinishedOutcome.NotUploaded -> R.string.meeting_upload_refused
     FinishedOutcome.Queued -> R.string.meeting_sync_failed
 }
 

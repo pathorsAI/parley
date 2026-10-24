@@ -31,6 +31,11 @@ import kotlinx.coroutines.launch
  * Android 12 has to run as a foreground service with one. What a stopped job
  * leaves behind is cheap to pick up: the batch job id is remembered, so the next
  * run polls it instead of uploading again.
+ *
+ * The same job drains the *upload* queue first (`AppContainer.runBackfillJob`):
+ * a meeting saved with no network has to reach the cloud even if the process
+ * is gone by the time the network returns, and one job with a network
+ * constraint already covers that without a second mechanism.
  */
 object BackfillJob {
     private const val TAG = "BackfillJob"

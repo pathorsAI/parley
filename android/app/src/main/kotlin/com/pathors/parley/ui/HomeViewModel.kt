@@ -705,6 +705,20 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     /**
+     * Tap on a recording the cloud refused: one pass that tries it first,
+     * parked or not, then a reload so the row says what happened.
+     */
+    fun retryUpload(id: String) {
+        if (_state.value.uploading || DemoMode.isActive) return
+        viewModelScope.launch {
+            _state.value = _state.value.copy(uploading = true)
+            runCatching { container.uploader.retryNow(id) }
+            _state.value = _state.value.copy(uploading = false)
+            refresh()
+        }
+    }
+
+    /**
      * Delete one recording from the cloud (`DELETE /recordings/{id}`).
      *
      * The call has existed since the sync work landed and had no caller at all,

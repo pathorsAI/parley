@@ -1,5 +1,7 @@
 package com.pathors.parley.meeting
 
+import com.pathors.parley.upload.DrainResult
+
 /**
  * How a live capture came to an end — and from that, the one decision that
  * cannot be taken back: whether the Ogg file written so far is kept or deleted.
@@ -96,6 +98,8 @@ data class CaptureHealth(
  *   anything.
  * @param sharedToOrgName the organization the recording was copied into, when
  *   it was. Only meaningful once it is in the cloud.
+ * @param uploadRefused the cloud refused this recording and it is parked on
+ *   the phone. Only meaningful while [pendingUpload].
  * @param health how the microphone fared, copied onto a saved recording for the
  *   problem-report prompt. Has no say in which state is returned.
  */
@@ -107,6 +111,7 @@ fun terminalStateFor(
     waitingForQuota: Boolean = false,
     sharedToOrgName: String? = null,
     health: CaptureHealth = CaptureHealth.NONE,
+    uploadRefused: Boolean = false,
 ): MeetingState = when {
     recordingId != null -> MeetingState.Finished(
         recordingId = recordingId,
@@ -115,6 +120,7 @@ fun terminalStateFor(
         interruptedBy = interruptedBy,
         waitingForQuota = pendingUpload && waitingForQuota,
         sharedToOrgName = sharedToOrgName.takeIf { !pendingUpload },
+        uploadRefused = pendingUpload && uploadRefused,
         micRecoveries = health.micRecoveries,
         audioRoute = health.audioRoute,
     )
@@ -123,4 +129,27 @@ fun terminalStateFor(
 
     // Under two seconds: a tap of the record button, not a meeting.
     else -> MeetingState.Finished(null, pendingUpload = false, dropped = true)
+}
+
+/**
+ * What one drain did for one just-queued recording, as the finished screen
+ * needs it.
+ *
+ * Read off [DrainResult.uploadedIds] rather than [DrainResult.remaining]: an
+ * empty queue does not mean this recording made it (it used to mean the
+ * recording had been *deleted* after a refusal), and a non-empty one does not
+ * mean it did not (an older recording may be parked).
+ */
+data class UploadOutcome(val pending: Boolean, val refused: Boolean) {
+    companion object {
+        /** [result] null = the drain itself failed; treat as still waiting. */
+        fun of(id: String?, result: DrainResult?): UploadOutcome {
+            if (id == null) return UploadOutcome(pending = false, refused = false)
+            val uploaded = result != null && id in result.uploadedIds
+            return UploadOutcome(
+                pending = !uploaded,
+                refused = !uploaded && result?.refused?.containsKey(id) == true,
+            )
+        }
+    }
 }
