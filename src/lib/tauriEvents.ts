@@ -123,6 +123,11 @@ export async function listenForTranscriptionLink(): Promise<UnlistenFn> {
       store.reportTranscriptionLink(p.source, "reconnecting");
       return;
     }
+    if (p.state === "no_audio") {
+      log.warn("meeting: no audio is being captured, transcription waits for it", { source: p.source });
+      store.reportTranscriptionNoAudio(p.source);
+      return;
+    }
     if (p.state !== "live") return;
     // Log only the transition back, not every leg's first handshake.
     const wasReconnecting = store.transcriptionReconnectingSources.includes(p.source);

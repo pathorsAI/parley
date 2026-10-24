@@ -121,3 +121,46 @@ describe("transcription link (#570: a dropped connection pauses, never ends, the
     expect(s.transcriptionReconnectingSources).toEqual([]);
   });
 });
+
+describe("no audio (a meeting capturing nothing opens no sessions)", () => {
+  const noAudio = (source: string) => useStore.getState().reportTranscriptionNoAudio(source);
+
+  it("raises the source without touching the link, so the silence guard still runs", () => {
+    noAudio("mix");
+    noAudio("mix");
+    const s = useStore.getState();
+    expect(s.transcriptionNoAudioSources).toEqual(["mix"]);
+    expect(s.transcriptionLink).toBe("live");
+    // Nothing was lost to a drop: the recording holds whatever was captured.
+    expect(s.transcriptionDropped).toBe(false);
+  });
+
+  it("the source's next live (audio came back, a leg dialled) clears it", () => {
+    noAudio("me");
+    noAudio("them");
+    report("me", "live");
+    expect(useStore.getState().transcriptionNoAudioSources).toEqual(["them"]);
+    expect(useStore.getState().transcriptionLink).toBe("live");
+  });
+
+  it("a reconnecting from the source clears it too (audio is back, the dial is backing off)", () => {
+    noAudio("mix");
+    report("mix", "reconnecting");
+    const s = useStore.getState();
+    expect(s.transcriptionNoAudioSources).toEqual([]);
+    expect(s.transcriptionLink).toBe("reconnecting");
+  });
+
+  it("is ignored outside a meeting and cleared by stop and start", () => {
+    noAudio("mix");
+    useStore.getState().stopMeeting();
+    expect(useStore.getState().transcriptionNoAudioSources).toEqual([]);
+    noAudio("mix");
+    expect(useStore.getState().transcriptionNoAudioSources).toEqual([]);
+
+    useStore.getState().startMeeting();
+    noAudio("mix");
+    useStore.getState().startMeeting();
+    expect(useStore.getState().transcriptionNoAudioSources).toEqual([]);
+  });
+});

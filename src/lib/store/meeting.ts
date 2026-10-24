@@ -49,6 +49,17 @@ export interface MeetingSlice {
    *  redialling. The link is reconnecting while ANY is; it reads live again
    *  only once each of them has reported live. */
   transcriptionReconnectingSources: string[];
+  /** Which sources the backend reported as capturing no audio: it closed
+   *  their transcription session rather than keep redialling one that would
+   *  only idle out, and dials again the moment audio arrives (their next
+   *  "live" or "reconnecting" clears them). Drives the live screen's "check
+   *  your microphone" banner while recording. Unlike "reconnecting" it leaves
+   *  `transcriptionLink` live, so the silence guard still ends a meeting
+   *  nothing is being captured in. */
+  transcriptionNoAudioSources: string[];
+  /** Record a `meeting://transcription` `no_audio` report from `source`.
+   *  Ignored outside an active meeting. */
+  reportTranscriptionNoAudio: (source: string) => void;
   /** Fold one `meeting://transcription` report into the three fields above.
    *  Ignored outside an active meeting (a stray event racing stop_meeting's
    *  teardown must not raise the banner over a finished call), and a "live"
@@ -94,10 +105,11 @@ export interface MeetingSlice {
  */
 const CLEARED_TRANSCRIPTION_LINK: Pick<
   ParleyState,
-  "transcriptionLink" | "transcriptionReconnectingSources"
+  "transcriptionLink" | "transcriptionReconnectingSources" | "transcriptionNoAudioSources"
 > = {
   transcriptionLink: "live",
   transcriptionReconnectingSources: [],
+  transcriptionNoAudioSources: [],
 };
 
 /**
@@ -132,17 +144,24 @@ function foldTranscriptionLink(
 ): Partial<ParleyState> {
   if (!isMeetingActive(state.meetingStatus)) return {};
   const pending = state.transcriptionReconnectingSources;
+  // Any report from a source that was waiting on audio means audio is back:
+  // the backend only dials (and so only reports) once it has some to send.
+  const noAudio = state.transcriptionNoAudioSources.includes(source)
+    ? { transcriptionNoAudioSources: state.transcriptionNoAudioSources.filter((s) => s !== source) }
+    : {};
   if (linkState === "reconnecting") {
     return {
+      ...noAudio,
       transcriptionLink: "reconnecting",
       transcriptionDropped: true,
       // Re-reported on every redial attempt while offline: keep one entry.
       transcriptionReconnectingSources: pending.includes(source) ? pending : [...pending, source],
     };
   }
-  if (!pending.includes(source)) return {};
+  if (!pending.includes(source)) return noAudio;
   const rest = pending.filter((s) => s !== source);
   return {
+    ...noAudio,
     transcriptionReconnectingSources: rest,
     transcriptionLink: rest.length === 0 ? "live" : "reconnecting",
   };
@@ -167,6 +186,12 @@ export const createMeetingSlice: SliceCreator<MeetingSlice> = (set) => ({
   setSystemAudioWarning: (systemAudioWarning) => set({ systemAudioWarning }),
   reportTranscriptionLink: (source, linkState) =>
     set((state) => foldTranscriptionLink(state, source, linkState)),
+  reportTranscriptionNoAudio: (source) =>
+    set((state) => {
+      if (!isMeetingActive(state.meetingStatus)) return {};
+      const sources = state.transcriptionNoAudioSources;
+      return sources.includes(source) ? {} : { transcriptionNoAudioSources: [...sources, source] };
+    }),
   setFinalizingMeeting: (v) => set({ isFinalizingMeeting: v }),
 
   startMeeting: () => {

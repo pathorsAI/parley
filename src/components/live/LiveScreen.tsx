@@ -86,6 +86,32 @@ function TranscriptionLinkBanner() {
 }
 
 /**
+ * Nothing is being captured: the backend closed the transcription session
+ * rather than redial one that would only idle out, and dials again by itself
+ * the moment audio arrives (store.transcriptionNoAudioSources). Usually a
+ * microphone that was unplugged or taken by another app — so it says where to
+ * look. Hidden while paused (that silence is the user's own) and while the
+ * reconnecting banner is up (one banner at a time).
+ */
+function NoAudioBanner() {
+  const { t } = useI18n();
+  const show = useStore(
+    (s) =>
+      s.meetingStatus === "recording" &&
+      s.transcriptionLink !== "reconnecting" &&
+      s.transcriptionNoAudioSources.length > 0,
+  );
+
+  if (!show) return null;
+  return (
+    <output className="flex shrink-0 items-center gap-2 border-b border-warning-border bg-warning px-3 py-1.5 text-xs text-warning-foreground">
+      <MicOff className="size-3.5 shrink-0" aria-hidden />
+      <span className="min-w-0 flex-1">{t("meeting.transcription.noAudioBanner")}</span>
+    </output>
+  );
+}
+
+/**
  * The silence guard is asking whether the meeting is over (nothing has been
  * transcribed for a long time — see meeting/silenceGuard.ts). Counts down to
  * the automatic End; either button answers it. Speech coming back withdraws it
@@ -155,6 +181,7 @@ export function LiveScreen() {
     <div className="flex min-h-0 flex-1 flex-col">
     <SystemAudioBanner />
     <TranscriptionLinkBanner />
+    <NoAudioBanner />
     <SilencePromptBanner />
     <ResizablePanelGroup
       key={layout}
