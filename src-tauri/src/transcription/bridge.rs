@@ -48,6 +48,7 @@
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::Notify;
@@ -96,6 +97,11 @@ struct Inner {
     /// again into the next leg).
     probe_samples: u64,
     hold_limit_samples: u64,
+    /// When the last chunk reached the bridge (`None` = never). The meter
+    /// drops chunks while the meeting is paused, so this goes stale both when
+    /// the user paused and when the capture stopped delivering — either way
+    /// there is nothing for a leg to carry (see `reconnect::LEG_IDLE`).
+    last_audio_at: Option<Instant>,
 }
 
 impl Inner {
@@ -155,6 +161,9 @@ pub struct SttBridge {
     /// Set once by [`SttBridge::close`]: the capture ended.
     closed: AtomicBool,
     closed_notify: Notify,
+    /// Woken whenever a chunk is held — what a redial parked on
+    /// [`audio_held`](SttBridge::audio_held) waits for.
+    held_notify: Notify,
 }
 
 impl Default for SttBridge {
@@ -177,9 +186,11 @@ impl SttBridge {
                 delivered_samples: 0,
                 probe_samples: 0,
                 hold_limit_samples,
+                last_audio_at: None,
             }),
             closed: AtomicBool::new(false),
             closed_notify: Notify::new(),
+            held_notify: Notify::new(),
         }
     }
 
@@ -191,36 +202,43 @@ impl SttBridge {
         if self.is_closed() {
             return;
         }
-        let mut guard = self.inner.lock().unwrap();
-        let inner = &mut *guard;
-        let len = chunk.len() as u64;
-        inner.total_samples += len;
-        let bounced = match &inner.route {
-            Route::Leg(tx) => match tx.send(chunk) {
-                Ok(()) => {
-                    inner.delivered_samples += len;
-                    return;
-                }
-                Err(returned) => returned.0,
-            },
-            Route::Probing(tx) => match tx.send(chunk.clone()) {
-                Ok(()) => {
-                    // Forwarded, and kept until the leg proves it is up.
-                    inner.probe_samples += len;
+        {
+            let mut guard = self.inner.lock().unwrap();
+            let inner = &mut *guard;
+            let len = chunk.len() as u64;
+            inner.total_samples += len;
+            inner.last_audio_at = Some(Instant::now());
+            let bounced = match &inner.route {
+                Route::Leg(tx) => match tx.send(chunk) {
+                    Ok(()) => {
+                        inner.delivered_samples += len;
+                        return;
+                    }
+                    Err(returned) => Some(returned.0),
+                },
+                Route::Probing(tx) => match tx.send(chunk.clone()) {
+                    Ok(()) => {
+                        // Forwarded, and kept until the leg proves it is up.
+                        inner.probe_samples += len;
+                        inner.push_held(chunk);
+                        return;
+                    }
+                    Err(_) => Some(chunk),
+                },
+                Route::Hold => {
                     inner.push_held(chunk);
-                    return;
+                    None
                 }
-                Err(_) => chunk,
-            },
-            Route::Hold => {
-                inner.push_held(chunk);
-                return;
+                Route::Discard => return,
+            };
+            if let Some(bounced) = bounced {
+                // A leg's send bounced: it died, so detach it.
+                inner.detach();
+                inner.push_held(bounced);
             }
-            Route::Discard => return,
-        };
-        // Reached only when a leg's send bounced: it died, so detach it.
-        inner.detach();
-        inner.push_held(bounced);
+        }
+        // Outside the lock: something is held now, so a parked redial can go.
+        self.held_notify.notify_waiters();
     }
 
     /// Attach the next leg: create its channel, queue everything held into it
@@ -320,6 +338,49 @@ impl SttBridge {
                 return;
             }
             notified.await;
+        }
+    }
+
+    /// How long since the last chunk reached the bridge; `None` if none ever
+    /// has. See `reconnect::leg_is_idle`.
+    pub fn since_last_audio(&self) -> Option<Duration> {
+        self.inner
+            .lock()
+            .unwrap()
+            .last_audio_at
+            .map(|t| t.elapsed())
+    }
+
+    /// Whether audio is waiting for the next leg.
+    pub fn has_held(&self) -> bool {
+        self.inner.lock().unwrap().held_samples > 0
+    }
+
+    /// Resolves once audio is held for the next leg (`true`, immediately if
+    /// some already is) or the bridge is closed (`false`). A redial parks here
+    /// so a meeting that is not capturing anything — paused, or a microphone
+    /// that stopped delivering — opens no transcription sessions at all,
+    /// instead of one that would only idle out.
+    pub async fn audio_held(&self) -> bool {
+        loop {
+            let held = self.held_notify.notified();
+            let closed = self.closed_notify.notified();
+            tokio::pin!(held);
+            tokio::pin!(closed);
+            // Register before checking, so a chunk or a close landing between
+            // the check and the await still wakes us.
+            held.as_mut().enable();
+            closed.as_mut().enable();
+            if self.is_closed() {
+                return false;
+            }
+            if self.has_held() {
+                return true;
+            }
+            tokio::select! {
+                _ = held => {}
+                _ = closed => {}
+            }
         }
     }
 
@@ -591,5 +652,50 @@ mod tests {
             .await
             .expect("closed() must wake on close()")
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn audio_held_waits_for_the_next_chunk_and_not_for_live_audio() {
+        let bridge = std::sync::Arc::new(SttBridge::default());
+        assert_eq!(bridge.since_last_audio(), None);
+        // A live leg takes the chunk: nothing is HELD, so a redial would have
+        // nothing to carry yet.
+        let leg = live_leg(&bridge);
+        bridge.send(second(1));
+        assert!(bridge.since_last_audio().is_some());
+        assert!(!bridge.has_held());
+        // The leg goes away; the parked redial waits for captured audio.
+        bridge.hold();
+        drop(leg);
+        let waiter = {
+            let bridge = bridge.clone();
+            tokio::spawn(async move { bridge.audio_held().await })
+        };
+        tokio::task::yield_now().await;
+        assert!(!waiter.is_finished(), "nothing captured yet: keep waiting");
+        bridge.send(second(2));
+        let held = tokio::time::timeout(std::time::Duration::from_secs(1), waiter)
+            .await
+            .expect("a held chunk must wake the parked redial")
+            .unwrap();
+        assert!(held);
+        // Already held: resolves at once.
+        assert!(bridge.audio_held().await);
+    }
+
+    #[tokio::test]
+    async fn audio_held_gives_up_when_the_capture_ends() {
+        let bridge = std::sync::Arc::new(SttBridge::default());
+        let waiter = {
+            let bridge = bridge.clone();
+            tokio::spawn(async move { bridge.audio_held().await })
+        };
+        tokio::task::yield_now().await;
+        bridge.close();
+        let held = tokio::time::timeout(std::time::Duration::from_secs(1), waiter)
+            .await
+            .expect("close must wake the parked redial")
+            .unwrap();
+        assert!(!held);
     }
 }

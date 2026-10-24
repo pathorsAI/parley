@@ -120,7 +120,11 @@ export type TranscriptionLinkPayload =
   | { source: string; state: "reconnecting"; attempt: number }
   /** A leg's handshake completed — including the meeting's very first one
    *  (leg 0), which the store ignores because nothing was reconnecting. */
-  | { source: string; state: "live"; leg: number };
+  | { source: string; state: "live"; leg: number }
+  /** No audio is being captured (and the meeting is not paused): the backend
+   *  closed this source's session instead of redialling one that would idle
+   *  out, and dials again — reporting "live" — once audio arrives. */
+  | { source: string; state: "no_audio" };
 
 export interface DiarizeProgressPayload {
   stage: string;

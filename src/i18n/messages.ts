@@ -1022,6 +1022,8 @@ export const zhTW = {
     "目前只錄到你的麥克風——對方的聲音不會出現在逐字稿（擷取不到任何輸出裝置，請確認喇叭或耳機已連接）。",
   "meeting.transcription.reconnectingBanner":
     "轉錄連線中斷，正在重新連線…錄音仍在進行。短暫中斷時說的話會補進逐字稿；斷線較久的部分仍完整保留在錄音裡，只是不會出現在即時逐字稿。",
+  "meeting.transcription.noAudioBanner":
+    "轉錄已暫停：Parley 沒有收到任何音訊。請確認麥克風仍連接且未被其他 App 占用；一有聲音就會自動恢復轉錄。",
   "common.dismiss": "關閉",
   "meeting.contextPlaceholder": "會議描述 / 與會者角色（例：A 輪募資談判，對方是投資人，我是創辦人）…",
   "meeting.contextButton": "補充背景",
@@ -2418,6 +2420,8 @@ export const en = {
     "Only your mic is being recorded — the other party won't appear in the transcript (no output device could be captured; check that speakers or headphones are connected).",
   "meeting.transcription.reconnectingBanner":
     "Transcription dropped — reconnecting… The recording is still running. What's said during a short drop catches up in the transcript; a longer gap is kept in the recording but won't appear in the live transcript.",
+  "meeting.transcription.noAudioBanner":
+    "Transcription paused — Parley isn't receiving any audio. Check that your microphone is still connected and not taken by another app; transcription resumes by itself as soon as sound comes in.",
   "common.dismiss": "Dismiss",
   "meeting.contextPlaceholder": "Meeting description / attendee roles (e.g. Series A negotiation, they are investors, I am the founder)…",
   "meeting.contextButton": "Context",
