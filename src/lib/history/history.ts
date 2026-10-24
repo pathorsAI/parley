@@ -32,6 +32,7 @@ import * as ipc from "../ipc/commands";
 import { listenEvent, type UnlistenFn } from "../ipc/events";
 import {
   emitHistoryUpdated,
+  listHistory,
   readEntry,
   renameEntryFiles,
   rewriteEntry,
@@ -42,6 +43,7 @@ import {
 
 import { pushToCloud } from "./cloudPush";
 import { loadHistoryEntry } from "./open";
+import { PendingSaves } from "../meeting/pendingSaves";
 
 // Storage access, opening, external writes and the folder repair live in their
 // own modules; these keep their old import path.
@@ -133,6 +135,118 @@ async function measureRecordingRate(path: string): Promise<number | null> {
 
 /** The analysis slice captured by {@link snapshotAnalysis} (passed to a deferred save). */
 export type AnalysisSnapshot = ReturnType<typeof snapshotAnalysis>;
+
+/** An analysis slice with nothing in it: a recording saved without its
+ *  transcript (an orphaned or crash-recovered meeting). */
+function emptyAnalysis(): AnalysisSnapshot {
+  return {
+    segments: [],
+    speakerNames: {},
+    findings: [],
+    actionItems: [],
+    analyzed: false,
+    meetingContext: "",
+    meetingBatna: "",
+    meetingTarget: "",
+    meetingFloor: "",
+    deliveryAssessment: null,
+    speechRateHz: null,
+    brief: null,
+    briefFailed: false,
+    filingSuggestion: null,
+    filingSuggested: false,
+    meetingKind: null,
+  };
+}
+
+/**
+ * Everything a finished live meeting's save needs, captured the moment it
+ * stops. The save runs only once Rust has encoded the recording, and by then
+ * the user may have started the next meeting: reading the live store at that
+ * point gave the old recording the new meeting's start time and transcript,
+ * or discarded it as empty.
+ */
+export interface LiveMeetingSnapshot {
+  /** The meeting's id (store.liveMeetingId) — also its history entry's id. */
+  id: string;
+  createdAt: number;
+  analysis: AnalysisSnapshot;
+  transcriptionDropped: boolean;
+  micSessionRateHz: number | null;
+  save: MeetingSaveTarget;
+  /** The backend recorded it without this window knowing (the page reloaded
+   *  under a running capture): its transcript is gone, keep the audio. */
+  orphan: boolean;
+}
+
+/** Stopped meetings whose recording is still being encoded and saved. */
+export const liveSaves = new PendingSaves<LiveMeetingSnapshot>();
+
+/** Snapshot the live meeting the store shows now (null when it has no id). */
+export function snapshotLiveMeeting(): LiveMeetingSnapshot | null {
+  const s = useStore.getState();
+  if (!s.liveMeetingId) return null;
+  return {
+    id: s.liveMeetingId,
+    createdAt: s.meetingStartedAt ?? Date.now(),
+    analysis: snapshotAnalysis(),
+    transcriptionDropped: s.transcriptionDropped,
+    micSessionRateHz: s.micSessionRateHz,
+    save: resolveMeetingSave(),
+    orphan: false,
+  };
+}
+
+/** A meeting this window never saw: only the backend's id and start time. */
+export function orphanSnapshot(id: string, startedAtMs: number | undefined): LiveMeetingSnapshot {
+  const def = useStore.getState().settings.defaultSaveLocation;
+  return {
+    id,
+    createdAt: startedAtMs || Date.now(),
+    analysis: emptyAnalysis(),
+    transcriptionDropped: true,
+    micSessionRateHz: null,
+    save: {
+      folderId: def.scope === "personal" ? (def.folderId ?? null) : null,
+      autoShare: null,
+      fallback: null,
+      origin: "default",
+    },
+    orphan: true,
+  };
+}
+
+/**
+ * The snapshot to save meeting `id`'s recording with. Final words can still
+ * land after Stop (the provider's closing flush), so while the store still
+ * shows THIS meeting — nothing has replaced it — its transcript is re-read;
+ * once another meeting has started, the Stop-time snapshot stands.
+ */
+export function liveSnapshotFor(id: string | undefined, startedAtMs: number | undefined): LiveMeetingSnapshot {
+  const s = useStore.getState();
+  const showsIt = !!id && s.liveMeetingId === id && !isMeetingActive(s.meetingStatus);
+  const captured = id ? liveSaves.snapshotOf(id) : null;
+  if (captured) {
+    if (!showsIt) return captured;
+    return {
+      ...captured,
+      analysis: snapshotAnalysis(),
+      transcriptionDropped: s.transcriptionDropped,
+      micSessionRateHz: s.micSessionRateHz,
+    };
+  }
+  if (showsIt) return snapshotLiveMeeting() ?? orphanSnapshot(id, startedAtMs);
+  return orphanSnapshot(id ?? crypto.randomUUID(), startedAtMs);
+}
+
+/** The meeting's entry is on disk (or it was deliberately not kept): its
+ *  crash journal can go. Best-effort — a leftover journal is recovered into
+ *  the same entry id next launch, and skipped then as already saved. */
+function finishJournal(id: string): void {
+  ipc.finishMeetingJournal({ meetingId: id }).catch((error) =>
+    log.warn("history: dropping the meeting journal failed", { id, error: String(error) }),
+  );
+}
 
 /**
  * Keep a finished live meeting's recording, or discard it? Discard only the
@@ -277,58 +391,69 @@ async function applyDefaultOrgShare(id: string, res: MeetingSaveTarget): Promise
 let uploadSaveInFlight: Promise<unknown> | null = null;
 
 /**
- * Auto-save a finished LIVE meeting once Rust reports the encoded recording.
+ * Auto-save a finished LIVE meeting once Rust reports the encoded recording,
+ * from the snapshot taken when it stopped (see {@link LiveMeetingSnapshot}).
  * No-op when the meeting produced no transcript (e.g. started + stopped at once)
  * — unless its transcription dropped, see {@link shouldKeepLiveRecording}.
  */
-export async function saveLiveToHistory(audioTempPath: string, durationMs: number): Promise<void> {
+export async function saveLiveToHistory(
+  audioTempPath: string,
+  durationMs: number,
+  snap: LiveMeetingSnapshot,
+): Promise<void> {
   if (!isTauri()) return;
-  if (!shouldKeepLiveRecording(useStore.getState())) {
+  const { analysis } = snap;
+  if (!shouldKeepLiveRecording({ segments: analysis.segments, transcriptionDropped: snap.transcriptionDropped })) {
     // Nothing was transcribed and the link never dropped — almost certainly an
     // accidental Start/Stop. Don't save a history entry, and discard the encoded
     // temp recording so it doesn't orphan in the temp dir (an entry would
     // normally consume it on save).
-    log.info("history: live save skipped (no transcript)");
+    log.info("history: live save skipped (no transcript)", { id: snap.id });
     await ipc.discardRecording({ path: audioTempPath }).catch((error) =>
       log.warn("history: discard empty live recording failed", {
         path: audioTempPath,
         error: String(error),
       }),
     );
-    leaveStoppedCockpit("meeting.notSaved.noTranscript");
+    finishJournal(snap.id);
+    if (useStore.getState().liveMeetingId === snap.id) leaveStoppedCockpit("meeting.notSaved.noTranscript");
     return;
   }
-  const s = useStore.getState();
-  if (s.transcriptionDropped) {
+  if (snap.transcriptionDropped) {
     // Saved past the empty-transcript gate, or saved with a transcript that
     // has a hole in it — either way worth one line when a user asks where part
     // of their meeting went.
     log.info("history: live save after a transcription drop", {
-      spoken: hasSpokenSegment(s.segments),
-      segments: s.segments.length,
+      id: snap.id,
+      orphan: snap.orphan,
+      spoken: hasSpokenSegment(analysis.segments),
+      segments: analysis.segments.length,
     });
   }
-  const createdAt = s.meetingStartedAt ?? Date.now();
+  const s = useStore.getState();
+  const createdAt = snap.createdAt;
   const dateLabel = new Date(createdAt).toLocaleString(localeOf());
   // Mic-only measured pace (issue #22): prefer the whole-session articulation rate
   // the live prosody tap accumulated from the user's OWN mic. Only fall back to
   // measuring the saved file when the mic rate is missing AND the file can't
   // contain the other side — in diarized meetings the recording is the mic+system
   // MIX, and measuring it would fold the counterpart's pace into the number.
-  const micOnlyRecording = !s.segments.some((seg) => seg.source === "mix");
+  const micOnlyRecording = !analysis.segments.some((seg) => seg.source === "mix");
   const speechRateHz =
-    s.micSessionRateHz ?? (micOnlyRecording ? await measureRecordingRate(audioTempPath) : null);
-  const save = resolveMeetingSave();
-  log.info("history: live save destination", { origin: save.origin, folderId: save.folderId });
+    snap.micSessionRateHz ?? (micOnlyRecording && !snap.orphan ? await measureRecordingRate(audioTempPath) : null);
+  const save = snap.save;
+  log.info("history: live save destination", { id: snap.id, origin: save.origin, folderId: save.folderId });
   const entry: HistoryEntry = {
-    id: crypto.randomUUID(),
+    // The meeting's own id: a second save of the same meeting (a recovered
+    // journal, a repeated event) overwrites its entry instead of duplicating it.
+    id: snap.id,
     title: `${translate(s.settings.language, "history.liveTitle")} · ${dateLabel}`,
     source: "live",
     createdAt,
     durationMs,
     audio: "audio.ogg",
     folderId: save.folderId,
-    ...snapshotAnalysis(),
+    ...analysis,
     speechRateHz,
   };
   try {
@@ -336,10 +461,12 @@ export async function saveLiveToHistory(audioTempPath: string, durationMs: numbe
   } catch (e) {
     // Nothing landed, so there is nothing to open or correct — just release the
     // titlebar spinner (the caller also clears it; doing it here keeps this
-    // function honest on its own) and let the caller log the failure.
+    // function honest on its own) and let the caller log the failure. The
+    // meeting's journal stays on disk, so the next launch recovers it.
     clearFinalizing();
     throw e;
   }
+  finishJournal(snap.id);
 
   // A per-meeting MOVE to an org drops the personal original once the copy is
   // in, so there is no personal report to open — the copy must carry the
@@ -368,7 +495,8 @@ export async function saveLiveToHistory(audioTempPath: string, durationMs: numbe
   if (correcting) useStore.getState().setPostSaveDiarizingId(entry.id);
   try {
     const now = useStore.getState();
-    if (!isMeetingActive(now.meetingStatus) && now.appMode === "live") {
+    const showsThisMeeting = now.liveMeetingId === entry.id || snap.orphan;
+    if (!isMeetingActive(now.meetingStatus) && now.appMode === "live" && showsThisMeeting) {
       now.setStudyTab("report");
       await loadHistoryEntry(entry.id).catch((e) =>
         log.warn("history: auto-open after stop failed", { id: entry.id, error: String(e) }),
@@ -473,11 +601,11 @@ async function applyPostSaveDiarization(entry: HistoryEntry): Promise<void> {
   // "mix-1", …), so an id match alone could hit a different meeting's lines.
   // Only touch the store when it provably still shows THIS meeting: this very
   // entry (auto-opened, or re-opened from history), or the just-ended live
-  // session if the auto-open was skipped (same start timestamp).
+  // session if the auto-open was skipped (the entry carries its meeting's id).
   const st = useStore.getState();
   const showsThisMeeting =
     st.loadedHistoryId === entry.id ||
-    (st.appMode === "live" && st.loadedHistoryId === null && st.meetingStartedAt === entry.createdAt);
+    (st.appMode === "live" && st.loadedHistoryId === null && st.liveMeetingId === entry.id);
   if (showsThisMeeting) {
     const segments = applyCorrectedSpeakers(st.segments, result.segments);
     // `speakerNames` deliberately untouched — see applyCorrectedSpeakers.
@@ -861,25 +989,109 @@ export function leaveStoppedCockpit(reasonKey: "meeting.notSaved.tooShort" | "me
  *  was discarded clears it too, so the spinner can't hang forever. */
 export async function listenForRecordingSaved(): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
-  const unlistenSaved = await listenEvent<{ path: string; durationMs: number }>(RECORDING_SAVED_EVENT, (e) => {
-    saveLiveToHistory(e.payload.path, e.payload.durationMs)
+  // Snapshot every meeting the moment it stops — before the encode, before
+  // anything else can start — so its save never reads another meeting's state.
+  const unsubscribeStops = useStore.subscribe((next, prev) => {
+    if (!isMeetingActive(prev.meetingStatus) || !prev.liveMeetingId) return;
+    if (next.meetingStatus === "stopped") {
+      const snap = snapshotLiveMeeting();
+      if (snap) liveSaves.capture(snap.id, snap);
+    } else if (next.meetingStatus === "idle") {
+      // Cancelled: nothing will be saved (Rust drops the journal too).
+      liveSaves.forget(prev.liveMeetingId);
+    }
+  });
+  const unlistenSaved = await listenEvent<RecordingSavedPayload>(RECORDING_SAVED_EVENT, (e) => {
+    const { path, durationMs, meetingId, startedAtMs } = e.payload;
+    const snap = liveSnapshotFor(meetingId, startedAtMs);
+    saveLiveToHistory(path, durationMs, snap)
       .catch((err) => {
-        log.error("history: live save failed", { error: String(err) });
+        log.error("history: live save failed", { id: snap.id, error: String(err) });
         // Stay on the cockpit (its transcript is the only copy left on screen)
         // but say so — a failed save used to look exactly like a slow one.
         const lang = useStore.getState().settings.language;
         notify.error(translate(lang, "meeting.notSaved.failed", { error: String(err) }));
       })
-      .finally(clearFinalizing);
+      .finally(() => {
+        clearFinalizing();
+        liveSaves.settle(snap.id);
+      });
   });
-  const unlistenDiscarded = await listenEvent(RECORDING_DISCARDED_EVENT, () => {
+  const unlistenDiscarded = await listenEvent<RecordingDiscardedPayload | null>(RECORDING_DISCARDED_EVENT, (e) => {
+    const meetingId = e.payload?.meetingId;
+    if (meetingId) liveSaves.settle(meetingId);
     clearFinalizing();
-    leaveStoppedCockpit("meeting.notSaved.tooShort");
+    // Only say so while the cockpit still shows that meeting.
+    if (!meetingId || useStore.getState().liveMeetingId === meetingId) {
+      leaveStoppedCockpit("meeting.notSaved.tooShort");
+    }
   });
   return () => {
+    unsubscribeStops();
     unlistenSaved();
     unlistenDiscarded();
   };
+}
+
+/** `meeting://recording-saved`: where the encoded recording landed, and which
+ *  meeting it is (absent only from a backend that predates the field). */
+interface RecordingSavedPayload {
+  path: string;
+  durationMs: number;
+  meetingId?: string;
+  startedAtMs?: number;
+}
+
+/** `meeting://recording-discarded`: which meeting produced nothing to keep. */
+interface RecordingDiscardedPayload {
+  meetingId?: string;
+  startedAtMs?: number;
+}
+
+/**
+ * Save the meetings that were still recording when Parley last died — a
+ * crash, a quit, a force-quit — from the crash journals Rust kept on disk
+ * (see recording_journal.rs). Their transcripts died with the page, so each is
+ * saved as a recording to transcribe again. Run once at boot, after the
+ * orphan check. Returns how many were saved.
+ */
+export async function recoverCrashedMeetings(): Promise<number> {
+  if (!isTauri()) return 0;
+  const found = await ipc.recoverMeetingJournals();
+  if (found.length === 0) return 0;
+  const existing = new Set((await listHistory()).map((e) => e.id));
+  const s = useStore.getState();
+  const lang = s.settings.language;
+  let saved = 0;
+  for (const r of found) {
+    try {
+      if (existing.has(r.meetingId)) {
+        // Its entry made it after all (the journal outlived the save).
+        await ipc.discardRecording({ path: r.path });
+      } else {
+        const snap = orphanSnapshot(r.meetingId, r.startedAtMs);
+        const dateLabel = new Date(snap.createdAt).toLocaleString(localeOf());
+        const entry: HistoryEntry = {
+          id: r.meetingId,
+          title: `${translate(lang, "history.liveTitle")} · ${dateLabel}${translate(lang, "history.recoveredSuffix")}`,
+          source: "live",
+          createdAt: snap.createdAt,
+          durationMs: r.durationMs,
+          audio: "audio.ogg",
+          folderId: snap.save.folderId,
+          ...snap.analysis,
+        };
+        await persist(entry, r.path, /* compress */ false);
+        saved++;
+        log.warn("history: recovered an unfinished meeting", { id: r.meetingId, durationMs: r.durationMs });
+      }
+      await ipc.finishMeetingJournal({ meetingId: r.meetingId });
+    } catch (error) {
+      log.error("history: recovering an unfinished meeting failed", { id: r.meetingId, error: String(error) });
+    }
+  }
+  if (saved > 0) notify.message(translate(lang, "meeting.recovered", { count: saved }));
+  return saved;
 }
 
 /**

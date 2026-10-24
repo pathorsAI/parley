@@ -7,13 +7,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
   toastError: vi.fn(),
+  toastMessage: vi.fn(),
+  toastLoading: vi.fn(() => "t1"),
   startMockStream: vi.fn(),
   openSettings: vi.fn(),
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...args: unknown[]) => mocks.invoke(...args) }));
-vi.mock("sonner", () => ({ toast: { error: mocks.toastError, warning: vi.fn(), success: vi.fn() } }));
+vi.mock("sonner", () => ({
+  toast: {
+    error: mocks.toastError,
+    warning: vi.fn(),
+    success: vi.fn(),
+    message: mocks.toastMessage,
+    loading: mocks.toastLoading,
+    dismiss: vi.fn(),
+  },
+}));
 vi.mock("../mockStream", () => ({ startMockStream: mocks.startMockStream, stopMockStream: vi.fn() }));
 vi.mock("../nav/settings", () => ({ openSettings: mocks.openSettings }));
 vi.mock("../dictionary", () => ({ recognitionTerms: () => ["Parley"] }));
@@ -22,6 +33,7 @@ vi.mock("../log", () => ({ log: mocks.log, attachConsoleOnce: vi.fn() }));
 import { useStore } from "../store";
 import type { Settings } from "../types";
 import { beginMeeting } from "./start";
+import { liveSaves } from "../history/history";
 import { translate } from "../../i18n/messages";
 
 const base = useStore.getState().settings;
@@ -60,6 +72,8 @@ beforeEach(() => {
   mocks.invoke.mockReset();
   mocks.invoke.mockImplementation(async (cmd: string) => (cmd === "local_stt_models" ? localModels : undefined));
   mocks.toastError.mockReset();
+  mocks.toastMessage.mockReset();
+  mocks.toastLoading.mockClear();
   mocks.startMockStream.mockReset();
   localModels = [];
 });
@@ -82,8 +96,11 @@ describe("beginMeeting", () => {
         relayUrl: undefined,
         model: null,
         vocabulary: ["Parley"],
+        // The store's id for this meeting, echoed back on its recording events.
+        meetingId: useStore.getState().liveMeetingId,
       },
     ]);
+    expect(useStore.getState().liveMeetingId).toEqual(expect.any(String));
     expect(mocks.toastError).not.toHaveBeenCalled();
   });
 
@@ -175,9 +192,48 @@ describe("beginMeeting", () => {
 
   it("backs out of recording when the backend refuses to start", async () => {
     setup({ transcriptionProvider: "soniox", sonioxApiKey: "sk" });
-    mocks.invoke.mockRejectedValueOnce(new Error("no input device"));
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "start_meeting") throw new Error("no input device");
+      return undefined;
+    });
     expect(await statusesDuring(beginMeeting)).toEqual(["recording", "stopped"]);
     expect(mocks.toastError).not.toHaveBeenCalled();
+    // A refused start leaves no save to wait for.
+    expect(liveSaves.hasPending()).toBe(false);
+  });
+
+  // The overnight merge: Start pressed while a meeting runs used to wipe the
+  // cockpit while the backend kept extending the old recording.
+  it("never starts silently over a meeting that is recording", async () => {
+    setup({ transcriptionProvider: "soniox", sonioxApiKey: "sk" });
+    useStore.setState({ meetingStatus: "recording", liveMeetingId: "running", segments: [] });
+    expect(await statusesDuring(beginMeeting)).toEqual([]);
+    expect(startCalls()).toEqual([]);
+    expect(mocks.toastMessage).toHaveBeenCalledWith(
+      translate("en", "meeting.start.alreadyRecording"),
+      expect.objectContaining({ action: expect.objectContaining({ label: translate("en", "meeting.start.endAndStartNew") }) }),
+    );
+    expect(useStore.getState().liveMeetingId).toBe("running");
+  });
+
+  it("stops and saves a recording this window lost before starting the next", async () => {
+    setup({ transcriptionProvider: "soniox", sonioxApiKey: "sk" });
+    let active: object | null = { meetingId: "lost", startedAtMs: 5 };
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "active_meeting") return active;
+      if (cmd === "stop_meeting") {
+        active = null;
+        // The recording event's save settles the wait.
+        setTimeout(() => liveSaves.settle("lost"), 0);
+      }
+      return undefined;
+    });
+    expect(await statusesDuring(beginMeeting)).toEqual(["recording"]);
+    const cmds = mocks.invoke.mock.calls.map((c) => c[0]);
+    expect(cmds.indexOf("stop_meeting")).toBeLessThan(cmds.indexOf("start_meeting"));
+    expect(mocks.toastLoading).toHaveBeenCalledWith(translate("en", "meeting.start.savingPrevious"));
+    expect(startCalls()[0]).toMatchObject({ meetingId: useStore.getState().liveMeetingId });
+    expect(useStore.getState().liveMeetingId).not.toBe("lost");
   });
 
   it("ignores a second start while the first is still in flight", async () => {

@@ -48,6 +48,30 @@ const V2_STREAM_PATH: &str = "/stt/v2/stream";
 /// meeting (no audio flowing) never trips the server's idle window.
 const KEEPALIVE_EVERY: Duration = Duration::from_secs(2);
 
+/// The header that names the calling build to Parley Cloud, which stores it
+/// on the rows a request creates (`stt_session`, batch jobs) so reliability
+/// can be split by platform and version. Same contract as the phone apps:
+/// `<platform>/<version>`, e.g. `macos/0.34.5`.
+const CLIENT_HEADER: &str = "X-Parley-Client";
+
+/// This build's `X-Parley-Client` value. `std::env::consts::OS` is exactly
+/// the contract's platform names (`macos`, `windows`, `linux`), and the crate
+/// version is the app version (the release script bumps both together).
+pub(crate) fn client_id() -> String {
+    format!("{}/{}", std::env::consts::OS, env!("CARGO_PKG_VERSION"))
+}
+
+/// `url` with `client=<client>` appended to its query, for a handshake the
+/// cloud should attribute even if a proxy drops the header (the cloud reads
+/// the header first, then this). Left alone when the URL already names one.
+fn with_client(url: &str, client: &str) -> String {
+    if url.contains("?client=") || url.contains("&client=") {
+        return url.to_string();
+    }
+    let sep = if url.contains('?') { '&' } else { '?' };
+    format!("{url}{sep}client={}", urlencode(client))
+}
+
 /// The v2 stream URL for the configured cloud endpoint. The frontend already
 /// passes the v2 URL; a v1 URL (`…/stt/stream?feature=…`) is rewritten so the
 /// query string (billing attribution) survives either way.
@@ -523,6 +547,7 @@ pub(crate) async fn transcribe_file(req: BatchRequest<'_>) -> Result<Transcripti
         .endpoint
         .ok_or_else(|| "hosted transcription requires the cloud batch URL".to_string())?;
     let (client, token) = (req.client, req.credential);
+    let build = client_id();
 
     // 1. Upload the raw (already compressed) bytes; the response is the job id.
     log::info!(
@@ -532,13 +557,12 @@ pub(crate) async fn transcribe_file(req: BatchRequest<'_>) -> Result<Transcripti
         req.vocabulary.len()
     );
     let create_resp = client
-        .post(cloud_upload_url(
-            base,
-            req.language_hints,
-            req.diarization,
-            req.vocabulary,
+        .post(with_client(
+            &cloud_upload_url(base, req.language_hints, req.diarization, req.vocabulary),
+            &build,
         ))
         .bearer_auth(token)
+        .header(CLIENT_HEADER, &build)
         .header("Content-Type", "application/octet-stream")
         .body(req.audio)
         .send()
@@ -561,6 +585,7 @@ pub(crate) async fn transcribe_file(req: BatchRequest<'_>) -> Result<Transcripti
     let transcript_resp = client
         .get(format!("{base}/{job_id}/transcript?format=parley"))
         .bearer_auth(token)
+        .header(CLIENT_HEADER, &build)
         .send()
         .await
         .map_err(|e| format!("Fetch transcript failed: {e}"))?;
@@ -584,6 +609,7 @@ pub(crate) async fn transcribe_file(req: BatchRequest<'_>) -> Result<Transcripti
     let _ = client
         .delete(format!("{base}/{job_id}"))
         .bearer_auth(token)
+        .header(CLIENT_HEADER, &build)
         .send()
         .await;
 
@@ -605,6 +631,7 @@ async fn poll_cloud_job(
         let status_resp = client
             .get(format!("{base}/{job_id}"))
             .bearer_auth(token)
+            .header(CLIENT_HEADER, client_id())
             .send()
             .await
             .map_err(|e| format!("Poll request failed: {e}"))?;
@@ -694,9 +721,13 @@ pub async fn run_session(
         .as_deref()
         .ok_or_else(|| anyhow!("hosted transcription requires the cloud endpoint"))?;
     let connecting = std::time::Instant::now();
+    let build = client_id();
     let ws = connect_with_headers(
-        &stream_url(endpoint),
-        &[("Authorization", format!("Bearer {}", config.api_key))],
+        &with_client(&stream_url(endpoint), &build),
+        &[
+            ("Authorization", format!("Bearer {}", config.api_key)),
+            (CLIENT_HEADER, build.clone()),
+        ],
     )
     .await?;
     let (mut write, mut read) = ws.split();
@@ -1070,6 +1101,35 @@ mod tests {
             on_payload(&mut b, "me", late, true).unwrap(),
             Next::Stop
         ));
+    }
+
+    #[test]
+    fn the_client_id_follows_the_cloud_contract() {
+        // apps/cloud/src/client.ts: ^(ios|android|macos|windows|linux)/([^\s()]{1,32})…$
+        let id = client_id();
+        let (platform, version) = id.split_once('/').unwrap();
+        assert!(["macos", "windows", "linux"].contains(&platform), "{id}");
+        assert_eq!(version, env!("CARGO_PKG_VERSION"));
+        assert!(!version.is_empty() && version.len() <= 32);
+        assert!(!version.contains(|c: char| c.is_whitespace() || c == '(' || c == ')'));
+    }
+
+    #[test]
+    fn the_client_rides_on_the_relay_url_query() {
+        assert_eq!(
+            with_client(
+                "wss://api.parley.tw/stt/v2/stream?feature=meeting",
+                "macos/0.34.5"
+            ),
+            "wss://api.parley.tw/stt/v2/stream?feature=meeting&client=macos%2F0.34.5"
+        );
+        assert_eq!(
+            with_client("https://x/stt/batch", "windows/1.2.3"),
+            "https://x/stt/batch?client=windows%2F1.2.3"
+        );
+        // Never twice.
+        let once = with_client("wss://x/stt/v2/stream?feature=meeting", "macos/1.0.0");
+        assert_eq!(with_client(&once, "macos/1.0.0"), once);
     }
 
     #[test]

@@ -206,6 +206,7 @@ exports[`store action trace > every action changes exactly what it did before, a
   {
     "changed": {
       "appMode": "live",
+      "liveMeetingId": "uuid-4",
       "meetingStartedAt": 1700000000000,
       "meetingStatus": "recording",
     },
@@ -611,7 +612,7 @@ exports[`store action trace > every action changes exactly what it did before, a
         {
           "atMs": 10,
           "detail": "d",
-          "id": "uuid-4",
+          "id": "uuid-5",
           "severity": "warn",
           "side": "them",
           "source": "extra",
@@ -657,7 +658,7 @@ exports[`store action trace > every action changes exactly what it did before, a
         {
           "atMs": 10,
           "detail": "d",
-          "id": "uuid-4",
+          "id": "uuid-5",
           "severity": "warn",
           "side": "them",
           "source": "extra",
@@ -704,7 +705,7 @@ exports[`store action trace > every action changes exactly what it did before, a
         {
           "atMs": 10,
           "detail": "d",
-          "id": "uuid-4",
+          "id": "uuid-5",
           "severity": "warn",
           "side": "them",
           "source": "extra",
@@ -2089,6 +2090,7 @@ checklist|流程遺漏|Given the meeting context provided, identify important to
       "appMode": "live",
       "filledPauseCount": 0,
       "filledPauseCounted": {},
+      "liveMeetingId": "uuid-7",
       "meetingPausedTotalMs": 0,
       "meetingStartedAt": 1700000006000,
       "meetingStatus": "recording",
@@ -2104,6 +2106,7 @@ checklist|流程遺漏|Given the meeting context provided, identify important to
   {
     "changed": {
       "appMode": "home",
+      "liveMeetingId": null,
       "meetingStartedAt": null,
       "meetingStatus": "idle",
     },

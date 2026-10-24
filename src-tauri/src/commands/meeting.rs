@@ -10,8 +10,9 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use crate::audio::microphone::Microphone;
 use crate::capture::{
     run_metered_session, spawn_capture, Begin, MeteredSession, MicCoordinator, MicTap, MicUser,
-    RecorderBuf,
+    RecorderBuf, Recording,
 };
+use crate::recording_journal::{self, JournalMeta, RecordingJournal};
 use crate::transcription::{Entry, SessionRequest, SttProvider, TranscribeConfig};
 
 /// Meeting-specific state held in Tauri's managed state. Who owns the mic (and
@@ -36,6 +37,14 @@ pub struct MeetingState {
     /// is transcribed, recorded or billed, but the capture + sockets stay open
     /// so resume is instant. Reset on every start.
     meeting_paused: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// The meeting being recorded: the id the frontend gave it (also the
+    /// history entry's id and the journal's file name) and when it started.
+    /// Every `meeting://recording-*` event carries them, so the frontend saves
+    /// THAT meeting's snapshot even when another one has started meanwhile.
+    current: Mutex<Option<JournalMeta>>,
+    /// Meetings stopped but not yet handed to the frontend (encoding). Their
+    /// journals must not be recovered as crashed meanwhile.
+    stopping: Mutex<Vec<String>>,
 }
 
 /// Whether a live meeting is currently recording. The Settings UI uses this to
@@ -44,6 +53,67 @@ pub struct MeetingState {
 #[tauri::command]
 pub fn meeting_active(coord: State<MicCoordinator>) -> bool {
     coord.owner() == Some(MicUser::Meeting)
+}
+
+/// The meeting the backend is recording, if any: its id and start time. The
+/// frontend asks before a start, so a recording this window lost track of is
+/// stopped and saved first instead of silently absorbing the next meeting.
+#[tauri::command]
+pub fn active_meeting(
+    state: State<MeetingState>,
+    coord: State<MicCoordinator>,
+) -> Option<JournalMeta> {
+    if coord.owner() != Some(MicUser::Meeting) {
+        return None;
+    }
+    state.current.lock().unwrap().clone()
+}
+
+/// The meeting's history entry is written (or it was deliberately not kept):
+/// its crash journal has done its job.
+#[tauri::command]
+pub fn finish_meeting_journal(app: AppHandle, meeting_id: String) {
+    if let Some(dir) = journal_dir(&app) {
+        recording_journal::remove(&dir, &meeting_id);
+    }
+}
+
+/// Journals of meetings that never reached history — the app crashed, was
+/// quit or force-quit mid-meeting — repaired into recordings for the frontend
+/// to save. The meeting still recording and any being stopped are skipped.
+#[tauri::command]
+pub fn recover_meeting_journals(
+    app: AppHandle,
+    state: State<MeetingState>,
+    coord: State<MicCoordinator>,
+) -> Vec<recording_journal::Recovered> {
+    let Some(dir) = journal_dir(&app) else {
+        return Vec::new();
+    };
+    let mut skip = state.stopping.lock().unwrap().clone();
+    if coord.owner() == Some(MicUser::Meeting) {
+        if let Some(m) = state.current.lock().unwrap().as_ref() {
+            skip.push(m.meeting_id.clone());
+        }
+    }
+    recording_journal::recover_all(&dir, &skip, crate::replay_audio::unique_recording_path)
+}
+
+fn journal_dir(app: &AppHandle) -> Option<std::path::PathBuf> {
+    match app.path().app_data_dir() {
+        Ok(d) => Some(recording_journal::journal_dir(&d)),
+        Err(e) => {
+            log::warn!("recording journal: no app data dir: {e}");
+            None
+        }
+    }
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// Pause / resume the live meeting (the titlebar ⏸/▶). While paused every
@@ -98,6 +168,10 @@ pub fn start_meeting(
     // provider is selected (see `TranscribeConfig::vocabulary`). Optional so a
     // caller that predates the dictionary still works — absent = no biasing.
     vocabulary: Option<Vec<String>>,
+    // The frontend's id for this meeting (its history entry's id). Echoed on
+    // the recording events so the save can never pick up another meeting's
+    // state; one is made up for a caller that sends none.
+    meeting_id: Option<String>,
 ) -> Result<(), String> {
     let provider = SttProvider::from_id(&provider).map_err(|e| e.to_string())?;
     let relay_endpoint = relay_url.filter(|u| !u.trim().is_empty());
@@ -145,7 +219,7 @@ pub fn start_meeting(
             time_offset_ms: 0,
             level_events: true,
         },
-        wiring: arm_meeting(&state),
+        wiring: arm_meeting(&app, &state, meeting_id),
     };
     let tasks = start_meeting_captures(&app, &coord, &gate, input_device, &sessions);
     finish_meeting_start(&app, &state, &coord, tasks);
@@ -201,8 +275,24 @@ impl MeetingSessions {
 /// it), unpause, drop the (finished) session handles of a prior meeting, and
 /// arm THIS meeting's error mute (unset). The previous meeting's sessions hold
 /// the previous mute — already set by its stop.
-fn arm_meeting(state: &MeetingState) -> MeetingWiring {
-    *state.recorder.lock().unwrap() = Some(Vec::new());
+fn arm_meeting(app: &AppHandle, state: &MeetingState, meeting_id: Option<String>) -> MeetingWiring {
+    let meta = JournalMeta {
+        meeting_id: meeting_id
+            .filter(|id| recording_journal::valid_meeting_id(id))
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+        started_at_ms: now_ms(),
+    };
+    // The crash-safe copy. Failing to open it costs only the crash safety:
+    // the meeting records into RAM as it always has.
+    let journal = journal_dir(app).and_then(|dir| match RecordingJournal::start(&dir, &meta) {
+        Ok(j) => Some(j),
+        Err(e) => {
+            log::error!("recording journal: not started, this meeting is RAM-only: {e}");
+            None
+        }
+    });
+    *state.recorder.lock().unwrap() = Some(Recording::new(journal));
+    *state.current.lock().unwrap() = Some(meta);
     // A new meeting always starts unpaused.
     state
         .meeting_paused
@@ -408,13 +498,13 @@ fn finish_meeting_start(
 
 /// Shared meeting teardown: mute this session's error surface, release the
 /// transcription tasks (with the flush/abort grace) and stop the capture.
-/// Returns the recorded PCM buffer for the caller to
-/// either encode (stop) or discard (cancel).
+/// Returns the recording (and which meeting it is) for the caller to either
+/// encode (stop) or discard (cancel).
 fn teardown_meeting(
     app: &AppHandle,
     state: &State<MeetingState>,
     coord: &State<MicCoordinator>,
-) -> Option<Vec<i16>> {
+) -> Option<(Recording, Option<JournalMeta>)> {
     // Direct-cancel safety net for the transcription sessions. Stopping the
     // capture below starts the graceful capture→channel-close cascade, which
     // closes the socket and emits final usage. The abort is ONLY a backstop for a
@@ -451,7 +541,8 @@ fn teardown_meeting(
     // session via channel close. See MicCoordinator for the gate/detach story.
     coord.stop(MicUser::Meeting);
     let _ = app.emit("meeting://status", "stopped");
-    state.recorder.lock().unwrap().take()
+    let recording = state.recorder.lock().unwrap().take()?;
+    Some((recording, state.current.lock().unwrap().clone()))
 }
 
 /// Cut a recording down to its first `keep_ms` (16 kHz mono). `None`, or a
@@ -482,7 +573,19 @@ pub fn stop_meeting(
     coord: State<MicCoordinator>,
     keep_ms: Option<u64>,
 ) -> Result<(), String> {
-    let pcm = teardown_meeting(&app, &state, &coord).map(|pcm| keep_leading(pcm, keep_ms));
+    let Some((recording, meta)) = teardown_meeting(&app, &state, &coord) else {
+        // Nothing was recording (a repeated stop). Still release the spinner.
+        let _ = app.emit("meeting://recording-discarded", serde_json::json!({}));
+        return Ok(());
+    };
+    let ids = meta
+        .as_ref()
+        .map(|m| serde_json::json!({ "meetingId": m.meeting_id, "startedAtMs": m.started_at_ms }));
+    let stopping_id = meta.as_ref().map(|m| m.meeting_id.clone());
+    if let Some(id) = &stopping_id {
+        state.stopping.lock().unwrap().push(id.clone());
+    }
+    let dir = journal_dir(&app);
 
     // Encode the captured audio off-thread and tell the frontend where it landed
     // (which then writes the history entry). Skip very short / empty recordings —
@@ -491,43 +594,92 @@ pub fn stop_meeting(
     // it on one of these events; a silent exit would hang that spinner forever.
     let app = app.clone();
     std::thread::spawn(move || {
-        let discarded = || {
-            let _ = app.emit("meeting://recording-discarded", ());
-        };
-        let Some(pcm) = pcm else {
-            discarded();
-            return;
-        };
-        let rate = crate::audio::TARGET_SAMPLE_RATE as usize;
-        if pcm.len() < rate * 2 {
-            log::info!("recording: too short to save ({} samples)", pcm.len());
-            discarded();
-            return;
+        let Recording { pcm, journal } = recording;
+        let journal_id = journal.as_ref().map(|j| j.id().to_string());
+        // Everything captured is on disk before anything else can go wrong.
+        if let Some(j) = journal {
+            j.close();
         }
-        let duration_ms = (pcm.len() as u64 * 1000) / rate as u64;
-        let out = crate::replay_audio::unique_recording_path();
-        match crate::replay_audio::encode_opus_ogg(&pcm, &out) {
-            Ok(()) => {
-                log::info!(
-                    "recording: saved {} ({} ms)",
-                    out.to_string_lossy(),
-                    duration_ms
-                );
-                let _ = app.emit(
-                    "meeting://recording-saved",
-                    serde_json::json!({
-                        "path": out.to_string_lossy(),
-                        "durationMs": duration_ms,
-                    }),
-                );
+        let outcome = encode_stopped(keep_leading(pcm, keep_ms), || {
+            // The RAM encode failed: the journal holds the same audio.
+            let (dir, id) = (dir.as_ref()?, journal_id.as_ref()?);
+            let out = crate::replay_audio::unique_recording_path();
+            match recording_journal::repair(&recording_journal::audio_path(dir, id), &out) {
+                Ok(ms) if ms > 0 => {
+                    log::warn!("recording: saved from the journal instead ({ms} ms)");
+                    Some((out, ms))
+                }
+                _ => None,
             }
-            Err(e) => {
-                log::error!("recording: encode failed: {e}");
-                discarded();
+        });
+        let mut payload = ids.clone().unwrap_or_else(|| serde_json::json!({}));
+        match outcome {
+            Stopped::Saved(out, duration_ms) => {
+                payload["path"] = out.to_string_lossy().into();
+                payload["durationMs"] = duration_ms.into();
+                let _ = app.emit("meeting://recording-saved", payload);
+                // The journal stays until the frontend has written the entry
+                // (`finish_meeting_journal`): a crash in between recovers it.
             }
+            Stopped::TooShort => {
+                if let (Some(dir), Some(id)) = (&dir, &journal_id) {
+                    recording_journal::remove(dir, id);
+                }
+                let _ = app.emit("meeting://recording-discarded", payload);
+            }
+            Stopped::Failed => {
+                // Kept on disk: the next launch tries to recover it.
+                let _ = app.emit("meeting://recording-discarded", payload);
+            }
+        }
+        if let Some(id) = &stopping_id {
+            app.state::<MeetingState>()
+                .stopping
+                .lock()
+                .unwrap()
+                .retain(|s| s != id);
         }
     });
     Ok(())
+}
+
+/// What became of a stopped meeting's audio.
+enum Stopped {
+    Saved(std::path::PathBuf, u64),
+    TooShort,
+    Failed,
+}
+
+/// Encode a stopped meeting's PCM to a fresh temp recording; `fallback` is
+/// tried when the encode fails.
+fn encode_stopped(
+    pcm: Vec<i16>,
+    fallback: impl FnOnce() -> Option<(std::path::PathBuf, u64)>,
+) -> Stopped {
+    let rate = crate::audio::TARGET_SAMPLE_RATE as usize;
+    if pcm.len() < rate * 2 {
+        log::info!("recording: too short to save ({} samples)", pcm.len());
+        return Stopped::TooShort;
+    }
+    let duration_ms = (pcm.len() as u64 * 1000) / rate as u64;
+    let out = crate::replay_audio::unique_recording_path();
+    match crate::replay_audio::encode_opus_ogg(&pcm, &out) {
+        Ok(()) => {
+            log::info!(
+                "recording: saved {} ({} ms)",
+                out.to_string_lossy(),
+                duration_ms
+            );
+            Stopped::Saved(out, duration_ms)
+        }
+        Err(e) => {
+            log::error!("recording: encode failed: {e}");
+            match fallback() {
+                Some((out, ms)) => Stopped::Saved(out, ms),
+                None => Stopped::Failed,
+            }
+        }
+    }
 }
 
 /// Cancel the live meeting: identical teardown to [`stop_meeting`], but the
@@ -540,11 +692,18 @@ pub fn cancel_meeting(
     state: State<MeetingState>,
     coord: State<MicCoordinator>,
 ) -> Result<(), String> {
-    let pcm = teardown_meeting(&app, &state, &coord);
-    if let Some(pcm) = pcm {
-        log::info!("meeting: cancelled, discarding {} samples", pcm.len());
-    } else {
-        log::info!("meeting: cancelled (no recording buffered)");
+    match teardown_meeting(&app, &state, &coord) {
+        Some((Recording { pcm, journal }, _)) => {
+            log::info!("meeting: cancelled, discarding {} samples", pcm.len());
+            if let Some(j) = journal {
+                let id = j.id().to_string();
+                j.close();
+                if let Some(dir) = journal_dir(&app) {
+                    recording_journal::remove(&dir, &id);
+                }
+            }
+        }
+        None => log::info!("meeting: cancelled (no recording buffered)"),
     }
     Ok(())
 }
@@ -609,7 +768,26 @@ fn spawn_farend_tap(
 
 #[cfg(test)]
 mod tests {
-    use super::keep_leading;
+    use super::{encode_stopped, keep_leading, Stopped};
+
+    #[test]
+    fn a_stop_too_short_to_keep_is_not_encoded() {
+        let out = encode_stopped(vec![0; 16_000], || panic!("no fallback for a blip"));
+        assert!(matches!(out, Stopped::TooShort));
+    }
+
+    #[test]
+    fn a_normal_stop_encodes_the_ram_recording() {
+        let pcm: Vec<i16> = (0..48_000).map(|i| ((i % 64) * 200) as i16).collect();
+        match encode_stopped(pcm, || panic!("the encode worked")) {
+            Stopped::Saved(path, ms) => {
+                assert_eq!(ms, 3_000);
+                assert_eq!(&std::fs::read(&path).unwrap()[..4], b"OggS");
+                let _ = std::fs::remove_file(path);
+            }
+            _ => panic!("expected a saved recording"),
+        }
+    }
 
     #[test]
     fn keep_leading_cuts_the_tail_at_the_requested_length() {

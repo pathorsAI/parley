@@ -16,6 +16,7 @@ vi.mock("../log", () => ({ log: mocks.log, attachConsoleOnce: vi.fn() }));
 import { useStore } from "../store";
 import type { MeetingStatus } from "../types";
 import { cancelActiveMeeting, endMeeting, recoverOrphanedMeeting, stopBackendMeeting, toggleMeetingPause } from "./controls";
+import { liveSaves } from "../history/history";
 
 const base = useStore.getState().settings;
 
@@ -139,26 +140,33 @@ describe("endMeeting with a trim", () => {
 });
 
 describe("recoverOrphanedMeeting", () => {
+  const backend = { meetingId: "lost-1", startedAtMs: 1_700_000_000_000 };
+
   it("stops and keeps a recording the backend is making for a meeting this window lost", async () => {
     setup({ key: "sk", status: "idle" });
-    useStore.setState({ transcriptionDropped: false });
-    mocks.invoke.mockImplementation((cmd: string) => Promise.resolve(cmd === "meeting_active" ? true : undefined));
-    await recoverOrphanedMeeting();
-    expect(commands()).toEqual([["meeting_active"], ["stop_meeting", {}]]);
+    useStore.setState({ transcriptionDropped: false, liveMeetingId: null });
+    mocks.invoke.mockImplementation((cmd: string) => Promise.resolve(cmd === "active_meeting" ? backend : undefined));
+    expect(await recoverOrphanedMeeting()).toBe(true);
+    expect(commands()).toEqual([["active_meeting"], ["stop_meeting", {}]]);
     expect(useStore.getState().transcriptionDropped).toBe(true);
+    // Its save is waited for, as a transcript-less recording dated by the backend.
+    expect(liveSaves.hasPending()).toBe(true);
+    const snap = liveSaves.snapshotOf("lost-1");
+    expect(snap).toMatchObject({ id: "lost-1", createdAt: backend.startedAtMs, orphan: true, transcriptionDropped: true });
+    liveSaves.settle("lost-1");
   });
 
   it("leaves the backend alone when nothing is recording", async () => {
     setup({ key: "sk", status: "idle" });
-    mocks.invoke.mockResolvedValue(false);
-    await recoverOrphanedMeeting();
-    expect(commands()).toEqual([["meeting_active"]]);
+    mocks.invoke.mockResolvedValue(null);
+    expect(await recoverOrphanedMeeting()).toBe(false);
+    expect(commands()).toEqual([["active_meeting"]]);
   });
 
   it("leaves a meeting this window is running alone", async () => {
     setup({ key: "sk", status: "recording" });
-    mocks.invoke.mockResolvedValue(true);
-    await recoverOrphanedMeeting();
-    expect(commands()).toEqual([["meeting_active"]]);
+    mocks.invoke.mockResolvedValue(backend);
+    expect(await recoverOrphanedMeeting()).toBe(false);
+    expect(commands()).toEqual([["active_meeting"]]);
   });
 });

@@ -1,6 +1,6 @@
 import { toast } from "sonner";
-import { useStore } from "../store";
-import { prepareTranscription, type TranscriptionRequest } from "../transcription/prepare";
+import { isMeetingActive, useStore } from "../store";
+import { meetingUsesRealPipeline, prepareTranscription, type TranscriptionRequest } from "../transcription/prepare";
 import { blockMessageKey } from "../transcription/errors";
 import { startMockStream } from "../mockStream";
 import { translate, type TranslationKey } from "../../i18n/messages";
@@ -8,6 +8,14 @@ import type { Settings } from "../types";
 import { log } from "../log";
 import { openSettings } from "../nav/settings";
 import * as ipc from "../ipc/commands";
+import { isTauri } from "../platform";
+import { liveSaves } from "../history/history";
+import { endMeeting, recoverOrphanedMeeting } from "./controls";
+
+/** How long Start waits for the previous meeting's save before going ahead
+ *  anyway. Its Stop-time snapshot keeps that save correct regardless; the
+ *  wait only keeps the two meetings from overlapping on screen. */
+export const PREVIOUS_SAVE_WAIT_MS = 30_000;
 
 /** In-flight latch: a double-click (or two start buttons hit in quick
  *  succession) would otherwise race two transcription sessions open. */
@@ -26,10 +34,56 @@ export async function beginMeeting(): Promise<void> {
   if (starting) return;
   starting = true;
   try {
+    if (!(await readyToStart())) return;
     await start();
   } finally {
     starting = false;
   }
+}
+
+/**
+ * Clear the way for a new meeting. Start never lands silently on top of one
+ * that is still going: a meeting this window is running is surfaced (with
+ * the explicit "end it and start a new one"); a recording the backend is
+ * making for a meeting this window lost is stopped and saved first — that
+ * silent no-op is how one desktop's evening meeting absorbed the next
+ * morning's; and a previous meeting still being saved is waited for, briefly.
+ */
+async function readyToStart(): Promise<boolean> {
+  const s = useStore.getState();
+  const t = (key: TranslationKey) => translate(s.settings.language, key);
+  if (isMeetingActive(s.meetingStatus)) {
+    log.info("meeting: start pressed while a meeting is recording");
+    toast.message(t("meeting.start.alreadyRecording"), {
+      action: { label: t("meeting.start.endAndStartNew"), onClick: () => void endAndStartNew() },
+    });
+    return false;
+  }
+  if (isTauri() && meetingUsesRealPipeline(s.settings)) {
+    await recoverOrphanedMeeting().catch((error) =>
+      log.warn("meeting: orphaned recording check before start failed", { error: String(error) }),
+    );
+  }
+  if (liveSaves.hasPending()) {
+    log.info("meeting: start waits for the previous meeting to finish saving");
+    const id = toast.loading(t("meeting.start.savingPrevious"));
+    try {
+      if (!(await liveSaves.whenSettled(PREVIOUS_SAVE_WAIT_MS))) {
+        log.warn("meeting: previous save still running, starting anyway");
+      }
+    } finally {
+      toast.dismiss(id);
+    }
+  }
+  return true;
+}
+
+/** "End it and start a new one": the explicit way to start over a meeting
+ *  that is running. The new one waits for the old one's save. */
+export async function endAndStartNew(): Promise<void> {
+  log.info("meeting: ending the running meeting to start a new one");
+  await endMeeting();
+  await beginMeeting();
 }
 
 const openTranscriptionSettings = () => openSettings("transcription");
@@ -83,6 +137,10 @@ async function start(): Promise<void> {
  *  backs the UI out of "recording" rather than leaving a recorder that isn't
  *  recording. */
 async function openCaptureSession(settings: Settings, request: TranscriptionRequest): Promise<void> {
+  const meetingId = useStore.getState().liveMeetingId;
+  // Before the call: an End pressed while the start is in flight must still
+  // find this meeting's snapshot waiting for its recording.
+  if (meetingId) liveSaves.markRecording(meetingId);
   log.info("meeting: start requested", {
     provider: request.provider,
     model: request.info.label,
@@ -110,13 +168,19 @@ async function openCaptureSession(settings: Settings, request: TranscriptionRequ
       // phrase dictionary — the terms it keeps mishearing in dictation are the
       // same ones it mishears in a meeting.
       vocabulary: request.vocabulary,
+      meetingId,
     });
   } catch (e) {
+    // Nothing is recording, so no recording event will settle a save.
+    if (meetingId) liveSaves.forget(meetingId);
     log.error("meeting: start failed", {
       provider: settings.transcriptionProvider,
       inputDevice: settings.inputDevice,
       error: String(e),
     });
     useStore.getState().stopMeeting();
+    // A start refused because the backend is still recording (a race with
+    // the check above) must not leave that recording running unseen.
+    void recoverOrphanedMeeting().catch(() => {});
   }
 }

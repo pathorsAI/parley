@@ -14,8 +14,10 @@ mod menu;
 mod model_download;
 mod permissions;
 mod playback;
+mod recording_journal;
 mod replay;
 mod replay_audio;
+mod sleep_watch;
 #[cfg(test)]
 mod test_http;
 mod transcription;
@@ -135,6 +137,10 @@ pub fn run() {
             // unlock — Carbon hotkey registrations and CGEventTaps can come
             // back dead from a sleep cycle.
             hotkey::install_wake_observer(app.handle().clone());
+            // Tell the frontend how long the machine slept, so a meeting left
+            // recording overnight is ended on wake instead of absorbing the
+            // next morning's meeting.
+            sleep_watch::install(app.handle().clone());
             // Follow the user across Spaces while the voice-typing overlay is up.
             voice_typing::install_space_observer(app.handle().clone());
             // Windows: the notification-area icon the close button hides to.
@@ -204,6 +210,9 @@ pub fn run() {
             commands::mic_test::start_mic_test,
             commands::mic_test::stop_mic_test,
             commands::meeting::meeting_active,
+            commands::meeting::active_meeting,
+            commands::meeting::finish_meeting_journal,
+            commands::meeting::recover_meeting_journals,
             commands::export::save_transcript,
             commands::export::export_recording,
             commands::oauth::start_oauth_loopback,

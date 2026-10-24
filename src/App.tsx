@@ -42,9 +42,10 @@ import { useThemePreference } from "./lib/theme";
 import { useAnalysisEngine, listenForCacheClear } from "./lib/analysis/engine";
 import { initStudyPipeline } from "./lib/analysis/studyPipeline";
 import { listenForSpeakerCacheClear } from "./lib/speakers/namesCache";
-import { initHistoryPersistSync, listenForRecordingSaved } from "./lib/history/history";
+import { initHistoryPersistSync, listenForRecordingSaved, recoverCrashedMeetings } from "./lib/history/history";
 import { endMeeting, recoverOrphanedMeeting } from "./lib/meeting/controls";
 import { initSilenceGuard } from "./lib/meeting/silenceGuard";
+import { listenForSystemWake } from "./lib/meeting/sleepWake";
 import { checkForUpdate } from "./lib/update";
 import {
   getPendingInstalledReleaseNotes,
@@ -193,6 +194,8 @@ const App = () => {
     track(listenForMeetingWarning());
     track(listenForLocalSttSlow());
     track(listenForTranscriptionLink());
+    // A meeting the computer slept through ends (and is saved) on wake.
+    track(listenForSystemWake());
     track(listenForSettings());
     track(listenForSttUsage());
     track(listenForCacheClear());
@@ -205,7 +208,11 @@ const App = () => {
     // that saves it is up.
     void recordingSaved
       .then(() => recoverOrphanedMeeting())
-      .catch((error) => log.warn("meeting: orphaned recording check failed", { error: String(error) }));
+      .catch((error) => log.warn("meeting: orphaned recording check failed", { error: String(error) }))
+      // Then the meetings that were still recording when Parley last died
+      // (crash, quit, force-quit): their crash journals become recordings.
+      .then(() => recoverCrashedMeetings())
+      .catch((error) => log.warn("meeting: crash recovery failed", { error: String(error) }));
     // The history://open + history://import listeners are gone with the standalone
     // History window (#195): the library is a route in THIS window now, so it
     // opens an entry by calling loadHistoryEntry directly.
