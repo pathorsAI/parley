@@ -8,10 +8,10 @@ import { isProviderReady } from "../../lib/ai/settings";
 import { describeAiError } from "../../lib/ai/errors";
 import { addEntry, removeEntry, whenDictionaryReady } from "../../lib/dictionary";
 import {
+  appendBackground,
   backgroundLines,
-  joinBackground,
   memoryFilesToText,
-  mergeBackground,
+  removeBackgroundLine,
   summarizeMemory,
   type MemorySummary,
 } from "../../lib/onboarding/memoryImport";
@@ -63,10 +63,12 @@ export function ContextStep() {
   }
 
   async function apply(summary: MemorySummary) {
-    const before = lines.length;
-    const merged = mergeBackground(useStore.getState().settings.userBackground, summary.background);
-    patch({ userBackground: merged });
-    const addedLines = backgroundLines(merged).length - before;
+    // Read fresh: the user may have edited lines while the model was running.
+    const { text, added: addedLines } = appendBackground(
+      useStore.getState().settings.userBackground,
+      summary.background,
+    );
+    if (addedLines > 0) patch({ userBackground: text });
     const addedTerms = await addTerms(summary.terms);
     setStatus({
       kind: "info",
@@ -105,7 +107,7 @@ export function ContextStep() {
   function addLine() {
     const v = newLine.trim();
     if (!v) return;
-    patch({ userBackground: mergeBackground(settings.userBackground, [v]) });
+    patch({ userBackground: appendBackground(settings.userBackground, [v]).text });
     setNewLine("");
   }
 
@@ -219,14 +221,15 @@ export function ContextStep() {
             <p className="py-1 text-[13px] text-muted-foreground">{t("onboarding.context.empty")}</p>
           )}
           {lines.map((line, i) => (
-            <div key={line} className="flex items-start gap-2 py-0.5 text-[13px] leading-relaxed">
+            // The same line can appear twice in hand-written text.
+            <div key={`${i}:${line}`} className="flex items-start gap-2 py-0.5 text-[13px] leading-relaxed">
               <span className="text-muted-foreground">•</span>
               <span className="flex-1">{line}</span>
               <button
                 type="button"
                 aria-label={t("onboarding.context.removeLine")}
                 className="flex size-5 items-center justify-center rounded text-muted-foreground hover:text-foreground"
-                onClick={() => patch({ userBackground: joinBackground(lines.filter((_, k) => k !== i)) })}
+                onClick={() => patch({ userBackground: removeBackgroundLine(settings.userBackground, i) })}
               >
                 <X className="size-3" />
               </button>

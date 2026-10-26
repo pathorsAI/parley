@@ -4,6 +4,7 @@ import { useI18n } from "../../i18n";
 import { log } from "../../lib/log";
 import { acceptInvitation, createOrg, listMyInvitations, listMyOrgs } from "../../lib/cloud/orgs";
 import type { CloudInvitation, CloudOrg } from "../../lib/cloud/types";
+import { orgErrMsg } from "../../lib/cloud/orgErrors";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ChoiceRow } from "./ChoiceRow";
@@ -24,26 +25,36 @@ export function OrgStep({ setBeforeNext }: Readonly<{ setBeforeNext: (fn: Before
   const [name, setName] = useState("");
   const [joining, setJoining] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Set when the lists couldn't be read. We then don't know whether the user is
+  // already a member, so creating is not offered (it could duplicate an org
+  // they're in); they retry or move on.
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const [mine, pending] = await Promise.all([listMyOrgs(), listMyInvitations()]);
     setOrgs(mine);
     setInvites(pending);
+    setLoadError(null);
   }, []);
 
-  useEffect(() => {
+  const reload = useCallback(() => {
+    setOrgs(null);
+    setLoadError(null);
     load().catch((e) => {
       log.warn("onboarding: loading organizations failed", { error: String(e) });
-      // Treat as "none yet": the user can still choose, and Settings can retry.
-      setOrgs([]);
+      setLoadError(orgErrMsg(t, e));
     });
-  }, [load]);
+  }, [load, t]);
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
 
   const member = (orgs?.length ?? 0) > 0;
 
   useEffect(() => {
     setBeforeNext(async () => {
-      if (member || choice === "solo") return true;
+      if (member || loadError || choice === "solo") return true;
       if (!name.trim()) {
         setError(t("onboarding.org.nameRequired"));
         return false;
@@ -52,12 +63,12 @@ export function OrgStep({ setBeforeNext }: Readonly<{ setBeforeNext: (fn: Before
         await createOrg(name);
         return true;
       } catch (e) {
-        setError(t("onboarding.org.failed", { error: e instanceof Error ? e.message : String(e) }));
+        setError(t("onboarding.org.failed", { error: orgErrMsg(t, e) }));
         return false;
       }
     });
     return () => setBeforeNext(null);
-  }, [member, choice, name, setBeforeNext, t]);
+  }, [member, loadError, choice, name, setBeforeNext, t]);
 
   async function join(inv: CloudInvitation) {
     setJoining(inv.id);
@@ -66,7 +77,7 @@ export function OrgStep({ setBeforeNext }: Readonly<{ setBeforeNext: (fn: Before
       await acceptInvitation(inv.id);
       await load();
     } catch (e) {
-      setError(t("onboarding.org.failed", { error: e instanceof Error ? e.message : String(e) }));
+      setError(t("onboarding.org.failed", { error: orgErrMsg(t, e) }));
     } finally {
       setJoining(null);
     }
@@ -76,7 +87,16 @@ export function OrgStep({ setBeforeNext }: Readonly<{ setBeforeNext: (fn: Before
     <div className="flex flex-col gap-3">
       <h2 className="text-base font-semibold tracking-tight">{t("onboarding.org.title")}</h2>
 
-      {orgs === null ? (
+      {loadError ? (
+        <div className="flex items-center gap-3 rounded-lg border border-warning-border bg-warning px-3 py-2.5">
+          <span className="flex-1 text-xs leading-relaxed text-warning-foreground">
+            {t("onboarding.org.loadFailed", { error: loadError })}
+          </span>
+          <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={reload}>
+            {t("onboarding.org.retry")}
+          </Button>
+        </div>
+      ) : orgs === null ? (
         <p className="flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="size-4 animate-spin" />
           {t("onboarding.org.loading")}

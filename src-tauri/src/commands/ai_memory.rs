@@ -19,15 +19,20 @@ use tauri::{AppHandle, Manager};
 /// longer is almost certainly something else that happens to end in `.md`.
 const MAX_FILE_BYTES: usize = 16 * 1024;
 /// The whole read stops here, newest files first, so one prolific project can't
-/// crowd the prompt.
-const MAX_TOTAL_BYTES: usize = 64 * 1024;
+/// crowd the prompt. Matches the frontend's `MAX_MEMORY_CHARS`, so nothing read
+/// here is thrown away there; a file that would cross it is skipped whole rather
+/// than cut mid-fact.
+const MAX_TOTAL_BYTES: usize = 24_000;
 /// Auto-memory files considered per run, newest first.
 const MAX_FILES: usize = 40;
 
 #[derive(Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct MemoryFile {
-    /// Where the file came from, for the UI: `"global"` or the project folder name.
+    /// Where the file came from: `"global"` or `"project"`. Never the project
+    /// folder's name: Claude Code names it after the project's absolute path,
+    /// which carries the username and often a client's name, and this text is
+    /// sent to an LLM.
     pub label: String,
     pub text: String,
 }
@@ -46,24 +51,20 @@ pub(crate) fn collect_claude_memory(home: &Path) -> Vec<MemoryFile> {
     let mut out = Vec::new();
     let mut total = 0usize;
 
-    let mut push = |label: String, path: &Path, out: &mut Vec<MemoryFile>| -> bool {
-        let Some(text) = read_capped(path) else { return true };
+    let mut push = |label: &str, path: &Path, out: &mut Vec<MemoryFile>| {
+        let Some(text) = read_capped(path) else { return };
         if total + text.len() > MAX_TOTAL_BYTES {
-            return false;
+            return;
         }
         total += text.len();
-        out.push(MemoryFile { label, text });
-        true
+        out.push(MemoryFile { label: label.into(), text });
     };
 
-    if !push("global".into(), &root.join("CLAUDE.md"), &mut out) {
-        return out;
-    }
+    push("global", &root.join("CLAUDE.md"), &mut out);
 
-    let mut auto: Vec<(std::time::SystemTime, String, PathBuf)> = Vec::new();
+    let mut auto: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
     if let Ok(projects) = std::fs::read_dir(root.join("projects")) {
         for project in projects.flatten() {
-            let label = project.file_name().to_string_lossy().into_owned();
             let Ok(files) = std::fs::read_dir(project.path().join("memory")) else { continue };
             for file in files.flatten() {
                 let path = file.path();
@@ -74,15 +75,13 @@ pub(crate) fn collect_claude_memory(home: &Path) -> Vec<MemoryFile> {
                     .metadata()
                     .and_then(|m| m.modified())
                     .unwrap_or(std::time::UNIX_EPOCH);
-                auto.push((modified, label.clone(), path));
+                auto.push((modified, path));
             }
         }
     }
     auto.sort_by(|a, b| b.0.cmp(&a.0));
-    for (_, label, path) in auto.into_iter().take(MAX_FILES) {
-        if !push(label, &path, &mut out) {
-            break;
-        }
+    for (_, path) in auto.into_iter().take(MAX_FILES) {
+        push("project", &path, &mut out);
     }
     out
 }
@@ -134,9 +133,25 @@ mod tests {
             files,
             vec![
                 MemoryFile { label: "global".into(), text: "I design Parley.".into() },
-                MemoryFile { label: "-work-parley".into(), text: "Team: Joe".into() },
+                MemoryFile { label: "project".into(), text: "Team: Joe".into() },
             ]
         );
+    }
+
+    #[test]
+    fn a_file_that_would_cross_the_total_is_skipped_whole() {
+        let home = temp_home("total");
+        let mem = home.join(".claude/projects/p/memory");
+        std::fs::create_dir_all(&mem).unwrap();
+        std::fs::write(home.join(".claude/CLAUDE.md"), "g".repeat(MAX_FILE_BYTES)).unwrap();
+        // Doesn't fit in what's left after the global file: skipped, not cut.
+        std::fs::write(mem.join("big.md"), "b".repeat(MAX_TOTAL_BYTES - MAX_FILE_BYTES + 1)).unwrap();
+        // Still fits: read even though a file before or after it was skipped.
+        std::fs::write(mem.join("small.md"), "s".repeat(100)).unwrap();
+
+        let files = collect_claude_memory(&home);
+        let labels: Vec<_> = files.iter().map(|f| (f.label.as_str(), f.text.len())).collect();
+        assert_eq!(labels, vec![("global", MAX_FILE_BYTES), ("project", 100)]);
     }
 
     #[test]

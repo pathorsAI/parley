@@ -305,9 +305,15 @@ export interface Settings {
   layout: AppLayout;
   /** False until the first-run onboarding wizard is completed or skipped. */
   onboarded: boolean;
-  /** Current onboarding wizard step, persisted so granting a permission (which
-   *  often needs an app restart) resumes where you left off instead of step 1. */
+  /** Legacy: the old four-step wizard's position (0 intro, 1 account, 2 perms,
+   *  3 done). Read only to resume a wizard started before `onboardingStepId`
+   *  existed; reset to 0 with it. */
   onboardingStep: number;
+  /** Current onboarding wizard step by id ("" = not started), persisted so
+   *  granting a permission (which often needs an app restart) resumes where
+   *  you left off instead of step 1. An id, not an index, because which steps
+   *  show depends on the build and on being signed in. */
+  onboardingStepId: string;
   /** Your name — helps the AI recognize when you're speaking or addressed. */
   userName: string;
   /** Your role / title — tailors the assistance to your seat at the table. */

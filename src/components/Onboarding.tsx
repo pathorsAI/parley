@@ -61,8 +61,8 @@ type StepId = "intro" | "account" | "org" | "model" | "perms" | "mic" | "context
 //
 // Not every step shows for everyone: the OSS build has no account (so no
 // sign-in and no organizations), and the organization step needs a session.
-// `onboardingStep` persists the position in this full list, so a resumed
-// wizard lands on the same step even when the visible list has changed.
+// `onboardingStepId` persists the step by id, so a resumed wizard lands on the
+// same step even when the visible list has changed.
 //
 // The perms step runs on both platforms: macOS walks the TCC prompts; Windows
 // has no runtime prompt, but the step is still the only place that shows
@@ -70,6 +70,18 @@ type StepId = "intro" | "account" | "org" | "model" | "perms" | "mic" | "context
 // sends the user to the exact pane that flips it (ms-settings:privacy-microphone).
 const ALL_STEPS: StepId[] = ["intro", "account", "org", "model", "perms", "mic", "context", "done"];
 const MODEL_STEP = ALL_STEPS.indexOf("model");
+/** The steps of the four-step wizard that `onboardingStep` indexed. */
+const LEGACY_STEPS: StepId[] = ["intro", "account", "perms", "done"];
+
+function isStepId(v: string): v is StepId {
+  return (ALL_STEPS as string[]).includes(v);
+}
+
+/** Where a saved wizard resumes: the saved id, else the legacy index's step. */
+function savedStep(saved: Pick<Settings, "onboardingStep" | "onboardingStepId">): StepId {
+  if (isStepId(saved.onboardingStepId)) return saved.onboardingStepId;
+  return LEGACY_STEPS[saved.onboardingStep] ?? "intro";
+}
 
 function visibleSteps(signedIn: boolean): StepId[] {
   return ALL_STEPS.filter((s) => {
@@ -96,11 +108,10 @@ export function Onboarding() {
 
   const [current, setCurrent] = useState<StepId>(() => {
     const { settings: saved, cloudAuth: auth } = useStore.getState();
-    const n = saved.onboardingStep ?? 0;
     const shown = visibleSteps(!!auth);
     // The first visible step at or after the saved one (a step that's hidden
     // now, e.g. "org" after signing out, resumes at the one after it).
-    let resumed = ALL_STEPS.slice(n >= 0 && n < ALL_STEPS.length ? n : 0).find((s) => shown.includes(s)) ?? "intro";
+    let resumed = ALL_STEPS.slice(ALL_STEPS.indexOf(savedStep(saved))).find((s) => shown.includes(s)) ?? "intro";
     // A step past the model gate (a session that has since signed out) must
     // not resume beyond it. The local model catalog isn't loaded yet here, so
     // a "local" setup resumes at the model step (fail closed) and the user
@@ -126,7 +137,7 @@ export function Onboarding() {
   // Persist the step so granting a permission (which often needs an app restart)
   // resumes here instead of bouncing back to step 1.
   useEffect(() => {
-    patch({ onboardingStep: ALL_STEPS.indexOf(current) });
+    patch({ onboardingStepId: current });
   }, [current, patch]);
 
   // Signing out mid-wizard hides the org step; don't strand the user on it.
@@ -197,7 +208,7 @@ export function Onboarding() {
   }, [current]);
 
   function finish() {
-    patch({ onboarded: true, onboardingStep: 0 });
+    patch({ onboarded: true, onboardingStep: 0, onboardingStepId: "" });
   }
 
   // The wizard stays up through the transcribing beat, so the button the user
@@ -473,6 +484,15 @@ function AccountStep({ onSignedIn }: Readonly<{ onSignedIn: () => void }>) {
   const cloudAuth = useStore((s) => s.cloudAuth);
   const [signingIn, setSigningIn] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The browser sign-in can finish long after the click, by which time the
+  // user may have carried on without it and picked their own models.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   async function doSignIn() {
     setSigningIn(true);
@@ -480,14 +500,16 @@ function AccountStep({ onSignedIn }: Readonly<{ onSignedIn: () => void }>) {
     try {
       const { signInWithGoogle } = await import("../lib/cloud/client");
       await signInWithGoogle();
-      // Signed in → default to Parley's free hosted STT + LLM so the model
-      // step is already done; it can still be switched there.
+      // Still here → default to Parley's free hosted STT + LLM so the model
+      // step is already done (it can still be switched there), and move on.
+      // Gone → the session counts, but their choices and position stand.
+      if (!mounted.current) return;
       patch({ llmProviders: { realtime: "parley", deep: "parley" }, transcriptionProvider: "parley" });
       onSignedIn();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (mounted.current) setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setSigningIn(false);
+      if (mounted.current) setSigningIn(false);
     }
   }
 

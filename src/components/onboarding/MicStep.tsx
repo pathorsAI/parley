@@ -22,7 +22,10 @@ export function MicStep() {
   const patch = useStore((s) => s.updateSettings);
   const [devices, setDevices] = useState<string[]>([]);
   const [testing, setTesting] = useState(false);
-  const testingRef = useRef(false);
+  // What the user last asked for, set before the IPC call so a cleanup that
+  // races a pending start still knows the mic is (about to be) open.
+  const wantTest = useRef(false);
+  const mounted = useRef(true);
   const desktop = isTauri();
 
   useEffect(() => {
@@ -34,33 +37,38 @@ export function MicStep() {
   }, [desktop]);
 
   // Never leave the mic open behind a closed step.
-  useEffect(
-    () => () => {
-      if (testingRef.current) {
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      if (wantTest.current) {
+        wantTest.current = false;
         ipc.stopMicTest().catch((e) => log.warn("onboarding: stop mic test failed", { error: String(e) }));
       }
-    },
-    [],
-  );
+    };
+  }, []);
 
   async function start(device: string) {
-    await ipc.startMicTest({ inputDevice: device || null });
-    testingRef.current = true;
+    wantTest.current = true;
     setTesting(true);
+    await ipc.startMicTest({ inputDevice: device || null });
+    // Stopped (or the step closed) while the start was in flight: the stop
+    // may have reached the backend first, so close what this start opened.
+    if (!wantTest.current || !mounted.current) await ipc.stopMicTest();
   }
 
   async function stop() {
-    testingRef.current = false;
-    setTesting(false);
+    wantTest.current = false;
+    if (mounted.current) setTesting(false);
     await ipc.stopMicTest();
   }
 
   async function pickDevice(value: string) {
     const dev = value === DEFAULT_DEVICE ? "" : value;
     patch({ inputDevice: dev });
-    if (testingRef.current) {
+    if (wantTest.current) {
       await stop();
-      await start(dev);
+      if (mounted.current) await start(dev);
     }
   }
 
@@ -98,8 +106,8 @@ export function MicStep() {
           disabled={!desktop}
           onClick={() => {
             (testing ? stop() : start(inputDevice)).catch((e) => {
-              testingRef.current = false;
-              setTesting(false);
+              wantTest.current = false;
+              if (mounted.current) setTesting(false);
               log.warn("onboarding: mic test toggle failed", { error: String(e) });
             });
           }}

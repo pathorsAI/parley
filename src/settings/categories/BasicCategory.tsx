@@ -137,7 +137,7 @@ export function BasicCategory({
             size="sm"
             className="h-8 w-fit text-xs"
             onClick={async () => {
-              patch({ onboarded: false, onboardingStep: 0 });
+              patch({ onboarded: false, onboardingStep: 0, onboardingStepId: "" });
               // The onboarding renders on the MAIN window — bring it forward
               // and close this Settings window so it isn't hidden behind it.
               await focusMainWindow();

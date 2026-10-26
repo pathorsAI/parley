@@ -19,8 +19,12 @@ import { recordLlmUsage } from "../usage/log";
 import type { MemoryFile } from "../ipc/commands";
 import type { Settings } from "../types";
 
-/** The prompt cap: memory is notes, and the model only needs the gist. */
+/** The prompt cap: memory is notes, and the model only needs the gist. The
+ *  Rust reader stops at the same size (whole files only), so this is a backstop
+ *  for the pasted ChatGPT answer. */
 export const MAX_MEMORY_CHARS = 24_000;
+/** What stands in for a redacted secret. */
+export const REDACTED = "[redacted]";
 /** Lines kept from one pass, so a chatty memory can't flood the background. */
 export const MAX_BACKGROUND_LINES = 8;
 export const MAX_TERMS = 12;
@@ -64,7 +68,7 @@ export async function summarizeMemory(opts: {
   signal?: AbortSignal;
 }): Promise<MemorySummary> {
   const { settings, text, signal } = opts;
-  const body = capMemoryText(text);
+  const body = capMemoryText(redactSecrets(text));
   if (!body) return { background: [], terms: [] };
   const { object, usage } = await generateObjectResilient({
     settings,
@@ -82,27 +86,73 @@ export async function summarizeMemory(opts: {
   };
 }
 
-/** Trimmed, de-bulleted, non-empty, de-duplicated lines. */
+/**
+ * Mask what looks like a credential before memory text leaves the machine: the
+ * prompt asks the model to skip secrets, but by then they've been sent. Catches
+ * well-known token prefixes, `key = value` assignments with a secret-ish name,
+ * and long unbroken key-like runs; prose is left alone.
+ */
+export function redactSecrets(text: string): string {
+  return text
+    .replace(
+      /\b(?:sk|pk|rk)-[A-Za-z0-9_-]{16,}|\b(?:ghp|gho|ghu|ghs|github_pat|xox[abprs]|glpat|AKIA|ASIA|AIza)[A-Za-z0-9_-]{12,}/gu,
+      REDACTED,
+    )
+    .replace(
+      /\b([A-Za-z_]*(?:api[_-]?key|secret|token|password|passwd)[A-Za-z_]*)(\s*[:=]\s*)(["']?)[^\s"']{6,}\3/giu,
+      (_m, name: string, sep: string) => `${name}${sep}${REDACTED}`,
+    )
+    // A long run of key characters with digits in it (paths and words have none
+    // that long, or no digits).
+    .replace(/\b(?=[A-Za-z0-9+/_-]*\d)(?=[A-Za-z0-9+/_-]*[A-Za-z])[A-Za-z0-9+/_-]{40,}={0,2}/gu, REDACTED);
+}
+
+/** A list marker at the start of a line: a bullet, or "1." / "2)" followed by a
+ *  space. Digits glued to the text ("3.5 years") and a minus or asterisk with no
+ *  space after it ("-10%", "*Important*") are content, not markers. */
+const LIST_MARKER = /^\s*(?:[•‧·]\s*|[-*+]\s+|\d{1,2}[.)]\s+)/u;
+
+/** The model's output as clean lines: trimmed, de-bulleted, non-empty, unique. */
 export function cleanLines(lines: readonly string[]): string[] {
   const out: string[] = [];
   for (const raw of lines) {
-    const line = raw.replace(/^\s*(?:[-*•‧·]|\d+[.)])\s*/u, "").trim();
+    const line = raw.replace(LIST_MARKER, "").trim();
     if (line && !out.includes(line)) out.push(line);
   }
   return out;
 }
 
-/** settings.userBackground as editable lines (one fact per line). */
+/**
+ * settings.userBackground is free text the user may also edit in Settings ›
+ * Basic Settings, with their own bullets, indentation and blank lines. The
+ * helpers below show it as lines and change it one line at a time, never
+ * re-formatting what they don't touch.
+ */
+
+/** The background's non-blank lines, for display (trimmed, markers kept). */
 export function backgroundLines(background: string): string[] {
-  return cleanLines(background.split(/\r?\n/u));
+  return background
+    .split(/\r?\n/u)
+    .map((l) => l.trim())
+    .filter(Boolean);
 }
 
-/** Lines back into settings.userBackground. */
-export function joinBackground(lines: readonly string[]): string {
-  return cleanLines(lines).join("\n");
+/** Remove the `index`-th non-blank line, leaving every other line as it was. */
+export function removeBackgroundLine(background: string, index: number): string {
+  const raw = background.split(/\r?\n/u);
+  let seen = -1;
+  const at = raw.findIndex((l) => l.trim() && ++seen === index);
+  if (at < 0) return background;
+  raw.splice(at, 1);
+  return raw.join("\n").replace(/^\n+|\n+$/gu, "");
 }
 
-/** Append new lines the background doesn't already have. */
-export function mergeBackground(background: string, add: readonly string[]): string {
-  return joinBackground([...backgroundLines(background), ...add]);
+/** Append the lines the background doesn't already have (compared without
+ *  list markers); returns the new text and how many lines were added. */
+export function appendBackground(background: string, add: readonly string[]): { text: string; added: number } {
+  const have = new Set(cleanLines(backgroundLines(background)));
+  const fresh = cleanLines(add).filter((l) => !have.has(l));
+  if (fresh.length === 0) return { text: background, added: 0 };
+  const base = background.replace(/\s+$/u, "");
+  return { text: (base ? `${base}\n` : "") + fresh.join("\n"), added: fresh.length };
 }

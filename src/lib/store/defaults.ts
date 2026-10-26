@@ -58,6 +58,7 @@ export const DEFAULT_SETTINGS: Settings = {
   layout: "coach",
   onboarded: false,
   onboardingStep: 0,
+  onboardingStepId: "",
   userName: "",
   userRole: "",
   userCompany: "",
