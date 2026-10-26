@@ -171,6 +171,12 @@ export const exportRecording = (args: { src: string; dst: string }) => invoke<vo
 export const listInputDevices = () => invoke<string[]>("list_input_devices");
 export const startMicTest = (args: { inputDevice?: string | null }) => invoke<void>("start_mic_test", args);
 export const stopMicTest = () => invoke<void>("stop_mic_test");
+/** One Claude Code memory file (ai_memory.rs): `label` is "global" or the project folder. */
+export interface MemoryFile {
+  label: string;
+  text: string;
+}
+export const readClaudeMemory = () => invoke<MemoryFile[]>("read_claude_memory");
 
 // ── Uploaded recordings & playback (replay.rs, playback.rs) ─────────────────
 

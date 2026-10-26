@@ -8,7 +8,9 @@
 //! - `export`: saved transcripts, exported audio, unsaved-recording cleanup.
 //! - `oauth`: the desktop sign-in loopback.
 //! - `logs`: the in-app log viewer.
+//! - `ai_memory`: onboarding's read of Claude Code's memory files.
 
+pub(crate) mod ai_memory;
 pub(crate) mod config;
 pub(crate) mod export;
 pub(crate) mod logs;

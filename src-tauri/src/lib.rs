@@ -209,6 +209,7 @@ pub fn run() {
             commands::mic_test::list_input_devices,
             commands::mic_test::start_mic_test,
             commands::mic_test::stop_mic_test,
+            commands::ai_memory::read_claude_memory,
             commands::meeting::meeting_active,
             commands::meeting::active_meeting,
             commands::meeting::finish_meeting_journal,
