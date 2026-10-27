@@ -440,7 +440,10 @@ export function Onboarding() {
                 {nextLabel}
                 <ChevronRight className="size-3.5" />
               </Button>
-              {nextBlocked && gateBlock && (
+              {/* A missing key needs no line here: the field is marked
+                  required right above. A local model still downloading
+                  does — nothing above says Next waits for it. */}
+              {nextBlocked && gateBlock && gateBlock !== "credential" && (
                 <span className="text-[11px] text-muted-foreground">{t(GATE_HINT[gateBlock])}</span>
               )}
             </div>
