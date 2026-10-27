@@ -89,7 +89,7 @@ pub(crate) fn collect_claude_memory(home: &Path) -> Vec<MemoryFile> {
             }
         }
     }
-    auto.sort_by(|a, b| b.0.cmp(&a.0));
+    auto.sort_by_key(|a| std::cmp::Reverse(a.0));
     for (_, path) in auto.into_iter().take(MAX_FILES) {
         push("project", &path, MAX_FILE_BYTES, &mut out);
     }
@@ -100,7 +100,7 @@ pub(crate) fn collect_claude_memory(home: &Path) -> Vec<MemoryFile> {
         .filter(|path| path.is_file())
         .map(|path| (modified_at(&path), path))
         .collect();
-    project_files.sort_by(|a, b| b.0.cmp(&a.0));
+    project_files.sort_by_key(|a| std::cmp::Reverse(a.0));
     project_files.dedup_by(|a, b| a.1 == b.1);
     for (_, path) in project_files.into_iter().take(MAX_PROJECT_FILES) {
         push("project", &path, MAX_PROJECT_FILE_BYTES, &mut out);
@@ -254,7 +254,7 @@ mod tests {
         std::fs::write(home.join(".claude.json"), config.to_string()).unwrap();
 
         let mut files = collect_claude_memory(&home);
-        files.sort_by(|a, b| a.text.len().cmp(&b.text.len()));
+        files.sort_by_key(|f| f.text.len());
         assert_eq!(files.len(), 2);
         assert!(files.iter().all(|f| f.label == "project"));
         assert_eq!(files[0].text, "Parley: meeting assistant");
