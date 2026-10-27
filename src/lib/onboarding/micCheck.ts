@@ -2,8 +2,8 @@
  * Onboarding's microphone check: the user reads a short self-introduction,
  * the configured STT provider transcribes it live (start_mic_check), and the
  * sentence becomes the first line of their speaker background — plus their
- * name and company, when Settings doesn't have them yet, and the proper nouns
- * they said as dictionary terms.
+ * name and company, when Settings doesn't have them yet, and the company,
+ * people and product names they said as dictionary terms.
  *
  * With an AI provider set up, the model tidies the sentence into those parts;
  * without one, the transcript itself is the background line, so the check
@@ -89,8 +89,8 @@ const SYSTEM =
   '- "name", "company", "role": as stated, or "" when not said.\n' +
   '- "background": 1 to 3 short factual lines about the user (who they are, what they use the ' +
   "assistant for). No bullet characters, no line over 80 characters.\n" +
-  '- "terms": the proper nouns said (company, product, people), spelled as the user most likely ' +
-  "writes them.\n" +
+  '- "terms": the names said, for a speech recogniser: company names, people\'s names (the user\'s ' +
+  "included) and product names, each spelled as the user most likely writes it; one name per entry.\n" +
   "Never invent anything that wasn't said.\n";
 
 /** Turn the transcript into background lines, terms and profile fields. */

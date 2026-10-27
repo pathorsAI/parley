@@ -18,26 +18,39 @@ import type { MemoryFile } from "../ipc/commands";
 import type { Settings } from "../types";
 
 /** The prompt cap: memory is notes, and the model only needs the gist. The
- *  Rust reader stops at the same size (whole files only), so this is a backstop
- *  for the pasted ChatGPT answer. */
+ *  Rust reader stops at the same size (whole files only), so this is only a
+ *  backstop. */
 export const MAX_MEMORY_CHARS = 24_000;
 /** What stands in for a redacted secret. */
 export const REDACTED = "[redacted]";
 /** Lines kept, so a chatty memory reads as a summary, not a dump. */
 export const MAX_MEMORY_LINES = 8;
+/** Names kept for the dictionary. */
+export const MAX_MEMORY_TERMS = 12;
 
 const schema = z.object({
   notes: z.array(z.string()).default([]),
+  terms: z.array(z.string()).default([]),
 });
+
+export interface MemorySummary {
+  notes: string[];
+  /** Company, people and product names, for the dictionary. */
+  terms: string[];
+}
 
 const SYSTEM =
   "You read notes an AI assistant has kept about its user and extract what a meeting assistant " +
   "should know about that user going into their meetings.\n" +
-  `Return JSON with "notes": at most ${MAX_MEMORY_LINES} short, factual lines about the user: their role ` +
-  "and company, what they work on and know, the customers or partners they meet, their team members and " +
-  "roles, and how they like to work. One fact per line, no bullet characters, no line over 80 characters.\n" +
+  "Return JSON with two arrays:\n" +
+  `- "notes": at most ${MAX_MEMORY_LINES} short, factual lines about the user: their role and company, ` +
+  "what they work on and know, the customers or partners they meet, their team members and roles, and how " +
+  "they like to work. One fact per line, no bullet characters, no line over 80 characters.\n" +
+  `- "terms": at most ${MAX_MEMORY_TERMS} names a speech recogniser would likely get wrong: company names ` +
+  "(their own, customers', partners'), people's names and product names. Exactly as written in the notes, " +
+  "one name per entry, no descriptions.\n" +
   "Skip coding conventions, tool configuration, file paths, secrets, credentials and anything about " +
-  "other people's private lives. If the notes say nothing useful, return an empty array.\n";
+  "other people's private lives. If the notes say nothing useful, return empty arrays.\n";
 
 /** Claude Code memory files as one prompt body, each under its label, capped. */
 export function memoryFilesToText(files: readonly MemoryFile[]): string {
@@ -49,15 +62,15 @@ export function capMemoryText(text: string): string {
   return trimmed.length > MAX_MEMORY_CHARS ? trimmed.slice(0, MAX_MEMORY_CHARS) : trimmed;
 }
 
-/** Condense memory text into a few lines with the user's LLM. */
+/** Condense memory text into a few lines, and the names in it, with the user's LLM. */
 export async function summarizeMemory(opts: {
   settings: Settings;
   text: string;
   signal?: AbortSignal;
-}): Promise<string[]> {
+}): Promise<MemorySummary> {
   const { settings, text, signal } = opts;
   const body = capMemoryText(redactSecrets(text));
-  if (!body) return [];
+  if (!body) return { notes: [], terms: [] };
   const { object, usage } = await generateObjectResilient({
     settings,
     workload: "realtime",
@@ -68,7 +81,10 @@ export async function summarizeMemory(opts: {
     signal,
   });
   void recordLlmUsage(settings, "realtime", "memory-import", usage);
-  return cleanLines(object.notes).slice(0, MAX_MEMORY_LINES);
+  return {
+    notes: cleanLines(object.notes).slice(0, MAX_MEMORY_LINES),
+    terms: cleanLines(object.terms).slice(0, MAX_MEMORY_TERMS),
+  };
 }
 
 /**

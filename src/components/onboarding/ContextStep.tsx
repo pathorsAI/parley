@@ -5,7 +5,6 @@ import { useStore } from "../../lib/store";
 import { isTauri } from "../../lib/tauriEvents";
 import { log } from "../../lib/log";
 import { isProviderReady } from "../../lib/ai/settings";
-import { describeAiError } from "../../lib/ai/errors";
 import { removeEntry } from "../../lib/dictionary";
 import {
   appendBackground,
@@ -19,14 +18,15 @@ import * as ipc from "../../lib/ipc/commands";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-type MemoryState = "reading" | "ready" | "none" | "needLlm" | "unavailable" | { error: string };
+type MemoryState = "reading" | "ready" | "hidden";
 
 /**
  * What every meeting prompt should know about the user:
  * - the speaker background (settings.userBackground, one fact per line),
  *   seeded by the self-introduction in the mic check, editable here;
- * - the terms transcription should spell right (the shared dictionary): the
- *   ones onboarding added, removable, plus any the user types;
+ * - the terms transcription should spell right (the shared dictionary):
+ *   company, people and product names from the self-introduction and the AI
+ *   memory, removable, plus any the user types;
  * - what their AI assistant remembers (settings.aiMemoryNotes): Claude Code's
  *   memory files, read and condensed when the step opens, shown read-only so
  *   the user can see what was taken.
@@ -106,9 +106,6 @@ export function ContextStep({
             </Button>
           </form>
         </div>
-        {lines.length > 0 && (
-          <span className="text-[11px] text-muted-foreground">{t("onboarding.context.backgroundHint")}</span>
-        )}
       </div>
 
       {/* Dictionary terms */}
@@ -150,24 +147,25 @@ export function ContextStep({
         </form>
       </div>
 
-      <AiMemory />
+      <AiMemory onTermsAdded={(added) => setTerms((prev) => [...prev, ...added])} />
     </div>
   );
 }
 
 /**
  * Claude Code's memory, condensed. Read once when the step opens (unless an
- * earlier visit already kept a summary), shown read-only. Nothing to show and
- * nothing to do when there is no memory or no AI provider to condense it.
+ * earlier visit already kept a summary); the company, people and product
+ * names in it join the terms above, the rest is shown read-only — and not shown at
+ * all when there is no memory, no AI provider to condense it, or the read
+ * failed.
  */
-function AiMemory() {
+function AiMemory({ onTermsAdded }: Readonly<{ onTermsAdded: (terms: AddedTerm[]) => void }>) {
   const { t } = useI18n();
   const notes = useStore((s) => s.settings.aiMemoryNotes);
   const patch = useStore((s) => s.updateSettings);
   const [state, setState] = useState<MemoryState>(() => {
     if (notes.trim()) return "ready";
-    if (!isTauri()) return "unavailable";
-    return isProviderReady(useStore.getState().settings, "realtime") ? "reading" : "needLlm";
+    return isTauri() && isProviderReady(useStore.getState().settings, "realtime") ? "reading" : "hidden";
   });
 
   useEffect(() => {
@@ -175,16 +173,20 @@ function AiMemory() {
     let alive = true;
     (async () => {
       const files = await ipc.readClaudeMemory();
-      if (files.length === 0) return "none" as const;
-      const lines = await summarizeMemory({ settings: useStore.getState().settings, text: memoryFilesToText(files) });
-      if (lines.length === 0) return "none" as const;
-      if (alive) patch({ aiMemoryNotes: lines.join("\n") });
+      if (files.length === 0) return "hidden" as const;
+      const summary = await summarizeMemory({ settings: useStore.getState().settings, text: memoryFilesToText(files) });
+      if (!alive) return "hidden" as const;
+      // The names go to the dictionary even when there are no notes to show.
+      const added = await addTerms(summary.terms);
+      if (added.length > 0) onTermsAdded(added);
+      if (summary.notes.length === 0) return "hidden" as const;
+      patch({ aiMemoryNotes: summary.notes.join("\n") });
       return "ready" as const;
     })()
       .then((next) => alive && setState(next))
       .catch((e) => {
         log.warn("onboarding: reading AI memory failed", { error: String(e) });
-        if (alive) setState({ error: describeAiError(e) });
+        if (alive) setState("hidden");
       });
     return () => {
       alive = false;
@@ -192,7 +194,9 @@ function AiMemory() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  if (state === "unavailable") return null;
+  // Nothing found, no AI provider, or a failed read: the section just isn't
+  // there — the step stands without it.
+  if (state !== "reading" && state !== "ready") return null;
   const lines = backgroundLines(notes);
 
   return (
@@ -201,31 +205,20 @@ function AiMemory() {
         <Sparkles className="size-3 text-primary" />
         {t("onboarding.context.memory.title")}
       </span>
-      {state === "reading" && (
+      {state === "reading" ? (
         <p className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
           <Loader2 className="size-3.5 animate-spin" />
           {t("onboarding.context.memory.reading")}
         </p>
-      )}
-      {state === "ready" && (
-        <>
-          <ul className="flex flex-col gap-0.5 rounded-lg bg-muted/40 px-3 py-2 text-[13px] leading-relaxed">
-            {lines.map((line, i) => (
-              <li key={`${i}:${line}`} className="flex gap-2">
-                <span className="text-muted-foreground">•</span>
-                <span className="flex-1">{line}</span>
-              </li>
-            ))}
-          </ul>
-          <span className="text-[11px] text-muted-foreground">{t("onboarding.context.memory.source")}</span>
-        </>
-      )}
-      {state === "none" && <p className="text-[13px] text-muted-foreground">{t("onboarding.context.memory.none")}</p>}
-      {state === "needLlm" && (
-        <p className="text-[13px] text-muted-foreground">{t("onboarding.context.memory.needLlm")}</p>
-      )}
-      {typeof state === "object" && (
-        <p className="text-[13px] text-muted-foreground">{t("onboarding.context.memory.failed", { error: state.error })}</p>
+      ) : (
+        <ul className="flex flex-col gap-0.5 rounded-lg bg-muted/40 px-3 py-2 text-[13px] leading-relaxed">
+          {lines.map((line, i) => (
+            <li key={`${i}:${line}`} className="flex gap-2">
+              <span className="text-muted-foreground">•</span>
+              <span className="flex-1">{line}</span>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );
