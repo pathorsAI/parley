@@ -127,6 +127,12 @@ export function Onboarding() {
   const index = Math.max(0, steps.indexOf(current));
   const [perms, setPerms] = useState<Perms | null>(null);
   const [advancing, setAdvancing] = useState(false);
+  // The model step's choice, kept here so it survives Back/Next: signed in,
+  // Parley's hosted models are the default unless the user picks their own.
+  const [ownModels, setOwnModels] = useState(false);
+  // The providers in place before the model step switched them to Parley's,
+  // so "Use my own models" puts them back.
+  const beforeHosted = useRef<Pick<Settings, "transcriptionProvider" | "llmProviders"> | null>(null);
   // A step that has work to do when the user presses Next (creating an
   // organization) registers it here; false keeps the user on the step.
   const beforeNext = useRef<BeforeNext | null>(null);
@@ -272,7 +278,9 @@ export function Onboarding() {
 
           {current === "org" && <OrgStep setBeforeNext={setBeforeNext} />}
 
-          {current === "model" && <ModelStep local={local} />}
+          {current === "model" && (
+            <ModelStep local={local} own={ownModels} setOwn={setOwnModels} beforeHosted={beforeHosted} />
+          )}
 
           {current === "perms" && (
             <div className="flex flex-col gap-3">
@@ -566,29 +574,67 @@ function AccountStep({ onSignedIn }: Readonly<{ onSignedIn: () => void }>) {
  * provider is required — it is what the gate checks; the LLM is optional
  * (recording works without it, analysis doesn't).
  */
-function ModelStep({ local }: Readonly<{ local: LocalSttModelsState }>) {
+function ModelStep({
+  local,
+  own,
+  setOwn,
+  beforeHosted,
+}: Readonly<{
+  local: LocalSttModelsState;
+  /** The user picked "Use my own models" in this wizard. */
+  own: boolean;
+  setOwn: (own: boolean) => void;
+  beforeHosted: React.MutableRefObject<Pick<Settings, "transcriptionProvider" | "llmProviders"> | null>;
+}>) {
   const { t } = useI18n();
   const settings = useStore((s) => s.settings);
   const patch = useStore((s) => s.updateSettings);
   const cloudAuth = useStore((s) => s.cloudAuth);
   const signedIn = CLOUD_ENABLED && !!cloudAuth;
   const listing = { cloudEnabled: CLOUD_ENABLED, signedIn: !!cloudAuth };
-  const [own, setOwn] = useState(() => !signedIn || !usesCloudSession(settings.transcriptionProvider));
   const showProviders = !signedIn || own;
 
   const llm = PROVIDER_BY_ID[settings.llmProviders.deep];
   const stt = STT_BY_ID[settings.transcriptionProvider];
 
+  function applyHosted() {
+    const current = useStore.getState().settings;
+    const onHosted =
+      usesCloudSession(current.transcriptionProvider) &&
+      current.llmProviders.realtime === "parley" &&
+      current.llmProviders.deep === "parley";
+    if (onHosted) return;
+    beforeHosted.current ??= {
+      transcriptionProvider: current.transcriptionProvider,
+      llmProviders: current.llmProviders,
+    };
+    patch({ llmProviders: { realtime: "parley", deep: "parley" }, transcriptionProvider: "parley" });
+  }
+
+  // Signed in → Parley's hosted models are filled in, however the session came
+  // about (signed in on the previous step, a session kept from before, or a
+  // sign-in that finished after the user had moved on), unless the user has
+  // picked their own models in this wizard.
+  useEffect(() => {
+    if (signedIn && !own) applyHosted();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signedIn]);
+
   function pickHosted() {
     setOwn(false);
-    patch({ llmProviders: { realtime: "parley", deep: "parley" }, transcriptionProvider: "parley" });
+    applyHosted();
   }
 
   function pickOwn() {
     setOwn(true);
-    // Leave Parley's hosted STT for the first bring-your-own provider; the
+    // Put back what was there before Parley's models were filled in; failing
+    // that, leave the hosted STT for the first bring-your-own provider. The
     // hosted LLM may stay — it's a separate, optional choice below.
-    if (usesCloudSession(settings.transcriptionProvider)) {
+    const saved = beforeHosted.current;
+    beforeHosted.current = null;
+    if (saved && !usesCloudSession(saved.transcriptionProvider)) {
+      patch(saved);
+    } else if (usesCloudSession(useStore.getState().settings.transcriptionProvider)) {
       const first = STT_PROVIDERS.find((p) => !usesCloudSession(p.id) && isProviderListed(p, listing));
       if (first) patch({ transcriptionProvider: first.id });
     }
