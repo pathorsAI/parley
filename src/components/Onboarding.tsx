@@ -28,7 +28,7 @@ import { ChoiceRow } from "./onboarding/ChoiceRow";
 import { OrgStep, type BeforeNext } from "./onboarding/OrgStep";
 import { MicStep } from "./onboarding/MicStep";
 import { ContextStep } from "./onboarding/ContextStep";
-import type { AddedTerm } from "../lib/onboarding/micCheck";
+import { mergeTerms, type AddedTerm } from "../lib/onboarding/micCheck";
 import { useI18n, LANGUAGE_OPTIONS } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -131,8 +131,9 @@ export function Onboarding() {
   // The model step's choice, kept here so it survives Back/Next: signed in,
   // Parley's hosted models are the default unless the user picks their own.
   const [ownModels, setOwnModels] = useState(false);
-  // Dictionary entries this wizard added (from the self-introduction, or typed
-  // on the context step), listed there so they can be taken back out.
+  // The dictionary terms this wizard found (names from the self-introduction
+  // and the AI memory, the user's name and company, ones typed on the context
+  // step), listed there so they can be taken back out.
   const [addedTerms, setAddedTerms] = useState<AddedTerm[]>([]);
   // The providers in place before the model step switched them to Parley's,
   // so "Use my own models" puts them back.
@@ -355,7 +356,7 @@ export function Onboarding() {
             </div>
           )}
 
-          {current === "mic" && <MicStep onTermsAdded={(terms) => setAddedTerms((prev) => [...prev, ...terms])} />}
+          {current === "mic" && <MicStep onTermsAdded={(terms) => setAddedTerms((prev) => mergeTerms(prev, terms))} />}
 
           {current === "context" && <ContextStep terms={addedTerms} setTerms={setAddedTerms} />}
 

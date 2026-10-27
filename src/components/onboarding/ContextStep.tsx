@@ -13,7 +13,7 @@ import {
   removeBackgroundLine,
   summarizeMemory,
 } from "../../lib/onboarding/memoryImport";
-import { addTerms, type AddedTerm } from "../../lib/onboarding/micCheck";
+import { addTerms, mergeTerms, type AddedTerm } from "../../lib/onboarding/micCheck";
 import * as ipc from "../../lib/ipc/commands";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,9 +24,9 @@ type MemoryState = "reading" | "ready" | "hidden";
  * What every meeting prompt should know about the user:
  * - the speaker background (settings.userBackground, one fact per line),
  *   seeded by the self-introduction in the mic check, editable here;
- * - the terms transcription should spell right (the shared dictionary):
- *   company, people and product names from the self-introduction and the AI
- *   memory, removable, plus any the user types;
+ * - the terms transcription should spell right (the shared dictionary): the
+ *   user's name and company, the company, people and product names from the
+ *   self-introduction and the AI memory, and any the user types — removable;
  * - what their AI assistant remembers (settings.aiMemoryNotes): Claude Code's
  *   memory files, read and condensed when the step opens, shown read-only so
  *   the user can see what was taken.
@@ -42,6 +42,16 @@ export function ContextStep({
   const [newLine, setNewLine] = useState("");
   const [newTerm, setNewTerm] = useState("");
 
+  // The names already known go straight in: the user's own name and company
+  // (Settings, or filled from the self-introduction). No AI needed for these.
+  useEffect(() => {
+    const { userName, userCompany } = useStore.getState().settings;
+    addTerms([userCompany, userName])
+      .then((found) => setTerms((prev) => mergeTerms(prev, found)))
+      .catch((e) => log.warn("onboarding: adding profile terms failed", { error: String(e) }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function addLine() {
     const v = newLine.trim();
     if (!v) return;
@@ -54,7 +64,7 @@ export function ContextStep({
     if (!v) return;
     setNewTerm("");
     addTerms([v])
-      .then((added) => setTerms((prev) => [...prev, ...added]))
+      .then((added) => setTerms((prev) => mergeTerms(prev, added)))
       .catch((e) => log.warn("onboarding: add term failed", { error: String(e) }));
   }
 
@@ -147,7 +157,7 @@ export function ContextStep({
         </form>
       </div>
 
-      <AiMemory onTermsAdded={(added) => setTerms((prev) => [...prev, ...added])} />
+      <AiMemory onTermsAdded={(added) => setTerms((prev) => mergeTerms(prev, added))} />
     </div>
   );
 }

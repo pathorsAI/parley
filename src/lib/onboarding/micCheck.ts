@@ -16,7 +16,7 @@ import { outputLanguageInstruction } from "../ai/profile";
 import { isProviderReady } from "../ai/settings";
 import { recordLlmUsage } from "../usage/log";
 import type { Settings } from "../types";
-import { addEntry, whenDictionaryReady } from "../dictionary";
+import { addEntry, listEntries, whenDictionaryReady } from "../dictionary";
 import { cleanLines } from "./memoryImport";
 
 /** The source label on the check's events (mic_check.rs `MIC_CHECK_SOURCE`). */
@@ -135,23 +135,36 @@ export function profileFill(
   return out;
 }
 
-/** A dictionary entry onboarding created, so it can take it back out. */
+/** A dictionary entry onboarding lists as a term. */
 export interface AddedTerm {
   id: string;
   phrase: string;
 }
 
 /**
- * Add phrases to the dictionary. A phrase already there merges as a variant
- * (or not at all); only brand-new entries are returned, so removing one later
- * never deletes something the user had before onboarding.
+ * Make sure each phrase is in the dictionary and return its entry — new or
+ * already there — so the context step lists every name onboarding found, even
+ * on a second run of the wizard when they all exist from the first. Removing
+ * one from the list is the user asking for it gone, so it removes the entry.
  */
 export async function addTerms(phrases: readonly string[]): Promise<AddedTerm[]> {
   await whenDictionaryReady();
-  const added: AddedTerm[] = [];
-  for (const phrase of phrases) {
+  const out: AddedTerm[] = [];
+  for (const raw of phrases) {
+    const phrase = raw.trim();
+    if (!phrase) continue;
     const res = addEntry({ phrase, source: "manual" });
-    if (res?.kind === "entry") added.push({ id: res.entryId, phrase: phrase.trim() });
+    const id = res?.entryId ?? listEntries().find((e) => e.phrase === phrase)?.id;
+    if (id && !out.some((t) => t.id === id)) out.push({ id, phrase });
   }
-  return added;
+  return out;
+}
+
+/** Merge terms into a list, skipping ones it already has (same entry or same phrase). */
+export function mergeTerms(list: readonly AddedTerm[], add: readonly AddedTerm[]): AddedTerm[] {
+  const out = [...list];
+  for (const t of add) {
+    if (!out.some((x) => x.id === t.id || x.phrase === t.phrase)) out.push(t);
+  }
+  return out;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CheckTranscript, joinRuns, profileFill } from "./micCheck";
+import { CheckTranscript, joinRuns, mergeTerms, profileFill } from "./micCheck";
 
 const seg = (id: string, text: string, is_final: boolean, source = "mic-check") => ({ id, source, text, is_final });
 
@@ -35,5 +35,15 @@ describe("profileFill", () => {
       profileFill({ userName: "", userCompany: "Acme", userRole: " " }, { name: "Jack", company: "Pathors", role: "設計師" }),
     ).toEqual({ userName: "Jack", userRole: "設計師" });
     expect(profileFill({ userName: "", userCompany: "", userRole: "" }, { name: "", company: "", role: "" })).toEqual({});
+  });
+});
+
+describe("mergeTerms", () => {
+  it("adds only terms the list doesn't have, by entry or by phrase", () => {
+    const a = { id: "1", phrase: "派斯科技" };
+    const b = { id: "2", phrase: "Jack" };
+    expect(mergeTerms([a], [a, b])).toEqual([a, b]);
+    expect(mergeTerms([a], [{ id: "3", phrase: "派斯科技" }])).toEqual([a]);
+    expect(mergeTerms([], [b, b])).toEqual([b]);
   });
 });
