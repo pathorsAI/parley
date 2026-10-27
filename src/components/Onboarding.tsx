@@ -287,13 +287,13 @@ export function Onboarding() {
               <h2 className="text-base font-semibold tracking-tight">
                 {t(isMac() ? "onboarding.perms.title" : "onboarding.perms.title.windows")}
               </h2>
-              {/* Windows asks consent for the microphone alone and points at
-                  its own Settings app — the macOS copy would send the user
-                  hunting for a "System Audio Recording" grant that doesn't
-                  exist there (loopback capture needs none). */}
-              <p className="text-sm leading-relaxed text-muted-foreground">
-                {t(isMac() ? "onboarding.perms.body" : "onboarding.perms.body.windows")}
-              </p>
+              {/* macOS needs no lead-in: each row says whose voice it is for.
+                  Windows keeps one line: it asks consent for the microphone
+                  alone, and its system-audio row is checked without the user
+                  doing anything (loopback capture needs no grant). */}
+              {!isMac() && (
+                <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.perms.body.windows")}</p>
+              )}
 
               <PermRow
                 icon={<Mic className="size-4" />}
