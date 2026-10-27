@@ -24,13 +24,19 @@ const local = (over: Partial<LocalSttModel> = {}): LocalSttModel => ({
 const noLocal: LocalGateInput = { models: null, downloads: {} };
 const localSettings = settingsFor({ transcriptionProvider: "local", localSttModel: SELECTED });
 
-describe("accountGateBlock — BYOK / hosted (unchanged behaviour)", () => {
-  it("passes when signed in, or with a key for the selected provider", () => {
-    expect(accountGateBlock(settingsFor({ transcriptionProvider: "soniox", sonioxApiKey: "" }), true, noLocal)).toBeNull();
-    expect(accountGateBlock(settingsFor({ transcriptionProvider: "soniox", sonioxApiKey: "k" }), false, noLocal)).toBeNull();
+describe("accountGateBlock — BYOK / hosted", () => {
+  it("passes for Parley's hosted STT only when signed in", () => {
+    expect(accountGateBlock(settingsFor({ transcriptionProvider: "parley" }), true, noLocal)).toBeNull();
+    expect(accountGateBlock(settingsFor({ transcriptionProvider: "parley" }), false, noLocal)).toBe("credential");
   });
 
-  it("blocks for a credential otherwise", () => {
+  it("passes for a bring-your-own provider only with its key, signed in or not", () => {
+    expect(accountGateBlock(settingsFor({ transcriptionProvider: "soniox", sonioxApiKey: "k" }), false, noLocal)).toBeNull();
+    expect(accountGateBlock(settingsFor({ transcriptionProvider: "soniox", sonioxApiKey: "k" }), true, noLocal)).toBeNull();
+    // Signed in but "own models" with no key: the first meeting would be refused.
+    expect(accountGateBlock(settingsFor({ transcriptionProvider: "soniox", sonioxApiKey: "" }), true, noLocal)).toBe(
+      "credential",
+    );
     expect(accountGateBlock(settingsFor({ transcriptionProvider: "deepgram", deepgramApiKey: "  " }), false, noLocal)).toBe(
       "credential",
     );
