@@ -531,30 +531,27 @@ function AccountStep({ onSignedIn }: Readonly<{ onSignedIn: () => void }>) {
         </div>
       ) : (
         <>
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col items-start gap-1.5">
             <Button
               size="sm"
-              className="h-9 w-fit gap-2 text-xs"
+              className="h-9 gap-2 text-xs"
               disabled={signingIn || !isTauri()}
               onClick={() => doSignIn().catch((error) => log.error("onboarding: sign-in failed", { error: String(error) }))}
             >
               {signingIn ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
               {signingIn ? t("settings.account.signingIn") : t("settings.account.signInGoogle")}
             </Button>
-            <p className="text-[11px] leading-relaxed text-muted-foreground">
-              {t("onboarding.account.freeNote")} {t("onboarding.account.orgNext")}
-            </p>
+            <p className="text-[11px] text-muted-foreground">{t("onboarding.account.orgNext")}</p>
             {error && (
               <p className="rounded-md bg-danger px-2.5 py-1.5 text-[11px] text-danger-foreground">
                 {t("onboarding.login.failed", { error })}
               </p>
             )}
           </div>
-          <div className="mt-1 flex flex-col gap-1 rounded-lg border bg-muted/40 px-3 py-2.5">
-            <span className="text-xs font-medium">{t("onboarding.account.noLogin.title")}</span>
-            <span className="text-xs leading-relaxed text-muted-foreground">
-              {t("onboarding.account.noLogin.body")}
-            </span>
+          {/* The other way through: the footer's Next, relabelled. */}
+          <div className="mt-2 flex flex-col gap-1 border-t pt-4">
+            <h3 className="text-sm font-medium">{t("onboarding.account.noLogin.title")}</h3>
+            <p className="text-xs leading-relaxed text-muted-foreground">{t("onboarding.account.noLogin.body")}</p>
           </div>
         </>
       )}
