@@ -26,9 +26,9 @@ import {
 export async function listenForTranscript(): Promise<UnlistenFn> {
   return listenIfTauri(TRANSCRIPT_SEGMENT_EVENT, (event) => {
     const p = event.payload;
-    // Voice-typing dictation streams over the same event but belongs to the
-    // floating overlay, not the meeting transcript — keep it out of the store.
-    if (p.source === "voice-typing") return;
+    // Voice-typing dictation and onboarding's mic check stream over the same
+    // event but aren't a meeting's transcript — keep them out of the store.
+    if (p.source === "voice-typing" || p.source === "mic-check") return;
     normalizeTranscriptText(p.text)
       .then((text) => {
         useStore.getState().upsertSegment({

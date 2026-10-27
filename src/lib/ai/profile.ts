@@ -8,6 +8,7 @@ function profileFacts(settings: Settings): string {
   if (settings.userRole.trim()) facts.push(`- Role: ${settings.userRole.trim()}`);
   if (settings.userCompany.trim()) facts.push(`- Company / side: ${settings.userCompany.trim()}`);
   if (settings.userBackground?.trim()) facts.push(`- Background: ${settings.userBackground.trim()}`);
+  if (settings.aiMemoryNotes?.trim()) facts.push(`- From my AI assistant's memory: ${settings.aiMemoryNotes.trim()}`);
   if (facts.length === 0) return "";
   return `ABOUT ME / US (the side you are advising):\n${facts.join("\n")}\n\n`;
 }

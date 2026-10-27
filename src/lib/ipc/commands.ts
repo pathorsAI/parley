@@ -177,6 +177,17 @@ export interface MemoryFile {
   text: string;
 }
 export const readClaudeMemory = () => invoke<MemoryFile[]>("read_claude_memory");
+/** Onboarding's microphone check: a short transcription on `source` "mic-check" (mic_check.rs). */
+export const startMicCheck = (args: {
+  provider: string;
+  apiKey: string;
+  model?: string | null;
+  languageHints?: string[] | null;
+  inputDevice?: string | null;
+  relayUrl?: string | null;
+  vocabulary?: string[] | null;
+}) => invoke<void>("start_mic_check", args);
+export const stopMicCheck = () => invoke<void>("stop_mic_check");
 
 // ── Uploaded recordings & playback (replay.rs, playback.rs) ─────────────────
 

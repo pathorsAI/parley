@@ -1,15 +1,13 @@
 /**
- * Onboarding's context step: turn what the user's AI assistants already
- * remember about them into speaker-background lines (settings.userBackground,
- * read by every meeting prompt via profileContext) and dictionary terms.
+ * Onboarding's context step: what the user's AI assistant already remembers
+ * about them, condensed into a few read-only lines (settings.aiMemoryNotes,
+ * read by every meeting prompt via profileContext). The source is Claude
+ * Code's memory files on this machine (read_claude_memory), read when the
+ * step opens; secrets are masked before the text goes to the user's own LLM
+ * (realtime lane), and only the condensed lines are kept.
  *
- * Two sources, both started by the user:
- * - Claude Code: its memory files on this machine (read_claude_memory).
- * - ChatGPT: no API exposes its memory, so the user asks ChatGPT with
- *   the `onboarding.context.chatgptPrompt` text and pastes the answer back.
- *
- * Either way the raw text goes to the user's own LLM (realtime lane) and only
- * the distilled lines come back; nothing is saved until the user sees them.
+ * The helpers for settings.userBackground (the editable speaker background)
+ * live here too.
  */
 import { z } from "zod";
 import { generateObjectResilient } from "../ai/generate";
@@ -25,31 +23,21 @@ import type { Settings } from "../types";
 export const MAX_MEMORY_CHARS = 24_000;
 /** What stands in for a redacted secret. */
 export const REDACTED = "[redacted]";
-/** Lines kept from one pass, so a chatty memory can't flood the background. */
-export const MAX_BACKGROUND_LINES = 8;
-export const MAX_TERMS = 12;
+/** Lines kept, so a chatty memory reads as a summary, not a dump. */
+export const MAX_MEMORY_LINES = 8;
 
 const schema = z.object({
-  background: z.array(z.string()).default([]),
-  terms: z.array(z.string()).default([]),
+  notes: z.array(z.string()).default([]),
 });
-
-export interface MemorySummary {
-  background: string[];
-  terms: string[];
-}
 
 const SYSTEM =
   "You read notes an AI assistant has kept about its user and extract what a meeting assistant " +
   "should know about that user going into their meetings.\n" +
-  "Return JSON with two arrays:\n" +
-  `- "background": at most ${MAX_BACKGROUND_LINES} short, factual lines about the user: their role and ` +
-  "company, what they work on, the customers or partners they meet, their team members and roles, and " +
-  "how they like to work. One fact per line, no bullet characters, no line over 80 characters.\n" +
-  `- "terms": at most ${MAX_TERMS} proper nouns a speech recogniser would likely get wrong: company, ` +
-  "product, project and people names. Exactly as written in the notes.\n" +
+  `Return JSON with "notes": at most ${MAX_MEMORY_LINES} short, factual lines about the user: their role ` +
+  "and company, what they work on and know, the customers or partners they meet, their team members and " +
+  "roles, and how they like to work. One fact per line, no bullet characters, no line over 80 characters.\n" +
   "Skip coding conventions, tool configuration, file paths, secrets, credentials and anything about " +
-  "other people's private lives. If the notes say nothing useful, return empty arrays.\n";
+  "other people's private lives. If the notes say nothing useful, return an empty array.\n";
 
 /** Claude Code memory files as one prompt body, each under its label, capped. */
 export function memoryFilesToText(files: readonly MemoryFile[]): string {
@@ -61,15 +49,15 @@ export function capMemoryText(text: string): string {
   return trimmed.length > MAX_MEMORY_CHARS ? trimmed.slice(0, MAX_MEMORY_CHARS) : trimmed;
 }
 
-/** Distil memory text into background lines and terms with the user's LLM. */
+/** Condense memory text into a few lines with the user's LLM. */
 export async function summarizeMemory(opts: {
   settings: Settings;
   text: string;
   signal?: AbortSignal;
-}): Promise<MemorySummary> {
+}): Promise<string[]> {
   const { settings, text, signal } = opts;
   const body = capMemoryText(redactSecrets(text));
-  if (!body) return { background: [], terms: [] };
+  if (!body) return [];
   const { object, usage } = await generateObjectResilient({
     settings,
     workload: "realtime",
@@ -80,10 +68,7 @@ export async function summarizeMemory(opts: {
     signal,
   });
   void recordLlmUsage(settings, "realtime", "memory-import", usage);
-  return {
-    background: cleanLines(object.background).slice(0, MAX_BACKGROUND_LINES),
-    terms: cleanLines(object.terms).slice(0, MAX_TERMS),
-  };
+  return cleanLines(object.notes).slice(0, MAX_MEMORY_LINES);
 }
 
 /**

@@ -323,6 +323,10 @@ export interface Settings {
   /** Free-text background on you / your side — product, goals, the deal, etc.
    *  Injected into every analysis prompt so the model knows which side is "us". */
   userBackground: string;
+  /** What the user's AI assistant remembers about them (Claude Code's memory
+   *  files), condensed by their LLM into one fact per line during onboarding.
+   *  Read-only in the UI; fed to every meeting prompt next to the background. */
+  aiMemoryNotes: string;
   /** Which provider serves each workload lane (#131) — realtime and deep can
    *  point at different vendors (e.g. Groq live, Anthropic for reports). */
   llmProviders: Record<LlmWorkload, LlmProvider>;

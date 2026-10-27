@@ -52,12 +52,17 @@ pub(crate) fn collect_claude_memory(home: &Path) -> Vec<MemoryFile> {
     let mut total = 0usize;
 
     let mut push = |label: &str, path: &Path, out: &mut Vec<MemoryFile>| {
-        let Some(text) = read_capped(path) else { return };
+        let Some(text) = read_capped(path) else {
+            return;
+        };
         if total + text.len() > MAX_TOTAL_BYTES {
             return;
         }
         total += text.len();
-        out.push(MemoryFile { label: label.into(), text });
+        out.push(MemoryFile {
+            label: label.into(),
+            text,
+        });
     };
 
     push("global", &root.join("CLAUDE.md"), &mut out);
@@ -65,7 +70,9 @@ pub(crate) fn collect_claude_memory(home: &Path) -> Vec<MemoryFile> {
     let mut auto: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
     if let Ok(projects) = std::fs::read_dir(root.join("projects")) {
         for project in projects.flatten() {
-            let Ok(files) = std::fs::read_dir(project.path().join("memory")) else { continue };
+            let Ok(files) = std::fs::read_dir(project.path().join("memory")) else {
+                continue;
+            };
             for file in files.flatten() {
                 let path = file.path();
                 if path.extension().and_then(|e| e.to_str()) != Some("md") {
@@ -106,7 +113,8 @@ mod tests {
     use super::*;
 
     fn temp_home(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("parley-ai-memory-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("parley-ai-memory-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -124,16 +132,30 @@ mod tests {
         let claude = home.join(".claude");
         std::fs::create_dir_all(claude.join("projects/-work-parley/memory")).unwrap();
         std::fs::write(claude.join("CLAUDE.md"), "  I design Parley.\n").unwrap();
-        std::fs::write(claude.join("projects/-work-parley/memory/MEMORY.md"), "Team: Joe").unwrap();
+        std::fs::write(
+            claude.join("projects/-work-parley/memory/MEMORY.md"),
+            "Team: Joe",
+        )
+        .unwrap();
         std::fs::write(claude.join("projects/-work-parley/memory/blank.md"), "   ").unwrap();
-        std::fs::write(claude.join("projects/-work-parley/memory/notes.txt"), "skip").unwrap();
+        std::fs::write(
+            claude.join("projects/-work-parley/memory/notes.txt"),
+            "skip",
+        )
+        .unwrap();
 
         let files = collect_claude_memory(&home);
         assert_eq!(
             files,
             vec![
-                MemoryFile { label: "global".into(), text: "I design Parley.".into() },
-                MemoryFile { label: "project".into(), text: "Team: Joe".into() },
+                MemoryFile {
+                    label: "global".into(),
+                    text: "I design Parley.".into()
+                },
+                MemoryFile {
+                    label: "project".into(),
+                    text: "Team: Joe".into()
+                },
             ]
         );
     }
@@ -145,12 +167,19 @@ mod tests {
         std::fs::create_dir_all(&mem).unwrap();
         std::fs::write(home.join(".claude/CLAUDE.md"), "g".repeat(MAX_FILE_BYTES)).unwrap();
         // Doesn't fit in what's left after the global file: skipped, not cut.
-        std::fs::write(mem.join("big.md"), "b".repeat(MAX_TOTAL_BYTES - MAX_FILE_BYTES + 1)).unwrap();
+        std::fs::write(
+            mem.join("big.md"),
+            "b".repeat(MAX_TOTAL_BYTES - MAX_FILE_BYTES + 1),
+        )
+        .unwrap();
         // Still fits: read even though a file before or after it was skipped.
         std::fs::write(mem.join("small.md"), "s".repeat(100)).unwrap();
 
         let files = collect_claude_memory(&home);
-        let labels: Vec<_> = files.iter().map(|f| (f.label.as_str(), f.text.len())).collect();
+        let labels: Vec<_> = files
+            .iter()
+            .map(|f| (f.label.as_str(), f.text.len()))
+            .collect();
         assert_eq!(labels, vec![("global", MAX_FILE_BYTES), ("project", 100)]);
     }
 

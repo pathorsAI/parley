@@ -40,6 +40,8 @@ export const DIARIZE_PROGRESS_EVENT = "diarize://progress";
 export const STT_CONNECTED_EVENT = "stt://connected";
 /** An STT session closed after its final answer. */
 export const STT_CLOSED_EVENT = "stt://closed";
+/** Onboarding's microphone check failed (mic_check.rs), payload like `meeting://error`. */
+export const MIC_CHECK_ERROR_EVENT = "miccheck://error";
 /** Seconds of audio a session sent to a provider, for the usage log. */
 export const STT_USAGE_EVENT = "usage://stt";
 /** The push-to-talk key went down / up. */
@@ -67,7 +69,8 @@ export const LOCAL_STT_SLOW_EVENT = "local-stt://slow";
 
 export interface TranscriptSegmentPayload {
   id: string;
-  /** "me" | "them" for a meeting, "voice-typing" for a dictation. */
+  /** "me" | "them" for a meeting, "voice-typing" for a dictation, "mic-check"
+   *  for onboarding's microphone check. */
   source: string;
   /** Diarized speaker number within this source (0 = unknown / single speaker). */
   speaker: number;
@@ -186,6 +189,7 @@ export interface BackendEventPayloads {
   [DIARIZE_PROGRESS_EVENT]: DiarizeProgressPayload;
   [STT_CONNECTED_EVENT]: SttConnectedPayload;
   [STT_CLOSED_EVENT]: SttClosedPayload;
+  [MIC_CHECK_ERROR_EVENT]: MeetingErrorPayload;
   [STT_USAGE_EVENT]: SttUsagePayload;
   [VOICE_TYPING_PTT_EVENT]: PttPayload;
   [VOICE_TYPING_ERROR_EVENT]: VoiceTypingErrorPayload;

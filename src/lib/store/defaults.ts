@@ -63,6 +63,7 @@ export const DEFAULT_SETTINGS: Settings = {
   userRole: "",
   userCompany: "",
   userBackground: "",
+  aiMemoryNotes: "",
   // Default both lanes to Groq's gpt-oss (fast + cheap); switch in Settings.
   llmProviders: { realtime: "groq", deep: "groq" },
   anthropicApiKey: "",

@@ -5,6 +5,7 @@
 //! - `session_files`: the live session snapshot and the MCP command queue.
 //! - `meeting`: starting, pausing, stopping and cancelling a live meeting.
 //! - `mic_test`: the Settings microphone preview.
+//! - `mic_check`: onboarding's microphone check (a short transcription).
 //! - `export`: saved transcripts, exported audio, unsaved-recording cleanup.
 //! - `oauth`: the desktop sign-in loopback.
 //! - `logs`: the in-app log viewer.
@@ -15,6 +16,7 @@ pub(crate) mod config;
 pub(crate) mod export;
 pub(crate) mod logs;
 pub(crate) mod meeting;
+pub(crate) mod mic_check;
 pub(crate) mod mic_test;
 pub(crate) mod oauth;
 pub(crate) mod session_files;
