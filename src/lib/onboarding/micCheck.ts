@@ -168,3 +168,74 @@ export function mergeTerms(list: readonly AddedTerm[], add: readonly AddedTerm[]
   }
   return out;
 }
+
+/**
+ * The user corrected a name in their speaker background (`from` → `to`, see
+ * detectCorrection): add `to` to the dictionary with the old spelling as a
+ * variant, so transcription writes it the corrected way, and return its entry.
+ */
+export async function learnTerm(from: string, to: string): Promise<AddedTerm | null> {
+  await whenDictionaryReady();
+  const res = addEntry({ phrase: to, variants: [from], source: "correction" });
+  const id = res?.entryId ?? listEntries().find((e) => e.phrase === to.trim())?.id;
+  return id ? { id, phrase: to.trim() } : null;
+}
+
+/** The longest edit (either side) worth asking the model about: a name, not a rewrite. */
+const MAX_NAME_EDIT = 24;
+
+/** What differs between two texts once their shared start and end are removed (code points). */
+export function changedSpan(before: string, after: string): { from: string; to: string } {
+  const a = [...before];
+  const b = [...after];
+  let start = 0;
+  while (start < a.length && start < b.length && a[start] === b[start]) start += 1;
+  let endA = a.length;
+  let endB = b.length;
+  while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) {
+    endA -= 1;
+    endB -= 1;
+  }
+  return { from: a.slice(start, endA).join(""), to: b.slice(start, endB).join("") };
+}
+
+const nameEditSchema = z.object({ from: z.string().default(""), to: z.string().default("") });
+
+const NAME_EDIT_SYSTEM =
+  "The user edited a short text about themself. You get it before and after. If the edit corrected or " +
+  "completed a name (a company, a person or a product), return the whole name as it was before (\"from\") " +
+  "and as it is now (\"to\"), e.g. 東昇 → 東森. Otherwise, or if the edit added or removed other words, " +
+  'return empty strings.\n';
+
+/**
+ * The name the user corrected, for edits the dictation rule (detectCorrection)
+ * can't place: Chinese has no word boundaries, so a one-character fix (東昇 →
+ * 東森) or an added character (台灣大哥 → 台灣大哥大) leaves it without the
+ * whole name. Only small edits are asked about, and only with an AI provider;
+ * the answer must be a name that is actually in the new text.
+ */
+export async function findNameEdit(opts: {
+  settings: Settings;
+  before: string;
+  after: string;
+  signal?: AbortSignal;
+}): Promise<{ from: string; to: string } | null> {
+  const { settings, before, after, signal } = opts;
+  const span = changedSpan(before, after);
+  if (!span.to || [...span.from].length > MAX_NAME_EDIT || [...span.to].length > MAX_NAME_EDIT) return null;
+  if (!isProviderReady(settings, "realtime")) return null;
+  const { object, usage } = await generateObjectResilient({
+    settings,
+    workload: "realtime",
+    feature: "meeting",
+    schema: nameEditSchema,
+    system: NAME_EDIT_SYSTEM + JSON_MODE_INSTRUCTION,
+    prompt: `BEFORE:\n${before}\n\nAFTER:\n${after}`,
+    signal,
+  });
+  void recordLlmUsage(settings, "realtime", "mic-check", usage);
+  const from = object.from.trim();
+  const to = object.to.trim();
+  if (!from || !to || from === to || !after.includes(to) || !before.includes(from)) return null;
+  return { from, to };
+}

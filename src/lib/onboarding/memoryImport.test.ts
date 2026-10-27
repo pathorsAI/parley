@@ -8,7 +8,6 @@ import {
   cleanLines,
   memoryFilesToText,
   redactSecrets,
-  removeBackgroundLine,
 } from "./memoryImport";
 
 describe("cleanLines", () => {
@@ -36,12 +35,6 @@ describe("background editing", () => {
 
   it("lists non-blank lines without rewriting them", () => {
     expect(backgroundLines(typed)).toEqual(["Clients:", "- Acme", "- 常和東森談外撥專案"]);
-  });
-
-  it("removes one line and leaves the user's formatting alone", () => {
-    expect(removeBackgroundLine(typed, 2)).toBe("Clients:\n  - Acme");
-    expect(removeBackgroundLine(typed, 1)).toBe("Clients:\n\n- 常和東森談外撥專案");
-    expect(removeBackgroundLine(typed, 9)).toBe(typed);
   });
 
   it("appends only lines it doesn't already have, ignoring list markers", () => {

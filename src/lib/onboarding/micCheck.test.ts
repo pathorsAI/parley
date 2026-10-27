@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CheckTranscript, joinRuns, mergeTerms, profileFill } from "./micCheck";
+import { CheckTranscript, changedSpan, joinRuns, mergeTerms, profileFill } from "./micCheck";
 
 const seg = (id: string, text: string, is_final: boolean, source = "mic-check") => ({ id, source, text, is_final });
 
@@ -45,5 +45,13 @@ describe("mergeTerms", () => {
     expect(mergeTerms([a], [a, b])).toEqual([a, b]);
     expect(mergeTerms([a], [{ id: "3", phrase: "派斯科技" }])).toEqual([a]);
     expect(mergeTerms([], [b, b])).toEqual([b]);
+  });
+});
+
+describe("changedSpan", () => {
+  it("is what's left once the shared start and end are removed", () => {
+    expect(changedSpan("常和東昇談專案", "常和東森談專案")).toEqual({ from: "昇", to: "森" });
+    expect(changedSpan("台灣大哥談", "台灣大哥大談")).toEqual({ from: "", to: "大" });
+    expect(changedSpan("same", "same")).toEqual({ from: "", to: "" });
   });
 });

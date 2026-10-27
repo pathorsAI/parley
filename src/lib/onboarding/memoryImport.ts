@@ -126,8 +126,8 @@ export function cleanLines(lines: readonly string[]): string[] {
 /**
  * settings.userBackground is free text the user may also edit in Settings ›
  * Basic Settings, with their own bullets, indentation and blank lines. The
- * helpers below show it as lines and change it one line at a time, never
- * re-formatting what they don't touch.
+ * helpers below read it as lines and append to it, never re-formatting what
+ * is already there.
  */
 
 /** The background's non-blank lines, for display (trimmed, markers kept). */
@@ -136,16 +136,6 @@ export function backgroundLines(background: string): string[] {
     .split(/\r?\n/u)
     .map((l) => l.trim())
     .filter(Boolean);
-}
-
-/** Remove the `index`-th non-blank line, leaving every other line as it was. */
-export function removeBackgroundLine(background: string, index: number): string {
-  const raw = background.split(/\r?\n/u);
-  let seen = -1;
-  const at = raw.findIndex((l) => l.trim() && ++seen === index);
-  if (at < 0) return background;
-  raw.splice(at, 1);
-  return raw.join("\n").replace(/^\n+|\n+$/gu, "");
 }
 
 /** Append the lines the background doesn't already have (compared without

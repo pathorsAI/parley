@@ -1,29 +1,27 @@
-import { useEffect, useState } from "react";
-import { Loader2, Sparkles, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Loader2, Plus, Sparkles, X } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { useStore } from "../../lib/store";
 import { isTauri } from "../../lib/tauriEvents";
 import { log } from "../../lib/log";
 import { isProviderReady } from "../../lib/ai/settings";
 import { removeEntry } from "../../lib/dictionary";
-import {
-  appendBackground,
-  backgroundLines,
-  memoryFilesToText,
-  removeBackgroundLine,
-  summarizeMemory,
-} from "../../lib/onboarding/memoryImport";
-import { addTerms, mergeTerms, type AddedTerm } from "../../lib/onboarding/micCheck";
+import { backgroundLines, memoryFilesToText, summarizeMemory } from "../../lib/onboarding/memoryImport";
+import { addTerms, findNameEdit, learnTerm, mergeTerms, type AddedTerm } from "../../lib/onboarding/micCheck";
+import { detectCorrection } from "../../lib/dictionary/diffCorrection";
+import { isIgnoredTwice, recognitionTerms, recordIgnore, whenDictionaryReady } from "../../lib/dictionary";
 import * as ipc from "../../lib/ipc/commands";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 
 type MemoryState = "reading" | "ready" | "hidden";
 
 /**
  * What every meeting prompt should know about the user:
- * - the speaker background (settings.userBackground, one fact per line),
- *   seeded by the self-introduction in the mic check, editable here;
+ * - the speaker background (settings.userBackground), seeded by the
+ *   self-introduction in the mic check, edited here as free text; correcting
+ *   a name in it offers that name to the dictionary;
  * - the terms transcription should spell right (the shared dictionary): the
  *   user's name and company, the company, people and product names from the
  *   self-introduction and the AI memory, and any the user types — removable;
@@ -36,10 +34,6 @@ export function ContextStep({
   setTerms,
 }: Readonly<{ terms: AddedTerm[]; setTerms: (update: (prev: AddedTerm[]) => AddedTerm[]) => void }>) {
   const { t } = useI18n();
-  const settings = useStore((s) => s.settings);
-  const patch = useStore((s) => s.updateSettings);
-  const lines = backgroundLines(settings.userBackground);
-  const [newLine, setNewLine] = useState("");
   const [newTerm, setNewTerm] = useState("");
 
   // The names already known go straight in: the user's own name and company
@@ -51,13 +45,6 @@ export function ContextStep({
       .catch((e) => log.warn("onboarding: adding profile terms failed", { error: String(e) }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  function addLine() {
-    const v = newLine.trim();
-    if (!v) return;
-    patch({ userBackground: appendBackground(settings.userBackground, [v]).text });
-    setNewLine("");
-  }
 
   function addTypedTerm() {
     const v = newTerm.trim();
@@ -76,47 +63,7 @@ export function ContextStep({
       </div>
 
       {/* Speaker background */}
-      <div className="flex flex-col gap-1.5">
-        <span className="text-xs text-muted-foreground">{t("onboarding.context.background")}</span>
-        <div className="flex flex-col gap-0.5 rounded-lg border px-3 py-2">
-          {lines.length === 0 && (
-            <p className="py-1 text-[13px] text-muted-foreground">{t("onboarding.context.empty")}</p>
-          )}
-          {lines.map((line, i) => (
-            // The same line can appear twice in hand-written text.
-            <div key={`${i}:${line}`} className="flex items-start gap-2 py-0.5 text-[13px] leading-relaxed">
-              <span className="text-muted-foreground">•</span>
-              <span className="flex-1">{line}</span>
-              <button
-                type="button"
-                aria-label={t("onboarding.context.removeLine")}
-                className="flex size-5 items-center justify-center rounded text-muted-foreground hover:text-foreground"
-                onClick={() => patch({ userBackground: removeBackgroundLine(settings.userBackground, i) })}
-              >
-                <X className="size-3" />
-              </button>
-            </div>
-          ))}
-          <form
-            className="flex gap-1.5 border-t border-dashed pt-1.5"
-            onSubmit={(e) => {
-              e.preventDefault();
-              addLine();
-            }}
-          >
-            <Input
-              value={newLine}
-              onChange={(e) => setNewLine(e.target.value)}
-              aria-label={t("onboarding.context.addLine")}
-              placeholder={t("onboarding.context.addLine")}
-              className="h-7 border-0 px-0.5 text-[13px] shadow-none focus-visible:ring-0"
-            />
-            <Button type="submit" variant="ghost" size="sm" className="h-7 text-xs text-primary" disabled={!newLine.trim()}>
-              {t("onboarding.context.add")}
-            </Button>
-          </form>
-        </div>
-      </div>
+      <BackgroundEditor onTermLearned={(term) => setTerms((prev) => mergeTerms(prev, [term]))} />
 
       {/* Dictionary terms */}
       <div className="flex flex-col gap-1.5">
@@ -158,6 +105,99 @@ export function ContextStep({
       </div>
 
       <AiMemory onTermsAdded={(added) => setTerms((prev) => mergeTerms(prev, added))} />
+    </div>
+  );
+}
+
+/** How long typing must pause before an edit counts as done. */
+const SETTLE_MS = 1200;
+
+/**
+ * The speaker background as one editable text. When an edit settles (a pause
+ * in typing, or leaving the field) and it looks like a corrected name, it
+ * offers the corrected name to the dictionary, with the old spelling as a
+ * variant. The test is the one for fixing a word in a dictation
+ * (detectCorrection), so new sentences and rewrites don't count; for small
+ * edits it can't place (most Chinese ones), the model is asked (findNameEdit).
+ */
+function BackgroundEditor({ onTermLearned }: Readonly<{ onTermLearned: (term: AddedTerm) => void }>) {
+  const { t } = useI18n();
+  const background = useStore((s) => s.settings.userBackground);
+  const patch = useStore((s) => s.updateSettings);
+  const [suggest, setSuggest] = useState<{ from: string; to: string } | null>(null);
+  // The text as of the last settled edit: what the next edit is compared to.
+  const baseline = useRef(background);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  useEffect(() => () => clearTimeout(timer.current), []);
+
+  async function settle() {
+    clearTimeout(timer.current);
+    const before = baseline.current;
+    const after = useStore.getState().settings.userBackground;
+    baseline.current = after;
+    if (before === after) return;
+    await whenDictionaryReady();
+    const settings = useStore.getState().settings;
+    const hit =
+      detectCorrection(before, after, before, recognitionTerms(settings)) ??
+      (await findNameEdit({ settings, before, after }).catch((e) => {
+        log.warn("onboarding: checking the background edit failed", { error: String(e) });
+        return null;
+      }));
+    // A newer edit has settled meanwhile: this suggestion is stale.
+    if (baseline.current !== after) return;
+    if (hit && !isIgnoredTwice(hit.from, hit.to)) setSuggest(hit);
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label htmlFor="onboarding-background" className="text-xs text-muted-foreground">
+        {t("onboarding.context.background")}
+      </label>
+      <Textarea
+        id="onboarding-background"
+        value={background}
+        placeholder={t("onboarding.context.backgroundPlaceholder")}
+        className="min-h-24 text-[13px] leading-relaxed"
+        onChange={(e) => {
+          patch({ userBackground: e.target.value });
+          clearTimeout(timer.current);
+          timer.current = setTimeout(() => void settle(), SETTLE_MS);
+        }}
+        onBlur={() => void settle()}
+      />
+      {suggest && (
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="text-muted-foreground">{t("onboarding.context.suggestTerm", { term: suggest.to })}</span>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-6 gap-1 px-2 text-xs"
+            onClick={() => {
+              const { from, to } = suggest;
+              setSuggest(null);
+              learnTerm(from, to)
+                .then((term) => term && onTermLearned(term))
+                .catch((e) => log.warn("onboarding: learning a corrected term failed", { error: String(e) }));
+            }}
+          >
+            <Plus className="size-3" />
+            {t("onboarding.context.suggestAdd")}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-6 px-2 text-xs text-muted-foreground"
+            onClick={() => {
+              recordIgnore(suggest.from, suggest.to);
+              setSuggest(null);
+            }}
+          >
+            {t("onboarding.context.suggestDismiss")}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
