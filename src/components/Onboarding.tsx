@@ -343,22 +343,11 @@ export function Onboarding() {
                   }}
                 />
               )}
-              <p className="text-[11px] text-muted-foreground">{t("onboarding.perms.autoHint")}</p>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 text-[11px]"
-                  onClick={() =>
-                    recheck().catch((error) => log.warn("onboarding: permission recheck failed", { error: String(error) }))
-                  }
-                >
-                  {t("onboarding.perms.recheck")}
-                </Button>
-                <span className="text-[11px] text-muted-foreground">
-                  {t(isMac() ? "onboarding.perms.hint" : "onboarding.perms.hint.windows")}
-                </span>
-              </div>
+              {/* No re-check button: the step polls (focus, visibility, every
+                  2 s), so a grant shows up on its own. */}
+              <p className="text-[11px] text-muted-foreground">
+                {t(isMac() ? "onboarding.perms.autoHint" : "onboarding.perms.autoHint.windows")}
+              </p>
             </div>
           )}
 
