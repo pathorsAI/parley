@@ -1,14 +1,13 @@
-//! Onboarding's "read what your AI already knows about you": the memory files
-//! Claude Code keeps on this machine. Only ever read when the user presses the
-//! button on the context step; the text goes back to the webview, which hands
-//! it to the user's own LLM to boil down into speaker-background lines.
+//! Onboarding's "what your AI already knows about you": the memory files
+//! Claude Code keeps on this machine, read when the context step opens. The
+//! text goes back to the webview, which masks secrets and hands it to the
+//! user's own LLM to condense into a few read-only lines.
 //!
-//! Sources (all optional, missing ones are skipped):
+//! Sources (all optional, missing ones are skipped), in this order:
 //! - `~/.claude/CLAUDE.md` — the user-level memory every session loads.
 //! - `~/.claude/projects/<project>/memory/*.md` — Claude Code's auto memory.
-//!
-//! ChatGPT keeps its memory server-side with no API to read it, so that path is
-//! a copy/paste in the UI and never touches this module.
+//! - `CLAUDE.md` / `.claude/CLAUDE.md` in the projects Claude Code has opened
+//!   (the `projects` keys of `~/.claude.json`) — where most people keep theirs.
 
 use std::path::{Path, PathBuf};
 
@@ -25,6 +24,12 @@ const MAX_FILE_BYTES: usize = 16 * 1024;
 const MAX_TOTAL_BYTES: usize = 24_000;
 /// Auto-memory files considered per run, newest first.
 const MAX_FILES: usize = 40;
+/// Project CLAUDE.md files considered per run, newest first.
+const MAX_PROJECT_FILES: usize = 5;
+/// A project's CLAUDE.md is mostly that project's conventions; its start is
+/// where the "who / what" usually is, and this keeps one long file from
+/// taking the whole budget.
+const MAX_PROJECT_FILE_BYTES: usize = 6 * 1024;
 
 #[derive(Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -44,15 +49,17 @@ pub fn read_claude_memory(app: AppHandle) -> Result<Vec<MemoryFile>, String> {
     Ok(collect_claude_memory(&home))
 }
 
-/// The memory files under `home/.claude`, global first, then auto memory newest
-/// first, capped by [`MAX_FILE_BYTES`], [`MAX_FILES`] and [`MAX_TOTAL_BYTES`].
+/// Claude Code's memory: the global file, then auto memory newest first, then
+/// the CLAUDE.md of the projects it has opened, newest first; capped by
+/// [`MAX_FILE_BYTES`] / [`MAX_PROJECT_FILE_BYTES`], [`MAX_FILES`] /
+/// [`MAX_PROJECT_FILES`] and [`MAX_TOTAL_BYTES`].
 pub(crate) fn collect_claude_memory(home: &Path) -> Vec<MemoryFile> {
     let root = home.join(".claude");
     let mut out = Vec::new();
     let mut total = 0usize;
 
-    let mut push = |label: &str, path: &Path, out: &mut Vec<MemoryFile>| {
-        let Some(text) = read_capped(path) else {
+    let mut push = |label: &str, path: &Path, max: usize, out: &mut Vec<MemoryFile>| {
+        let Some(text) = read_capped(path, max) else {
             return;
         };
         if total + text.len() > MAX_TOTAL_BYTES {
@@ -65,7 +72,7 @@ pub(crate) fn collect_claude_memory(home: &Path) -> Vec<MemoryFile> {
         });
     };
 
-    push("global", &root.join("CLAUDE.md"), &mut out);
+    push("global", &root.join("CLAUDE.md"), MAX_FILE_BYTES, &mut out);
 
     let mut auto: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
     if let Ok(projects) = std::fs::read_dir(root.join("projects")) {
@@ -78,30 +85,67 @@ pub(crate) fn collect_claude_memory(home: &Path) -> Vec<MemoryFile> {
                 if path.extension().and_then(|e| e.to_str()) != Some("md") {
                     continue;
                 }
-                let modified = file
-                    .metadata()
-                    .and_then(|m| m.modified())
-                    .unwrap_or(std::time::UNIX_EPOCH);
-                auto.push((modified, path));
+                auto.push((modified_at(&path), path));
             }
         }
     }
     auto.sort_by(|a, b| b.0.cmp(&a.0));
     for (_, path) in auto.into_iter().take(MAX_FILES) {
-        push("project", &path, &mut out);
+        push("project", &path, MAX_FILE_BYTES, &mut out);
+    }
+
+    let mut project_files: Vec<(std::time::SystemTime, PathBuf)> = project_dirs(home)
+        .into_iter()
+        .flat_map(|dir| [dir.join("CLAUDE.md"), dir.join(".claude").join("CLAUDE.md")])
+        .filter(|path| path.is_file())
+        .map(|path| (modified_at(&path), path))
+        .collect();
+    project_files.sort_by(|a, b| b.0.cmp(&a.0));
+    project_files.dedup_by(|a, b| a.1 == b.1);
+    for (_, path) in project_files.into_iter().take(MAX_PROJECT_FILES) {
+        push("project", &path, MAX_PROJECT_FILE_BYTES, &mut out);
     }
     out
 }
 
-/// A file's text cut to [`MAX_FILE_BYTES`] on a char boundary; `None` when it
-/// is missing, unreadable, not UTF-8 or blank.
-fn read_capped(path: &Path) -> Option<String> {
+/// The project folders Claude Code has opened: the keys of `projects` in
+/// `~/.claude.json`, absolute paths only. Empty when the file is missing or
+/// isn't the shape expected.
+fn project_dirs(home: &Path) -> Vec<PathBuf> {
+    let Ok(raw) = std::fs::read_to_string(home.join(".claude.json")) else {
+        return Vec::new();
+    };
+    let Ok(config) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return Vec::new();
+    };
+    config
+        .get("projects")
+        .and_then(|p| p.as_object())
+        .map(|projects| {
+            projects
+                .keys()
+                .map(PathBuf::from)
+                .filter(|p| p.is_absolute())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn modified_at(path: &Path) -> std::time::SystemTime {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .unwrap_or(std::time::UNIX_EPOCH)
+}
+
+/// A file's text cut to `max` bytes on a char boundary; `None` when it is
+/// missing, unreadable, not UTF-8 or blank.
+fn read_capped(path: &Path, max: usize) -> Option<String> {
     let text = std::fs::read_to_string(path).ok()?;
     let text = text.trim();
     if text.is_empty() {
         return None;
     }
-    let mut end = text.len().min(MAX_FILE_BYTES);
+    let mut end = text.len().min(max);
     while !text.is_char_boundary(end) {
         end -= 1;
     }
@@ -181,6 +225,48 @@ mod tests {
             .map(|f| (f.label.as_str(), f.text.len()))
             .collect();
         assert_eq!(labels, vec![("global", MAX_FILE_BYTES), ("project", 100)]);
+    }
+
+    #[test]
+    fn reads_the_claude_md_of_projects_listed_in_claude_json() {
+        let home = temp_home("projects");
+        let work = home.join("work");
+        std::fs::create_dir_all(work.join("parley/.claude")).unwrap();
+        std::fs::create_dir_all(work.join("site")).unwrap();
+        std::fs::write(
+            work.join("parley/.claude/CLAUDE.md"),
+            "Parley: meeting assistant",
+        )
+        .unwrap();
+        std::fs::write(
+            work.join("site/CLAUDE.md"),
+            "x".repeat(MAX_PROJECT_FILE_BYTES + 500),
+        )
+        .unwrap();
+        let config = serde_json::json!({
+            "projects": {
+                work.join("parley").to_string_lossy(): {},
+                work.join("site").to_string_lossy(): {},
+                work.join("gone").to_string_lossy(): {},
+                "relative/path": {}
+            }
+        });
+        std::fs::write(home.join(".claude.json"), config.to_string()).unwrap();
+
+        let mut files = collect_claude_memory(&home);
+        files.sort_by(|a, b| a.text.len().cmp(&b.text.len()));
+        assert_eq!(files.len(), 2);
+        assert!(files.iter().all(|f| f.label == "project"));
+        assert_eq!(files[0].text, "Parley: meeting assistant");
+        // A long project file is read only up to its own cap.
+        assert_eq!(files[1].text.len(), MAX_PROJECT_FILE_BYTES);
+    }
+
+    #[test]
+    fn a_broken_claude_json_reads_no_projects() {
+        let home = temp_home("broken-json");
+        std::fs::write(home.join(".claude.json"), "{ not json").unwrap();
+        assert!(collect_claude_memory(&home).is_empty());
     }
 
     #[test]

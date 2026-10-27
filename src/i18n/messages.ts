@@ -106,6 +106,8 @@ export const zhTW = {
   "onboarding.context.removeTerm": "移除 {term}",
   "onboarding.context.memory.title": "AI 記憶 · 來自 Claude Code",
   "onboarding.context.memory.reading": "讀取中…",
+  "onboarding.context.memory.needLlm": "找到 Claude Code 的記憶，設定 AI 後就會自動整理。",
+  "onboarding.context.memory.failed": "Claude Code 的記憶整理失敗：{error}",
   "app.subtitle.real": "會議助理",
   "app.subtitle.demo": "demo",
 
@@ -1556,6 +1558,8 @@ export const en = {
   "onboarding.context.removeTerm": "Remove {term}",
   "onboarding.context.memory.title": "AI memory · from Claude Code",
   "onboarding.context.memory.reading": "Reading…",
+  "onboarding.context.memory.needLlm": "Found Claude Code's memory. Set up an AI provider and it's condensed here automatically.",
+  "onboarding.context.memory.failed": "Couldn't condense Claude Code's memory: {error}",
   "app.subtitle.real": "meeting copilot",
   "app.subtitle.demo": "demo",
 

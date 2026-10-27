@@ -5,6 +5,7 @@ import { useStore } from "../../lib/store";
 import { isTauri } from "../../lib/tauriEvents";
 import { log } from "../../lib/log";
 import { isProviderReady } from "../../lib/ai/settings";
+import { describeAiError } from "../../lib/ai/errors";
 import { removeEntry } from "../../lib/dictionary";
 import { backgroundLines, memoryFilesToText, summarizeMemory } from "../../lib/onboarding/memoryImport";
 import { addTerms, findNameEdit, learnTerm, mergeTerms, type AddedTerm } from "../../lib/onboarding/micCheck";
@@ -15,7 +16,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 
-type MemoryState = "reading" | "ready" | "hidden";
+/** "hidden": no memory on this machine (or not the desktop app), so nothing
+ *  to show. "needLlm" / failed: there is memory, but it couldn't be condensed. */
+type MemoryState = "reading" | "ready" | "hidden" | "needLlm" | { failed: string };
 
 /**
  * What every meeting prompt should know about the user:
@@ -205,9 +208,10 @@ function BackgroundEditor({ onTermLearned }: Readonly<{ onTermLearned: (term: Ad
 /**
  * Claude Code's memory, condensed. Read once when the step opens (unless an
  * earlier visit already kept a summary); the company, people and product
- * names in it join the terms above, the rest is shown read-only — and not shown at
- * all when there is no memory, no AI provider to condense it, or the read
- * failed.
+ * names in it join the terms above, the rest is shown read-only. With no
+ * memory on this machine the section isn't there at all; with memory that
+ * couldn't be condensed (no AI provider, or the call failed) it is one line
+ * saying why.
  */
 function AiMemory({ onTermsAdded }: Readonly<{ onTermsAdded: (terms: AddedTerm[]) => void }>) {
   const { t } = useI18n();
@@ -215,23 +219,32 @@ function AiMemory({ onTermsAdded }: Readonly<{ onTermsAdded: (terms: AddedTerm[]
   const patch = useStore((s) => s.updateSettings);
   const [state, setState] = useState<MemoryState>(() => {
     if (notes.trim()) return "ready";
-    return isTauri() && isProviderReady(useStore.getState().settings, "realtime") ? "reading" : "hidden";
+    return isTauri() ? "reading" : "hidden";
   });
 
   useEffect(() => {
     if (state !== "reading") return;
     let alive = true;
-    (async () => {
+    (async (): Promise<MemoryState> => {
+      // Reading the files needs no AI; whether there is memory at all decides
+      // between staying out of the way and saying why it can't be used.
       const files = await ipc.readClaudeMemory();
-      if (files.length === 0) return "hidden" as const;
-      const summary = await summarizeMemory({ settings: useStore.getState().settings, text: memoryFilesToText(files) });
-      if (!alive) return "hidden" as const;
-      // The names go to the dictionary even when there are no notes to show.
-      const added = await addTerms(summary.terms);
-      if (added.length > 0) onTermsAdded(added);
-      if (summary.notes.length === 0) return "hidden" as const;
-      patch({ aiMemoryNotes: summary.notes.join("\n") });
-      return "ready" as const;
+      if (files.length === 0) return "hidden";
+      const settings = useStore.getState().settings;
+      if (!isProviderReady(settings, "realtime")) return "needLlm";
+      try {
+        const summary = await summarizeMemory({ settings, text: memoryFilesToText(files) });
+        if (!alive) return "hidden";
+        // The names go to the dictionary even when there are no notes to show.
+        const added = await addTerms(summary.terms);
+        if (added.length > 0) onTermsAdded(added);
+        if (summary.notes.length === 0) return "hidden";
+        patch({ aiMemoryNotes: summary.notes.join("\n") });
+        return "ready";
+      } catch (e) {
+        log.warn("onboarding: condensing AI memory failed", { error: String(e) });
+        return { failed: describeAiError(e) };
+      }
     })()
       .then((next) => alive && setState(next))
       .catch((e) => {
@@ -244,11 +257,21 @@ function AiMemory({ onTermsAdded }: Readonly<{ onTermsAdded: (terms: AddedTerm[]
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Nothing found, no AI provider, or a failed read: the section just isn't
-  // there — the step stands without it.
-  if (state !== "reading" && state !== "ready") return null;
-  const lines = backgroundLines(notes);
+  if (state === "hidden") return null;
 
+  // Memory exists but couldn't be used: one line saying why, not the section.
+  if (state === "needLlm" || typeof state === "object") {
+    return (
+      <p className="flex items-center gap-1.5 border-t pt-4 text-xs text-muted-foreground">
+        <Sparkles className="size-3 shrink-0 text-primary" />
+        {state === "needLlm"
+          ? t("onboarding.context.memory.needLlm")
+          : t("onboarding.context.memory.failed", { error: state.failed })}
+      </p>
+    );
+  }
+
+  const lines = backgroundLines(notes);
   return (
     <div className="flex flex-col gap-1.5 border-t pt-4">
       <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
