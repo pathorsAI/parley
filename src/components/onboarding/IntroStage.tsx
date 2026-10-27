@@ -1,69 +1,101 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { FileAudio, Folder, House, AudioLines, Mic, Plug } from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { AudioLines, Check, FileAudio, Folder, House, Mic, Plug } from "lucide-react";
 import { useI18n } from "../../i18n";
+import type { TranslationKey } from "../../i18n/messages";
 import { sampleManifest } from "../../lib/onboarding/sample";
 import { OB_EASE, TYPE_MS_PER_CHAR, prefersReducedMotion } from "../../lib/onboarding/motion";
 import { cn } from "@/lib/utils";
 import { runTimeline, typingSchedule, type Beat } from "./timeline";
 
 /**
- * The wizard's first screen, told by the UI itself: in about seven seconds the
- * pieces of Parley assemble inside the card — the recording pill, the
- * transcript typing itself with speaker names, the sidebar with a customer
- * folder that a recording flies into, and the MCP plug lighting up — each beat
- * with one caption line. It rests on its final frame; Next works at any time.
- * Real component styles (the titlebar pill, sidebar rows, a library row), not
- * illustrations. Under reduced motion it shows the final frame and all the
- * captions at once.
+ * The wizard's first screen: Parley in four steps — record, transcribe, file,
+ * hand to AI. The four steps land first as a row and hold, then the demo walks
+ * through them one at a time while the row tracks where it is: the recording
+ * pill, two transcript lines typing with speaker names, a recording flying
+ * into a customer folder, the MCP plug lighting up. Only the current step's
+ * part of the demo is at full strength, so there is one thing to look at. It
+ * runs in about seven seconds and rests on its final frame; Next works at any
+ * time. Real component styles (the titlebar pill, sidebar rows, a library
+ * row), not illustrations. Under reduced motion it shows the final frame.
  */
 
-export type IntroBeatId = "record" | "transcript" | "folder" | "mcp" | "ready";
+export type IntroStepId = "record" | "transcript" | "folder" | "mcp";
+export type IntroBeatId = "overview" | IntroStepId | "ready";
+
+export const INTRO_STEPS: readonly IntroStepId[] = ["record", "transcript", "folder", "mcp"];
 
 export const INTRO_BEATS: readonly Beat<IntroBeatId>[] = [
-  { id: "record", at: 0 },
-  { id: "transcript", at: 900 },
-  { id: "folder", at: 4100 },
-  { id: "mcp", at: 5700 },
-  { id: "ready", at: 6600 },
+  // The row lands (~0.7 s) and holds a beat on its own before the demo starts.
+  { id: "overview", at: 0 },
+  { id: "record", at: 1200 },
+  { id: "transcript", at: 2300 },
+  { id: "folder", at: 4300 },
+  { id: "mcp", at: 5600 },
+  { id: "ready", at: 6800 },
 ];
 const ORDER = INTRO_BEATS.map((b) => b.id);
 
-/** The transcript beat's typing budget (three lines, whatever the language). */
-export const TRANSCRIPT_BUDGET_MS = 2800;
-const LINE_GAP_MS = 220;
+/** How long each step lasts: the gap to the beat after it. */
+export function stepDurationMs(id: IntroStepId): number {
+  const i = ORDER.indexOf(id);
+  return INTRO_BEATS[i + 1].at - INTRO_BEATS[i].at;
+}
+
+/** The transcript beat's typing budget (two lines, whatever the language). */
+export const TRANSCRIPT_BUDGET_MS = 1600;
+const TRANSCRIPT_LINES = 2;
+const LINE_GAP_MS = 160;
 /** Inside the folder beat: when the recording card shows, and when it flies. */
-const CARD_IN_MS = 300;
-const CARD_FLY_AT_MS = 900;
-const CARD_FLY_MS = 700;
-/** Inside the MCP beat: the plug fades in, then lights up. */
-const PLUG_LIGHT_MS = 350;
+const CARD_IN_MS = 150;
+const CARD_FLY_AT_MS = 500;
+const CARD_FLY_MS = 600;
+/** Inside the MCP beat: the plug lights up. */
+const PLUG_LIGHT_MS = 200;
+/** The overview row: each step lands this long after the one before. */
+const OVERVIEW_STAGGER_MS = 90;
+
+const STEP_LABEL: Record<IntroStepId, TranslationKey> = {
+  record: "onboarding.stage.step.record",
+  transcript: "onboarding.stage.step.transcript",
+  folder: "onboarding.stage.step.folder",
+  mcp: "onboarding.stage.step.mcp",
+};
+const CAPTION: Record<IntroBeatId, TranslationKey> = {
+  overview: "onboarding.stage.overview",
+  record: "onboarding.stage.record",
+  transcript: "onboarding.stage.transcript",
+  folder: "onboarding.stage.folder",
+  mcp: "onboarding.stage.mcp",
+  ready: "onboarding.stage.ready",
+};
 
 export function IntroStage() {
   const { t, language } = useI18n();
   const [reduced] = useState(prefersReducedMotion);
-  const [beat, setBeat] = useState<IntroBeatId | null>(reduced ? "ready" : null);
+  const [beat, setBeat] = useState<IntroBeatId>(reduced ? "ready" : "overview");
 
   useEffect(() => {
     if (reduced) return;
     return runTimeline(INTRO_BEATS, (id) => setBeat(id));
   }, [reduced]);
 
-  const reached = (id: IntroBeatId) => beat !== null && ORDER.indexOf(beat) >= ORDER.indexOf(id);
+  const reached = (id: IntroBeatId) => ORDER.indexOf(beat) >= ORDER.indexOf(id);
+  // One part of the demo at full strength: the current step's. Parts already
+  // shown step back; at rest (ready) everything is back to full.
+  const focus = (id: IntroStepId) =>
+    cn("ob-transition", beat !== "ready" && beat !== id && reached(id) && "opacity-40");
   const manifest = sampleManifest(language);
-  const captionKey = {
-    record: "onboarding.stage.record",
-    transcript: "onboarding.stage.transcript",
-    folder: "onboarding.stage.folder",
-    mcp: "onboarding.stage.mcp",
-    ready: "onboarding.stage.ready",
-  } as const;
 
   return (
-    <section className="flex flex-col gap-2.5" aria-label={t("onboarding.stage.aria")}>
-      <div className="relative flex h-[204px] overflow-hidden rounded-lg border bg-background" data-testid="intro-stage">
+    <section className="flex flex-col gap-3" aria-label={t("onboarding.stage.aria")}>
+      <StepRow beat={beat} reduced={reduced} />
+
+      <div className="relative flex h-[184px] overflow-hidden rounded-lg border bg-background" data-testid="intro-stage">
         <MiniSidebar
           running={reached("folder")}
           instant={reduced}
+          className={focus("folder")}
+          highlight={beat === "folder"}
           folderName={manifest.suggestion.folders[0]?.name ?? ""}
           cardTitle={manifest.suggestion.title}
         />
@@ -73,7 +105,8 @@ export function IntroStage() {
               <span
                 className={cn(
                   "inline-flex items-center gap-1.5 rounded-full bg-recording/10 px-2.5 py-0.5 text-recording",
-                  !reduced && "ob-scale-in"
+                  !reduced && "ob-scale-in",
+                  focus("record"),
                 )}
               >
                 <span aria-hidden className="ob-blink size-2 rounded-full bg-recording" />
@@ -83,12 +116,13 @@ export function IntroStage() {
             ) : (
               <span />
             )}
-            {reached("mcp") && <McpPlug instant={reduced} />}
+            <McpPlug lit={reached("mcp")} instant={reduced} />
           </div>
           <TranscriptLines
             running={reached("transcript")}
             instant={reduced}
-            lines={manifest.segments.slice(0, 3).map((s) => ({
+            className={focus("transcript")}
+            lines={manifest.segments.slice(0, TRANSCRIPT_LINES).map((s) => ({
               id: `${s.speaker}-${s.startMs}`,
               speaker: manifest.speakers[s.speaker],
               me: s.speaker === "me",
@@ -97,18 +131,65 @@ export function IntroStage() {
           />
         </div>
       </div>
-      {reduced ? (
-        <ul className="flex flex-col gap-0.5 text-sm text-muted-foreground">
-          {ORDER.map((id) => (
-            <li key={id}>{t(captionKey[id])}</li>
-          ))}
-        </ul>
-      ) : (
-        <p key={beat ?? "none"} aria-live="polite" className="ob-fade-in min-h-5 text-sm text-muted-foreground">
-          {beat ? t(captionKey[beat]) : " "}
-        </p>
-      )}
+
+      <p key={beat} aria-live="polite" className={cn("min-h-5 text-sm text-muted-foreground", !reduced && "ob-fade-in")}>
+        {t(CAPTION[beat])}
+      </p>
     </section>
+  );
+}
+
+/**
+ * The four steps as a row: upcoming, current (its bar fills over the step),
+ * done (checked). It lands first, on its own, before the demo starts.
+ */
+function StepRow({ beat, reduced }: Readonly<{ beat: IntroBeatId; reduced: boolean }>) {
+  const { t } = useI18n();
+  const at = ORDER.indexOf(beat);
+  return (
+    <ol className="grid grid-cols-4 gap-1.5">
+      {INTRO_STEPS.map((id, i) => {
+        const state = beat === id ? "current" : at > ORDER.indexOf(id) ? "done" : "upcoming";
+        return (
+          <li
+            key={id}
+            aria-current={state === "current" ? "step" : undefined}
+            className={cn(
+              "ob-transition flex flex-col gap-1.5 rounded-md border px-2 pb-1.5 pt-2",
+              state === "current" ? "border-primary bg-primary/5" : "bg-background",
+              !reduced && "ob-rise",
+            )}
+            style={reduced ? undefined : { animationDelay: `${i * OVERVIEW_STAGGER_MS}ms` }}
+          >
+            <span className="flex items-center gap-1.5 text-xs font-medium">
+              <span
+                className={cn(
+                  "ob-transition grid size-4 shrink-0 place-items-center rounded-full text-[10px] font-semibold tabular-nums",
+                  state === "upcoming" ? "bg-muted text-muted-foreground" : "bg-primary text-primary-foreground",
+                )}
+              >
+                {state === "done" ? <Check className="size-2.5" strokeWidth={3} /> : i + 1}
+              </span>
+              <span className={cn("truncate", state === "upcoming" && "text-muted-foreground")}>
+                {t(STEP_LABEL[id])}
+              </span>
+            </span>
+            <span className="h-0.5 overflow-hidden rounded-full bg-muted">
+              {state !== "upcoming" && (
+                <span
+                  className={cn("block h-full rounded-full bg-primary", state === "current" && !reduced && "ob-progress")}
+                  style={
+                    state === "current" && !reduced
+                      ? ({ "--ob-progress-ms": `${stepDurationMs(id)}ms` } as CSSProperties)
+                      : undefined
+                  }
+                />
+              )}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
@@ -131,10 +212,12 @@ function useElapsed(running: boolean, instant: boolean, untilMs: number): number
 function TranscriptLines({
   running,
   instant,
+  className,
   lines,
 }: Readonly<{
   running: boolean;
   instant: boolean;
+  className?: string;
   lines: { id: string; speaker: string; me: boolean; text: string }[];
 }>) {
   const schedule = useMemo(
@@ -144,7 +227,7 @@ function TranscriptLines({
   const elapsed = useElapsed(running, instant, schedule.endMs + LINE_GAP_MS);
 
   return (
-    <div className="flex min-h-0 flex-col gap-1.5 overflow-hidden px-3 py-2">
+    <div className={cn("flex min-h-0 flex-col gap-1.5 overflow-hidden px-3 py-2", className)}>
       {lines.map((line, i) => {
         const shown = Math.max(0, Math.floor((elapsed - schedule.starts[i]) / schedule.msPerChar));
         if (!running && !instant) return null;
@@ -179,12 +262,26 @@ function speakerRevealClass(done: boolean, instant: boolean): string {
   return instant ? "" : "ob-fade-in";
 }
 
+/**
+ * The app's sidebar, there from the start (it is the frame, not a step). In
+ * the folder step a recording card shows and flies into the customer folder,
+ * which flashes as it lands.
+ */
 function MiniSidebar({
   running,
   instant,
+  className,
+  highlight,
   folderName,
   cardTitle,
-}: Readonly<{ running: boolean; instant: boolean; folderName: string; cardTitle: string }>) {
+}: Readonly<{
+  running: boolean;
+  instant: boolean;
+  className?: string;
+  highlight: boolean;
+  folderName: string;
+  cardTitle: string;
+}>) {
   const { t } = useI18n();
   const [card, setCard] = useState<"hidden" | "shown" | "filed">(instant ? "filed" : "hidden");
   const [flash, setFlash] = useState(false);
@@ -226,48 +323,39 @@ function MiniSidebar({
     { icon: <House className="size-3" />, label: t("home.title") },
     { icon: <AudioLines className="size-3" />, label: t("library.all") },
   ];
-  const slide = (i: number) =>
-    instant ? {} : ({ className: "ob-slide-in", style: { animationDelay: `${i * 70}ms` } } as const);
 
   return (
     <>
-      <div className="flex w-[118px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar px-1.5 py-2 text-sidebar-foreground">
-        {(running || instant) && (
-          <>
-            {rows.map((r, i) => (
-              <div
-                key={r.label}
-                {...slide(i)}
-                className={cn(
-                  slide(i).className,
-                  "flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[11px]",
-                  r.primary ? "font-medium text-primary" : ""
-                )}
-              >
-                <span className={r.primary ? "" : "text-muted-foreground"}>{r.icon}</span>
-                <span className="truncate">{r.label}</span>
-              </div>
-            ))}
-            <div
-              {...slide(3)}
-              className={cn(slide(3).className, "mt-2 px-1.5 pb-0.5 text-[10px] font-semibold text-muted-foreground")}
-            >
-              {t("shell.folders")}
-            </div>
-            <div
-              ref={folderRef}
-              {...slide(6)}
-              className={cn(
-                slide(6).className,
-                "flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[11px]",
-                flash && "ob-flash"
-              )}
-            >
-              <Folder className="size-3 text-muted-foreground" />
-              <span className="truncate">{folderName}</span>
-            </div>
-          </>
+      <div
+        className={cn(
+          "flex w-[118px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar px-1.5 py-2 text-sidebar-foreground",
+          className,
         )}
+      >
+        {rows.map((r) => (
+          <div
+            key={r.label}
+            className={cn(
+              "flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[11px]",
+              r.primary ? "font-medium text-primary" : "",
+            )}
+          >
+            <span className={r.primary ? "" : "text-muted-foreground"}>{r.icon}</span>
+            <span className="truncate">{r.label}</span>
+          </div>
+        ))}
+        <div className="mt-2 px-1.5 pb-0.5 text-[10px] font-semibold text-muted-foreground">{t("shell.folders")}</div>
+        <div
+          ref={folderRef}
+          className={cn(
+            "ob-transition flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[11px]",
+            highlight && "bg-primary/10 text-primary",
+            flash && "ob-flash",
+          )}
+        >
+          <Folder className={cn("size-3", !highlight && "text-muted-foreground")} />
+          <span className="truncate">{folderName}</span>
+        </div>
       </div>
       {card === "shown" && (
         // A library row, lifted off the list: the recording that gets filed.
@@ -283,20 +371,21 @@ function MiniSidebar({
   );
 }
 
-function McpPlug({ instant }: Readonly<{ instant: boolean }>) {
-  const [lit, setLit] = useState(instant);
+/** The MCP plug: there from the start, greyed, and lit in the hand-off step. */
+function McpPlug({ lit, instant }: Readonly<{ lit: boolean; instant: boolean }>) {
+  const [on, setOn] = useState(instant && lit);
   useLayoutEffect(() => {
-    if (instant) return;
-    const id = setTimeout(() => setLit(true), PLUG_LIGHT_MS);
+    if (!lit) return;
+    if (instant) return setOn(true);
+    const id = setTimeout(() => setOn(true), PLUG_LIGHT_MS);
     return () => clearTimeout(id);
-  }, [instant]);
+  }, [lit, instant]);
   return (
     <span
-      data-lit={lit}
+      data-lit={on}
       className={cn(
         "ob-transition grid size-6 place-items-center rounded-full",
-        !instant && "ob-fade-in",
-        lit ? "bg-primary/10 text-primary ring-2 ring-primary/25" : "text-muted-foreground"
+        on ? "bg-primary/10 text-primary ring-2 ring-primary/25" : "text-muted-foreground/50"
       )}
     >
       <Plug className="size-3.5" />

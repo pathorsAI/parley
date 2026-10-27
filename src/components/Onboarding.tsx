@@ -403,16 +403,22 @@ export function Onboarding() {
         {/* Footer nav — the last step ends through its own two buttons above. */}
         {current !== "done" && (
           <div className="flex items-start justify-between border-t px-5 py-3">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-8 text-xs"
-              disabled={index === 0 || advancing}
-              onClick={() => goTo(steps[Math.max(0, index - 1)])}
-            >
-              <ChevronLeft className="size-3.5" />
-              {t("onboarding.back")}
-            </Button>
+            {/* Nothing to go back to on the first step; the empty span keeps
+                Next on the right. */}
+            {index === 0 ? (
+              <span />
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 text-xs"
+                disabled={advancing}
+                onClick={() => goTo(steps[index - 1])}
+              >
+                <ChevronLeft className="size-3.5" />
+                {t("onboarding.back")}
+              </Button>
+            )}
             <div className="flex flex-col items-end gap-1">
               <Button
                 size="sm"
