@@ -140,25 +140,21 @@ export function IntroStage() {
 }
 
 /**
- * The four steps as a row: upcoming, current (its bar fills over the step),
- * done (checked). It lands first, on its own, before the demo starts.
+ * The four steps as a row, each just a label over a progress bar: upcoming
+ * (muted), current (blue, its bar fills over the step), done (checked, full). It lands first, on its own, before the demo starts.
  */
 function StepRow({ beat, reduced }: Readonly<{ beat: IntroBeatId; reduced: boolean }>) {
   const { t } = useI18n();
   const at = ORDER.indexOf(beat);
   return (
-    <ol className="grid grid-cols-4 gap-1.5">
+    <ol className="grid grid-cols-4 gap-3">
       {INTRO_STEPS.map((id, i) => {
         const state = beat === id ? "current" : at > ORDER.indexOf(id) ? "done" : "upcoming";
         return (
           <li
             key={id}
             aria-current={state === "current" ? "step" : undefined}
-            className={cn(
-              "ob-transition flex flex-col gap-1.5 rounded-md border px-2 pb-1.5 pt-2",
-              state === "current" ? "border-primary bg-primary/5" : "bg-background",
-              !reduced && "ob-rise",
-            )}
+            className={cn("flex flex-col gap-1.5", !reduced && "ob-rise")}
             style={reduced ? undefined : { animationDelay: `${i * OVERVIEW_STAGGER_MS}ms` }}
           >
             <span className="flex items-center gap-1.5 text-xs font-medium">
@@ -170,11 +166,17 @@ function StepRow({ beat, reduced }: Readonly<{ beat: IntroBeatId; reduced: boole
               >
                 {state === "done" ? <Check className="size-2.5" strokeWidth={3} /> : i + 1}
               </span>
-              <span className={cn("truncate", state === "upcoming" && "text-muted-foreground")}>
+              <span
+                className={cn(
+                  "ob-transition truncate",
+                  state === "current" && "text-primary",
+                  state === "upcoming" && "text-muted-foreground",
+                )}
+              >
                 {t(STEP_LABEL[id])}
               </span>
             </span>
-            <span className="h-0.5 overflow-hidden rounded-full bg-muted">
+            <span className="h-1 overflow-hidden rounded-full bg-muted">
               {state !== "upcoming" && (
                 <span
                   className={cn("block h-full rounded-full bg-primary", state === "current" && !reduced && "ob-progress")}
