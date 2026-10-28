@@ -610,7 +610,7 @@ function AccountStep({ onBack, onContinue }: Readonly<{ onBack: () => void; onCo
           </ChoiceTag>
           <p className="text-sm leading-relaxed">{t("onboarding.account.body")}</p>
         </div>
-        <div className="flex flex-col items-end gap-1.5">
+        <div className="relative flex flex-col items-end">
           <Button
             size="sm"
             className="relative h-8 gap-2 px-2.5 text-xs"
@@ -621,7 +621,9 @@ function AccountStep({ onBack, onContinue }: Readonly<{ onBack: () => void; onCo
             {signingIn ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
           </Button>
           {error && (
-            <p className="relative rounded-md bg-danger px-2.5 py-1.5 text-[11px] text-danger-foreground">
+            // Plain red text in the card's bottom padding, so a failure never
+            // changes the card's height.
+            <p className="absolute top-full right-0 mt-1 w-max max-w-[480px] text-right text-[11px] text-danger-foreground">
               {t("onboarding.login.failed", { error })}
             </p>
           )}
