@@ -26,6 +26,7 @@ import { openRecording } from "./home/GettingStarted";
 import { TranscribingPulse, useTranscribingPulse } from "./onboarding/TranscribingPulse";
 import { IntroHero, IntroStage } from "./onboarding/IntroStage";
 import { ConfirmCard } from "./onboarding/ConfirmCard";
+import { DoneScribbles } from "./onboarding/DoneScribbles";
 import { ChoiceCard, OrDivider, SelectCard } from "./onboarding/ChoiceCard";
 import { checkModelKeys, type KeyProblems } from "../lib/onboarding/keyCheck";
 import { OrgStep } from "./onboarding/OrgStep";
@@ -451,10 +452,11 @@ export function Onboarding() {
               </div>
               <div className="flex flex-col items-center gap-5">
                 <h2 className="text-2xl leading-[1.2] font-semibold">{t("onboarding.done.title")}</h2>
-                <p className="text-sm leading-[1.4] text-[#333] dark:text-foreground">
+                <p className="relative text-sm leading-[1.4] whitespace-nowrap text-[#333] dark:text-foreground">
                   <span className="font-medium">{t("onboarding.done.lead")}</span>
                   <br />
                   {t("onboarding.done.body")}
+                  <DoneScribbles />
                 </p>
               </div>
               <div className="flex items-center justify-center gap-6">
