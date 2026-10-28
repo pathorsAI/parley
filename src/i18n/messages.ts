@@ -123,6 +123,9 @@ export const zhTW = {
   "onboarding.context.memory.reading": "讀取中…",
   "onboarding.context.memory.needLlm": "找到 Claude Code 的記憶，設定 AI 後就會自動整理。",
   "onboarding.context.memory.failed": "Claude Code 的記憶整理失敗：{error}",
+  "onboarding.context.memory.excerpt": "先列出原文擷取的內容。",
+  "onboarding.context.memory.retry": "重試",
+  "onboarding.context.memory.refresh": "重新整理",
   "app.subtitle.real": "會議助理",
   "app.subtitle.demo": "demo",
 
@@ -1583,6 +1586,9 @@ export const en = {
   "onboarding.context.memory.reading": "Reading…",
   "onboarding.context.memory.needLlm": "Found Claude Code's memory. Set up an AI provider and it's condensed here automatically.",
   "onboarding.context.memory.failed": "Couldn't condense Claude Code's memory: {error}",
+  "onboarding.context.memory.excerpt": "Showing lines taken straight from it for now.",
+  "onboarding.context.memory.retry": "Retry",
+  "onboarding.context.memory.refresh": "Refresh",
   "app.subtitle.real": "meeting copilot",
   "app.subtitle.demo": "demo",
 

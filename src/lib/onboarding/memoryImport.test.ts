@@ -6,6 +6,7 @@ import {
   backgroundLines,
   capMemoryText,
   cleanLines,
+  excerptMemory,
   memoryFilesToText,
   redactSecrets,
   removeBackgroundLines,
@@ -97,5 +98,34 @@ describe("removeBackgroundLines", () => {
     const { text, lines } = appendBackground(before, ["Works at Acme", "Uses Parley for client calls"]);
     expect(lines).toEqual(["Uses Parley for client calls"]);
     expect(removeBackgroundLines(text, lines)).toBe(before);
+  });
+});
+
+describe("excerptMemory", () => {
+  it("keeps the plain statements and drops markdown furniture", () => {
+    const text = [
+      "## CLAUDE.md",
+      "# About me",
+      "- I'm a **product designer** at Pathors",
+      "- Working on `Parley` onboarding",
+      "```bash",
+      "gws gmail users drafts create",
+      "```",
+      "| tool | use |",
+      "> a quote",
+      "---",
+      "See [the docs](https://example.com) at ~/Pathors/p-drive/notes.md",
+      "ok",
+    ].join("\n");
+    expect(excerptMemory(text)).toEqual(["I'm a product designer at Pathors", "Working on Parley onboarding"]);
+  });
+
+  it("masks secrets, cuts long lines and keeps a summary's worth", () => {
+    const long = "這是一段很長的說明".repeat(12);
+    const lines = excerptMemory(["api_key = sk-abcdefghijklmnopqrstuvwxyz123456", long, ...Array.from({ length: 12 }, (_, i) => `Fact number ${i}`)].join("\n"));
+    expect(lines[0]).toContain(REDACTED);
+    expect([...lines[1]].length).toBe(80);
+    expect(lines[1].endsWith("…")).toBe(true);
+    expect(lines).toHaveLength(8);
   });
 });

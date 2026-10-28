@@ -87,6 +87,40 @@ export async function summarizeMemory(opts: {
   };
 }
 
+/** The longest excerpted line: a note, not a paragraph. */
+const MAX_EXCERPT_CHARS = 80;
+
+/**
+ * A few lines straight from the memory text, for when it can't be condensed
+ * (no AI provider, or the call failed): its plain statements, in order —
+ * headings, code, tables, quotes, rules, links and file paths skipped, list
+ * markers and markdown emphasis dropped, long lines cut — secrets masked, as
+ * many as a summary would keep.
+ */
+export function excerptMemory(text: string): string[] {
+  const out: string[] = [];
+  let inCode = false;
+  for (const raw of redactSecrets(text).split(/\r?\n/u)) {
+    const line = raw.trim();
+    if (line.startsWith("```")) {
+      inCode = !inCode;
+      continue;
+    }
+    if (inCode || !line || /^#{1,6}\s/u.test(line) || /^[|>]/u.test(line) || /^[-*_=]{3,}$/u.test(line)) continue;
+    const plain = line
+      .replace(LIST_MARKER, "")
+      .replace(/\[([^\]]+)\]\([^)]+\)/gu, "$1")
+      .replace(/\*\*|__|`/gu, "")
+      .trim();
+    const chars = [...plain];
+    if (chars.length < 6 || /https?:\/\/|[~.]?\/\S+\/\S*/u.test(plain)) continue;
+    const note = chars.length > MAX_EXCERPT_CHARS ? `${chars.slice(0, MAX_EXCERPT_CHARS - 1).join("")}…` : plain;
+    if (!out.includes(note)) out.push(note);
+    if (out.length >= MAX_MEMORY_LINES) break;
+  }
+  return out;
+}
+
 /**
  * Mask what looks like a credential before memory text leaves the machine: the
  * prompt asks the model to skip secrets, but by then they've been sent. Catches

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Plus, Sparkles, X } from "lucide-react";
+import { Loader2, Plus, RotateCcw, Sparkles, X } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { useStore } from "../../lib/store";
 import { isTauri } from "../../lib/tauriEvents";
@@ -7,7 +7,7 @@ import { log } from "../../lib/log";
 import { isProviderReady } from "../../lib/ai/settings";
 import { describeAiError } from "../../lib/ai/errors";
 import { removeEntry } from "../../lib/dictionary";
-import { backgroundLines, memoryFilesToText, summarizeMemory } from "../../lib/onboarding/memoryImport";
+import { backgroundLines, excerptMemory, memoryFilesToText, summarizeMemory } from "../../lib/onboarding/memoryImport";
 import {
   addTerms,
   editedWord,
@@ -32,8 +32,10 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 
 /** "hidden": no memory on this machine (or not the desktop app), so nothing
- *  to show. "needLlm" / failed: there is memory, but it couldn't be condensed. */
-type MemoryState = "reading" | "ready" | "hidden" | "needLlm" | { failed: string };
+ *  to show. An object: there is memory, but it couldn't be condensed — `why`
+ *  ("needLlm", or the error), and whether the lines shown are an excerpt of it
+ *  (false when earlier notes were kept instead). */
+type MemoryState = "reading" | "ready" | "hidden" | { why: "needLlm" | { failed: string }; excerpt: boolean };
 
 /**
  * What every meeting prompt should know about the user:
@@ -248,11 +250,12 @@ function BackgroundEditor({
 
 /**
  * Claude Code's memory, condensed. Read once when the step opens (unless an
- * earlier visit already kept a summary); the company, people and product
- * names in it join the terms above, the rest is shown read-only. With no
- * memory on this machine the section isn't there at all; with memory that
- * couldn't be condensed (no AI provider, or the call failed) it is one line
- * saying why.
+ * earlier visit already kept notes); the company, people and product names in
+ * it join the terms above, the rest is shown read-only. With no memory on this
+ * machine the section isn't there at all. When it can't be condensed (no AI
+ * provider, or the call failed) the section shows a few lines taken straight
+ * from it instead (excerptMemory), saying why; either way Refresh tries the
+ * model again.
  */
 function AiMemory({ onTermsAdded }: Readonly<{ onTermsAdded: (terms: AddedTerm[]) => void }>) {
   const { t } = useI18n();
@@ -268,13 +271,22 @@ function AiMemory({ onTermsAdded }: Readonly<{ onTermsAdded: (terms: AddedTerm[]
     let alive = true;
     (async (): Promise<MemoryState> => {
       // Reading the files needs no AI; whether there is memory at all decides
-      // between staying out of the way and saying why it can't be used.
+      // between staying out of the way and showing what can be done with it.
       const files = await ipc.readClaudeMemory();
       if (files.length === 0) return "hidden";
+      const text = memoryFilesToText(files);
+      // Not condensed: say why, and show what can be read off the text —
+      // unless notes are already kept (a Refresh that failed), which stay.
+      const fallback = (why: "needLlm" | { failed: string }): MemoryState => {
+        if (useStore.getState().settings.aiMemoryNotes.trim()) return { why, excerpt: false };
+        const lines = excerptMemory(text);
+        if (lines.length > 0) patch({ aiMemoryNotes: lines.join("\n") });
+        return { why, excerpt: lines.length > 0 };
+      };
       const settings = useStore.getState().settings;
-      if (!isProviderReady(settings, "realtime")) return "needLlm";
+      if (!isProviderReady(settings, "realtime")) return fallback("needLlm");
       try {
-        const summary = await summarizeMemory({ settings, text: memoryFilesToText(files) });
+        const summary = await summarizeMemory({ settings, text });
         if (!alive) return "hidden";
         // The names go to the dictionary even when there are no notes to show.
         const added = await addTerms(summary.terms);
@@ -284,7 +296,7 @@ function AiMemory({ onTermsAdded }: Readonly<{ onTermsAdded: (terms: AddedTerm[]
         return "ready";
       } catch (e) {
         log.warn("onboarding: condensing AI memory failed", { error: String(e) });
-        return { failed: describeAiError(e) };
+        return fallback({ failed: describeAiError(e) });
       }
     })()
       .then((next) => alive && setState(next))
@@ -296,43 +308,56 @@ function AiMemory({ onTermsAdded }: Readonly<{ onTermsAdded: (terms: AddedTerm[]
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [state]);
 
   if (state === "hidden") return null;
 
-  // Memory exists but couldn't be used: one line saying why, not the section.
-  if (state === "needLlm" || typeof state === "object") {
-    return (
-      <p className="flex items-center gap-1.5 border-t pt-4 text-xs text-muted-foreground">
-        <Sparkles className="size-3 shrink-0 text-primary" />
-        {state === "needLlm"
-          ? t("onboarding.context.memory.needLlm")
-          : t("onboarding.context.memory.failed", { error: state.failed })}
-      </p>
-    );
-  }
-
   const lines = backgroundLines(notes);
+  const notCondensed = typeof state === "object" ? state : null;
+  let why = "";
+  if (notCondensed?.why === "needLlm") why = t("onboarding.context.memory.needLlm");
+  else if (notCondensed) why = t("onboarding.context.memory.failed", { error: notCondensed.why.failed });
+
   return (
     <div className="flex flex-col gap-1.5 border-t pt-4">
-      <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <Sparkles className="size-3 text-primary" />
-        {t("onboarding.context.memory.title")}
-      </span>
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Sparkles className="size-3 text-primary" />
+          {t("onboarding.context.memory.title")}
+        </span>
+        {state !== "reading" && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 gap-1 px-2 text-xs text-primary"
+            onClick={() => setState("reading")}
+          >
+            <RotateCcw className="size-3" />
+            {notCondensed ? t("onboarding.context.memory.retry") : t("onboarding.context.memory.refresh")}
+          </Button>
+        )}
+      </div>
+      {notCondensed && (
+        <p className="text-[11px] leading-relaxed text-muted-foreground">
+          {why} {notCondensed.excerpt && t("onboarding.context.memory.excerpt")}
+        </p>
+      )}
       {state === "reading" ? (
         <p className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
           <Loader2 className="size-3.5 animate-spin" />
           {t("onboarding.context.memory.reading")}
         </p>
       ) : (
-        <ul className="flex flex-col gap-0.5 rounded-lg bg-muted/40 px-3 py-2 text-[13px] leading-relaxed">
-          {lines.map((line, i) => (
-            <li key={`${i}:${line}`} className="flex gap-2">
-              <span className="text-muted-foreground">•</span>
-              <span className="flex-1">{line}</span>
-            </li>
-          ))}
-        </ul>
+        lines.length > 0 && (
+          <ul className="flex flex-col gap-0.5 rounded-lg bg-muted/40 px-3 py-2 text-[13px] leading-relaxed">
+            {lines.map((line, i) => (
+              <li key={`${i}:${line}`} className="flex gap-2">
+                <span className="text-muted-foreground">•</span>
+                <span className="flex-1">{line}</span>
+              </li>
+            ))}
+          </ul>
+        )
       )}
     </div>
   );
