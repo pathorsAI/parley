@@ -39,15 +39,18 @@ LOCALES=(
   "zh-Hant:zh-Hant:zh_TW"
 )
 
-# file name : demo route ("-" = no route, capture whatever the app opens on)
+# file name : demo route ("-" = no route, capture whatever the app opens on).
+# Each capture is raw; `compose-frames.py` then puts the frame's headline from
+# `screenshot-captions.json` above it, and that composed frame is what ships.
 FRAMES=(
-  "01-welcome:-"
-  "02-record:record"
-  "03-library:library"
-  "04-transcript:transcript"
-  "05-voice-keyboard:keyboard"
-  "06-settings:settings"
+  "01-record:record"
+  "02-summary:summary"
+  "03-transcript:jump"
+  "04-voice-typing:keyboard"
+  "05-filing:settled"
+  "06-library:library"
 )
+RAW="$DERIVED/raw"
 
 say() { printf '\033[1m▸ %s\033[0m\n' "$*"; }
 
@@ -102,7 +105,7 @@ capture() {  # $1 = destination png
 
 for entry in "${LOCALES[@]}"; do
   IFS=: read -r locale lang region <<<"$entry"
-  outdir="$HERE/screenshots/$locale"
+  outdir="$RAW/$locale"
   mkdir -p "$outdir"
   say "Capturing $locale"
 
@@ -143,7 +146,7 @@ xcrun simctl status_bar "$UDID" clear
 xcrun simctl terminate "$UDID" "$BUNDLE_ID" 2>/dev/null || true
 
 say "Verifying frames"
-verify_args=("$HERE/screenshots")
+verify_args=("$RAW")
 for entry in "${LOCALES[@]}"; do verify_args+=("${entry%%:*}"); done
 verify_args+=("--")
 for frame in "${FRAMES[@]}"; do verify_args+=("${frame%%:*}"); done
@@ -311,4 +314,11 @@ print("  the checks above cannot see a clipped label, a missing font, or English
 print("  copy in the Chinese set.")
 PY
 
-say "Done — upload ios/AppStore/screenshots/<locale>/ to the matching App Store Connect localization"
+# The checks above run on the raw captures, where "two frames are the same
+# screen" is still measurable; the headline would make every frame differ.
+say "Adding headlines"
+for entry in "${LOCALES[@]}"; do rm -f "$HERE/screenshots/${entry%%:*}"/*.png; done
+python3 "$HERE/compose-frames.py" "$RAW" "$HERE/screenshots" \
+  "$IOS_DIR/App/Parley/Resources/Fonts" "$HERE/screenshot-captions.json"
+
+say "Done — ios/AppStore/screenshots/<locale>/ is what the store submission uploads"

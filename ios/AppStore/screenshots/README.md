@@ -1,6 +1,6 @@
 # iPhone screenshot set
 
-Two locale sets, six frames each, produced by one command:
+Two locale sets, six frames each, produced by one command (it also needs Google Chrome for the headline step):
 
 ```bash
 ios/AppStore/capture-screenshots.sh
@@ -15,14 +15,19 @@ Captured on an **iPhone 17 Pro Max**, whose native 1320×2868 is exactly the App
 Store 6.9-inch slot — no rescaling, no aspect drift. The script verifies the
 dimensions before it exits.
 
-| File | App state | What it has to sell |
+Each frame is a raw capture with a one-line headline above it. The headlines
+live in [`../screenshot-captions.json`](../screenshot-captions.json) and
+[`../compose-frames.py`](../compose-frames.py) puts them on (headless Chrome,
+the app's own DM Sans and Alexandria files). The capture script runs both steps.
+
+| File | Demo route | Headline (zh-Hant / en-US) |
 | --- | --- | --- |
-| `01-welcome` | First launch, signed out | What the app is and what an account buys, before it asks for one. |
-| `02-record` | Recording in progress | The phone is listening to the room and the transcript is already there, speakers apart. |
-| `03-library` | Personal library | The result is kept: titles, durations, speaker and finding counts, folders. |
-| `04-transcript` | Saved recording | A transcript is a document you read and quote from, with named speakers and timestamps. |
-| `05-voice-keyboard` | Settings → Voice keyboard | The 1.1 headline: dictation into any app. |
-| `06-settings` | Settings | Trust and control — account, usage, sync state, appearance, language. |
+| `01-record` | `record` | 開會時，逐字稿邊講邊出來 / A live transcript while you talk |
+| `02-summary` | `summary` | 重點和待辦會後馬上整理好 / Highlights and to-dos, ready when you stop |
+| `03-transcript` | `jump` | 點一下時間回到那句原話 / Tap a timestamp, find the exact words |
+| `04-voice-typing` | `keyboard` | 在任何 App 用說的打字 / Type by voice in any app |
+| `05-filing` | `settled` | 自動取標題建議放哪個資料夾 / Titled and filed for you |
+| `06-library` | `library` | 每一場會議都找得到 / Every meeting, easy to find |
 
 ## How the frames are produced
 

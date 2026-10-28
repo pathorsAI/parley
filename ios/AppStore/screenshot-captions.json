@@ -1,0 +1,26 @@
+{
+  "01-record": {
+    "zh-Hant": "開會時，逐字稿<br>邊講邊出來",
+    "en-US": "A live transcript<br>while you talk"
+  },
+  "02-summary": {
+    "zh-Hant": "重點和待辦<br>會後馬上整理好",
+    "en-US": "Highlights and to-dos,<br>ready when you stop"
+  },
+  "03-transcript": {
+    "zh-Hant": "點一下時間<br>回到那句原話",
+    "en-US": "Tap a timestamp,<br>find the exact words"
+  },
+  "04-voice-typing": {
+    "zh-Hant": "在任何 App<br>用說的打字",
+    "en-US": "Type by voice<br>in any app"
+  },
+  "05-filing": {
+    "zh-Hant": "自動取標題<br>建議放哪個資料夾",
+    "en-US": "Titled and filed<br>for you"
+  },
+  "06-library": {
+    "zh-Hant": "每一場會議<br>都找得到",
+    "en-US": "Every meeting,<br>easy to find"
+  }
+}

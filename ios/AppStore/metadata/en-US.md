@@ -34,6 +34,11 @@ text field — tap the mic, and your words type themselves in at the cursor. Put
 on the Action Button and dictation starts without even switching keyboards. Stop
 and pick it up again without being bounced out of the app you are in.
 
+AI polish takes out the filler and the slips of the tongue while keeping every
+sentence you said. Fix a word once and Parley remembers how you say it. The
+keyboard also types: English and Zhuyin panes sit next to the mic, and your
+saved name, phone numbers and addresses are one tap away.
+
 RECORD THE MEETINGS YOU HAVE IN PERSON
 
 Put the phone on the table and a live, speaker-separated transcript arrives while
@@ -43,7 +48,9 @@ quote from, not a wall of undifferentiated text.
 
 ALSO IN THE APP
 
-• A library of your recordings to browse, search, and file into folders
+• A library of your recordings to browse, search, and file into folders you create, rename, and delete right on the phone
+• Import an audio file you already have and get it transcribed like a recording
+• The recording and the open microphone show on the Lock Screen and in the Dynamic Island
 • Personal and organization spaces, with sharing and moving between them
 • Finished recordings survive a dead network: they queue on the phone and sync themselves once you are back
 • English and Traditional Chinese throughout, following your iPhone's language
@@ -76,12 +83,18 @@ you are sitting in.
 
 YOUR DATA
 
-Parley uses the microphone only while you have started a recording, and iOS
-shows its microphone indicator the whole time.
+Parley uses the microphone only while you record or dictate, and iOS shows its
+orange microphone indicator the whole time. If you turn on keeping the
+microphone ready after dictation, the indicator stays on for that window, but
+nothing is recorded or sent until you tap the mic.
 You can delete your account and personal data permanently from Settings →
 Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
+
+## What's New — 1.35
+
+Manage folders on your phone. Long-press a folder in the Library to rename or delete it, or tap + at the end of the folder row to make a new one. Deleting a folder moves its recordings to Unfiled; no recording is ever deleted.
 
 ## What's New — 1.34
 
