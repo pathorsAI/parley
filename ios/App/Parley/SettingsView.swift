@@ -828,7 +828,7 @@ struct SettingsView: View {
                     .foregroundStyle(Theme.warning)
             }
         } footer: {
-            sectionFooter("After you dictate, the microphone stays ready so the next dictation starts where you are typing. iOS shows the orange dot meanwhile, but nothing is recorded until you tap the mic.")
+            sectionFooter("The orange dot stays on while it's ready, but nothing is recorded until you tap the mic.")
         }
     }
 

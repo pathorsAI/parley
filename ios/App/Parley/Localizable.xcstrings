@@ -581,23 +581,6 @@
         }
       }
     },
-    "After you dictate, the microphone stays ready so the next dictation starts where you are typing. iOS shows the orange dot meanwhile, but nothing is recorded until you tap the mic." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "After you dictate, the microphone stays ready so the next dictation starts where you are typing. iOS shows the orange dot meanwhile, but nothing is recorded until you tap the mic."
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "聽寫後麥克風會保留一段時間，下次可以直接在原本的 App 聽寫。這段時間會亮橘點，但在你按下麥克風前不會錄音。"
-          }
-        }
-      }
-    },
     "All" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7036,6 +7019,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "目前無法使用麥克風。"
+          }
+        }
+      }
+    },
+    "The orange dot stays on while it's ready, but nothing is recorded until you tap the mic." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The orange dot stays on while it's ready, but nothing is recorded until you tap the mic."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "待命時會一直亮橘點，但在你按下麥克風前不會錄音。"
           }
         }
       }
