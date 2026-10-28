@@ -70,6 +70,15 @@ struct LibraryView: View {
     /// "Move to organization", waiting on its dialog. The same confirmation for
     /// the same reason: the move ends in deleting the personal original.
     @State private var confirmingOrgMove: PendingOrgMove?
+    /// The chip row's "+" or a chip's Rename, while its name alert is up.
+    @State private var namingFolder: FolderNaming?
+    /// The alert's text field. State of its own rather than part of
+    /// `namingFolder`: the alert binds to it while it is up.
+    @State private var folderNameDraft = ""
+    /// A chip's Delete, waiting on its dialog. Deleting a folder deletes no
+    /// recording, but it does empty a place someone filed things into, and on an
+    /// org that is everyone's place — so it asks first, like a recording does.
+    @State private var confirmingFolderDelete: CloudFolder?
     /// Meetings (the cloud library, everything below) or Voice typing (what was
     /// dictated on this phone, `DictationHistoryList`).
     @State private var section: LibrarySection = .meetings
@@ -456,15 +465,52 @@ struct LibraryView: View {
     /// The chip row stays put instead of scrolling away with the list, so the
     /// selected folder is always named on screen while the list under it
     /// changes.
+    ///
+    /// The row is up whenever there is a folder, or once a load has finished
+    /// without one: with no folders it is only the "+", which is the one place an
+    /// org scope can make its first folder. It waits out the first load so the
+    /// lone "+" does not flash up ahead of the chips it belongs after.
     private var list: some View {
         VStack(spacing: 0) {
-            if !folders.isEmpty {
+            if !folders.isEmpty || !loading {
                 folderChips
             }
             folderList(folderFilter)
         }
         .simultaneousGesture(folderSwipe)
         .sheet(isPresented: $showingUploadQueue) { UploadQueueSheet() }
+        .alert(
+            namingFolder?.title ?? Text(verbatim: ""),
+            isPresented: Binding(
+                get: { namingFolder != nil },
+                set: { if !$0 { namingFolder = nil } }),
+            presenting: namingFolder
+        ) { naming in
+            TextField("Folder name", text: $folderNameDraft)
+            Button("Cancel", role: .cancel) {}
+            Button(naming.confirmLabel) { Task { await commitFolderName(naming) } }
+                .disabled(trimmedFolderName.isEmpty)
+        }
+        .confirmationDialog(
+            confirmingFolderDelete.map { Text("Delete “\($0.name)”?") } ?? Text(verbatim: ""),
+            isPresented: Binding(
+                get: { confirmingFolderDelete != nil },
+                set: { if !$0 { confirmingFolderDelete = nil } }),
+            titleVisibility: .visible,
+            presenting: confirmingFolderDelete
+        ) { folder in
+            Button("Delete", role: .destructive) { Task { await deleteFolder(folder) } }
+        } message: { folder in
+            // Says what happens to what is in it, because "delete" next to a
+            // folder of recordings reads as deleting them. The count is what this
+            // phone has loaded, which is the library the user is looking at.
+            let count = recordingCount(in: folder)
+            if count == 0 {
+                Text("The folder is empty.")
+            } else {
+                Text("\(count) recordings in it move to Unfiled. No recording is deleted.")
+            }
+        }
     }
 
     /// One folder's worth of the library.
@@ -686,9 +732,9 @@ struct LibraryView: View {
     }
 
     private func step(_ delta: Int) {
-        // No folders, no chip row, nothing to switch between: `Unfiled` and `All`
-        // are the same list, and moving between them invisibly would read as the
-        // library having lost something.
+        // No folders, no chips (the row is only its "+"), nothing to switch
+        // between: `Unfiled` and `All` are the same list, and moving between
+        // them invisibly would read as the library having lost something.
         guard !folders.isEmpty else { return }
         let pages = folderPages
         let current = pages.firstIndex(of: folderFilter ?? Self.allPage) ?? 0
@@ -709,20 +755,36 @@ struct LibraryView: View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    chip(String(localized: "All"), selected: folderFilter == nil) {
-                        select(nil)
+                    // With no folders, `All` and `Unfiled` are the same list
+                    // (see `step`), so the row is only the "+".
+                    if !folders.isEmpty {
+                        chip(String(localized: "All"), selected: folderFilter == nil) {
+                            select(nil)
+                        }
+                        .id(Self.allPage)
+                        chip(
+                            String(localized: "Unfiled"),
+                            selected: folderFilter == Self.unfiledPage
+                        ) {
+                            select(Self.unfiledPage)
+                        }
+                        .id(Self.unfiledPage)
                     }
-                    .id(Self.allPage)
-                    chip(
-                        String(localized: "Unfiled"), selected: folderFilter == Self.unfiledPage
-                    ) {
-                        select(Self.unfiledPage)
-                    }
-                    .id(Self.unfiledPage)
                     ForEach(folders) { f in
                         chip(f.name, selected: folderFilter == f.id) { select(f.id) }
                             .id(f.id)
+                            // Long-press, the platform's door to "more about this
+                            // one", so the row itself stays chips and nothing
+                            // else. Real folders only: `All` and `Unfiled` are
+                            // views of the library, not things anyone made.
+                            .contextMenu {
+                                Button("Rename", systemImage: "pencil") { requestRename(f) }
+                                Button("Delete", systemImage: "trash", role: .destructive) {
+                                    confirmingFolderDelete = f
+                                }
+                            }
                     }
+                    newFolderButton
                 }
                 .padding(.vertical, 4)
                 .padding(.horizontal, 2)
@@ -786,6 +848,136 @@ struct LibraryView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    /// The trailing "+": a new folder in whatever scope is showing.
+    ///
+    /// Drawn like an unselected chip — caption size, secondary label, no fill —
+    /// so it reads as the end of the row rather than a button laid on top of it.
+    /// The glyph is small, so the tap target is the platform's 44pt minimum
+    /// around it. Inside the scrolling strip, after the last folder, so it
+    /// counts toward `chipsWidth` (an overflowing row still scrolls to reach
+    /// it) and takes no part in `folderPages` or the selected-chip scroll.
+    private var newFolderButton: some View {
+        Button {
+            folderNameDraft = ""
+            namingFolder = .create
+        } label: {
+            // Laid out like a chip — glyph over the transparent 1pt rule — so it
+            // sits on the chips' baseline and the row keeps its height. The
+            // 44pt target comes from the content shape instead of the frame:
+            // a 44pt-tall "+" would have made the whole row taller for it.
+            VStack(spacing: 5) {
+                Image(systemName: "plus")
+                    .font(.parley.caption.weight(.semibold))
+                    .foregroundStyle(Color(.secondaryLabel))
+                Color.clear.frame(height: 1)
+            }
+            .frame(minWidth: 44)
+            .contentShape(Rectangle().inset(by: -11))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("New folder")
+    }
+
+    // MARK: folder management (chip row)
+
+    private var trimmedFolderName: String {
+        folderNameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func requestRename(_ folder: CloudFolder) {
+        folderNameDraft = folder.name
+        namingFolder = .rename(folder)
+    }
+
+    /// What the delete dialog says will move: the loaded rows filed in it,
+    /// the sample included when it is there.
+    private func recordingCount(in folder: CloudFolder) -> Int {
+        allRecordings.filter { $0.folderId == folder.id }.count
+    }
+
+    /// Create or rename, after the server has answered. Not optimistic: an org
+    /// folder's id is the server's, and a rename an org can refuse would have to
+    /// be walked back on screen — so the row changes once, to what is true.
+    ///
+    /// The scope is read before the call and checked after it. Switching scope
+    /// mid-request replaces `folders` with the other library's, and a folder
+    /// landing in it would be a folder from somewhere else.
+    private func commitFolderName(_ naming: FolderNaming) async {
+        let name = trimmedFolderName
+        guard !name.isEmpty else { return }
+        let orgId = scope
+        error = nil
+        do {
+            switch naming {
+            case .create:
+                let folder: CloudFolder
+                if let orgId {
+                    folder = try await app.cloud.createOrgFolder(orgId: orgId, name: name)
+                } else {
+                    folder = try await app.cloud.createFolder(name: name)
+                }
+                guard scope == orgId else { return }
+                folders.append(folder)
+                select(folder.id)
+            case .rename(let folder):
+                guard name != folder.name else { return }
+                if let orgId {
+                    try await app.cloud.renameOrgFolder(orgId: orgId, id: folder.id, name: name)
+                } else {
+                    try await app.cloud.renameFolder(id: folder.id, name: name)
+                }
+                guard scope == orgId,
+                    let index = folders.firstIndex(where: { $0.id == folder.id })
+                else { return }
+                folders[index].name = name
+            }
+        } catch {
+            guard scope == orgId else { return }
+            self.error = folderFailure(error)
+        }
+    }
+
+    /// The server re-homes the folder's recordings to the scope's root and
+    /// tombstones the folder; this does the same to what is on screen, so the
+    /// rows land in Unfiled without a reload. If the folder was the page being
+    /// shown, the page goes back to `All` — the recordings that were on it are
+    /// still there, just no longer under a name.
+    private func deleteFolder(_ folder: CloudFolder) async {
+        let orgId = scope
+        error = nil
+        do {
+            if let orgId {
+                try await app.cloud.deleteOrgFolder(orgId: orgId, id: folder.id)
+            } else {
+                try await app.cloud.deleteFolder(id: folder.id)
+            }
+            guard scope == orgId else { return }
+            folders.removeAll { $0.id == folder.id }
+            for index in recordings.indices where recordings[index].folderId == folder.id {
+                recordings[index].folderId = nil
+            }
+            // The sample is filed on this phone only (`SampleRecordingStore`),
+            // so the server's re-home never reaches it.
+            if orgId == nil, sample.summary?.folderId == folder.id {
+                sample.setFolder(nil)
+            }
+            if folderFilter == folder.id { select(nil) }
+        } catch {
+            guard scope == orgId else { return }
+            self.error = folderFailure(error)
+        }
+    }
+
+    /// A 403 is the org's rule, not a fault: only the folder's creator or an
+    /// admin may change it, and saying so tells the user who can. Everything
+    /// else is the same retryable failure.
+    private func folderFailure(_ error: Error) -> String {
+        if let e = error as? CloudError, e.status == 403 {
+            return String(localized: "Only the folder's creator or an organization admin can change it.")
+        }
+        return String(localized: "Couldn't update the folder. Try again.")
     }
 
     /// The rows one folder shows. Takes the folder as a parameter so the list
@@ -863,7 +1055,8 @@ struct LibraryView: View {
         // The picker sheet rather than a submenu of every folder: a submenu
         // has no search and no way to add the customer you have just met.
         // Personal scope can create a folder, so it always has somewhere to
-        // go; an org scope has no create endpoint here, so it needs folders.
+        // go; an org scope's picker does not create (its folders are made from
+        // the chip row's "+"), so it needs folders.
         if scope == nil || !folders.isEmpty {
             Button("Move to folder…", systemImage: "folder") { moving = rec }
         }
@@ -1152,6 +1345,26 @@ private final class SwipeGeometry {
     var scrollingChipStrip: CGRect? {
         guard let chipStrip, chipsWidth > chipStrip.width + 0.5 else { return nil }
         return chipStrip
+    }
+}
+
+/// The chip row's name alert: a new folder, or a new name for one that exists.
+private enum FolderNaming {
+    case create
+    case rename(CloudFolder)
+
+    var title: Text {
+        switch self {
+        case .create: Text("New folder")
+        case .rename: Text("Rename folder")
+        }
+    }
+
+    var confirmLabel: LocalizedStringKey {
+        switch self {
+        case .create: "Create"
+        case .rename: "Save"
+        }
     }
 }
 

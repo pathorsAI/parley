@@ -257,6 +257,22 @@ public actor CloudClient: BatchTranscriptionService, DictionarySyncTransport {
             id: id, name: name, orgId: nil, createdAt: createdAt, updatedAt: createdAt)
     }
 
+    /// Rename a personal folder (`PATCH /folders/:id`). The server trims the
+    /// name and answers `{ ok: true }`, so there is nothing to read back.
+    public func renameFolder(id: String, name: String) async throws {
+        let body = try JSONSerialization.data(withJSONObject: ["name": name])
+        _ = try await request(
+            "folders/\(id)", method: "PATCH", body: body, contentType: "application/json")
+    }
+
+    /// Delete a personal folder (`DELETE /folders/:id`). The server re-homes the
+    /// recordings in it to the personal root and tombstones the folder in one
+    /// batch — no recording is deleted, so the caller only has to move its own
+    /// rows to Unfiled.
+    public func deleteFolder(id: String) async throws {
+        _ = try await request("folders/\(id)", method: "DELETE")
+    }
+
     // MARK: orgs
 
     public func myOrgs() async throws -> [CloudOrg] {
@@ -279,6 +295,34 @@ public actor CloudClient: BatchTranscriptionService, DictionarySyncTransport {
     public func orgFolders(orgId: String) async throws -> [CloudFolder] {
         struct F: Codable { let folders: [CloudFolder] }
         return try await get("orgs/\(orgId)/folders", as: F.self).folders
+    }
+
+    /// Create a shared folder in an org (`POST /orgs/:orgId/folders`). Unlike a
+    /// personal folder the id is the server's: org folders are
+    /// server-authoritative with no offline copy to agree with, so only the name
+    /// is sent and the `{ folder }` the server answers is the folder.
+    public func createOrgFolder(orgId: String, name: String) async throws -> CloudFolder {
+        let body = try JSONSerialization.data(withJSONObject: ["name": name])
+        let data = try await request(
+            "orgs/\(orgId)/folders", method: "POST", body: body, contentType: "application/json")
+        struct F: Decodable { let folder: CloudFolder }
+        return try JSONDecoder().decode(F.self, from: data).folder
+    }
+
+    /// Rename an org folder (`PATCH /orgs/:orgId/folders/:id`). Only the folder's
+    /// creator or an org admin/owner may; anyone else gets a `CloudError` with
+    /// status 403, which the caller tells apart from a failed request.
+    public func renameOrgFolder(orgId: String, id: String, name: String) async throws {
+        let body = try JSONSerialization.data(withJSONObject: ["name": name])
+        _ = try await request(
+            "orgs/\(orgId)/folders/\(id)", method: "PATCH",
+            body: body, contentType: "application/json")
+    }
+
+    /// Delete an org folder (`DELETE /orgs/:orgId/folders/:id`): its recordings
+    /// move to the org root, none is deleted. Same 403 rule as the rename.
+    public func deleteOrgFolder(orgId: String, id: String) async throws {
+        _ = try await request("orgs/\(orgId)/folders/\(id)", method: "DELETE")
     }
 
     public func deleteOrgRecording(orgId: String, id: String) async throws {

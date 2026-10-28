@@ -104,6 +104,41 @@
         }
       }
     },
+    "%lld recordings in it move to Unfiled. No recording is deleted." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "1 recording in it moves to Unfiled. No recording is deleted."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld recordings in it move to Unfiled. No recording is deleted."
+                }
+              }
+            }
+          }
+        },
+        "zh-Hant" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "裡面的 %lld 筆錄音會移到「未歸檔」，不會被刪除。"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "%lld recordings not uploaded — out of quota. Kept on this phone; tap to see them" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1382,6 +1417,23 @@
         }
       }
     },
+    "Couldn't update the folder. Try again." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't update the folder. Try again."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法更新資料夾，請再試一次。"
+          }
+        }
+      }
+    },
     "Create" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1582,6 +1634,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "永久刪除帳號？"
+          }
+        }
+      }
+    },
+    "Delete “%@”?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete “%@”?"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "刪除「%@」？"
           }
         }
       }
@@ -3809,6 +3878,23 @@
         }
       }
     },
+    "Only the folder's creator or an organization admin can change it." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only the folder's creator or an organization admin can change it."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "只有建立這個資料夾的人或組織管理員可以修改。"
+          }
+        }
+      }
+    },
     "Only the uploader or an admin can delete this recording" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5098,6 +5184,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "刪贅字、修口誤、排版，保留你說的每一句。"
+          }
+        }
+      }
+    },
+    "Rename" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rename"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新命名"
+          }
+        }
+      }
+    },
+    "Rename folder" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rename folder"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新命名資料夾"
           }
         }
       }
@@ -6916,6 +7036,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "「應該是」不能包含「聽成」的內容，否則每次套用都會越改越長。"
+          }
+        }
+      }
+    },
+    "The folder is empty." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The folder is empty."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這個資料夾是空的。"
           }
         }
       }
