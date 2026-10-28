@@ -19,8 +19,10 @@ import {
   MIC_CHECK_MAX_MS,
   MIC_CHECK_SOURCE,
   addTerms,
+  fixProductName,
   profileFill,
   summarizeIntro,
+  withProductName,
   type AddedTerm,
 } from "../../lib/onboarding/micCheck";
 import { appendBackground } from "../../lib/onboarding/memoryImport";
@@ -93,7 +95,7 @@ export function MicStep({ onTermsAdded }: Readonly<{ onTermsAdded: (terms: Added
   }
 
   async function showText(raw: string) {
-    const shown = await normalizeTranscriptText(raw);
+    const shown = fixProductName(await normalizeTranscriptText(raw));
     if (mounted.current) setText(shown);
     return shown;
   }
@@ -159,7 +161,7 @@ export function MicStep({ onTermsAdded }: Readonly<{ onTermsAdded: (terms: Added
         languageHints: request.languageHints,
         inputDevice: settings.inputDevice || null,
         relayUrl: request.relayUrl,
-        vocabulary: request.vocabulary,
+        vocabulary: withProductName(request.vocabulary),
       });
     } catch (e) {
       r.live = false;

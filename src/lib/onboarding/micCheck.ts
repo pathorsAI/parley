@@ -16,7 +16,7 @@ import { outputLanguageInstruction } from "../ai/profile";
 import { isProviderReady } from "../ai/settings";
 import { recordLlmUsage } from "../usage/log";
 import type { Settings } from "../types";
-import { addEntry, listEntries, whenDictionaryReady } from "../dictionary";
+import { addEntry, applyReplacements, listEntries, whenDictionaryReady } from "../dictionary";
 import { cleanLines } from "./memoryImport";
 
 /** The source label on the check's events (mic_check.rs `MIC_CHECK_SOURCE`). */
@@ -51,6 +51,76 @@ export class CheckTranscript {
     const committed = [...this.finals.entries()].sort((a, b) => order(a[0]) - order(b[0])).map(([, t]) => t);
     return joinRuns([...committed, this.interim]);
   }
+}
+
+/**
+ * The product's name, which the check's script has the user say. The check is
+ * the first thing Parley ever transcribes for them, so it must not get its own
+ * name wrong: the recognizer is told the word up front (`withProductName`),
+ * and whatever it still mishears is rewritten (`fixProductName`).
+ */
+export const PRODUCT_NAME = "Parley";
+
+/**
+ * How recognizers mishear "Parley", in English and as Chinese sound-alikes.
+ * Safe to rewrite unconditionally here — and only here: in a self-introduction
+ * that reads "I use Parley to…" these can only mean the product, while in an
+ * ordinary meeting 帕利 or "parlay" may well be what was said. Words that are
+ * plausible names in an introduction (Harley, parlor) are left alone.
+ * Traditional forms only: the transcript is converted before this runs.
+ */
+const PRODUCT_NAME_MISHEARINGS = [
+  "parley", // the right word in the wrong case
+  "parlay",
+  "parlee",
+  "parly",
+  "parlie",
+  "parle",
+  "parli",
+  "parlei",
+  "parleigh",
+  "parlé",
+  "barley",
+  "par lay",
+  "par ley",
+  "par lee",
+  "pa ley",
+  "pah ley",
+  "帕雷",
+  "帕利",
+  "帕里",
+  "帕莉",
+  "帕麗",
+  "帕力",
+  "帕立",
+  "帕勒",
+  "帕來",
+  "帕萊",
+  "趴雷",
+  "趴利",
+  "啪雷",
+  "派雷",
+  "派利",
+  "派力",
+  "怕累",
+  "怕雷",
+  "巴雷",
+];
+
+const PRODUCT_NAME_ENTRY = [
+  { id: "builtin-product-name", phrase: PRODUCT_NAME, variants: PRODUCT_NAME_MISHEARINGS, createdAt: 0, source: "manual" as const },
+];
+
+/** The check's recognition terms with the product's name first. */
+export function withProductName(vocabulary: readonly string[]): string[] {
+  return [PRODUCT_NAME, ...vocabulary.filter((term) => term !== PRODUCT_NAME)];
+}
+
+/** Rewrite every mishearing of the product's name, spaced off from Chinese the way the script writes it. */
+export function fixProductName(text: string): string {
+  return applyReplacements(text, PRODUCT_NAME_ENTRY)
+    .replace(/(\p{Script=Han})Parley/gu, "$1 Parley")
+    .replace(/Parley(\p{Script=Han})/gu, "Parley $1");
 }
 
 /** Join recognizer runs: CJK runs touch, Latin runs get a space between. */

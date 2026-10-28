@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CheckTranscript, changedSpan, joinRuns, mergeTerms, profileFill } from "./micCheck";
+import { CheckTranscript, changedSpan, fixProductName, joinRuns, mergeTerms, profileFill, withProductName } from "./micCheck";
 
 const seg = (id: string, text: string, is_final: boolean, source = "mic-check") => ({ id, source, text, is_final });
 
@@ -53,5 +53,28 @@ describe("changedSpan", () => {
     expect(changedSpan("常和東昇談專案", "常和東森談專案")).toEqual({ from: "昇", to: "森" });
     expect(changedSpan("台灣大哥談", "台灣大哥大談")).toEqual({ from: "", to: "大" });
     expect(changedSpan("same", "same")).toEqual({ from: "", to: "" });
+  });
+});
+
+describe("the product's name in the check", () => {
+  it("rewrites the ways a recognizer mishears Parley", () => {
+    expect(fixProductName("I use parlay to write up meetings")).toBe("I use Parley to write up meetings");
+    expect(fixProductName("I use Par Lay to take notes")).toBe("I use Parley to take notes");
+    expect(fixProductName("I use parley daily")).toBe("I use Parley daily");
+  });
+
+  it("rewrites Chinese sound-alikes, spaced the way the script writes it", () => {
+    expect(fixProductName("我主要用帕雷來整理會議")).toBe("我主要用 Parley 來整理會議");
+    expect(fixProductName("我主要用 帕利 來整理會議")).toBe("我主要用 Parley 來整理會議");
+  });
+
+  it("leaves a correct transcript, and names that only sound close, alone", () => {
+    expect(fixProductName("我主要用 Parley 來整理會議")).toBe("我主要用 Parley 來整理會議");
+    expect(fixProductName("I'm Harley from the parlor")).toBe("I'm Harley from the parlor");
+    expect(fixProductName("Parleys")).toBe("Parleys");
+  });
+
+  it("tells the recognizer the name first, once", () => {
+    expect(withProductName(["派斯科技", "Parley", "Jack"])).toEqual(["Parley", "派斯科技", "Jack"]);
   });
 });
