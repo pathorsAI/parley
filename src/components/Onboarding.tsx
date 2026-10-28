@@ -261,8 +261,7 @@ export function Onboarding() {
   const micOk = perms?.microphone === "authorized";
   const systemAudioOk = perms?.systemAudio === "granted";
   const intro = current === "intro";
-  // The sign-in step keeps the welcome screen's height and its card(s) fill
-  // it. Signed out it is a choice between two cards, each with its own
+  // The sign-in step's card(s) fill the dialog's height. Signed out it is a choice between two cards, each with its own
   // button, and Back sits under them, so it has no footer. Signed in it
   // confirms the account; from there the rest of setup is optional, so its
   // footer is the welcome screen's: Skip, or Start the rest.
@@ -276,9 +275,9 @@ export function Onboarding() {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6">
       <div
         className={cn(
-          "relative flex max-h-[88vh] w-full flex-col overflow-hidden rounded-xl shadow-2xl",
-          "max-w-[560px]",
-          account && "h-[580px] max-h-[calc(100vh-3rem)]",
+          // One size for every step, so the dialog never jumps between them;
+          // a short window gets all the height it has, and a long step scrolls.
+          "relative flex h-[580px] max-h-[calc(100vh-3rem)] w-full max-w-[560px] flex-col overflow-hidden rounded-xl shadow-2xl",
           intro ? "bg-(--ob-hero-bg) [--ob-hero-bg:#f5f5f5] dark:[--ob-hero-bg:var(--muted)]" : "bg-background",
         )}
       >
