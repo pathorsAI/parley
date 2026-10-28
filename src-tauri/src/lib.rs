@@ -203,6 +203,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::meeting::start_meeting,
+            commands::key_check::verify_stt_key,
             commands::meeting::stop_meeting,
             commands::meeting::cancel_meeting,
             commands::meeting::set_meeting_paused,

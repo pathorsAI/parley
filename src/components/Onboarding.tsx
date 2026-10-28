@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronLeft, ChevronRight, Globe, Loader2, LogIn, Mic, UserRoundCheck, UsersRound, Volume2 } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Cpu, Globe, Loader2, LogIn, Mic, UserRoundCheck, UsersRound, Volume2 } from "lucide-react";
 import { useStore } from "../lib/store";
 import { isMac, isWindows } from "../lib/platform";
 import { isTauri } from "../lib/tauriEvents";
@@ -10,6 +10,7 @@ import { PROVIDERS, PROVIDER_BY_ID, type ProviderInfo } from "../lib/ai/provider
 import {
   STT_PROVIDERS,
   STT_BY_ID,
+  sttApiKey,
   sttLabel,
   usesCloudSession,
   usesLocalModel,
@@ -25,8 +26,8 @@ import { openRecording } from "./home/GettingStarted";
 import { TranscribingPulse, useTranscribingPulse } from "./onboarding/TranscribingPulse";
 import { IntroHero, IntroStage } from "./onboarding/IntroStage";
 import { ConfirmCard } from "./onboarding/ConfirmCard";
-import { ChoiceCard, OrDivider } from "./onboarding/ChoiceCard";
-import { ChoiceRow } from "./onboarding/ChoiceRow";
+import { ChoiceCard, OrDivider, SelectCard } from "./onboarding/ChoiceCard";
+import { checkModelKeys, type KeyProblems } from "../lib/onboarding/keyCheck";
 import { OrgStep } from "./onboarding/OrgStep";
 import { MicStep } from "./onboarding/MicStep";
 import { ContextStep } from "./onboarding/ContextStep";
@@ -155,6 +156,9 @@ export function Onboarding() {
   // The organization step while it offers its two choices (each card has its
   // own button), when the footer steps aside.
   const [orgChoosing, setOrgChoosing] = useState(false);
+  // The model step's Next checks the keys with their vendors first.
+  const [checkingKeys, setCheckingKeys] = useState(false);
+  const [keyProblems, setKeyProblems] = useState<KeyProblems>({});
   // The model step's choice, kept here so it survives Back/Next: signed in,
   // Parley's hosted models are the default unless the user picks their own.
   const [ownModels, setOwnModels] = useState(false);
@@ -195,6 +199,30 @@ export function Onboarding() {
   function next() {
     goTo(steps[Math.min(steps.length - 1, index + 1)]);
   }
+
+  // Leaving the model step: a key the vendor refuses keeps the user here, with
+  // the reason under that field, instead of a first meeting that never
+  // transcribes. Any edit to the providers or keys clears the old verdict.
+  async function nextFromModel() {
+    setCheckingKeys(true);
+    try {
+      const problems = await checkModelKeys(useStore.getState().settings);
+      setKeyProblems(problems);
+      if (!problems.stt && !problems.llm) next();
+    } finally {
+      setCheckingKeys(false);
+    }
+  }
+  const keyInputs = [
+    settings.transcriptionProvider,
+    sttApiKey(settings, settings.transcriptionProvider),
+    settings.llmProviders.deep,
+    settings[PROVIDER_BY_ID[settings.llmProviders.deep].apiKeyField],
+    settings.customBaseUrl,
+  ].join("\u0000");
+  useEffect(() => {
+    setKeyProblems({});
+  }, [keyInputs]);
 
   async function recheck() {
     if (!isTauri()) return;
@@ -324,7 +352,13 @@ export function Onboarding() {
           )}
 
           {current === "model" && (
-            <ModelStep local={local} own={ownModels} setOwn={setOwnModels} beforeHosted={beforeHosted} />
+            <ModelStep
+              local={local}
+              own={ownModels}
+              setOwn={setOwnModels}
+              beforeHosted={beforeHosted}
+              keyProblems={keyProblems}
+            />
           )}
 
           {current === "perms" && (
@@ -465,9 +499,16 @@ export function Onboarding() {
               <Button
                 size="sm"
                 className="h-8 text-xs"
-                disabled={nextBlocked}
-                onClick={next}
+                disabled={nextBlocked || checkingKeys}
+                onClick={() => {
+                  if (current === "model") {
+                    nextFromModel().catch((error) => log.error("onboarding: key check failed", { error: String(error) }));
+                  } else {
+                    next();
+                  }
+                }}
               >
+                {checkingKeys && <Loader2 className="size-3.5 animate-spin" />}
                 {nextLabel}
                 <ChevronRight className="size-3.5" />
               </Button>
@@ -670,12 +711,15 @@ function ModelStep({
   own,
   setOwn,
   beforeHosted,
+  keyProblems,
 }: Readonly<{
   local: LocalSttModelsState;
-  /** The user picked "Use my own models" in this wizard. */
+  /** The user picked "Bring your own models" in this wizard. */
   own: boolean;
   setOwn: (own: boolean) => void;
   beforeHosted: React.MutableRefObject<Pick<Settings, "transcriptionProvider" | "llmProviders"> | null>;
+  /** What Next's key check found wrong, shown under the field it is about. */
+  keyProblems: KeyProblems;
 }>) {
   const { t } = useI18n();
   const settings = useStore((s) => s.settings);
@@ -731,31 +775,45 @@ function ModelStep({
     }
   }
 
-  return (
-    <div className="flex flex-col gap-3">
-      {signedIn ? (
-        <div role="radiogroup" aria-label={t("onboarding.model.title")} className="flex flex-col gap-2">
-          <ChoiceRow
-            selected={!own}
-            label={t("onboarding.model.hosted")}
-            note={t("onboarding.model.hostedNote")}
-            onSelect={pickHosted}
-          />
-          <ChoiceRow
-            selected={own}
-            label={t("onboarding.model.own")}
-            note={t("onboarding.model.ownNote")}
-            onSelect={pickOwn}
-          />
-        </div>
-      ) : (
-        <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.model.body")}</p>
-      )}
+  const problem = (p: KeyProblems[keyof KeyProblems]) =>
+    p && <p className="text-[11px] text-danger-foreground">{t(p.key, p.vars)}</p>;
 
+  return (
+    // Signed in it is a choice between the two cards; otherwise only the
+    // bring-your-own card shows, already open.
+    <div
+      role={signedIn ? "radiogroup" : undefined}
+      aria-label={signedIn ? t("onboarding.model.title") : undefined}
+      className="flex flex-col gap-6"
+    >
+      {signedIn && (
+        <SelectCard
+          primary
+          selected={!own}
+          onSelect={pickHosted}
+          icon={<img src="/onboarding/parley-mark.svg" alt="" className="h-3.5 w-auto" />}
+          label={t("onboarding.model.hosted")}
+          note={t("onboarding.model.hostedNote")}
+          art={{ src: "/onboarding/signin-member-lines.svg", className: "top-[-68px] left-[-445px] h-[200px] w-[967px]" }}
+        />
+      )}
+      <SelectCard
+        selected={showProviders}
+        onSelect={signedIn ? pickOwn : undefined}
+        icon={<Cpu className="size-3.5" />}
+        label={t("onboarding.model.own")}
+        note={t("onboarding.model.ownNote")}
+        art={{
+          src: "/onboarding/org-solo-lines.svg",
+          className: showProviders
+            ? "top-[10.47%] right-[-48.88%] bottom-[57.43%] left-[-1px]"
+            : "top-[57.58%] right-[-48.88%] bottom-[-134.12%] left-0",
+        }}
+      >
       {showProviders && (
-        <div className="flex flex-col gap-4 rounded-lg border bg-muted/10 px-3 py-3">
+        <>
           {/* Transcription — required: it is what the gate checks. */}
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-2 rounded-[10px] bg-white/50 p-3 dark:bg-white/5">
             <FieldLabel label={t("onboarding.stt.provider")} tag={t("onboarding.account.required")} />
             <Select
               value={settings.transcriptionProvider}
@@ -801,10 +859,11 @@ function ModelStep({
                 />
               }
             />
+            {problem(keyProblems.stt)}
           </div>
 
           {/* AI model — optional: recording works without it. */}
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-2 rounded-[10px] bg-white/50 p-3 dark:bg-white/5">
             <FieldLabel label={t("onboarding.llm.provider")} tag={t("onboarding.account.optional")} />
             <Select
               value={settings.llmProviders.deep}
@@ -873,10 +932,12 @@ function ModelStep({
             ) : (
               <LlmKeyField llm={llm} settings={settings} patch={patch} />
             )}
+            {problem(keyProblems.llm)}
             <p className="text-[11px] text-muted-foreground">{t("onboarding.account.llmLater")}</p>
           </div>
-        </div>
+        </>
       )}
+      </SelectCard>
     </div>
   );
 }

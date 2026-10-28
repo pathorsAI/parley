@@ -316,6 +316,10 @@ export const writeVoiceHistory = (args: { content: string }) => invoke<void>("wr
 export const checkPermissions = () => invoke<Permissions>("check_permissions");
 export const requestMicrophone = () => invoke<void>("request_microphone");
 export const probeSystemAudio = () => invoke<string>("probe_system_audio");
+
+/** `verify_stt_key` (commands/key_check.rs): does the vendor accept this speech-to-text key? */
+export type KeyCheck = "accepted" | "rejected" | "unknown";
+export const verifySttKey = (args: { provider: string; key: string }) => invoke<KeyCheck>("verify_stt_key", args);
 /** pane: "microphone" | "system-audio" | "input-monitoring" | "accessibility" | "keyboard" */
 export const openPrivacySettings = (args: { pane: string }) => invoke<void>("open_privacy_settings", args);
 export const appIdentity = () => invoke<AppIdentity>("app_identity");

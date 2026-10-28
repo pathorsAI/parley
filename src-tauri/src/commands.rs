@@ -10,10 +10,12 @@
 //! - `oauth`: the desktop sign-in loopback.
 //! - `logs`: the in-app log viewer.
 //! - `ai_memory`: onboarding's read of Claude Code's memory files.
+//! - `key_check`: onboarding's check that a speech-to-text key is accepted.
 
 pub(crate) mod ai_memory;
 pub(crate) mod config;
 pub(crate) mod export;
+pub(crate) mod key_check;
 pub(crate) mod logs;
 pub(crate) mod meeting;
 pub(crate) mod mic_check;
