@@ -8,6 +8,7 @@ import { orgErrMsg } from "../../lib/cloud/orgErrors";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ChoiceRow } from "./ChoiceRow";
+import { ConfirmCard } from "./ConfirmCard";
 
 /** Runs when the user presses Next; false keeps them on the step. */
 export type BeforeNext = () => Promise<boolean>;
@@ -83,6 +84,43 @@ export function OrgStep({ setBeforeNext }: Readonly<{ setBeforeNext: (fn: Before
     }
   }
 
+  const inviteRows = invites.map((inv) => (
+    <div key={inv.id} className="flex w-full items-center gap-3 rounded-lg border bg-background px-3 py-2.5">
+      <Users className="size-4 shrink-0 text-muted-foreground" />
+      <span className="flex-1 text-sm">
+        {t("onboarding.org.invited", { name: inv.organizationName ?? inv.organizationId })}
+      </span>
+      <Button
+        size="sm"
+        className="h-7 text-[11px]"
+        disabled={joining !== null}
+        onClick={() => {
+          join(inv).catch((e) => log.error("onboarding: accept invitation failed", { error: String(e) }));
+        }}
+      >
+        {joining === inv.id && <Loader2 className="size-3.5 animate-spin" />}
+        {t("onboarding.org.accept")}
+      </Button>
+    </div>
+  ));
+
+  // Already in an organization: nothing to choose, so the step confirms it the
+  // way the sign-in step confirms the account.
+  if (member && orgs) {
+    return (
+      <div className="flex flex-1 flex-col gap-3">
+        <ConfirmCard
+          pills={orgs.map((org) => ({ key: org.id, icon: <Users className="size-3.5" />, label: org.name }))}
+          title={t("onboarding.org.joinedTitle")}
+          body={t("onboarding.org.joinedNote")}
+        >
+          {inviteRows.length > 0 && <div className="relative flex w-full flex-col gap-2">{inviteRows}</div>}
+        </ConfirmCard>
+        {error && <p className="text-[11px] text-danger-foreground">{error}</p>}
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-3">
 
@@ -102,74 +140,41 @@ export function OrgStep({ setBeforeNext }: Readonly<{ setBeforeNext: (fn: Before
         </p>
       ) : (
         <>
-          {orgs.map((org) => (
-            <div
-              key={org.id}
-              className="flex items-center gap-2 rounded-lg border border-success-border bg-success px-3 py-2.5 text-sm text-success-foreground"
-            >
-              <Users className="size-4 shrink-0" />
-              {t("onboarding.org.joined", { name: org.name })}
-            </div>
-          ))}
-          {member && <p className="text-xs leading-relaxed text-muted-foreground">{t("onboarding.org.joinedNote")}</p>}
+          {inviteRows}
 
-          {invites.map((inv) => (
-            <div key={inv.id} className="flex items-center gap-3 rounded-lg border px-3 py-2.5">
-              <Users className="size-4 shrink-0 text-muted-foreground" />
-              <span className="flex-1 text-sm">
-                {t("onboarding.org.invited", { name: inv.organizationName ?? inv.organizationId })}
-              </span>
-              <Button
-                size="sm"
-                className="h-7 text-[11px]"
-                disabled={joining !== null}
-                onClick={() => {
-                  join(inv).catch((e) => log.error("onboarding: accept invitation failed", { error: String(e) }));
+          <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.org.body")}</p>
+          <div role="radiogroup" aria-label={t("onboarding.org.title")} className="flex flex-col gap-2">
+            <ChoiceRow
+              selected={choice === "create"}
+              label={t("onboarding.org.create")}
+              note={t("onboarding.org.createNote")}
+              onSelect={() => {
+                setChoice("create");
+                setError(null);
+              }}
+            />
+            {choice === "create" && (
+              <Input
+                autoFocus
+                value={name}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  setError(null);
                 }}
-              >
-                {joining === inv.id && <Loader2 className="size-3.5 animate-spin" />}
-                {t("onboarding.org.accept")}
-              </Button>
-            </div>
-          ))}
-
-          {!member && (
-            <>
-              <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.org.body")}</p>
-              <div role="radiogroup" aria-label={t("onboarding.org.title")} className="flex flex-col gap-2">
-                <ChoiceRow
-                  selected={choice === "create"}
-                  label={t("onboarding.org.create")}
-                  note={t("onboarding.org.createNote")}
-                  onSelect={() => {
-                    setChoice("create");
-                    setError(null);
-                  }}
-                />
-                {choice === "create" && (
-                  <Input
-                    autoFocus
-                    value={name}
-                    onChange={(e) => {
-                      setName(e.target.value);
-                      setError(null);
-                    }}
-                    aria-label={t("onboarding.org.create")}
-                    placeholder={t("onboarding.org.namePlaceholder")}
-                  />
-                )}
-                <ChoiceRow
-                  selected={choice === "solo"}
-                  label={t("onboarding.org.solo")}
-                  note={t("onboarding.org.soloNote")}
-                  onSelect={() => {
-                    setChoice("solo");
-                    setError(null);
-                  }}
-                />
-              </div>
-            </>
-          )}
+                aria-label={t("onboarding.org.create")}
+                placeholder={t("onboarding.org.namePlaceholder")}
+              />
+            )}
+            <ChoiceRow
+              selected={choice === "solo"}
+              label={t("onboarding.org.solo")}
+              note={t("onboarding.org.soloNote")}
+              onSelect={() => {
+                setChoice("solo");
+                setError(null);
+              }}
+            />
+          </div>
         </>
       )}
 

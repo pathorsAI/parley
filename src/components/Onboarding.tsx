@@ -24,6 +24,7 @@ import { loadSampleRecording } from "../lib/onboarding/sample";
 import { openRecording } from "./home/GettingStarted";
 import { TranscribingPulse, useTranscribingPulse } from "./onboarding/TranscribingPulse";
 import { IntroHero, IntroStage } from "./onboarding/IntroStage";
+import { ConfirmCard } from "./onboarding/ConfirmCard";
 import { ChoiceRow } from "./onboarding/ChoiceRow";
 import { OrgStep, type BeforeNext } from "./onboarding/OrgStep";
 import { MicStep } from "./onboarding/MicStep";
@@ -307,7 +308,8 @@ export function Onboarding() {
             intro ? "px-6 pt-[63px] pb-16" : "px-5 py-5",
             // The two sign-in cards fill whatever height there is; it only
             // scrolls if a minimum-size window can't hold their text.
-            account && "flex flex-col",
+            // Column, so a step's card can fill the dialog's height.
+            "flex flex-col",
           )}
         >
           {intro && (
@@ -577,26 +579,11 @@ function AccountStep({ onBack, onContinue }: Readonly<{ onBack: () => void; onCo
 
   if (cloudAuth) {
     return (
-      <section className="relative flex min-h-fit flex-1 flex-col items-center justify-center overflow-hidden bg-linear-to-b from-[#e1f2fd] to-white p-5 dark:from-primary/15 dark:to-transparent">
-        <div className="flex w-full flex-col items-center gap-6">
-          <span className="inline-flex items-center gap-2 rounded-full bg-[#d9f7e5] px-3 py-1 text-sm leading-[1.3] text-[#006a3b] dark:bg-success dark:text-success-foreground">
-            <UserRoundCheck className="size-3.5" />
-            {cloudAuth.user.email}
-          </span>
-          <div className="flex w-full flex-col gap-1 text-center text-sm">
-            <p className="leading-relaxed font-medium text-primary">{t("onboarding.account.member.unlocked")}</p>
-            <p className="leading-[1.2] text-[#333]/70 dark:text-muted-foreground">
-              {t("onboarding.account.member.allowance")}
-            </p>
-          </div>
-        </div>
-        <img
-          src="/onboarding/signedin-member-lines.svg"
-          alt=""
-          aria-hidden
-          className="pointer-events-none absolute top-0 left-[-444px] h-[415px] w-[967px] max-w-none"
-        />
-      </section>
+      <ConfirmCard
+        pills={[{ key: "email", icon: <UserRoundCheck className="size-3.5" />, label: cloudAuth.user.email }]}
+        title={t("onboarding.account.member.unlocked")}
+        body={t("onboarding.account.member.allowance")}
+      />
     );
   }
 
