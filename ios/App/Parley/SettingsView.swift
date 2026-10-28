@@ -284,7 +284,12 @@ struct SettingsView: View {
         } header: {
             sectionHeader("Sync")
         } footer: {
-            sectionFooter("When the network drops, the server goes quiet, or you run out of quota, the phone holds on to finished recordings until they sync.")
+            // Only while something is waiting: "Everything is synced" needs no
+            // explanation, and a reassurance on screen all the time stops being
+            // read by the time it matters.
+            if app.pendingUploadCount > 0 {
+                sectionFooter("Recordings stay on this phone until they sync.")
+            }
         }
     }
 
@@ -412,7 +417,7 @@ struct SettingsView: View {
             }
             keepAudioRows
         } footer: {
-            sectionFooter("Picking an organization still saves the recording to your personal space and shares a copy there — same as the desktop app.")
+            sectionFooter("Recordings stay in your personal space, and a copy is shared to the organization you pick.")
         }
     }
 
@@ -552,8 +557,6 @@ struct SettingsView: View {
                         .foregroundStyle(Color(.secondaryLabel))
                 }
             }
-        } footer: {
-            sectionFooter("Parley speaks English and Traditional Chinese, and follows your iPhone's language by default. Change it for Parley alone in Settings › Parley › Language.")
         }
     }
 
@@ -639,7 +642,7 @@ struct SettingsView: View {
         } header: {
             sectionHeader("Voice keyboard")
         } footer: {
-            sectionFooter("Fix a word right after dictating it and Parley learns how you say it. What it has learned is in the personal dictionary, where you can also add names it should get right.")
+            sectionFooter("Fix a word right after dictating and Parley remembers it.")
         }
     }
 
@@ -677,7 +680,7 @@ struct SettingsView: View {
         Section {
             VStack(alignment: .leading, spacing: 4) {
                 Toggle("Keep voice typing history", isOn: $keepDictationHistory)
-                Text("What you dictate is kept on this phone for 30 days, up to 200 entries, so you can copy it again from Library › Voice typing if it didn't land. It never leaves the phone. Turning this off keeps what is already there until you clear it.")
+                Text("Kept on this phone only, for 30 days, up to 200 entries.")
                     .font(.parley.caption)
                     .foregroundStyle(Color(.secondaryLabel))
                     .fixedSize(horizontal: false, vertical: true)
@@ -736,7 +739,7 @@ struct SettingsView: View {
         } header: {
             sectionHeader("Keyboards")
         } footer: {
-            sectionFooter("Swipe sideways on the Parley keyboard to move between the mic and the keyboards you have turned on here. At least one keyboard stays on.")
+            sectionFooter("Swipe sideways on the Parley keyboard to switch.")
         }
     }
 
@@ -804,7 +807,7 @@ struct SettingsView: View {
         } header: {
             sectionHeader("Keeping the microphone ready")
         } footer: {
-            sectionFooter("After you dictate, Parley can hold the microphone open for a while, so the next tap on the keyboard's mic types where you already are instead of opening Parley. Even when this is off, Parley keeps the microphone for 30 seconds after each dictation, so dictating again right away stays where you are too.\n\niOS shows the orange microphone dot for the whole time, because Parley really is holding the microphone. It is not listening through it: nothing is recorded, transcribed, or sent until you tap the mic, and sound that arrives before then is thrown away as it comes in. The window ends on its own, and you can end it early here or from the keyboard.")
+            sectionFooter("After you dictate, the microphone stays ready so the next dictation starts where you are typing. iOS shows the orange dot meanwhile, but nothing is recorded until you tap the mic.")
         }
     }
 
@@ -880,8 +883,6 @@ struct SettingsView: View {
             Button("Show the getting-started list again") {
                 showGettingStartedAgain()
             }
-        } footer: {
-            sectionFooter("Live coaching and deep analysis live in the desktop app; the phone handles recording, transcribing, and reading back in-person meetings. On the Mac, Claude Code can also read your whole recording library over MCP.")
         }
     }
 

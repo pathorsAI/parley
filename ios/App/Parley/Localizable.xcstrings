@@ -581,19 +581,19 @@
         }
       }
     },
-    "After you dictate, Parley can hold the microphone open for a while, so the next tap on the keyboard's mic types where you already are instead of opening Parley. Even when this is off, Parley keeps the microphone for 30 seconds after each dictation, so dictating again right away stays where you are too.\n\niOS shows the orange microphone dot for the whole time, because Parley really is holding the microphone. It is not listening through it: nothing is recorded, transcribed, or sent until you tap the mic, and sound that arrives before then is thrown away as it comes in. The window ends on its own, and you can end it early here or from the keyboard." : {
+    "After you dictate, the microphone stays ready so the next dictation starts where you are typing. iOS shows the orange dot meanwhile, but nothing is recorded until you tap the mic." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "After you dictate, Parley can hold the microphone open for a while, so the next tap on the keyboard's mic types where you already are instead of opening Parley. Even when this is off, Parley keeps the microphone for 30 seconds after each dictation, so dictating again right away stays where you are too.\n\niOS shows the orange microphone dot for the whole time, because Parley really is holding the microphone. It is not listening through it: nothing is recorded, transcribed, or sent until you tap the mic, and sound that arrives before then is thrown away as it comes in. The window ends on its own, and you can end it early here or from the keyboard."
+            "value" : "After you dictate, the microphone stays ready so the next dictation starts where you are typing. iOS shows the orange dot meanwhile, but nothing is recorded until you tap the mic."
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "聽寫結束後，Parley 可以先把麥克風留著一段時間。在這段時間內按鍵盤上的麥克風，就會直接在你正在打字的 App 裡開始聽寫，不會跳到 Parley。即使這裡設為關閉，每次聽寫後 Parley 仍會留著麥克風 30 秒，讓你馬上再聽寫時也不必跳到 Parley。\n\n這段時間內 iOS 會一直顯示橘色的麥克風指示點，因為 Parley 確實佔用著麥克風。但它不會透過麥克風聽你說話：在你按下麥克風之前，不會錄音、不會轉錄、也不會送出任何東西，期間收到的聲音會邊收邊丟掉。時間到會自動結束，你也可以在這裡或在鍵盤上提前結束。"
+            "value" : "聽寫後麥克風會保留一段時間，下次可以直接在原本的 App 聽寫。這段時間會亮橘點，但在你按下麥克風前不會錄音。"
           }
         }
       }
@@ -2199,19 +2199,19 @@
         }
       }
     },
-    "Fix a word right after dictating it and Parley learns how you say it. What it has learned is in the personal dictionary, where you can also add names it should get right." : {
+    "Fix a word right after dictating and Parley remembers it." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Fix a word right after dictating it and Parley learns how you say it. What it has learned is in the personal dictionary, where you can also add names it should get right."
+            "value" : "Fix a word right after dictating and Parley remembers it."
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "聽寫完馬上把字改對，Parley 就會記住你的說法。學到的東西都在個人詞庫裡，你也可以在那裡加上該念對的名字。"
+            "value" : "聽寫後改對的字，Parley 會記住。"
           }
         }
       }
@@ -2657,6 +2657,23 @@
         }
       }
     },
+    "Kept on this phone only, for 30 days, up to 200 entries." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kept on this phone only, for 30 days, up to 200 entries."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "只存在這支手機上，保留 30 天、最多 200 筆。"
+          }
+        }
+      }
+    },
     "Kept on this phone until it uploads or you delete it." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2890,23 +2907,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在聽…"
-          }
-        }
-      }
-    },
-    "Live coaching and deep analysis live in the desktop app; the phone handles recording, transcribing, and reading back in-person meetings. On the Mac, Claude Code can also read your whole recording library over MCP." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Live coaching and deep analysis live in the desktop app; the phone handles recording, transcribing, and reading back in-person meetings. On the Mac, Claude Code can also read your whole recording library over MCP."
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "即時教練與深度分析以桌面版為主；手機負責面對面會議的錄音、轉錄與閱讀。在 Mac 上還能讓 Claude Code 透過 MCP 直接讀整個錄音資料庫。"
           }
         }
       }
@@ -4363,23 +4363,6 @@
         }
       }
     },
-    "Parley speaks English and Traditional Chinese, and follows your iPhone's language by default. Change it for Parley alone in Settings › Parley › Language." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Parley speaks English and Traditional Chinese, and follows your iPhone's language by default. Change it for Parley alone in Settings › Parley › Language."
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Parley 支援英文與繁體中文，預設跟隨 iPhone 的語言。只想改 Parley 的話，到「設定 › Parley › 語言」調整。"
-          }
-        }
-      }
-    },
     "Parley was closed before the dictation finished. Tap the mic to try again." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4461,23 +4444,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "個人 · %@"
-          }
-        }
-      }
-    },
-    "Picking an organization still saves the recording to your personal space and shares a copy there — same as the desktop app." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Picking an organization still saves the recording to your personal space and shares a copy there — same as the desktop app."
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "選擇組織時，錄音仍會保存在個人空間，並自動分享一份到該組織——與桌面版行為一致。"
           }
         }
       }
@@ -5012,6 +4978,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在這支手機錄的音檔會留在手機上，方便回放。其他裝置的錄音需要時再下載。"
+          }
+        }
+      }
+    },
+    "Recordings stay in your personal space, and a copy is shared to the organization you pick." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recordings stay in your personal space, and a copy is shared to the organization you pick."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "錄音會留在個人空間，並分享一份到你選的組織。"
+          }
+        }
+      }
+    },
+    "Recordings stay on this phone until they sync." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recordings stay on this phone until they sync."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "錄音會留在手機上，直到同步完成。"
           }
         }
       }
@@ -6598,19 +6598,19 @@
         }
       }
     },
-    "Swipe sideways on the Parley keyboard to move between the mic and the keyboards you have turned on here. At least one keyboard stays on." : {
+    "Swipe sideways on the Parley keyboard to switch." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Swipe sideways on the Parley keyboard to move between the mic and the keyboards you have turned on here. At least one keyboard stays on."
+            "value" : "Swipe sideways on the Parley keyboard to switch."
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在 Parley 鍵盤上左右滑動，就能在語音和你在這裡開啟的鍵盤之間切換。至少要留一個鍵盤開著。"
+            "value" : "在 Parley 鍵盤上左右滑動就能切換。"
           }
         }
       }
@@ -7923,23 +7923,6 @@
         }
       }
     },
-    "What you dictate is kept on this phone for 30 days, up to 200 entries, so you can copy it again from Library › Voice typing if it didn't land. It never leaves the phone. Turning this off keeps what is already there until you clear it." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "What you dictate is kept on this phone for 30 days, up to 200 entries, so you can copy it again from Library › Voice typing if it didn't land. It never leaves the phone. Turning this off keeps what is already there until you clear it."
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "說過的話會在這支手機上保留 30 天、最多 200 筆，沒有成功輸入時，可以到「錄音庫 › 語音輸入」再複製一次。這些內容不會離開手機。關閉後，已經保留的紀錄會留著，直到你清除為止。"
-          }
-        }
-      }
-    },
     "What you dictate with the Parley keyboard shows up here, so you can copy it again if it didn't land." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7970,23 +7953,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "時間"
-          }
-        }
-      }
-    },
-    "When the network drops, the server goes quiet, or you run out of quota, the phone holds on to finished recordings until they sync." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "When the network drops, the server goes quiet, or you run out of quota, the phone holds on to finished recordings until they sync."
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "網路中斷、伺服器暫時無回應或額度不足時，手機會保留完成的錄音，直到同步成功。"
           }
         }
       }
