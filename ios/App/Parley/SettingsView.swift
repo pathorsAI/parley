@@ -41,6 +41,7 @@ struct SettingsView: View {
     @State private var showClearHistoryConfirmation = false
     /// Pushes 常用資訊 when the keyboard's saved-info panel links to it.
     @State private var showSavedInfo = false
+    @State private var path: [SettingsPage] = []
     @State private var showResetZhuyinConfirmation = false
     @State private var personalFolders: [CloudFolder] = []
     @State private var orgFolders: [String: [CloudFolder]] = [:]
@@ -60,8 +61,8 @@ struct SettingsView: View {
     #endif
 
     var body: some View {
-        NavigationStack {
-            ScrollViewReader { proxy in
+        NavigationStack(path: $path) {
+            ScrollViewReader { _ in
                 Form {
                     accountSection
                     if app.signedIn {
@@ -74,20 +75,17 @@ struct SettingsView: View {
                     if app.hasAccount {
                         syncSection
                     }
-                    if app.hasAccount {
-                        dictationSection.id(Self.keyboardSectionID)
-                        micWindowSection
+                    // Everything about the keyboard and dictation is one row
+                    // here and its own page behind it: five sections of it
+                    // used to sit between sync and appearance, and a page that
+                    // is half keyboard settings reads as a keyboard's settings.
+                    // Always shown, because the keyboards and saved info need
+                    // no account.
+                    Section {
+                        NavigationLink(value: SettingsPage.voiceTyping) {
+                            Label("Voice typing", systemImage: "mic")
+                        }
                     }
-                    // Also shown signed out while anything is kept: the history
-                    // is on this phone, not in the account, and signing out must
-                    // not strand the only switch that clears it.
-                    if app.hasAccount || !dictationHistory.entries.isEmpty {
-                        dictationHistorySection
-                    }
-                    keyboardsSection
-                    // Outside the account gate, like the keyboards: 常用資訊
-                    // needs no account.
-                    savedInfoSection
                     appearanceSection
                     languageSection
                     // Outside every gate: a report can be sent signed out —
@@ -135,10 +133,7 @@ struct SettingsView: View {
                 }
                 #if DEBUG
                     .onReceive(ScreenshotDemo.shared.$focusKeyboardSection) { focus in
-                        // .center, not .top: scrollTo ignores the navigation
-                        // bar's safe-area inset, so a top anchor slides the
-                        // section header under the blur.
-                        if focus { proxy.scrollTo(Self.keyboardSectionID, anchor: .center) }
+                        if focus { path = [.voiceTyping] }
                     }
                     .onReceive(ScreenshotDemo.shared.$pressResetChecklist) { press in
                         guard press else { return }
@@ -151,6 +146,7 @@ struct SettingsView: View {
                 #endif
             }
             .navigationTitle("Settings")
+            .navigationDestination(for: SettingsPage.self) { _ in voiceTypingPage }
             .navigationDestination(isPresented: $showSavedInfo) { SavedInfoView() }
             .task { await loadFolders() }
             .task { findStuckUpload() }
@@ -171,16 +167,6 @@ struct SettingsView: View {
                 Text("The recordings themselves stay in the cloud. You can download the audio again whenever you need it.")
             }
             .confirmationDialog(
-                "Clear voice typing history?",
-                isPresented: $showClearHistoryConfirmation, titleVisibility: .visible
-            ) {
-                Button("Clear all", role: .destructive) {
-                    dictationHistory.clearAll()
-                }
-            } message: {
-                Text("Everything you have dictated is removed from this phone. This can't be undone.")
-            }
-            .confirmationDialog(
                 "Delete your account permanently?", isPresented: $showDeleteConfirmation,
                 titleVisibility: .visible
             ) {
@@ -193,7 +179,48 @@ struct SettingsView: View {
         }
     }
 
-    private static let keyboardSectionID = "voice-keyboard"
+    /// Settings' one pushed page so far. A value rather than a flag so the
+    /// screenshot route can open it without a tap.
+    enum SettingsPage: Hashable { case voiceTyping }
+
+    /// Settings › Voice typing: the keyboard, the microphone window, what was
+    /// dictated, the typing panes and saved info. Same surfaces and face as the
+    /// root, which is the point of it being a `Form` of its own rather than a
+    /// different kind of screen.
+    private var voiceTypingPage: some View {
+        Form {
+            if app.hasAccount {
+                dictationSection
+                micWindowSection
+            }
+            // Also shown signed out while anything is kept: the history is on
+            // this phone, not in the account, and signing out must not strand
+            // the only switch that clears it.
+            if app.hasAccount || !dictationHistory.entries.isEmpty {
+                dictationHistorySection
+            }
+            keyboardsSection
+            // Outside the account gate, like the keyboards: 常用資訊 needs no
+            // account.
+            savedInfoSection
+        }
+        .font(.parley.body)
+        .environment(\.defaultMinListRowHeight, 48)
+        .navigationTitle("Voice typing")
+        .navigationBarTitleDisplayMode(.inline)
+        // Here rather than on the root: a dialog belongs to the screen whose
+        // button raised it, and the root is not on screen while this is.
+        .confirmationDialog(
+            "Clear voice typing history?",
+            isPresented: $showClearHistoryConfirmation, titleVisibility: .visible
+        ) {
+            Button("Clear all", role: .destructive) {
+                dictationHistory.clearAll()
+            }
+        } message: {
+            Text("Everything you have dictated is removed from this phone. This can't be undone.")
+        }
+    }
 
     private func sectionHeader(_ title: LocalizedStringKey) -> some View {
         SettingsSection.header(title)
@@ -331,8 +358,6 @@ struct SettingsView: View {
             Toggle("Send crash reports automatically", isOn: $autoSendCrashReports)
         } header: {
             sectionHeader("Feedback & diagnostics")
-        } footer: {
-            sectionFooter("Only the app version, device model, and where it crashed. Never your recordings or transcripts.")
         }
     }
 
@@ -778,8 +803,6 @@ struct SettingsView: View {
             } label: {
                 Label("Saved info", systemImage: "person.text.rectangle")
             }
-        } footer: {
-            sectionFooter("Your name, phone numbers, addresses and ID numbers, one tap away on the Parley keyboard. They stay on this phone.")
         }
     }
 
@@ -804,8 +827,6 @@ struct SettingsView: View {
                     .font(.parley.caption)
                     .foregroundStyle(Theme.warning)
             }
-        } header: {
-            sectionHeader("Keeping the microphone ready")
         } footer: {
             sectionFooter("After you dictate, the microphone stays ready so the next dictation starts where you are typing. iOS shows the orange dot meanwhile, but nothing is recorded until you tap the mic.")
         }

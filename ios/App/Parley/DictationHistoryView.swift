@@ -244,7 +244,7 @@ struct DictationHistoryList: View {
                 } else if keepHistory {
                     Text("What you dictate with the Parley keyboard shows up here, so you can copy it again if it didn't land.")
                 } else {
-                    Text("Voice typing history is off. Turn it on in Settings › Voice typing history.")
+                    Text("Voice typing history is off. Turn it on in Settings › Voice typing.")
                 }
             }
             .font(.parley.subheadline)
