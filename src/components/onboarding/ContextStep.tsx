@@ -38,8 +38,8 @@ type MemoryState = "reading" | "ready" | "hidden" | "needLlm" | { failed: string
 /**
  * What every meeting prompt should know about the user:
  * - the speaker background (settings.userBackground), seeded by the
- *   self-introduction in the mic check, edited here as free text; selecting
- *   or editing a few words in it offers them to the dictionary;
+ *   self-introduction in the mic check, edited here as free text; editing a
+ *   few words in it offers them to the dictionary;
  * - the terms transcription should spell right (the shared dictionary): the
  *   user's name and company, the company, people and product names from the
  *   self-introduction and the AI memory, and any the user types — removable;
@@ -134,15 +134,13 @@ export function ContextStep({
 const SETTLE_MS = 1200;
 
 /**
- * The speaker background as one editable text, which offers words in it to
- * the dictionary:
- * - selecting a few words asks whether to add them;
- * - when an edit settles (a pause in typing, or leaving the field) it asks
- *   about what changed. A corrected name — by the dictation rule
- *   (detectCorrection), or for small edits it can't place (most Chinese ones)
- *   by the model (findNameEdit) — is offered with the old spelling as a
- *   variant; any other short insertion is offered as it is.
- * Words already among the terms, and sentences, aren't offered.
+ * The speaker background as one editable text, which offers edited words to
+ * the dictionary. When an edit settles (a pause in typing, or leaving the
+ * field) it asks about what changed: a corrected name — by the dictation rule
+ * (detectCorrection), or for small edits it can't place (most Chinese ones)
+ * by the model (findNameEdit) — with the old spelling as a variant; any other
+ * short insertion as it is. Only edits ask: selecting text doesn't. Words
+ * already among the terms, and sentences, aren't offered.
  */
 function BackgroundEditor({
   terms,
@@ -153,21 +151,6 @@ function BackgroundEditor({
   const patch = useStore((s) => s.updateSettings);
   /** `from`: a corrected spelling, kept as a variant (corrections only). */
   const [suggest, setSuggest] = useState<{ from?: string; to: string } | null>(null);
-
-  const field = useRef<HTMLTextAreaElement | null>(null);
-  // Selecting words offers them. The native `select` event is the one both
-  // webviews fire for a textarea (React's onSelect doesn't, reliably);
-  // mouseup / keyup catch a selection made some other way.
-  function offerSelection() {
-    const el = field.current;
-    if (el && el.selectionEnd > el.selectionStart) offer(el.value.slice(el.selectionStart, el.selectionEnd));
-  }
-  useEffect(() => {
-    const el = field.current;
-    if (!el) return;
-    el.addEventListener("select", offerSelection);
-    return () => el.removeEventListener("select", offerSelection);
-  });
 
   /** Offer `raw` unless it isn't a term, or the dictionary already has it. */
   function offer(raw: string, from?: string) {
@@ -223,9 +206,6 @@ function BackgroundEditor({
           timer.current = setTimeout(() => void settle(), SETTLE_MS);
         }}
         onBlur={() => void settle()}
-        onMouseUp={offerSelection}
-        onKeyUp={offerSelection}
-        ref={field}
       />
       {suggest && (
         <div className="flex flex-wrap items-center gap-2 text-xs">
