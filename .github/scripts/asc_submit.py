@@ -111,7 +111,7 @@ WHATS_NEW_LIMIT = 4000
 BUILD_POLL_SECONDS = 60
 BUILD_POLL_ATTEMPTS = 30  # 30 minutes
 ASSET_POLL_SECONDS = 5
-ASSET_POLL_ATTEMPTS = 60  # 5 minutes per screenshot
+ASSET_POLL_ATTEMPTS = 180  # 15 minutes per screenshot: on 2026-10-29 Apple took over 5 to process several
 
 
 # --------------------------------------------------------------------------

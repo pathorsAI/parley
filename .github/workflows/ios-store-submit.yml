@@ -80,7 +80,7 @@ jobs:
     # Generous because the script waits: up to 30 minutes for a build that is
     # still processing, then a poll per screenshot until Apple reports it
     # COMPLETE.
-    timeout-minutes: 90
+    timeout-minutes: 240
 
     steps:
       - name: What this run will do
