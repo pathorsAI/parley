@@ -101,6 +101,14 @@ final class MeetingRecorder: ObservableObject {
     /// the meeting, which is what gets the audio captured so far onto disk and
     /// into the cloud instead of leaving a dead recording on screen.
     @Published private(set) var lostMicrophone = false
+    /// The last start was refused because the microphone permission is off.
+    /// Its own flag rather than a reading of `status`: the view needs to put
+    /// the way to Settings under the sentence, and asking again cannot — once
+    /// someone has said no, iOS never shows the prompt a second time, so a
+    /// record button pressed again fails exactly the same way. Cleared by the
+    /// next start that gets the grant, or by `recheckMicrophonePermission()`
+    /// when the user comes back from Settings having turned it on.
+    @Published private(set) var micDenied = false
     /// How the live transcript is doing, separately from `status`, so the view
     /// can draw "reconnecting" as the temporary state it is instead of styling
     /// it like the sentence that says the transcript is over.
@@ -230,9 +238,13 @@ final class MeetingRecorder: ObservableObject {
         guard await AudioCapture.requestPermission() else {
             phase = .idle
             startedAt = nil
-            status = String(localized: "Microphone access is required")
+            micDenied = true
+            // What to do, not only what went wrong: the button under it is
+            // the way to Settings, and the sentence says why it is there.
+            status = String(localized: "Parley can't use the microphone. Turn it on in Settings.")
             return
         }
+        micDenied = false
         // `stop()` can land while the permission sheet is up.
         guard phase == .starting else { return }
 
@@ -292,6 +304,17 @@ final class MeetingRecorder: ObservableObject {
         transcription = .connecting
         status = String(localized: "Connecting transcription…")
         await connect(client, leg: 0)
+    }
+
+    /// The user may have turned the microphone on in Settings since the last
+    /// refusal. Read without prompting (`AudioCapture.permission`), so it is
+    /// safe on every return to the foreground, and only acted on between
+    /// meetings: the refusal's sentence is the one thing it clears, and a
+    /// meeting in flight has its own.
+    func recheckMicrophonePermission() {
+        guard micDenied, phase == .idle, AudioCapture.permission == .granted else { return }
+        micDenied = false
+        status = nil
     }
 
     /// End the meeting: stop the microphone, let the relay flush its last

@@ -31,6 +31,23 @@ struct LiveView: View {
     @State private var micPrompt: MeetingRecorder.FinishedMeeting?
     @State private var showDiscardConfirm = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.openURL) private var openURL
+    /// Whether the transcript keeps itself on the newest line. On until the
+    /// reader drags it — someone scrolling up mid-meeting is re-reading
+    /// something, and pulling them back down on every new turn is the one
+    /// thing an auto-scrolling transcript must not do (the same rule
+    /// `RecordingDetailView.followsAudio` keeps for playback). Back on from
+    /// the "Latest" control, from scrolling back down to the end, and when
+    /// the next meeting starts.
+    @State private var followsLive = true
+    /// How many turns there were when following stopped, so "Latest" only
+    /// appears once there is something below the reader they have not seen.
+    @State private var segmentsWhenLeft = 0
+    /// The transcript's last line is in view (within a few points). Only ever
+    /// written on iOS 18, which can report scroll geometry; on 17 it stays
+    /// false and the way back is the "Latest" control alone.
+    @State private var transcriptAtBottom = false
     /// How far open the controls panel is while recording, 0 (one row) to 1
     /// (everything). A fraction rather than points so the choice survives a
     /// Dynamic Type change or a status line that wraps, both of which move
@@ -114,6 +131,12 @@ struct LiveView: View {
             // `.onReceive` covers a warm one, where it already does.
             .onAppear { takeQuickRecord() }
             .onReceive(QuickRecordInbox.shared.$requestedAt) { if $0 != nil { takeQuickRecord() } }
+            // Coming back from Settings is the moment a refused microphone may
+            // have been turned on; checking here is what takes the "Open
+            // Settings" button down without asking for another tap on record.
+            .onChange(of: scenePhase) {
+                if scenePhase == .active { recorder.recheckMicrophonePermission() }
+            }
             // The microphone is not coming back. End the meeting rather than
             // leave a recording on screen that records nothing — the audio up
             // to the failure is on disk and worth keeping.
@@ -184,22 +207,100 @@ struct LiveView: View {
                 }
                 .padding(20)
             }
+            // A user pan stops following. `simultaneousGesture` so the scroll
+            // view still scrolls — this only wants to know — and it never fires
+            // for a `scrollTo`, which is the distinction that matters. A pan
+            // that starts at the end does not count until it has left it, so
+            // a nudge at the bottom, or the drag that brings the reader back
+            // down, does not undo the resume below.
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 8).onChanged { _ in
+                    guard followsLive, !transcriptAtBottom else { return }
+                    segmentsWhenLeft = recorder.segments.count
+                    followsLive = false
+                })
+            .modifier(
+                ReportsScrollBottom { atBottom in
+                    guard atBottom != transcriptAtBottom else { return }
+                    transcriptAtBottom = atBottom
+                    // Scrolling back down to the newest line is asking to
+                    // follow again; making the reader find a button for it
+                    // would be a step they already took.
+                    if atBottom { followsLive = true }
+                })
             .onChange(of: recorder.segments.count) {
-                if let last = recorder.segments.last {
-                    withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+                guard followsLive, let last = recorder.segments.last else { return }
+                withAnimation(reduceMotion ? nil : .default) {
+                    proxy.scrollTo(last.id, anchor: .bottom)
                 }
             }
             // Resizing the panel resizes this scroll view from the bottom, and
             // a scroll view keeps its top still — so without this, pulling the
             // panel down would uncover older lines while the newest one, the
             // one being read, slid out of view under the finger. Unanimated:
-            // it tracks the drag frame by frame.
+            // it tracks the drag frame by frame. Only while following: a
+            // reader who has scrolled up is reading an older line, and the
+            // top staying still is what keeps *that* one under their eyes.
             .onChange(of: panelHeight) {
-                if recorder.isRecording, let last = recorder.segments.last {
+                if recorder.isRecording, followsLive, let last = recorder.segments.last {
                     proxy.scrollTo(last.id, anchor: .bottom)
                 }
             }
+            // A new meeting is a new transcript; whatever the reader was
+            // re-reading in the last one is gone.
+            .onChange(of: recorder.isRecording) {
+                if recorder.isRecording {
+                    followsLive = true
+                    segmentsWhenLeft = 0
+                }
+            }
+            // The fade is scoped to the overlay: on the scroll view it would
+            // also animate the turn whose arrival brought the control up.
+            .overlay(alignment: .bottom) {
+                ZStack {
+                    if showsLatest {
+                        latestControl(proxy)
+                            .padding(.bottom, 12)
+                            .transition(.opacity)
+                    }
+                }
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: showsLatest)
+            }
         }
+    }
+
+    /// The reader has scrolled away from the end and more has been said since.
+    private var showsLatest: Bool {
+        !followsLive && recorder.segments.count > segmentsWhenLeft
+    }
+
+    /// The way back to the newest line once the reader has scrolled away and
+    /// more has been said. Blue because it is the one live, tappable thing on
+    /// the transcript; on the page colour with a hairline, not a filled pill,
+    /// so it reads as a control sitting over the words rather than a banner
+    /// competing with them. Only there when there is something new to jump
+    /// to — a reader who scrolled up in a quiet moment is not nagged.
+    private func latestControl(_ proxy: ScrollViewProxy) -> some View {
+        Button {
+            followsLive = true
+            guard let last = recorder.segments.last else { return }
+            withAnimation(reduceMotion ? nil : .default) {
+                proxy.scrollTo(last.id, anchor: .bottom)
+            }
+        } label: {
+            Label("Latest", systemImage: "arrow.down")
+                .font(.parley.footnote.weight(.semibold))
+                .foregroundStyle(Theme.primary)
+                .padding(.horizontal, 16)
+                // 44pt so the target is the HIG minimum rather than the line
+                // box, and `contentShape` so the whole capsule takes the tap.
+                .frame(minHeight: 44)
+                .background(Capsule().fill(Theme.background))
+                .overlay(Capsule().stroke(Color(.separator), lineWidth: 1))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text("Jump to latest"))
     }
 
     /// Who is talking *now*: the most recent segment the provider has not
@@ -335,6 +436,22 @@ struct LiveView: View {
         .accessibilityElement(children: .combine)
     }
 
+    /// The one way out of a refused microphone. Plain blue text, because it
+    /// is a link to somewhere else rather than a control on this screen, and
+    /// a 44pt target so it is not the height of one caption line.
+    private var openSettingsControl: some View {
+        Button {
+            if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+        } label: {
+            Text("Open Settings")
+                .font(.parley.subheadlineEmphasized)
+                .foregroundStyle(Theme.primary)
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     /// What the orange dot means, and the way out of it. Shown only while a
     /// window is actually open, and never during a meeting — a recording has
     /// its own reason to hold the microphone, and two explanations for one
@@ -420,6 +537,13 @@ struct LiveView: View {
             }
             if let status = recorder.status, shown.contains(.statusLine) {
                 statusLine(status)
+            }
+            // Only between meetings — a refusal leaves the recorder idle, so
+            // this is the full column and never the compact row — and only
+            // while the refusal stands: asking again cannot help once someone
+            // has said no, because iOS never shows the prompt twice.
+            if recorder.micDenied && !recorder.isRecording {
+                openSettingsControl
             }
             recordControl(diameter: stop)
             if recorder.isRecording && shown.contains(.discard) {
@@ -796,6 +920,31 @@ struct LiveView: View {
             // The gate in RootView normally keeps this unreachable, but a
             // session can expire while the app is open and on this screen.
             app.signIn()
+        }
+    }
+}
+
+/// Tells the live transcript whether its last line is in view, so scrolling
+/// back down to it can resume following. iOS 18's scroll geometry is the one
+/// clean way to know; on 17 this does nothing and the "Latest" control is the
+/// way back. The distance, not a Bool, is what is observed: it changes as the
+/// transcript grows as well as when it scrolls, so the first report arrives
+/// with the first turn rather than waiting for the first time the answer
+/// flips.
+private struct ReportsScrollBottom: ViewModifier {
+    let report: (Bool) -> Void
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.onScrollGeometryChange(for: Double.self) { geometry in
+                max(0, geometry.contentSize.height - geometry.visibleRect.maxY)
+            } action: { _, distance in
+                // A few points of slack, for the content inset and for a
+                // `scrollTo(.bottom)` that lands a hair short.
+                report(distance <= 24)
+            }
+        } else {
+            content
         }
     }
 }

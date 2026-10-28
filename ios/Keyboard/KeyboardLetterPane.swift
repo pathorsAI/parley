@@ -210,7 +210,22 @@ struct LetterPane: View, Equatable {
         ) {
             Image(systemName: Self.glyph(shift)).font(.system(size: 19, weight: .regular))
         }
-        .accessibilityLabel(shift == .locked ? Text("Caps lock") : Text("Shift"))
+        .accessibilityLabel(Text("Shift"))
+        .accessibilityValue(Self.spoken(shift))
+        // VoiceOver and Switch Control activate the button without a press,
+        // so `onPressDown` never fires and the empty `action` would be all
+        // they get. The same tap the finger makes, once per activation; an
+        // activation produces no `isPressed` change, so it cannot also fire
+        // the press-down.
+        .accessibilityAction { bridge.tapShift() }
+    }
+
+    private static func spoken(_ shift: ShiftLatch.State) -> Text {
+        switch shift {
+        case .off: return Text("Off")
+        case .oneShot: return Text("On")
+        case .locked: return Text("Caps lock")
+        }
     }
 
     private static func glyph(_ shift: ShiftLatch.State) -> String {

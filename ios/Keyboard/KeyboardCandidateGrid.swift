@@ -69,6 +69,9 @@ struct CandidateGrid: View {
                     .simultaneousGesture(
                         LongPressGesture(minimumDuration: 0.5).onEnded { _ in hold(candidate) })
                     .accessibilityLabel(Text(verbatim: candidate))
+                    // A pick, not a keystroke: a button to VoiceOver, so
+                    // touch typing does not take it on lift like the keys.
+                    .accessibilityRemoveTraits(.isKeyboardKey)
                 }
             }
         }

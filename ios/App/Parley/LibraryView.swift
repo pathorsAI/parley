@@ -62,6 +62,14 @@ struct LibraryView: View {
     @State private var walkingThrough = false
     /// The recording the folder picker is moving, while it is up.
     @State private var moving: CloudRecordingSummary?
+    /// The recording whose delete is waiting on the confirmation dialog. A cloud
+    /// delete takes the transcript and summary with it on every device, and
+    /// there is no trash to fish it out of, so neither the swipe nor the
+    /// context menu deletes on the first gesture.
+    @State private var confirmingDelete: CloudRecordingSummary?
+    /// "Move to organization", waiting on its dialog. The same confirmation for
+    /// the same reason: the move ends in deleting the personal original.
+    @State private var confirmingOrgMove: PendingOrgMove?
     /// Meetings (the cloud library, everything below) or Voice typing (what was
     /// dictated on this phone, `DictationHistoryList`).
     @State private var section: LibrarySection = .meetings
@@ -127,6 +135,37 @@ struct LibraryView: View {
                 }
             }
             .sheet(item: $moving) { rec in folderPicker(for: rec) }
+            // Attached once here, not per row: every row's swipe and context
+            // menu only sets the state, and this one dialog answers for all of
+            // them.
+            .confirmationDialog(
+                "Delete this recording?",
+                isPresented: Binding(
+                    get: { confirmingDelete != nil },
+                    set: { if !$0 { confirmingDelete = nil } }),
+                titleVisibility: .visible,
+                presenting: confirmingDelete
+            ) { rec in
+                Button("Delete", role: .destructive) { Task { await remove(rec) } }
+            } message: { _ in
+                Text(
+                    "The recording, its transcript and its summary are deleted everywhere. This cannot be undone."
+                )
+            }
+            .confirmationDialog(
+                confirmingOrgMove.map { Text("Move to \($0.org.name)?") } ?? Text(verbatim: ""),
+                isPresented: Binding(
+                    get: { confirmingOrgMove != nil },
+                    set: { if !$0 { confirmingOrgMove = nil } }),
+                titleVisibility: .visible,
+                presenting: confirmingOrgMove
+            ) { move in
+                Button("Move", role: .destructive) {
+                    Task { await shareToOrg(move.recording, org: move.org, thenDelete: true) }
+                }
+            } message: { _ in
+                Text("A copy goes to the organization, and the recording leaves your personal library.")
+            }
             .searchable(
                 text: $search, isPresented: $searchPresented,
                 prompt: section == .meetings
@@ -501,9 +540,12 @@ struct LibraryView: View {
                 }
                 .onDisappear { swipeGeometry.rows[rec.id] = nil }
                 .modifier(RecordingRow())
-                .swipeActions(edge: .trailing) {
+                // No full swipe: a long drag across the row used to delete
+                // outright. Now the swipe only reveals the button, and the
+                // button asks first (`requestDelete`).
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                     Button("Delete", systemImage: "trash", role: .destructive) {
-                        Task { await remove(rec) }
+                        requestDelete(rec)
                     }
                 }
                 // Leading, so the destructive edge stays the one it has always
@@ -835,12 +877,25 @@ struct LibraryView: View {
             }
             Menu("Move to organization") {
                 ForEach(app.orgs) { org in
-                    Button(org.name) { Task { await shareToOrg(rec, org: org, thenDelete: true) } }
+                    // Asks first, unlike the copy above: this one deletes the
+                    // personal original once the copy lands.
+                    Button(org.name) { confirmingOrgMove = PendingOrgMove(recording: rec, org: org) }
                 }
             }
         }
         Button("Delete", systemImage: "trash", role: .destructive) {
+            requestDelete(rec)
+        }
+    }
+
+    /// The one entry point for the row's Delete, from either the swipe or the
+    /// context menu. The sample skips the dialog: removing it only takes it out
+    /// of the Library, and the checklist can load it again.
+    private func requestDelete(_ rec: CloudRecordingSummary) {
+        if SampleManifest.isSample(id: rec.id) {
             Task { await remove(rec) }
+        } else {
+            confirmingDelete = rec
         }
     }
 
@@ -1100,6 +1155,13 @@ private final class SwipeGeometry {
     }
 }
 
+/// A "Move to organization" waiting on its confirmation: the dialog needs both
+/// halves, the recording to move and the organization it is going to.
+private struct PendingOrgMove {
+    let recording: CloudRecordingSummary
+    let org: CloudOrg
+}
+
 private struct OpenedRecording: Hashable {
     let id: String
     /// nil = personal scope.
@@ -1347,35 +1409,40 @@ private struct RecordingCard: View {
             // folder came out as "R…" / "新…" with visible room beside it. The
             // layout priority below serves the folder first, so the Spacer gets
             // only what the folder does not want — see `.layoutPriority(1)`.
-            HStack(spacing: 10) {
-                Label(
-                    RecordingDetailView.duration(summary.durationMs), systemImage: "clock"
-                )
-                .fixedSize()
-                if let n = summary.speakerCount, n > 0 {
-                    Label("\(n)", systemImage: "person.2").fixedSize()
+            //
+            // All of that holds only while the pinned values fit. From Larger
+            // Text's xLarge up they can add up to more than the screen, and a
+            // row whose children refuse to shrink makes the whole cell wider
+            // than the list: title, snippet and meta all came out clipped on
+            // both edges. So when the one line cannot fit, the meta goes on two
+            // (`stackedMeta`). `ViewThatFits` decides, measuring each option at
+            // its ideal width — which for the folder would be its full name, and
+            // a long folder would then flip a row that only needed to truncate
+            // it onto two lines. The folder's `idealWidth` below is what keeps
+            // that from happening: the one line is measured with room for a
+            // truncated name, and laid out with whatever the row really has.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    counts
+                    // The folder's slot also does the Spacer's job of pushing
+                    // the date to the trailing edge: a Spacer measures as
+                    // unbounded when `ViewThatFits` asks for an ideal width, and
+                    // the one line never "fit". The ZStack keeps the slot there
+                    // on a row with no folder, where `folderLabel` is nothing.
+                    ZStack(alignment: .leading) {
+                        Color.clear.frame(width: 0, height: 0)
+                        folderLabel
+                    }
+                    .frame(minWidth: 0, idealWidth: 44, maxWidth: .infinity, alignment: .leading)
+                    // First claim on whatever the pinned values leave
+                    // over. A long name still degrades — it just does so
+                    // after the row is actually full, not at one
+                    // character.
+                    .layoutPriority(1)
+                    Text(verbatim: Self.dateLabel(summary.createdAt)).fixedSize()
+                    statusGlyphs(pinned: true)
                 }
-                if let n = summary.findingsCount, n > 0 {
-                    // `lightbulb`, the same glyph the detail screen puts on the
-                    // findings section. The glyph here used to be the AI stars,
-                    // which said "a model wrote this" rather than "findings" —
-                    // and the count is only ever about the latter.
-                    Label("\(n)", systemImage: "lightbulb").fixedSize()
-                }
-                if let fid = summary.folderId, let f = folders.first(where: { $0.id == fid }) {
-                    Label(f.name, systemImage: "folder")
-                        .truncationMode(.tail)
-                        // First claim on whatever the pinned values leave over.
-                        // A long name still degrades — it just does so after
-                        // the row is actually full, not at one character.
-                        .layoutPriority(1)
-                }
-                Spacer(minLength: 4)
-                Text(verbatim: Self.dateLabel(summary.createdAt)).fixedSize()
-                if summary.hasAudio {
-                    Image(systemName: "speaker.wave.2")
-                }
-                audioIndicator
+                stackedMeta
             }
             // Durations, counts and a clock time: tabular figures so the row
             // doesn't reflow a digit at a time as a meeting ticks over.
@@ -1392,6 +1459,68 @@ private struct RecordingCard: View {
         }
     }
 
+    // MARK: meta pieces, shared by the one-line and the two-line layout
+
+    /// Duration, speakers, findings: short values that are pinned so they never
+    /// wrap mid-number.
+    @ViewBuilder
+    private var counts: some View {
+        Label(RecordingDetailView.duration(summary.durationMs), systemImage: "clock")
+            .fixedSize()
+        if let n = summary.speakerCount, n > 0 {
+            Label("\(n)", systemImage: "person.2").fixedSize()
+        }
+        if let n = summary.findingsCount, n > 0 {
+            // `lightbulb`, the same glyph the detail screen puts on the
+            // findings section. The glyph here used to be the AI stars,
+            // which said "a model wrote this" rather than "findings" —
+            // and the count is only ever about the latter.
+            Label("\(n)", systemImage: "lightbulb").fixedSize()
+        }
+    }
+
+    /// The one value on the meta line allowed to truncate. No `fixedSize`.
+    @ViewBuilder
+    private var folderLabel: some View {
+        if let fid = summary.folderId, let f = folders.first(where: { $0.id == fid }) {
+            Label(f.name, systemImage: "folder")
+                .truncationMode(.tail)
+        }
+    }
+
+    /// The glyphs that close the line: audio in the cloud, then audio here.
+    @ViewBuilder
+    private func statusGlyphs(pinned: Bool) -> some View {
+        if summary.hasAudio {
+            Image(systemName: "speaker.wave.2")
+        }
+        audioIndicator(pinned: pinned)
+    }
+
+    /// The meta when one line cannot hold it. Counts on the first line, where
+    /// they are still pinned; folder, date and status on the second, where
+    /// nothing is, so the folder and date truncate before anything widens the
+    /// row. No Spacer
+    /// on the second line: it would split the slack with the folder (the
+    /// problem the one-line layout needed `.layoutPriority` for), and at these
+    /// sizes there is no slack worth pushing the date right with.
+    ///
+    /// The counts get one more fallback: at the largest sizes even three short
+    /// pinned labels can outgrow the screen, and then they stack.
+    private var stackedMeta: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) { counts }
+                VStack(alignment: .leading, spacing: 4) { counts }
+            }
+            HStack(spacing: 10) {
+                folderLabel
+                Text(verbatim: Self.dateLabel(summary.createdAt))
+                statusGlyphs(pinned: false)
+            }
+        }
+    }
+
     /// The last thing on the meta line: a phone glyph when the audio is here, a
     /// progress ring while it is arriving, and nothing at all otherwise.
     ///
@@ -1404,7 +1533,7 @@ private struct RecordingCard: View {
     /// context menu: a button inside a `NavigationLink`'s label cannot be tapped
     /// on its own, so a tappable "Retry" here would be a lie.
     @ViewBuilder
-    private var audioIndicator: some View {
+    private func audioIndicator(pinned: Bool) -> some View {
         switch audio {
         case .local:
             Image(systemName: "iphone")
@@ -1415,7 +1544,9 @@ private struct RecordingCard: View {
         case .failed:
             Text("Download failed · Retry")
                 .foregroundStyle(Color(.secondaryLabel))
-                .fixedSize()
+                // Pinned on the one-line layout; free to truncate on the two-line
+                // one, where pinning it would widen the row.
+                .fixedSize(horizontal: pinned, vertical: true)
         case .absent:
             EmptyView()
         }

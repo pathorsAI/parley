@@ -328,6 +328,23 @@
         }
       }
     },
+    "A copy goes to the organization, and the recording leaves your personal library." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A copy goes to the organization, and the recording leaves your personal library."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "會複製一份到組織，這筆錄音會從你的個人錄音庫移走。"
+          }
+        }
+      }
+    },
     "A tax ID number is usually eight digits. You can still save it." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2538,6 +2555,23 @@
         }
       }
     },
+    "Jump to latest" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jump to latest"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "跳到最新"
+          }
+        }
+      }
+    },
     "Keep audio on this phone" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2738,6 +2772,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "語言"
+          }
+        }
+      }
+    },
+    "Latest" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Latest"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最新"
           }
         }
       }
@@ -3079,23 +3130,6 @@
         }
       }
     },
-    "Microphone access is required" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Microphone access is required"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "需要麥克風權限"
-          }
-        }
-      }
-    },
     "Microphone access wasn't granted, so there is no window to keep open." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3232,6 +3266,23 @@
         }
       }
     },
+    "Move" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移動"
+          }
+        }
+      }
+    },
     "Move failed: %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3245,6 +3296,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "搬移失敗：%@"
+          }
+        }
+      }
+    },
+    "Move to %@?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move to %@?"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移到「%@」？"
           }
         }
       }
@@ -3827,6 +3895,23 @@
         }
       }
     },
+    "Open Settings" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open Settings"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打開設定"
+          }
+        }
+      }
+    },
     "Open the transcript" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4070,6 +4155,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "擁有者"
+          }
+        }
+      }
+    },
+    "Parley can't use the microphone. Turn it on in Settings." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Parley can't use the microphone. Turn it on in Settings."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Parley 無法使用麥克風，請到設定裡打開。"
           }
         }
       }
@@ -6968,6 +7070,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "目前無法使用麥克風。"
+          }
+        }
+      }
+    },
+    "The recording, its transcript and its summary are deleted everywhere. This cannot be undone." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The recording, its transcript and its summary are deleted everywhere. This cannot be undone."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這筆錄音和它的逐字稿、摘要會在所有地方一併刪除，刪除後無法復原。"
           }
         }
       }

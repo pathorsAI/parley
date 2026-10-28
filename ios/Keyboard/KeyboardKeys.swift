@@ -422,6 +422,11 @@ struct KeyButton<Label: View>: View {
             // The whole target takes the touch, not just the painted cap.
             .contentShape(KeyTarget(reach: reach))
         }
+        // A key, not just a button: VoiceOver's typing modes (touch typing
+        // types on lift) apply to it as they do on the system keyboard.
+        // Candidates borrow this cap and take the trait back off; see
+        // `CandidateGrid`.
+        .accessibilityAddTraits(.isKeyboardKey)
     }
 }
 
@@ -493,6 +498,11 @@ struct DeleteKey: View, Equatable {
             .frame(maxWidth: width == nil ? .infinity : nil)
         }
         .accessibilityLabel(Text("Delete"))
+        // A drag gesture is no button to VoiceOver or Switch Control: without
+        // these the key was announced as an image and did nothing. One delete
+        // per activation, as `SpaceKey` does for space.
+        .accessibilityAddTraits([.isButton, .isKeyboardKey])
+        .accessibilityAction { action() }
     }
 }
 

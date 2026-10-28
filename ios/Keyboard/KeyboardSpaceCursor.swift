@@ -88,7 +88,7 @@ struct SpaceKey: View, Equatable {
         .onDisappear { press.cancel(bridge: bridge) }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text("Space"))
-        .accessibilityAddTraits(.isButton)
+        .accessibilityAddTraits([.isButton, .isKeyboardKey])
         .accessibilityAction { bridge.space() }
     }
 }

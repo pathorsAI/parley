@@ -1,5 +1,6 @@
 import ParleyKit
 import SwiftUI
+import UIKit
 
 /// The voice pane: a live-transcript slot, one round record button, the three
 /// controls a dictating user reaches for and the ✕ that only exists while a
@@ -45,6 +46,9 @@ struct VoicePane: View, Equatable {
         .padding(.horizontal, KBMetrics.voiceSide)
         .padding(.top, KBMetrics.voiceTop)
         .padding(.bottom, KBMetrics.voiceBottom)
+        .onChange(of: spokenMessage) { _, message in
+            if let message { VoiceAnnouncement.post(message) }
+        }
     }
 
     /// The controls, arranged around the record button rather than in a row:
@@ -121,6 +125,7 @@ struct VoicePane: View, Equatable {
             }
         }
         .accessibilityLabel(Text("At sign"))
+        .accessibilityAddTraits(.isKeyboardKey)
     }
 
     /// ✕ — end the session and throw away what was said.
@@ -162,6 +167,9 @@ struct VoicePane: View, Equatable {
             }
         }
         .accessibilityLabel(Text("Delete"))
+        // A drag gesture is no button to VoiceOver; see `DeleteKey`.
+        .accessibilityAddTraits([.isButton, .isKeyboardKey])
+        .accessibilityAction { bridge.backspace() }
     }
 
     /// Return, as a glyph rather than a word.
@@ -178,6 +186,7 @@ struct VoicePane: View, Equatable {
             }
         }
         .accessibilityLabel(Text(voice.returnKey.label))
+        .accessibilityAddTraits(.isKeyboardKey)
     }
 
     private func disc<Content: View>(
@@ -238,6 +247,7 @@ struct VoicePane: View, Equatable {
         }
         .disabled(!voice.hasFullAccess)
         .accessibilityLabel(recordLabel)
+        .accessibilityValue(recordValue ?? Text(verbatim: ""))
     }
 
     /// The microphone is open and listening to the user — a live session that
@@ -323,6 +333,26 @@ struct VoicePane: View, Equatable {
         // `recordGlyph`.
         return voice.ready
             ? Text("Start dictation") : Text("Open Parley to set up voice typing")
+    }
+
+    /// Where the session is, for VoiceOver — the label is what the tap does,
+    /// and the colour and the ripple that say this to everyone else are only
+    /// something to see. Nothing at rest: the label says it all there.
+    private var recordValue: Text? {
+        guard voice.hasFullAccess, voice.listening else { return nil }
+        if voice.finishing { return Text("Polishing…") }
+        if voice.reconnecting { return Text("Reconnecting") }
+        return Text("Listening")
+    }
+
+    /// The error or the notice the slot shows, which is what VoiceOver is told
+    /// when one appears; the slot itself is nowhere near the element VoiceOver
+    /// is on. Read off the same conditions as `textSlot`, so it is `nil` the
+    /// whole time the microphone is open — VoiceOver's speech would be
+    /// transcribed — and a failure that arrives then is spoken once it closes.
+    private var spokenMessage: String? {
+        guard voice.hasFullAccess, !voice.listening else { return nil }
+        return voice.errorText ?? voice.noticeText
     }
 
     /// Disabled (no Full Access) reads inert rather than inviting: the button
@@ -722,6 +752,23 @@ private struct CopyTarget: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+/// What the voice pane says to VoiceOver on its own: an error, a notice, the
+/// words landing. Queued rather than interrupting, so "Inserted" and the
+/// notice that comes with the same ending are both heard, and neither cuts
+/// off VoiceOver reading the record button's new label.
+///
+/// Every caller posts only once the microphone is closed. An announcement
+/// while it is open would be spoken into it and transcribed.
+enum VoiceAnnouncement {
+    static func post(_ message: String) {
+        guard UIAccessibility.isVoiceOverRunning else { return }
+        UIAccessibility.post(
+            notification: .announcement,
+            argument: NSAttributedString(
+                string: message, attributes: [.accessibilitySpeechQueueAnnouncement: true]))
     }
 }
 

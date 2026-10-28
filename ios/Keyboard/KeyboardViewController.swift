@@ -1480,6 +1480,10 @@ final class KeyboardViewController: UIInputViewController {
             // there is no App Group to read a transcript from and no haptics to
             // play, and the drain returns before it gets here.
             Haptics.dictationDelivered()
+            // The same edge, for VoiceOver: the words went into a field it is
+            // not on. Only ever on `done`, so the microphone is already closed
+            // and the announcement cannot be dictated back in.
+            VoiceAnnouncement.post(String(localized: "Inserted"))
         }
 
         bridge.partial = d.partial
