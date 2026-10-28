@@ -31,7 +31,7 @@ import { checkModelKeys, type KeyProblems } from "../lib/onboarding/keyCheck";
 import { OrgStep } from "./onboarding/OrgStep";
 import { MicStep } from "./onboarding/MicStep";
 import { ContextStep } from "./onboarding/ContextStep";
-import { mergeTerms, type AddedTerm } from "../lib/onboarding/micCheck";
+import { mergeTerms, type AddedTerm, type MicRun } from "../lib/onboarding/micCheck";
 import { useI18n, LANGUAGE_OPTIONS } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -166,6 +166,8 @@ export function Onboarding() {
   // and the AI memory, the user's name and company, ones typed on the context
   // step), listed there so they can be taken back out.
   const [addedTerms, setAddedTerms] = useState<AddedTerm[]>([]);
+  // What the last microphone check added, so testing again replaces it.
+  const micRun = useRef<MicRun | null>(null);
   // The providers in place before the model step switched them to Parley's,
   // so "Use my own models" puts them back.
   const beforeHosted = useRef<Pick<Settings, "transcriptionProvider" | "llmProviders"> | null>(null);
@@ -427,7 +429,13 @@ export function Onboarding() {
             </div>
           )}
 
-          {current === "mic" && <MicStep onTermsAdded={(terms) => setAddedTerms((prev) => mergeTerms(prev, terms))} />}
+          {current === "mic" && (
+            <MicStep
+              onTermsAdded={(terms) => setAddedTerms((prev) => mergeTerms(prev, terms))}
+              onTermsRemoved={(ids) => setAddedTerms((prev) => prev.filter((term) => !ids.includes(term.id)))}
+              lastRun={micRun}
+            />
+          )}
 
           {current === "context" && <ContextStep terms={addedTerms} setTerms={setAddedTerms} />}
 

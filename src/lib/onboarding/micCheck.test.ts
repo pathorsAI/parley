@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { CheckTranscript, changedSpan, fixProductName, joinRuns, mergeTerms, profileFill, withProductName } from "./micCheck";
+import {
+  CheckTranscript,
+  changedSpan,
+  fixProductName,
+  joinRuns,
+  mergeTerms,
+  profileFill,
+  undoMicRun,
+  withProductName,
+} from "./micCheck";
 
 const seg = (id: string, text: string, is_final: boolean, source = "mic-check") => ({ id, source, text, is_final });
 
@@ -76,5 +85,23 @@ describe("the product's name in the check", () => {
 
   it("tells the recognizer the name first, once", () => {
     expect(withProductName(["派斯科技", "Parley", "Jack"])).toEqual(["Parley", "派斯科技", "Jack"]);
+  });
+});
+
+describe("testing again replaces the previous check", () => {
+  const run = { lines: ["派斯科技設計師 Jack，用 Parley 整理客戶會議"], profile: { userName: "Jack" }, created: [], terms: [] };
+
+  it("takes the previous check's line back out and keeps the rest of the background", () => {
+    const patch = undoMicRun(
+      { userBackground: "- 常和東森談外撥專案\n- 派斯科技設計師 Jack，用 Parley 整理客戶會議", userName: "Jack", userCompany: "", userRole: "" },
+      run,
+    );
+    expect(patch.userBackground).toBe("- 常和東森談外撥專案");
+    expect(patch.userName).toBe("");
+  });
+
+  it("leaves a profile field the user has changed since", () => {
+    const patch = undoMicRun({ userBackground: "", userName: "Jack Lin", userCompany: "", userRole: "" }, run);
+    expect(patch.userName).toBeUndefined();
   });
 });

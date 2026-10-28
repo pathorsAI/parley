@@ -17,7 +17,7 @@ import { isProviderReady } from "../ai/settings";
 import { recordLlmUsage } from "../usage/log";
 import type { Settings } from "../types";
 import { addEntry, applyReplacements, listEntries, whenDictionaryReady } from "../dictionary";
-import { cleanLines } from "./memoryImport";
+import { cleanLines, removeBackgroundLines } from "./memoryImport";
 
 /** The source label on the check's events (mic_check.rs `MIC_CHECK_SOURCE`). */
 export const MIC_CHECK_SOURCE = "mic-check";
@@ -209,6 +209,41 @@ export function profileFill(
 export interface AddedTerm {
   id: string;
   phrase: string;
+  /** This call made the entry (it wasn't in the dictionary before). */
+  created?: boolean;
+}
+
+type ProfileFields = Pick<Settings, "userName" | "userCompany" | "userRole">;
+
+/**
+ * What one check put into the user's setup, so that testing again replaces
+ * it instead of piling a second introduction on top: the background lines it
+ * appended, the profile fields it filled, the dictionary entries it created
+ * (deleted on undo) and every term it listed (taken off the context step's list).
+ */
+export interface MicRun {
+  lines: string[];
+  profile: Partial<ProfileFields>;
+  created: string[];
+  terms: string[];
+}
+
+/**
+ * The settings half of undoing a run: its background lines out, and the
+ * profile fields it filled cleared — unless the user has since changed them,
+ * in which case they are theirs now.
+ */
+export function undoMicRun(
+  settings: Pick<Settings, "userBackground"> & ProfileFields,
+  run: MicRun,
+): Partial<Pick<Settings, "userBackground"> & ProfileFields> {
+  const patch: Partial<Pick<Settings, "userBackground"> & ProfileFields> = {
+    userBackground: removeBackgroundLines(settings.userBackground, run.lines),
+  };
+  for (const key of Object.keys(run.profile) as (keyof ProfileFields)[]) {
+    if (settings[key] === run.profile[key]) patch[key] = "";
+  }
+  return patch;
 }
 
 /**
@@ -225,7 +260,7 @@ export async function addTerms(phrases: readonly string[]): Promise<AddedTerm[]>
     if (!phrase) continue;
     const res = addEntry({ phrase, source: "manual" });
     const id = res?.entryId ?? listEntries().find((e) => e.phrase === phrase)?.id;
-    if (id && !out.some((t) => t.id === id)) out.push({ id, phrase });
+    if (id && !out.some((t) => t.id === id)) out.push({ id, phrase, created: res?.kind === "entry" });
   }
   return out;
 }

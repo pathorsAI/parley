@@ -23,8 +23,11 @@ import {
   profileFill,
   summarizeIntro,
   withProductName,
+  undoMicRun,
   type AddedTerm,
+  type MicRun,
 } from "../../lib/onboarding/micCheck";
+import { removeEntry } from "../../lib/dictionary";
 import { appendBackground } from "../../lib/onboarding/memoryImport";
 import { WaveformTrack } from "./WaveformTrack";
 import { Button } from "@/components/ui/button";
@@ -46,7 +49,17 @@ type Phase = "idle" | "listening" | "stopping" | "saving" | "saved" | "empty" | 
  * and dictionary terms (handed up through `onTermsAdded` so the context step
  * can list them).
  */
-export function MicStep({ onTermsAdded }: Readonly<{ onTermsAdded: (terms: AddedTerm[]) => void }>) {
+export function MicStep({
+  onTermsAdded,
+  onTermsRemoved,
+  lastRun,
+}: Readonly<{
+  onTermsAdded: (terms: AddedTerm[]) => void;
+  onTermsRemoved: (ids: string[]) => void;
+  /** What the previous check put into the setup (kept by the wizard, so it
+   *  outlives leaving the step); a new check takes it back out first. */
+  lastRun: React.MutableRefObject<MicRun | null>;
+}>) {
   const { t } = useI18n();
   const inputDevice = useStore((s) => s.settings.inputDevice);
   const patch = useStore((s) => s.updateSettings);
@@ -101,8 +114,19 @@ export function MicStep({ onTermsAdded }: Readonly<{ onTermsAdded: (terms: Added
     return shown;
   }
 
+  /** Testing again replaces the previous result rather than adding to it. */
+  function undoLastRun() {
+    const last = lastRun.current;
+    if (!last) return;
+    lastRun.current = null;
+    patch(undoMicRun(useStore.getState().settings, last));
+    for (const id of last.created) removeEntry(id);
+    if (last.terms.length > 0) onTermsRemoved(last.terms);
+  }
+
   async function start() {
     teardown();
+    undoLastRun();
     setText("");
     setError("");
     const settings = useStore.getState().settings;
@@ -207,14 +231,19 @@ export function MicStep({ onTermsAdded }: Readonly<{ onTermsAdded: (terms: Added
       return { background: [said], terms: [], name: "", company: "", role: "" };
     });
     const current = useStore.getState().settings;
-    patch({
-      userBackground: appendBackground(current.userBackground, intro.background).text,
-      ...profileFill(current, intro),
-    });
+    const appended = appendBackground(current.userBackground, intro.background);
+    const profile = profileFill(current, intro);
+    patch({ userBackground: appended.text, ...profile });
     const added = await addTerms(intro.terms).catch((e) => {
       log.warn("onboarding: adding self-introduction terms failed", { error: String(e) });
       return [];
     });
+    lastRun.current = {
+      lines: appended.lines,
+      profile,
+      created: added.filter((term) => term.created).map((term) => term.id),
+      terms: added.map((term) => term.id),
+    };
     if (added.length > 0) onTermsAdded(added);
     if (mounted.current) setPhase("saved");
   }

@@ -8,6 +8,7 @@ import {
   cleanLines,
   memoryFilesToText,
   redactSecrets,
+  removeBackgroundLines,
 } from "./memoryImport";
 
 describe("cleanLines", () => {
@@ -41,9 +42,10 @@ describe("background editing", () => {
     expect(appendBackground(typed, ["常和東森談外撥專案", "團隊：Joe"])).toEqual({
       text: "Clients:\n  - Acme\n\n- 常和東森談外撥專案\n團隊：Joe",
       added: 1,
+      lines: ["團隊：Joe"],
     });
-    expect(appendBackground("", ["- A"])).toEqual({ text: "A", added: 1 });
-    expect(appendBackground("A", ["A"])).toEqual({ text: "A", added: 0 });
+    expect(appendBackground("", ["- A"])).toEqual({ text: "A", added: 1, lines: ["A"] });
+    expect(appendBackground("A", ["A"])).toEqual({ text: "A", added: 0, lines: [] });
   });
 });
 
@@ -81,5 +83,19 @@ describe("redactSecrets", () => {
   it("leaves ordinary notes alone", () => {
     const notes = "I lead design at Pathors; we pitch 東森 on outbound calling. Token budget talks are on Fridays.";
     expect(redactSecrets(notes)).toBe(notes);
+  });
+});
+
+describe("removeBackgroundLines", () => {
+  it("drops the given lines, markers or not, and keeps everything else as written", () => {
+    const text = "Works at Acme\n\n- Designs onboarding\n* Talks to clients";
+    expect(removeBackgroundLines(text, ["Designs onboarding"])).toBe("Works at Acme\n\n* Talks to clients");
+  });
+
+  it("undoes exactly what appendBackground added", () => {
+    const before = "Works at Acme";
+    const { text, lines } = appendBackground(before, ["Works at Acme", "Uses Parley for client calls"]);
+    expect(lines).toEqual(["Uses Parley for client calls"]);
+    expect(removeBackgroundLines(text, lines)).toBe(before);
   });
 });

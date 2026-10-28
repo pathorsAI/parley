@@ -139,11 +139,28 @@ export function backgroundLines(background: string): string[] {
 }
 
 /** Append the lines the background doesn't already have (compared without
- *  list markers); returns the new text and how many lines were added. */
-export function appendBackground(background: string, add: readonly string[]): { text: string; added: number } {
+ *  list markers); returns the new text, how many lines were added and which. */
+export function appendBackground(
+  background: string,
+  add: readonly string[],
+): { text: string; added: number; lines: string[] } {
   const have = new Set(cleanLines(backgroundLines(background)));
   const fresh = cleanLines(add).filter((l) => !have.has(l));
-  if (fresh.length === 0) return { text: background, added: 0 };
+  if (fresh.length === 0) return { text: background, added: 0, lines: [] };
   const base = background.replace(/\s+$/u, "");
-  return { text: (base ? `${base}\n` : "") + fresh.join("\n"), added: fresh.length };
+  return { text: (base ? `${base}\n` : "") + fresh.join("\n"), added: fresh.length, lines: fresh };
+}
+
+/** Take out lines added earlier (compared without list markers), leaving the rest as written. */
+export function removeBackgroundLines(background: string, lines: readonly string[]): string {
+  const drop = new Set(cleanLines(lines));
+  if (drop.size === 0) return background;
+  return background
+    .split(/\r?\n/u)
+    .filter((l) => {
+      const line = cleanLines([l])[0];
+      return !line || !drop.has(line);
+    })
+    .join("\n")
+    .replace(/\s+$/u, "");
 }
