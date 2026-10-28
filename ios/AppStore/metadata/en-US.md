@@ -83,6 +83,10 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.34
+
+Settings is simpler. Everything about the Parley keyboard and voice typing now lives on its own Voice typing page, and the long explanations under each setting are down to a line where one is needed.
+
 ## What's New — 1.33
 
 Meetings are no longer lost when an upload is refused. If your quota runs out or an upload is cut off, the recording now stays on your phone, and the Library shows how many are waiting. Tap that line to retry, save or delete each one. Waiting recordings also go up as soon as the network comes back or you open the app again.
