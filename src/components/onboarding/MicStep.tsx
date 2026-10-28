@@ -19,6 +19,7 @@ import {
   MIC_CHECK_MAX_MS,
   MIC_CHECK_SOURCE,
   addTerms,
+  completeIntro,
   fixProductName,
   profileFill,
   summarizeIntro,
@@ -225,11 +226,13 @@ export function MicStep({
     }
     setPhase("saving");
     const settings = useStore.getState().settings;
-    const intro = await summarizeIntro({ settings, transcript: said }).catch((e) => {
+    const summary = await summarizeIntro({ settings, transcript: said }).catch((e) => {
       // The sentence itself still makes a background line.
       log.warn("onboarding: summarizing the self-introduction failed", { error: String(e) });
       return { background: [said], terms: [], name: "", company: "", role: "" };
     });
+    // The company and name always become terms, model or not.
+    const intro = completeIntro(summary, said);
     const current = useStore.getState().settings;
     const appended = appendBackground(current.userBackground, intro.background);
     const profile = profileFill(current, intro);

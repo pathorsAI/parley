@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   CheckTranscript,
   changedSpan,
+  completeIntro,
   fixProductName,
   joinRuns,
   mergeTerms,
+  parseIntroScript,
   profileFill,
+  termCandidate,
   undoMicRun,
   withProductName,
 } from "./micCheck";
@@ -103,5 +106,39 @@ describe("testing again replaces the previous check", () => {
   it("leaves a profile field the user has changed since", () => {
     const patch = undoMicRun({ userBackground: "", userName: "Jack Lin", userCompany: "", userRole: "" }, run);
     expect(patch.userName).toBeUndefined();
+  });
+});
+
+describe("the company and name in the introduction", () => {
+  it("reads them from the script's blanks", () => {
+    expect(parseIntroScript("我是派斯科技的設計師 Jack，我主要用 Parley 來整理客戶會議。")).toEqual({ company: "派斯科技", name: "Jack" });
+    expect(parseIntroScript("我是 派斯科技 的 王小明，我主要用 Parley 來開會。")).toEqual({ company: "派斯科技", name: "王小明" });
+    expect(parseIntroScript("I'm Jack, a designer at Pathors, and I use Parley to write up calls.")).toEqual({ company: "Pathors", name: "Jack" });
+  });
+
+  it("doesn't take a job title for a name", () => {
+    expect(parseIntroScript("我是派斯科技的設計師，我主要用 Parley 來開會。")).toEqual({ company: "派斯科技", name: "" });
+  });
+
+  it("always lists the company and name among the terms", () => {
+    const plain = { background: ["…"], terms: [], name: "", company: "", role: "" };
+    expect(completeIntro(plain, "我是派斯科技的設計師 Jack，我主要用 Parley 來開會").terms).toEqual(["派斯科技", "Jack"]);
+    const fromModel = { ...plain, terms: ["派斯科技", "東森"], name: "Jack Lin", company: "派斯科技" };
+    expect(completeIntro(fromModel, "").terms).toEqual(["派斯科技", "東森", "Jack Lin"]);
+  });
+});
+
+describe("termCandidate", () => {
+  it("offers a short name, trimmed of punctuation", () => {
+    expect(termCandidate("「東森」，")).toBe("東森");
+    expect(termCandidate(" Acme Inc. ")).toBe("Acme Inc");
+  });
+
+  it("offers nothing for a sentence, a line break, or bare digits", () => {
+    expect(termCandidate("常和台灣大哥大、東森談外撥專案，也負責語音 agent 平台設計")).toBeNull();
+    expect(termCandidate("東森\n台哥大")).toBeNull();
+    expect(termCandidate("派斯科技設計師 Jack，常和東森談外撥專案")).toBeNull();
+    expect(termCandidate("2026")).toBeNull();
+    expect(termCandidate("   ")).toBeNull();
   });
 });

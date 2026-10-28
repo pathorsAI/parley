@@ -8,9 +8,24 @@ import { isProviderReady } from "../../lib/ai/settings";
 import { describeAiError } from "../../lib/ai/errors";
 import { removeEntry } from "../../lib/dictionary";
 import { backgroundLines, memoryFilesToText, summarizeMemory } from "../../lib/onboarding/memoryImport";
-import { addTerms, findNameEdit, learnTerm, mergeTerms, type AddedTerm } from "../../lib/onboarding/micCheck";
+import {
+  addTerms,
+  changedSpan,
+  findNameEdit,
+  learnTerm,
+  mergeTerms,
+  termCandidate,
+  type AddedTerm,
+} from "../../lib/onboarding/micCheck";
 import { detectCorrection } from "../../lib/dictionary/diffCorrection";
-import { isIgnoredTwice, recognitionTerms, recordIgnore, whenDictionaryReady } from "../../lib/dictionary";
+import {
+  isIgnoredTwice,
+  listEntries,
+  profileTerms,
+  recognitionTerms,
+  recordIgnore,
+  whenDictionaryReady,
+} from "../../lib/dictionary";
 import * as ipc from "../../lib/ipc/commands";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,8 +38,8 @@ type MemoryState = "reading" | "ready" | "hidden" | "needLlm" | { failed: string
 /**
  * What every meeting prompt should know about the user:
  * - the speaker background (settings.userBackground), seeded by the
- *   self-introduction in the mic check, edited here as free text; correcting
- *   a name in it offers that name to the dictionary;
+ *   self-introduction in the mic check, edited here as free text; selecting
+ *   or editing a few words in it offers them to the dictionary;
  * - the terms transcription should spell right (the shared dictionary): the
  *   user's name and company, the company, people and product names from the
  *   self-introduction and the AI memory, and any the user types — removable;
@@ -39,15 +54,16 @@ export function ContextStep({
   const { t } = useI18n();
   const [newTerm, setNewTerm] = useState("");
 
-  // The names already known go straight in: the user's own name and company
-  // (Settings, or filled from the self-introduction). No AI needed for these.
+  // The user's own company and name are always terms (Settings, or filled
+  // from the self-introduction), each spelling of them on its own — and they
+  // follow the fields if those change while the step is open. No AI needed.
+  const userName = useStore((s) => s.settings.userName);
+  const userCompany = useStore((s) => s.settings.userCompany);
   useEffect(() => {
-    const { userName, userCompany } = useStore.getState().settings;
-    addTerms([userCompany, userName])
+    addTerms(profileTerms({ userName, userCompany }))
       .then((found) => setTerms((prev) => mergeTerms(prev, found)))
       .catch((e) => log.warn("onboarding: adding profile terms failed", { error: String(e) }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [userName, userCompany, setTerms]);
 
   function addTypedTerm() {
     const v = newTerm.trim();
@@ -65,7 +81,10 @@ export function ContextStep({
       </div>
 
       {/* Speaker background */}
-      <BackgroundEditor onTermLearned={(term) => setTerms((prev) => mergeTerms(prev, [term]))} />
+      <BackgroundEditor
+        terms={terms}
+        onTermLearned={(term) => setTerms((prev) => mergeTerms(prev, [term]))}
+      />
 
       {/* Dictionary terms */}
       <div className="flex flex-col gap-1.5">
@@ -115,18 +134,48 @@ export function ContextStep({
 const SETTLE_MS = 1200;
 
 /**
- * The speaker background as one editable text. When an edit settles (a pause
- * in typing, or leaving the field) and it looks like a corrected name, it
- * offers the corrected name to the dictionary, with the old spelling as a
- * variant. The test is the one for fixing a word in a dictation
- * (detectCorrection), so new sentences and rewrites don't count; for small
- * edits it can't place (most Chinese ones), the model is asked (findNameEdit).
+ * The speaker background as one editable text, which offers words in it to
+ * the dictionary:
+ * - selecting a few words asks whether to add them;
+ * - when an edit settles (a pause in typing, or leaving the field) it asks
+ *   about what changed. A corrected name — by the dictation rule
+ *   (detectCorrection), or for small edits it can't place (most Chinese ones)
+ *   by the model (findNameEdit) — is offered with the old spelling as a
+ *   variant; any other short insertion is offered as it is.
+ * Words already among the terms, and sentences, aren't offered.
  */
-function BackgroundEditor({ onTermLearned }: Readonly<{ onTermLearned: (term: AddedTerm) => void }>) {
+function BackgroundEditor({
+  terms,
+  onTermLearned,
+}: Readonly<{ terms: readonly AddedTerm[]; onTermLearned: (term: AddedTerm) => void }>) {
   const { t } = useI18n();
   const background = useStore((s) => s.settings.userBackground);
   const patch = useStore((s) => s.updateSettings);
-  const [suggest, setSuggest] = useState<{ from: string; to: string } | null>(null);
+  /** `from`: a corrected spelling, kept as a variant (corrections only). */
+  const [suggest, setSuggest] = useState<{ from?: string; to: string } | null>(null);
+
+  const field = useRef<HTMLTextAreaElement | null>(null);
+  // Selecting words offers them. The native `select` event is the one both
+  // webviews fire for a textarea (React's onSelect doesn't, reliably);
+  // mouseup / keyup catch a selection made some other way.
+  function offerSelection() {
+    const el = field.current;
+    if (el && el.selectionEnd > el.selectionStart) offer(el.value.slice(el.selectionStart, el.selectionEnd));
+  }
+  useEffect(() => {
+    const el = field.current;
+    if (!el) return;
+    el.addEventListener("select", offerSelection);
+    return () => el.removeEventListener("select", offerSelection);
+  });
+
+  /** Offer `raw` unless it isn't a term, or the dictionary already has it. */
+  function offer(raw: string, from?: string) {
+    const to = termCandidate(raw);
+    if (!to) return;
+    if (terms.some((term) => term.phrase === to) || listEntries().some((e) => e.phrase === to)) return;
+    setSuggest({ from, to });
+  }
   // The text as of the last settled edit: what the next edit is compared to.
   const baseline = useRef(background);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -149,7 +198,13 @@ function BackgroundEditor({ onTermLearned }: Readonly<{ onTermLearned: (term: Ad
       }));
     // A newer edit has settled meanwhile: this suggestion is stale.
     if (baseline.current !== after) return;
-    if (hit && !isIgnoredTwice(hit.from, hit.to)) setSuggest(hit);
+    if (hit) {
+      if (!isIgnoredTwice(hit.from, hit.to)) offer(hit.to, hit.from);
+      return;
+    }
+    // Not a correction: offer what was typed in, if it is a name's length.
+    const typed = changedSpan(before, after).to;
+    if (typed.trim()) offer(typed);
   }
 
   return (
@@ -168,6 +223,9 @@ function BackgroundEditor({ onTermLearned }: Readonly<{ onTermLearned: (term: Ad
           timer.current = setTimeout(() => void settle(), SETTLE_MS);
         }}
         onBlur={() => void settle()}
+        onMouseUp={offerSelection}
+        onKeyUp={offerSelection}
+        ref={field}
       />
       {suggest && (
         <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -179,9 +237,9 @@ function BackgroundEditor({ onTermLearned }: Readonly<{ onTermLearned: (term: Ad
             onClick={() => {
               const { from, to } = suggest;
               setSuggest(null);
-              learnTerm(from, to)
-                .then((term) => term && onTermLearned(term))
-                .catch((e) => log.warn("onboarding: learning a corrected term failed", { error: String(e) }));
+              (from ? learnTerm(from, to).then((term) => (term ? [term] : [])) : addTerms([to]))
+                .then((added) => added.forEach(onTermLearned))
+                .catch((e) => log.warn("onboarding: adding a background term failed", { error: String(e) }));
             }}
           >
             <Plus className="size-3" />
@@ -192,7 +250,8 @@ function BackgroundEditor({ onTermLearned }: Readonly<{ onTermLearned: (term: Ad
             variant="ghost"
             className="h-6 px-2 text-xs text-muted-foreground"
             onClick={() => {
-              recordIgnore(suggest.from, suggest.to);
+              // Turning down a correction twice stops it being offered again.
+              if (suggest.from) recordIgnore(suggest.from, suggest.to);
               setSuggest(null);
             }}
           >

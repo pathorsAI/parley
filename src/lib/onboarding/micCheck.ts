@@ -193,6 +193,64 @@ export async function summarizeIntro(opts: {
   };
 }
 
+/** Words that end a Chinese job title rather than a name (設計師, 經理, 店長…). */
+const TITLE_ENDINGS = /[師長理員監裁者生工手]$/u;
+
+/**
+ * The company and the speaker's name from the check's own script ("我是
+ * {company} 的 {name / title}…", "I'm {name / title} at {company}…"), for when
+ * there is no model to ask. The company is whatever stands in its blank. The
+ * name/title blank keeps only what looks like a name: a capitalised Latin word,
+ * or a short Chinese one that doesn't end like a title.
+ */
+export function parseIntroScript(text: string): { company: string; name: string } {
+  const zh = /我是\s*(.+?)\s*的\s*([^，,。.]+)/u.exec(text);
+  const en = /\bI(?:'| a)m\s+(.+?)\s+at\s+([^,.;]+)/iu.exec(text);
+  const company = (zh?.[1] ?? en?.[2] ?? "").trim();
+  const who = zh?.[2] ?? en?.[1] ?? "";
+  const name =
+    who
+      .split(/[\s/／、,，]+/u)
+      .map((w) => w.trim())
+      .find((w) => /^\p{Lu}[\p{L}'-]*$/u.test(w) || (/^\p{Script=Han}{2,4}$/u.test(w) && !TITLE_ENDINGS.test(w))) ?? "";
+  return { company: [...company].length <= MAX_TERM_CHARS ? company : "", name };
+}
+
+/**
+ * The introduction with its company and name always among the terms: what the
+ * model found, else what the script's blanks held — so the dictionary learns
+ * both even without an AI provider, and even when Settings already has a name.
+ */
+export function completeIntro(intro: IntroSummary, transcript: string): IntroSummary {
+  const parsed = parseIntroScript(transcript);
+  const company = intro.company || parsed.company;
+  const name = intro.name || parsed.name;
+  const terms = [...intro.terms];
+  for (const term of [company, name]) {
+    if (term && !terms.includes(term)) terms.push(term);
+  }
+  return { ...intro, company, name, terms };
+}
+
+/** The longest text offered as a term: a name, not a sentence. */
+export const MAX_TERM_CHARS = 16;
+
+/** Punctuation that splits clauses, so a name never contains it. */
+const CLAUSE_BREAK = /[，。、；：！？,;:!?]/u;
+
+/**
+ * What a selection or an edit in the speaker background would add as a term,
+ * or null when it isn't one: one line, a name's length, no clause break inside
+ * (that is a sentence), not just punctuation or digits, and without the
+ * punctuation around it.
+ */
+export function termCandidate(text: string): string | null {
+  const term = text.replace(/^[\s\p{P}]+|[\s\p{P}]+$/gu, "");
+  if (!term || /\n/u.test(term) || [...term].length > MAX_TERM_CHARS) return null;
+  if (CLAUSE_BREAK.test(term) || !/\p{L}/u.test(term)) return null;
+  return term;
+}
+
 /** The profile fields to fill: only the ones Settings doesn't have yet. */
 export function profileFill(
   settings: Pick<Settings, "userName" | "userCompany" | "userRole">,
