@@ -83,6 +83,16 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.33
+
+Meetings are no longer lost when an upload is refused. If your quota runs out or an upload is cut off, the recording now stays on your phone, and the Library shows how many are waiting. Tap that line to retry, save or delete each one. Waiting recordings also go up as soon as the network comes back or you open the app again.
+
+Deleting a meeting now asks first. A full swipe no longer deletes on its own, and Move to organization, which removes your personal copy, also confirms.
+
+Reading back during a meeting is easier. Scroll up in the live transcript and it stays where you are. When new lines come in, a Latest button takes you back down.
+
+If the microphone permission is off, the record screen now says so and offers a button to Settings. The Library also fits larger text sizes without cutting rows off, and the Parley keyboard works with VoiceOver and Switch Control.
+
 ## What's New — 1.32
 
 Long meetings now finish filling in their transcripts. After a meeting, Parley fills in whatever the live transcript missed in the background. Before, leaving the app stopped that work, and the next try uploaded the whole recording again, so a long meeting could stay unfinished. Now it carries on after you leave, and picks up where it stopped when you come back.
