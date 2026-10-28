@@ -188,7 +188,7 @@ export function OrgStep({
           icon={<CircleUserRound className="size-3.5" />}
           label={t("onboarding.org.solo")}
           note={t("onboarding.org.soloNote")}
-          art={{ src: "/onboarding/org-solo-lines.svg", className: "top-[29.23%] right-[-48.88%] bottom-[-18.86%] left-0" }}
+          art={{ src: "/onboarding/org-solo-lines.svg", className: "top-[38px] left-0 h-[116.52px] w-[774.18px]" }}
           action={
             <Button
               variant="ghost"

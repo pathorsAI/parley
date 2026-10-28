@@ -252,7 +252,7 @@ export function MicStep({ onTermsAdded }: Readonly<{ onTermsAdded: (terms: Added
           <div
             aria-hidden
             className={cn(
-              "ob-transition pointer-events-none absolute top-[-3.7%] right-[-47.34%] bottom-[17.39%] left-[-1.54%]",
+              "ob-transition pointer-events-none absolute top-[-5px] left-[-8px] h-[116.52px] w-[774.18px]",
               phase === "listening" && "opacity-70",
             )}
           >

@@ -376,7 +376,7 @@ export function Onboarding() {
                 <PermRow
                   icon={<Mic className="size-4" />}
                   label={t("onboarding.perms.mic")}
-                  art="top-[50.68%] right-[-38.88%] bottom-[-110.3%] left-[-10%]"
+                  art="top-[37px] left-[-52px] h-[116.52px] w-[774.18px]"
                   ok={micOk}
                   actionLabel={t(isMac() ? "onboarding.perms.grant" : "settings.permissions.openSettings")}
                   onAction={async () => {
@@ -404,7 +404,7 @@ export function Onboarding() {
                 {((isMac() && perms?.systemAudio !== "unsupported") || isWindows()) && (
                   <PermRow
                     icon={<Volume2 className="size-4" />}
-                    art="top-[-64.38%] right-[-38.3%] bottom-[4.77%] left-[-10.58%]"
+                    art="top-[-47px] left-[-55px] h-[116.52px] w-[774.18px]"
                     label={t(isMac() ? "onboarding.perms.systemAudio" : "onboarding.perms.systemAudio.windows")}
                     ok={systemAudioOk}
                     actionLabel={t(isMac() ? "onboarding.perms.grant" : "settings.permissions.openSettings")}
@@ -651,7 +651,7 @@ function AccountStep({ onBack, onContinue }: Readonly<{ onBack: () => void; onCo
         fill
         icon={<UsersRound className="size-3.5" />}
         label={t("onboarding.account.guest.tag")}
-        art={{ src: "/onboarding/signin-guest-lines.svg", className: "top-[21.35%] right-[-48.88%] bottom-[13.19%] left-0" }}
+        art={{ src: "/onboarding/signin-guest-lines.svg", className: "top-[38px] left-0 h-[116.52px] w-[774.18px]" }}
         action={
           <Button
             variant="ghost"
@@ -794,7 +794,7 @@ function ModelStep({
           icon={<img src="/onboarding/parley-mark.svg" alt="" className="h-3.5 w-auto" />}
           label={t("onboarding.model.hosted")}
           note={t("onboarding.model.hostedNote")}
-          art={{ src: "/onboarding/signin-member-lines.svg", className: "top-[-68px] left-[-445px] h-[200px] w-[967px]" }}
+          art={{ src: "/onboarding/signin-member-lines.svg", className: "top-[-67px] left-[-444px] h-[200px] w-[967px]" }}
         />
       )}
       <SelectCard
@@ -803,12 +803,7 @@ function ModelStep({
         icon={<Cpu className="size-3.5" />}
         label={t("onboarding.model.own")}
         note={t("onboarding.model.ownNote")}
-        art={{
-          src: "/onboarding/org-solo-lines.svg",
-          className: showProviders
-            ? "top-[10.47%] right-[-48.88%] bottom-[57.43%] left-[-1px]"
-            : "top-[57.58%] right-[-48.88%] bottom-[-134.12%] left-0",
-        }}
+        art={{ src: "/onboarding/org-solo-lines.svg", className: "top-[38px] left-0 h-[116.52px] w-[774.18px]" }}
       >
       {showProviders && (
         <>

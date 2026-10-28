@@ -18,7 +18,7 @@ const GAIN = 1.8;
 
 /**
  * The mic check's level as a recording track: thin blue bars for what has
- * been said, a dashed line for the rest, and a red playhead where the
+ * been said, a dashed line for the rest, and a blue playhead where the
  * recording is now. Fed by the backend `audio://level` event for `source`
  * (sqrt-mapped, as in LevelMeter, since speech peaks are small, then
  * amplified so normal speech fills the track). The playhead
@@ -89,7 +89,7 @@ export function WaveformTrack({
           />
         ))}
       </div>
-      <span className="absolute inset-y-0 w-0.5 rounded-full bg-recording" style={{ left: playheadX }} />
+      <span className="absolute top-1/2 h-3/4 w-0.5 -translate-y-1/2 rounded-full bg-primary" style={{ left: playheadX }} />
     </div>
   );
 }

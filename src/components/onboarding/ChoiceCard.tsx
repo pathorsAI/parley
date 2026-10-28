@@ -25,7 +25,7 @@ export function ChoiceCard({
   icon: ReactNode;
   label: string;
   note?: string;
-  /** The line art: its file and where it sits, as drawn. */
+  /** The line art: its file, and its fixed place and size as drawn (px, so a taller card never stretches it). */
   art: { src: string; className: string };
   action: ReactNode;
   children?: ReactNode;
