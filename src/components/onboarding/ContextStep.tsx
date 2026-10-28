@@ -10,7 +10,7 @@ import { removeEntry } from "../../lib/dictionary";
 import { backgroundLines, memoryFilesToText, summarizeMemory } from "../../lib/onboarding/memoryImport";
 import {
   addTerms,
-  changedSpan,
+  editedWord,
   findNameEdit,
   learnTerm,
   mergeTerms,
@@ -138,8 +138,9 @@ const SETTLE_MS = 1200;
  * the dictionary. When an edit settles (a pause in typing, or leaving the
  * field) it asks about what changed: a corrected name — by the dictation rule
  * (detectCorrection), or for small edits it can't place (most Chinese ones)
- * by the model (findNameEdit) — with the old spelling as a variant; any other
- * short insertion as it is. Only edits ask: selecting text doesn't. Words
+ * by the model (findNameEdit) — with the old spelling as a variant; otherwise
+ * the whole word the edit landed in (editedWord), never a lone character.
+ * Only edits ask: selecting text doesn't. Words
  * already among the terms, and sentences, aren't offered.
  */
 function BackgroundEditor({
@@ -185,9 +186,11 @@ function BackgroundEditor({
       if (!isIgnoredTwice(hit.from, hit.to)) offer(hit.to, hit.from);
       return;
     }
-    // Not a correction: offer what was typed in, if it is a name's length.
-    const typed = changedSpan(before, after).to;
-    if (typed.trim()) offer(typed);
+    // Not a correction the rules or the model could place: offer the whole
+    // word the edit landed in (fixing 昇 in 東昇 offers 東森, not 森), with its
+    // old spelling as a variant when there was one.
+    const word = editedWord(before, after);
+    if (word) offer(word.to, word.from && word.from !== word.to ? word.from : undefined);
   }
 
   return (

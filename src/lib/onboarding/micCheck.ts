@@ -362,6 +362,62 @@ export function changedSpan(before: string, after: string): { from: string; to: 
   return { from: a.slice(start, endA).join(""), to: b.slice(start, endB).join("") };
 }
 
+/**
+ * Characters that join words in a Chinese sentence rather than belong to a
+ * name (常和東森談…, 派斯科技的設計師), where an edited word is taken to end.
+ * Kept to the plainly grammatical: 中, 上, 大 and the like are left out, since
+ * names use them (中華電信, 台灣大哥大).
+ */
+const ZH_JOINERS = new Set([..."的和與跟及或在是為用來談把被從到對向給讓我你他她也都就並而等"]);
+const HAN = /\p{Script=Han}/u;
+const WORD_CHAR = /[\p{L}\p{N}_'’-]/u;
+
+/**
+ * The whole word an edit landed in, as it is now (`to`) and as it was
+ * (`from`): fixing one character of 東昇 makes 東森, not 森. A Latin word runs
+ * to the next space or punctuation; a Chinese one across Han characters up to
+ * punctuation, a space, a Latin letter or a joining word (ZH_JOINERS). Null
+ * when the edit didn't touch a word (only spaces or punctuation changed).
+ */
+export function editedWord(before: string, after: string): { from: string; to: string } | null {
+  const span = changedSpan(before, after);
+  const a = [...before];
+  const b = [...after];
+  // Where the changed text sits in `after`: after the shared start.
+  let start = 0;
+  while (start < a.length && start < b.length && a[start] === b[start]) start += 1;
+  let end = start + [...span.to].length;
+  const isWord = (ch: string | undefined, han: boolean) =>
+    ch !== undefined && (han ? HAN.test(ch) && !ZH_JOINERS.has(ch) : WORD_CHAR.test(ch) && !HAN.test(ch));
+  const anyWord = (ch: string) => isWord(ch, true) || isWord(ch, false);
+
+  const typed = b.slice(start, end);
+  const first = typed.findIndex(anyWord);
+  let han: boolean;
+  if (first >= 0) {
+    // Narrow to the word characters typed (「、台哥大」 → 台哥大).
+    const last = typed.length - 1 - [...typed].reverse().findIndex(anyWord);
+    han = HAN.test(typed[first]);
+    end = start + last + 1;
+    start += first;
+  } else {
+    // Nothing word-like typed: a deletion inside a word counts, a change of
+    // punctuation, spaces or a joining word doesn't.
+    if (![...span.from].some(anyWord)) return null;
+    const beside = b[start - 1] ?? b[start] ?? "";
+    han = HAN.test(beside);
+  }
+  let ws = start;
+  let we = end;
+  while (isWord(b[ws - 1], han)) ws -= 1;
+  while (isWord(b[we], han)) we += 1;
+  const to = b.slice(ws, we).join("");
+  if (!to) return null;
+  // The word as it was: the same surroundings around what the edit replaced.
+  const from = b.slice(ws, start).join("") + span.from + b.slice(end, we).join("");
+  return { from, to };
+}
+
 const nameEditSchema = z.object({ from: z.string().default(""), to: z.string().default("") });
 
 const NAME_EDIT_SYSTEM =

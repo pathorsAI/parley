@@ -3,6 +3,7 @@ import {
   CheckTranscript,
   changedSpan,
   completeIntro,
+  editedWord,
   fixProductName,
   joinRuns,
   mergeTerms,
@@ -140,5 +141,29 @@ describe("termCandidate", () => {
     expect(termCandidate("派斯科技設計師 Jack，常和東森談外撥專案")).toBeNull();
     expect(termCandidate("2026")).toBeNull();
     expect(termCandidate("   ")).toBeNull();
+  });
+});
+
+describe("editedWord", () => {
+  it("widens a one-character fix to the whole Chinese name", () => {
+    expect(editedWord("常和東昇談外撥專案", "常和東森談外撥專案")).toEqual({ from: "東昇", to: "東森" });
+    expect(editedWord("我是派思科技的設計師", "我是派斯科技的設計師")).toEqual({ from: "派思科技", to: "派斯科技" });
+  });
+
+  it("widens an added character to the name it completes", () => {
+    expect(editedWord("常和台灣大哥、東森開會", "常和台灣大哥大、東森開會")).toEqual({ from: "台灣大哥", to: "台灣大哥大" });
+  });
+
+  it("widens a Latin edit to the word", () => {
+    expect(editedWord("a designer at Pathers, mostly", "a designer at Pathors, mostly")).toEqual({ from: "Pathers", to: "Pathors" });
+  });
+
+  it("keeps a newly typed name as it is", () => {
+    expect(editedWord("常和東森談外撥", "常和東森、台哥大談外撥")).toEqual({ from: "", to: "台哥大" });
+  });
+
+  it("finds no word when only punctuation or a joining word changed", () => {
+    expect(editedWord("東森，台哥大", "東森。台哥大")).toBeNull();
+    expect(editedWord("東森和台哥大", "東森與台哥大")).toBeNull();
   });
 });
