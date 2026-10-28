@@ -77,7 +77,8 @@ export function ContextStep({
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    // Fills the step, so the AI memory below can take whatever height is left.
+    <div className="flex min-h-0 flex-1 flex-col gap-6">
       {/* Speaker background */}
       <BackgroundEditor
         terms={terms}
@@ -324,7 +325,7 @@ function AiMemory({ onTermsAdded }: Readonly<{ onTermsAdded: (terms: AddedTerm[]
   else if (notCondensed) why = t("onboarding.context.memory.failed", { error: notCondensed.why.failed });
 
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex min-h-0 flex-1 flex-col gap-1.5">
       <div className="flex items-center justify-between gap-2">
         <span className="flex items-center gap-1.5">
           <Sparkles className="size-3.5 text-primary" />
@@ -355,8 +356,9 @@ function AiMemory({ onTermsAdded }: Readonly<{ onTermsAdded: (terms: AddedTerm[]
         </p>
       ) : (
         lines.length > 0 && (
-          // About three lines tall, as drawn; longer memory scrolls inside.
-          <ul className="flex max-h-[92px] flex-col gap-0.5 overflow-y-auto rounded-[8px] bg-[#f5f7f9] p-3 text-[13px] leading-[21.125px] text-[#333] dark:bg-muted dark:text-foreground">
+          // Takes the rest of the dialog's height (never under about three
+          // lines); a longer memory scrolls inside it.
+          <ul className="flex min-h-[92px] flex-1 flex-col gap-0.5 overflow-y-auto rounded-[8px] bg-[#f5f7f9] p-3 text-[13px] leading-[21.125px] text-[#333] dark:bg-muted dark:text-foreground">
             {lines.map((line, i) => (
               <li key={`${i}:${line}`} className="flex gap-2">
                 <span>•</span>
