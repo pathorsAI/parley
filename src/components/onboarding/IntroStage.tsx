@@ -87,7 +87,7 @@ export function IntroStage() {
   const manifest = sampleManifest(language);
 
   return (
-    <section className="flex flex-col gap-3" aria-label={t("onboarding.stage.aria")}>
+    <section className="flex flex-col gap-4" aria-label={t("onboarding.stage.aria")}>
       <StepRow beat={beat} reduced={reduced} />
 
       <div className="relative flex h-[184px] overflow-hidden rounded-lg border bg-background" data-testid="intro-stage">
@@ -100,7 +100,7 @@ export function IntroStage() {
           cardTitle={manifest.suggestion.title}
         />
         <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex h-8 shrink-0 items-center justify-between border-b px-2.5">
+          <div className="flex h-[41px] shrink-0 items-center justify-between border-b px-2.5">
             {reached("record") ? (
               <span
                 className={cn(
@@ -140,6 +140,53 @@ export function IntroStage() {
 }
 
 /**
+ * The welcome screen's backdrop: a row of soft blue bars hanging from the top
+ * edge, tallest at the sides, fading into the dialog. Decoration only — the
+ * colours are the artwork's, not theme tokens; each bar fades to the dialog's
+ * own background, so it sits right in either theme. The first column is left
+ * empty, as drawn.
+ */
+const HERO_BARS: readonly ({ h: number; color: string; opacity?: number; inner?: { h: number; color: string; opacity: number } } | null)[] = [
+  null,
+  { h: 199, color: "#1469d4" },
+  { h: 155, color: "#1979da" },
+  { h: 123, color: "#1d86e0" },
+  { h: 92, color: "#2191e4" },
+  { h: 75, color: "#2191e4", opacity: 0.9 },
+  { h: 46, color: "#2aacef", opacity: 0.8, inner: { h: 30, color: "#2db6f3", opacity: 0.7 } },
+  { h: 46, color: "#2aacef", opacity: 0.8 },
+  { h: 75, color: "#259de9", opacity: 0.9 },
+  { h: 92, color: "#2191e4" },
+  { h: 123, color: "#1d86e0" },
+  { h: 155, color: "#1979da" },
+  { h: 199, color: "#1469d4" },
+];
+
+const fade = (color: string) => `linear-gradient(to bottom, ${color}, var(--muted))`;
+
+export function IntroHero() {
+  return (
+    <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 flex h-[200px] opacity-80 blur-[5px]">
+      {HERO_BARS.map((bar, i) => (
+        <div key={i} className="relative flex-1">
+          {bar && (
+            <>
+              <div className="absolute inset-x-0 top-0" style={{ height: bar.h, background: fade(bar.color), opacity: bar.opacity }} />
+              {bar.inner && (
+                <div
+                  className="absolute inset-x-0 top-0"
+                  style={{ height: bar.inner.h, background: fade(bar.inner.color), opacity: bar.inner.opacity }}
+                />
+              )}
+            </>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
  * The four steps as a row, each just a label over a progress bar: upcoming
  * (muted), current (blue, its bar fills over the step), done (checked, full). It lands first, on its own, before the demo starts.
  */
@@ -154,7 +201,7 @@ function StepRow({ beat, reduced }: Readonly<{ beat: IntroBeatId; reduced: boole
           <li
             key={id}
             aria-current={state === "current" ? "step" : undefined}
-            className={cn("flex flex-col gap-1.5", !reduced && "ob-rise")}
+            className={cn("flex flex-col gap-2.5", !reduced && "ob-rise")}
             style={reduced ? undefined : { animationDelay: `${i * OVERVIEW_STAGGER_MS}ms` }}
           >
             <span className="flex items-center gap-1.5 text-xs font-medium">
@@ -229,14 +276,14 @@ function TranscriptLines({
   const elapsed = useElapsed(running, instant, schedule.endMs + LINE_GAP_MS);
 
   return (
-    <div className={cn("flex min-h-0 flex-col gap-1.5 overflow-hidden px-3 py-2", className)}>
+    <div className={cn("flex min-h-0 flex-col gap-2 overflow-hidden px-3 py-2.5", className)}>
       {lines.map((line, i) => {
         const shown = Math.max(0, Math.floor((elapsed - schedule.starts[i]) / schedule.msPerChar));
         if (!running && !instant) return null;
         if (shown <= 0) return null;
         const done = shown >= line.text.length;
         return (
-          <div key={line.id} className="flex flex-col">
+          <div key={line.id} className="flex flex-col gap-0.5">
             {/* The speaker is named once the line is in — the order a live
                 transcript resolves it. */}
             <span
@@ -248,7 +295,7 @@ function TranscriptLines({
             >
               {line.speaker}
             </span>
-            <span className="line-clamp-2 text-[11px] leading-snug text-foreground/90">
+            <span className="line-clamp-2 text-[11px] leading-snug text-foreground/70">
               {line.text.slice(0, shown)}
             </span>
           </div>

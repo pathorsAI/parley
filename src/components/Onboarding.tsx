@@ -23,7 +23,7 @@ import { beginMeeting } from "../lib/meeting/start";
 import { loadSampleRecording } from "../lib/onboarding/sample";
 import { openRecording } from "./home/GettingStarted";
 import { TranscribingPulse, useTranscribingPulse } from "./onboarding/TranscribingPulse";
-import { IntroStage } from "./onboarding/IntroStage";
+import { IntroHero, IntroStage } from "./onboarding/IntroStage";
 import { ChoiceRow } from "./onboarding/ChoiceRow";
 import { OrgStep, type BeforeNext } from "./onboarding/OrgStep";
 import { MicStep } from "./onboarding/MicStep";
@@ -31,6 +31,7 @@ import { ContextStep } from "./onboarding/ContextStep";
 import { mergeTerms, type AddedTerm } from "../lib/onboarding/micCheck";
 import { useI18n, LANGUAGE_OPTIONS } from "../i18n";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { PasswordInput } from "@/components/ui/password-input";
 import {
@@ -237,12 +238,30 @@ export function Onboarding() {
 
   const micOk = perms?.microphone === "authorized";
   const systemAudioOk = perms?.systemAudio === "granted";
-  const nextLabel = current === "account" && !cloudAuth ? t("onboarding.next.noLogin") : t("onboarding.next");
+  const intro = current === "intro";
+  let nextLabel = t("onboarding.next");
+  if (intro) nextLabel = t("onboarding.start");
+  else if (current === "account" && !cloudAuth) nextLabel = t("onboarding.next.noLogin");
+  const skipTitle = skipBlocked && gateBlock ? t(GATE_HINT[gateBlock]) : t("onboarding.skip");
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6">
-      <div className="flex max-h-[88vh] w-full max-w-lg flex-col rounded-xl border bg-background shadow-2xl">
-        {/* Header */}
+      <div
+        className={cn(
+          "relative flex max-h-[88vh] w-full flex-col overflow-hidden rounded-xl border shadow-2xl",
+          intro ? "max-w-[560px] bg-muted" : "max-w-lg bg-background",
+        )}
+      >
+        {/* The welcome screen has no title bar: a hero, its title in the body,
+            and only the language in the corner. Skip moves to the footer. */}
+        {intro ? (
+          <>
+            <IntroHero />
+            <div className="relative flex h-15 shrink-0 items-center justify-end px-5">
+              <LanguageMenu onHero />
+            </div>
+          </>
+        ) : (
         <div className="flex items-center justify-between border-b px-5 py-3">
           <span className="text-sm font-semibold">{t("onboarding.title")}</span>
           <div className="flex items-center gap-3">
@@ -252,7 +271,7 @@ export function Onboarding() {
             </span>
             {/* The tooltip sits on a wrapper: a disabled button swallows the
                 hover that would show its own title. */}
-            <span title={skipBlocked && gateBlock ? t(GATE_HINT[gateBlock]) : t("onboarding.skip")}>
+            <span title={skipTitle}>
               <button
                 type="button"
                 className="text-muted-foreground hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
@@ -265,12 +284,13 @@ export function Onboarding() {
             </span>
           </div>
         </div>
+        )}
 
         {/* Body */}
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
-          {current === "intro" && (
-            <div className="flex flex-col gap-3">
-              <h2 className="text-lg font-semibold tracking-tight">{t("onboarding.intro.title")}</h2>
+        <div className={cn("relative min-h-0 flex-1 overflow-y-auto", intro ? "px-6 pt-[63px] pb-16" : "px-5 py-5")}>
+          {intro && (
+            <div className="flex flex-col gap-9">
+              <h2 className="text-center text-2xl leading-[1.2] font-semibold">{t("onboarding.intro.welcome")}</h2>
               {/* The UI assembles itself: pill, transcript, folder, plug —
                   one caption per beat. "Both sides of the conversation" holds
                   on both desktop platforms (macOS process tap, Windows WASAPI
@@ -404,12 +424,19 @@ export function Onboarding() {
 
         {/* Footer nav — the last step ends through its own two buttons above. */}
         {current !== "done" && (
-          <div className="flex items-start justify-between border-t px-5 py-3">
-            {/* Nothing to go back to on the first step; the empty span keeps
-                Next on the right. */}
-            {index === 0 ? (
-              <span />
-            ) : (
+          <div className={cn("relative flex items-start justify-between border-t px-5", intro ? "py-4" : "py-3")}>
+            {/* Nothing to go back to on the first step: the welcome screen
+                offers Skip there instead; otherwise an empty span keeps Next
+                on the right. */}
+            {intro && (
+              <span title={skipTitle}>
+                <Button variant="ghost" size="sm" className="h-8 text-xs" disabled={skipBlocked} onClick={finish}>
+                  {t("onboarding.skip")}
+                </Button>
+              </span>
+            )}
+            {!intro && index === 0 && <span />}
+            {index > 0 && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -449,24 +476,38 @@ export function Onboarding() {
 }
 
 /** The UI language, from any step: it also sets the report language. */
-function LanguageMenu() {
+function LanguageMenu({ onHero = false }: Readonly<{ onHero?: boolean }>) {
   const { t } = useI18n();
   const language = useStore((s) => s.settings.language);
   const patch = useStore((s) => s.updateSettings);
-  const currentLabel = LANGUAGE_OPTIONS.find((l) => l.value === language)?.nativeLabel ?? language;
+  const option = LANGUAGE_OPTIONS.find((l) => l.value === language);
+  const currentLabel = option?.nativeLabel ?? language;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-7 gap-1.5 px-2 text-xs"
-          aria-label={`${t("onboarding.language.label")}: ${currentLabel}`}
-        >
-          <Globe className="size-3.5 text-muted-foreground" />
-          {currentLabel}
-          <ChevronDown className="size-3 text-muted-foreground" />
-        </Button>
+        {/* Over the welcome hero: white on the blue, short label, no chrome. */}
+        {onHero ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1.5 px-2 text-xs text-white hover:bg-white/15 hover:text-white"
+            aria-label={`${t("onboarding.language.label")}: ${currentLabel}`}
+          >
+            <Globe className="size-3.5" />
+            {option?.shortLabel ?? language}
+          </Button>
+        ) : (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1.5 px-2 text-xs"
+            aria-label={`${t("onboarding.language.label")}: ${currentLabel}`}
+          >
+            <Globe className="size-3.5 text-muted-foreground" />
+            {currentLabel}
+            <ChevronDown className="size-3 text-muted-foreground" />
+          </Button>
+        )}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-44">
         {LANGUAGE_OPTIONS.map((lang) => (

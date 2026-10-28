@@ -2,9 +2,16 @@ import type { AppLanguage } from "../lib/types";
 
 export type Dict = Record<string, string>;
 
-export const LANGUAGE_OPTIONS: { value: AppLanguage; label: string; nativeLabel: string; flag: string }[] = [
-  { value: "zh-TW", label: "Traditional Chinese", nativeLabel: "繁體中文", flag: "tw" },
-  { value: "en", label: "English", nativeLabel: "English", flag: "us" },
+export const LANGUAGE_OPTIONS: {
+  value: AppLanguage;
+  label: string;
+  nativeLabel: string;
+  /** For tight spots, like the welcome screen's corner. */
+  shortLabel: string;
+  flag: string;
+}[] = [
+  { value: "zh-TW", label: "Traditional Chinese", nativeLabel: "繁體中文", shortLabel: "繁中", flag: "tw" },
+  { value: "en", label: "English", nativeLabel: "English", shortLabel: "EN", flag: "us" },
 ];
 
 export const zhTW = {
@@ -12,14 +19,15 @@ export const zhTW = {
   "onboarding.skip": "略過",
   "onboarding.back": "上一步",
   "onboarding.next": "下一步",
-  "onboarding.intro.title": "錄下會議，然後交給你已經在用的 AI",
+  "onboarding.intro.welcome": "歡迎使用 Parley！",
+  "onboarding.start": "開始",
   "onboarding.stage.aria": "Parley 怎麼運作",
   "onboarding.stage.recording": "錄音中",
   "onboarding.stage.overview": "四個步驟，從開會到交給 AI。",
   "onboarding.stage.step.record": "錄音",
-  "onboarding.stage.step.transcript": "轉文字",
+  "onboarding.stage.step.transcript": "即時轉錄",
   "onboarding.stage.step.folder": "歸檔",
-  "onboarding.stage.step.mcp": "交給 AI",
+  "onboarding.stage.step.mcp": "AI 分析與摘要",
   "onboarding.stage.record": "Parley 把你和對方的聲音同時錄下來。",
   "onboarding.stage.transcript": "即時轉成文字，標出誰在說話。",
   "onboarding.stage.folder": "之後一個客戶一個資料夾。",
@@ -1464,14 +1472,15 @@ export const en = {
   "onboarding.skip": "Skip",
   "onboarding.back": "Back",
   "onboarding.next": "Next",
-  "onboarding.intro.title": "Record the meeting. Then hand it to the AI you already use.",
+  "onboarding.intro.welcome": "Welcome to Parley!",
+  "onboarding.start": "Get started",
   "onboarding.stage.aria": "How Parley works",
   "onboarding.stage.recording": "Recording",
   "onboarding.stage.overview": "Four steps, from the meeting to your AI.",
   "onboarding.stage.step.record": "Record",
-  "onboarding.stage.step.transcript": "Transcribe",
+  "onboarding.stage.step.transcript": "Live transcript",
   "onboarding.stage.step.folder": "File",
-  "onboarding.stage.step.mcp": "Hand to AI",
+  "onboarding.stage.step.mcp": "AI summary",
   "onboarding.stage.record": "Parley records both sides of the conversation.",
   "onboarding.stage.transcript": "It transcribes live and labels who is speaking.",
   "onboarding.stage.folder": "Afterwards, one customer, one folder.",
