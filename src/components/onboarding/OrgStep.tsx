@@ -85,7 +85,6 @@ export function OrgStep({ setBeforeNext }: Readonly<{ setBeforeNext: (fn: Before
 
   return (
     <div className="flex flex-col gap-3">
-      <h2 className="text-base font-semibold tracking-tight">{t("onboarding.org.title")}</h2>
 
       {loadError ? (
         <div className="flex items-center gap-3 rounded-lg border border-warning-border bg-warning px-3 py-2.5">

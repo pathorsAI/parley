@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, Globe, Loader2, LogIn, Mic, Volume2, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Check, ChevronLeft, ChevronRight, Globe, Loader2, LogIn, Mic, UserRoundCheck, UsersRound, Volume2 } from "lucide-react";
 import { useStore } from "../lib/store";
 import { isMac, isWindows } from "../lib/platform";
 import { isTauri } from "../lib/tauriEvents";
@@ -71,6 +71,28 @@ type StepId = "intro" | "account" | "org" | "model" | "perms" | "mic" | "context
 // whether the mic is actually allowed (the backend reads the consent store) and
 // sends the user to the exact pane that flips it (ms-settings:privacy-microphone).
 const ALL_STEPS: StepId[] = ["intro", "account", "org", "model", "perms", "mic", "context", "done"];
+
+/** Each step's title, shown in the header (the welcome screen has its own). */
+function stepTitle(step: StepId): TranslationKey {
+  switch (step) {
+    case "intro":
+      return "onboarding.title";
+    case "account":
+      return "onboarding.account.title";
+    case "org":
+      return "onboarding.org.title";
+    case "model":
+      return "onboarding.model.title";
+    case "perms":
+      return isMac() ? "onboarding.perms.title" : "onboarding.perms.title.windows";
+    case "mic":
+      return "onboarding.mic.title";
+    case "context":
+      return "onboarding.context.title";
+    case "done":
+      return "onboarding.done.title";
+  }
+}
 const MODEL_STEP = ALL_STEPS.indexOf("model");
 /** The steps of the four-step wizard that `onboardingStep` indexed. */
 const LEGACY_STEPS: StepId[] = ["intro", "account", "perms", "done"];
@@ -162,7 +184,7 @@ export function Onboarding() {
   const local = useLocalSttModels(usesLocalModel(settings.transcriptionProvider));
   const gateBlock = accountGateBlock(settings, !!cloudAuth, local);
   const ready = gateBlock === null;
-  // Neither Next on the model step nor the header X may get past the gate:
+  // Neither Next on the model step nor the welcome screen's Skip may get past the gate:
   // skipping used to land users in a mock recorder that played a fake
   // transcript and saved nothing, so the first meeting silently failed.
   const nextBlocked = current === "model" && !ready;
@@ -239,9 +261,11 @@ export function Onboarding() {
   const micOk = perms?.microphone === "authorized";
   const systemAudioOk = perms?.systemAudio === "granted";
   const intro = current === "intro";
-  let nextLabel = t("onboarding.next");
-  if (intro) nextLabel = t("onboarding.start");
-  else if (current === "account" && !cloudAuth) nextLabel = t("onboarding.next.noLogin");
+  const nextLabel = intro ? t("onboarding.start") : t("onboarding.next");
+  // Signed out, the sign-in step is a choice between two cards, each with its
+  // own button, so it has no footer. Signed in (back from a later step), it
+  // does: there is nothing left to choose, only Back and Next.
+  const showFooter = current !== "done" && !(current === "account" && !cloudAuth);
   const skipTitle = skipBlocked && gateBlock ? t(GATE_HINT[gateBlock]) : t("onboarding.skip");
 
   return (
@@ -249,9 +273,8 @@ export function Onboarding() {
       <div
         className={cn(
           "relative flex max-h-[88vh] w-full flex-col overflow-hidden rounded-xl shadow-2xl",
-          intro
-            ? "max-w-[560px] bg-(--ob-hero-bg) [--ob-hero-bg:#f5f5f5] dark:[--ob-hero-bg:var(--muted)]"
-            : "max-w-lg border bg-background",
+          "max-w-[560px]",
+          intro ? "bg-(--ob-hero-bg) [--ob-hero-bg:#f5f5f5] dark:[--ob-hero-bg:var(--muted)]" : "bg-background",
         )}
       >
         {/* The welcome screen has no title bar: a hero, its title in the body,
@@ -264,28 +287,13 @@ export function Onboarding() {
             </div>
           </>
         ) : (
-        <div className="flex items-center justify-between border-b px-5 py-3">
-          <span className="text-sm font-semibold">{t("onboarding.title")}</span>
-          <div className="flex items-center gap-3">
+          // Every later step: its own title, the language, and a progress bar
+          // along the bottom edge — one segment per step after the welcome.
+          <div className="relative flex h-15 shrink-0 items-center justify-between px-5">
+            <h2 className="text-sm font-semibold text-primary">{t(stepTitle(current))}</h2>
             <LanguageMenu />
-            <span className="text-[11px] tabular-nums text-muted-foreground">
-              {index + 1} / {steps.length}
-            </span>
-            {/* The tooltip sits on a wrapper: a disabled button swallows the
-                hover that would show its own title. */}
-            <span title={skipTitle}>
-              <button
-                type="button"
-                className="text-muted-foreground hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
-                aria-label={t("onboarding.skip")}
-                disabled={skipBlocked}
-                onClick={finish}
-              >
-                <X className="size-4" />
-              </button>
-            </span>
+            <StepProgress reached={index} total={steps.length - 1} />
           </div>
-        </div>
         )}
 
         {/* Body */}
@@ -301,7 +309,14 @@ export function Onboarding() {
             </div>
           )}
 
-          {current === "account" && <AccountStep onSignedIn={() => goTo("org")} />}
+          {current === "account" && (
+            <AccountStep
+              onSignedIn={() => goTo("org")}
+              onContinue={() => {
+                next().catch((error) => log.error("onboarding: next failed", { error: String(error) }));
+              }}
+            />
+          )}
 
           {current === "org" && <OrgStep setBeforeNext={setBeforeNext} />}
 
@@ -311,9 +326,6 @@ export function Onboarding() {
 
           {current === "perms" && (
             <div className="flex flex-col gap-3">
-              <h2 className="text-base font-semibold tracking-tight">
-                {t(isMac() ? "onboarding.perms.title" : "onboarding.perms.title.windows")}
-              </h2>
               {/* macOS needs no lead-in: each row says whose voice it is for.
                   Windows keeps one line: it asks consent for the microphone
                   alone, and its system-audio row is checked without the user
@@ -387,7 +399,6 @@ export function Onboarding() {
               <div className="flex size-12 items-center justify-center rounded-full bg-success text-success-foreground">
                 <Check className="size-6" />
               </div>
-              <h2 className="text-lg font-semibold tracking-tight">{t("onboarding.done.title")}</h2>
               <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">{t("onboarding.done.body")}</p>
               <div className="mt-2 flex flex-col items-center gap-2">
                 {samplePulse.active ? (
@@ -425,8 +436,8 @@ export function Onboarding() {
         </div>
 
         {/* Footer nav — the last step ends through its own two buttons above. */}
-        {current !== "done" && (
-          <div className={cn("relative flex items-start justify-between border-t px-5", intro ? "py-4" : "py-3")}>
+        {showFooter && (
+          <div className="relative flex items-start justify-between border-t px-5 py-4">
             {/* Nothing to go back to on the first step: the welcome screen
                 offers Skip there instead; otherwise an empty span keeps Next
                 on the right. */}
@@ -487,29 +498,16 @@ function LanguageMenu({ onHero = false }: Readonly<{ onHero?: boolean }>) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        {/* Over the welcome hero: white on the blue, short label, no chrome. */}
-        {onHero ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 gap-1.5 px-2 text-xs text-white hover:bg-white/15 hover:text-white"
-            aria-label={`${t("onboarding.language.label")}: ${currentLabel}`}
-          >
-            <Globe className="size-3.5" />
-            {option?.shortLabel ?? language}
-          </Button>
-        ) : (
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 gap-1.5 px-2 text-xs"
-            aria-label={`${t("onboarding.language.label")}: ${currentLabel}`}
-          >
-            <Globe className="size-3.5 text-muted-foreground" />
-            {currentLabel}
-            <ChevronDown className="size-3 text-muted-foreground" />
-          </Button>
-        )}
+        {/* Short label, no chrome; white over the welcome hero. */}
+        <Button
+          variant="ghost"
+          size="sm"
+          className={cn("h-7 gap-1.5 px-2 text-xs", onHero && "text-white hover:bg-white/15 hover:text-white")}
+          aria-label={`${t("onboarding.language.label")}: ${currentLabel}`}
+        >
+          <Globe className="size-3.5" />
+          {option?.shortLabel ?? language}
+        </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-44">
         {LANGUAGE_OPTIONS.map((lang) => (
@@ -532,7 +530,7 @@ function LanguageMenu({ onHero = false }: Readonly<{ onHero?: boolean }>) {
  * success both providers default to "parley" and the wizard moves on to the
  * organization step. Not signing in is the footer's Next, relabelled.
  */
-function AccountStep({ onSignedIn }: Readonly<{ onSignedIn: () => void }>) {
+function AccountStep({ onSignedIn, onContinue }: Readonly<{ onSignedIn: () => void; onContinue: () => void }>) {
   const { t } = useI18n();
   const patch = useStore((s) => s.updateSettings);
   const cloudAuth = useStore((s) => s.cloudAuth);
@@ -567,42 +565,111 @@ function AccountStep({ onSignedIn }: Readonly<{ onSignedIn: () => void }>) {
     }
   }
 
-  return (
-    <div className="flex flex-col gap-3">
-      <h2 className="text-base font-semibold tracking-tight">{t("onboarding.account.title")}</h2>
-      <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.account.body")}</p>
+  if (cloudAuth) {
+    return (
+      <div className="flex items-center gap-2 rounded-lg border border-success-border bg-success px-3 py-2.5 text-sm text-success-foreground">
+        <Check className="size-4 shrink-0" />
+        {t("onboarding.account.signedInAs", { email: cloudAuth.user.email })}
+      </div>
+    );
+  }
 
-      {cloudAuth ? (
-        <div className="flex items-center gap-2 rounded-lg border border-success-border bg-success px-3 py-2.5 text-sm text-success-foreground">
-          <Check className="size-4 shrink-0" />
-          {t("onboarding.account.signedInAs", { email: cloudAuth.user.email })}
+  return (
+    <div className="flex flex-col gap-6">
+      <section className="relative flex flex-col items-end gap-8 overflow-hidden bg-linear-to-b from-[#e1f2fd] to-white p-5 dark:from-primary/15 dark:to-transparent">
+        <div className="flex w-full flex-col gap-6">
+          <ChoiceTag icon={<UserRoundCheck className="size-3.5" />} primary>
+            {t("onboarding.account.member.tag")}
+          </ChoiceTag>
+          <p className="text-sm leading-relaxed">{t("onboarding.account.body")}</p>
         </div>
-      ) : (
-        <>
-          <div className="flex flex-col items-start gap-1.5">
-            <Button
-              size="sm"
-              className="h-9 gap-2 text-xs"
-              disabled={signingIn || !isTauri()}
-              onClick={() => doSignIn().catch((error) => log.error("onboarding: sign-in failed", { error: String(error) }))}
-            >
-              {signingIn ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
-              {signingIn ? t("settings.account.signingIn") : t("settings.account.signInGoogle")}
-            </Button>
-            <p className="text-[11px] text-muted-foreground">{t("onboarding.account.orgNext")}</p>
-            {error && (
-              <p className="rounded-md bg-danger px-2.5 py-1.5 text-[11px] text-danger-foreground">
-                {t("onboarding.login.failed", { error })}
-              </p>
-            )}
-          </div>
-          {/* The other way through: the footer's Next, relabelled. */}
-          <div className="mt-2 flex flex-col gap-1 border-t pt-4">
-            <h3 className="text-sm font-medium">{t("onboarding.account.noLogin.title")}</h3>
-            <p className="text-xs leading-relaxed text-muted-foreground">{t("onboarding.account.noLogin.body")}</p>
-          </div>
-        </>
+        <div className="flex flex-col items-end gap-1.5">
+          <Button
+            size="sm"
+            className="relative h-8 gap-2 px-2.5 text-xs"
+            disabled={signingIn || !isTauri()}
+            onClick={() => doSignIn().catch((error) => log.error("onboarding: sign-in failed", { error: String(error) }))}
+          >
+            {signingIn ? t("settings.account.signingIn") : t("onboarding.account.member.cta")}
+            {signingIn ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
+          </Button>
+          {error && (
+            <p className="relative rounded-md bg-danger px-2.5 py-1.5 text-[11px] text-danger-foreground">
+              {t("onboarding.login.failed", { error })}
+            </p>
+          )}
+        </div>
+        <img
+          src="/onboarding/signin-member-lines.svg"
+          alt=""
+          aria-hidden
+          className="pointer-events-none absolute top-0 left-[-444px] h-[200px] w-[967px] max-w-none"
+        />
+      </section>
+
+      <div className="flex items-center gap-4 text-xs text-muted-foreground" aria-hidden>
+        <span className="h-px flex-1 bg-[#e6e6e6] dark:bg-border" />
+        {t("onboarding.account.or")}
+        <span className="h-px flex-1 bg-[#e6e6e6] dark:bg-border" />
+      </div>
+
+      <section className="relative flex flex-col items-end gap-8 overflow-hidden bg-linear-to-b from-[#f5f5f5] to-[#fafafa] p-5 dark:from-muted dark:to-muted/60">
+        <div className="flex w-full flex-col gap-6">
+          <ChoiceTag icon={<UsersRound className="size-3.5" />}>{t("onboarding.account.guest.tag")}</ChoiceTag>
+          <p className="text-sm leading-relaxed">{t("onboarding.account.guest.body")}</p>
+        </div>
+        <div aria-hidden className="pointer-events-none absolute top-[19%] right-[-48.88%] bottom-[22.74%] left-0">
+          <img src="/onboarding/signin-guest-lines.svg" alt="" className="size-full max-w-none" />
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="relative h-8 gap-2 bg-background px-2.5 text-xs hover:bg-background/80"
+          onClick={onContinue}
+        >
+          {t("onboarding.account.guest.cta")}
+          <ChevronRight className="size-3.5" />
+        </Button>
+      </section>
+    </div>
+  );
+}
+
+/** The label on a sign-in choice: a soft pill with an icon. */
+function ChoiceTag({ icon, primary = false, children }: Readonly<{ icon: ReactNode; primary?: boolean; children: ReactNode }>) {
+  return (
+    <span
+      className={cn(
+        "inline-flex w-fit items-center gap-2 rounded-full bg-white/70 px-3 py-1 text-sm leading-[1.3] dark:bg-white/10",
+        primary && "text-primary",
       )}
+    >
+      {icon}
+      {children}
+    </span>
+  );
+}
+
+/**
+ * The steps after the welcome screen as segments along the header's bottom
+ * edge, filled up to and including the current one.
+ */
+function StepProgress({ reached, total }: Readonly<{ reached: number; total: number }>) {
+  return (
+    <div
+      role="progressbar"
+      aria-valuemin={1}
+      aria-valuemax={total}
+      aria-valuenow={reached}
+      aria-valuetext={`${reached} / ${total}`}
+      className="absolute inset-x-0 bottom-0 flex gap-0.5"
+    >
+      {Array.from({ length: total }, (_, i) => (
+        <span
+          key={`segment-${i + 1}`}
+          className={cn("h-px flex-1", i < reached ? "bg-primary" : "bg-[#e6e6e6] dark:bg-border")}
+        />
+      ))}
     </div>
   );
 }
@@ -682,7 +749,6 @@ function ModelStep({
 
   return (
     <div className="flex flex-col gap-3">
-      <h2 className="text-base font-semibold tracking-tight">{t("onboarding.model.title")}</h2>
       {signedIn ? (
         <div role="radiogroup" aria-label={t("onboarding.model.title")} className="flex flex-col gap-2">
           <ChoiceRow

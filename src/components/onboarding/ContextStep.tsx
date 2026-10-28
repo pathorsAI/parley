@@ -61,7 +61,6 @@ export function ContextStep({
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1.5">
-        <h2 className="text-base font-semibold tracking-tight">{t("onboarding.context.title")}</h2>
         <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.context.body")}</p>
       </div>
 
