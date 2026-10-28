@@ -362,68 +362,68 @@ export function Onboarding() {
           )}
 
           {current === "perms" && (
-            <div className="flex flex-col gap-3">
-              {/* macOS needs no lead-in: each row says whose voice it is for.
-                  Windows keeps one line: it asks consent for the microphone
-                  alone, and its system-audio row is checked without the user
-                  doing anything (loopback capture needs no grant). */}
-              {!isMac() && (
-                <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.perms.body.windows")}</p>
-              )}
+            <div className="flex flex-col gap-6">
+              {/* Windows says something different: it asks consent for the
+                  microphone alone, and its system-audio row is checked without
+                  the user doing anything (loopback capture needs no grant). */}
+              <p className="text-sm leading-relaxed text-[#333] dark:text-foreground">
+                {t(isMac() ? "onboarding.perms.body" : "onboarding.perms.body.windows")}
+              </p>
 
-              <PermRow
-                icon={<Mic className="size-4" />}
-                label={t("onboarding.perms.mic")}
-                ok={micOk}
-                actionLabel={t(isMac() ? "onboarding.perms.grant" : "settings.permissions.openSettings")}
-                onAction={async () => {
-                  // Not yet determined → the native prompt is enough; only jump
-                  // to System Settings when it was explicitly denied (the OS
-                  // won't re-prompt in that case). Windows never prompts at all
-                  // — request_microphone() is a stub there — so its only useful
-                  // click is the deep link into the privacy pane.
-                  if (!isMac() || perms?.microphone === "denied") {
-                    await ipc.openPrivacySettings({ pane: "microphone" }).catch((error) =>
-                      log.warn("permissions: open microphone settings failed", { error: String(error) }),
-                    );
-                  } else {
-                    await ipc.requestMicrophone().catch((error) =>
-                      log.warn("permissions: microphone request failed", { error: String(error) }),
-                    );
-                  }
-                  await recheck();
-                }}
-              />
-              {/* macOS shows the row only where the tap exists (< 14.2
-                  reports unsupported). Windows always has it: loopback needs
-                  no consent, so the row is a ✓ whenever there is an output
-                  device to capture, and otherwise a link to Sound settings. */}
-              {((isMac() && perms?.systemAudio !== "unsupported") || isWindows()) && (
+              {/* No re-check button: the step polls (focus, visibility, every
+                  2 s), so a grant shows up on its own. */}
+              <div className="flex flex-col gap-3">
                 <PermRow
-                  icon={<Volume2 className="size-4" />}
-                  label={t(isMac() ? "onboarding.perms.systemAudio" : "onboarding.perms.systemAudio.windows")}
-                  ok={systemAudioOk}
+                  icon={<Mic className="size-4" />}
+                  label={t("onboarding.perms.mic")}
+                  art="top-[50.68%] right-[-38.88%] bottom-[-110.3%] left-[-10%]"
+                  ok={micOk}
                   actionLabel={t(isMac() ? "onboarding.perms.grant" : "settings.permissions.openSettings")}
                   onAction={async () => {
-                    // macOS: probes a real Core Audio process tap; the first
-                    // probe shows the "record system audio" consent prompt.
-                    // Windows: only checks for a default output device, and
-                    // when there is none the fix lives in Sound settings.
-                    const s = await ipc.probeSystemAudio().catch(() => null);
-                    if (s === "denied" || (!isMac() && s !== "granted")) {
-                      await ipc.openPrivacySettings({ pane: "system-audio" }).catch((error) =>
-                        log.warn("permissions: open system-audio settings failed", { error: String(error) }),
+                    // Not yet determined → the native prompt is enough; only jump
+                    // to System Settings when it was explicitly denied (the OS
+                    // won't re-prompt in that case). Windows never prompts at all
+                    // — request_microphone() is a stub there — so its only useful
+                    // click is the deep link into the privacy pane.
+                    if (!isMac() || perms?.microphone === "denied") {
+                      await ipc.openPrivacySettings({ pane: "microphone" }).catch((error) =>
+                        log.warn("permissions: open microphone settings failed", { error: String(error) }),
+                      );
+                    } else {
+                      await ipc.requestMicrophone().catch((error) =>
+                        log.warn("permissions: microphone request failed", { error: String(error) }),
                       );
                     }
                     await recheck();
                   }}
                 />
-              )}
-              {/* No re-check button: the step polls (focus, visibility, every
-                  2 s), so a grant shows up on its own. */}
-              <p className="text-[11px] text-muted-foreground">
-                {t(isMac() ? "onboarding.perms.autoHint" : "onboarding.perms.autoHint.windows")}
-              </p>
+                {/* macOS shows the row only where the tap exists (< 14.2
+                    reports unsupported). Windows always has it: loopback needs
+                    no consent, so the row is a ✓ whenever there is an output
+                    device to capture, and otherwise a link to Sound settings. */}
+                {((isMac() && perms?.systemAudio !== "unsupported") || isWindows()) && (
+                  <PermRow
+                    icon={<Volume2 className="size-4" />}
+                    art="top-[-64.38%] right-[-38.3%] bottom-[4.77%] left-[-10.58%]"
+                    label={t(isMac() ? "onboarding.perms.systemAudio" : "onboarding.perms.systemAudio.windows")}
+                    ok={systemAudioOk}
+                    actionLabel={t(isMac() ? "onboarding.perms.grant" : "settings.permissions.openSettings")}
+                    onAction={async () => {
+                      // macOS: probes a real Core Audio process tap; the first
+                      // probe shows the "record system audio" consent prompt.
+                      // Windows: only checks for a default output device, and
+                      // when there is none the fix lives in Sound settings.
+                      const s = await ipc.probeSystemAudio().catch(() => null);
+                      if (s === "denied" || (!isMac() && s !== "granted")) {
+                        await ipc.openPrivacySettings({ pane: "system-audio" }).catch((error) =>
+                          log.warn("permissions: open system-audio settings failed", { error: String(error) }),
+                        );
+                      }
+                      await recheck();
+                    }}
+                  />
+                )}
+              </div>
             </div>
           )}
 
@@ -951,29 +951,40 @@ function FieldLabel({ label, tag }: Readonly<{ label: string; tag: string }>) {
   );
 }
 
+/** One permission as a card, from the Figma permissions frame; `art` places its line art. */
 function PermRow({
   icon,
   label,
   ok,
   actionLabel,
   onAction,
+  art,
 }: Readonly<{
   icon: React.ReactNode;
   label: string;
   ok: boolean;
   actionLabel: string;
   onAction: () => void;
+  art: string;
 }>) {
   return (
-    <div className="flex items-center gap-3 rounded-lg border bg-muted/20 px-3 py-2.5">
-      <span className="text-muted-foreground">{icon}</span>
-      <span className="flex-1 text-sm">{label}</span>
+    <div className="relative flex items-center gap-3 overflow-hidden rounded-[8px] border border-[#e3e6ec] bg-[#f5f7f9]/20 p-5 text-[#333] dark:border-border dark:bg-muted/20 dark:text-foreground">
+      <div aria-hidden className={cn("pointer-events-none absolute", art)}>
+        <img src="/onboarding/org-solo-lines.svg" alt="" className="size-full max-w-none" />
+      </div>
+      <span className="relative">{icon}</span>
+      <span className="relative flex-1 text-sm">{label}</span>
       {ok ? (
-        <span className="flex items-center gap-1 text-xs text-success-foreground">
+        <span className="relative flex items-center gap-1 text-xs text-success-foreground">
           <Check className="size-3.5" />
         </span>
       ) : (
-        <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={onAction}>
+        <Button
+          variant="outline"
+          size="sm"
+          className="relative h-auto rounded-[8px] border-[#e3e6ec] bg-background px-3 py-1.5 text-[11px] text-[#333] dark:border-border dark:text-foreground"
+          onClick={onAction}
+        >
           {actionLabel}
         </Button>
       )}
