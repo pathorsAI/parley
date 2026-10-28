@@ -261,13 +261,15 @@ export function Onboarding() {
   const micOk = perms?.microphone === "authorized";
   const systemAudioOk = perms?.systemAudio === "granted";
   const intro = current === "intro";
-  const nextLabel = intro ? t("onboarding.start") : t("onboarding.next");
-  // Signed out, the sign-in step is a choice between two cards, each with its
-  // own button, and Back sits under them, so it has no footer; the dialog
-  // keeps the welcome screen's height and the cards share it. Signed in (back
-  // from a later step), it does: nothing left to choose, only Back and Next.
-  const accountChoice = current === "account" && !cloudAuth;
-  const showFooter = current !== "done" && !accountChoice;
+  // The sign-in step keeps the welcome screen's height and its card(s) fill
+  // it. Signed out it is a choice between two cards, each with its own
+  // button, and Back sits under them, so it has no footer. Signed in it
+  // confirms the account; from there the rest of setup is optional, so its
+  // footer is the welcome screen's: Skip, or Start the rest.
+  const account = current === "account";
+  const showFooter = current !== "done" && !(account && !cloudAuth);
+  const skipFooter = intro || (account && !!cloudAuth);
+  const nextLabel = skipFooter ? t("onboarding.start") : t("onboarding.next");
   const skipTitle = skipBlocked && gateBlock ? t(GATE_HINT[gateBlock]) : t("onboarding.skip");
 
   return (
@@ -276,7 +278,7 @@ export function Onboarding() {
         className={cn(
           "relative flex max-h-[88vh] w-full flex-col overflow-hidden rounded-xl shadow-2xl",
           "max-w-[560px]",
-          accountChoice && "h-[580px] max-h-[calc(100vh-3rem)]",
+          account && "h-[580px] max-h-[calc(100vh-3rem)]",
           intro ? "bg-(--ob-hero-bg) [--ob-hero-bg:#f5f5f5] dark:[--ob-hero-bg:var(--muted)]" : "bg-background",
         )}
       >
@@ -306,7 +308,7 @@ export function Onboarding() {
             intro ? "px-6 pt-[63px] pb-16" : "px-5 py-5",
             // The two sign-in cards fill whatever height there is; it only
             // scrolls if a minimum-size window can't hold their text.
-            accountChoice && "flex flex-col",
+            account && "flex flex-col",
           )}
         >
           {intro && (
@@ -322,7 +324,6 @@ export function Onboarding() {
 
           {current === "account" && (
             <AccountStep
-              onSignedIn={() => goTo("org")}
               onBack={() => goTo(steps[index - 1])}
               onContinue={() => {
                 next().catch((error) => log.error("onboarding: next failed", { error: String(error) }));
@@ -450,18 +451,16 @@ export function Onboarding() {
         {/* Footer nav — the last step ends through its own two buttons above. */}
         {showFooter && (
           <div className="relative flex items-start justify-between border-t px-5 py-4">
-            {/* Nothing to go back to on the first step: the welcome screen
-                offers Skip there instead; otherwise an empty span keeps Next
-                on the right. */}
-            {intro && (
+            {/* The welcome screen and the signed-in confirmation offer Skip
+                where Back would be. */}
+            {skipFooter && (
               <span title={skipTitle}>
                 <Button variant="ghost" size="sm" className="h-8 text-xs" disabled={skipBlocked} onClick={finish}>
                   {t("onboarding.skip")}
                 </Button>
               </span>
             )}
-            {!intro && index === 0 && <span />}
-            {index > 0 && (
+            {!skipFooter && index > 0 && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -542,11 +541,7 @@ function LanguageMenu({ onHero = false }: Readonly<{ onHero?: boolean }>) {
  * success both providers default to "parley" and the wizard moves on to the
  * organization step. Not signing in is the footer's Next, relabelled.
  */
-function AccountStep({
-  onSignedIn,
-  onBack,
-  onContinue,
-}: Readonly<{ onSignedIn: () => void; onBack: () => void; onContinue: () => void }>) {
+function AccountStep({ onBack, onContinue }: Readonly<{ onBack: () => void; onContinue: () => void }>) {
   const { t } = useI18n();
   const patch = useStore((s) => s.updateSettings);
   const cloudAuth = useStore((s) => s.cloudAuth);
@@ -569,11 +564,11 @@ function AccountStep({
       const { signInWithGoogle } = await import("../lib/cloud/client");
       await signInWithGoogle();
       // Still here → default to Parley's free hosted STT + LLM so the model
-      // step is already done (it can still be switched there), and move on.
-      // Gone → the session counts, but their choices and position stand.
+      // step is already done (it can still be switched there); the step then
+      // shows the signed-in confirmation. Gone → the session counts, but
+      // their choices and position stand.
       if (!mounted.current) return;
       patch({ llmProviders: { realtime: "parley", deep: "parley" }, transcriptionProvider: "parley" });
-      onSignedIn();
     } catch (e) {
       if (mounted.current) setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -583,10 +578,26 @@ function AccountStep({
 
   if (cloudAuth) {
     return (
-      <div className="flex items-center gap-2 rounded-lg border border-success-border bg-success px-3 py-2.5 text-sm text-success-foreground">
-        <Check className="size-4 shrink-0" />
-        {t("onboarding.account.signedInAs", { email: cloudAuth.user.email })}
-      </div>
+      <section className="relative flex min-h-fit flex-1 flex-col items-center justify-center overflow-hidden bg-linear-to-b from-[#e1f2fd] to-white p-5 dark:from-primary/15 dark:to-transparent">
+        <div className="flex w-full flex-col items-center gap-6">
+          <span className="inline-flex items-center gap-2 rounded-full bg-[#d9f7e5] px-3 py-1 text-sm leading-[1.3] text-[#006a3b] dark:bg-success dark:text-success-foreground">
+            <UserRoundCheck className="size-3.5" />
+            {cloudAuth.user.email}
+          </span>
+          <div className="flex w-full flex-col gap-1 text-center text-sm">
+            <p className="leading-relaxed font-medium text-primary">{t("onboarding.account.member.unlocked")}</p>
+            <p className="leading-[1.2] text-[#333]/70 dark:text-muted-foreground">
+              {t("onboarding.account.member.allowance")}
+            </p>
+          </div>
+        </div>
+        <img
+          src="/onboarding/signedin-member-lines.svg"
+          alt=""
+          aria-hidden
+          className="pointer-events-none absolute top-0 left-[-444px] h-[415px] w-[967px] max-w-none"
+        />
+      </section>
     );
   }
 
