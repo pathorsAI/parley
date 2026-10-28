@@ -14,7 +14,7 @@ import { runTimeline, typingSchedule, type Beat } from "./timeline";
  * pill, two transcript lines typing with speaker names, a recording flying
  * into a customer folder, the MCP plug lighting up. Only the current step's
  * part of the demo is at full strength, so there is one thing to look at. It
- * runs in about seven seconds and rests on its final frame; Next works at any
+ * runs in about ten seconds and rests on its final frame; Next works at any
  * time. Real component styles (the titlebar pill, sidebar rows, a library
  * row), not illustrations. Under reduced motion it shows the final frame.
  */
@@ -25,13 +25,13 @@ export type IntroBeatId = "overview" | IntroStepId | "ready";
 export const INTRO_STEPS: readonly IntroStepId[] = ["record", "transcript", "folder", "mcp"];
 
 export const INTRO_BEATS: readonly Beat<IntroBeatId>[] = [
-  // The row lands (~0.7 s) and holds a beat on its own before the demo starts.
+  // The row lands (~1 s) and holds a beat on its own before the demo starts.
   { id: "overview", at: 0 },
-  { id: "record", at: 1200 },
-  { id: "transcript", at: 2300 },
-  { id: "folder", at: 4300 },
-  { id: "mcp", at: 5600 },
-  { id: "ready", at: 6800 },
+  { id: "record", at: 1800 },
+  { id: "transcript", at: 3400 },
+  { id: "folder", at: 6400 },
+  { id: "mcp", at: 8300 },
+  { id: "ready", at: 10100 },
 ];
 const ORDER = INTRO_BEATS.map((b) => b.id);
 
@@ -42,17 +42,17 @@ export function stepDurationMs(id: IntroStepId): number {
 }
 
 /** The transcript beat's typing budget (two lines, whatever the language). */
-export const TRANSCRIPT_BUDGET_MS = 1600;
+export const TRANSCRIPT_BUDGET_MS = 2400;
 const TRANSCRIPT_LINES = 2;
-const LINE_GAP_MS = 160;
+const LINE_GAP_MS = 240;
 /** Inside the folder beat: when the recording card shows, and when it flies. */
-const CARD_IN_MS = 150;
-const CARD_FLY_AT_MS = 500;
-const CARD_FLY_MS = 600;
+const CARD_IN_MS = 225;
+const CARD_FLY_AT_MS = 750;
+const CARD_FLY_MS = 900;
 /** Inside the MCP beat: the plug lights up. */
-const PLUG_LIGHT_MS = 200;
+const PLUG_LIGHT_MS = 300;
 /** The overview row: each step lands this long after the one before. */
-const OVERVIEW_STAGGER_MS = 90;
+const OVERVIEW_STAGGER_MS = 135;
 
 const STEP_LABEL: Record<IntroStepId, TranslationKey> = {
   record: "onboarding.stage.step.record",

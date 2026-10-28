@@ -13,28 +13,28 @@ describe("intro beat schedule", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it("shows the four steps first, then walks record → transcript → folder → mcp, in under seven seconds", () => {
+  it("shows the four steps first, then walks record → transcript → folder → mcp, in about ten seconds", () => {
     const fired: [string, number][] = [];
     const t0 = Date.now();
     runTimeline(INTRO_BEATS, (id) => fired.push([id, Date.now() - t0]));
 
     vi.advanceTimersByTime(0);
     expect(fired).toEqual([["overview", 0]]);
-    vi.advanceTimersByTime(1199);
+    vi.advanceTimersByTime(1799);
     expect(fired).toHaveLength(1);
     vi.advanceTimersByTime(1);
-    expect(fired[fired.length - 1]).toEqual(["record", 1200]);
+    expect(fired[fired.length - 1]).toEqual(["record", 1800]);
 
     vi.runAllTimers();
     expect(fired.map(([id]) => id)).toEqual(["overview", "record", "transcript", "folder", "mcp", "ready"]);
-    expect(fired[fired.length - 1][1]).toBeLessThan(7000);
+    expect(fired[fired.length - 1][1]).toBeLessThanOrEqual(10500);
   });
 
   it("keeps every step short, and has one beat per step in the row", () => {
     expect(INTRO_STEPS.every((id) => INTRO_BEATS.some((b) => b.id === id))).toBe(true);
     for (const id of INTRO_STEPS) {
       expect(stepDurationMs(id)).toBeGreaterThan(0);
-      expect(stepDurationMs(id)).toBeLessThanOrEqual(2000);
+      expect(stepDurationMs(id)).toBeLessThanOrEqual(3000);
     }
   });
 
@@ -45,7 +45,7 @@ describe("intro beat schedule", () => {
   it("stops when cancelled (Next pressed mid-sequence)", () => {
     const fired: string[] = [];
     const cancel = runTimeline(INTRO_BEATS, (id) => fired.push(id));
-    vi.advanceTimersByTime(1600);
+    vi.advanceTimersByTime(2400);
     cancel();
     vi.runAllTimers();
     expect(fired).toEqual(["overview", "record"]);
@@ -69,7 +69,7 @@ describe("typingSchedule", () => {
   it("fits the sample's first two lines in both languages", () => {
     for (const lang of ["zh-TW", "en"] as const) {
       const lines = sampleManifest(lang).segments.slice(0, 2).map((x) => x.text.length);
-      const s = typingSchedule(lines, TRANSCRIPT_BUDGET_MS, 160, 22);
+      const s = typingSchedule(lines, TRANSCRIPT_BUDGET_MS, 240, 22);
       expect(s.endMs).toBeLessThanOrEqual(TRANSCRIPT_BUDGET_MS + 1e-6);
       expect(s.msPerChar).toBeLessThanOrEqual(22);
     }
