@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Loader2, Mic, RotateCcw, Square } from "lucide-react";
-import { useI18n } from "../../i18n";
+import { useI18n, type TranslationKey } from "../../i18n";
 import { useStore } from "../../lib/store";
 import { isTauri } from "../../lib/tauriEvents";
 import { log } from "../../lib/log";
@@ -26,8 +26,9 @@ import {
   type AddedTerm,
 } from "../../lib/onboarding/micCheck";
 import { appendBackground } from "../../lib/onboarding/memoryImport";
-import { LevelMeter } from "../LevelMeter";
+import { WaveformTrack } from "./WaveformTrack";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const DEFAULT_DEVICE = "__default__";
@@ -221,16 +222,16 @@ export function MicStep({ onTermsAdded }: Readonly<{ onTermsAdded: (terms: Added
   const busy = phase === "listening" || phase === "stopping" || phase === "saving";
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-6">
       <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.mic.body")}</p>
       <div className="flex flex-col gap-1.5">
-        <span className="text-xs text-muted-foreground">{t("onboarding.mic.device")}</span>
+        <span className="text-sm text-[#333] dark:text-foreground">{t("onboarding.mic.device")}</span>
         <Select
           value={inputDevice || DEFAULT_DEVICE}
           disabled={!desktop || busy}
           onValueChange={(v) => patch({ inputDevice: v === DEFAULT_DEVICE ? "" : v })}
         >
-          <SelectTrigger className="w-full">
+          <SelectTrigger className="h-10 w-full rounded-[8px] border-[#dadee5] dark:border-input">
             <SelectValue placeholder={t("settings.transcription.systemDefault")} />
           </SelectTrigger>
           <SelectContent>
@@ -244,45 +245,95 @@ export function MicStep({ onTermsAdded }: Readonly<{ onTermsAdded: (terms: Added
         </Select>
       </div>
 
-      <p className="rounded-lg bg-muted/50 px-3 py-2.5 text-[13px] leading-relaxed">{t("onboarding.mic.script")}</p>
-
-      <div className="flex items-center gap-2.5">
-        {phase === "listening" ? (
-          <Button variant="destructive" size="sm" className="h-8 gap-1.5" onClick={() => void stop()}>
-            <Square className="size-3" />
-            {t("onboarding.mic.stop")}
-          </Button>
-        ) : (
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 gap-1.5"
-            disabled={!desktop || busy}
-            onClick={() => {
-              start().catch((e) => {
-                log.warn("onboarding: mic check failed to start", { error: String(e) });
-                setError(t("onboarding.mic.failed", { error: String(e) }));
-                setPhase("error");
-              });
-            }}
+      <div className="flex flex-col gap-1.5">
+        <span className="text-sm text-[#333] dark:text-foreground">{t("onboarding.mic.introLabel")}</span>
+        <div className="relative flex flex-col gap-4 overflow-hidden rounded-[8px] border border-[#e3e6ec] bg-background p-5 dark:border-border">
+          {/* The line art steps back while the user speaks, so the waveform reads first. */}
+          <div
+            aria-hidden
+            className={cn(
+              "ob-transition pointer-events-none absolute top-[-3.7%] right-[-47.34%] bottom-[17.39%] left-[-1.54%]",
+              phase === "listening" && "opacity-70",
+            )}
           >
-            {phase === "idle" ? <Mic className="size-3.5" /> : <RotateCcw className="size-3.5" />}
-            {phase === "idle" ? t("onboarding.mic.start") : t("onboarding.mic.retry")}
-          </Button>
-        )}
-        <LevelMeter source={MIC_CHECK_SOURCE} className="h-2 flex-1" />
+            <img src="/onboarding/org-solo-lines.svg" alt="" className="size-full max-w-none" />
+          </div>
+
+          <p className="relative rounded-[10px] bg-[#f5f5f5] px-3 py-2.5 text-[13px] leading-[21.125px] text-[#333] dark:bg-muted dark:text-foreground">
+            <ScriptLine template={t("onboarding.mic.script")} />
+          </p>
+
+          <div className="relative flex items-center gap-2.5">
+            {phase === "listening" ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-auto gap-1.5 rounded-[8px] border-[#e3e6ec] bg-background px-2.5 py-2 text-sm font-medium text-recording hover:text-recording dark:border-border"
+                onClick={() => void stop()}
+              >
+                <Square className="size-3.5 fill-current" />
+                {t("onboarding.mic.stop")}
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-auto gap-1.5 rounded-[8px] border-[#e3e6ec] bg-background px-2.5 py-2 text-sm font-medium text-primary hover:text-primary dark:border-border"
+                disabled={!desktop || busy}
+                onClick={() => {
+                  start().catch((e) => {
+                    log.warn("onboarding: mic check failed to start", { error: String(e) });
+                    setError(t("onboarding.mic.failed", { error: String(e) }));
+                    setPhase("error");
+                  });
+                }}
+              >
+                {phase === "idle" ? <Mic className="size-3.5" /> : <RotateCcw className="size-3.5" />}
+                {phase === "idle" ? t("onboarding.mic.start") : t("onboarding.mic.retry")}
+              </Button>
+            )}
+            <WaveformTrack source={MIC_CHECK_SOURCE} running={phase === "listening"} className="h-9 flex-1" />
+          </div>
+
+          {text && (
+            <p className="relative text-[15px] leading-relaxed">
+              {text}
+              {phase === "listening" && <span className="ob-blink ml-0.5 text-primary">▍</span>}
+            </p>
+          )}
+
+          <MicStatus phase={phase} error={error} />
+        </div>
       </div>
-
-      {text && (
-        <p className="text-[15px] leading-relaxed">
-          {text}
-          {phase === "listening" && <span className="ob-blink ml-0.5 text-primary">▍</span>}
-        </p>
-      )}
-
-      <MicStatus phase={phase} error={error} />
       {!desktop && <p className="text-[11px] text-muted-foreground">{t("onboarding.mic.desktopOnly")}</p>}
     </div>
+  );
+}
+
+/** The script to read, its blanks ({company}…) greyed out between braces, as drawn. */
+function ScriptLine({ template }: Readonly<{ template: string }>) {
+  const { t } = useI18n();
+  const blanks: Record<string, TranslationKey> = {
+    company: "onboarding.mic.script.company",
+    role: "onboarding.mic.script.role",
+    purpose: "onboarding.mic.script.purpose",
+  };
+  return (
+    <>
+      {template.split(/(\{\w+\})/).map((part, i) => {
+        const name = /^\{(\w+)\}$/.exec(part)?.[1];
+        const key = name ? blanks[name] : undefined;
+        if (!key) return part;
+        return (
+          // The template's parts never reorder, so the index is a stable key.
+          <span key={`${name}-${i}`}>
+            {"{"}
+            <span className="text-[#333]/50 dark:text-muted-foreground">{t(key)}</span>
+            {"}"}
+          </span>
+        );
+      })}
+    </>
   );
 }
 
