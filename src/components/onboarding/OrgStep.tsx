@@ -152,19 +152,21 @@ export function OrgStep({ setBeforeNext }: Readonly<{ setBeforeNext: (fn: Before
                 setChoice("create");
                 setError(null);
               }}
-            />
-            {choice === "create" && (
-              <Input
-                autoFocus
-                value={name}
-                onChange={(e) => {
-                  setName(e.target.value);
-                  setError(null);
-                }}
-                aria-label={t("onboarding.org.create")}
-                placeholder={t("onboarding.org.namePlaceholder")}
-              />
-            )}
+            >
+              {choice === "create" && (
+                <Input
+                  autoFocus
+                  value={name}
+                  onChange={(e) => {
+                    setName(e.target.value);
+                    setError(null);
+                  }}
+                  aria-label={t("onboarding.org.create")}
+                  placeholder={t("onboarding.org.namePlaceholder")}
+                  className="bg-background"
+                />
+              )}
+            </ChoiceRow>
             <ChoiceRow
               selected={choice === "solo"}
               label={t("onboarding.org.solo")}
