@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ChevronRight, CircleUserRound, Loader2, Users } from "lucide-react";
+import { ChevronLeft, ChevronRight, CircleUserRound, Loader2, Users } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { log } from "../../lib/log";
 import { acceptInvitation, createOrg, listMyInvitations, listMyOrgs } from "../../lib/cloud/orgs";
@@ -13,14 +13,16 @@ import { ConfirmCard } from "./ConfirmCard";
 /**
  * Signed-in only: join the org someone invited you to, create one, or carry on
  * alone — two cards, each with its own button, which also moves the wizard on
- * (`onNext`); while they show, the wizard's footer steps aside (`setChoosing`).
+ * (`onNext`), and Back under them (`onBack`); while they show, the wizard's
+ * footer steps aside (`setChoosing`).
  * Already a member, the step just confirms it. Everything here can be redone
  * in Settings › Organizations.
  */
 export function OrgStep({
   onNext,
+  onBack,
   setChoosing,
-}: Readonly<{ onNext: () => void; setChoosing: (choosing: boolean) => void }>) {
+}: Readonly<{ onNext: () => void; onBack: () => void; setChoosing: (choosing: boolean) => void }>) {
   const { t } = useI18n();
   const [orgs, setOrgs] = useState<CloudOrg[] | null>(null);
   const [invites, setInvites] = useState<CloudInvitation[]>([]);
@@ -200,6 +202,17 @@ export function OrgStep({
             </Button>
           }
         />
+
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-8 gap-1 self-start px-2.5 text-xs"
+          disabled={creating}
+          onClick={onBack}
+        >
+          <ChevronLeft className="size-3.5" />
+          {t("onboarding.back")}
+        </Button>
       </div>
     );
   }

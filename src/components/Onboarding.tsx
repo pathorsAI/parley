@@ -319,7 +319,9 @@ export function Onboarding() {
             />
           )}
 
-          {current === "org" && <OrgStep onNext={next} setChoosing={setOrgChoosing} />}
+          {current === "org" && (
+            <OrgStep onNext={next} onBack={() => goTo(steps[index - 1])} setChoosing={setOrgChoosing} />
+          )}
 
           {current === "model" && (
             <ModelStep local={local} own={ownModels} setOwn={setOwnModels} beforeHosted={beforeHosted} />
