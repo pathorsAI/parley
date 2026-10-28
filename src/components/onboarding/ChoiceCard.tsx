@@ -33,7 +33,7 @@ export function ChoiceCard({
   return (
     <section
       className={cn(
-        "relative flex flex-col items-end overflow-hidden p-5",
+        "relative flex flex-col items-end overflow-hidden rounded-[8px] p-5",
         fill ? "min-h-fit flex-1 basis-0 justify-between gap-2" : "gap-8",
         primary
           ? "bg-linear-to-b from-[#e1f2fd] to-white dark:from-primary/15 dark:to-transparent"

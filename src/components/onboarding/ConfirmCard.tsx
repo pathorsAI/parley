@@ -19,7 +19,7 @@ export function ConfirmCard({
   children?: ReactNode;
 }>) {
   return (
-    <section className="relative flex min-h-fit flex-1 flex-col items-center justify-center overflow-hidden bg-linear-to-b from-[#e1f2fd] to-white p-5 dark:from-primary/15 dark:to-transparent">
+    <section className="relative flex min-h-fit flex-1 flex-col items-center justify-center overflow-hidden rounded-[8px] bg-linear-to-b from-[#e1f2fd] to-white p-5 dark:from-primary/15 dark:to-transparent">
       <div className="flex w-full flex-col items-center gap-6">
         <div className="flex flex-wrap justify-center gap-2">
           {pills.map((pill) => (
