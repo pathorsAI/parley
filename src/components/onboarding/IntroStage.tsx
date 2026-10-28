@@ -140,48 +140,51 @@ export function IntroStage() {
 }
 
 /**
- * The welcome screen's backdrop: a row of soft blue bars hanging from the top
- * edge, tallest at the sides, fading into the dialog. Decoration only — the
- * colours are the artwork's, not theme tokens; each bar fades to the dialog's
- * own background, so it sits right in either theme. The first column is left
- * empty, as drawn.
+ * The welcome screen's backdrop, as drawn in Figma: thirteen equal columns,
+ * each a bar centred on the dialog's top edge that fades from the dialog's
+ * background to blue and back, tallest at the sides. Decoration only — the
+ * colours are the artwork's, not theme tokens. `inset` is the bar's top and
+ * bottom inset as a share of the 398px strip; `alpha` the bar's own opacity.
  */
-const HERO_BARS: readonly ({ h: number; color: string; opacity?: number; inner?: { h: number; color: string; opacity: number } } | null)[] = [
-  null,
-  { h: 199, color: "#1469d4" },
-  { h: 155, color: "#1979da" },
-  { h: 123, color: "#1d86e0" },
-  { h: 92, color: "#2191e4" },
-  { h: 75, color: "#2191e4", opacity: 0.9 },
-  { h: 46, color: "#2aacef", opacity: 0.8, inner: { h: 30, color: "#2db6f3", opacity: 0.7 } },
-  { h: 46, color: "#2aacef", opacity: 0.8 },
-  { h: 75, color: "#259de9", opacity: 0.9 },
-  { h: 92, color: "#2191e4" },
-  { h: 123, color: "#1d86e0" },
-  { h: 155, color: "#1979da" },
-  { h: 199, color: "#1469d4" },
+const HERO_BARS: readonly { inset: number; color: string; alpha?: number }[] = [
+  { inset: 0, color: "#1469d4" },
+  { inset: 11.01, color: "#1979da" },
+  { inset: 19.07, color: "#1d86e0" },
+  { inset: 26.82, color: "#2191e4" },
+  { inset: 31.16, color: "#2191e4", alpha: 0.9 },
+  { inset: 38.45, color: "#2aacef", alpha: 0.8 },
+  { inset: 42.48, color: "#2db6f3", alpha: 0.7 },
+  { inset: 38.45, color: "#2aacef", alpha: 0.8 },
+  { inset: 31.16, color: "#259de9", alpha: 0.9 },
+  { inset: 26.82, color: "#2191e4" },
+  { inset: 19.07, color: "#1d86e0" },
+  { inset: 11.01, color: "#1979da" },
+  { inset: 0, color: "#1469d4" },
 ];
 
-const fade = (color: string) => `linear-gradient(to bottom, ${color}, var(--muted))`;
+const withAlpha = (color: string, alpha: number) => `color-mix(in srgb, ${color} ${alpha * 100}%, transparent)`;
 
+/** Sits in a dialog that sets `--ob-hero-bg` to its own background. */
 export function IntroHero() {
+  const width = 100 / HERO_BARS.length;
   return (
-    <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 flex h-[200px] opacity-80 blur-[5px]">
-      {HERO_BARS.map((bar, i) => (
-        <div key={i} className="relative flex-1">
-          {bar && (
-            <>
-              <div className="absolute inset-x-0 top-0" style={{ height: bar.h, background: fade(bar.color), opacity: bar.opacity }} />
-              {bar.inner && (
-                <div
-                  className="absolute inset-x-0 top-0"
-                  style={{ height: bar.inner.h, background: fade(bar.inner.color), opacity: bar.inner.opacity }}
-                />
-              )}
-            </>
-          )}
-        </div>
-      ))}
+    <div aria-hidden className="pointer-events-none absolute top-[-198px] left-0 h-[398px] w-full opacity-80">
+      {HERO_BARS.map(({ inset, color, alpha = 1 }, i) => {
+        const edge = withAlpha("var(--ob-hero-bg)", alpha);
+        return (
+          <div
+            key={`${i}-${color}`}
+            className="absolute"
+            style={{
+              left: `${i * width}%`,
+              width: `${width}%`,
+              top: `${inset}%`,
+              bottom: `${inset}%`,
+              background: `linear-gradient(180deg, ${edge} 0%, ${withAlpha(color, alpha)} 50%, ${edge} 100%)`,
+            }}
+          />
+        );
+      })}
     </div>
   );
 }

@@ -249,7 +249,9 @@ export function Onboarding() {
       <div
         className={cn(
           "relative flex max-h-[88vh] w-full flex-col overflow-hidden rounded-xl border shadow-2xl",
-          intro ? "max-w-[560px] bg-muted" : "max-w-lg bg-background",
+          intro
+            ? "max-w-[560px] bg-(--ob-hero-bg) [--ob-hero-bg:#f5f5f5] dark:[--ob-hero-bg:var(--muted)]"
+            : "max-w-lg bg-background",
         )}
       >
         {/* The welcome screen has no title bar: a hero, its title in the body,
