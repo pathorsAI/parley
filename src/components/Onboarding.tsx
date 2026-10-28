@@ -280,6 +280,9 @@ export function Onboarding() {
   const micOk = perms?.microphone === "authorized";
   const systemAudioOk = perms?.systemAudio === "granted";
   const intro = current === "intro";
+  // The first and last screens share the hero look: blue bars, no title bar,
+  // only the language in the corner.
+  const hero = intro || current === "done";
   // Signed out, the sign-in step is a choice between two cards, each with its
   // own button, and Back sits under them, so it has no footer; nor does the
   // organization step while it offers its two cards. Signed in, the sign-in
@@ -298,12 +301,12 @@ export function Onboarding() {
           // One size for every step, so the dialog never jumps between them;
           // a short window gets all the height it has, and a long step scrolls.
           "relative flex h-[580px] max-h-[calc(100vh-3rem)] w-full max-w-[560px] flex-col overflow-hidden rounded-xl shadow-2xl",
-          intro ? "bg-(--ob-hero-bg) [--ob-hero-bg:#f5f5f5] dark:[--ob-hero-bg:var(--muted)]" : "bg-background",
+          hero ? "bg-(--ob-hero-bg) [--ob-hero-bg:#f5f5f5] dark:[--ob-hero-bg:var(--muted)]" : "bg-background",
         )}
       >
         {/* The welcome screen has no title bar: a hero, its title in the body,
             and only the language in the corner. Skip moves to the footer. */}
-        {intro ? (
+        {hero ? (
           <>
             <IntroHero />
             <div className="relative flex h-15 shrink-0 items-center justify-end px-5">
@@ -324,7 +327,9 @@ export function Onboarding() {
         <div
           className={cn(
             "relative min-h-0 flex-1 overflow-y-auto",
-            intro ? "px-6 pt-[63px] pb-16" : "px-5 py-5",
+            intro && "px-6 pt-[63px] pb-16",
+            current === "done" && "items-center justify-center px-6 pb-16",
+            !hero && "px-5 py-5",
             // The two sign-in cards fill whatever height there is; it only
             // scrolls if a minimum-size window can't hold their text.
             // Column, so a step's card can fill the dialog's height.
@@ -440,27 +445,19 @@ export function Onboarding() {
           {current === "context" && <ContextStep terms={addedTerms} setTerms={setAddedTerms} />}
 
           {current === "done" && (
-            <div className="flex flex-col items-center gap-3 py-6 text-center">
-              <div className="flex size-12 items-center justify-center rounded-full bg-success text-success-foreground">
+            <div className="flex flex-col items-center gap-9 text-center">
+              <div className="flex size-12 items-center justify-center rounded-full bg-[#d9f7e5] text-[#006a3b] dark:bg-success dark:text-success-foreground">
                 <Check className="size-6" />
               </div>
-              <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">{t("onboarding.done.body")}</p>
-              <div className="mt-2 flex flex-col items-center gap-2">
-                {samplePulse.active ? (
-                  <TranscribingPulse className="h-9" />
-                ) : (
-                  <Button
-                    size="sm"
-                    className="h-9 text-xs"
-                    onClick={() =>
-                      walkThroughSample().catch((error) =>
-                        log.error("onboarding: sample walkthrough failed", { error: String(error) }),
-                      )
-                    }
-                  >
-                    {t("onboarding.done.sample")}
-                  </Button>
-                )}
+              <div className="flex flex-col items-center gap-5">
+                <h2 className="text-2xl leading-[1.2] font-semibold">{t("onboarding.done.title")}</h2>
+                <p className="text-sm leading-[1.4] text-[#333] dark:text-foreground">
+                  <span className="font-medium">{t("onboarding.done.lead")}</span>
+                  <br />
+                  {t("onboarding.done.body")}
+                </p>
+              </div>
+              <div className="flex items-center justify-center gap-6">
                 <Button
                   variant="ghost"
                   size="sm"
@@ -475,6 +472,21 @@ export function Onboarding() {
                 >
                   {t("onboarding.done.startMeeting")}
                 </Button>
+                {samplePulse.active ? (
+                  <TranscribingPulse className="h-8" />
+                ) : (
+                  <Button
+                    size="sm"
+                    className="h-8 text-xs"
+                    onClick={() =>
+                      walkThroughSample().catch((error) =>
+                        log.error("onboarding: sample walkthrough failed", { error: String(error) }),
+                      )
+                    }
+                  >
+                    {t("onboarding.done.sample")}
+                  </Button>
+                )}
               </div>
             </div>
           )}
