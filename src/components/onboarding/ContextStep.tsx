@@ -77,11 +77,7 @@ export function ContextStep({
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1.5">
-        <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.context.body")}</p>
-      </div>
-
+    <div className="flex flex-col gap-6">
       {/* Speaker background */}
       <BackgroundEditor
         terms={terms}
@@ -90,7 +86,7 @@ export function ContextStep({
 
       {/* Dictionary terms */}
       <div className="flex flex-col gap-1.5">
-        <span className="text-xs text-muted-foreground">{t("onboarding.context.terms")}</span>
+        <span className="text-sm text-[#333] dark:text-foreground">{t("onboarding.context.terms")}</span>
         <form
           className="flex flex-wrap items-center gap-1.5"
           onSubmit={(e) => {
@@ -99,7 +95,10 @@ export function ContextStep({
           }}
         >
           {terms.map((term) => (
-            <span key={term.id} className="inline-flex h-6 items-center gap-1 rounded-full border pl-2.5 pr-1 text-xs">
+            <span
+              key={term.id}
+              className="inline-flex h-6 items-center gap-1 rounded-full border border-[#e3e6ec] pr-1 pl-2.5 text-xs text-foreground dark:border-border"
+            >
               {term.phrase}
               <button
                 type="button"
@@ -119,9 +118,15 @@ export function ContextStep({
             onChange={(e) => setNewTerm(e.target.value)}
             aria-label={t("onboarding.context.terms")}
             placeholder={t("onboarding.context.termPlaceholder")}
-            className="h-6 w-28 rounded-full border-dashed px-2.5 text-xs"
+            className="h-6 w-28 rounded-full border-dashed border-[#dadee5] px-2.5 text-sm placeholder:text-muted-foreground dark:border-input"
           />
-          <Button type="submit" variant="ghost" size="sm" className="h-6 px-2 text-xs text-primary" disabled={!newTerm.trim()}>
+          <Button
+            type="submit"
+            variant="ghost"
+            size="sm"
+            className="h-6 px-2 text-xs text-primary disabled:opacity-50"
+            disabled={!newTerm.trim()}
+          >
             {t("onboarding.context.add")}
           </Button>
         </form>
@@ -197,14 +202,14 @@ function BackgroundEditor({
 
   return (
     <div className="flex flex-col gap-1.5">
-      <label htmlFor="onboarding-background" className="text-xs text-muted-foreground">
+      <label htmlFor="onboarding-background" className="text-sm text-[#333] dark:text-foreground">
         {t("onboarding.context.background")}
       </label>
       <Textarea
         id="onboarding-background"
         value={background}
         placeholder={t("onboarding.context.backgroundPlaceholder")}
-        className="min-h-24 text-[13px] leading-relaxed"
+        className="h-24 min-h-24 rounded-[10px] border-[#dadee5] px-2.5 py-2 text-sm leading-[22.75px] dark:border-input"
         onChange={(e) => {
           patch({ userBackground: e.target.value });
           clearTimeout(timer.current);
@@ -319,11 +324,12 @@ function AiMemory({ onTermsAdded }: Readonly<{ onTermsAdded: (terms: AddedTerm[]
   else if (notCondensed) why = t("onboarding.context.memory.failed", { error: notCondensed.why.failed });
 
   return (
-    <div className="flex flex-col gap-1.5 border-t pt-4">
+    <div className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between gap-2">
-        <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Sparkles className="size-3 text-primary" />
-          {t("onboarding.context.memory.title")}
+        <span className="flex items-center gap-1.5">
+          <Sparkles className="size-3.5 text-primary" />
+          <span className="text-sm text-[#333] dark:text-foreground">{t("onboarding.context.memory.title")} · </span>
+          <span className="text-xs text-muted-foreground">{t("onboarding.context.memory.source")}</span>
         </span>
         {state !== "reading" && (
           <Button
@@ -349,10 +355,11 @@ function AiMemory({ onTermsAdded }: Readonly<{ onTermsAdded: (terms: AddedTerm[]
         </p>
       ) : (
         lines.length > 0 && (
-          <ul className="flex flex-col gap-0.5 rounded-lg bg-muted/40 px-3 py-2 text-[13px] leading-relaxed">
+          // About three lines tall, as drawn; longer memory scrolls inside.
+          <ul className="flex max-h-[92px] flex-col gap-0.5 overflow-y-auto rounded-[8px] bg-[#f5f7f9] p-3 text-[13px] leading-[21.125px] text-[#333] dark:bg-muted dark:text-foreground">
             {lines.map((line, i) => (
               <li key={`${i}:${line}`} className="flex gap-2">
-                <span className="text-muted-foreground">•</span>
+                <span>•</span>
                 <span className="flex-1">{line}</span>
               </li>
             ))}
