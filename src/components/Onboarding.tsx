@@ -263,9 +263,11 @@ export function Onboarding() {
   const intro = current === "intro";
   const nextLabel = intro ? t("onboarding.start") : t("onboarding.next");
   // Signed out, the sign-in step is a choice between two cards, each with its
-  // own button, so it has no footer. Signed in (back from a later step), it
-  // does: there is nothing left to choose, only Back and Next.
-  const showFooter = current !== "done" && !(current === "account" && !cloudAuth);
+  // own button, and Back sits under them, so it has no footer; the dialog
+  // keeps the welcome screen's height and the cards share it. Signed in (back
+  // from a later step), it does: nothing left to choose, only Back and Next.
+  const accountChoice = current === "account" && !cloudAuth;
+  const showFooter = current !== "done" && !accountChoice;
   const skipTitle = skipBlocked && gateBlock ? t(GATE_HINT[gateBlock]) : t("onboarding.skip");
 
   return (
@@ -274,6 +276,7 @@ export function Onboarding() {
         className={cn(
           "relative flex max-h-[88vh] w-full flex-col overflow-hidden rounded-xl shadow-2xl",
           "max-w-[560px]",
+          accountChoice && "h-[580px]",
           intro ? "bg-(--ob-hero-bg) [--ob-hero-bg:#f5f5f5] dark:[--ob-hero-bg:var(--muted)]" : "bg-background",
         )}
       >
@@ -297,7 +300,13 @@ export function Onboarding() {
         )}
 
         {/* Body */}
-        <div className={cn("relative min-h-0 flex-1 overflow-y-auto", intro ? "px-6 pt-[63px] pb-16" : "px-5 py-5")}>
+        <div
+          className={cn(
+            "relative min-h-0 flex-1 overflow-y-auto",
+            intro ? "px-6 pt-[63px] pb-16" : "px-5 py-5",
+            accountChoice && "flex flex-col",
+          )}
+        >
           {intro && (
             <div className="flex flex-col gap-9">
               <h2 className="text-center text-2xl leading-[1.2] font-semibold">{t("onboarding.intro.welcome")}</h2>
@@ -312,6 +321,7 @@ export function Onboarding() {
           {current === "account" && (
             <AccountStep
               onSignedIn={() => goTo("org")}
+              onBack={() => goTo(steps[index - 1])}
               onContinue={() => {
                 next().catch((error) => log.error("onboarding: next failed", { error: String(error) }));
               }}
@@ -530,7 +540,11 @@ function LanguageMenu({ onHero = false }: Readonly<{ onHero?: boolean }>) {
  * success both providers default to "parley" and the wizard moves on to the
  * organization step. Not signing in is the footer's Next, relabelled.
  */
-function AccountStep({ onSignedIn, onContinue }: Readonly<{ onSignedIn: () => void; onContinue: () => void }>) {
+function AccountStep({
+  onSignedIn,
+  onBack,
+  onContinue,
+}: Readonly<{ onSignedIn: () => void; onBack: () => void; onContinue: () => void }>) {
   const { t } = useI18n();
   const patch = useStore((s) => s.updateSettings);
   const cloudAuth = useStore((s) => s.cloudAuth);
@@ -575,8 +589,8 @@ function AccountStep({ onSignedIn, onContinue }: Readonly<{ onSignedIn: () => vo
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      <section className="relative flex flex-col items-end gap-8 overflow-hidden bg-linear-to-b from-[#e1f2fd] to-white p-5 dark:from-primary/15 dark:to-transparent">
+    <div className="flex flex-1 flex-col gap-6">
+      <section className="relative flex min-h-fit flex-1 basis-0 flex-col items-end justify-between gap-4 overflow-hidden bg-linear-to-b from-[#e1f2fd] to-white p-5 dark:from-primary/15 dark:to-transparent">
         <div className="flex w-full flex-col gap-6">
           <ChoiceTag icon={<UserRoundCheck className="size-3.5" />} primary>
             {t("onboarding.account.member.tag")}
@@ -613,12 +627,12 @@ function AccountStep({ onSignedIn, onContinue }: Readonly<{ onSignedIn: () => vo
         <span className="h-px flex-1 bg-[#e6e6e6] dark:bg-border" />
       </div>
 
-      <section className="relative flex flex-col items-end gap-8 overflow-hidden bg-linear-to-b from-[#f5f5f5] to-[#fafafa] p-5 dark:from-muted dark:to-muted/60">
+      <section className="relative flex min-h-fit flex-1 basis-0 flex-col items-end justify-between gap-4 overflow-hidden bg-linear-to-b from-[#f5f5f5] to-[#fafafa] p-5 dark:from-muted dark:to-muted/60">
         <div className="flex w-full flex-col gap-6">
           <ChoiceTag icon={<UsersRound className="size-3.5" />}>{t("onboarding.account.guest.tag")}</ChoiceTag>
           <p className="text-sm leading-relaxed">{t("onboarding.account.guest.body")}</p>
         </div>
-        <div aria-hidden className="pointer-events-none absolute top-[19%] right-[-48.88%] bottom-[22.74%] left-0">
+        <div aria-hidden className="pointer-events-none absolute top-[21.35%] right-[-48.88%] bottom-[13.19%] left-0">
           <img src="/onboarding/signin-guest-lines.svg" alt="" className="size-full max-w-none" />
         </div>
         <Button
@@ -631,6 +645,11 @@ function AccountStep({ onSignedIn, onContinue }: Readonly<{ onSignedIn: () => vo
           <ChevronRight className="size-3.5" />
         </Button>
       </section>
+
+      <Button variant="ghost" size="sm" className="h-8 gap-1 self-start px-2.5 text-xs" onClick={onBack}>
+        <ChevronLeft className="size-3.5" />
+        {t("onboarding.back")}
+      </Button>
     </div>
   );
 }
