@@ -276,7 +276,7 @@ export function Onboarding() {
         className={cn(
           "relative flex max-h-[88vh] w-full flex-col overflow-hidden rounded-xl shadow-2xl",
           "max-w-[560px]",
-          accountChoice && "h-[580px]",
+          accountChoice && "h-[580px] max-h-[calc(100vh-3rem)]",
           intro ? "bg-(--ob-hero-bg) [--ob-hero-bg:#f5f5f5] dark:[--ob-hero-bg:var(--muted)]" : "bg-background",
         )}
       >
@@ -304,6 +304,8 @@ export function Onboarding() {
           className={cn(
             "relative min-h-0 flex-1 overflow-y-auto",
             intro ? "px-6 pt-[63px] pb-16" : "px-5 py-5",
+            // The two sign-in cards fill whatever height there is; it only
+            // scrolls if a minimum-size window can't hold their text.
             accountChoice && "flex flex-col",
           )}
         >
@@ -589,8 +591,8 @@ function AccountStep({
   }
 
   return (
-    <div className="flex flex-1 flex-col gap-6">
-      <section className="relative flex min-h-fit flex-1 basis-0 flex-col items-end justify-between gap-4 overflow-hidden bg-linear-to-b from-[#e1f2fd] to-white p-5 dark:from-primary/15 dark:to-transparent">
+    <div className="flex min-h-0 flex-1 flex-col gap-6">
+      <section className="relative flex min-h-fit flex-1 basis-0 flex-col items-end justify-between gap-2 overflow-hidden bg-linear-to-b from-[#e1f2fd] to-white p-5 dark:from-primary/15 dark:to-transparent">
         <div className="flex w-full flex-col gap-6">
           <ChoiceTag icon={<UserRoundCheck className="size-3.5" />} primary>
             {t("onboarding.account.member.tag")}
@@ -627,7 +629,7 @@ function AccountStep({
         <span className="h-px flex-1 bg-[#e6e6e6] dark:bg-border" />
       </div>
 
-      <section className="relative flex min-h-fit flex-1 basis-0 flex-col items-end justify-between gap-4 overflow-hidden bg-linear-to-b from-[#f5f5f5] to-[#fafafa] p-5 dark:from-muted dark:to-muted/60">
+      <section className="relative flex min-h-fit flex-1 basis-0 flex-col items-end justify-between gap-2 overflow-hidden bg-linear-to-b from-[#f5f5f5] to-[#fafafa] p-5 dark:from-muted dark:to-muted/60">
         <div className="flex w-full flex-col gap-6">
           <ChoiceTag icon={<UsersRound className="size-3.5" />}>{t("onboarding.account.guest.tag")}</ChoiceTag>
           <p className="text-sm leading-relaxed">{t("onboarding.account.guest.body")}</p>
