@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, ChevronLeft, ChevronRight, Globe, Loader2, LogIn, Mic, UserRoundCheck, UsersRound, Volume2 } from "lucide-react";
 import { useStore } from "../lib/store";
 import { isMac, isWindows } from "../lib/platform";
@@ -25,8 +25,9 @@ import { openRecording } from "./home/GettingStarted";
 import { TranscribingPulse, useTranscribingPulse } from "./onboarding/TranscribingPulse";
 import { IntroHero, IntroStage } from "./onboarding/IntroStage";
 import { ConfirmCard } from "./onboarding/ConfirmCard";
+import { ChoiceCard, OrDivider } from "./onboarding/ChoiceCard";
 import { ChoiceRow } from "./onboarding/ChoiceRow";
-import { OrgStep, type BeforeNext } from "./onboarding/OrgStep";
+import { OrgStep } from "./onboarding/OrgStep";
 import { MicStep } from "./onboarding/MicStep";
 import { ContextStep } from "./onboarding/ContextStep";
 import { mergeTerms, type AddedTerm } from "../lib/onboarding/micCheck";
@@ -151,7 +152,9 @@ export function Onboarding() {
   });
   const index = Math.max(0, steps.indexOf(current));
   const [perms, setPerms] = useState<Perms | null>(null);
-  const [advancing, setAdvancing] = useState(false);
+  // The organization step while it offers its two choices (each card has its
+  // own button), when the footer steps aside.
+  const [orgChoosing, setOrgChoosing] = useState(false);
   // The model step's choice, kept here so it survives Back/Next: signed in,
   // Parley's hosted models are the default unless the user picks their own.
   const [ownModels, setOwnModels] = useState(false);
@@ -162,12 +165,6 @@ export function Onboarding() {
   // The providers in place before the model step switched them to Parley's,
   // so "Use my own models" puts them back.
   const beforeHosted = useRef<Pick<Settings, "transcriptionProvider" | "llmProviders"> | null>(null);
-  // A step that has work to do when the user presses Next (creating an
-  // organization) registers it here; false keeps the user on the step.
-  const beforeNext = useRef<BeforeNext | null>(null);
-  const setBeforeNext = useCallback((fn: BeforeNext | null) => {
-    beforeNext.current = fn;
-  }, []);
 
   // Persist the step so granting a permission (which often needs an app restart)
   // resumes here instead of bouncing back to step 1.
@@ -192,19 +189,10 @@ export function Onboarding() {
   const skipBlocked = !ready;
 
   function goTo(step: StepId) {
-    beforeNext.current = null;
     setCurrent(step);
   }
 
-  async function next() {
-    if (beforeNext.current) {
-      setAdvancing(true);
-      try {
-        if (!(await beforeNext.current())) return;
-      } finally {
-        setAdvancing(false);
-      }
-    }
+  function next() {
     goTo(steps[Math.min(steps.length - 1, index + 1)]);
   }
 
@@ -262,12 +250,13 @@ export function Onboarding() {
   const micOk = perms?.microphone === "authorized";
   const systemAudioOk = perms?.systemAudio === "granted";
   const intro = current === "intro";
-  // The sign-in step's card(s) fill the dialog's height. Signed out it is a choice between two cards, each with its own
-  // button, and Back sits under them, so it has no footer. Signed in it
-  // confirms the account; from there the rest of setup is optional, so its
-  // footer is the welcome screen's: Skip, or Start the rest.
+  // Signed out, the sign-in step is a choice between two cards, each with its
+  // own button, and Back sits under them, so it has no footer; nor does the
+  // organization step while it offers its two cards. Signed in, the sign-in
+  // step confirms the account; from there the rest of setup is optional, so
+  // its footer is the welcome screen's: Skip, or Start the rest.
   const account = current === "account";
-  const showFooter = current !== "done" && !(account && !cloudAuth);
+  const showFooter = current !== "done" && !(account && !cloudAuth) && !(current === "org" && orgChoosing);
   const skipFooter = intro || (account && !!cloudAuth);
   const nextLabel = skipFooter ? t("onboarding.start") : t("onboarding.next");
   const skipTitle = skipBlocked && gateBlock ? t(GATE_HINT[gateBlock]) : t("onboarding.skip");
@@ -326,13 +315,11 @@ export function Onboarding() {
           {current === "account" && (
             <AccountStep
               onBack={() => goTo(steps[index - 1])}
-              onContinue={() => {
-                next().catch((error) => log.error("onboarding: next failed", { error: String(error) }));
-              }}
+              onContinue={next}
             />
           )}
 
-          {current === "org" && <OrgStep setBeforeNext={setBeforeNext} />}
+          {current === "org" && <OrgStep onNext={next} setChoosing={setOrgChoosing} />}
 
           {current === "model" && (
             <ModelStep local={local} own={ownModels} setOwn={setOwnModels} beforeHosted={beforeHosted} />
@@ -466,7 +453,6 @@ export function Onboarding() {
                 variant="ghost"
                 size="sm"
                 className="h-8 text-xs"
-                disabled={advancing}
                 onClick={() => goTo(steps[index - 1])}
               >
                 <ChevronLeft className="size-3.5" />
@@ -477,12 +463,9 @@ export function Onboarding() {
               <Button
                 size="sm"
                 className="h-8 text-xs"
-                disabled={nextBlocked || advancing}
-                onClick={() => {
-                  next().catch((error) => log.error("onboarding: next failed", { error: String(error) }));
-                }}
+                disabled={nextBlocked}
+                onClick={next}
               >
-                {advancing && <Loader2 className="size-3.5 animate-spin" />}
                 {nextLabel}
                 <ChevronRight className="size-3.5" />
               </Button>
@@ -589,84 +572,63 @@ function AccountStep({ onBack, onContinue }: Readonly<{ onBack: () => void; onCo
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-6">
-      <section className="relative flex min-h-fit flex-1 basis-0 flex-col items-end justify-between gap-2 overflow-hidden bg-linear-to-b from-[#e1f2fd] to-white p-5 dark:from-primary/15 dark:to-transparent">
-        <div className="flex w-full flex-col gap-6">
-          <ChoiceTag icon={<UserRoundCheck className="size-3.5" />} primary>
-            {t("onboarding.account.member.tag")}
-          </ChoiceTag>
-          <p className="text-sm leading-relaxed">{t("onboarding.account.body")}</p>
-        </div>
-        <div className="relative flex flex-col items-end">
+      <ChoiceCard
+        primary
+        fill
+        icon={<UserRoundCheck className="size-3.5" />}
+        label={t("onboarding.account.member.tag")}
+        art={{ src: "/onboarding/signin-member-lines.svg", className: "top-0 left-[-444px] h-[200px] w-[967px]" }}
+        action={
+          <div className="flex flex-col items-end">
+            <Button
+              size="sm"
+              className="h-8 gap-2 px-2.5 text-xs"
+              disabled={signingIn || !isTauri()}
+              onClick={() => doSignIn().catch((error) => log.error("onboarding: sign-in failed", { error: String(error) }))}
+            >
+              {signingIn ? t("settings.account.signingIn") : t("onboarding.account.member.cta")}
+              {signingIn ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
+            </Button>
+            {error && (
+              // Plain red text in the card's bottom padding, so a failure never
+              // changes the card's height.
+              <p className="absolute top-full right-0 mt-1 w-max max-w-[480px] text-right text-[11px] text-danger-foreground">
+                {t("onboarding.login.failed", { error })}
+              </p>
+            )}
+          </div>
+        }
+      >
+        <p className="text-sm leading-relaxed">{t("onboarding.account.body")}</p>
+      </ChoiceCard>
+
+      <OrDivider label={t("onboarding.account.or")} />
+
+      <ChoiceCard
+        fill
+        icon={<UsersRound className="size-3.5" />}
+        label={t("onboarding.account.guest.tag")}
+        art={{ src: "/onboarding/signin-guest-lines.svg", className: "top-[21.35%] right-[-48.88%] bottom-[13.19%] left-0" }}
+        action={
           <Button
+            variant="ghost"
             size="sm"
-            className="relative h-8 gap-2 px-2.5 text-xs"
-            disabled={signingIn || !isTauri()}
-            onClick={() => doSignIn().catch((error) => log.error("onboarding: sign-in failed", { error: String(error) }))}
+            className="h-8 gap-2 bg-background px-2.5 text-xs hover:bg-background/80"
+            onClick={onContinue}
           >
-            {signingIn ? t("settings.account.signingIn") : t("onboarding.account.member.cta")}
-            {signingIn ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
+            {t("onboarding.account.guest.cta")}
+            <ChevronRight className="size-3.5" />
           </Button>
-          {error && (
-            // Plain red text in the card's bottom padding, so a failure never
-            // changes the card's height.
-            <p className="absolute top-full right-0 mt-1 w-max max-w-[480px] text-right text-[11px] text-danger-foreground">
-              {t("onboarding.login.failed", { error })}
-            </p>
-          )}
-        </div>
-        <img
-          src="/onboarding/signin-member-lines.svg"
-          alt=""
-          aria-hidden
-          className="pointer-events-none absolute top-0 left-[-444px] h-[200px] w-[967px] max-w-none"
-        />
-      </section>
-
-      <div className="flex items-center gap-4 text-xs text-muted-foreground" aria-hidden>
-        <span className="h-px flex-1 bg-[#e6e6e6] dark:bg-border" />
-        {t("onboarding.account.or")}
-        <span className="h-px flex-1 bg-[#e6e6e6] dark:bg-border" />
-      </div>
-
-      <section className="relative flex min-h-fit flex-1 basis-0 flex-col items-end justify-between gap-2 overflow-hidden bg-linear-to-b from-[#f5f5f5] to-[#fafafa] p-5 dark:from-muted dark:to-muted/60">
-        <div className="flex w-full flex-col gap-6">
-          <ChoiceTag icon={<UsersRound className="size-3.5" />}>{t("onboarding.account.guest.tag")}</ChoiceTag>
-          <p className="text-sm leading-relaxed">{t("onboarding.account.guest.body")}</p>
-        </div>
-        <div aria-hidden className="pointer-events-none absolute top-[21.35%] right-[-48.88%] bottom-[13.19%] left-0">
-          <img src="/onboarding/signin-guest-lines.svg" alt="" className="size-full max-w-none" />
-        </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="relative h-8 gap-2 bg-background px-2.5 text-xs hover:bg-background/80"
-          onClick={onContinue}
-        >
-          {t("onboarding.account.guest.cta")}
-          <ChevronRight className="size-3.5" />
-        </Button>
-      </section>
+        }
+      >
+        <p className="text-sm leading-relaxed">{t("onboarding.account.guest.body")}</p>
+      </ChoiceCard>
 
       <Button variant="ghost" size="sm" className="h-8 gap-1 self-start px-2.5 text-xs" onClick={onBack}>
         <ChevronLeft className="size-3.5" />
         {t("onboarding.back")}
       </Button>
     </div>
-  );
-}
-
-/** The label on a sign-in choice: a soft pill with an icon. */
-function ChoiceTag({ icon, primary = false, children }: Readonly<{ icon: ReactNode; primary?: boolean; children: ReactNode }>) {
-  return (
-    <span
-      className={cn(
-        "inline-flex w-fit items-center gap-2 rounded-full bg-white/70 px-3 py-1 text-sm leading-[1.3] dark:bg-white/10",
-        primary && "text-primary",
-      )}
-    >
-      {icon}
-      {children}
-    </span>
   );
 }
 

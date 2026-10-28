@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, Users } from "lucide-react";
+import { ChevronRight, CircleUserRound, Loader2, Users } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { log } from "../../lib/log";
 import { acceptInvitation, createOrg, listMyInvitations, listMyOrgs } from "../../lib/cloud/orgs";
@@ -7,23 +7,25 @@ import type { CloudInvitation, CloudOrg } from "../../lib/cloud/types";
 import { orgErrMsg } from "../../lib/cloud/orgErrors";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ChoiceRow } from "./ChoiceRow";
+import { ChoiceCard, OrDivider } from "./ChoiceCard";
 import { ConfirmCard } from "./ConfirmCard";
-
-/** Runs when the user presses Next; false keeps them on the step. */
-export type BeforeNext = () => Promise<boolean>;
 
 /**
  * Signed-in only: join the org someone invited you to, create one, or carry on
- * alone. Creating happens on Next, so the name field and the choice stay
- * editable until then. Everything here can be redone in Settings › Organizations.
+ * alone — two cards, each with its own button, which also moves the wizard on
+ * (`onNext`); while they show, the wizard's footer steps aside (`setChoosing`).
+ * Already a member, the step just confirms it. Everything here can be redone
+ * in Settings › Organizations.
  */
-export function OrgStep({ setBeforeNext }: Readonly<{ setBeforeNext: (fn: BeforeNext | null) => void }>) {
+export function OrgStep({
+  onNext,
+  setChoosing,
+}: Readonly<{ onNext: () => void; setChoosing: (choosing: boolean) => void }>) {
   const { t } = useI18n();
   const [orgs, setOrgs] = useState<CloudOrg[] | null>(null);
   const [invites, setInvites] = useState<CloudInvitation[]>([]);
-  const [choice, setChoice] = useState<"create" | "solo">("solo");
   const [name, setName] = useState("");
+  const [creating, setCreating] = useState(false);
   const [joining, setJoining] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Set when the lists couldn't be read. We then don't know whether the user is
@@ -53,23 +55,30 @@ export function OrgStep({ setBeforeNext }: Readonly<{ setBeforeNext: (fn: Before
 
   const member = (orgs?.length ?? 0) > 0;
 
+  // The two cards show once we know the user isn't in an organization; while
+  // loading, or when the lists couldn't be read, the footer stays (so Next can
+  // carry on without one).
+  const choosing = orgs !== null && !member && !loadError;
   useEffect(() => {
-    setBeforeNext(async () => {
-      if (member || loadError || choice === "solo") return true;
-      if (!name.trim()) {
-        setError(t("onboarding.org.nameRequired"));
-        return false;
-      }
-      try {
-        await createOrg(name);
-        return true;
-      } catch (e) {
-        setError(t("onboarding.org.failed", { error: orgErrMsg(t, e) }));
-        return false;
-      }
-    });
-    return () => setBeforeNext(null);
-  }, [member, loadError, choice, name, setBeforeNext, t]);
+    setChoosing(choosing);
+  }, [choosing, setChoosing]);
+  useEffect(() => () => setChoosing(false), [setChoosing]);
+
+  async function create() {
+    if (!name.trim()) {
+      setError(t("onboarding.org.nameRequired"));
+      return;
+    }
+    setCreating(true);
+    setError(null);
+    try {
+      await createOrg(name);
+      onNext();
+    } catch (e) {
+      setError(t("onboarding.org.failed", { error: orgErrMsg(t, e) }));
+      setCreating(false);
+    }
+  }
 
   async function join(inv: CloudInvitation) {
     setJoining(inv.id);
@@ -121,9 +130,83 @@ export function OrgStep({ setBeforeNext }: Readonly<{ setBeforeNext: (fn: Before
     );
   }
 
+  if (choosing) {
+    return (
+      <div className="flex flex-col gap-6">
+        {inviteRows.length > 0 && <div className="flex flex-col gap-2">{inviteRows}</div>}
+
+        <ChoiceCard
+          primary
+          icon={<img src="/onboarding/icon-org-create.svg" alt="" className="size-3.5" />}
+          label={t("onboarding.org.create")}
+          note={t("onboarding.org.createNote")}
+          art={{ src: "/onboarding/signin-member-lines.svg", className: "top-[-5px] left-[-444px] h-[200px] w-[967px]" }}
+          action={
+            <div className="flex flex-col items-end">
+              <Button
+                size="sm"
+                className="h-8 gap-2 px-2.5 text-xs"
+                disabled={creating}
+                onClick={() => {
+                  create().catch((e) => log.error("onboarding: create organization failed", { error: String(e) }));
+                }}
+              >
+                {t("onboarding.org.createCta")}
+                {creating ? <Loader2 className="size-3.5 animate-spin" /> : <ChevronRight className="size-3.5" />}
+              </Button>
+              {error && (
+                // Plain red text in the card's bottom padding, as on sign-in.
+                <p className="absolute top-full right-0 mt-1 w-max max-w-[480px] text-right text-[11px] text-danger-foreground">
+                  {error}
+                </p>
+              )}
+            </div>
+          }
+        >
+          <Input
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value);
+              setError(null);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !creating) {
+                create().catch((err) => log.error("onboarding: create organization failed", { error: String(err) }));
+              }
+            }}
+            aria-label={t("onboarding.org.create")}
+            placeholder={t("onboarding.org.namePlaceholder")}
+            className="h-auto rounded-[10px] border-[#dadee5] bg-background px-2.5 py-2 text-sm"
+          />
+        </ChoiceCard>
+
+        <OrDivider label={t("onboarding.account.or")} />
+
+        <ChoiceCard
+          icon={<CircleUserRound className="size-3.5" />}
+          label={t("onboarding.org.solo")}
+          note={t("onboarding.org.soloNote")}
+          art={{ src: "/onboarding/org-solo-lines.svg", className: "top-[29.23%] right-[-48.88%] bottom-[-18.86%] left-0" }}
+          action={
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 gap-2 bg-background px-2.5 text-xs hover:bg-background/80"
+              disabled={creating}
+              onClick={onNext}
+            >
+              {t("onboarding.org.soloCta")}
+              <ChevronRight className="size-3.5" />
+            </Button>
+          }
+        />
+      </div>
+    );
+  }
+
+  // Still loading, or the lists couldn't be read.
   return (
     <div className="flex flex-col gap-3">
-
       {loadError ? (
         <div className="flex items-center gap-3 rounded-lg border border-warning-border bg-warning px-3 py-2.5">
           <span className="flex-1 text-xs leading-relaxed text-warning-foreground">
@@ -133,55 +216,11 @@ export function OrgStep({ setBeforeNext }: Readonly<{ setBeforeNext: (fn: Before
             {t("onboarding.org.retry")}
           </Button>
         </div>
-      ) : orgs === null ? (
+      ) : (
         <p className="flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="size-4 animate-spin" />
           {t("onboarding.org.loading")}
         </p>
-      ) : (
-        <>
-          {inviteRows}
-
-          <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.org.body")}</p>
-          <div role="radiogroup" aria-label={t("onboarding.org.title")} className="flex flex-col gap-2">
-            <ChoiceRow
-              selected={choice === "create"}
-              label={t("onboarding.org.create")}
-              note={t("onboarding.org.createNote")}
-              onSelect={() => {
-                setChoice("create");
-                setError(null);
-              }}
-            >
-              {choice === "create" && (
-                <Input
-                  autoFocus
-                  value={name}
-                  onChange={(e) => {
-                    setName(e.target.value);
-                    setError(null);
-                  }}
-                  aria-label={t("onboarding.org.create")}
-                  placeholder={t("onboarding.org.namePlaceholder")}
-                  className="bg-background"
-                />
-              )}
-            </ChoiceRow>
-            <ChoiceRow
-              selected={choice === "solo"}
-              label={t("onboarding.org.solo")}
-              note={t("onboarding.org.soloNote")}
-              onSelect={() => {
-                setChoice("solo");
-                setError(null);
-              }}
-            />
-          </div>
-        </>
-      )}
-
-      {error && (
-        <p className="rounded-md bg-danger px-2.5 py-1.5 text-[11px] text-danger-foreground">{error}</p>
       )}
     </div>
   );
