@@ -2,6 +2,7 @@ import { useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   AudioLines,
+  Calendar,
   Check,
   ChevronDown,
   ChevronRight,
@@ -46,6 +47,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { LevelMeter } from "./LevelMeter";
 import { McpStatusChip } from "./McpStatusChip";
+import { MicChip } from "./MicChip";
 import { StudyGenerationChip } from "./study/StudyGenerationChip";
 
 
@@ -505,14 +507,21 @@ function PrimaryAction({
       </Button>
     );
   }
-  // One button: start. The chevron appears only when a prep draft from an
+  // One button: start (直接錄音 — record now, riding whatever prep is set;
+  // the meeting draft beside it is the "prepare first" door). The chevron appears only when a prep draft from an
   // earlier call is still around, because clearing it is then the one other
   // thing you might want to do before recording.
   if (!hasPrepDraft) {
     return (
-      <Button size="sm" variant="default" onClick={onStart} disabled={busy} className="h-8">
+      <Button
+        size="sm"
+        variant="default"
+        onClick={onStart}
+        disabled={busy}
+        className="h-8 rounded-[10px]"
+      >
         <Mic className="size-3.5" />
-        {t("titlebar.startMeeting")}
+        {t("titlebar.recordNow")}
       </Button>
     );
   }
@@ -523,10 +532,10 @@ function PrimaryAction({
         variant="default"
         onClick={onStart}
         disabled={busy}
-        className="h-8 rounded-r-none"
+        className="h-8 rounded-l-[10px] rounded-r-none"
       >
         <Mic className="size-3.5" />
-        {t("titlebar.startMeeting")}
+        {t("titlebar.recordNow")}
       </Button>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -535,7 +544,7 @@ function PrimaryAction({
             variant="default"
             disabled={busy}
             aria-label={t("titlebar.startOptions")}
-            className="h-8 w-6 rounded-l-none border-l border-primary-foreground/20"
+            className="h-8 w-6 rounded-l-none rounded-r-[10px] border-l border-primary-foreground/20"
           >
             <ChevronDown className="size-3.5" />
           </Button>
@@ -643,6 +652,7 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const showReplay = useStore((s) => s.showReplay);
   const replayName = useStore((s) => s.replay?.name ?? null);
   const resetPrep = useStore((s) => s.resetPrep);
+  const setDraftOpen = useStore((s) => s.setDraftOpen);
   // A non-empty prep draft unlocks the explicit "clear prep" menu item.
   const hasPrepDraft = useStore(
     (s) =>
@@ -819,7 +829,10 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
         {studyMode && <StudyGenerationChip />}
       </div>
 
-      <div className="flex items-center gap-2 justify-self-end">
+      <div className="flex items-center gap-1.5 justify-self-end">
+        {/* Which mic the next (or current) recording uses. Stays during a
+            meeting to show the live level; switching is locked then. */}
+        <MicChip />
         <PrimaryAction
           mode={appMode}
           meetingActive={meetingActive}
@@ -834,6 +847,20 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           onResetPrep={resetPrep}
           t={t}
         />
+        {/* The "prepare first" door, beside the "record now" one. Offered only
+            where 直接錄音 is: the study tense loads the open recording into the
+            same prep fields, so a draft there would edit that recording. */}
+        {!studyMode && !meetingActive && !isFinalizingMeeting && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 rounded-[10px]"
+            onClick={() => setDraftOpen(true)}
+          >
+            <Calendar className="size-3.5" />
+            {t("titlebar.newDraft")}
+          </Button>
+        )}
         {confirmCancel && (
           <CancelMeetingDialog
             t={t}

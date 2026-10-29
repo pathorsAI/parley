@@ -15,7 +15,8 @@ import type { TodoItem } from "../../lib/types";
  * the AI button runs that same check on demand.
  */
 
-function TodoRow({ todo }: Readonly<{ todo: TodoItem }>) {
+/** One checklist item: toggle, text, hover-to-remove. Also the meeting draft's agenda rows. */
+export function TodoRow({ todo }: Readonly<{ todo: TodoItem }>) {
   const toggleTodo = useStore((s) => s.toggleTodo);
   const removeTodo = useStore((s) => s.removeTodo);
   return (
@@ -43,7 +44,8 @@ function TodoRow({ todo }: Readonly<{ todo: TodoItem }>) {
   );
 }
 
-function AddForm() {
+/** The add-an-item input under the checklist (live rail and meeting draft). */
+export function TodoAddForm() {
   const { t } = useI18n();
   const addTodo = useStore((s) => s.addTodo);
   const [input, setInput] = useState("");
@@ -131,7 +133,7 @@ export function TodosPanel() {
         </div>
       </ScrollArea>
 
-      <AddForm />
+      <TodoAddForm />
     </div>
   );
 }
