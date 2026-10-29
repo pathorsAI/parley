@@ -128,7 +128,7 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
         className="mb-1 flex shrink-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-medium text-primary transition-colors hover:bg-sidebar-foreground/5"
       >
         <Mic className="size-3.5 shrink-0" />
-        <span className="min-w-0 flex-1 truncate">{t("titlebar.startMeeting")}</span>
+        <span className="min-w-0 flex-1 truncate">{t("titlebar.recordNow")}</span>
         {startChord && (
           <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
             {formatChordLabel(startChord)}
