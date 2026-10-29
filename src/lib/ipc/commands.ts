@@ -173,7 +173,12 @@ export const startMicTest = (args: { inputDevice?: string | null }) => invoke<vo
 export const stopMicTest = () => invoke<void>("stop_mic_test");
 /** One Claude Code memory file (ai_memory.rs): `label` is "global" or the project folder. */
 export interface MemoryFile {
+  /** What the LLM sees it as: "global" or "project". */
   label: string;
+  /** For the reading log: the global file, auto memory, or a project's CLAUDE.md. */
+  kind: "global" | "auto" | "project";
+  /** Display name for the reading log; never sent to the LLM. */
+  name: string;
   text: string;
 }
 export const readClaudeMemory = () => invoke<MemoryFile[]>("read_claude_memory");

@@ -39,6 +39,14 @@ pub struct MemoryFile {
     /// which carries the username and often a client's name, and this text is
     /// sent to an LLM.
     pub label: String,
+    /// Which kind of memory it is, for the onboarding step's reading log:
+    /// `"global"`, `"auto"` (Claude Code's auto memory) or `"project"` (a
+    /// project's CLAUDE.md).
+    pub kind: &'static str,
+    /// A short display name for the reading log (`~/.claude/CLAUDE.md`, the
+    /// auto-memory file's name, `<folder>/CLAUDE.md`). Shown on this machine
+    /// only; never part of the text sent to the LLM.
+    pub name: String,
     pub text: String,
 }
 
@@ -58,21 +66,35 @@ pub(crate) fn collect_claude_memory(home: &Path) -> Vec<MemoryFile> {
     let mut out = Vec::new();
     let mut total = 0usize;
 
-    let mut push = |label: &str, path: &Path, max: usize, out: &mut Vec<MemoryFile>| {
-        let Some(text) = read_capped(path, max) else {
-            return;
+    let mut push =
+        |kind: &'static str, name: String, path: &Path, max: usize, out: &mut Vec<MemoryFile>| {
+            let Some(text) = read_capped(path, max) else {
+                return;
+            };
+            if total + text.len() > MAX_TOTAL_BYTES {
+                return;
+            }
+            total += text.len();
+            out.push(MemoryFile {
+                label: if kind == "global" {
+                    "global"
+                } else {
+                    "project"
+                }
+                .into(),
+                kind,
+                name,
+                text,
+            });
         };
-        if total + text.len() > MAX_TOTAL_BYTES {
-            return;
-        }
-        total += text.len();
-        out.push(MemoryFile {
-            label: label.into(),
-            text,
-        });
-    };
 
-    push("global", &root.join("CLAUDE.md"), MAX_FILE_BYTES, &mut out);
+    push(
+        "global",
+        "~/.claude/CLAUDE.md".into(),
+        &root.join("CLAUDE.md"),
+        MAX_FILE_BYTES,
+        &mut out,
+    );
 
     let mut auto: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
     if let Ok(projects) = std::fs::read_dir(root.join("projects")) {
@@ -91,7 +113,7 @@ pub(crate) fn collect_claude_memory(home: &Path) -> Vec<MemoryFile> {
     }
     auto.sort_by_key(|a| std::cmp::Reverse(a.0));
     for (_, path) in auto.into_iter().take(MAX_FILES) {
-        push("project", &path, MAX_FILE_BYTES, &mut out);
+        push("auto", file_name(&path), &path, MAX_FILE_BYTES, &mut out);
     }
 
     let mut project_files: Vec<(std::time::SystemTime, PathBuf)> = project_dirs(home)
@@ -103,9 +125,37 @@ pub(crate) fn collect_claude_memory(home: &Path) -> Vec<MemoryFile> {
     project_files.sort_by_key(|a| std::cmp::Reverse(a.0));
     project_files.dedup_by(|a, b| a.1 == b.1);
     for (_, path) in project_files.into_iter().take(MAX_PROJECT_FILES) {
-        push("project", &path, MAX_PROJECT_FILE_BYTES, &mut out);
+        push(
+            "project",
+            project_file_name(&path),
+            &path,
+            MAX_PROJECT_FILE_BYTES,
+            &mut out,
+        );
     }
     out
+}
+
+fn file_name(path: &Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// `<project folder>/CLAUDE.md`, or `<project folder>/.claude/CLAUDE.md`.
+fn project_file_name(path: &Path) -> String {
+    let parent = path.parent();
+    let (dir, prefix) = match parent {
+        Some(p) if p.file_name().is_some_and(|n| n == ".claude") => (p.parent(), ".claude/"),
+        _ => (parent, ""),
+    };
+    let folder = dir
+        .and_then(|d| d.file_name())
+        .map(|n| n.to_string_lossy().into_owned());
+    match folder {
+        Some(folder) => format!("{folder}/{prefix}{}", file_name(path)),
+        None => file_name(path),
+    }
 }
 
 /// The project folders Claude Code has opened: the keys of `projects` in
@@ -194,10 +244,14 @@ mod tests {
             vec![
                 MemoryFile {
                     label: "global".into(),
+                    kind: "global",
+                    name: "~/.claude/CLAUDE.md".into(),
                     text: "I design Parley.".into()
                 },
                 MemoryFile {
                     label: "project".into(),
+                    kind: "auto",
+                    name: "MEMORY.md".into(),
                     text: "Team: Joe".into()
                 },
             ]
@@ -256,8 +310,12 @@ mod tests {
         let mut files = collect_claude_memory(&home);
         files.sort_by_key(|f| f.text.len());
         assert_eq!(files.len(), 2);
-        assert!(files.iter().all(|f| f.label == "project"));
+        assert!(files
+            .iter()
+            .all(|f| f.label == "project" && f.kind == "project"));
         assert_eq!(files[0].text, "Parley: meeting assistant");
+        assert_eq!(files[0].name, "parley/.claude/CLAUDE.md");
+        assert_eq!(files[1].name, "site/CLAUDE.md");
         // A long project file is read only up to its own cap.
         assert_eq!(files[1].text.len(), MAX_PROJECT_FILE_BYTES);
     }

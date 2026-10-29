@@ -8,6 +8,7 @@ import {
   cleanLines,
   excerptMemory,
   memoryFilesToText,
+  readingSteps,
   redactSecrets,
   removeBackgroundLines,
 } from "./memoryImport";
@@ -54,10 +55,15 @@ describe("memory text", () => {
   it("labels each Claude Code file", () => {
     expect(
       memoryFilesToText([
-        { label: "global", text: "I design Parley.\n" },
-        { label: "project", text: "Team: Joe" },
+        { label: "global", kind: "global", name: "~/.claude/CLAUDE.md", text: "I design Parley.\n" },
+        { label: "project", kind: "auto", name: "MEMORY.md", text: "Team: Joe" },
       ]),
     ).toBe("## global\nI design Parley.\n\n## project\nTeam: Joe");
+  });
+
+  it("keeps the files' display names out of the model's text", () => {
+    const text = memoryFilesToText([{ label: "project", kind: "project", name: "acme-client/CLAUDE.md", text: "x" }]);
+    expect(text).not.toContain("acme-client");
   });
 
   it("caps what goes to the model", () => {
@@ -127,5 +133,29 @@ describe("excerptMemory", () => {
     expect([...lines[1]].length).toBe(80);
     expect(lines[1].endsWith("…")).toBe(true);
     expect(lines).toHaveLength(8);
+  });
+});
+
+describe("readingSteps", () => {
+  const file = (kind: "global" | "auto" | "project", name: string) => ({ label: "x", kind, name, text: "t" });
+
+  it("names each file, and counts auto memory on one line where it starts", () => {
+    expect(
+      readingSteps([
+        file("global", "~/.claude/CLAUDE.md"),
+        file("auto", "MEMORY.md"),
+        file("auto", "user-role.md"),
+        file("auto", "team.md"),
+        file("project", "parley/CLAUDE.md"),
+      ]),
+    ).toEqual([
+      { kind: "file", name: "~/.claude/CLAUDE.md" },
+      { kind: "auto", count: 3 },
+      { kind: "file", name: "parley/CLAUDE.md" },
+    ]);
+  });
+
+  it("is empty when nothing was read", () => {
+    expect(readingSteps([])).toEqual([]);
   });
 });
