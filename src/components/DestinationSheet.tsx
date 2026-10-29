@@ -743,6 +743,7 @@ export function DestinationField({
   personalFolders = true,
   allowKeepCopy = true,
   chip,
+  form = false,
 }: Readonly<{
   value: LibraryDestination;
   mode?: OrgHandoffMode | null;
@@ -757,6 +758,8 @@ export function DestinationField({
   /** Render as a small chip instead of a full-width field: dashed with
    *  `chip.empty` while nothing is picked, solid with the place once it is. */
   chip?: { empty: string };
+  /** Sized like the other inputs of a {@link FormSection} form (the meeting draft). */
+  form?: boolean;
 }>) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -798,7 +801,9 @@ export function DestinationField({
         onClick={() => setOpen(true)}
         aria-label={title}
         title={title}
-        className="flex h-7 w-full min-w-0 cursor-pointer items-center gap-1.5 rounded-md border border-input bg-background px-2 text-xs outline-none transition-colors hover:bg-muted/50 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+        className={`flex w-full min-w-0 cursor-pointer items-center gap-1.5 border bg-background outline-none ${
+          form ? "h-8 rounded-[8px] border-[#dadee5] px-2.5 text-sm dark:border-input" : "h-7 rounded-md border-input px-2 text-xs"
+        } transition-colors hover:bg-muted/50 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50`}
       >
         {isOrg ? (
           <UsersRound className="size-3.5 shrink-0 text-muted-foreground" />

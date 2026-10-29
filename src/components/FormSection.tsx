@@ -69,4 +69,4 @@ export function FieldHint({ children }: Readonly<{ children: ReactNode }>) {
 /** Onboarding's input look: rounded, a light border. No height — a one-line
  *  input adds h-8, a textarea its own vertical padding. */
 export const FORM_INPUT_CLASS =
-  "rounded-[10px] border border-[#dadee5] bg-background px-2.5 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:border-input";
+  "rounded-[8px] border border-[#dadee5] bg-background px-2.5 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:border-input";

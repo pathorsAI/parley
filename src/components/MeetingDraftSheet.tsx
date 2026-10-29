@@ -59,7 +59,7 @@ function MeetingWhenFields() {
           <button
             type="button"
             onClick={addTime}
-            className="flex h-8 items-center gap-1.5 self-start rounded-[10px] border border-dashed border-[#dadee5] bg-background px-3 text-sm text-muted-foreground transition-colors hover:text-foreground dark:border-input"
+            className="flex h-8 items-center gap-1.5 self-start rounded-[8px] border border-dashed border-[#dadee5] bg-background px-3 text-sm text-muted-foreground transition-colors hover:text-foreground dark:border-input"
           >
             <CalendarPlus className="size-3.5" />
             {t("draft.addTime")}
@@ -86,7 +86,7 @@ function MeetingWhenFields() {
                 aria-label={t("draft.lead")}
                 value={lead}
                 onChange={(e) => setLead(Number(e.target.value))}
-                className="h-8 rounded-[10px] border border-[#dadee5] bg-background px-2 text-sm outline-none dark:border-input"
+                className="h-8 rounded-[8px] border border-[#dadee5] bg-background px-2 text-sm outline-none dark:border-input"
               >
                 {LEAD_CHOICES.map((m) => (
                   <option key={m} value={m}>
@@ -215,6 +215,7 @@ export function MeetingDraftSheet() {
             <Field>
               <FieldTitle label={t("dest.title.save")} />
               <DestinationField
+                form
                 gateOnSync
                 verb="save"
                 title={t("dest.title.save")}
