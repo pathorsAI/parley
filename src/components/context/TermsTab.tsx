@@ -1,19 +1,21 @@
-//! Settings › Dictionary — the phrase list that biases recognition and rewrites
-//! the variants that slip through anyway.
+//! 語境庫 › 常用詞 — the phrase list that biases recognition and rewrites the
+//! variants that slip through anyway. (It used to be Settings › 詞庫; that
+//! panel now only points here.)
 //!
 //! Edits go straight through lib/dictionary (a shared JSON file), NOT through
 //! the zustand settings object: the local MCP server writes the same file, so
-//! the file has to stay the source of truth. That's also why this panel
-//! re-reads on the dictionary's broadcast — an entry added by an external tool
-//! (or by the correction bubble in another window) shows up here on focus.
+//! the file has to stay the source of truth. That's also why this tab re-reads
+//! on the dictionary's broadcast — an entry added by an external tool (or by
+//! the correction bubble in another window) shows up here on focus.
 //!
-//! Cloud sync runs in the main window (lib/cloud/dictionarySync); this panel only
-//! shows its status line, read from the status it leaves in localStorage.
+//! Cloud sync runs in this (the main) window (lib/cloud/dictionarySync); the
+//! tab only shows its status line, read from the status it leaves in
+//! localStorage.
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { Plus, Trash2 } from "lucide-react";
-import { useI18n } from "../i18n";
-import { log } from "../lib/log";
+import { useI18n } from "../../i18n";
+import { log } from "../../lib/log";
 import {
   addEntry,
   listEntries,
@@ -23,18 +25,20 @@ import {
   whenDictionaryReady,
   VOCABULARY_LIMIT,
   type DictionaryEntry,
-} from "../lib/dictionary";
+  type DictionarySource,
+} from "../../lib/dictionary";
 import {
   readDictionarySyncStatus,
   STATUS_EVENT,
   STATUS_KEY,
   type DictionarySyncStatus,
-} from "../lib/cloud/dictionarySync";
-import { CLOUD_ENABLED } from "../lib/flags";
-import { useStore } from "../lib/store";
-import type { TranslationKey } from "../i18n";
+} from "../../lib/cloud/dictionarySync";
+import { CLOUD_ENABLED } from "../../lib/flags";
+import { useStore } from "../../lib/store";
+import type { TranslationKey } from "../../i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { InfoTip } from "@/components/ui/info-tip";
 
 /** Variants are edited as one comma-separated field — a dictation user thinks
  *  in "these all mean Parley", not in rows. Both comma shapes split, because a
@@ -45,6 +49,14 @@ function parseVariants(value: string): string[] {
     .map((v) => v.trim())
     .filter(Boolean);
 }
+
+/** Where an entry came from, as the short tag beside it. Learned-by-correction
+ *  is the one the user didn't type themselves, so it is the one in colour. */
+const SOURCE_TAG: Record<DictionarySource, { key: TranslationKey; className: string }> = {
+  correction: { key: "context.terms.source.correction", className: "bg-info text-info-foreground" },
+  manual: { key: "context.terms.source.manual", className: "bg-muted text-muted-foreground" },
+  mcp: { key: "context.terms.source.mcp", className: "bg-muted text-muted-foreground" },
+};
 
 /**
  * One editable row. Keystrokes stay local and only commit on blur: writing
@@ -70,10 +82,12 @@ function EntryRow({
   useEffect(() => setPhrase(entry.phrase), [entry.phrase]);
   useEffect(() => setVariants(joined), [joined]);
 
+  const tag = SOURCE_TAG[entry.source];
   return (
-    <div className="flex items-start gap-2">
+    <div className="flex items-center gap-2">
       <Input
         value={phrase}
+        aria-label={t("context.terms.phrase")}
         onChange={(ev) => setPhrase(ev.target.value)}
         onBlur={() => {
           // An emptied phrase would orphan its variants — put it back.
@@ -81,17 +95,19 @@ function EntryRow({
           else if (phrase !== entry.phrase) onCommit({ phrase });
         }}
         placeholder={t("settings.dictionary.phrasePlaceholder")}
-        className="h-8 max-w-[180px] text-sm"
+        className="h-8 w-[180px] shrink-0 text-sm"
       />
       <Input
         value={variants}
+        aria-label={t("context.terms.variants")}
         onChange={(ev) => setVariants(ev.target.value)}
         onBlur={() => {
           if (variants !== joined) onCommit({ variants: parseVariants(variants) });
         }}
         placeholder={t("settings.dictionary.variantsPlaceholder")}
-        className="h-8 flex-1 text-sm"
+        className="h-8 min-w-0 flex-1 text-sm"
       />
+      <span className={`shrink-0 rounded px-1.5 py-px text-[10px] ${tag.className}`}>{t(tag.key)}</span>
       <Button
         size="icon"
         variant="ghost"
@@ -174,7 +190,7 @@ function SyncStatusLine() {
   );
 }
 
-export function DictionarySettings() {
+export function TermsTab() {
   const { t } = useI18n();
   const [entries, setEntries] = useState<DictionaryEntry[]>(() => listEntries());
   const [newPhrase, setNewPhrase] = useState("");
@@ -187,7 +203,7 @@ export function DictionarySettings() {
     // empty list would write over the real one — wait for the read.
     whenDictionaryReady()
       .then(refresh)
-      .catch((error) => log.warn("dictionary: settings hydrate failed", { error: String(error) }));
+      .catch((error) => log.warn("dictionary: context hydrate failed", { error: String(error) }));
     let active = true;
     let unlisten: (() => void) | undefined;
     listenForDictionaryUpdated(refresh)
@@ -195,7 +211,7 @@ export function DictionarySettings() {
         if (active) unlisten = un;
         else un();
       })
-      .catch((error) => log.warn("dictionary: settings listener failed", { error: String(error) }));
+      .catch((error) => log.warn("dictionary: context listener failed", { error: String(error) }));
     return () => {
       active = false;
       unlisten?.();
@@ -209,6 +225,14 @@ export function DictionarySettings() {
 
   return (
     <>
+      {/* The privacy note travelled with the editor from Settings: what leaves
+          the machine is the same wherever the list is edited. */}
+      <p className="flex items-center gap-1 text-[11px] text-muted-foreground">
+        {t("context.terms.hint")}
+        <InfoTip label={t("settings.info")}>
+          {`${t("settings.dictionary.intro")}\n\n${t("settings.dictionary.privacy")}`}
+        </InfoTip>
+      </p>
       <SyncStatusLine />
 
       <div className="flex flex-col gap-2">
@@ -231,18 +255,20 @@ export function DictionarySettings() {
       {/* New row. Committing through the Add button (rather than dropping a
           blank row in the list) keeps the phrase unique-able: adding a phrase
           that already exists merges its variants instead of duplicating it. */}
-      <div className="flex items-start gap-2">
+      <div className="flex items-center gap-2">
         <Input
           value={newPhrase}
           onChange={(ev) => setNewPhrase(ev.target.value)}
+          aria-label={t("context.terms.newPhrase")}
           placeholder={t("settings.dictionary.phrasePlaceholder")}
-          className="h-8 max-w-[180px] text-sm"
+          className="h-8 w-[180px] shrink-0 text-sm"
         />
         <Input
           value={newVariants}
           onChange={(ev) => setNewVariants(ev.target.value)}
+          aria-label={t("context.terms.variants")}
           placeholder={t("settings.dictionary.variantsPlaceholder")}
-          className="h-8 flex-1 text-sm"
+          className="h-8 min-w-0 flex-1 text-sm"
         />
         <Button
           variant="outline"

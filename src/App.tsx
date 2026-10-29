@@ -34,6 +34,7 @@ import {
 } from "./lib/tray";
 import { listenForLocalSttSlow } from "./lib/transcription/localAlerts";
 import { listenForSettings } from "./lib/settingsSync";
+import { listenForMainNavigate } from "./lib/nav/navigate";
 import { listenForViewLogsMenu } from "./lib/diagnostics";
 import { listenForSttUsage } from "./lib/usage/log";
 import { initTemplatesSync } from "./lib/templatesSync";
@@ -198,6 +199,8 @@ const App = () => {
     // A meeting the computer slept through ends (and is saved) on wake.
     track(listenForSystemWake());
     track(listenForSettings());
+    // Another window sending this one somewhere (Settings › 詞庫 → 語境庫).
+    track(listenForMainNavigate());
     track(listenForSttUsage());
     track(listenForCacheClear());
     track(listenForSpeakerCacheClear());

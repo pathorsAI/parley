@@ -1,8 +1,10 @@
 import { loadHistoryEntry } from "../history/history";
 import { isMeetingActive, useStore, type LibrarySelection } from "../store";
 import { log } from "../log";
+import { listenIfTauri, type UnlistenFn } from "../ipc/events";
 import { createNavHistory, type NavStatus } from "./history";
 import { sameLocation, type Location } from "./location";
+import { MAIN_NAVIGATE_EVENT } from "./mainWindow";
 
 export type { Location } from "./location";
 export { locationKey, sameLocation } from "./location";
@@ -152,4 +154,17 @@ export async function leaveRecordingTo(selection: LibrarySelection): Promise<Nav
   store.exitReplay();
   store.setStudyTab("report");
   return navigateTo({ kind: "library", selection }, { from });
+}
+
+/**
+ * Main window only: go where another window asked ({@link MAIN_NAVIGATE_EVENT},
+ * sent by openInMainWindow). Recorded like any other trip, so ⌘[ comes back
+ * from it. A no-op outside the Tauri shell.
+ */
+export function listenForMainNavigate(): Promise<UnlistenFn> {
+  return listenIfTauri<Location>(MAIN_NAVIGATE_EVENT, (e) => {
+    navigateTo(e.payload).catch((error) =>
+      log.warn("nav: main-window navigation failed", { error: String(error) })
+    );
+  });
 }

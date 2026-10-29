@@ -3,6 +3,7 @@ import {
   Archive,
   ArchiveRestore,
   AudioLines,
+  BookOpen,
   Check,
   ChevronRight,
   Folder,
@@ -151,6 +152,15 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
         count={countAt({ kind: "all" })}
         active={nodeActive({ kind: "all" })}
         onSelect={() => selectLibrary({ kind: "personal", node: { kind: "all" } })}
+      />
+
+      {/* 語境庫: what every meeting is told about you — terms, background, AI
+          memory. Not a folder, so it sits above the folder section. */}
+      <Row
+        icon={<BookOpen className="size-3.5" />}
+        label={t("context.title")}
+        active={libraryActive && selection.kind === "context"}
+        onSelect={() => selectLibrary({ kind: "context" })}
       />
 
       <GroupLabel
