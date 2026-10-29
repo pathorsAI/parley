@@ -154,6 +154,15 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
         onSelect={() => selectLibrary({ kind: "personal", node: { kind: "all" } })}
       />
 
+      {/* Voice-typing history sits right under every recording: both are
+          "everything I've said", just captured two ways. */}
+      <Row
+        icon={<Mic className="size-3.5" />}
+        label={t("history.sidebar.voiceTyping")}
+        active={libraryActive && selection.kind === "voice"}
+        onSelect={() => selectLibrary({ kind: "voice" })}
+      />
+
       {/* 語境庫: what every meeting is told about you — terms, background, AI
           memory. Not a folder, so it sits above the folder section. */}
       <Row
@@ -221,12 +230,6 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
         count={countAt({ kind: "unassigned" })}
         active={nodeActive({ kind: "unassigned" })}
         onSelect={() => selectLibrary({ kind: "personal", node: { kind: "unassigned" } })}
-      />
-      <Row
-        icon={<Mic className="size-3.5" />}
-        label={t("history.sidebar.voiceTyping")}
-        active={libraryActive && selection.kind === "voice"}
-        onSelect={() => selectLibrary({ kind: "voice" })}
       />
 
       {/* Org-shared recordings are their own tree on purpose: a shared copy is
