@@ -8,6 +8,7 @@ import { log } from "../../lib/log";
 import { Button } from "@/components/ui/button";
 import type { LibraryTree } from "../shell/useLibraryTree";
 import { GettingStarted, openSampleRecording } from "./GettingStarted";
+import { UpcomingMeeting } from "./UpcomingMeeting";
 import {
   GETTING_STARTED_STEPS,
   isGettingStartedVisible,
@@ -98,6 +99,9 @@ export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
           </div>
           <p className="text-xs text-muted-foreground">{t("home.dropHint")}</p>
         </section>
+
+        {/* ── The meeting drafted next ─────────────────────────────────────── */}
+        <UpcomingMeeting style={delay(60)} />
 
         {/* ── Getting started (first lap) ─────────────────────────────────── */}
         {showChecklist && (

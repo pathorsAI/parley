@@ -73,3 +73,16 @@ export function monthGrid(year: number, month: number): number[][] {
   }
   return weeks;
 }
+
+/** How far off a start is, for "2 小時後": minutes under an hour, hours under
+ *  a day, then days; "started" once it is under way. */
+export function untilStart(
+  startMs: number,
+  now: number,
+): { unit: "started" } | { unit: "min" | "hour" | "day"; value: number } {
+  const minutes = Math.ceil((startMs - now) / MIN);
+  if (minutes <= 0) return { unit: "started" };
+  if (minutes < 60) return { unit: "min", value: minutes };
+  if (minutes < 24 * 60) return { unit: "hour", value: Math.round(minutes / 60) };
+  return { unit: "day", value: Math.round(minutes / (24 * 60)) };
+}
