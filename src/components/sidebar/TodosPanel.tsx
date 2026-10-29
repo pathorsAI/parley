@@ -44,8 +44,9 @@ export function TodoRow({ todo }: Readonly<{ todo: TodoItem }>) {
   );
 }
 
-/** The add-an-item input under the checklist (live rail and meeting draft). */
-export function TodoAddForm() {
+/** The add-an-item input under the checklist (live rail and meeting draft);
+ *  `bare` drops its divider and padding for a form field panel. */
+export function TodoAddForm({ bare = false }: Readonly<{ bare?: boolean }> = {}) {
   const { t } = useI18n();
   const addTodo = useStore((s) => s.addTodo);
   const [input, setInput] = useState("");
@@ -57,18 +58,18 @@ export function TodoAddForm() {
   return (
     <form
       onSubmit={add}
-      className="flex items-center gap-2 border-t p-2.5"
+      className={bare ? "flex items-center gap-2" : "flex items-center gap-2 border-t p-2.5"}
     >
       <Input
         value={input}
         onChange={(e) => setInput(e.target.value)}
         placeholder={t("todos.addPlaceholder")}
-        className="h-8 text-sm"
+        className={bare ? "h-9 rounded-[10px] border-[#dadee5] text-sm dark:border-input" : "h-8 text-sm"}
       />
       <Button
         type="submit"
         size="icon"
-        className="size-8 shrink-0"
+        className={bare ? "size-9 shrink-0 rounded-[10px]" : "size-8 shrink-0"}
         disabled={!input.trim()}
       >
         <Plus className="size-4" />

@@ -3,6 +3,7 @@ import { useI18n } from "../i18n";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { FieldHint, FieldLabel, FieldPanel, FORM_INPUT_CLASS } from "./FormSection";
 
 /**
  * Per-meeting context, bound to the store. Shown wherever a meeting is set up
@@ -17,7 +18,13 @@ import { Textarea } from "@/components/ui/textarea";
 export function MeetingContextField({
   rows = 3,
   autoFocus = false,
-}: Readonly<{ rows?: number; autoFocus?: boolean }>) {
+  form = false,
+}: Readonly<{
+  rows?: number;
+  autoFocus?: boolean;
+  /** Laid out as a field panel in a {@link FormSection} (the meeting draft). */
+  form?: boolean;
+}>) {
   const { t } = useI18n();
   const meetingContext = useStore((s) => s.meetingContext);
   const setMeetingContext = useStore((s) => s.setMeetingContext);
@@ -26,6 +33,30 @@ export function MeetingContextField({
   const floor = useStore((s) => s.meetingFloor);
   const setField = useStore((s) => s.setNegotiationField);
   const legacyNegotiation = !!(batna.trim() || target.trim() || floor.trim());
+  const negotiation = legacyNegotiation && (
+    <div className="flex flex-col gap-2">
+      <SetupField label={t("analyze.batnaLabel")} value={batna} placeholder={t("analyze.batnaPlaceholder")} onChange={(v) => setField("meetingBatna", v)} />
+      <SetupField label={t("analyze.targetLabel")} value={target} placeholder={t("analyze.targetPlaceholder")} onChange={(v) => setField("meetingTarget", v)} />
+      <SetupField label={t("analyze.floorLabel")} value={floor} placeholder={t("analyze.floorPlaceholder")} onChange={(v) => setField("meetingFloor", v)} />
+    </div>
+  );
+  if (form) {
+    return (
+      <FieldPanel>
+        <FieldLabel label={t("draft.context")} htmlFor="draft-context" />
+        <textarea
+          id="draft-context"
+          rows={rows}
+          value={meetingContext}
+          onChange={(e) => setMeetingContext(e.target.value)}
+          placeholder={t("meeting.contextPlaceholder")}
+          className={`${FORM_INPUT_CLASS} max-h-48 resize-none leading-[22px]`}
+        />
+        <FieldHint>{t("analyze.contextHint")}</FieldHint>
+        {negotiation}
+      </FieldPanel>
+    );
+  }
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-col gap-1.5">
@@ -40,13 +71,7 @@ export function MeetingContextField({
           className="max-h-48 overflow-y-auto resize-none text-xs"
         />
       </div>
-      {legacyNegotiation && (
-      <div className="flex flex-col gap-2">
-        <SetupField label={t("analyze.batnaLabel")} value={batna} placeholder={t("analyze.batnaPlaceholder")} onChange={(v) => setField("meetingBatna", v)} />
-        <SetupField label={t("analyze.targetLabel")} value={target} placeholder={t("analyze.targetPlaceholder")} onChange={(v) => setField("meetingTarget", v)} />
-        <SetupField label={t("analyze.floorLabel")} value={floor} placeholder={t("analyze.floorPlaceholder")} onChange={(v) => setField("meetingFloor", v)} />
-      </div>
-      )}
+      {negotiation}
       <p className="text-[11px] leading-snug text-muted-foreground">{t("analyze.contextHint")}</p>
     </div>
   );

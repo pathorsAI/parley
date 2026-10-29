@@ -180,7 +180,7 @@ export function MeetingTimePicker() {
   };
 
   return (
-    <div ref={setContainer} className="flex flex-wrap items-center gap-1 rounded-md border border-input bg-background p-0.5">
+    <div ref={setContainer} className="flex flex-wrap items-center gap-1 rounded-[10px] border border-[#dadee5] bg-background p-0.5 dark:border-input">
       <Popover open={open === "day"} onOpenChange={(o) => setOpen(o ? "day" : null)}>
         <PopoverTrigger className={triggerClass}>
           {new Date(startAt).toLocaleDateString(locale, { month: "long", day: "numeric", weekday: "short" })}

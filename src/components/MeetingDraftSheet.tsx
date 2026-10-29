@@ -1,4 +1,4 @@
-import { CalendarPlus, Eraser, Save, Trash2, X } from "lucide-react";
+import { BellRing, CalendarDays, CalendarPlus, Eraser, FolderOpen, NotebookPen, Save, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { isMeetingActive, useStore } from "../lib/store";
 import { ensureNotificationPermission } from "../lib/meeting/reminder";
@@ -6,6 +6,7 @@ import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { DestinationField } from "./DestinationSheet";
+import { FieldHint, FieldLabel, FieldPanel, FORM_INPUT_CLASS, FormSection } from "./FormSection";
 import { MeetingContextField } from "./MeetingContextField";
 import { MeetingTimePicker, defaultMeetingTime } from "./MeetingTimePicker";
 import { TodoAddForm, TodoRow } from "./sidebar/TodosPanel";
@@ -14,7 +15,8 @@ import { useMeetingDestination } from "./useMeetingDestination";
 /** Lead times the draft offers, in minutes before the start. */
 const LEAD_CHOICES = [0, 5, 10, 15, 30] as const;
 
-/** The draft's name, start time and how long before it to be reminded. */
+/** The draft's name, start time and how long before it to be reminded:
+ *  the 會議資訊 section's panels. */
 function MeetingWhenFields() {
   const { t } = useI18n();
   const title = useStore((s) => s.meetingTitle);
@@ -39,62 +41,65 @@ function MeetingWhenFields() {
   }
 
   return (
-    <div className="flex flex-col gap-3">
-      <label className="flex flex-col gap-1.5">
-        <span className="text-xs font-medium">{t("floating.titleLabel")}</span>
+    <>
+      <FieldPanel>
+        <FieldLabel label={t("floating.titleLabel")} htmlFor="draft-title" />
         <input
+          id="draft-title"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           placeholder={t("floating.untitled")}
-          className="h-8 rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+          className={FORM_INPUT_CLASS}
         />
-      </label>
-      <div className="flex flex-col gap-1.5">
-        <span className="text-xs font-medium">{t("draft.when")}</span>
+        <FieldHint>{t("draft.titleHint")}</FieldHint>
+      </FieldPanel>
+      <FieldPanel>
+        <FieldLabel label={t("draft.when")} />
         {meetingAt == null ? (
           <button
             type="button"
             onClick={addTime}
-            className="flex h-8 items-center gap-1.5 self-start rounded-md border border-dashed px-2.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            className="flex h-9 items-center gap-1.5 self-start rounded-[10px] border border-dashed border-[#dadee5] bg-background px-3 text-sm text-muted-foreground transition-colors hover:text-foreground dark:border-input"
           >
             <CalendarPlus className="size-3.5" />
             {t("draft.addTime")}
           </button>
         ) : (
-          <div className="flex items-start gap-1">
-            <div className="min-w-0 flex-1">
-              <MeetingTimePicker />
+          <>
+            <div className="flex items-center gap-1">
+              <div className="min-w-0 flex-1">
+                <MeetingTimePicker />
+              </div>
+              <button
+                type="button"
+                aria-label={t("draft.whenClear")}
+                title={t("draft.whenClear")}
+                onClick={clearTime}
+                className="grid size-9 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-muted"
+              >
+                <X className="size-3.5" />
+              </button>
             </div>
-            <button
-              type="button"
-              aria-label={t("draft.whenClear")}
-              title={t("draft.whenClear")}
-              onClick={clearTime}
-              className="grid size-9 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-muted"
-            >
-              <X className="size-3.5" />
-            </button>
-          </div>
+            <div className="flex items-center gap-2">
+              <BellRing className="size-3.5 shrink-0 text-muted-foreground" />
+              <select
+                aria-label={t("draft.lead")}
+                value={lead}
+                onChange={(e) => setLead(Number(e.target.value))}
+                className="h-8 rounded-[10px] border border-[#dadee5] bg-background px-2 text-sm outline-none dark:border-input"
+              >
+                {LEAD_CHOICES.map((m) => (
+                  <option key={m} value={m}>
+                    {m === 0 ? t("draft.lead.atStart") : t("draft.lead.before", { minutes: String(m) })}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </>
         )}
-        {meetingAt != null && (
-          <select
-            aria-label={t("draft.lead")}
-            value={lead}
-            onChange={(e) => setLead(Number(e.target.value))}
-            className="h-8 rounded-md border border-input bg-background px-2 text-sm outline-none"
-          >
-            {LEAD_CHOICES.map((m) => (
-              <option key={m} value={m}>
-                {m === 0 ? t("draft.lead.atStart") : t("draft.lead.before", { minutes: String(m) })}
-              </option>
-            ))}
-          </select>
-        )}
-        <span className="text-[11px] text-muted-foreground">
-          {meetingAt == null ? t("draft.whenHint") : t("draft.whenSet")}
-        </span>
-      </div>
-    </div>
+        <FieldHint>{meetingAt == null ? t("draft.whenHint") : t("draft.whenSet")}</FieldHint>
+      </FieldPanel>
+    </>
   );
 }
 
@@ -201,39 +206,53 @@ export function MeetingDraftSheet() {
           </>
         }
       >
-        <div className="flex flex-col gap-5 px-4 py-3">
-          <MeetingWhenFields />
+        <div className="flex flex-col gap-4 px-4 py-4">
+          <FormSection
+            icon={<CalendarDays className="size-3.5" />}
+            label={t("draft.section.meeting")}
+            note={t("draft.section.meetingNote")}
+          >
+            <MeetingWhenFields />
+          </FormSection>
 
-          <div className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium">{t("dest.title.save")}</span>
-            <DestinationField
-              gateOnSync
-              verb="save"
-              title={t("dest.title.save")}
-              value={destination}
-              mode={mode}
-              fresh={fresh}
-              onChange={pickDestination}
-            />
-          </div>
-
-          <MeetingContextField rows={5} />
-
-          <div className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium">{t("draft.agenda")}</span>
-            <div className="overflow-hidden rounded-md border">
-              {todos.length === 0 ? (
-                <p className="px-3 py-3 text-xs text-muted-foreground">{t("todos.empty")}</p>
-              ) : (
-                <div className="flex flex-col gap-0.5 p-1.5">
+          <FormSection
+            icon={<NotebookPen className="size-3.5" />}
+            label={t("draft.section.prep")}
+            note={t("draft.section.prepNote")}
+          >
+            <MeetingContextField form rows={4} />
+            <FieldPanel>
+              <FieldLabel label={t("draft.agenda")} />
+              {todos.length > 0 && (
+                <div className="-mx-1.5 flex flex-col gap-0.5">
                   {todos.map((todo) => (
                     <TodoRow key={todo.id} todo={todo} />
                   ))}
                 </div>
               )}
-              <TodoAddForm />
-            </div>
-          </div>
+              <TodoAddForm bare />
+              {todos.length === 0 && <FieldHint>{t("todos.empty")}</FieldHint>}
+            </FieldPanel>
+          </FormSection>
+
+          <FormSection
+            icon={<FolderOpen className="size-3.5" />}
+            label={t("draft.section.filing")}
+            note={t("draft.section.filingNote")}
+          >
+            <FieldPanel>
+              <FieldLabel label={t("dest.title.save")} />
+              <DestinationField
+                gateOnSync
+                verb="save"
+                title={t("dest.title.save")}
+                value={destination}
+                mode={mode}
+                fresh={fresh}
+                onChange={pickDestination}
+              />
+            </FieldPanel>
+          </FormSection>
         </div>
       </SheetContent>
     </Sheet>
