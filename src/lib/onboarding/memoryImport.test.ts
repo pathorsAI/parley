@@ -67,6 +67,16 @@ describe("memory text", () => {
     expect(text).not.toContain("acme-client");
   });
 
+  it("shares the cap: short files whole, long ones cut evenly", () => {
+    const file = (text: string) => ({ label: "project", kind: "auto" as const, name: "n", text });
+    const text = memoryFilesToText([file("G".repeat(MAX_MEMORY_CHARS)), file("short note"), file("P".repeat(MAX_MEMORY_CHARS))]);
+    expect(text).toContain("short note");
+    const g = text.match(/G+/u)![0].length;
+    const p = text.match(/P+/u)![0].length;
+    expect(Math.abs(g - p)).toBeLessThanOrEqual(1);
+    expect(g + p + "short note".length).toBeLessThanOrEqual(MAX_MEMORY_CHARS);
+  });
+
   it("caps what goes to the model", () => {
     expect(capMemoryText("x".repeat(MAX_MEMORY_CHARS + 50))).toHaveLength(MAX_MEMORY_CHARS);
     expect(capMemoryText("  short  ")).toBe("short");

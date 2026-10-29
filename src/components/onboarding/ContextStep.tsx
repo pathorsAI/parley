@@ -7,7 +7,15 @@ import { log } from "../../lib/log";
 import { isProviderReady } from "../../lib/ai/settings";
 import { describeAiError } from "../../lib/ai/errors";
 import { removeEntry } from "../../lib/dictionary";
-import { draftBackground, memoryFilesToText, readingSteps, type ReadingStep } from "../../lib/onboarding/memoryImport";
+import {
+  appendBackground,
+  backgroundLines,
+  draftBackground,
+  memoryFilesToText,
+  readingSteps,
+  removeBackgroundLines,
+  type ReadingStep,
+} from "../../lib/onboarding/memoryImport";
 import { prefersReducedMotion } from "../../lib/onboarding/motion";
 import { cn } from "@/lib/utils";
 import {
@@ -43,7 +51,7 @@ import { Textarea } from "@/components/ui/textarea";
  *   user's name and company, the company, people and product names from the
  *   self-introduction and Claude Code's memory, and any the user types — removable;
  * - how they work: Claude Code's memory files on this machine, read when the
- *   step opens and used to fill in the background in a fixed template, with
+ *   step opens and added under the background in a fixed template, with
  *   a log of what was read.
  */
 export function ContextStep({
@@ -279,7 +287,8 @@ const LOG_STEP_MS = 420;
 
 /**
  * "How you work": Claude Code's memory files on this machine, used to fill in
- * the speaker background above. A reading log plays as it happens — each
+ * the speaker background above, as template lines under what the user said
+ * in the mic check. A reading log plays as it happens — each
  * file read, then the writing — and stays as the record of what was read; the
  * result is the background itself. Done once (settings.aiMemoryNotes keeps
  * what was written): a revisit replays the read without rewriting the user's
@@ -318,16 +327,22 @@ function AiMemory({
       try {
         const draft = await draftBackground({
           settings,
-          current: settings.userBackground,
+          current: removeBackgroundLines(settings.userBackground, backgroundLines(settings.aiMemoryNotes)),
           text: memoryFilesToText(files),
         });
         if (!alive) return "hidden";
         // The names go to the dictionary even when there's no background to write.
         const added = await addTerms(draft.terms);
         if (added.length > 0) onTermsAdded(added);
+        // Under what the user said in the mic check, in place of what an
+        // earlier fill-in (Refresh) added.
+        const own = removeBackgroundLines(
+          useStore.getState().settings.userBackground,
+          backgroundLines(useStore.getState().settings.aiMemoryNotes),
+        );
         if (draft.background.length === 0) return { kind: "nothing" };
-        const text = draft.background.join("\n");
-        patch({ userBackground: text, aiMemoryNotes: text });
+        const { text, lines } = appendBackground(own, draft.background);
+        patch({ userBackground: text, aiMemoryNotes: lines.join("\n") || draft.background.join("\n") });
         onBackgroundWritten();
         return { kind: "written" };
       } catch (e) {

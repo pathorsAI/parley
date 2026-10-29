@@ -2,9 +2,10 @@
  * Onboarding's context step, "how you work": what Claude Code on this machine
  * already knows about the user (read_claude_memory) is folded into their
  * speaker background (settings.userBackground), which every meeting prompt
- * reads. The user's LLM (realtime lane) rewrites the background they gave in
- * the mic check — company, title, what they use Parley for — into a fuller
- * one, a line per section of a fixed template; the user can edit it after.
+ * reads. The user's LLM (realtime lane) reads the background they gave in
+ * the mic check — company, title, what they use Parley for — and adds what
+ * the files say under it, a line per section of a fixed template; the user
+ * can edit it after.
  * Secrets are masked before any text leaves the machine.
  *
  * The helpers for settings.userBackground (the editable speaker background)
@@ -18,10 +19,11 @@ import { recordLlmUsage } from "../usage/log";
 import type { MemoryFile } from "../ipc/commands";
 import type { Settings } from "../types";
 
-/** The prompt cap: memory is notes, and the model only needs the gist. The
- *  Rust reader stops at the same size (whole files only), so this is only a
- *  backstop. */
-export const MAX_MEMORY_CHARS = 24_000;
+/** The prompt cap. The Rust reader returns up to 24k characters, but the
+ *  hosted model's proxy sits on a small per-minute token budget, and a prompt
+ *  that size (CJK runs about a token a character) came back as 502 every
+ *  time. The facts worth having are near the top of each file. */
+export const MAX_MEMORY_CHARS = 6_000;
 /** What stands in for a redacted secret. */
 export const REDACTED = "[redacted]";
 /** Names kept for the dictionary. */
@@ -47,7 +49,7 @@ const schema = z.object({
 });
 
 export interface BackgroundDraft {
-  /** The new speaker background, one template line each. */
+  /** Lines to add under the speaker background, one template section each. */
   background: string[];
   /** Company, people and product names, for the dictionary. */
   terms: string[];
@@ -57,13 +59,14 @@ function system(labels: readonly string[]): string {
   return (
     "You write the speaker background a meeting assistant reads before every meeting: who the user is, " +
     "so it can tell which speaker is them and advise from their side.\n" +
-    "You get the background the user gave themselves (CURRENT, may be empty) and notes their coding " +
-    "assistant keeps about them (NOTES). Rewrite CURRENT into a fuller background using NOTES.\n" +
+    "You get the background the user already gave (CURRENT: their self-introduction, may be empty) and " +
+    "notes their coding assistant keeps about them (NOTES). CURRENT stays as it is; you write what goes " +
+    "under it.\n" +
     'Return JSON with two arrays:\n' +
-    '- "background": one line per section below, in this order, each written as "<label>：<facts>" with the ' +
-    "label exactly as given. Put several facts in one line separated by \"；\". Leave out a section when " +
-    "nothing is known for it. Keep every fact from CURRENT (it is the user's own words, and wins where NOTES " +
-    "disagree); add from NOTES only what helps in meetings. No line over 120 characters.\n" +
+    '- "background": what NOTES add that CURRENT doesn\'t already say, one line per section below, in this ' +
+    'order, each written as "<label>：<facts>" with the label exactly as given. Put several facts in one ' +
+    "line separated by \"；\". Leave out a section when NOTES add nothing to it. Never contradict CURRENT. " +
+    "Only what helps in meetings; no line over 120 characters.\n" +
     `  Sections: ${labels.map((l) => `"${l}"`).join(", ")}.\n` +
     `- "terms": at most ${MAX_MEMORY_TERMS} names a speech recogniser would likely get wrong: company names ` +
     "(their own, customers', partners'), people's names and product names. Exactly as written, one name " +
@@ -73,9 +76,28 @@ function system(labels: readonly string[]): string {
   );
 }
 
-/** Claude Code memory files as one prompt body, each under its label, capped. */
+/**
+ * Claude Code memory files as one prompt body, each under its label, within
+ * MAX_MEMORY_CHARS shared fairly: short files whole, and what they leave split
+ * evenly among the long ones, each cut to its start — so one long global file
+ * can't crowd out the short notes after it.
+ */
 export function memoryFilesToText(files: readonly MemoryFile[]): string {
-  return capMemoryText(files.map((f) => `## ${f.label}\n${f.text.trim()}`).join("\n\n"));
+  const texts = files.map((f) => f.text.trim());
+  const heads = files.map((f) => `## ${f.label}\n`);
+  const share = new Map<number, number>();
+  // The labels and the blank lines between files come out of the budget first.
+  let left = MAX_MEMORY_CHARS - heads.reduce((n, h) => n + h.length + 2, 0);
+  const bySize = texts.map((_text, i) => i).sort((a, b) => texts[a].length - texts[b].length);
+  bySize.forEach((i, k) => {
+    const fair = Math.max(0, Math.floor(left / (bySize.length - k)));
+    const take = Math.min(texts[i].length, fair);
+    share.set(i, take);
+    left -= take;
+  });
+  return capMemoryText(
+    heads.map((head, i) => head + texts[i].slice(0, share.get(i))).join("\n\n"),
+  );
 }
 
 export function capMemoryText(text: string): string {
@@ -84,9 +106,10 @@ export function capMemoryText(text: string): string {
 }
 
 /**
- * The speaker background rewritten with what the notes add, and the names in
- * them, by the user's LLM. Lines that don't start with a template label are
- * dropped, so the result always reads as the template.
+ * What the notes add to the speaker background, as template lines to go
+ * under it, and the names in them, by the user's LLM. Lines that don't start
+ * with a template label are dropped, so the addition always reads as the
+ * template.
  */
 export async function draftBackground(opts: {
   settings: Settings;
