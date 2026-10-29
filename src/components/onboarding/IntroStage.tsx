@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { AudioLines, Check, FileAudio, Folder, House, Mic, Plug } from "lucide-react";
+import { AudioLines, Check, FileAudio, Folder, House, Mic, Plug, Sparkles, Square } from "lucide-react";
 import { useI18n } from "../../i18n";
 import type { TranslationKey } from "../../i18n/messages";
 import { sampleManifest } from "../../lib/onboarding/sample";
@@ -12,9 +12,10 @@ import { runTimeline, typingSchedule, type Beat } from "./timeline";
  * hand to AI. The four steps land first as a row and hold, then the demo walks
  * through them one at a time while the row tracks where it is: the recording
  * pill, two transcript lines typing with speaker names, a recording flying
- * into a customer folder, the MCP plug lighting up. Only the current step's
+ * into a customer folder, then the MCP plug lighting up as an AI summary of
+ * the meeting rises over the transcript — findings, then a to-do. Only the current step's
  * part of the demo is at full strength, so there is one thing to look at. It
- * runs in about ten seconds and rests on its final frame; Next works at any
+ * runs in about eleven seconds and rests on its final frame; Next works at any
  * time. Real component styles (the titlebar pill, sidebar rows, a library
  * row), not illustrations. Under reduced motion it shows the final frame.
  */
@@ -31,7 +32,7 @@ export const INTRO_BEATS: readonly Beat<IntroBeatId>[] = [
   { id: "transcript", at: 3400 },
   { id: "folder", at: 6400 },
   { id: "mcp", at: 8300 },
-  { id: "ready", at: 10100 },
+  { id: "ready", at: 11000 },
 ];
 const ORDER = INTRO_BEATS.map((b) => b.id);
 
@@ -49,8 +50,12 @@ const LINE_GAP_MS = 240;
 const CARD_IN_MS = 225;
 const CARD_FLY_AT_MS = 750;
 const CARD_FLY_MS = 900;
-/** Inside the MCP beat: the plug lights up. */
+/** Inside the MCP beat: the plug lights up, the AI's summary card rises, and
+ *  its lines come in one after another. */
 const PLUG_LIGHT_MS = 300;
+const SUMMARY_IN_MS = 350;
+const SUMMARY_LINE_AT_MS = 800;
+const SUMMARY_LINE_STAGGER_MS = 380;
 /** The overview row: each step lands this long after the one before. */
 const OVERVIEW_STAGGER_MS = 135;
 
@@ -130,6 +135,12 @@ export function IntroStage() {
             }))}
           />
         </div>
+        <AiSummaryCard
+          running={reached("mcp")}
+          instant={reduced}
+          findings={manifest.findings.slice(0, 2).map((f) => f.title)}
+          todo={manifest.actionItems[0]?.text ?? ""}
+        />
       </div>
 
       <p key={beat} aria-live="polite" className={cn("min-h-5 text-sm text-muted-foreground", !reduced && "ob-fade-in")}>
@@ -442,5 +453,57 @@ function McpPlug({ lit, instant }: Readonly<{ lit: boolean; instant: boolean }>)
     >
       <Plug className="size-3.5" />
     </span>
+  );
+}
+
+/**
+ * The hand-off step's payoff: what the AI makes of the meeting. A summary
+ * card rises over the transcript (it covers the right pane, the plug still
+ * showing above it) and its lines come in one by one — the sample meeting's
+ * first findings, then a to-do with its checkbox. Stays on the final frame.
+ */
+function AiSummaryCard({
+  running,
+  instant,
+  findings,
+  todo,
+}: Readonly<{ running: boolean; instant: boolean; findings: string[]; todo: string }>) {
+  const { t } = useI18n();
+  const lines = useMemo(
+    () => [...findings.map((text) => ({ text, todo: false })), ...(todo ? [{ text: todo, todo: true }] : [])],
+    [findings, todo],
+  );
+  const untilMs = SUMMARY_LINE_AT_MS + lines.length * SUMMARY_LINE_STAGGER_MS;
+  const elapsed = useElapsed(running, instant, untilMs);
+  if (!instant && (!running || elapsed < SUMMARY_IN_MS)) return null;
+  const shown = instant ? lines.length : Math.floor((elapsed - SUMMARY_LINE_AT_MS) / SUMMARY_LINE_STAGGER_MS) + 1;
+
+  return (
+    <div
+      className={cn(
+        "absolute right-2 bottom-2 left-[126px] z-10 flex flex-col gap-1.5 rounded-md border bg-background px-2.5 py-2 shadow-sm",
+        !instant && "ob-spring-in",
+      )}
+    >
+      <span className="flex items-center gap-1.5 text-[11px] font-semibold text-primary">
+        <Sparkles className="size-3" />
+        {t("onboarding.stage.summary")}
+      </span>
+      <ul className="flex flex-col gap-1">
+        {lines.slice(0, Math.max(0, shown)).map((line) => (
+          <li
+            key={line.text}
+            className={cn("flex items-start gap-1.5 text-[11px] leading-snug text-foreground/80", !instant && "ob-rise")}
+          >
+            {line.todo ? (
+              <Square className="mt-px size-3 shrink-0 text-muted-foreground" />
+            ) : (
+              <span aria-hidden className="mt-[5px] size-1 shrink-0 rounded-full bg-primary" />
+            )}
+            <span className="line-clamp-1">{line.text}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
