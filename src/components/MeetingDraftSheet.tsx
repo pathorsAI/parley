@@ -49,7 +49,7 @@ function MeetingWhenFields() {
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           placeholder={t("floating.untitled")}
-          className={FORM_INPUT_CLASS}
+          className={`${FORM_INPUT_CLASS} h-8`}
         />
         <FieldHint>{t("draft.titleHint")}</FieldHint>
       </Field>
@@ -59,7 +59,7 @@ function MeetingWhenFields() {
           <button
             type="button"
             onClick={addTime}
-            className="flex h-9 items-center gap-1.5 self-start rounded-[10px] border border-dashed border-[#dadee5] bg-background px-3 text-sm text-muted-foreground transition-colors hover:text-foreground dark:border-input"
+            className="flex h-8 items-center gap-1.5 self-start rounded-[10px] border border-dashed border-[#dadee5] bg-background px-3 text-sm text-muted-foreground transition-colors hover:text-foreground dark:border-input"
           >
             <CalendarPlus className="size-3.5" />
             {t("draft.addTime")}
@@ -75,7 +75,7 @@ function MeetingWhenFields() {
                 aria-label={t("draft.whenClear")}
                 title={t("draft.whenClear")}
                 onClick={clearTime}
-                className="grid size-9 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-muted"
+                className="grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-muted"
               >
                 <X className="size-3.5" />
               </button>

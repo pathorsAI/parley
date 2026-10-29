@@ -50,7 +50,7 @@ export function MeetingContextField({
           value={meetingContext}
           onChange={(e) => setMeetingContext(e.target.value)}
           placeholder={t("meeting.contextPlaceholder")}
-          className={`${FORM_INPUT_CLASS} max-h-48 resize-none leading-[22px]`}
+          className={`${FORM_INPUT_CLASS} max-h-48 resize-none py-1.5 leading-[22px]`}
         />
         <FieldHint>{t("analyze.contextHint")}</FieldHint>
         {negotiation}

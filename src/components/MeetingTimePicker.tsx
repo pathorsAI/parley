@@ -21,7 +21,7 @@ const MIN = 60_000;
 const ABOVE_SHEET = "z-[95]";
 
 const triggerClass =
-  "flex h-8 items-center rounded-md px-2.5 text-sm text-foreground transition-colors hover:bg-muted data-[state=open]:bg-muted";
+  "flex h-7 items-center rounded-[8px] px-2 text-sm text-foreground transition-colors hover:bg-muted data-[state=open]:bg-muted";
 
 /** The UI language's locale for dates and times. */
 function useLocale(): string {
@@ -180,7 +180,7 @@ export function MeetingTimePicker() {
   };
 
   return (
-    <div ref={setContainer} className="flex flex-wrap items-center gap-1 rounded-[10px] border border-[#dadee5] bg-background p-0.5 dark:border-input">
+    <div ref={setContainer} className="flex flex-wrap items-center gap-1 rounded-[10px] border border-[#dadee5] bg-background p-px dark:border-input">
       <Popover open={open === "day"} onOpenChange={(o) => setOpen(o ? "day" : null)}>
         <PopoverTrigger className={triggerClass}>
           {new Date(startAt).toLocaleDateString(locale, { month: "long", day: "numeric", weekday: "short" })}

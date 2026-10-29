@@ -64,12 +64,12 @@ export function TodoAddForm({ bare = false }: Readonly<{ bare?: boolean }> = {})
         value={input}
         onChange={(e) => setInput(e.target.value)}
         placeholder={t("todos.addPlaceholder")}
-        className={bare ? "h-9 rounded-[10px] border-[#dadee5] text-sm dark:border-input" : "h-8 text-sm"}
+        className={bare ? "h-8 rounded-[10px] border-[#dadee5] text-sm dark:border-input" : "h-8 text-sm"}
       />
       <Button
         type="submit"
         size="icon"
-        className={bare ? "size-9 shrink-0 rounded-[10px]" : "size-8 shrink-0"}
+        className={bare ? "size-8 shrink-0 rounded-[10px]" : "size-8 shrink-0"}
         disabled={!input.trim()}
       >
         <Plus className="size-4" />
