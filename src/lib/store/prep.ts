@@ -28,6 +28,9 @@ export interface PrepSlice {
    *  A draft with a time is kept across restarts and reminds you before it. */
   meetingAt: number | null;
   setMeetingAt: (at: number | null) => void;
+  /** When it ends (epoch ms) — the calendar-style picker's end time. */
+  meetingEndAt: number | null;
+  setMeetingEndAt: (at: number | null) => void;
   /** Minutes before `meetingAt` the reminder fires (0 = at the start). */
   reminderLeadMin: number;
   setReminderLeadMin: (min: number) => void;
@@ -89,6 +92,7 @@ const CLEARED_PREP_SLICE = {
   meetingTitle: "",
   meetingNotes: "",
   meetingAt: null,
+  meetingEndAt: null,
   remindedFor: null,
   meetingBatna: "",
   meetingTarget: "",
@@ -102,6 +106,7 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
   meetingTitle: "",
   meetingNotes: "",
   meetingAt: null,
+  meetingEndAt: null,
   reminderLeadMin: DEFAULT_REMINDER_LEAD_MIN,
   remindedFor: null,
   draftOpen: false,
@@ -116,6 +121,7 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
   setMeetingTitle: (meetingTitle) => set({ meetingTitle }),
   setMeetingNotes: (meetingNotes) => set({ meetingNotes }),
   setMeetingAt: (meetingAt) => set({ meetingAt }),
+  setMeetingEndAt: (meetingEndAt) => set({ meetingEndAt }),
   setReminderLeadMin: (reminderLeadMin) => set({ reminderLeadMin }),
   setRemindedFor: (remindedFor) => set({ remindedFor }),
   setMeetingOrgShare: (meetingOrgShare) => set({ meetingOrgShare }),

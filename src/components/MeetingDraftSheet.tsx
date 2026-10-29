@@ -1,4 +1,4 @@
-import { Eraser, Mic, X } from "lucide-react";
+import { CalendarPlus, Eraser, Mic, X } from "lucide-react";
 import { isMeetingActive, useStore } from "../lib/store";
 import { beginMeeting } from "../lib/meeting/start";
 import { ensureNotificationPermission } from "../lib/meeting/reminder";
@@ -7,23 +7,12 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { DestinationField } from "./DestinationSheet";
 import { MeetingContextField } from "./MeetingContextField";
+import { MeetingTimePicker, defaultMeetingTime } from "./MeetingTimePicker";
 import { TodoAddForm, TodoRow } from "./sidebar/TodosPanel";
 import { useMeetingDestination } from "./useMeetingDestination";
 
 /** Lead times the draft offers, in minutes before the start. */
 const LEAD_CHOICES = [0, 5, 10, 15, 30] as const;
-
-/** epoch ms ⇄ the `datetime-local` input's local "YYYY-MM-DDTHH:mm". */
-export function toLocalInput(ms: number): string {
-  const d = new Date(ms);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-export function fromLocalInput(value: string): number | null {
-  if (!value) return null;
-  const ms = new Date(value).getTime();
-  return Number.isNaN(ms) ? null : ms;
-}
 
 /** The draft's name, start time and how long before it to be reminded. */
 function MeetingWhenFields() {
@@ -32,14 +21,21 @@ function MeetingWhenFields() {
   const setTitle = useStore((s) => s.setMeetingTitle);
   const meetingAt = useStore((s) => s.meetingAt);
   const setMeetingAt = useStore((s) => s.setMeetingAt);
+  const setMeetingEndAt = useStore((s) => s.setMeetingEndAt);
   const lead = useStore((s) => s.reminderLeadMin);
   const setLead = useStore((s) => s.setReminderLeadMin);
 
-  function pickTime(value: string) {
-    const at = fromLocalInput(value);
-    setMeetingAt(at);
+  function addTime() {
+    const { start, end } = defaultMeetingTime();
+    setMeetingAt(start);
+    setMeetingEndAt(end);
     // The first time a time is set is when asking makes sense.
-    if (at != null) void ensureNotificationPermission();
+    void ensureNotificationPermission();
+  }
+
+  function clearTime() {
+    setMeetingAt(null);
+    setMeetingEndAt(null);
   }
 
   return (
@@ -55,26 +51,31 @@ function MeetingWhenFields() {
       </label>
       <div className="flex flex-col gap-1.5">
         <span className="text-xs font-medium">{t("draft.when")}</span>
-        <div className="flex items-center gap-2">
-          <input
-            type="datetime-local"
-            aria-label={t("draft.when")}
-            value={meetingAt == null ? "" : toLocalInput(meetingAt)}
-            onChange={(e) => pickTime(e.target.value)}
-            className="h-8 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-          />
-          {meetingAt != null && (
+        {meetingAt == null ? (
+          <button
+            type="button"
+            onClick={addTime}
+            className="flex h-8 items-center gap-1.5 self-start rounded-md border border-dashed px-2.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <CalendarPlus className="size-3.5" />
+            {t("draft.addTime")}
+          </button>
+        ) : (
+          <div className="flex items-start gap-1">
+            <div className="min-w-0 flex-1">
+              <MeetingTimePicker />
+            </div>
             <button
               type="button"
               aria-label={t("draft.whenClear")}
               title={t("draft.whenClear")}
-              onClick={() => setMeetingAt(null)}
-              className="grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-muted"
+              onClick={clearTime}
+              className="grid size-9 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-muted"
             >
               <X className="size-3.5" />
             </button>
-          )}
-        </div>
+          </div>
+        )}
         {meetingAt != null && (
           <select
             aria-label={t("draft.lead")}

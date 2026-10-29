@@ -207,6 +207,7 @@ export function migratePersistedState(persisted: unknown, version: number): unkn
  *  has to survive the app being quit. A draft without a time stays per-session. */
 const SCHEDULED_DRAFT_KEYS = [
   "meetingAt",
+  "meetingEndAt",
   "reminderLeadMin",
   "remindedFor",
   "meetingTitle",

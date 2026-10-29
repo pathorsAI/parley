@@ -117,7 +117,10 @@ export function initMeetingReminder(): () => void {
     // The drafted meeting is being recorded: its time is spent.
     if (isMeetingActive(next.meetingStatus) && !isMeetingActive(prev.meetingStatus)) {
       useReminderDue.getState().dismiss();
-      if (next.meetingAt != null) next.setMeetingAt(null);
+      if (next.meetingAt != null) {
+        next.setMeetingAt(null);
+        next.setMeetingEndAt(null);
+      }
       return;
     }
     if (
