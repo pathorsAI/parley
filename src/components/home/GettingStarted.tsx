@@ -8,12 +8,11 @@ import {
   dismissGettingStarted,
   gettingStartedProgress,
 } from "../../lib/onboarding/gettingStarted";
-import { modChordCap } from "../../lib/commands/format";
 import { useI18n, type TranslationKey } from "../../i18n";
 import { log } from "../../lib/log";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { GettingStartedState, GettingStartedStep } from "../../lib/types";
+import type { GettingStartedState } from "../../lib/types";
 import {
   TranscribingPulse,
   useTranscribingPulse,
@@ -87,30 +86,25 @@ export function GettingStarted({
     else void openRecording(lapEntryId, "report").catch(fail("open"));
   };
 
-  const sub = (step: GettingStartedStep): string =>
-    step === "replayed"
-      ? t("home.gs.replayed.sub", { shortcut: modChordCap("F") })
-      : t(`home.gs.${step}.sub` as TranslationKey);
-
   return (
     <section className="animate-fade-up flex flex-col" style={style} data-testid="getting-started">
       <div className="flex items-center gap-3 pb-1">
         <h2 className="text-sm font-semibold">{t("home.gs.title")}</h2>
-        <span className="text-xs tabular-nums text-muted-foreground" data-testid="gs-progress">
+        <span className="text-sm tabular-nums text-muted-foreground" data-testid="gs-progress">
           {t("home.gs.progress", { done, total })}
         </span>
         <span className="ml-auto flex items-center gap-1">
           {pulse.active ? (
             <TranscribingPulse />
           ) : (
-            // The one way in. Text-weight blue: Home's filled "Start meeting"
+            // The one way in. A blue tint, not a fill: Home's filled 直接錄音
             // sits right above, and two filled buttons would compete.
             <Button
               variant="ghost"
               size="sm"
               data-testid="gs-go"
               onClick={go}
-              className="text-primary hover:bg-primary/10 hover:text-primary"
+              className="bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary"
             >
               {startFresh ? t("home.gs.walkSample") : t("home.gs.continue")}
               {!startFresh && <ArrowRight data-icon="inline-end" />}
@@ -129,23 +123,25 @@ export function GettingStarted({
         {GETTING_STARTED_STEPS.map((step) => {
           const isDone = state[step];
           return (
-            <li key={step} data-step={step} data-done={isDone} className="flex items-center gap-3 py-3">
+            <li key={step} data-step={step} data-done={isDone} className="flex items-start gap-3 py-3">
               {isDone ? (
                 <span
                   role="img"
                   aria-label={t("home.gs.done")}
-                  className="grid size-4 shrink-0 place-items-center rounded-full bg-success-foreground text-background"
+                  className="mt-0.5 grid size-4 shrink-0 place-items-center rounded-full bg-success-foreground text-background"
                 >
                   <Check className="size-3" strokeWidth={3} />
                 </span>
               ) : (
-                <span className="size-4 shrink-0 rounded-[4px] border border-muted-foreground/40" />
+                <span className="mt-0.5 size-4 shrink-0 rounded-[4px] border border-muted-foreground/40" />
               )}
               <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                <span className={cn("text-sm", isDone && "text-muted-foreground")}>
+                <span className={cn("text-sm", isDone && "text-muted-foreground line-through")}>
                   {t(`home.gs.${step}.title` as TranslationKey)}
                 </span>
-                {!isDone && <span className="text-xs text-muted-foreground">{sub(step)}</span>}
+                <span className="text-xs text-muted-foreground">
+                  {t(`home.gs.${step}.sub` as TranslationKey)}
+                </span>
               </span>
             </li>
           );
