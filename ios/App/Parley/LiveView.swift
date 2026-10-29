@@ -97,22 +97,17 @@ struct LiveView: View {
                 controls
             }
             .background(Theme.background)
-            // The principal item below draws the title, but `navigationTitle`
-            // stays: it is what a pushed screen's back button says, and it is
-            // the name the system uses when the app has no custom title view to
-            // show (VoiceOver's rotor, Stage Manager, screen-time reports).
+            // No visible title: the tab bar already says Record, and a
+            // wordmark over the transcript was one more thing to read on a page
+            // whose job is to be quiet while somebody talks. `navigationTitle`
+            // stays for what the system does with it (VoiceOver's rotor, Stage
+            // Manager, screen-time reports); the empty principal item is what
+            // keeps the bar from drawing it.
             .navigationTitle("Parley")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                // The product name is a wordmark, not a heading: Alexandria, in
-                // ink. It used to carry the brand gradient, which made the one
-                // fixed piece of the chrome the loudest thing on a page whose
-                // whole job is to be quiet while somebody talks.
                 ToolbarItem(placement: .principal) {
-                    Text(verbatim: "Parley")
-                        .font(.parley.wordmark)
-                        .foregroundStyle(Color(.label))
-                        .accessibilityAddTraits(.isHeader)
+                    Text(verbatim: "").accessibilityHidden(true)
                 }
                 // Copying works mid-meeting on purpose: the reason to grab a
                 // line is usually that it was just said.
