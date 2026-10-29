@@ -145,12 +145,15 @@ export interface IntroSummary {
   role: string;
 }
 
-const schema = z.object({
-  name: z.string().default(""),
-  company: z.string().default(""),
-  role: z.string().default(""),
-  background: z.array(z.string()).default([]),
-  terms: z.array(z.string()).default([]),
+// Every field required, no `.default()`: a default drops the field from the
+// JSON schema's `required`, and a strict json_schema request with optional
+// fields is refused upstream (the hosted model answers it with a 502).
+export const introSchema = z.object({
+  name: z.string(),
+  company: z.string(),
+  role: z.string(),
+  background: z.array(z.string()),
+  terms: z.array(z.string()),
 });
 
 const SYSTEM =
@@ -177,7 +180,7 @@ export async function summarizeIntro(opts: {
     settings,
     workload: "realtime",
     feature: "meeting",
-    schema,
+    schema: introSchema,
     system: SYSTEM + JSON_MODE_INSTRUCTION + outputLanguageInstruction(settings),
     prompt: `TRANSCRIPT:\n${transcript}`,
     signal,
@@ -418,7 +421,7 @@ export function editedWord(before: string, after: string): { from: string; to: s
   return { from, to };
 }
 
-const nameEditSchema = z.object({ from: z.string().default(""), to: z.string().default("") });
+export const nameEditSchema = z.object({ from: z.string(), to: z.string() });
 
 const NAME_EDIT_SYSTEM =
   "The user edited a short text about themself. You get it before and after. If the edit corrected or " +

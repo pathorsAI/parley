@@ -43,9 +43,11 @@ export function backgroundLabels(settings: Pick<Settings, "language">): readonly
   return BACKGROUND_TEMPLATE[settings.language === "zh-TW" ? "zh-TW" : "en"];
 }
 
-const schema = z.object({
-  background: z.array(z.string()).default([]),
-  terms: z.array(z.string()).default([]),
+// Both required, no `.default()`: see micCheck.ts — optional fields in a strict
+// json_schema come back from the hosted model as 502.
+export const backgroundDraftSchema = z.object({
+  background: z.array(z.string()),
+  terms: z.array(z.string()),
 });
 
 export interface BackgroundDraft {
@@ -127,7 +129,7 @@ export async function draftBackground(opts: {
     settings,
     workload: "realtime",
     feature: "meeting",
-    schema,
+    schema: backgroundDraftSchema,
     system: system(labels) + JSON_MODE_INSTRUCTION + outputLanguageInstruction(settings),
     prompt: `CURRENT:\n${redactSecrets(current.trim()) || "(empty)"}\n\nNOTES:\n${body}`,
     signal,
