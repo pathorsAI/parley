@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { AudioLines, Check, FileAudio, Folder, House, Mic, Plug, Sparkles, Square } from "lucide-react";
+import { AudioLines, Check, FileAudio, Folder, House, Mic, Plug, Square } from "lucide-react";
 import { useI18n } from "../../i18n";
 import type { TranslationKey } from "../../i18n/messages";
 import { sampleManifest } from "../../lib/onboarding/sample";
@@ -12,8 +12,9 @@ import { runTimeline, typingSchedule, type Beat } from "./timeline";
  * hand to AI. The four steps land first as a row and hold, then the demo walks
  * through them one at a time while the row tracks where it is: the recording
  * pill, two transcript lines typing with speaker names, a recording flying
- * into a customer folder, then the MCP plug lighting up as an AI summary of
- * the meeting rises over the transcript — findings, then a to-do. Only the current step's
+ * into a customer folder, then the meeting over: the titlebar's report /
+ * replay tabs replace the recording pill, the report's key points and action
+ * items fill in, and the MCP plug lights up. Only the current step's
  * part of the demo is at full strength, so there is one thing to look at. It
  * runs in about eleven seconds and rests on its final frame; Next works at any
  * time. Real component styles (the titlebar pill, sidebar rows, a library
@@ -50,12 +51,11 @@ const LINE_GAP_MS = 240;
 const CARD_IN_MS = 225;
 const CARD_FLY_AT_MS = 750;
 const CARD_FLY_MS = 900;
-/** Inside the MCP beat: the plug lights up, the AI's summary card rises, and
- *  its lines come in one after another. */
+/** Inside the MCP beat: the plug lights up, and the report's lines come in
+ *  one after another. */
 const PLUG_LIGHT_MS = 300;
-const SUMMARY_IN_MS = 350;
-const SUMMARY_LINE_AT_MS = 800;
-const SUMMARY_LINE_STAGGER_MS = 380;
+const REPORT_LINE_AT_MS = 350;
+const REPORT_LINE_STAGGER_MS = 300;
 /** The overview row: each step lands this long after the one before. */
 const OVERVIEW_STAGGER_MS = 135;
 
@@ -106,7 +106,15 @@ export function IntroStage() {
         />
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex h-[41px] shrink-0 items-center justify-between border-b px-2.5">
-            {reached("record") ? (
+            {reached("mcp") ? (
+              // The meeting is over: the titlebar's report / replay switch.
+              <span className={cn("flex items-center gap-0.5 rounded-md bg-muted p-0.5", !reduced && "ob-fade-in")}>
+                <span className="rounded-[5px] bg-background px-2 py-0.5 text-[10px] font-medium text-foreground shadow-sm">
+                  {t("study.report")}
+                </span>
+                <span className="px-2 py-0.5 text-[10px] font-medium text-muted-foreground">{t("study.replay")}</span>
+              </span>
+            ) : reached("record") ? (
               <span
                 className={cn(
                   "inline-flex items-center gap-1.5 rounded-full bg-recording/10 px-2.5 py-0.5 text-recording",
@@ -123,24 +131,26 @@ export function IntroStage() {
             )}
             <McpPlug lit={reached("mcp")} instant={reduced} />
           </div>
-          <TranscriptLines
-            running={reached("transcript")}
-            instant={reduced}
-            className={focus("transcript")}
-            lines={manifest.segments.slice(0, TRANSCRIPT_LINES).map((s) => ({
-              id: `${s.speaker}-${s.startMs}`,
-              speaker: manifest.speakers[s.speaker],
-              me: s.speaker === "me",
-              text: s.text,
-            }))}
-          />
+          {reached("mcp") ? (
+            <ReportPreview
+              instant={reduced}
+              points={manifest.findings.slice(0, 2).map((f) => f.title)}
+              actions={manifest.actionItems.slice(0, 2).map((a) => a.text)}
+            />
+          ) : (
+            <TranscriptLines
+              running={reached("transcript")}
+              instant={reduced}
+              className={focus("transcript")}
+              lines={manifest.segments.slice(0, TRANSCRIPT_LINES).map((s) => ({
+                id: `${s.speaker}-${s.startMs}`,
+                speaker: manifest.speakers[s.speaker],
+                me: s.speaker === "me",
+                text: s.text,
+              }))}
+            />
+          )}
         </div>
-        <AiSummaryCard
-          running={reached("mcp")}
-          instant={reduced}
-          findings={manifest.findings.slice(0, 2).map((f) => f.title)}
-          todo={manifest.actionItems[0]?.text ?? ""}
-        />
       </div>
 
       <p key={beat} aria-live="polite" className={cn("min-h-5 text-sm text-muted-foreground", !reduced && "ob-fade-in")}>
@@ -456,54 +466,51 @@ function McpPlug({ lit, instant }: Readonly<{ lit: boolean; instant: boolean }>)
   );
 }
 
+
 /**
- * The hand-off step's payoff: what the AI makes of the meeting. A summary
- * card rises over the transcript (it covers the right pane, the plug still
- * showing above it) and its lines come in one by one — the sample meeting's
- * first findings, then a to-do with its checkbox. Stays on the final frame.
+ * The report a meeting ends on, cut down: its key points and action items
+ * under the report page's own section headings, lines coming in one after
+ * another in reading order. Rests on its final frame.
  */
-function AiSummaryCard({
-  running,
+function ReportPreview({
   instant,
-  findings,
-  todo,
-}: Readonly<{ running: boolean; instant: boolean; findings: string[]; todo: string }>) {
+  points,
+  actions,
+}: Readonly<{ instant: boolean; points: string[]; actions: string[] }>) {
   const { t } = useI18n();
-  const lines = useMemo(
-    () => [...findings.map((text) => ({ text, todo: false })), ...(todo ? [{ text: todo, todo: true }] : [])],
-    [findings, todo],
-  );
-  const untilMs = SUMMARY_LINE_AT_MS + lines.length * SUMMARY_LINE_STAGGER_MS;
-  const elapsed = useElapsed(running, instant, untilMs);
-  if (!instant && (!running || elapsed < SUMMARY_IN_MS)) return null;
-  const shown = instant ? lines.length : Math.floor((elapsed - SUMMARY_LINE_AT_MS) / SUMMARY_LINE_STAGGER_MS) + 1;
+  const total = points.length + actions.length;
+  const elapsed = useElapsed(true, instant, REPORT_LINE_AT_MS + total * REPORT_LINE_STAGGER_MS);
+  const shown = instant ? total : Math.floor((elapsed - REPORT_LINE_AT_MS) / REPORT_LINE_STAGGER_MS) + 1;
+  const rows = [
+    ...points.map((text) => ({ text, action: false })),
+    ...actions.map((text) => ({ text, action: true })),
+  ];
+
+  const row = (r: { text: string; action: boolean }, i: number) =>
+    i < shown && (
+      <p
+        key={r.text}
+        className={cn("flex items-start gap-1.5 text-[11px] leading-snug text-foreground/80", !instant && "ob-rise")}
+      >
+        {r.action ? (
+          <Square className="mt-px size-3 shrink-0 text-muted-foreground" />
+        ) : (
+          <span aria-hidden className="mt-[5px] size-1 shrink-0 rounded-full bg-foreground/40" />
+        )}
+        <span className="line-clamp-1">{r.text}</span>
+      </p>
+    );
 
   return (
-    <div
-      className={cn(
-        "absolute right-2 bottom-2 left-[126px] z-10 flex flex-col gap-1.5 rounded-md border bg-background px-2.5 py-2 shadow-sm",
-        !instant && "ob-spring-in",
-      )}
-    >
-      <span className="flex items-center gap-1.5 text-[11px] font-semibold text-primary">
-        <Sparkles className="size-3" />
-        {t("onboarding.stage.summary")}
-      </span>
-      <ul className="flex flex-col gap-1">
-        {lines.slice(0, Math.max(0, shown)).map((line) => (
-          <li
-            key={line.text}
-            className={cn("flex items-start gap-1.5 text-[11px] leading-snug text-foreground/80", !instant && "ob-rise")}
-          >
-            {line.todo ? (
-              <Square className="mt-px size-3 shrink-0 text-muted-foreground" />
-            ) : (
-              <span aria-hidden className="mt-[5px] size-1 shrink-0 rounded-full bg-primary" />
-            )}
-            <span className="line-clamp-1">{line.text}</span>
-          </li>
-        ))}
-      </ul>
+    <div className={cn("flex min-h-0 flex-col gap-2 overflow-hidden px-3 py-2.5", !instant && "ob-fade-in")}>
+      <section className="flex flex-col gap-1">
+        <h3 className="text-[10px] font-semibold text-muted-foreground">{t("study.brief")}</h3>
+        {rows.slice(0, points.length).map((r, i) => row(r, i))}
+      </section>
+      <section className="flex flex-col gap-1">
+        <h3 className="text-[10px] font-semibold text-muted-foreground">{t("actionItems.title")}</h3>
+        {rows.slice(points.length).map((r, i) => row(r, points.length + i))}
+      </section>
     </div>
   );
 }
