@@ -1,7 +1,22 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, CalendarDays, FileText, GripVertical, Loader2, Maximize2, Minus, Pause, Play, Square, X } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import {
+  ArrowUp,
+  CalendarDays,
+  FileText,
+  GripVertical,
+  Loader2,
+  Maximize2,
+  MessageCircle,
+  Minus,
+  Pause,
+  Play,
+  Square,
+  X,
+} from "lucide-react";
 import { useStore } from "../../lib/store";
-import { COMPACT_BELOW, setMeetingPill } from "../../lib/meeting/floatingWindow";
+import { COMPACT_BELOW, dragWindowFrom, setMeetingPill, setPillAnswerOpen } from "../../lib/meeting/floatingWindow";
 import { useMeetingElapsed } from "../../lib/meeting/elapsed";
 import { cancelActiveMeeting, endMeeting, toggleMeetingPause } from "../../lib/meeting/controls";
 import { useCommandShortcut } from "../../lib/commands/bind";
@@ -124,30 +139,128 @@ function CompactBody() {
   );
 }
 
-/** The capsule ("小膠囊"): the whole window collapsed to clock + coach tip. */
+/**
+ * The capsule ("小膠囊"): the whole window collapsed to one white row — the
+ * clock, an ask box and expand. Asking opens the answer under the row (the
+ * window grows for it); × folds it away again. Dragged from anywhere that is
+ * not a control, without the double-click zoom a drag region would bring.
+ */
 function MeetingCapsule({ onExpand }: Readonly<{ onExpand: () => void }>) {
   const { t } = useI18n();
-  const tip = useCoachTip();
+  const cards = useCoachAsk((s) => s.cards);
+  const ask = useCoachAsk((s) => s.ask);
+  const busy = cards.some((c) => c.busy);
+  const last = cards.length ? cards[cards.length - 1] : null;
+  const [draft, setDraft] = useState("");
+  const [idx, setIdx] = useState(-1);
+  const [open, setOpen] = useState(false);
+  const presets = ASK_SUGGESTIONS.map((k) => t(k));
+
+  useEffect(() => {
+    void setPillAnswerOpen(open);
+  }, [open]);
+
+  function send() {
+    if (!draft.trim() || busy) return;
+    void ask(draft);
+    setDraft("");
+    setIdx(-1);
+    setOpen(true);
+  }
+
+  // ↑ ↓ walk the quick questions into the box; Enter asks.
+  function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    e.preventDefault();
+    const step = e.key === "ArrowDown" ? 1 : -1;
+    const next = idx < 0 ? (step > 0 ? 0 : presets.length - 1) : (idx + step + presets.length) % presets.length;
+    setIdx(next);
+    setDraft(presets[next]);
+  }
+
   return (
     <div
       role="dialog"
       aria-label={t("floating.capsule")}
-      data-tauri-drag-region
-      className="flex h-full w-full items-center gap-2.5 rounded-full border bg-background pr-1.5 pl-2"
+      onMouseDown={(e) => dragWindowFrom(e)}
+      className="flex h-full w-full flex-col bg-background"
     >
-      <RecordingClock withLabel={false} />
-      <span data-tauri-drag-region className="min-w-0 flex-1 truncate text-xs text-warning-foreground">
-        {tip}
-      </span>
-      <button
-        type="button"
-        aria-label={t("floating.expand")}
-        title={t("floating.expand")}
-        onClick={onExpand}
-        className="grid size-8 shrink-0 place-items-center rounded-full text-foreground/80 transition-colors hover:bg-muted"
-      >
-        <Maximize2 className="size-3.5" />
-      </button>
+      <div className="flex h-12 shrink-0 items-center gap-2 pr-1.5 pl-2">
+        <RecordingClock withLabel={false} />
+        <form
+          className="flex h-8 min-w-0 flex-1 items-center gap-1 rounded-lg border border-input bg-background pr-1 pl-2.5"
+          onSubmit={(e) => {
+            e.preventDefault();
+            send();
+          }}
+        >
+          <input
+            value={draft}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              setIdx(-1);
+            }}
+            onKeyDown={onKeyDown}
+            aria-label={t("feed.askPlaceholder")}
+            placeholder={t("floating.capsuleAsk")}
+            className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground"
+          />
+          <button
+            type="submit"
+            aria-label={t("floating.send")}
+            disabled={busy || !draft.trim()}
+            className="grid size-6 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground disabled:opacity-60"
+          >
+            {busy ? <Loader2 className="size-3 animate-spin" /> : <ArrowUp className="size-3" />}
+          </button>
+        </form>
+        {last && !open && (
+          <button
+            type="button"
+            aria-label={t("floating.showAnswer")}
+            title={t("floating.showAnswer")}
+            onClick={() => setOpen(true)}
+            className="grid size-8 shrink-0 place-items-center rounded-md text-foreground/80 transition-colors hover:bg-muted"
+          >
+            <MessageCircle className="size-3.5" />
+          </button>
+        )}
+        <button
+          type="button"
+          aria-label={t("floating.expand")}
+          title={t("floating.expand")}
+          onClick={onExpand}
+          className="grid size-8 shrink-0 place-items-center rounded-md text-foreground/80 transition-colors hover:bg-muted"
+        >
+          <Maximize2 className="size-3.5" />
+        </button>
+      </div>
+      {open && last && (
+        <div className="relative flex min-h-0 flex-1 flex-col border-t">
+          <button
+            type="button"
+            aria-label={t("floating.hideAnswer")}
+            title={t("floating.hideAnswer")}
+            onClick={() => setOpen(false)}
+            className="absolute top-1.5 right-1.5 grid size-6 place-items-center rounded text-muted-foreground hover:bg-muted"
+          >
+            <X className="size-3.5" />
+          </button>
+          <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2.5 pr-8">
+            <p className="mb-1 flex items-start gap-1.5 text-xs font-medium text-muted-foreground">
+              <MessageCircle className="mt-0.5 size-3 shrink-0" />
+              <span className="min-w-0">{last.question}</span>
+            </p>
+            {last.answer ? (
+              <div className="prose prose-sm dark:prose-invert max-w-none text-sm">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{last.answer}</ReactMarkdown>
+              </div>
+            ) : (
+              <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -162,12 +275,12 @@ function FloatingTitleBar({
 
   return (
     <header
-      data-tauri-drag-region
+      onMouseDown={(e) => dragWindowFrom(e)}
       className="flex h-[50px] shrink-0 items-center gap-2.5 border-b pl-4 pr-3"
     >
       <GripVertical aria-hidden className="pointer-events-none size-3.5 text-muted-foreground/70" />
       <RecordingClock />
-      <div data-tauri-drag-region className="h-full min-w-0 flex-1" />
+      <div className="h-full min-w-0 flex-1" />
       {!compact && <MicChip />}
       <div className="flex items-center gap-1 pl-2">
         <button

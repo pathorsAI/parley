@@ -11,8 +11,10 @@ const DRAG_MIN = { width: 300, height: 220 } as const;
 /** Below either of these the window shows the compact view (latest caption
  *  and coach tip) instead of the tabs. */
 export const COMPACT_BELOW = { width: 360, height: 400 } as const;
-/** The collapsed capsule ("小膠囊"). */
-export const PILL_SIZE = { width: 320, height: 48 } as const;
+/** The collapsed capsule ("小膠囊"): one row with the clock and an ask box. */
+export const PILL_SIZE = { width: 380, height: 48 } as const;
+/** The capsule with the coach's answer open under its row. */
+export const PILL_ANSWER_HEIGHT = 240;
 /** The main window's own minimum (tauri.conf.json), restored afterwards. */
 const MAIN_MIN = { width: 900, height: 600 } as const;
 /** Gap kept between the floating window and the screen's edges. */
@@ -135,4 +137,30 @@ export async function setMeetingPill(on: boolean): Promise<void> {
   } catch (error) {
     log.warn("meeting: capsule toggle failed", { on, error: String(error) });
   }
+}
+
+/** Grow the capsule to show an answer under its row, or shrink it back. */
+export async function setPillAnswerOpen(open: boolean): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    const { getCurrentWindow, LogicalSize } = await import("@tauri-apps/api/window");
+    const height = open ? PILL_ANSWER_HEIGHT : PILL_SIZE.height;
+    await getCurrentWindow().setSize(new LogicalSize(PILL_SIZE.width, height));
+  } catch (error) {
+    log.warn("meeting: capsule answer resize failed", { open, error: String(error) });
+  }
+}
+
+/**
+ * Drag the window from a press anywhere on `el` that is not a control. Not a
+ * `data-tauri-drag-region`: a double-click there zooms the window to fill the
+ * screen, which turned the capsule into a screen-sized oval.
+ */
+export function dragWindowFrom(e: { button: number; target: EventTarget; detail: number }): void {
+  if (e.button !== 0 || !isTauri()) return;
+  const target = e.target as HTMLElement;
+  if (target.closest("button, input, textarea, a, [role=option]")) return;
+  void import("@tauri-apps/api/window")
+    .then(({ getCurrentWindow }) => getCurrentWindow().startDragging())
+    .catch((error) => log.warn("meeting: capsule drag failed", { error: String(error) }));
 }
