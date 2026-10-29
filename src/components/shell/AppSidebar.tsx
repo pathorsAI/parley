@@ -34,6 +34,7 @@ import { useI18n } from "../../i18n";
 import type { LibraryTree } from "./useLibraryTree";
 import { isArchived, type Folder as LocalFolder } from "../../lib/history/folders";
 import { usePulsingFolder } from "../../lib/onboarding/motion";
+import { useArchiveFolder } from "../library/useArchiveFolder";
 import type { CloudOrg } from "../../lib/cloud/types";
 
 /**
@@ -95,14 +96,19 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
     0
   );
 
-  /** Put a folder away / bring it back, moving the selection off it on the way
-   *  out — a hidden row can't stay the highlighted one. */
-  const setArchived = (f: LocalFolder, archived: boolean) => {
-    tree.archivePersonalFolder(f.id, archived);
-    if (archived && nodeActive({ kind: "folder", folderId: f.id })) {
-      selectLibrary({ kind: "personal", node: { kind: "all" } });
-    }
-  };
+  // Putting a folder away asks first (the same dialog the library header's
+  // 封存資料夾 opens); bringing it back does not.
+  const archive = useArchiveFolder(tree);
+
+  // An open folder that is archived — just now, from here or from the library
+  // header — keeps its highlight by opening the shelf it now lives on, rather
+  // than by moving the selection off it.
+  const openFolderId =
+    libraryActive && personalSel?.node.kind === "folder" ? personalSel.node.folderId : null;
+  const openArchivedId = archivedFolders.find((f) => f.id === openFolderId)?.id;
+  useEffect(() => {
+    if (openArchivedId) setExpanded((p) => (p.archived ? p : { ...p, archived: true }));
+  }, [openArchivedId]);
 
   // The same chord the binder listens for, spelled for this OS — read from the
   // registry so the hint can never promise a key that does nothing.
@@ -168,7 +174,7 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
             active={nodeActive(node)}
             onSelect={() => selectLibrary({ kind: "personal", node })}
             onRename={(name) => tree.renamePersonalFolder(f.id, name)}
-            onArchive={() => setArchived(f, true)}
+            onArchive={() => archive.requestArchive(f)}
             onDelete={() => {
               // Only move off the folder once it is actually gone: the question
               // is asked in-app now, so cancelling used to navigate you away
@@ -311,7 +317,7 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
                   active={nodeActive(node)}
                   onSelect={() => selectLibrary({ kind: "personal", node })}
                   onRename={(name) => tree.renamePersonalFolder(f.id, name)}
-                  onUnarchive={() => setArchived(f, false)}
+                  onUnarchive={() => archive.restore(f)}
                   onDelete={() => {
                     tree
                       .deletePersonalFolder(f)
@@ -335,15 +341,18 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
   // empty space below the tree — where "what can I even do here" has no answer
   // other than the ＋ hiding in a header until you hover it.
   return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>{nav}</ContextMenuTrigger>
-      <ContextMenuContent onCloseAutoFocus={preventFocusRestore}>
-        <ContextMenuItem onSelect={() => setNewFolderOpen(true)}>
-          <FolderPlus className="size-3.5" />
-          {t("sidebar.menu.newFolder")}
-        </ContextMenuItem>
-      </ContextMenuContent>
-    </ContextMenu>
+    <>
+      <ContextMenu>
+        <ContextMenuTrigger asChild>{nav}</ContextMenuTrigger>
+        <ContextMenuContent onCloseAutoFocus={preventFocusRestore}>
+          <ContextMenuItem onSelect={() => setNewFolderOpen(true)}>
+            <FolderPlus className="size-3.5" />
+            {t("sidebar.menu.newFolder")}
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
+      {archive.dialog}
+    </>
   );
 }
 
