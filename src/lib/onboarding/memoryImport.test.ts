@@ -12,6 +12,7 @@ import {
   readingSteps,
   redactSecrets,
   removeBackgroundLines,
+  properNouns,
 } from "./memoryImport";
 
 describe("cleanLines", () => {
@@ -163,5 +164,13 @@ describe("templateLines", () => {
 
   it("needs a colon right after the label", () => {
     expect(templateLines(["公司的人都很好"], labels)).toEqual([]);
+  });
+});
+
+describe("properNouns", () => {
+  it("keeps company and product names, drops jargon, commands and short acronyms", () => {
+    expect(
+      properNouns(["派斯科技", "Parley", "Pensieve", "staging", "ticket", "weekly-summary", "CLAUDE.md", "BD", "CRM", "Pathors"]),
+    ).toEqual(["派斯科技", "Parley", "Pensieve", "Pathors"]);
   });
 });

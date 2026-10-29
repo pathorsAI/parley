@@ -26,8 +26,9 @@ import type { Settings } from "../types";
 export const MAX_MEMORY_CHARS = 6_000;
 /** What stands in for a redacted secret. */
 export const REDACTED = "[redacted]";
-/** Names kept for the dictionary. */
-export const MAX_MEMORY_TERMS = 12;
+/** Names kept for the dictionary: a handful of the user's own proper nouns,
+ *  not every word a coding assistant's notes mention. */
+export const MAX_MEMORY_TERMS = 6;
 
 /**
  * The speaker background's sections, in order. Each becomes one
@@ -70,9 +71,11 @@ function system(labels: readonly string[]): string {
     "line separated by \"；\". Leave out a section when NOTES add nothing to it. Never contradict CURRENT. " +
     "Only what helps in meetings; no line over 120 characters.\n" +
     `  Sections: ${labels.map((l) => `"${l}"`).join(", ")}.\n` +
-    `- "terms": at most ${MAX_MEMORY_TERMS} names a speech recogniser would likely get wrong: company names ` +
-    "(their own, customers', partners'), people's names and product names. Exactly as written, one name " +
-    "per entry, no descriptions.\n" +
+    `- "terms": at most ${MAX_MEMORY_TERMS} proper nouns particular to this user that a speech recogniser ` +
+    "would likely get wrong: their company's name, their products', and their customers' or partners' " +
+    "company names. Leave out everyday words, job or tech jargon, acronyms, command and file names, and " +
+    "well-known tools and services (GitHub, Discord, Slack, Google…). Fewer is better; an empty list is " +
+    "fine. Exactly as written, one name per entry, no descriptions.\n" +
     "Skip coding conventions, tool configuration, file paths, secrets, credentials and anything about " +
     "other people's private lives.\n"
   );
@@ -137,7 +140,7 @@ export async function draftBackground(opts: {
   void recordLlmUsage(settings, "realtime", "memory-import", usage);
   return {
     background: templateLines(object.background, labels),
-    terms: cleanLines(object.terms).slice(0, MAX_MEMORY_TERMS),
+    terms: properNouns(object.terms).slice(0, MAX_MEMORY_TERMS),
   };
 }
 
@@ -157,6 +160,20 @@ export function templateLines(lines: readonly string[], labels: readonly string[
     if (facts && !byLabel.has(label)) byLabel.set(label, facts);
   }
   return labels.filter((l) => byLabel.has(l)).map((l) => `${l}：${byLabel.get(l)}`);
+}
+
+/**
+ * The model's terms, kept to what looks like a proper noun: a name in CJK, or
+ * one with a capital letter. Dropped: lower-case words ("staging", "ticket"),
+ * command and file names ("weekly-summary", "CLAUDE.md"), and short acronyms
+ * ("BD", "CRM"), which the notes are full of and a dictionary doesn't need.
+ */
+export function properNouns(terms: readonly string[]): string[] {
+  return cleanLines(terms).filter(
+    (t) =>
+      /\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Hangul}/u.test(t) ||
+      (/\p{Lu}/u.test(t) && !/[-_/.\\]/u.test(t) && !/^\p{Lu}{1,3}$/u.test(t)),
+  );
 }
 
 /** One line of the context step's reading log. */
