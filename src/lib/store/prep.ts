@@ -34,6 +34,10 @@ export interface PrepSlice {
   /** Minutes before `meetingAt` the reminder fires (0 = at the start). */
   reminderLeadMin: number;
   setReminderLeadMin: (min: number) => void;
+  /** The user pressed 儲存草稿: keep this draft across restarts (a draft
+   *  with a time is kept regardless). Cleared when it is recorded or reset. */
+  draftSaved: boolean;
+  setDraftSaved: (saved: boolean) => void;
   /** The `meetingAt` whose reminder has already fired, so a reload or a
    *  restart does not fire it twice. */
   remindedFor: number | null;
@@ -94,6 +98,7 @@ const CLEARED_PREP_SLICE = {
   meetingAt: null,
   meetingEndAt: null,
   remindedFor: null,
+  draftSaved: false,
   meetingBatna: "",
   meetingTarget: "",
   meetingFloor: "",
@@ -107,6 +112,7 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
   meetingNotes: "",
   meetingAt: null,
   meetingEndAt: null,
+  draftSaved: false,
   reminderLeadMin: DEFAULT_REMINDER_LEAD_MIN,
   remindedFor: null,
   draftOpen: false,
@@ -124,6 +130,7 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
   setMeetingEndAt: (meetingEndAt) => set({ meetingEndAt }),
   setReminderLeadMin: (reminderLeadMin) => set({ reminderLeadMin }),
   setRemindedFor: (remindedFor) => set({ remindedFor }),
+  setDraftSaved: (draftSaved) => set({ draftSaved }),
   setMeetingOrgShare: (meetingOrgShare) => set({ meetingOrgShare }),
   setMeetingFolder: (meetingFolderId) => set({ meetingFolderId }),
   resetPrep: () =>

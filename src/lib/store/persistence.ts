@@ -203,13 +203,15 @@ export function migratePersistedState(persisted: unknown, version: number): unkn
  * zustand-persist `merge`: backfill any settings fields missing from older
  * persisted state (runs after {@link migratePersistedState}). Exported for tests.
  */
-/** The prep a draft with a meeting time keeps across restarts — its reminder
- *  has to survive the app being quit. A draft without a time stays per-session. */
+/** The prep a saved draft keeps across restarts — one the user saved, or one
+ *  with a meeting time (its reminder has to survive the app being quit).
+ *  Anything else stays per-session. */
 const SCHEDULED_DRAFT_KEYS = [
   "meetingAt",
   "meetingEndAt",
   "reminderLeadMin",
   "remindedFor",
+  "draftSaved",
   "meetingTitle",
   "meetingNotes",
   "meetingContext",
@@ -223,9 +225,9 @@ const SCHEDULED_DRAFT_KEYS = [
 
 type ScheduledDraft = Pick<ParleyState, (typeof SCHEDULED_DRAFT_KEYS)[number]>;
 
-/** The scheduled draft to persist, or null when the draft has no time. */
+/** The draft to persist, or null when it is neither saved nor timed. */
 export function scheduledDraft(state: ParleyState): ScheduledDraft | null {
-  if (state.meetingAt == null) return null;
+  if (state.meetingAt == null && !state.draftSaved) return null;
   const out: Partial<ScheduledDraft> = {};
   for (const k of SCHEDULED_DRAFT_KEYS) (out as Record<string, unknown>)[k] = state[k];
   return out as ScheduledDraft;
@@ -234,7 +236,7 @@ export function scheduledDraft(state: ParleyState): ScheduledDraft | null {
 /** A persisted scheduled draft, if it is one (anything else is dropped). */
 function restoredDraft(persisted: unknown): Partial<ScheduledDraft> {
   const d = (persisted as { draft?: Partial<ScheduledDraft> | null } | undefined)?.draft;
-  if (!d || typeof d.meetingAt !== "number") return {};
+  if (!d || (typeof d.meetingAt !== "number" && d.draftSaved !== true)) return {};
   const out: Partial<ScheduledDraft> = {};
   for (const k of SCHEDULED_DRAFT_KEYS) {
     if (d[k] !== undefined) (out as Record<string, unknown>)[k] = d[k];

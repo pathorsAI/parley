@@ -1,6 +1,6 @@
-import { CalendarPlus, Eraser, Mic, X } from "lucide-react";
+import { CalendarPlus, Eraser, Save, X } from "lucide-react";
+import { toast } from "sonner";
 import { isMeetingActive, useStore } from "../lib/store";
-import { beginMeeting } from "../lib/meeting/start";
 import { ensureNotificationPermission } from "../lib/meeting/reminder";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
@@ -127,12 +127,27 @@ export function MeetingDraftSheet() {
   );
   const { destination, mode, fresh, pickDestination } = useMeetingDestination();
 
-  /** Close first, then start — the same call as 直接錄音, which rides
-   *  whatever prep is set. A refusal (missing key, meeting already running)
-   *  surfaces as its own toast, and the draft is still there to reopen. */
-  function start() {
+  const meetingAt = useStore((s) => s.meetingAt);
+  const setDraftSaved = useStore((s) => s.setDraftSaved);
+  const language = useStore((s) => s.settings.language);
+
+  /** Keep the draft (across restarts, too) and close. Recording it is a
+   *  separate act: 直接錄音, or 開始錄音 on its reminder. */
+  function save() {
+    setDraftSaved(true);
     setDraftOpen(false);
-    void beginMeeting();
+    toast.success(
+      meetingAt == null
+        ? t("draft.saved")
+        : t("draft.savedWithTime", {
+            time: new Date(meetingAt).toLocaleString(language === "en" ? "en-US" : "zh-TW", {
+              month: "numeric",
+              day: "numeric",
+              hour: "numeric",
+              minute: "2-digit",
+            }),
+          }),
+    );
   }
 
   return (
@@ -153,14 +168,9 @@ export function MeetingDraftSheet() {
               <Eraser className="size-3.5" />
               {t("draft.clear")}
             </Button>
-            <Button
-              size="sm"
-              className="h-8"
-              disabled={meetingActive || finalizing}
-              onClick={start}
-            >
-              <Mic className="size-3.5" />
-              {t("draft.start")}
+            <Button size="sm" className="h-8" disabled={!hasDraft || meetingActive || finalizing} onClick={save}>
+              <Save className="size-3.5" />
+              {t("draft.save")}
             </Button>
           </>
         }

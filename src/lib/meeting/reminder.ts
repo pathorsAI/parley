@@ -121,6 +121,8 @@ export function initMeetingReminder(): () => void {
         next.setMeetingAt(null);
         next.setMeetingEndAt(null);
       }
+      // Recorded: no longer a draft to keep.
+      if (next.draftSaved) next.setDraftSaved(false);
       return;
     }
     if (

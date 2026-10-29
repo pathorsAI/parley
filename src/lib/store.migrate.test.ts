@@ -164,7 +164,15 @@ describe("scheduled meeting draft", () => {
     expect(restored.meetingContext).toBe("名單");
   });
 
-  it("ignores a persisted draft without a time", () => {
+  it("keeps a saved draft that has no time", async () => {
+    const { scheduledDraft } = await import("./store/persistence");
+    const saved = scheduledDraft({ ...current(), meetingAt: null, draftSaved: true, meetingContext: "名單" });
+    expect(saved).toMatchObject({ draftSaved: true, meetingContext: "名單" });
+    const restored = mergePersistedState({ settings: {}, draft: saved }, current());
+    expect(restored.meetingContext).toBe("名單");
+  });
+
+  it("ignores a persisted draft that was neither saved nor timed", () => {
     const restored = mergePersistedState({ settings: {}, draft: { meetingTitle: "x" } }, current());
     expect(restored.meetingTitle).toBe(current().meetingTitle);
   });
