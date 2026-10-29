@@ -32,6 +32,7 @@ import {
   offersKeepCopy,
   openingDestination,
   orgNameOf,
+  placeName,
   primaryAction,
   revealsToOrg,
   saveLastDestination,
@@ -153,6 +154,20 @@ function useCrumb(sources: DestinationSources) {
   };
 }
 
+/** A destination by its own name (see placeName) — the move sheet's wording. */
+function usePlaceName(sources: DestinationSources) {
+  const { t } = useI18n();
+  return (d: LibraryDestination, newFolder?: string | null): string => {
+    if (newFolder) return newFolder;
+    const folders = d.scope === "personal" ? sources.personalFolders : (sources.orgFolders[d.orgId] ?? []);
+    return placeName(
+      d,
+      { personal: t("destination.personal"), orgs: sources.orgs ?? [], folders },
+      t("dest.noFolder")
+    );
+  };
+}
+
 /** Create the staged new folder (if any) in the picked workspace. */
 async function createStagedFolder(
   selected: LibraryDestination,
@@ -230,6 +245,12 @@ export function DestinationSheet({
   const ownSources = useDestinationSources(open && !sourcesProp, gateOnSync);
   const sources = sourcesProp ?? ownSources;
   const crumb = useCrumb(sources);
+  const place = usePlaceName(sources);
+  // Moving a recording that exists names places the way the library does — by
+  // the folder alone, under workspace tabs that already say where. The doors
+  // that choose for a recording still to come (save, auto-share) keep the
+  // crumb, which carries the workspace in the one line they show.
+  const named = verb === "move" ? place : crumb;
 
   // What the sheet opens on. Re-derived on every open; the user's own pick in
   // this session overrides it until the sheet closes.
@@ -239,6 +260,9 @@ export function DestinationSheet({
   const [query, setQuery] = useState("");
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
+  /** Switched to a workspace the recording is not in and not yet picked a
+   *  folder there — the button asks for one instead of guessing the root. */
+  const [unpicked, setUnpicked] = useState(false);
   const lastUsed = useMemo(() => (open ? loadLastDestination() : null), [open]);
 
   useEffect(() => {
@@ -249,6 +273,7 @@ export function DestinationSheet({
     setQuery("");
     setCreating(false);
     setBusy(false);
+    setUnpicked(false);
   }, [open, initialMode]);
 
   const workspaces: WorkspaceRef[] = useMemo(
@@ -268,11 +293,16 @@ export function DestinationSheet({
     setQuery("");
     setCreating(false);
     // Coming back to the workspace the recording is in lands on its folder.
-    setPicked(current && workspaceOf(current) === ws ? current : workspaceRoot(ws));
+    // Anywhere else nothing is picked yet, as long as there is a list to pick
+    // from (Personal has none in the auto-share setting: there it means "off").
+    const home = !!current && workspaceOf(current) === ws;
+    setPicked(home ? current : workspaceRoot(ws));
+    setUnpicked(!home && (ws !== PERSONAL_WORKSPACE || personalFolders));
   }
 
   function pickFolder(folderId: string | null) {
     setNewFolder(null);
+    setUnpicked(false);
     setPicked(inWorkspace(workspace, folderId));
   }
 
@@ -286,15 +316,23 @@ export function DestinationSheet({
     } else {
       setPicked(workspaceRoot(workspace));
       setNewFolder(clean);
+      setUnpicked(false);
     }
     setCreating(false);
     setQuery("");
   }
 
   // A folder still to be created is never "where it already is".
-  const action = primaryAction(verb, newFolder ? null : current, selected, crumb(selected, newFolder));
+  const action = primaryAction(verb, newFolder ? null : current, selected, named(selected, newFolder));
   const showKeepCopy = allowKeepCopy && offersKeepCopy(current, selected);
-  const disabled = busy || action.kind === "stay" || (showFolderList && folders === null);
+  const disabled =
+    busy || unpicked || action.kind === "stay" || (showFolderList && folders === null);
+  // Into an org with the personal original kept is a copy: it SAVES there
+  // rather than moving, and the button says so.
+  const copies = action.kind === "move" && showKeepCopy && keepCopy;
+  let label = actionLabel(t, action);
+  if (unpicked) label = t("dest.pickFolder");
+  else if (copies) label = t("dest.action.save", { target: action.target });
 
   async function confirm() {
     if (disabled) return;
@@ -317,7 +355,7 @@ export function DestinationSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         title={title}
-        description={current ? t("dest.currentlyIn", { place: crumb(current) }) : undefined}
+        description={current ? t("dest.currentlyIn", { place: named(current) }) : undefined}
         closeLabel={t("common.close")}
         // Esc while naming a new folder closes the field, not the sheet.
         onEscapeKeyDown={(e) => {
@@ -330,7 +368,7 @@ export function DestinationSheet({
             orgNote={revealsToOrg(current, selected) ? t("dest.orgNote", { org: orgNameOf(sources.orgs, selected) }) : null}
             keepCopy={showKeepCopy ? keepCopy : null}
             onKeepCopyChange={setKeepCopy}
-            label={actionLabel(t, action)}
+            label={label}
             busy={busy}
             disabled={disabled}
             onCancel={() => onOpenChange(false)}
@@ -350,7 +388,7 @@ export function DestinationSheet({
           hidden={!showFolderList}
           query={query}
           onQueryChange={setQuery}
-          selectedFolderId={newFolder ? undefined : selected.folderId}
+          selectedFolderId={newFolder || unpicked ? undefined : selected.folderId}
           currentFolderId={current && workspaceOf(current) === workspace ? current.folderId : undefined}
           newFolder={newFolder}
           creating={creating}
