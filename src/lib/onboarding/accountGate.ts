@@ -1,6 +1,6 @@
 import type { Settings } from "../types";
 import { sttApiKey } from "../transcription/providers";
-import { usesLocalModel } from "../transcription/registry";
+import { usesCloudSession, usesLocalModel } from "../transcription/registry";
 import {
   anyLocalBusy,
   isLocalModelReady,
@@ -26,8 +26,10 @@ export type AccountGateBlock = "credential" | "localDownload" | "localDownloadin
  * - "local" (on-device): the selected model is downloaded and verified, and no
  *   download is still in flight. Signing in does not bypass this — the user
  *   chose to transcribe on this device, so that has to work.
- * - Otherwise: a Parley session (hosted STT) or a key for the selected BYOK
- *   provider.
+ * - Parley's hosted STT: a signed-in session.
+ * - A bring-your-own provider: its key. Being signed in doesn't stand in for
+ *   it — a signed-in user who picks their own models still needs the key, or
+ *   the first meeting is refused with "no transcription key".
  */
 export function accountGateBlock(
   settings: Settings,
@@ -38,7 +40,8 @@ export function accountGateBlock(
     if (anyLocalBusy(local.models, local.downloads)) return "localDownloading";
     return isLocalModelReady(local.models, settings.localSttModel) ? null : "localDownload";
   }
-  return signedIn || !!sttApiKey(settings, settings.transcriptionProvider).trim() ? null : "credential";
+  if (usesCloudSession(settings.transcriptionProvider)) return signedIn ? null : "credential";
+  return sttApiKey(settings, settings.transcriptionProvider).trim() ? null : "credential";
 }
 
 export function transcriptionReady(settings: Settings, signedIn: boolean, local: LocalGateInput): boolean {

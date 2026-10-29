@@ -171,6 +171,28 @@ export const exportRecording = (args: { src: string; dst: string }) => invoke<vo
 export const listInputDevices = () => invoke<string[]>("list_input_devices");
 export const startMicTest = (args: { inputDevice?: string | null }) => invoke<void>("start_mic_test", args);
 export const stopMicTest = () => invoke<void>("stop_mic_test");
+/** One Claude Code memory file (ai_memory.rs): `label` is "global" or the project folder. */
+export interface MemoryFile {
+  /** What the LLM sees it as: "global" or "project". */
+  label: string;
+  /** For the reading log: the global file, auto memory, or a project's CLAUDE.md. */
+  kind: "global" | "auto" | "project";
+  /** Display name for the reading log; never sent to the LLM. */
+  name: string;
+  text: string;
+}
+export const readClaudeMemory = () => invoke<MemoryFile[]>("read_claude_memory");
+/** Onboarding's microphone check: a short transcription on `source` "mic-check" (mic_check.rs). */
+export const startMicCheck = (args: {
+  provider: string;
+  apiKey: string;
+  model?: string | null;
+  languageHints?: string[] | null;
+  inputDevice?: string | null;
+  relayUrl?: string | null;
+  vocabulary?: string[] | null;
+}) => invoke<void>("start_mic_check", args);
+export const stopMicCheck = () => invoke<void>("stop_mic_check");
 
 // ── Uploaded recordings & playback (replay.rs, playback.rs) ─────────────────
 
@@ -299,6 +321,10 @@ export const writeVoiceHistory = (args: { content: string }) => invoke<void>("wr
 export const checkPermissions = () => invoke<Permissions>("check_permissions");
 export const requestMicrophone = () => invoke<void>("request_microphone");
 export const probeSystemAudio = () => invoke<string>("probe_system_audio");
+
+/** `verify_stt_key` (commands/key_check.rs): does the vendor accept this speech-to-text key? */
+export type KeyCheck = "accepted" | "rejected" | "unknown";
+export const verifySttKey = (args: { provider: string; key: string }) => invoke<KeyCheck>("verify_stt_key", args);
 /** pane: "microphone" | "system-audio" | "input-monitoring" | "accessibility" | "keyboard" */
 export const openPrivacySettings = (args: { pane: string }) => invoke<void>("open_privacy_settings", args);
 export const appIdentity = () => invoke<AppIdentity>("app_identity");

@@ -109,6 +109,7 @@ pub fn run() {
         // Single source of truth for "who owns the mic" (meeting / mic test /
         // voice typing) — guarantees at most one live capture session.
         .manage(MicCoordinator::default())
+        .manage(commands::mic_check::MicCheckState::default())
         // Tee of the live meeting's raw mic PCM so voice typing can dictate
         // during a meeting without opening a second input stream (see MicTap).
         .manage(MicTap::default())
@@ -202,6 +203,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::meeting::start_meeting,
+            commands::key_check::verify_stt_key,
             commands::meeting::stop_meeting,
             commands::meeting::cancel_meeting,
             commands::meeting::set_meeting_paused,
@@ -209,6 +211,9 @@ pub fn run() {
             commands::mic_test::list_input_devices,
             commands::mic_test::start_mic_test,
             commands::mic_test::stop_mic_test,
+            commands::mic_check::start_mic_check,
+            commands::mic_check::stop_mic_check,
+            commands::ai_memory::read_claude_memory,
             commands::meeting::meeting_active,
             commands::meeting::active_meeting,
             commands::meeting::finish_meeting_journal,

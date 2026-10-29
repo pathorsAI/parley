@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, Loader2, LogIn, Mic, Volume2, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Check, ChevronLeft, ChevronRight, Cpu, Globe, Loader2, LogIn, Mic, UserRoundCheck, UsersRound, Volume2 } from "lucide-react";
 import { useStore } from "../lib/store";
 import { isMac, isWindows } from "../lib/platform";
 import { isTauri } from "../lib/tauriEvents";
@@ -24,12 +24,27 @@ import { beginMeeting } from "../lib/meeting/start";
 import { loadSampleRecording } from "../lib/onboarding/sample";
 import { openRecording } from "./home/GettingStarted";
 import { TranscribingPulse, useTranscribingPulse } from "./onboarding/TranscribingPulse";
-import { IntroStage } from "./onboarding/IntroStage";
+import { IntroHero, IntroStage } from "./onboarding/IntroStage";
+import { ConfirmCard } from "./onboarding/ConfirmCard";
+import { DoneScribbles } from "./onboarding/DoneScribbles";
+import { ChoiceCard, OrDivider, SelectCard } from "./onboarding/ChoiceCard";
+import { checkModelKeys, type KeyProblems } from "../lib/onboarding/keyCheck";
+import { OrgStep } from "./onboarding/OrgStep";
+import { MicStep } from "./onboarding/MicStep";
+import { ContextStep } from "./onboarding/ContextStep";
+import { mergeTerms, type AddedTerm, type MicRun } from "../lib/onboarding/micCheck";
 import { useI18n, LANGUAGE_OPTIONS } from "../i18n";
-import { Flag } from "./ui/flag";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { PasswordInput } from "@/components/ui/password-input";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Select,
   SelectContent,
@@ -43,22 +58,70 @@ import * as ipc from "../lib/ipc/commands";
 // systemAudio: unknown | granted | denied | unsupported (macOS < 14.2).
 type Perms = ipc.Permissions;
 
-type StepId = "intro" | "account" | "perms" | "done";
+type StepId = "intro" | "account" | "org" | "model" | "perms" | "mic" | "context" | "done";
 
-// Four steps, one job each: say what Parley is, make transcription actually
-// work, get the OS permissions, then hand off to a first real run. Teaching the
-// rest of the app lives in the Home checklist, not here. The perms step runs on
-// both platforms: macOS walks the TCC prompts; Windows has no runtime prompt,
-// but the step is still the only place that shows whether the mic is actually
-// allowed (the backend reads the consent store) and sends the user to the exact
-// pane that flips it (ms-settings:privacy-microphone).
-const STEPS: StepId[] = ["intro", "account", "perms", "done"];
-const STEP_COUNT = STEPS.length;
-const ACCOUNT_STEP = STEPS.indexOf("account");
+// One job per step: say what Parley is, sign in, settle the organization, make
+// transcription actually work, get the OS permissions, check the mic, tell the
+// AI who the user is, then hand off to a first real run. Teaching the rest of
+// the app lives in the Home checklist, not here.
+//
+// Not every step shows for everyone: the OSS build has no account (so no
+// sign-in and no organizations), and the organization step needs a session.
+// `onboardingStepId` persists the step by id, so a resumed wizard lands on the
+// same step even when the visible list has changed.
+//
+// The perms step runs on both platforms: macOS walks the TCC prompts; Windows
+// has no runtime prompt, but the step is still the only place that shows
+// whether the mic is actually allowed (the backend reads the consent store) and
+// sends the user to the exact pane that flips it (ms-settings:privacy-microphone).
+const ALL_STEPS: StepId[] = ["intro", "account", "org", "model", "perms", "mic", "context", "done"];
+
+/** Each step's title, shown in the header (the welcome screen has its own). */
+function stepTitle(step: StepId): TranslationKey {
+  switch (step) {
+    case "intro":
+      return "onboarding.title";
+    case "account":
+      return "onboarding.account.title";
+    case "org":
+      return "onboarding.org.title";
+    case "model":
+      return "onboarding.model.title";
+    case "perms":
+      return isMac() ? "onboarding.perms.title" : "onboarding.perms.title.windows";
+    case "mic":
+      return "onboarding.mic.title";
+    case "context":
+      return "onboarding.context.title";
+    case "done":
+      return "onboarding.done.title";
+  }
+}
+const MODEL_STEP = ALL_STEPS.indexOf("model");
+/** The steps of the four-step wizard that `onboardingStep` indexed. */
+const LEGACY_STEPS: StepId[] = ["intro", "account", "perms", "done"];
+
+function isStepId(v: string): v is StepId {
+  return (ALL_STEPS as string[]).includes(v);
+}
+
+/** Where a saved wizard resumes: the saved id, else the legacy index's step. */
+function savedStep(saved: Pick<Settings, "onboardingStep" | "onboardingStepId">): StepId {
+  if (isStepId(saved.onboardingStepId)) return saved.onboardingStepId;
+  return LEGACY_STEPS[saved.onboardingStep] ?? "intro";
+}
+
+function visibleSteps(signedIn: boolean): StepId[] {
+  return ALL_STEPS.filter((s) => {
+    if (s === "account") return CLOUD_ENABLED;
+    if (s === "org") return CLOUD_ENABLED && signedIn;
+    return true;
+  });
+}
 
 /** Helper text under the blocked Next button, per reason (see accountGate.ts). */
 const GATE_HINT: Record<AccountGateBlock, TranslationKey> = {
-  credential: "onboarding.account.gate",
+  credential: "onboarding.model.gate",
   localDownload: "localStt.gate.download",
   localDownloading: "localStt.gate.downloading",
 };
@@ -68,37 +131,101 @@ export function Onboarding() {
   const settings = useStore((s) => s.settings);
   const patch = useStore((s) => s.updateSettings);
   const cloudAuth = useStore((s) => s.cloudAuth);
-  const [step, setStep] = useState(() => {
-    const s = settings.onboardingStep ?? 0;
-    const resumed = s >= 0 && s < STEP_COUNT ? s : 0;
-    // A step persisted past the account gate (an older, longer wizard, or a
-    // session that has since signed out) must not resume beyond it. The local
-    // model catalog isn't loaded yet here, so a "local" setup resumes at the
-    // account step (fail closed) and the user confirms the downloaded model.
-    const { settings: current, cloudAuth: auth } = useStore.getState();
-    return resumed > ACCOUNT_STEP && !transcriptionReady(current, !!auth, { models: null, downloads: {} })
-      ? ACCOUNT_STEP
-      : resumed;
+  const signedIn = !!cloudAuth;
+  const steps = visibleSteps(signedIn);
+
+  const [current, setCurrent] = useState<StepId>(() => {
+    const { settings: saved, cloudAuth: auth } = useStore.getState();
+    const shown = visibleSteps(!!auth);
+    // The first visible step at or after the saved one (a step that's hidden
+    // now, e.g. "org" after signing out, resumes at the one after it).
+    let resumed = ALL_STEPS.slice(ALL_STEPS.indexOf(savedStep(saved))).find((s) => shown.includes(s)) ?? "intro";
+    // A step past the model gate (a session that has since signed out) must
+    // not resume beyond it. The local model catalog isn't loaded yet here, so
+    // a "local" setup resumes at the model step (fail closed) and the user
+    // confirms the downloaded model.
+    if (
+      ALL_STEPS.indexOf(resumed) > MODEL_STEP &&
+      !transcriptionReady(saved, !!auth, { models: null, downloads: {} })
+    ) {
+      resumed = "model";
+    }
+    return resumed;
   });
-  const current = STEPS[step];
+  const index = Math.max(0, steps.indexOf(current));
   const [perms, setPerms] = useState<Perms | null>(null);
+  // The organization step while it offers its two choices (each card has its
+  // own button), when the footer steps aside.
+  const [orgChoosing, setOrgChoosing] = useState(false);
+  // The model step's Next checks the keys with their vendors first.
+  const [checkingKeys, setCheckingKeys] = useState(false);
+  const [keyProblems, setKeyProblems] = useState<KeyProblems>({});
+  // The model step's choice, kept here so it survives Back/Next: signed in,
+  // Parley's hosted models are the default unless the user picks their own.
+  const [ownModels, setOwnModels] = useState(false);
+  // The dictionary terms this wizard found (names from the self-introduction
+  // and the AI memory, the user's name and company, ones typed on the context
+  // step), listed there so they can be taken back out.
+  const [addedTerms, setAddedTerms] = useState<AddedTerm[]>([]);
+  // What the last microphone check added, so testing again replaces it.
+  const micRun = useRef<MicRun | null>(null);
+  // The providers in place before the model step switched them to Parley's,
+  // so "Use my own models" puts them back.
+  const beforeHosted = useRef<Pick<Settings, "transcriptionProvider" | "llmProviders"> | null>(null);
 
   // Persist the step so granting a permission (which often needs an app restart)
   // resumes here instead of bouncing back to step 1.
   useEffect(() => {
-    patch({ onboardingStep: step });
-  }, [step, patch]);
+    patch({ onboardingStepId: current });
+  }, [current, patch]);
+
+  // Signing out mid-wizard hides the org step; don't strand the user on it.
+  useEffect(() => {
+    if (!visibleSteps(signedIn).includes(current)) setCurrent("model");
+  }, [signedIn, current]);
 
   // On-device catalog + download state, live only while "local" is selected;
-  // owned here (not in AccountStep) because it feeds the gate below.
+  // owned here (not in ModelStep) because it feeds the gate below.
   const local = useLocalSttModels(usesLocalModel(settings.transcriptionProvider));
   const gateBlock = accountGateBlock(settings, !!cloudAuth, local);
   const ready = gateBlock === null;
-  // Neither Next on the account step nor the header X may get past the gate:
+  // Neither Next on the model step nor the welcome screen's Skip may get past the gate:
   // skipping used to land users in a mock recorder that played a fake
   // transcript and saved nothing, so the first meeting silently failed.
-  const nextBlocked = current === "account" && !ready;
+  const nextBlocked = current === "model" && !ready;
   const skipBlocked = !ready;
+
+  function goTo(step: StepId) {
+    setCurrent(step);
+  }
+
+  function next() {
+    goTo(steps[Math.min(steps.length - 1, index + 1)]);
+  }
+
+  // Leaving the model step: a key the vendor refuses keeps the user here, with
+  // the reason under that field, instead of a first meeting that never
+  // transcribes. Any edit to the providers or keys clears the old verdict.
+  async function nextFromModel() {
+    setCheckingKeys(true);
+    try {
+      const problems = await checkModelKeys(useStore.getState().settings);
+      setKeyProblems(problems);
+      if (!problems.stt && !problems.llm) next();
+    } finally {
+      setCheckingKeys(false);
+    }
+  }
+  const keyInputs = [
+    settings.transcriptionProvider,
+    sttApiKey(settings, settings.transcriptionProvider),
+    settings.llmProviders.deep,
+    settings[PROVIDER_BY_ID[settings.llmProviders.deep].apiKeyField],
+    settings.customBaseUrl,
+  ].join("\u0000");
+  useEffect(() => {
+    setKeyProblems({});
+  }, [keyInputs]);
 
   async function recheck() {
     if (!isTauri()) return;
@@ -119,7 +246,7 @@ export function Onboarding() {
   // to System Settings, hence the 2 s poll; it stops when the user leaves the
   // step.)
   useEffect(() => {
-    if (STEPS[step] !== "perms") return;
+    if (current !== "perms") return;
     recheck().catch((error) => log.warn("onboarding: permission recheck failed", { error: String(error) }));
     const recheckNow = () => {
       recheck().catch((error) => log.warn("onboarding: permission recheck failed", { error: String(error) }));
@@ -132,10 +259,10 @@ export function Onboarding() {
       document.removeEventListener("visibilitychange", recheckNow);
       globalThis.clearInterval(id);
     };
-  }, [step]);
+  }, [current]);
 
   function finish() {
-    patch({ onboarded: true, onboardingStep: 0 });
+    patch({ onboarded: true, onboardingStep: 0, onboardingStepId: "" });
   }
 
   // The wizard stays up through the transcribing beat, so the button the user
@@ -153,172 +280,186 @@ export function Onboarding() {
 
   const micOk = perms?.microphone === "authorized";
   const systemAudioOk = perms?.systemAudio === "granted";
+  const intro = current === "intro";
+  // The first and last screens share the hero look: blue bars, no title bar,
+  // only the language in the corner.
+  const hero = intro || current === "done";
+  // Signed out, the sign-in step is a choice between two cards, each with its
+  // own button, and Back sits under them, so it has no footer; nor does the
+  // organization step while it offers its two cards. Signed in, the sign-in
+  // step confirms the account; from there the rest of setup is optional, so
+  // its footer is the welcome screen's: Skip, or Start the rest.
+  const account = current === "account";
+  const showFooter = current !== "done" && !(account && !cloudAuth) && !(current === "org" && orgChoosing);
+  const skipFooter = intro || (account && !!cloudAuth);
+  const nextLabel = skipFooter ? t("onboarding.start") : t("onboarding.next");
+  const skipTitle = skipBlocked && gateBlock ? t(GATE_HINT[gateBlock]) : t("onboarding.skip");
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6">
-      <div className="flex max-h-[88vh] w-full max-w-lg flex-col rounded-xl border bg-background shadow-2xl">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b px-5 py-3">
-          <span className="text-sm font-semibold">{t("onboarding.title")}</span>
-          <div className="flex items-center gap-3">
-            <span className="text-[11px] tabular-nums text-muted-foreground">
-              {step + 1} / {STEP_COUNT}
-            </span>
-            {/* The tooltip sits on a wrapper: a disabled button swallows the
-                hover that would show its own title. */}
-            <span title={skipBlocked && gateBlock ? t(GATE_HINT[gateBlock]) : t("onboarding.skip")}>
-              <button
-                type="button"
-                className="text-muted-foreground hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
-                aria-label={t("onboarding.skip")}
-                disabled={skipBlocked}
-                onClick={finish}
-              >
-                <X className="size-4" />
-              </button>
-            </span>
+      <div
+        className={cn(
+          // One size for every step, so the dialog never jumps between them;
+          // a short window gets all the height it has, and a long step scrolls.
+          "relative flex h-[580px] max-h-[calc(100vh-3rem)] w-full max-w-[560px] flex-col overflow-hidden rounded-xl shadow-2xl",
+          hero ? "bg-(--ob-hero-bg) [--ob-hero-bg:#f5f5f5] dark:[--ob-hero-bg:var(--muted)]" : "bg-background",
+        )}
+      >
+        {/* The welcome screen has no title bar: a hero, its title in the body,
+            and only the language in the corner. Skip moves to the footer. */}
+        {hero ? (
+          <>
+            <IntroHero />
+            <div className="relative flex h-15 shrink-0 items-center justify-end px-5">
+              <LanguageMenu onHero />
+            </div>
+          </>
+        ) : (
+          // Every later step: its own title, the language, and a progress bar
+          // along the bottom edge — one segment per step after the welcome.
+          <div className="relative flex h-15 shrink-0 items-center justify-between px-5">
+            <h2 className="text-sm font-semibold text-primary">{t(stepTitle(current))}</h2>
+            <LanguageMenu />
+            <StepProgress reached={index} total={steps.length - 1} />
           </div>
-        </div>
+        )}
 
         {/* Body */}
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
-          {current === "intro" && (
-            <div className="flex flex-col gap-4">
-              <div className="grid grid-cols-2 gap-2">
-                {LANGUAGE_OPTIONS.map((lang) => (
-                  <button
-                    key={lang.value}
-                    type="button"
-                    onClick={() => patch({ language: lang.value })}
-                    className={`flex items-center justify-between rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
-                      settings.language === lang.value
-                        ? "border-primary bg-primary/10"
-                        : "hover:bg-muted/50"
-                    }`}
-                  >
-                    <span className="flex items-center gap-2">
-                      <Flag code={lang.flag} className="size-5" />
-                      {lang.nativeLabel}
-                    </span>
-                    {settings.language === lang.value && <Check className="size-4 text-primary" />}
-                  </button>
-                ))}
-              </div>
-              <div className="flex flex-col gap-3">
-                <h2 className="text-lg font-semibold tracking-tight">{t("onboarding.intro.title")}</h2>
-                {/* The UI assembles itself: pill, transcript, folder, plug —
-                    one caption per beat. "Both sides of the conversation" holds
-                    on both desktop platforms (macOS process tap, Windows WASAPI
-                    loopback), so the captions are the same everywhere. */}
-                <IntroStage />
-              </div>
+        <div
+          className={cn(
+            "relative min-h-0 flex-1 overflow-y-auto",
+            intro && "px-6 pt-[63px] pb-16",
+            current === "done" && "items-center justify-center px-6 pb-16",
+            !hero && "px-5 py-5",
+            // The two sign-in cards fill whatever height there is; it only
+            // scrolls if a minimum-size window can't hold their text.
+            // Column, so a step's card can fill the dialog's height.
+            "flex flex-col",
+          )}
+        >
+          {intro && (
+            <div className="flex flex-col gap-9">
+              <h2 className="text-center text-2xl leading-[1.2] font-semibold">{t("onboarding.intro.welcome")}</h2>
+              {/* The UI assembles itself: pill, transcript, folder, plug —
+                  one caption per beat. "Both sides of the conversation" holds
+                  on both desktop platforms (macOS process tap, Windows WASAPI
+                  loopback), so the captions are the same everywhere. */}
+              <IntroStage />
             </div>
           )}
 
-          {current === "account" && <AccountStep local={local} />}
+          {current === "account" && (
+            <AccountStep
+              onBack={() => goTo(steps[index - 1])}
+              onContinue={next}
+            />
+          )}
+
+          {current === "org" && (
+            <OrgStep onNext={next} onBack={() => goTo(steps[index - 1])} setChoosing={setOrgChoosing} />
+          )}
+
+          {current === "model" && (
+            <ModelStep
+              local={local}
+              own={ownModels}
+              setOwn={setOwnModels}
+              beforeHosted={beforeHosted}
+              keyProblems={keyProblems}
+            />
+          )}
 
           {current === "perms" && (
-            <div className="flex flex-col gap-3">
-              <h2 className="text-base font-semibold tracking-tight">
-                {t(isMac() ? "onboarding.perms.title" : "onboarding.perms.title.windows")}
-              </h2>
-              {/* Windows asks consent for the microphone alone and points at
-                  its own Settings app — the macOS copy would send the user
-                  hunting for a "System Audio Recording" grant that doesn't
-                  exist there (loopback capture needs none). */}
-              <p className="text-sm leading-relaxed text-muted-foreground">
+            <div className="flex flex-col gap-6">
+              {/* Windows says something different: it asks consent for the
+                  microphone alone, and its system-audio row is checked without
+                  the user doing anything (loopback capture needs no grant). */}
+              <p className="text-sm leading-relaxed text-[#333] dark:text-foreground">
                 {t(isMac() ? "onboarding.perms.body" : "onboarding.perms.body.windows")}
               </p>
 
-              <PermRow
-                icon={<Mic className="size-4" />}
-                label={t("onboarding.perms.mic")}
-                ok={micOk}
-                actionLabel={t(isMac() ? "onboarding.perms.grant" : "settings.permissions.openSettings")}
-                onAction={async () => {
-                  // Not yet determined → the native prompt is enough; only jump
-                  // to System Settings when it was explicitly denied (the OS
-                  // won't re-prompt in that case). Windows never prompts at all
-                  // — request_microphone() is a stub there — so its only useful
-                  // click is the deep link into the privacy pane.
-                  if (!isMac() || perms?.microphone === "denied") {
-                    await ipc.openPrivacySettings({ pane: "microphone" }).catch((error) =>
-                      log.warn("permissions: open microphone settings failed", { error: String(error) }),
-                    );
-                  } else {
-                    await ipc.requestMicrophone().catch((error) =>
-                      log.warn("permissions: microphone request failed", { error: String(error) }),
-                    );
-                  }
-                  await recheck();
-                }}
-              />
-              {/* macOS shows the row only where the tap exists (< 14.2
-                  reports unsupported). Windows always has it: loopback needs
-                  no consent, so the row is a ✓ whenever there is an output
-                  device to capture, and otherwise a link to Sound settings. */}
-              {((isMac() && perms?.systemAudio !== "unsupported") || isWindows()) && (
+              {/* No re-check button: the step polls (focus, visibility, every
+                  2 s), so a grant shows up on its own. */}
+              <div className="flex flex-col gap-3">
                 <PermRow
-                  icon={<Volume2 className="size-4" />}
-                  label={t(isMac() ? "onboarding.perms.systemAudio" : "onboarding.perms.systemAudio.windows")}
-                  ok={systemAudioOk}
+                  icon={<Mic className="size-4" />}
+                  label={t("onboarding.perms.mic")}
+                  art="top-[37px] left-[-52px] h-[116.52px] w-[774.18px]"
+                  ok={micOk}
                   actionLabel={t(isMac() ? "onboarding.perms.grant" : "settings.permissions.openSettings")}
                   onAction={async () => {
-                    // macOS: probes a real Core Audio process tap; the first
-                    // probe shows the "record system audio" consent prompt.
-                    // Windows: only checks for a default output device, and
-                    // when there is none the fix lives in Sound settings.
-                    const s = await ipc.probeSystemAudio().catch(() => null);
-                    if (s === "denied" || (!isMac() && s !== "granted")) {
-                      await ipc.openPrivacySettings({ pane: "system-audio" }).catch((error) =>
-                        log.warn("permissions: open system-audio settings failed", { error: String(error) }),
+                    // Not yet determined → the native prompt is enough; only jump
+                    // to System Settings when it was explicitly denied (the OS
+                    // won't re-prompt in that case). Windows never prompts at all
+                    // — request_microphone() is a stub there — so its only useful
+                    // click is the deep link into the privacy pane.
+                    if (!isMac() || perms?.microphone === "denied") {
+                      await ipc.openPrivacySettings({ pane: "microphone" }).catch((error) =>
+                        log.warn("permissions: open microphone settings failed", { error: String(error) }),
+                      );
+                    } else {
+                      await ipc.requestMicrophone().catch((error) =>
+                        log.warn("permissions: microphone request failed", { error: String(error) }),
                       );
                     }
                     await recheck();
                   }}
                 />
-              )}
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 text-[11px]"
-                  onClick={() =>
-                    recheck().catch((error) => log.warn("onboarding: permission recheck failed", { error: String(error) }))
-                  }
-                >
-                  {t("onboarding.perms.recheck")}
-                </Button>
-                <span className="text-[11px] text-muted-foreground">
-                  {t(isMac() ? "onboarding.perms.hint" : "onboarding.perms.hint.windows")}
-                </span>
+                {/* macOS shows the row only where the tap exists (< 14.2
+                    reports unsupported). Windows always has it: loopback needs
+                    no consent, so the row is a ✓ whenever there is an output
+                    device to capture, and otherwise a link to Sound settings. */}
+                {((isMac() && perms?.systemAudio !== "unsupported") || isWindows()) && (
+                  <PermRow
+                    icon={<Volume2 className="size-4" />}
+                    art="top-[-47px] left-[-55px] h-[116.52px] w-[774.18px]"
+                    label={t(isMac() ? "onboarding.perms.systemAudio" : "onboarding.perms.systemAudio.windows")}
+                    ok={systemAudioOk}
+                    actionLabel={t(isMac() ? "onboarding.perms.grant" : "settings.permissions.openSettings")}
+                    onAction={async () => {
+                      // macOS: probes a real Core Audio process tap; the first
+                      // probe shows the "record system audio" consent prompt.
+                      // Windows: only checks for a default output device, and
+                      // when there is none the fix lives in Sound settings.
+                      const s = await ipc.probeSystemAudio().catch(() => null);
+                      if (s === "denied" || (!isMac() && s !== "granted")) {
+                        await ipc.openPrivacySettings({ pane: "system-audio" }).catch((error) =>
+                          log.warn("permissions: open system-audio settings failed", { error: String(error) }),
+                        );
+                      }
+                      await recheck();
+                    }}
+                  />
+                )}
               </div>
             </div>
           )}
 
+          {current === "mic" && (
+            <MicStep
+              onTermsAdded={(terms) => setAddedTerms((prev) => mergeTerms(prev, terms))}
+              onTermsRemoved={(ids) => setAddedTerms((prev) => prev.filter((term) => !ids.includes(term.id)))}
+              lastRun={micRun}
+            />
+          )}
+
+          {current === "context" && <ContextStep terms={addedTerms} setTerms={setAddedTerms} />}
+
           {current === "done" && (
-            <div className="flex flex-col items-center gap-3 py-6 text-center">
-              <div className="flex size-12 items-center justify-center rounded-full bg-success text-success-foreground">
+            <div className="flex flex-col items-center gap-9 text-center">
+              <div className="flex size-12 items-center justify-center rounded-full bg-[#d9f7e5] text-[#006a3b] dark:bg-success dark:text-success-foreground">
                 <Check className="size-6" />
               </div>
-              <h2 className="text-lg font-semibold tracking-tight">{t("onboarding.done.title")}</h2>
-              <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">{t("onboarding.done.body")}</p>
-              <div className="mt-2 flex flex-col items-center gap-2">
-                {samplePulse.active ? (
-                  <TranscribingPulse className="h-9" />
-                ) : (
-                  <Button
-                    size="sm"
-                    className="h-9 text-xs"
-                    onClick={() =>
-                      walkThroughSample().catch((error) =>
-                        log.error("onboarding: sample walkthrough failed", { error: String(error) }),
-                      )
-                    }
-                  >
-                    {t("onboarding.done.sample")}
-                  </Button>
-                )}
+              <div className="flex flex-col items-center gap-5">
+                <h2 className="text-2xl leading-[1.2] font-semibold">{t("onboarding.done.title")}</h2>
+                <p className="relative text-sm leading-[1.4] whitespace-nowrap text-[#333] dark:text-foreground">
+                  <span className="font-medium">{t("onboarding.done.lead")}</span>
+                  <br />
+                  {t("onboarding.done.body")}
+                  <DoneScribbles />
+                </p>
+              </div>
+              <div className="flex items-center justify-center gap-6">
                 <Button
                   variant="ghost"
                   size="sm"
@@ -333,74 +474,137 @@ export function Onboarding() {
                 >
                   {t("onboarding.done.startMeeting")}
                 </Button>
+                {samplePulse.active ? (
+                  <TranscribingPulse className="h-8" />
+                ) : (
+                  <Button
+                    size="sm"
+                    className="h-8 text-xs"
+                    onClick={() =>
+                      walkThroughSample().catch((error) =>
+                        log.error("onboarding: sample walkthrough failed", { error: String(error) }),
+                      )
+                    }
+                  >
+                    {t("onboarding.done.sample")}
+                  </Button>
+                )}
               </div>
             </div>
           )}
         </div>
 
-        {/* Footer nav */}
-        <div className="flex items-start justify-between border-t px-5 py-3">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 text-xs"
-            disabled={step === 0}
-            onClick={() => setStep((s) => Math.max(0, s - 1))}
-          >
-            <ChevronLeft className="size-3.5" />
-            {t("onboarding.back")}
-          </Button>
-          {/* The last step ends through its own two buttons above. */}
-          {step < STEP_COUNT - 1 && (
+        {/* Footer nav — the last step ends through its own two buttons above. */}
+        {showFooter && (
+          <div className="relative flex items-start justify-between border-t px-5 py-4">
+            {/* The welcome screen and the signed-in confirmation offer Skip
+                where Back would be. */}
+            {skipFooter && (
+              <span title={skipTitle}>
+                <Button variant="ghost" size="sm" className="h-8 text-xs" disabled={skipBlocked} onClick={finish}>
+                  {t("onboarding.skip")}
+                </Button>
+              </span>
+            )}
+            {!skipFooter && index > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 text-xs"
+                onClick={() => goTo(steps[index - 1])}
+              >
+                <ChevronLeft className="size-3.5" />
+                {t("onboarding.back")}
+              </Button>
+            )}
             <div className="flex flex-col items-end gap-1">
               <Button
                 size="sm"
                 className="h-8 text-xs"
-                disabled={nextBlocked}
-                onClick={() => setStep((s) => Math.min(STEP_COUNT - 1, s + 1))}
+                disabled={nextBlocked || checkingKeys}
+                onClick={() => {
+                  if (current === "model") {
+                    nextFromModel().catch((error) => log.error("onboarding: key check failed", { error: String(error) }));
+                  } else {
+                    next();
+                  }
+                }}
               >
-                {t("onboarding.next")}
+                {checkingKeys && <Loader2 className="size-3.5 animate-spin" />}
+                {nextLabel}
                 <ChevronRight className="size-3.5" />
               </Button>
-              {nextBlocked && gateBlock && (
+              {/* A missing key needs no line here: the field is marked
+                  required right above. A local model still downloading
+                  does — nothing above says Next waits for it. */}
+              {nextBlocked && gateBlock && gateBlock !== "credential" && (
                 <span className="text-[11px] text-muted-foreground">{t(GATE_HINT[gateBlock])}</span>
               )}
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-/**
- * Step 2: make transcription work. Signing in (official build only) is the
- * primary path — it unlocks Parley's hosted STT + LLM, and on success both
- * providers default to "parley". Bringing your own keys is the secondary path,
- * collapsed behind a disclosure in the official build and always open in the
- * OSS build, where it is the only path. The STT key is required; the LLM key
- * is optional (recording works without it, analysis doesn't).
- */
-function AccountStep({ local }: Readonly<{ local: LocalSttModelsState }>) {
+/** The UI language, from any step: it also sets the report language. */
+function LanguageMenu({ onHero = false }: Readonly<{ onHero?: boolean }>) {
   const { t } = useI18n();
-  const settings = useStore((s) => s.settings);
+  const language = useStore((s) => s.settings.language);
+  const patch = useStore((s) => s.updateSettings);
+  const option = LANGUAGE_OPTIONS.find((l) => l.value === language);
+  const currentLabel = option?.nativeLabel ?? language;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        {/* Short label, no chrome; white over the welcome hero. */}
+        <Button
+          variant="ghost"
+          size="sm"
+          className={cn("h-7 gap-1.5 px-2 text-xs", onHero && "text-white hover:bg-white/15 hover:text-white")}
+          aria-label={`${t("onboarding.language.label")}: ${currentLabel}`}
+        >
+          <Globe className="size-3.5" />
+          {option?.shortLabel ?? language}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-44">
+        {LANGUAGE_OPTIONS.map((lang) => (
+          <DropdownMenuItem key={lang.value} onSelect={() => patch({ language: lang.value })}>
+            <span className="flex-1">{lang.nativeLabel}</span>
+            {language === lang.value && <Check className="size-3.5 text-primary" />}
+          </DropdownMenuItem>
+        ))}
+        <DropdownMenuSeparator />
+        <p className="px-2 pb-1.5 text-[11px] leading-relaxed text-muted-foreground">
+          {t("onboarding.language.note")}
+        </p>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/**
+ * Sign in (official build only). It unlocks Parley's hosted STT + LLM, and on
+ * success both providers default to "parley" and the wizard moves on to the
+ * organization step. Not signing in is the footer's Next, relabelled.
+ */
+function AccountStep({ onBack, onContinue }: Readonly<{ onBack: () => void; onContinue: () => void }>) {
+  const { t } = useI18n();
   const patch = useStore((s) => s.updateSettings);
   const cloudAuth = useStore((s) => s.cloudAuth);
-  const listing = { cloudEnabled: CLOUD_ENABLED, signedIn: !!cloudAuth };
   const [signingIn, setSigningIn] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Start expanded when a BYOK STT key is already there (re-running onboarding)
-  // so the user sees what satisfies the gate.
-  // ("local" always counts: its picker lives in here.)
-  const [byokOpen, setByokOpen] = useState(
-    () =>
-      !CLOUD_ENABLED ||
-      usesLocalModel(settings.transcriptionProvider) ||
-      (!usesCloudSession(settings.transcriptionProvider) && !!sttApiKey(settings, settings.transcriptionProvider)),
-  );
-
-  const llm = PROVIDER_BY_ID[settings.llmProviders.deep];
-  const stt = STT_BY_ID[settings.transcriptionProvider];
+  // The browser sign-in can finish long after the click, by which time the
+  // user may have carried on without it and picked their own models.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   async function doSignIn() {
     setSigningIn(true);
@@ -408,63 +612,225 @@ function AccountStep({ local }: Readonly<{ local: LocalSttModelsState }>) {
     try {
       const { signInWithGoogle } = await import("../lib/cloud/client");
       await signInWithGoogle();
-      // Signed in → default to Parley's free hosted STT + LLM so the step is
-      // done in one tap; the pickers below now surface "parley" too.
+      // Still here → default to Parley's free hosted STT + LLM so the model
+      // step is already done (it can still be switched there); the step then
+      // shows the signed-in confirmation. Gone → the session counts, but
+      // their choices and position stand.
+      if (!mounted.current) return;
       patch({ llmProviders: { realtime: "parley", deep: "parley" }, transcriptionProvider: "parley" });
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (mounted.current) setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setSigningIn(false);
+      if (mounted.current) setSigningIn(false);
     }
   }
 
-  return (
-    <div className="flex flex-col gap-3">
-      <h2 className="text-base font-semibold tracking-tight">{t("onboarding.account.title")}</h2>
-      <p className="text-sm leading-relaxed text-muted-foreground">{t("onboarding.account.body")}</p>
+  if (cloudAuth) {
+    return (
+      <ConfirmCard
+        pills={[{ key: "email", icon: <UserRoundCheck className="size-3.5" />, label: cloudAuth.user.email }]}
+        title={t("onboarding.account.member.unlocked")}
+        body={t("onboarding.account.member.allowance")}
+      />
+    );
+  }
 
-      {CLOUD_ENABLED &&
-        (cloudAuth ? (
-          <div className="flex items-center gap-2 rounded-lg border border-success-border bg-success px-3 py-2.5 text-sm text-success-foreground">
-            <Check className="size-4 shrink-0" />
-            {t("onboarding.login.signedIn")}
-          </div>
-        ) : (
-          <div className="flex flex-col gap-2">
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-6">
+      <ChoiceCard
+        primary
+        fill
+        icon={<UserRoundCheck className="size-3.5" />}
+        label={t("onboarding.account.member.tag")}
+        art={{ src: "/onboarding/signin-member-lines.svg", className: "top-0 left-[-444px] h-[200px] w-[967px]" }}
+        action={
+          <div className="flex flex-col items-end">
             <Button
               size="sm"
-              className="h-9 w-fit gap-2 text-xs"
+              className="h-8 gap-2 px-2.5 text-xs"
               disabled={signingIn || !isTauri()}
               onClick={() => doSignIn().catch((error) => log.error("onboarding: sign-in failed", { error: String(error) }))}
             >
+              {signingIn ? t("settings.account.signingIn") : t("onboarding.account.member.cta")}
               {signingIn ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
-              {signingIn ? t("settings.account.signingIn") : t("settings.account.signInGoogle")}
             </Button>
-            <p className="text-[11px] text-muted-foreground">{t("onboarding.account.freeNote")}</p>
             {error && (
-              <p className="rounded-md bg-danger px-2.5 py-1.5 text-[11px] text-danger-foreground">
+              // Plain red text in the card's bottom padding, so a failure never
+              // changes the card's height.
+              <p className="absolute top-full right-0 mt-1 w-max max-w-[480px] text-right text-[11px] text-danger-foreground">
                 {t("onboarding.login.failed", { error })}
               </p>
             )}
           </div>
-        ))}
+        }
+      >
+        <p className="text-sm leading-relaxed">{t("onboarding.account.body")}</p>
+      </ChoiceCard>
 
-      {CLOUD_ENABLED && (
-        <button
-          type="button"
-          className="flex w-fit items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-          aria-expanded={byokOpen}
-          onClick={() => setByokOpen((o) => !o)}
-        >
-          {byokOpen ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
-          {t("onboarding.account.byok")}
-        </button>
+      <OrDivider label={t("onboarding.account.or")} />
+
+      <ChoiceCard
+        fill
+        icon={<UsersRound className="size-3.5" />}
+        label={t("onboarding.account.guest.tag")}
+        art={{ src: "/onboarding/signin-guest-lines.svg", className: "top-[38px] left-0 h-[116.52px] w-[774.18px]" }}
+        action={
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 gap-2 bg-background px-2.5 text-xs hover:bg-background/80"
+            onClick={onContinue}
+          >
+            {t("onboarding.account.guest.cta")}
+            <ChevronRight className="size-3.5" />
+          </Button>
+        }
+      >
+        <p className="text-sm leading-relaxed">{t("onboarding.account.guest.body")}</p>
+      </ChoiceCard>
+
+      <Button variant="ghost" size="sm" className="h-8 gap-1 self-start px-2.5 text-xs" onClick={onBack}>
+        <ChevronLeft className="size-3.5" />
+        {t("onboarding.back")}
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * The steps after the welcome screen as segments along the header's bottom
+ * edge, filled up to and including the current one.
+ */
+function StepProgress({ reached, total }: Readonly<{ reached: number; total: number }>) {
+  return (
+    <div
+      role="progressbar"
+      aria-valuemin={1}
+      aria-valuemax={total}
+      aria-valuenow={reached}
+      aria-valuetext={`${reached} / ${total}`}
+      className="absolute inset-x-0 bottom-0 flex gap-0.5"
+    >
+      {Array.from({ length: total }, (_, i) => (
+        <span
+          key={`segment-${i + 1}`}
+          className={cn("h-px flex-1", i < reached ? "bg-primary" : "bg-[#e6e6e6] dark:bg-border")}
+        />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Make transcription work. Signed in, it is a choice between Parley's hosted
+ * models (already selected by sign-in) and the user's own; otherwise (not
+ * signed in, or the OSS build) the provider pickers are the whole step. The STT
+ * provider is required — it is what the gate checks; the LLM is optional
+ * (recording works without it, analysis doesn't).
+ */
+function ModelStep({
+  local,
+  own,
+  setOwn,
+  beforeHosted,
+  keyProblems,
+}: Readonly<{
+  local: LocalSttModelsState;
+  /** The user picked "Bring your own models" in this wizard. */
+  own: boolean;
+  setOwn: (own: boolean) => void;
+  beforeHosted: React.MutableRefObject<Pick<Settings, "transcriptionProvider" | "llmProviders"> | null>;
+  /** What Next's key check found wrong, shown under the field it is about. */
+  keyProblems: KeyProblems;
+}>) {
+  const { t } = useI18n();
+  const settings = useStore((s) => s.settings);
+  const patch = useStore((s) => s.updateSettings);
+  const cloudAuth = useStore((s) => s.cloudAuth);
+  const signedIn = CLOUD_ENABLED && !!cloudAuth;
+  const listing = { cloudEnabled: CLOUD_ENABLED, signedIn: !!cloudAuth };
+  const showProviders = !signedIn || own;
+
+  const llm = PROVIDER_BY_ID[settings.llmProviders.deep];
+  const stt = STT_BY_ID[settings.transcriptionProvider];
+
+  function applyHosted() {
+    const current = useStore.getState().settings;
+    const onHosted =
+      usesCloudSession(current.transcriptionProvider) &&
+      current.llmProviders.realtime === "parley" &&
+      current.llmProviders.deep === "parley";
+    if (onHosted) return;
+    beforeHosted.current ??= {
+      transcriptionProvider: current.transcriptionProvider,
+      llmProviders: current.llmProviders,
+    };
+    patch({ llmProviders: { realtime: "parley", deep: "parley" }, transcriptionProvider: "parley" });
+  }
+
+  // Signed in → Parley's hosted models are filled in, however the session came
+  // about (signed in on the previous step, a session kept from before, or a
+  // sign-in that finished after the user had moved on), unless the user has
+  // picked their own models in this wizard.
+  useEffect(() => {
+    if (signedIn && !own) applyHosted();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signedIn]);
+
+  function pickHosted() {
+    setOwn(false);
+    applyHosted();
+  }
+
+  function pickOwn() {
+    setOwn(true);
+    // Put back what was there before Parley's models were filled in; failing
+    // that, leave the hosted STT for the first bring-your-own provider. The
+    // hosted LLM may stay — it's a separate, optional choice below.
+    const saved = beforeHosted.current;
+    beforeHosted.current = null;
+    if (saved && !usesCloudSession(saved.transcriptionProvider)) {
+      patch(saved);
+    } else if (usesCloudSession(useStore.getState().settings.transcriptionProvider)) {
+      const first = STT_PROVIDERS.find((p) => !usesCloudSession(p.id) && isProviderListed(p, listing));
+      if (first) patch({ transcriptionProvider: first.id });
+    }
+  }
+
+  const problem = (p: KeyProblems[keyof KeyProblems]) =>
+    p && <p className="text-[11px] text-danger-foreground">{t(p.key, p.vars)}</p>;
+
+  return (
+    // Signed in it is a choice between the two cards; otherwise only the
+    // bring-your-own card shows, already open.
+    <div
+      role={signedIn ? "radiogroup" : undefined}
+      aria-label={signedIn ? t("onboarding.model.title") : undefined}
+      className="flex flex-col gap-6"
+    >
+      {signedIn && (
+        <SelectCard
+          primary
+          selected={!own}
+          onSelect={pickHosted}
+          icon={<img src="/onboarding/parley-mark.svg" alt="" className="h-3.5 w-auto" />}
+          label={t("onboarding.model.hosted")}
+          note={t("onboarding.model.hostedNote")}
+          art={{ src: "/onboarding/signin-member-lines.svg", className: "top-[-67px] left-[-444px] h-[200px] w-[967px]" }}
+        />
       )}
-
-      {byokOpen && (
-        <div className="flex flex-col gap-4 rounded-lg border bg-muted/10 px-3 py-3">
+      <SelectCard
+        selected={showProviders}
+        onSelect={signedIn ? pickOwn : undefined}
+        icon={<Cpu className="size-3.5" />}
+        label={t("onboarding.model.own")}
+        note={t("onboarding.model.ownNote")}
+        art={{ src: "/onboarding/org-solo-lines.svg", className: "top-[38px] left-0 h-[116.52px] w-[774.18px]" }}
+      >
+      {showProviders && (
+        <>
           {/* Transcription — required: it is what the gate checks. */}
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-2 rounded-[10px] bg-white/50 p-3 dark:bg-white/5">
             <FieldLabel label={t("onboarding.stt.provider")} tag={t("onboarding.account.required")} />
             <Select
               value={settings.transcriptionProvider}
@@ -474,9 +840,9 @@ function AccountStep({ local }: Readonly<{ local: LocalSttModelsState }>) {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {/* Hosted "parley" STT (Parley Cloud) shows only in the
-                    official build once signed in. */}
-                {STT_PROVIDERS.filter((p) => isProviderListed(p, listing)).map((p) => (
+                {/* "Own models" means not Parley's hosted STT — that is the
+                    other choice above. */}
+                {STT_PROVIDERS.filter((p) => isProviderListed(p, listing) && !usesCloudSession(p.id)).map((p) => (
                   <SelectItem key={p.id} value={p.id}>
                     <span className="flex items-center gap-2">
                       <img src={p.icon} alt="" className="size-4 rounded-sm" />
@@ -491,11 +857,10 @@ function AccountStep({ local }: Readonly<{ local: LocalSttModelsState }>) {
                 ))}
               </SelectContent>
             </Select>
-            {/* The hosted provider authenticates with the signed-in session, not
-                an API key — so no key field for it. On-device: no key — pick a
-                model, then download it; the gate holds Next until the download
-                has finished. (The "no diarization" tag on the Select item
-                already flags that live meetings won't separate speakers.) */}
+            {/* On-device: no key — pick a model, then download it; the gate
+                holds Next until the download has finished. (The "no
+                diarization" tag on the Select item already flags that live
+                meetings won't separate speakers.) */}
             <SttCredentialField
               info={stt}
               settings={settings}
@@ -511,10 +876,11 @@ function AccountStep({ local }: Readonly<{ local: LocalSttModelsState }>) {
                 />
               }
             />
+            {problem(keyProblems.stt)}
           </div>
 
           {/* AI model — optional: recording works without it. */}
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-2 rounded-[10px] bg-white/50 p-3 dark:bg-white/5">
             <FieldLabel label={t("onboarding.llm.provider")} tag={t("onboarding.account.optional")} />
             <Select
               value={settings.llmProviders.deep}
@@ -583,10 +949,12 @@ function AccountStep({ local }: Readonly<{ local: LocalSttModelsState }>) {
             ) : (
               <LlmKeyField llm={llm} settings={settings} patch={patch} />
             )}
+            {problem(keyProblems.llm)}
             <p className="text-[11px] text-muted-foreground">{t("onboarding.account.llmLater")}</p>
           </div>
-        </div>
+        </>
       )}
+      </SelectCard>
     </div>
   );
 }
@@ -600,29 +968,40 @@ function FieldLabel({ label, tag }: Readonly<{ label: string; tag: string }>) {
   );
 }
 
+/** One permission as a card, from the Figma permissions frame; `art` places its line art. */
 function PermRow({
   icon,
   label,
   ok,
   actionLabel,
   onAction,
+  art,
 }: Readonly<{
   icon: React.ReactNode;
   label: string;
   ok: boolean;
   actionLabel: string;
   onAction: () => void;
+  art: string;
 }>) {
   return (
-    <div className="flex items-center gap-3 rounded-lg border bg-muted/20 px-3 py-2.5">
-      <span className="text-muted-foreground">{icon}</span>
-      <span className="flex-1 text-sm">{label}</span>
+    <div className="relative flex items-center gap-3 overflow-hidden rounded-[8px] border border-[#e3e6ec] bg-[#f5f7f9]/20 p-5 text-[#333] dark:border-border dark:bg-muted/20 dark:text-foreground">
+      <div aria-hidden className={cn("pointer-events-none absolute", art)}>
+        <img src="/onboarding/org-solo-lines.svg" alt="" className="size-full max-w-none" />
+      </div>
+      <span className="relative">{icon}</span>
+      <span className="relative flex-1 text-sm">{label}</span>
       {ok ? (
-        <span className="flex items-center gap-1 text-xs text-success-foreground">
+        <span className="relative flex items-center gap-1 text-xs text-success-foreground">
           <Check className="size-3.5" />
         </span>
       ) : (
-        <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={onAction}>
+        <Button
+          variant="outline"
+          size="sm"
+          className="relative h-auto rounded-[8px] border-[#e3e6ec] bg-background px-3 py-1.5 text-[11px] text-[#333] dark:border-border dark:text-foreground"
+          onClick={onAction}
+        >
           {actionLabel}
         </Button>
       )}
