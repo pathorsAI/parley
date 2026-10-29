@@ -5,7 +5,9 @@ import { useStickToBottom } from "../lib/useStickToBottom";
 import { useI18n } from "../i18n";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
-export function TranscriptPanel() {
+/** `floating`: the floating meeting window's larger type (its Figma frame). */
+export function TranscriptPanel({ variant = "default" }: Readonly<{ variant?: "default" | "floating" }> = {}) {
+  const floating = variant === "floating";
   const { t } = useI18n();
   const segments = useStore((s) => s.segments);
   const status = useStore((s) => s.meetingStatus);
@@ -87,11 +89,11 @@ export function TranscriptPanel() {
             return (
               <div key={block[0].id}>
                 <div
-                  className={`text-xs font-semibold ${live ? "text-primary" : "text-muted-foreground"}`}
+                  className={`${floating ? "text-sm" : "text-xs"} font-semibold ${live ? "text-primary" : "text-muted-foreground"}`}
                 >
                   {label(block[0])}
                 </div>
-                <p className="text-[15px] leading-7">
+                <p className={floating ? "mt-1 text-base leading-6" : "text-[15px] leading-7"}>
                   {block.map((seg) => (
                     <Fragment key={seg.id}>
                       <span

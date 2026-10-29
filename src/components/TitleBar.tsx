@@ -284,7 +284,7 @@ function RecordingName({ t }: Readonly<{ t: TFn }>) {
  * same reason as MeetingContextDialog: the titlebar's backdrop-blur makes it
  * the containing block for fixed-position descendants.
  */
-function CancelMeetingDialog({
+export function CancelMeetingDialog({
   onConfirm,
   onKeep,
   t,

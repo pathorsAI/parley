@@ -175,6 +175,8 @@ export interface LiveMeetingSnapshot {
   transcriptionDropped: boolean;
   micSessionRateHz: number | null;
   save: MeetingSaveTarget;
+  /** The name typed in the floating window; absent = the dated default. */
+  title?: string;
   /** The backend recorded it without this window knowing (the page reloaded
    *  under a running capture): its transcript is gone, keep the audio. */
   orphan: boolean;
@@ -194,6 +196,7 @@ export function snapshotLiveMeeting(): LiveMeetingSnapshot | null {
     transcriptionDropped: s.transcriptionDropped,
     micSessionRateHz: s.micSessionRateHz,
     save: resolveMeetingSave(),
+    title: s.meetingTitle.trim() || undefined,
     orphan: false,
   };
 }
@@ -434,7 +437,7 @@ export async function saveLiveToHistory(
     // The meeting's own id: a second save of the same meeting (a recovered
     // journal, a repeated event) overwrites its entry instead of duplicating it.
     id: snap.id,
-    title: `${translate(s.settings.language, "history.liveTitle")} · ${dateLabel}`,
+    title: snap.title ?? `${translate(s.settings.language, "history.liveTitle")} · ${dateLabel}`,
     source: "live",
     createdAt,
     durationMs,

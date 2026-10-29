@@ -158,6 +158,18 @@ function SilencePromptBanner() {
   );
 }
 
+/** Every in-meeting warning strip, in priority order (each hides itself). */
+export function LiveBanners() {
+  return (
+    <>
+      <SystemAudioBanner />
+      <TranscriptionLinkBanner />
+      <NoAudioBanner />
+      <SilencePromptBanner />
+    </>
+  );
+}
+
 /**
  * The LIVE screen, in one of two postures (titlebar-center switcher):
  * - coach (default): transcript rail | coach feed | agenda checklist —
@@ -179,10 +191,7 @@ export function LiveScreen() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-    <SystemAudioBanner />
-    <TranscriptionLinkBanner />
-    <NoAudioBanner />
-    <SilencePromptBanner />
+    <LiveBanners />
     <ResizablePanelGroup
       key={layout}
       orientation="horizontal"

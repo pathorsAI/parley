@@ -13,6 +13,10 @@ export interface PrepSlice {
   /** Per-meeting context/description (who's here, roles) — NOT a global setting. */
   meetingContext: string;
   setMeetingContext: (text: string) => void;
+  /** The name typed into the floating meeting window's title. Empty = the save
+   *  falls back to its dated default ("會議 · …"). */
+  meetingTitle: string;
+  setMeetingTitle: (title: string) => void;
   /** The meeting-draft sheet is open: the prep below, filled in before
    *  recording ("新增會議草稿"). UI state only; not part of the draft itself. */
   draftOpen: boolean;
@@ -64,6 +68,7 @@ const CLEARED_PREP_SLICE = {
   meetingFolderId: null,
   meetingOrgShare: null,
   meetingContext: "",
+  meetingTitle: "",
   meetingBatna: "",
   meetingTarget: "",
   meetingFloor: "",
@@ -73,6 +78,7 @@ const CLEARED_PREP_SLICE = {
 export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
   todos: [],
   meetingContext: "",
+  meetingTitle: "",
   draftOpen: false,
   setDraftOpen: (draftOpen) => set({ draftOpen }),
   meetingFolderId: null,
@@ -82,6 +88,7 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
   meetingFloor: "",
 
   setMeetingContext: (text) => set({ meetingContext: text }),
+  setMeetingTitle: (meetingTitle) => set({ meetingTitle }),
   setMeetingOrgShare: (meetingOrgShare) => set({ meetingOrgShare }),
   setMeetingFolder: (meetingFolderId) => set({ meetingFolderId }),
   resetPrep: () =>

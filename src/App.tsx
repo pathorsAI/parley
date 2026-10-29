@@ -4,6 +4,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { exit } from "@tauri-apps/plugin-process";
 import { TitleBar } from "./components/TitleBar";
 import { AppShell } from "./components/shell/AppShell";
+import { MeetingFloatingWindow } from "./components/live/MeetingFloatingWindow";
+import { useFloatingMeetingWindow } from "./lib/meeting/floatingWindow";
 import { Onboarding } from "./components/Onboarding";
 import { AnalysisErrorDialog } from "./components/AnalysisErrorDialog";
 import { ReleaseNotesDialog } from "./components/ReleaseNotesDialog";
@@ -429,6 +431,13 @@ const App = () => {
   // Drive the standalone "how to reply" window (Tauri); no-op in browser dev.
   useFindingSolutionHost();
 
+  // While a meeting records (and until its save opens the report) the window
+  // becomes the floating meeting window, then goes back to its old place.
+  const floating = useStore(
+    (s) => isMeetingActive(s.meetingStatus) || s.isFinalizingMeeting,
+  );
+  useFloatingMeetingWindow(floating);
+
   return (
     <div
       className={`flex h-screen flex-col overflow-hidden text-foreground ${
@@ -454,9 +463,15 @@ const App = () => {
           useFindingSolutionHost); in plain browser dev we fall back to the
           in-app overlay so the feature still works without multi-window. */}
       {!isTauri() && <FindingSolutionWindow />}
-      <TitleBar fullscreen={fullscreen} />
+      {floating ? (
+        <MeetingFloatingWindow />
+      ) : (
+        <>
+          <TitleBar fullscreen={fullscreen} />
+          <AppShell />
+        </>
+      )}
       <DeliveryNudgeHost />
-      <AppShell />
     </div>
   );
 };

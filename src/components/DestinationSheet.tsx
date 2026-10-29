@@ -742,6 +742,7 @@ export function DestinationField({
   gateOnSync = false,
   personalFolders = true,
   allowKeepCopy = true,
+  chip,
 }: Readonly<{
   value: LibraryDestination;
   mode?: OrgHandoffMode | null;
@@ -753,6 +754,9 @@ export function DestinationField({
   gateOnSync?: boolean;
   personalFolders?: boolean;
   allowKeepCopy?: boolean;
+  /** Render as a small chip instead of a full-width field: dashed with
+   *  `chip.empty` while nothing is picked, solid with the place once it is. */
+  chip?: { empty: string };
 }>) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -766,10 +770,30 @@ export function DestinationField({
   const label =
     verb === "share" && shownValue.scope === "personal" ? t("dest.action.shareOff") : crumb(shownValue);
   const isOrg = shownValue.scope === "org";
+  const unpicked = shownValue.scope === "personal" && !shownValue.folderId;
+
+  const trigger = chip ? (
+    <button
+      type="button"
+      onClick={() => setOpen(true)}
+      aria-label={title}
+      title={title}
+      className={`flex h-6 max-w-56 min-w-0 cursor-pointer items-center gap-2 rounded-md border px-2 text-xs transition-colors hover:bg-muted/60 ${
+        unpicked ? "border-dashed bg-background text-foreground/80" : "bg-muted/40 text-foreground"
+      }`}
+    >
+      {isOrg ? (
+        <UsersRound className="size-3 shrink-0" />
+      ) : (
+        <Folder className="size-3 shrink-0" />
+      )}
+      <span className="min-w-0 truncate">{unpicked ? chip.empty : label}</span>
+    </button>
+  ) : null;
 
   return (
     <>
-      <button
+      {trigger ?? (<button
         type="button"
         onClick={() => setOpen(true)}
         aria-label={title}
@@ -786,7 +810,7 @@ export function DestinationField({
           <span className="shrink-0 text-[10px] text-muted-foreground">{t("dest.keepCopyHint")}</span>
         )}
         <ChevronDown className="size-3 shrink-0 opacity-60" />
-      </button>
+      </button>)}
       <DestinationSheet
         open={open}
         onOpenChange={setOpen}
