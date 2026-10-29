@@ -92,6 +92,10 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.36
+
+Manage folders on your phone. Long-press a folder in the Library to rename or delete it, or tap + at the end of the folder row to make a new one. Deleting a folder moves its recordings to Unfiled; no recording is ever deleted. The Record screen is also quieter, with nothing above the transcript but the copy button.
+
 ## What's New — 1.35
 
 Manage folders on your phone. Long-press a folder in the Library to rename or delete it, or tap + at the end of the folder row to make a new one. Deleting a folder moves its recordings to Unfiled; no recording is ever deleted.

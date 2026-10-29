@@ -39,16 +39,15 @@ LOCALES=(
   "zh-Hant:zh-Hant:zh_TW"
 )
 
-# file name : demo route ("-" = no route, capture whatever the app opens on).
-# Each capture is raw; `compose-frames.py` then puts the frame's headline from
-# `screenshot-captions.json` above it, and that composed frame is what ships.
+# raw file name : demo route. These are raw captures; `compose-frames.py` turns
+# them (plus the drawn voice-typing screen) into the shipped frames described in
+# `screenshot-frames.json`.
 FRAMES=(
-  "01-record:record"
-  "02-summary:summary"
-  "03-transcript:jump"
-  "04-voice-typing:keyboard"
-  "05-filing:settled"
-  "06-library:library"
+  "record:record"
+  "summary:summary"
+  "jump:jump"
+  "settled:settled"
+  "library:library"
 )
 RAW="$DERIVED/raw"
 
@@ -316,9 +315,10 @@ PY
 
 # The checks above run on the raw captures, where "two frames are the same
 # screen" is still measurable; the headline would make every frame differ.
-say "Adding headlines"
+say "Composing the store frames"
 for entry in "${LOCALES[@]}"; do rm -f "$HERE/screenshots/${entry%%:*}"/*.png; done
-python3 "$HERE/compose-frames.py" "$RAW" "$HERE/screenshots" \
-  "$IOS_DIR/App/Parley/Resources/Fonts" "$HERE/screenshot-captions.json"
+FONTS="$IOS_DIR/App/Parley/Resources/Fonts"
+python3 "$HERE/draw-voice-typing.py" "$FONTS" "$RAW" >/dev/null
+python3 "$HERE/compose-frames.py" "$RAW" "$HERE/screenshots" "$FONTS" "$HERE/screenshot-frames.json"
 
 say "Done — ios/AppStore/screenshots/<locale>/ is what the store submission uploads"

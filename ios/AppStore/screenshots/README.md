@@ -1,6 +1,6 @@
 # iPhone screenshot set
 
-Two locale sets, six frames each, produced by one command (it also needs Google Chrome for the headline step):
+Two locale sets, seven frames each, produced by one command (it also needs Google Chrome for the headline step):
 
 ```bash
 ios/AppStore/capture-screenshots.sh
@@ -15,19 +15,22 @@ Captured on an **iPhone 17 Pro Max**, whose native 1320×2868 is exactly the App
 Store 6.9-inch slot — no rescaling, no aspect drift. The script verifies the
 dimensions before it exits.
 
-Each frame is a raw capture with a one-line headline above it. The headlines
-live in [`../screenshot-captions.json`](../screenshot-captions.json) and
-[`../compose-frames.py`](../compose-frames.py) puts them on (headless Chrome,
-the app's own DM Sans and Alexandria files). The capture script runs both steps.
+Each frame is composed by [`../compose-frames.py`](../compose-frames.py) from
+[`../screenshot-frames.json`](../screenshot-frames.json): a headline with one
+accent word, the screen in a phone bezel, and white tags that point at what the
+screen shows, on navy, brand-blue or light-grey grounds in turn. The capture
+script runs the whole chain (captures, then `draw-voice-typing.py`, then the
+compositor); it needs Google Chrome for the two drawing steps.
 
-| File | Demo route | Headline (zh-Hant / en-US) |
+| File | Screen | Headline (zh-Hant / en-US) |
 | --- | --- | --- |
-| `01-record` | `record` | 開會時，逐字稿邊講邊出來 / A live transcript while you talk |
-| `02-summary` | `summary` | 重點和待辦會後馬上整理好 / Highlights and to-dos, ready when you stop |
-| `03-transcript` | `jump` | 點一下時間回到那句原話 / Tap a timestamp, find the exact words |
-| `04-voice-typing` | `keyboard` | 在任何 App 用說的打字 / Type by voice in any app |
-| `05-filing` | `settled` | 自動取標題建議放哪個資料夾 / Titled and filed for you |
-| `06-library` | `library` | 每一場會議都找得到 / Every meeting, easy to find |
+| `01-record` | demo `record` | 開會不用抄，逐字稿自己長出來 / Stop taking notes. The transcript writes itself. |
+| `02-voice-typing` | drawn: the keyboard dictating into a chat | 在任何 App 用說的打字 / Type by voice in any app |
+| `03-summary` | demo `summary` | 會一結束，重點和待辦就整理好 / Highlights and to-dos the moment it ends |
+| `04-transcript` | demo `jump` | 點一下，回到他說的那句話 / One tap back to exactly what was said |
+| `05-filing` | demo `settled` | 自動取標題，幫你歸好檔 / Titled and filed for you |
+| `06-library` | demo `library` | 每場會議，隨時找得到 / Every meeting, right where you left it |
+| `07-desktop` | drawn: iPhone → Mac report | 手機錄下來，Mac 上深入看 / Capture on iPhone. Go deep on Mac. |
 
 ## How the frames are produced
 
