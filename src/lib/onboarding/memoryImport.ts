@@ -1,10 +1,11 @@
 /**
- * Onboarding's context step: what the user's AI assistant already remembers
- * about them, condensed into a few read-only lines (settings.aiMemoryNotes,
- * read by every meeting prompt via profileContext). The source is Claude
- * Code's memory files on this machine (read_claude_memory), read when the
- * step opens; secrets are masked before the text goes to the user's own LLM
- * (realtime lane), and only the condensed lines are kept.
+ * Onboarding's context step, "how you work": what Claude Code on this machine
+ * already knows about the user (read_claude_memory) is folded into their
+ * speaker background (settings.userBackground), which every meeting prompt
+ * reads. The user's LLM (realtime lane) rewrites the background they gave in
+ * the mic check — company, title, what they use Parley for — into a fuller
+ * one, a line per section of a fixed template; the user can edit it after.
+ * Secrets are masked before any text leaves the machine.
  *
  * The helpers for settings.userBackground (the editable speaker background)
  * live here too.
@@ -23,34 +24,54 @@ import type { Settings } from "../types";
 export const MAX_MEMORY_CHARS = 24_000;
 /** What stands in for a redacted secret. */
 export const REDACTED = "[redacted]";
-/** Lines kept, so a chatty memory reads as a summary, not a dump. */
-export const MAX_MEMORY_LINES = 8;
 /** Names kept for the dictionary. */
 export const MAX_MEMORY_TERMS = 12;
 
+/**
+ * The speaker background's sections, in order. Each becomes one
+ * "label：facts" line; sections with nothing to say are left out.
+ */
+export const BACKGROUND_TEMPLATE = {
+  "zh-TW": ["身分", "公司", "用 Parley 做什麼", "負責的工作", "常開的會議", "常見講者", "溝通偏好"],
+  en: ["Who I am", "Company", "Using Parley for", "What I work on", "Usual meetings", "Frequent speakers", "How I like to work"],
+} as const;
+
+/** The template's labels in the app's language. */
+export function backgroundLabels(settings: Pick<Settings, "language">): readonly string[] {
+  return BACKGROUND_TEMPLATE[settings.language === "zh-TW" ? "zh-TW" : "en"];
+}
+
 const schema = z.object({
-  notes: z.array(z.string()).default([]),
+  background: z.array(z.string()).default([]),
   terms: z.array(z.string()).default([]),
 });
 
-export interface MemorySummary {
-  notes: string[];
+export interface BackgroundDraft {
+  /** The new speaker background, one template line each. */
+  background: string[];
   /** Company, people and product names, for the dictionary. */
   terms: string[];
 }
 
-const SYSTEM =
-  "You read notes an AI assistant has kept about its user and extract what a meeting assistant " +
-  "should know about that user going into their meetings.\n" +
-  "Return JSON with two arrays:\n" +
-  `- "notes": at most ${MAX_MEMORY_LINES} short, factual lines about the user: their role and company, ` +
-  "what they work on and know, the customers or partners they meet, their team members and roles, and how " +
-  "they like to work. One fact per line, no bullet characters, no line over 80 characters.\n" +
-  `- "terms": at most ${MAX_MEMORY_TERMS} names a speech recogniser would likely get wrong: company names ` +
-  "(their own, customers', partners'), people's names and product names. Exactly as written in the notes, " +
-  "one name per entry, no descriptions.\n" +
-  "Skip coding conventions, tool configuration, file paths, secrets, credentials and anything about " +
-  "other people's private lives. If the notes say nothing useful, return empty arrays.\n";
+function system(labels: readonly string[]): string {
+  return (
+    "You write the speaker background a meeting assistant reads before every meeting: who the user is, " +
+    "so it can tell which speaker is them and advise from their side.\n" +
+    "You get the background the user gave themselves (CURRENT, may be empty) and notes their coding " +
+    "assistant keeps about them (NOTES). Rewrite CURRENT into a fuller background using NOTES.\n" +
+    'Return JSON with two arrays:\n' +
+    '- "background": one line per section below, in this order, each written as "<label>：<facts>" with the ' +
+    "label exactly as given. Put several facts in one line separated by \"；\". Leave out a section when " +
+    "nothing is known for it. Keep every fact from CURRENT (it is the user's own words, and wins where NOTES " +
+    "disagree); add from NOTES only what helps in meetings. No line over 120 characters.\n" +
+    `  Sections: ${labels.map((l) => `"${l}"`).join(", ")}.\n` +
+    `- "terms": at most ${MAX_MEMORY_TERMS} names a speech recogniser would likely get wrong: company names ` +
+    "(their own, customers', partners'), people's names and product names. Exactly as written, one name " +
+    "per entry, no descriptions.\n" +
+    "Skip coding conventions, tool configuration, file paths, secrets, credentials and anything about " +
+    "other people's private lives.\n"
+  );
+}
 
 /** Claude Code memory files as one prompt body, each under its label, capped. */
 export function memoryFilesToText(files: readonly MemoryFile[]): string {
@@ -62,29 +83,55 @@ export function capMemoryText(text: string): string {
   return trimmed.length > MAX_MEMORY_CHARS ? trimmed.slice(0, MAX_MEMORY_CHARS) : trimmed;
 }
 
-/** Condense memory text into a few lines, and the names in it, with the user's LLM. */
-export async function summarizeMemory(opts: {
+/**
+ * The speaker background rewritten with what the notes add, and the names in
+ * them, by the user's LLM. Lines that don't start with a template label are
+ * dropped, so the result always reads as the template.
+ */
+export async function draftBackground(opts: {
   settings: Settings;
+  /** The background as it stands. */
+  current: string;
+  /** Memory text (memoryFilesToText). */
   text: string;
   signal?: AbortSignal;
-}): Promise<MemorySummary> {
-  const { settings, text, signal } = opts;
+}): Promise<BackgroundDraft> {
+  const { settings, current, text, signal } = opts;
   const body = capMemoryText(redactSecrets(text));
-  if (!body) return { notes: [], terms: [] };
+  if (!body) return { background: [], terms: [] };
+  const labels = backgroundLabels(settings);
   const { object, usage } = await generateObjectResilient({
     settings,
     workload: "realtime",
     feature: "meeting",
     schema,
-    system: SYSTEM + JSON_MODE_INSTRUCTION + outputLanguageInstruction(settings),
-    prompt: `NOTES:\n${body}`,
+    system: system(labels) + JSON_MODE_INSTRUCTION + outputLanguageInstruction(settings),
+    prompt: `CURRENT:\n${redactSecrets(current.trim()) || "(empty)"}\n\nNOTES:\n${body}`,
     signal,
   });
   void recordLlmUsage(settings, "realtime", "memory-import", usage);
   return {
-    notes: cleanLines(object.notes).slice(0, MAX_MEMORY_LINES),
+    background: templateLines(object.background, labels),
     terms: cleanLines(object.terms).slice(0, MAX_MEMORY_TERMS),
   };
+}
+
+/**
+ * The model's background lines kept to the template: each must open with one
+ * of `labels` and a colon (either width), is normalised to "label：facts", and
+ * they come back in template order, one per label.
+ */
+export function templateLines(lines: readonly string[], labels: readonly string[]): string[] {
+  const byLabel = new Map<string, string>();
+  for (const line of cleanLines(lines)) {
+    const label = labels.find((l) => line.startsWith(l));
+    if (!label) continue;
+    const rest = line.slice(label.length).trim();
+    if (!/^[:：]/u.test(rest)) continue;
+    const facts = rest.slice(1).trim();
+    if (facts && !byLabel.has(label)) byLabel.set(label, facts);
+  }
+  return labels.filter((l) => byLabel.has(l)).map((l) => `${l}：${byLabel.get(l)}`);
 }
 
 /** One line of the context step's reading log. */
@@ -105,40 +152,6 @@ export function readingSteps(files: readonly MemoryFile[]): ReadingStep[] {
     } else {
       out.push({ kind: "file", name: f.name });
     }
-  }
-  return out;
-}
-
-/** The longest excerpted line: a note, not a paragraph. */
-const MAX_EXCERPT_CHARS = 80;
-
-/**
- * A few lines straight from the memory text, for when it can't be condensed
- * (no AI provider, or the call failed): its plain statements, in order —
- * headings, code, tables, quotes, rules, links and file paths skipped, list
- * markers and markdown emphasis dropped, long lines cut — secrets masked, as
- * many as a summary would keep.
- */
-export function excerptMemory(text: string): string[] {
-  const out: string[] = [];
-  let inCode = false;
-  for (const raw of redactSecrets(text).split(/\r?\n/u)) {
-    const line = raw.trim();
-    if (line.startsWith("```")) {
-      inCode = !inCode;
-      continue;
-    }
-    if (inCode || !line || /^#{1,6}\s/u.test(line) || /^[|>]/u.test(line) || /^[-*_=]{3,}$/u.test(line)) continue;
-    const plain = line
-      .replace(LIST_MARKER, "")
-      .replace(/\[([^\]]+)\]\([^)]+\)/gu, "$1")
-      .replace(/\*\*|__|`/gu, "")
-      .trim();
-    const chars = [...plain];
-    if (chars.length < 6 || /https?:\/\/|[~.]?\/\S+\/\S*/u.test(plain)) continue;
-    const note = chars.length > MAX_EXCERPT_CHARS ? `${chars.slice(0, MAX_EXCERPT_CHARS - 1).join("")}…` : plain;
-    if (!out.includes(note)) out.push(note);
-    if (out.length >= MAX_MEMORY_LINES) break;
   }
   return out;
 }

@@ -6,7 +6,8 @@ import {
   backgroundLines,
   capMemoryText,
   cleanLines,
-  excerptMemory,
+  templateLines,
+  BACKGROUND_TEMPLATE,
   memoryFilesToText,
   readingSteps,
   redactSecrets,
@@ -107,35 +108,6 @@ describe("removeBackgroundLines", () => {
   });
 });
 
-describe("excerptMemory", () => {
-  it("keeps the plain statements and drops markdown furniture", () => {
-    const text = [
-      "## CLAUDE.md",
-      "# About me",
-      "- I'm a **product designer** at Pathors",
-      "- Working on `Parley` onboarding",
-      "```bash",
-      "gws gmail users drafts create",
-      "```",
-      "| tool | use |",
-      "> a quote",
-      "---",
-      "See [the docs](https://example.com) at ~/Pathors/p-drive/notes.md",
-      "ok",
-    ].join("\n");
-    expect(excerptMemory(text)).toEqual(["I'm a product designer at Pathors", "Working on Parley onboarding"]);
-  });
-
-  it("masks secrets, cuts long lines and keeps a summary's worth", () => {
-    const long = "這是一段很長的說明".repeat(12);
-    const lines = excerptMemory(["api_key = sk-abcdefghijklmnopqrstuvwxyz123456", long, ...Array.from({ length: 12 }, (_, i) => `Fact number ${i}`)].join("\n"));
-    expect(lines[0]).toContain(REDACTED);
-    expect([...lines[1]].length).toBe(80);
-    expect(lines[1].endsWith("…")).toBe(true);
-    expect(lines).toHaveLength(8);
-  });
-});
-
 describe("readingSteps", () => {
   const file = (kind: "global" | "auto" | "project", name: string) => ({ label: "x", kind, name, text: "t" });
 
@@ -157,5 +129,29 @@ describe("readingSteps", () => {
 
   it("is empty when nothing was read", () => {
     expect(readingSteps([])).toEqual([]);
+  });
+});
+
+describe("templateLines", () => {
+  const labels = BACKGROUND_TEMPLATE["zh-TW"];
+
+  it("keeps template lines, in template order, one per label", () => {
+    expect(
+      templateLines(
+        [
+          "常見講者: Brendan（PM）；Joe（工程）",
+          "- 身分：產品設計師",
+          "身分：重複的一行",
+          "公司：派斯科技（Pathors）",
+          "隨口一句沒有標籤",
+          "溝通偏好：",
+        ],
+        labels,
+      ),
+    ).toEqual(["身分：產品設計師", "公司：派斯科技（Pathors）", "常見講者：Brendan（PM）；Joe（工程）"]);
+  });
+
+  it("needs a colon right after the label", () => {
+    expect(templateLines(["公司的人都很好"], labels)).toEqual([]);
   });
 });
