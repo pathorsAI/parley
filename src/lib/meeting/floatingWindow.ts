@@ -4,8 +4,15 @@ import { log } from "../log";
 
 /** The floating meeting window's size (the Figma frame), in logical px. */
 export const FLOATING_SIZE = { width: 760, height: 858 } as const;
-/** How small the floating window may be dragged. */
+/** The smallest the window OPENS at, on a cramped screen. */
 const FLOATING_MIN = { width: 420, height: 480 } as const;
+/** How small it may be dragged: below COMPACT it turns into the compact view. */
+const DRAG_MIN = { width: 300, height: 220 } as const;
+/** Below either of these the window shows the compact view (latest caption
+ *  and coach tip) instead of the tabs. */
+export const COMPACT_BELOW = { width: 360, height: 400 } as const;
+/** The collapsed capsule ("小膠囊"). */
+export const PILL_SIZE = { width: 320, height: 48 } as const;
 /** The main window's own minimum (tauri.conf.json), restored afterwards. */
 const MAIN_MIN = { width: 900, height: 600 } as const;
 /** Gap kept between the floating window and the screen's edges. */
@@ -75,7 +82,7 @@ export function useFloatingMeetingWindow(on: boolean): void {
             { x: area.position.x / monitor.scaleFactor, y: area.position.y / monitor.scaleFactor },
           )
         : floatingFrame({ width: FLOATING_SIZE.width + EDGE * 2, height: FLOATING_SIZE.height + EDGE * 3 });
-      await win.setMinSize(new LogicalSize(FLOATING_MIN.width, FLOATING_MIN.height));
+      await win.setMinSize(new LogicalSize(DRAG_MIN.width, DRAG_MIN.height));
       await win.setSize(new LogicalSize(frame.width, frame.height));
       await win.setPosition(new LogicalPosition(frame.x, frame.y));
       await win.setAlwaysOnTop(true);
@@ -99,4 +106,33 @@ export function useFloatingMeetingWindow(on: boolean): void {
         .catch((error) => log.warn("meeting: leaving the floating window failed", { error: String(error) }));
     };
   }, [on]);
+}
+
+/** The floating window's size before it collapsed into the capsule. */
+let beforePill: { width: number; height: number } | null = null;
+
+/**
+ * Collapse the floating window into the capsule, or open it back up to the
+ * size it had. Its top-left corner stays put either way.
+ */
+export async function setMeetingPill(on: boolean): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    const { getCurrentWindow, LogicalSize } = await import("@tauri-apps/api/window");
+    const win = getCurrentWindow();
+    if (on) {
+      const scale = await win.scaleFactor();
+      const size = await win.innerSize();
+      beforePill = { width: size.width / scale, height: size.height / scale };
+      await win.setMinSize(new LogicalSize(PILL_SIZE.width, PILL_SIZE.height));
+      await win.setSize(new LogicalSize(PILL_SIZE.width, PILL_SIZE.height));
+    } else {
+      const back = beforePill ?? FLOATING_SIZE;
+      beforePill = null;
+      await win.setMinSize(new LogicalSize(DRAG_MIN.width, DRAG_MIN.height));
+      await win.setSize(new LogicalSize(back.width, back.height));
+    }
+  } catch (error) {
+    log.warn("meeting: capsule toggle failed", { on, error: String(error) });
+  }
 }

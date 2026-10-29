@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, CalendarDays, FileText, GripVertical, Loader2, Minus, Pause, Play, Square, X } from "lucide-react";
+import { ArrowUp, CalendarDays, FileText, GripVertical, Loader2, Maximize2, Minus, Pause, Play, Square, X } from "lucide-react";
 import { useStore } from "../../lib/store";
+import { COMPACT_BELOW, setMeetingPill } from "../../lib/meeting/floatingWindow";
 import { useMeetingElapsed } from "../../lib/meeting/elapsed";
 import { cancelActiveMeeting, endMeeting, toggleMeetingPause } from "../../lib/meeting/controls";
 import { useCommandShortcut } from "../../lib/commands/bind";
@@ -9,7 +10,7 @@ import { log } from "../../lib/log";
 import { useI18n } from "../../i18n";
 import { CancelMeetingDialog } from "../TitleBar";
 import { MicChip } from "../MicChip";
-import { TranscriptPanel } from "../TranscriptPanel";
+import { speakerLabel, TranscriptPanel } from "../TranscriptPanel";
 import { DestinationField } from "../DestinationSheet";
 import { MeetingContextField } from "../MeetingContextField";
 import { useMeetingDestination } from "../useMeetingDestination";
@@ -26,25 +27,138 @@ function meetingDate(ms: number): string {
   return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}`;
 }
 
-async function withWindow(action: "minimize" | "resize") {
+async function startResize() {
   if (!isTauri()) return;
   try {
     const { getCurrentWindow } = await import("@tauri-apps/api/window");
-    const win = getCurrentWindow();
-    if (action === "minimize") await win.minimize();
-    else await win.startResizeDragging("SouthEast");
+    await getCurrentWindow().startResizeDragging("SouthEast");
   } catch (error) {
-    log.warn("meeting: floating window action failed", { action, error: String(error) });
+    log.warn("meeting: floating window resize failed", { error: String(error) });
   }
 }
 
-/** Title bar: drag handle, the recording clock, the mic, minimize and close. */
-function FloatingTitleBar({ onClose }: Readonly<{ onClose: () => void }>) {
+/** True while the window is dragged smaller than the full layout fits. */
+function useCompact(): boolean {
+  const measure = () =>
+    globalThis.innerWidth < COMPACT_BELOW.width || globalThis.innerHeight < COMPACT_BELOW.height;
+  const [compact, setCompact] = useState(measure);
+  useEffect(() => {
+    const onResize = () => setCompact(measure());
+    globalThis.addEventListener("resize", onResize);
+    return () => globalThis.removeEventListener("resize", onResize);
+  }, []);
+  return compact;
+}
+
+/** The recording clock: red dot + elapsed, orange with 已暫停 while paused. */
+function RecordingClock({ withLabel = true }: Readonly<{ withLabel?: boolean }>) {
   const { t } = useI18n();
   const status = useStore((s) => s.meetingStatus);
   const startedAt = useStore((s) => s.meetingStartedAt);
   const paused = status === "paused";
   const elapsed = useMeetingElapsed(status === "recording" || paused, paused, startedAt);
+  return (
+    <span
+      className={`pointer-events-none inline-flex shrink-0 items-center gap-2 rounded-full px-3 py-1 ${
+        paused ? "bg-warning text-warning-foreground" : "bg-recording/10 text-recording"
+      }`}
+    >
+      <span
+        aria-hidden
+        className={`size-2 rounded-full ${paused ? "bg-warning-foreground" : "animate-pulse bg-recording"}`}
+      />
+      <span className="font-display text-sm font-semibold tabular-nums">{elapsed}</span>
+      {paused && withLabel && <span className="text-xs font-medium">{t("titlebar.paused")}</span>}
+    </span>
+  );
+}
+
+/** The coach's latest word: the last answer, else the newest finding, else
+ *  how to ask. One line of it rides in the capsule and the compact view. */
+function useCoachTip(): string {
+  const { t } = useI18n();
+  const lastAnswer = useCoachAsk((s) => {
+    for (let i = s.cards.length - 1; i >= 0; i--) if (s.cards[i].answer.trim()) return s.cards[i].answer;
+    return "";
+  });
+  const lastFinding = useStore((s) => s.findings[s.findings.length - 1]?.title ?? "");
+  const text = lastAnswer || lastFinding;
+  // Answers are markdown; the tip is one plain line.
+  return text ? text.replace(/[#*_`>]/g, "").replace(/\s+/g, " ").trim() : t("floating.coachTipEmpty");
+}
+
+/** The latest transcript line, for the compact view. */
+function useLatestLine(): { name: string; text: string } | null {
+  const { t } = useI18n();
+  const names = useStore((s) => s.speakerNames);
+  const last = useStore((s) => {
+    let best: (typeof s.segments)[number] | null = null;
+    for (const seg of s.segments) if (seg.text.trim() && (!best || seg.startMs >= best.startMs)) best = seg;
+    return best;
+  });
+  return last ? { name: speakerLabel(last, names, t), text: last.text } : null;
+}
+
+/** Compact view: the window dragged small keeps only the latest line and the
+ *  coach's tip between the title bar and the bottom bar. */
+function CompactBody() {
+  const { t } = useI18n();
+  const line = useLatestLine();
+  const tip = useCoachTip();
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-4 py-3">
+      <div className="flex min-h-0 flex-col gap-0.5">
+        {line ? (
+          <>
+            <span className="text-xs font-semibold text-primary">{line.name}</span>
+            <span className="line-clamp-4 text-sm leading-[22px] text-foreground">{line.text}</span>
+          </>
+        ) : (
+          <span className="text-sm text-muted-foreground">{t("meeting.listening")}</span>
+        )}
+      </div>
+      <div className="line-clamp-3 shrink-0 rounded-lg border border-warning-border bg-warning px-2.5 py-1.5 text-xs leading-normal text-warning-foreground">
+        {tip}
+      </div>
+    </div>
+  );
+}
+
+/** The capsule ("小膠囊"): the whole window collapsed to clock + coach tip. */
+function MeetingCapsule({ onExpand }: Readonly<{ onExpand: () => void }>) {
+  const { t } = useI18n();
+  const tip = useCoachTip();
+  return (
+    <div
+      role="dialog"
+      aria-label={t("floating.capsule")}
+      data-tauri-drag-region
+      className="flex h-full w-full items-center gap-2.5 rounded-full border bg-background pr-1.5 pl-2"
+    >
+      <RecordingClock withLabel={false} />
+      <span data-tauri-drag-region className="min-w-0 flex-1 truncate text-xs text-warning-foreground">
+        {tip}
+      </span>
+      <button
+        type="button"
+        aria-label={t("floating.expand")}
+        title={t("floating.expand")}
+        onClick={onExpand}
+        className="grid size-8 shrink-0 place-items-center rounded-full text-foreground/80 transition-colors hover:bg-muted"
+      >
+        <Maximize2 className="size-3.5" />
+      </button>
+    </div>
+  );
+}
+
+/** Title bar: drag handle, the recording clock, the mic, collapse and close. */
+function FloatingTitleBar({
+  onClose,
+  onCollapse,
+  compact,
+}: Readonly<{ onClose: () => void; onCollapse: () => void; compact: boolean }>) {
+  const { t } = useI18n();
 
   return (
     <header
@@ -52,26 +166,15 @@ function FloatingTitleBar({ onClose }: Readonly<{ onClose: () => void }>) {
       className="flex h-[50px] shrink-0 items-center gap-2.5 border-b pl-4 pr-3"
     >
       <GripVertical aria-hidden className="pointer-events-none size-3.5 text-muted-foreground/70" />
-      <span
-        className={`pointer-events-none inline-flex items-center gap-2 rounded-full px-3 py-1 ${
-          paused ? "bg-warning text-warning-foreground" : "bg-recording/10 text-recording"
-        }`}
-      >
-        <span
-          aria-hidden
-          className={`size-2 rounded-full ${paused ? "bg-warning-foreground" : "animate-pulse bg-recording"}`}
-        />
-        <span className="font-display text-sm font-semibold tabular-nums">{elapsed}</span>
-        {paused && <span className="text-xs font-medium">{t("titlebar.paused")}</span>}
-      </span>
+      <RecordingClock />
       <div data-tauri-drag-region className="h-full min-w-0 flex-1" />
-      <MicChip />
+      {!compact && <MicChip />}
       <div className="flex items-center gap-1 pl-2">
         <button
           type="button"
-          aria-label={t("titlebar.minimizeWindow")}
-          title={t("titlebar.minimizeWindow")}
-          onClick={() => void withWindow("minimize")}
+          aria-label={t("floating.collapse")}
+          title={t("floating.collapse")}
+          onClick={onCollapse}
           className="grid size-8 place-items-center rounded-md text-foreground/80 transition-colors hover:bg-muted"
         >
           <Minus className="size-4" />
@@ -283,6 +386,8 @@ export function MeetingFloatingWindow() {
   const [tab, setTab] = useState<Tab>("transcript");
   const [bgOpen, setBgOpen] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [pill, setPill] = useState(false);
+  const compact = useCompact();
   const busyRef = useRef(false);
   const meetingActive = status === "recording" || status === "paused";
   const paused = status === "paused";
@@ -304,70 +409,87 @@ export function MeetingFloatingWindow() {
     }
   }
 
+  function togglePill(on: boolean) {
+    setPill(on);
+    void setMeetingPill(on);
+  }
+
+  if (pill) return <MeetingCapsule onExpand={() => togglePill(false)} />;
+
   return (
     <div className="relative flex min-h-0 flex-1 flex-col bg-background">
-      <FloatingTitleBar onClose={() => setConfirmCancel(true)} />
+      <FloatingTitleBar
+        compact={compact}
+        onClose={() => setConfirmCancel(true)}
+        onCollapse={() => togglePill(true)}
+      />
       <LiveBanners />
-      <MeetingHeading />
+      {compact ? (
+        <CompactBody />
+      ) : (
+        <>
+          <MeetingHeading />
 
-      {bgOpen && (
-        <div className="mx-5 mt-4 flex shrink-0 flex-col gap-2 rounded-lg border p-3">
-          <span className="text-xs font-medium">{t("floating.backgroundLabel")}</span>
-          <MeetingContextField rows={3} autoFocus />
-          <button
-            type="button"
-            onClick={() => setBgOpen(false)}
-            className="self-end rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground"
-          >
-            {t("floating.backgroundDone")}
-          </button>
-        </div>
+          {bgOpen && (
+            <div className="mx-5 mt-4 flex shrink-0 flex-col gap-2 rounded-lg border p-3">
+              <span className="text-xs font-medium">{t("floating.backgroundLabel")}</span>
+              <MeetingContextField rows={3} autoFocus />
+              <button
+                type="button"
+                onClick={() => setBgOpen(false)}
+                className="self-end rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground"
+              >
+                {t("floating.backgroundDone")}
+              </button>
+            </div>
+          )}
+
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="flex shrink-0 items-start gap-2 px-4 pt-5">
+              <div role="tablist" aria-label={t("floating.tabsLabel")} className="flex flex-1 self-stretch">
+                <TabButton active={tab === "notes"} label={t("floating.tabs.notes")} onClick={() => setTab("notes")} />
+                <TabButton
+                  active={tab === "transcript"}
+                  label={t("floating.tabs.transcript")}
+                  onClick={() => setTab("transcript")}
+                />
+                <TabButton
+                  active={tab === "coach"}
+                  label={coachCount ? `${t("floating.tabs.coach")} ${coachCount}` : t("floating.tabs.coach")}
+                  onClick={() => setTab("coach")}
+                />
+              </div>
+              <button
+                type="button"
+                aria-label={t("floating.background")}
+                title={t("floating.background")}
+                aria-pressed={bgOpen}
+                onClick={() => setBgOpen((v) => !v)}
+                className={`grid size-9 shrink-0 place-items-center rounded-[10px] border transition-colors hover:bg-muted ${
+                  bgOpen ? "border-primary/40 bg-primary/10 text-primary" : "bg-background text-foreground/80"
+                }`}
+              >
+                <FileText className="size-4" />
+              </button>
+            </div>
+            <div className="flex min-h-0 flex-1 flex-col px-4 pb-5">
+              {/* 筆記 sits flush on the panel's left edge, so while it is the raised
+                  tab that corner stays square and the two read as one surface. */}
+              <div
+                className={`min-h-0 flex-1 overflow-hidden rounded-lg bg-muted/50 ${
+                  tab === "notes" ? "rounded-tl-none" : ""
+                }`}
+              >
+                {tab === "transcript" && <TranscriptPanel variant="floating" />}
+                {tab === "notes" && <NotesPad />}
+                {tab === "coach" && (
+                  <CoachFeed onSeek={setHighlightMs} askBar={false} emptyText={t("floating.coachEmpty")} />
+                )}
+              </div>
+            </div>
+          </div>
+        </>
       )}
-
-      <div className="flex min-h-0 flex-1 flex-col">
-        <div className="flex shrink-0 items-start gap-2 px-4 pt-5">
-          <div role="tablist" aria-label={t("floating.tabsLabel")} className="flex flex-1 self-stretch">
-            <TabButton active={tab === "notes"} label={t("floating.tabs.notes")} onClick={() => setTab("notes")} />
-            <TabButton
-              active={tab === "transcript"}
-              label={t("floating.tabs.transcript")}
-              onClick={() => setTab("transcript")}
-            />
-            <TabButton
-              active={tab === "coach"}
-              label={coachCount ? `${t("floating.tabs.coach")} ${coachCount}` : t("floating.tabs.coach")}
-              onClick={() => setTab("coach")}
-            />
-          </div>
-          <button
-            type="button"
-            aria-label={t("floating.background")}
-            title={t("floating.background")}
-            aria-pressed={bgOpen}
-            onClick={() => setBgOpen((v) => !v)}
-            className={`grid size-9 shrink-0 place-items-center rounded-[10px] border transition-colors hover:bg-muted ${
-              bgOpen ? "border-primary/40 bg-primary/10 text-primary" : "bg-background text-foreground/80"
-            }`}
-          >
-            <FileText className="size-4" />
-          </button>
-        </div>
-        <div className="flex min-h-0 flex-1 flex-col px-4 pb-5">
-          {/* 筆記 sits flush on the panel's left edge, so while it is the raised
-              tab that corner stays square and the two read as one surface. */}
-          <div
-            className={`min-h-0 flex-1 overflow-hidden rounded-lg bg-muted/50 ${
-              tab === "notes" ? "rounded-tl-none" : ""
-            }`}
-          >
-            {tab === "transcript" && <TranscriptPanel variant="floating" />}
-            {tab === "notes" && <NotesPad />}
-            {tab === "coach" && (
-              <CoachFeed onSeek={setHighlightMs} askBar={false} emptyText={t("floating.coachEmpty")} />
-            )}
-          </div>
-        </div>
-      </div>
 
       <footer className="flex shrink-0 items-center gap-2 border-t px-4 py-3">
         {/* 暫停 wears the paused pill's orange; once paused, 繼續 is the blue
@@ -403,7 +525,7 @@ export function MeetingFloatingWindow() {
         title={t("floating.resize")}
         onMouseDown={(e) => {
           e.preventDefault();
-          void withWindow("resize");
+          void startResize();
         }}
         className="absolute right-1 bottom-1 size-3 cursor-se-resize text-muted-foreground/70"
       >

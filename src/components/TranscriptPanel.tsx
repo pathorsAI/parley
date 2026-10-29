@@ -5,6 +5,22 @@ import { useStickToBottom } from "../lib/useStickToBottom";
 import { useI18n } from "../i18n";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
+type Segment = ReturnType<typeof useStore.getState>["segments"][number];
+
+/** Who said `seg`: the name the user gave that speaker, else 你 / 遠端 n. */
+export function speakerLabel(
+  seg: Segment,
+  names: ReturnType<typeof useStore.getState>["speakerNames"],
+  t: ReturnType<typeof useI18n>["t"],
+): string {
+  const customName = names[speakerKey(seg)];
+  if (customName) return customName;
+  if (seg.source === "me") {
+    return (seg.speaker || 1) <= 1 ? t("speaker.you") : t("speaker.speaker", { number: seg.speaker });
+  }
+  return seg.speaker > 0 ? t("speaker.remote", { number: seg.speaker }) : t("speaker.them");
+}
+
 /** `floating`: the floating meeting window's denser type (14px lines). */
 export function TranscriptPanel({ variant = "default" }: Readonly<{ variant?: "default" | "floating" }> = {}) {
   const floating = variant === "floating";
@@ -59,14 +75,7 @@ export function TranscriptPanel({ variant = "default" }: Readonly<{ variant?: "d
     return () => clearTimeout(timer);
   }, [highlightMs, runs, setHighlightMs, programmaticScroll]);
 
-  function label(seg: (typeof runs)[number]) {
-    const customName = names[speakerKey(seg)];
-    if (customName) return customName;
-    if (seg.source === "me") {
-      return (seg.speaker || 1) <= 1 ? t("speaker.you") : t("speaker.speaker", { number: seg.speaker });
-    }
-    return seg.speaker > 0 ? t("speaker.remote", { number: seg.speaker }) : t("speaker.them");
-  }
+  const label = (seg: Segment) => speakerLabel(seg, names, t);
 
   if (runs.length === 0) {
     return (
