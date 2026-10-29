@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { useStore, isMeetingActive } from "../store";
+import type { MeetingDraft } from "../store/prep";
 import { translate } from "../../i18n";
 import { isTauri } from "../platform";
 import { log } from "../log";
@@ -27,10 +28,10 @@ export function planReminder(p: {
   return { kind: "fire" };
 }
 
-/** The reminder card the main window shows (null = none up). */
-export const useReminderDue = create<{ dueAt: number | null; dismiss: () => void }>((set) => ({
-  dueAt: null,
-  dismiss: () => set({ dueAt: null }),
+/** The draft whose reminder card the main window shows (null = none up). */
+export const useReminderDue = create<{ draftId: string | null; dismiss: () => void }>((set) => ({
+  draftId: null,
+  dismiss: () => set({ draftId: null }),
 }));
 
 /** The notification's headline: whose meeting, and how soon. */
@@ -77,66 +78,61 @@ async function alertUser(title: string, body: string): Promise<void> {
   }
 }
 
-function fire(): void {
+function fire(draft: MeetingDraft): void {
   const s = useStore.getState();
-  if (s.meetingAt == null) return;
-  s.setRemindedFor(s.meetingAt);
+  if (draft.meetingAt == null) return;
+  s.markDraftReminded(draft.id, draft.meetingAt);
   // Already recording: the reminder has nothing left to say.
   if (isMeetingActive(s.meetingStatus)) return;
-  const minutes = Math.max(0, Math.round((s.meetingAt - Date.now()) / 60_000));
-  log.info("reminder: firing", { meetingAt: s.meetingAt, minutes });
-  useReminderDue.setState({ dueAt: s.meetingAt });
+  const minutes = Math.max(0, Math.round((draft.meetingAt - Date.now()) / 60_000));
+  log.info("reminder: firing", { draft: draft.id, meetingAt: draft.meetingAt, minutes });
+  useReminderDue.setState({ draftId: draft.id });
   void alertUser(
-    reminderHeadline(s.settings.language, s.meetingTitle, minutes),
+    reminderHeadline(s.settings.language, draft.title, minutes),
     translate(s.settings.language, "reminder.body"),
   );
 }
 
 /**
- * Run the meeting-draft reminder for this window (the main window, once).
- * Re-plans whenever the draft's time, lead or reminded marker changes, and
- * retires the draft's time once its meeting is recorded. Returns its teardown.
+ * Run the meeting-draft reminders for this window (the main window, once):
+ * one per saved draft with a time, re-planned whenever the drafts change.
+ * Returns its teardown.
  */
 export function initMeetingReminder(): () => void {
   let timer: ReturnType<typeof setTimeout> | undefined;
 
+  // Firing marks the draft, which changes the drafts and re-enters through the
+  // subscription below; the guard keeps that from planning mid-loop.
+  let planning = false;
   const replan = () => {
-    clearTimeout(timer);
-    const s = useStore.getState();
-    const plan = planReminder({
-      meetingAt: s.meetingAt,
-      leadMin: s.reminderLeadMin,
-      remindedFor: s.remindedFor,
-      now: Date.now(),
-    });
-    if (plan.kind === "fire") fire();
-    else if (plan.kind === "wait") timer = setTimeout(replan, plan.ms);
+    if (planning) return;
+    planning = true;
+    try {
+      clearTimeout(timer);
+      const now = Date.now();
+      let wait: number | null = null;
+      const due: string[] = [];
+      for (const d of useStore.getState().drafts) {
+        const plan = planReminder({ meetingAt: d.meetingAt, leadMin: d.reminderLeadMin, remindedFor: d.remindedFor, now });
+        if (plan.kind === "fire") due.push(d.id);
+        else if (plan.kind === "wait") wait = wait == null ? plan.ms : Math.min(wait, plan.ms);
+      }
+      for (const id of due) {
+        const d = useStore.getState().drafts.find((x) => x.id === id);
+        if (d) fire(d);
+      }
+      if (wait != null) timer = setTimeout(replan, wait);
+    } finally {
+      planning = false;
+    }
   };
 
   const unsubscribe = useStore.subscribe((next, prev) => {
-    // The drafted meeting is being recorded: its time is spent.
-    if (isMeetingActive(next.meetingStatus) && !isMeetingActive(prev.meetingStatus)) {
-      useReminderDue.getState().dismiss();
-      if (next.meetingAt != null) {
-        next.setMeetingAt(null);
-        next.setMeetingEndAt(null);
-      }
-      // Recorded: no longer a draft to keep.
-      if (next.draftSaved) next.setDraftSaved(false);
-      return;
-    }
-    if (
-      next.meetingAt !== prev.meetingAt ||
-      next.reminderLeadMin !== prev.reminderLeadMin ||
-      next.remindedFor !== prev.remindedFor
-    ) {
-      // A new time is a new reminder; a cleared one takes its card with it.
-      if (next.meetingAt !== prev.meetingAt) {
-        if (next.meetingAt == null) useReminderDue.getState().dismiss();
-        if (next.remindedFor != null && next.remindedFor !== next.meetingAt) next.setRemindedFor(null);
-      }
-      replan();
-    }
+    if (next.drafts === prev.drafts) return;
+    // A card whose draft is gone (recorded, deleted) goes with it.
+    const due = useReminderDue.getState().draftId;
+    if (due && !next.drafts.some((d) => d.id === due)) useReminderDue.getState().dismiss();
+    replan();
   });
   replan();
   return () => {

@@ -16,14 +16,15 @@ function clockLabel(ms: number, locale: string): string {
  */
 export function MeetingReminderCard() {
   const { t } = useI18n();
-  const dueAt = useReminderDue((s) => s.dueAt);
+  const draftId = useReminderDue((s) => s.draftId);
   const dismiss = useReminderDue((s) => s.dismiss);
-  const title = useStore((s) => s.meetingTitle);
+  const draft = useStore((s) => s.drafts.find((d) => d.id === draftId) ?? null);
   const language = useStore((s) => s.settings.language);
-  const setDraftOpen = useStore((s) => s.setDraftOpen);
   const busy = useStore((s) => isMeetingActive(s.meetingStatus) || s.isFinalizingMeeting);
 
-  if (dueAt == null || busy) return null;
+  if (!draft || draft.meetingAt == null || busy) return null;
+  const dueAt = draft.meetingAt;
+  const title = draft.title;
   const minutes = Math.max(0, Math.round((dueAt - Date.now()) / 60_000));
 
   return (
@@ -56,7 +57,7 @@ export function MeetingReminderCard() {
           className="h-8"
           onClick={() => {
             dismiss();
-            setDraftOpen(true);
+            useStore.getState().editDraft(draft.id);
           }}
         >
           {t("reminder.openDraft")}
@@ -66,7 +67,8 @@ export function MeetingReminderCard() {
           className="h-8"
           onClick={() => {
             dismiss();
-            void beginMeeting();
+            // Record with what was prepared: the draft becomes the prep.
+            if (useStore.getState().takeDraft(draft.id)) void beginMeeting();
           }}
         >
           <Mic className="size-3.5" />

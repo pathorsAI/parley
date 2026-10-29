@@ -26,6 +26,7 @@ import {
   tFor,
 } from "./defaults";
 import type { ParleyState } from "./types";
+import type { MeetingDraft } from "./prep";
 
 /**
  * #131: map legacy single-provider settings (provider + {ask,eval} model roles)
@@ -203,45 +204,19 @@ export function migratePersistedState(persisted: unknown, version: number): unkn
  * zustand-persist `merge`: backfill any settings fields missing from older
  * persisted state (runs after {@link migratePersistedState}). Exported for tests.
  */
-/** The prep a saved draft keeps across restarts — one the user saved, or one
- *  with a meeting time (its reminder has to survive the app being quit).
- *  Anything else stays per-session. */
-const SCHEDULED_DRAFT_KEYS = [
-  "meetingAt",
-  "meetingEndAt",
-  "reminderLeadMin",
-  "remindedFor",
-  "draftSaved",
-  "meetingTitle",
-  "meetingNotes",
-  "meetingContext",
-  "meetingBatna",
-  "meetingTarget",
-  "meetingFloor",
-  "todos",
-  "meetingFolderId",
-  "meetingOrgShare",
-] as const;
-
-type ScheduledDraft = Pick<ParleyState, (typeof SCHEDULED_DRAFT_KEYS)[number]>;
-
-/** The draft to persist, or null when it is neither saved nor timed. */
-export function scheduledDraft(state: ParleyState): ScheduledDraft | null {
-  if (state.meetingAt == null && !state.draftSaved) return null;
-  const out: Partial<ScheduledDraft> = {};
-  for (const k of SCHEDULED_DRAFT_KEYS) (out as Record<string, unknown>)[k] = state[k];
-  return out as ScheduledDraft;
-}
-
-/** A persisted scheduled draft, if it is one (anything else is dropped). */
-function restoredDraft(persisted: unknown): Partial<ScheduledDraft> {
-  const d = (persisted as { draft?: Partial<ScheduledDraft> | null } | undefined)?.draft;
-  if (!d || (typeof d.meetingAt !== "number" && d.draftSaved !== true)) return {};
-  const out: Partial<ScheduledDraft> = {};
-  for (const k of SCHEDULED_DRAFT_KEYS) {
-    if (d[k] !== undefined) (out as Record<string, unknown>)[k] = d[k];
-  }
-  return out;
+/** Saved meeting drafts from a persisted payload (anything malformed is
+ *  dropped, so a bad entry can't take the store down). */
+export function restoredDrafts(persisted: unknown): MeetingDraft[] {
+  const raw = (persisted as { drafts?: unknown } | undefined)?.drafts;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (d): d is MeetingDraft =>
+      !!d &&
+      typeof d === "object" &&
+      typeof (d as MeetingDraft).id === "string" &&
+      Array.isArray((d as MeetingDraft).todos) &&
+      ((d as MeetingDraft).meetingAt === null || typeof (d as MeetingDraft).meetingAt === "number"),
+  );
 }
 
 export function mergePersistedState(persisted: unknown, current: ParleyState): ParleyState {
@@ -275,7 +250,7 @@ export function mergePersistedState(persisted: unknown, current: ParleyState): P
 
   return {
     ...current,
-    ...restoredDraft(persisted),
+    drafts: restoredDrafts(persisted),
     settings: {
       ...DEFAULT_SETTINGS,
       ...p,
@@ -324,11 +299,11 @@ export const PERSIST_OPTIONS = {
   version: PERSIST_VERSION,
   migrate: migratePersistedState,
   // Persist settings + the cloud sign-in — transcript/eval state is per-session.
-  // A draft with a meeting time rides along so its reminder survives a restart.
+  // Saved meeting drafts ride along: 即將開始 and their reminders survive a restart.
   partialize: (state: ParleyState) => ({
     settings: state.settings,
     cloudAuth: state.cloudAuth,
-    draft: scheduledDraft(state),
+    drafts: state.drafts,
   }),
   // Backfill any settings fields missing from older persisted state.
   merge: mergePersistedState,

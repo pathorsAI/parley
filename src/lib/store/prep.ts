@@ -11,6 +11,58 @@ import type { SliceCreator } from "./types";
  *  be on your mind. Changeable per draft. */
 export const DEFAULT_REMINDER_LEAD_MIN = 5;
 
+/**
+ * A saved meeting draft (儲存草稿): everything prepared for one upcoming
+ * meeting. Drafts wait in a list — 總覽's 即將開始 — and one is loaded into
+ * the prep fields to be edited or recorded.
+ */
+export interface MeetingDraft {
+  id: string;
+  title: string;
+  meetingAt: number | null;
+  meetingEndAt: number | null;
+  reminderLeadMin: number;
+  /** The `meetingAt` whose reminder has already fired. */
+  remindedFor: number | null;
+  meetingContext: string;
+  meetingBatna: string;
+  meetingTarget: string;
+  meetingFloor: string;
+  todos: TodoItem[];
+  meetingFolderId: string | null;
+  meetingOrgShare: MeetingShare;
+  updatedAt: number;
+}
+
+/** The prep fields a draft fills in when it is loaded. */
+function prepFromDraft(d: MeetingDraft) {
+  return {
+    meetingTitle: d.title,
+    meetingAt: d.meetingAt,
+    meetingEndAt: d.meetingEndAt,
+    reminderLeadMin: d.reminderLeadMin,
+    meetingContext: d.meetingContext,
+    meetingBatna: d.meetingBatna,
+    meetingTarget: d.meetingTarget,
+    meetingFloor: d.meetingFloor,
+    todos: d.todos,
+    meetingFolderId: d.meetingFolderId,
+    meetingOrgShare: d.meetingOrgShare,
+    meetingNotes: "",
+  };
+}
+
+/** Drafts in the order 即將開始 lists them: timed ones soonest first, then
+ *  the untimed ones, newest first. Pure. */
+export function sortDrafts(drafts: readonly MeetingDraft[]): MeetingDraft[] {
+  return [...drafts].sort((a, b) => {
+    if (a.meetingAt != null && b.meetingAt != null) return a.meetingAt - b.meetingAt;
+    if (a.meetingAt != null) return -1;
+    if (b.meetingAt != null) return 1;
+    return b.updatedAt - a.updatedAt;
+  });
+}
+
 export interface PrepSlice {
   /** Meeting to-do / agenda checklist. */
   todos: TodoItem[];
@@ -34,14 +86,22 @@ export interface PrepSlice {
   /** Minutes before `meetingAt` the reminder fires (0 = at the start). */
   reminderLeadMin: number;
   setReminderLeadMin: (min: number) => void;
-  /** The user pressed 儲存草稿: keep this draft across restarts (a draft
-   *  with a time is kept regardless). Cleared when it is recorded or reset. */
-  draftSaved: boolean;
-  setDraftSaved: (saved: boolean) => void;
-  /** The `meetingAt` whose reminder has already fired, so a reload or a
-   *  restart does not fire it twice. */
-  remindedFor: number | null;
-  setRemindedFor: (at: number | null) => void;
+  /** Saved drafts, waiting to be recorded (persisted). */
+  drafts: MeetingDraft[];
+  /** The saved draft the prep fields are being edited for (null = a new one). */
+  editingDraftId: string | null;
+  /** Save the prep as a draft (a new one, or the one being edited) and clear
+   *  the prep for the next. Returns the saved draft (null during a meeting). */
+  saveDraft: () => MeetingDraft | null;
+  /** Load a saved draft into the prep to edit it, and open the sheet. */
+  editDraft: (id: string) => void;
+  /** Leave the draft being edited unchanged and clear the prep. */
+  discardDraftEdit: () => void;
+  /** Load a saved draft into the prep to record it, taking it off the list. */
+  takeDraft: (id: string) => boolean;
+  deleteDraft: (id: string) => void;
+  /** Note that this draft's reminder fired for its `meetingAt`. */
+  markDraftReminded: (id: string, at: number) => void;
   /** The meeting-draft sheet is open: the prep below, filled in before
    *  recording ("新增會議草稿"). UI state only; not part of the draft itself. */
   draftOpen: boolean;
@@ -97,8 +157,6 @@ const CLEARED_PREP_SLICE = {
   meetingNotes: "",
   meetingAt: null,
   meetingEndAt: null,
-  remindedFor: null,
-  draftSaved: false,
   meetingBatna: "",
   meetingTarget: "",
   meetingFloor: "",
@@ -112,9 +170,9 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
   meetingNotes: "",
   meetingAt: null,
   meetingEndAt: null,
-  draftSaved: false,
   reminderLeadMin: DEFAULT_REMINDER_LEAD_MIN,
-  remindedFor: null,
+  drafts: [],
+  editingDraftId: null,
   draftOpen: false,
   setDraftOpen: (draftOpen) => set({ draftOpen }),
   meetingFolderId: null,
@@ -129,15 +187,87 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
   setMeetingAt: (meetingAt) => set({ meetingAt }),
   setMeetingEndAt: (meetingEndAt) => set({ meetingEndAt }),
   setReminderLeadMin: (reminderLeadMin) => set({ reminderLeadMin }),
-  setRemindedFor: (remindedFor) => set({ remindedFor }),
-  setDraftSaved: (draftSaved) => set({ draftSaved }),
+  saveDraft: () => {
+    let saved: MeetingDraft | null = null;
+    set((s) => {
+      // The prep belongs to the live meeting while one runs.
+      if (isMeetingActive(s.meetingStatus)) return {};
+      const id = s.editingDraftId ?? crypto.randomUUID();
+      const prev = s.drafts.find((d) => d.id === id);
+      const draft: MeetingDraft = {
+        id,
+        title: s.meetingTitle.trim(),
+        meetingAt: s.meetingAt,
+        meetingEndAt: s.meetingEndAt,
+        reminderLeadMin: s.reminderLeadMin,
+        // A moved time (or lead) is a new reminder.
+        remindedFor:
+          prev && prev.meetingAt === s.meetingAt && prev.reminderLeadMin === s.reminderLeadMin
+            ? prev.remindedFor
+            : null,
+        meetingContext: s.meetingContext,
+        meetingBatna: s.meetingBatna,
+        meetingTarget: s.meetingTarget,
+        meetingFloor: s.meetingFloor,
+        todos: s.todos,
+        meetingFolderId: s.meetingFolderId,
+        meetingOrgShare: s.meetingOrgShare,
+        updatedAt: Date.now(),
+      };
+      saved = draft;
+      log.info("store: draft saved", { id, timed: draft.meetingAt != null });
+      return {
+        drafts: prev ? s.drafts.map((d) => (d.id === id ? draft : d)) : [...s.drafts, draft],
+        editingDraftId: null,
+        reminderLeadMin: DEFAULT_REMINDER_LEAD_MIN,
+        ...CLEARED_PREP_SLICE,
+      };
+    });
+    return saved;
+  },
+  editDraft: (id) =>
+    set((s) => {
+      const d = s.drafts.find((x) => x.id === id);
+      if (!d || isMeetingActive(s.meetingStatus)) return {};
+      return { ...prepFromDraft(d), editingDraftId: id, draftOpen: true };
+    }),
+  discardDraftEdit: () =>
+    set((s) => {
+      if (s.editingDraftId == null || isMeetingActive(s.meetingStatus)) return {};
+      return { ...CLEARED_PREP_SLICE, reminderLeadMin: DEFAULT_REMINDER_LEAD_MIN, editingDraftId: null };
+    }),
+  takeDraft: (id) => {
+    let taken = false;
+    set((s) => {
+      const d = s.drafts.find((x) => x.id === id);
+      if (!d || isMeetingActive(s.meetingStatus)) return {};
+      taken = true;
+      log.info("store: draft taken to record", { id });
+      return {
+        ...prepFromDraft(d),
+        drafts: s.drafts.filter((x) => x.id !== id),
+        editingDraftId: null,
+        draftOpen: false,
+      };
+    });
+    return taken;
+  },
+  deleteDraft: (id) =>
+    set((s) => ({
+      drafts: s.drafts.filter((x) => x.id !== id),
+      ...(s.editingDraftId === id
+        ? { ...CLEARED_PREP_SLICE, reminderLeadMin: DEFAULT_REMINDER_LEAD_MIN, editingDraftId: null }
+        : {}),
+    })),
+  markDraftReminded: (id, at) =>
+    set((s) => ({ drafts: s.drafts.map((d) => (d.id === id ? { ...d, remindedFor: at } : d)) })),
   setMeetingOrgShare: (meetingOrgShare) => set({ meetingOrgShare }),
   setMeetingFolder: (meetingFolderId) => set({ meetingFolderId }),
   resetPrep: () =>
     set((s) => {
       if (isMeetingActive(s.meetingStatus)) return {};
       log.info("store: prep reset");
-      return { ...CLEARED_PREP_SLICE };
+      return { ...CLEARED_PREP_SLICE, reminderLeadMin: DEFAULT_REMINDER_LEAD_MIN, editingDraftId: null };
     }),
   setNegotiationField: (field, value) => set({ [field]: value }),
 

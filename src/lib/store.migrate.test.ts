@@ -150,30 +150,35 @@ describe("voice typing polish style migration", () => {
   });
 });
 
-describe("scheduled meeting draft", () => {
-  it("rides along with settings only while it has a time", async () => {
-    const { scheduledDraft } = await import("./store/persistence");
-    expect(scheduledDraft({ ...current(), meetingAt: null })).toBeNull();
-    const at = Date.UTC(2026, 9, 30, 6, 0);
-    const saved = scheduledDraft({ ...current(), meetingAt: at, meetingTitle: "週會", meetingContext: "名單" });
-    expect(saved).toMatchObject({ meetingAt: at, meetingTitle: "週會", meetingContext: "名單" });
-    // ...and comes back on the next launch.
-    const restored = mergePersistedState({ settings: {}, draft: saved }, current());
-    expect(restored.meetingAt).toBe(at);
-    expect(restored.meetingTitle).toBe("週會");
-    expect(restored.meetingContext).toBe("名單");
+describe("saved meeting drafts", () => {
+  const draft = {
+    id: "d1",
+    title: "週會",
+    meetingAt: Date.UTC(2026, 9, 30, 6, 0),
+    meetingEndAt: null,
+    reminderLeadMin: 5,
+    remindedFor: null,
+    meetingContext: "名單",
+    meetingBatna: "",
+    meetingTarget: "",
+    meetingFloor: "",
+    todos: [],
+    meetingFolderId: null,
+    meetingOrgShare: null,
+    updatedAt: 1,
+  };
+
+  it("come back on the next launch", () => {
+    const restored = mergePersistedState({ settings: {}, drafts: [draft] }, current());
+    expect(restored.drafts).toEqual([draft]);
   });
 
-  it("keeps a saved draft that has no time", async () => {
-    const { scheduledDraft } = await import("./store/persistence");
-    const saved = scheduledDraft({ ...current(), meetingAt: null, draftSaved: true, meetingContext: "名單" });
-    expect(saved).toMatchObject({ draftSaved: true, meetingContext: "名單" });
-    const restored = mergePersistedState({ settings: {}, draft: saved }, current());
-    expect(restored.meetingContext).toBe("名單");
-  });
-
-  it("ignores a persisted draft that was neither saved nor timed", () => {
-    const restored = mergePersistedState({ settings: {}, draft: { meetingTitle: "x" } }, current());
-    expect(restored.meetingTitle).toBe(current().meetingTitle);
+  it("drop anything malformed", () => {
+    const restored = mergePersistedState(
+      { settings: {}, drafts: [draft, { id: 3 }, null, { ...draft, id: "d2", meetingAt: "soon" }] },
+      current(),
+    );
+    expect(restored.drafts.map((d) => d.id)).toEqual(["d1"]);
+    expect(mergePersistedState({ settings: {} }, current()).drafts).toEqual([]);
   });
 });

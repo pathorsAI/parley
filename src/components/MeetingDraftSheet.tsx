@@ -1,4 +1,4 @@
-import { CalendarPlus, Eraser, Save, X } from "lucide-react";
+import { CalendarPlus, Eraser, Save, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { isMeetingActive, useStore } from "../lib/store";
 import { ensureNotificationPermission } from "../lib/meeting/reminder";
@@ -99,13 +99,14 @@ function MeetingWhenFields() {
 }
 
 /**
- * The meeting draft ("新增會議草稿"): the per-meeting prep — context, folder,
- * agenda — filled in before recording, opened from the title bar and the home
- * screen via `setDraftOpen(true)`. Recording then starts with it.
+ * The meeting draft ("新增會議草稿"): the per-meeting prep — name, time,
+ * context, folder, agenda — filled in ahead of a meeting. 儲存草稿 files it
+ * into the saved drafts (總覽's 即將開始) and clears the fields for the next;
+ * a saved draft opens here again from that list (editingDraftId).
  *
- * Nothing here is new state: every field edits the prep slice the live meeting
- * already reads, so closing the sheet keeps the draft (it is still the prep),
- * and 清除草稿 is the slice's one reset path.
+ * The fields are the prep slice the live meeting reads, so a new draft closed
+ * unsaved is still the prep 直接錄音 rides. Closing while editing a saved one
+ * leaves that draft as it was.
  */
 export function MeetingDraftSheet() {
   const { t } = useI18n();
@@ -127,15 +128,16 @@ export function MeetingDraftSheet() {
   );
   const { destination, mode, fresh, pickDestination } = useMeetingDestination();
 
-  const meetingAt = useStore((s) => s.meetingAt);
-  const setDraftSaved = useStore((s) => s.setDraftSaved);
+  const editingId = useStore((s) => s.editingDraftId);
   const language = useStore((s) => s.settings.language);
 
-  /** Keep the draft (across restarts, too) and close. Recording it is a
-   *  separate act: 直接錄音, or 開始錄音 on its reminder. */
+  /** File the draft into 即將開始 and close. Recording it is a separate act:
+   *  開始 on 總覽, or 開始錄音 on its reminder. */
   function save() {
-    setDraftSaved(true);
+    const saved = useStore.getState().saveDraft();
     setDraftOpen(false);
+    if (!saved) return;
+    const meetingAt = saved.meetingAt;
     toast.success(
       meetingAt == null
         ? t("draft.saved")
@@ -151,23 +153,47 @@ export function MeetingDraftSheet() {
   }
 
   return (
-    <Sheet open={open} onOpenChange={setDraftOpen}>
+    <Sheet
+      open={open}
+      onOpenChange={(next) => {
+        setDraftOpen(next);
+        // Closing a saved draft without saving leaves it as it was.
+        if (!next) useStore.getState().discardDraftEdit();
+      }}
+    >
       <SheetContent
-        closeLabel={t("common.done")}
-        title={t("draft.title")}
+        closeLabel={t("common.close")}
+        title={editingId ? t("draft.editTitle") : t("draft.title")}
         description={t("draft.description")}
         footer={
           <>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="mr-auto h-8 text-muted-foreground"
-              disabled={!hasDraft || meetingActive}
-              onClick={resetPrep}
-            >
-              <Eraser className="size-3.5" />
-              {t("draft.clear")}
-            </Button>
+            {editingId ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="mr-auto h-8 text-destructive hover:text-destructive"
+                disabled={meetingActive}
+                onClick={() => {
+                  useStore.getState().deleteDraft(editingId);
+                  setDraftOpen(false);
+                  toast.success(t("draft.deleted"));
+                }}
+              >
+                <Trash2 className="size-3.5" />
+                {t("draft.delete")}
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="mr-auto h-8 text-muted-foreground"
+                disabled={!hasDraft || meetingActive}
+                onClick={resetPrep}
+              >
+                <Eraser className="size-3.5" />
+                {t("draft.clear")}
+              </Button>
+            )}
             <Button size="sm" className="h-8" disabled={!hasDraft || meetingActive || finalizing} onClick={save}>
               <Save className="size-3.5" />
               {t("draft.save")}

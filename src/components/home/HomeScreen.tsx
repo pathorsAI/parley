@@ -8,7 +8,7 @@ import { log } from "../../lib/log";
 import { Button } from "@/components/ui/button";
 import type { LibraryTree } from "../shell/useLibraryTree";
 import { GettingStarted, openSampleRecording } from "./GettingStarted";
-import { UpcomingMeeting } from "./UpcomingMeeting";
+import { UpcomingMeetings } from "./UpcomingMeetings";
 import {
   GETTING_STARTED_STEPS,
   isGettingStartedVisible,
@@ -101,7 +101,7 @@ export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
         </section>
 
         {/* ── The meeting drafted next ─────────────────────────────────────── */}
-        <UpcomingMeeting style={delay(60)} />
+        <UpcomingMeetings folderName={(id) => folderName(id)} style={delay(60)} />
 
         {/* ── Getting started (first lap) ─────────────────────────────────── */}
         {showChecklist && (

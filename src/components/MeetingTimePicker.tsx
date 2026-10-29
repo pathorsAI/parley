@@ -15,6 +15,10 @@ import { useI18n } from "../i18n";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 const MIN = 60_000;
+/** The picker lives in the draft sheet (z-[91]); a popover's default z-50
+ *  opened underneath it, where nothing could be seen or clicked. Kept even
+ *  now that the lists portal into the sheet, so they sit above its fields. */
+const ABOVE_SHEET = "z-[95]";
 
 const triggerClass =
   "flex h-8 items-center rounded-md px-2.5 text-sm text-foreground transition-colors hover:bg-muted data-[state=open]:bg-muted";
@@ -38,6 +42,9 @@ function TimeList({
   onPick,
 }: Readonly<{ slots: number[]; value: number; render: (ms: number) => React.ReactNode; onPick: (ms: number) => void }>) {
   const chosen = useRef<HTMLButtonElement | null>(null);
+  // Open on the chosen time, or the slot just before it when it falls
+  // between slots — never back at midnight.
+  const anchor = slots.reduce((best, ms) => (ms <= value ? ms : best), slots[0]);
   useEffect(() => {
     chosen.current?.scrollIntoView({ block: "center" });
   }, []);
@@ -46,7 +53,7 @@ function TimeList({
       {slots.map((ms) => (
         <button
           key={ms}
-          ref={ms === value ? chosen : undefined}
+          ref={ms === anchor ? chosen : undefined}
           type="button"
           role="option"
           aria-selected={ms === value}
@@ -152,6 +159,9 @@ export function MeetingTimePicker() {
   const setStart = useStore((s) => s.setMeetingAt);
   const setEnd = useStore((s) => s.setMeetingEndAt);
   const [open, setOpen] = useState<"day" | "start" | "end" | null>(null);
+  // The lists portal into the picker itself, i.e. into the sheet (see
+  // PopoverContent's container).
+  const [container, setContainer] = useState<HTMLDivElement | null>(null);
 
   if (startAt == null) return null;
   const endAt = endAtRaw != null && endAtRaw > startAt ? endAtRaw : startAt + DEFAULT_DURATION_MIN * MIN;
@@ -170,12 +180,12 @@ export function MeetingTimePicker() {
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-1 rounded-md border border-input bg-background p-0.5">
+    <div ref={setContainer} className="flex flex-wrap items-center gap-1 rounded-md border border-input bg-background p-0.5">
       <Popover open={open === "day"} onOpenChange={(o) => setOpen(o ? "day" : null)}>
         <PopoverTrigger className={triggerClass}>
           {new Date(startAt).toLocaleDateString(locale, { month: "long", day: "numeric", weekday: "short" })}
         </PopoverTrigger>
-        <PopoverContent align="start" className="w-auto p-0">
+        <PopoverContent container={container} align="start" className={`${ABOVE_SHEET} w-auto p-0`}>
           <DayGrid value={startAt} onPick={(day) => moveStart(onDay(day, startAt))} />
         </PopoverContent>
       </Popover>
@@ -183,7 +193,7 @@ export function MeetingTimePicker() {
         <PopoverTrigger className={triggerClass} aria-label={t("draft.startTime")}>
           {timeLabel(startAt, locale)}
         </PopoverTrigger>
-        <PopoverContent align="start" className="w-36 p-0">
+        <PopoverContent container={container} align="start" className={`${ABOVE_SHEET} w-36 p-0`}>
           <TimeList
             slots={startSlots(startAt)}
             value={startAt}
@@ -197,7 +207,7 @@ export function MeetingTimePicker() {
         <PopoverTrigger className={triggerClass} aria-label={t("draft.endTime")}>
           {timeLabel(endAt, locale)}
         </PopoverTrigger>
-        <PopoverContent align="start" className="w-48 p-0">
+        <PopoverContent container={container} align="start" className={`${ABOVE_SHEET} w-48 p-0`}>
           <TimeList
             slots={endSlots(startAt)}
             value={endAt}
