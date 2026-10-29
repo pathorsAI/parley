@@ -13,6 +13,10 @@ export interface PrepSlice {
   /** Per-meeting context/description (who's here, roles) — NOT a global setting. */
   meetingContext: string;
   setMeetingContext: (text: string) => void;
+  /** The meeting-draft sheet is open: the prep below, filled in before
+   *  recording ("新增會議草稿"). UI state only; not part of the draft itself. */
+  draftOpen: boolean;
+  setDraftOpen: (open: boolean) => void;
   /** Principled-negotiation setup for THIS deal (per-meeting, not global). Feeds
    *  BATNA / ZOPA / walk-away reasoning in the analysis. */
   meetingBatna: string;
@@ -69,6 +73,8 @@ const CLEARED_PREP_SLICE = {
 export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
   todos: [],
   meetingContext: "",
+  draftOpen: false,
+  setDraftOpen: (draftOpen) => set({ draftOpen }),
   meetingFolderId: null,
   meetingOrgShare: null,
   meetingBatna: "",

@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { Toaster } from "./components/ui/sonner";
 import { IngestWizard } from "./components/IngestWizard";
 import { TranscriptImportDialog } from "./components/TranscriptImportDialog";
+import { MeetingDraftSheet } from "./components/MeetingDraftSheet";
 import { FindingSolutionWindow } from "./components/analysis/FindingSolutionWindow";
 import { useFindingSolutionHost } from "./components/analysis/useFindingSolutionHost";
 import { DeliveryNudgeHost } from "./components/delivery/DeliveryNudgeHost";
@@ -445,6 +446,7 @@ const App = () => {
       <Toaster />
       <IngestWizard />
       <TranscriptImportDialog />
+      <MeetingDraftSheet />
       {/* In the Tauri app the drilldown is its own OS window (see
           useFindingSolutionHost); in plain browser dev we fall back to the
           in-app overlay so the feature still works without multi-window. */}
