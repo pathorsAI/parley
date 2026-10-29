@@ -104,6 +104,7 @@ pub fn run() {
         // Authoritative OS detection for the frontend's platform branches
         // (src/lib/platform.ts) — window chrome, hidden panels, key caps.
         .plugin(tauri_plugin_os::init())
+        .plugin(tauri_plugin_notification::init())
         // Unconditional like single-instance: the crate only builds for desktop.
         .plugin(autostart_plugin.build())
         // Single source of truth for "who owns the mic" (meeting / mic test /

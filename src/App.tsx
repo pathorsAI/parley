@@ -49,6 +49,8 @@ import { listenForSpeakerCacheClear } from "./lib/speakers/namesCache";
 import { initHistoryPersistSync, listenForRecordingSaved, recoverCrashedMeetings } from "./lib/history/history";
 import { endMeeting, recoverOrphanedMeeting } from "./lib/meeting/controls";
 import { initSilenceGuard } from "./lib/meeting/silenceGuard";
+import { initMeetingReminder } from "./lib/meeting/reminder";
+import { MeetingReminderCard } from "./components/MeetingReminderCard";
 import { listenForSystemWake } from "./lib/meeting/sleepWake";
 import { checkForUpdate } from "./lib/update";
 import {
@@ -235,6 +237,8 @@ const App = () => {
     // Asks whether a meeting nobody has spoken in for a long time is over,
     // and ends it when nobody answers (main window only, like the save).
     const unSilenceGuard = initSilenceGuard();
+    // Reminds you before a drafted meeting's time (main window only).
+    const unMeetingReminder = initMeetingReminder();
     return () => {
       listeners.dispose();
       unTemplates();
@@ -245,6 +249,7 @@ const App = () => {
       unVoiceTyping();
       unDictionarySync();
       unSilenceGuard();
+      unMeetingReminder();
     };
   }, []);
 
@@ -459,6 +464,7 @@ const App = () => {
       <IngestWizard />
       <TranscriptImportDialog />
       <MeetingDraftSheet />
+      <MeetingReminderCard />
       {/* In the Tauri app the drilldown is its own OS window (see
           useFindingSolutionHost); in plain browser dev we fall back to the
           in-app overlay so the feature still works without multi-window. */}

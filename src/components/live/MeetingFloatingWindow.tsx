@@ -10,7 +10,6 @@ import { useI18n } from "../../i18n";
 import { CancelMeetingDialog } from "../TitleBar";
 import { MicChip } from "../MicChip";
 import { TranscriptPanel } from "../TranscriptPanel";
-import { TodosPanel } from "../sidebar/TodosPanel";
 import { DestinationField } from "../DestinationSheet";
 import { MeetingContextField } from "../MeetingContextField";
 import { useMeetingDestination } from "../useMeetingDestination";
@@ -128,6 +127,23 @@ function MeetingHeading() {
   );
 }
 
+/** 筆記: a plain text box — write whatever, however. Saved with the recording
+ *  as part of its context. */
+function NotesPad() {
+  const { t } = useI18n();
+  const notes = useStore((s) => s.meetingNotes);
+  const setNotes = useStore((s) => s.setMeetingNotes);
+  return (
+    <textarea
+      value={notes}
+      onChange={(e) => setNotes(e.target.value)}
+      placeholder={t("floating.notesPlaceholder")}
+      aria-label={t("floating.tabs.notes")}
+      className="block size-full resize-none bg-transparent p-5 text-base leading-6 text-foreground outline-none placeholder:text-muted-foreground"
+    />
+  );
+}
+
 /** One tab of the segmented strip: the selected one rises into the panel. */
 function TabButton({
   active,
@@ -194,7 +210,7 @@ function AskBox({ onAsked }: Readonly<{ onAsked: () => void }>) {
 
   return (
     <form
-      className="relative flex h-10 min-w-0 flex-1 items-center gap-2 rounded-[10px] border border-input bg-background pr-1 pl-3.5"
+      className="relative flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg border border-input bg-background pr-1 pl-3"
       onSubmit={(e) => {
         e.preventDefault();
         send(draft);
@@ -238,15 +254,15 @@ function AskBox({ onAsked }: Readonly<{ onAsked: () => void }>) {
         onKeyDown={onKeyDown}
         aria-label={t("feed.askPlaceholder")}
         placeholder={t("floating.askPlaceholder")}
-        className="min-w-0 flex-1 bg-transparent text-[15px] text-foreground outline-none placeholder:text-muted-foreground"
+        className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
       />
       <button
         type="submit"
         aria-label={t("floating.send")}
         disabled={busy || !draft.trim()}
-        className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground transition-opacity disabled:opacity-60"
+        className="grid size-6 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground transition-opacity disabled:opacity-60"
       >
-        {busy ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
+        {busy ? <Loader2 className="size-3.5 animate-spin" /> : <ArrowUp className="size-3.5" />}
       </button>
     </form>
   );
@@ -310,7 +326,7 @@ export function MeetingFloatingWindow() {
 
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="flex shrink-0 items-start gap-2 px-4 pt-5">
-          <div role="tablist" aria-label={t("floating.tabsLabel")} className="flex flex-1 self-stretch px-1.5">
+          <div role="tablist" aria-label={t("floating.tabsLabel")} className="flex flex-1 self-stretch">
             <TabButton active={tab === "notes"} label={t("floating.tabs.notes")} onClick={() => setTab("notes")} />
             <TabButton
               active={tab === "transcript"}
@@ -339,7 +355,7 @@ export function MeetingFloatingWindow() {
         <div className="flex min-h-0 flex-1 flex-col px-4 pb-5">
           <div className="min-h-0 flex-1 overflow-hidden rounded-lg bg-muted/50">
             {tab === "transcript" && <TranscriptPanel variant="floating" />}
-            {tab === "notes" && <TodosPanel />}
+            {tab === "notes" && <NotesPad />}
             {tab === "coach" && (
               <CoachFeed onSeek={setHighlightMs} askBar={false} emptyText={t("floating.coachEmpty")} />
             )}
@@ -347,12 +363,18 @@ export function MeetingFloatingWindow() {
         </div>
       </div>
 
-      <footer className="flex shrink-0 items-center gap-2 border-t p-4">
+      <footer className="flex shrink-0 items-center gap-2 border-t px-4 py-3">
+        {/* 暫停 wears the paused pill's orange; once paused, 繼續 is the blue
+            way back into the recording. */}
         <button
           type="button"
           onClick={toggleMeetingPause}
           disabled={!meetingActive}
-          className="flex h-10 shrink-0 items-center gap-2 rounded-[10px] bg-foreground/10 pr-4 pl-3.5 text-base font-medium text-foreground transition-colors hover:bg-foreground/15 disabled:opacity-50"
+          className={`flex h-8 shrink-0 items-center gap-1.5 rounded-lg pr-3 pl-2.5 text-sm font-medium transition-colors disabled:opacity-50 ${
+            paused
+              ? "bg-primary text-primary-foreground hover:bg-primary/90"
+              : "bg-warning text-warning-foreground hover:bg-warning/80"
+          }`}
         >
           {paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
           {paused ? t("titlebar.resume") : t("titlebar.pause")}
@@ -362,7 +384,7 @@ export function MeetingFloatingWindow() {
           type="button"
           onClick={() => void guarded(endMeeting)}
           disabled={!meetingActive || finalizing}
-          className="flex h-10 shrink-0 items-center gap-2 rounded-[10px] bg-recording/10 pr-4 pl-3.5 text-base font-medium text-recording transition-colors hover:bg-recording/15 disabled:opacity-60"
+          className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg pr-3 pl-2.5 text-sm font-medium text-recording bg-recording/10 transition-colors hover:bg-recording/15 disabled:opacity-60"
         >
           {finalizing ? <Loader2 className="size-3.5 animate-spin" /> : <Square className="size-3.5" />}
           {t("titlebar.end")}

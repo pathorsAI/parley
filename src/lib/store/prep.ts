@@ -7,6 +7,10 @@ import { log } from "../log";
 import { isMeetingActive } from "./meeting";
 import type { SliceCreator } from "./types";
 
+/** Default reminder lead: enough to wrap up and join, short enough to still
+ *  be on your mind. Changeable per draft. */
+export const DEFAULT_REMINDER_LEAD_MIN = 5;
+
 export interface PrepSlice {
   /** Meeting to-do / agenda checklist. */
   todos: TodoItem[];
@@ -17,6 +21,20 @@ export interface PrepSlice {
    *  falls back to its dated default ("會議 · …"). */
   meetingTitle: string;
   setMeetingTitle: (title: string) => void;
+  /** Free-form notes typed during the meeting (the floating window's 筆記). */
+  meetingNotes: string;
+  setMeetingNotes: (notes: string) => void;
+  /** When the drafted meeting starts (epoch ms), or null when it has no time.
+   *  A draft with a time is kept across restarts and reminds you before it. */
+  meetingAt: number | null;
+  setMeetingAt: (at: number | null) => void;
+  /** Minutes before `meetingAt` the reminder fires (0 = at the start). */
+  reminderLeadMin: number;
+  setReminderLeadMin: (min: number) => void;
+  /** The `meetingAt` whose reminder has already fired, so a reload or a
+   *  restart does not fire it twice. */
+  remindedFor: number | null;
+  setRemindedFor: (at: number | null) => void;
   /** The meeting-draft sheet is open: the prep below, filled in before
    *  recording ("新增會議草稿"). UI state only; not part of the draft itself. */
   draftOpen: boolean;
@@ -69,6 +87,9 @@ const CLEARED_PREP_SLICE = {
   meetingOrgShare: null,
   meetingContext: "",
   meetingTitle: "",
+  meetingNotes: "",
+  meetingAt: null,
+  remindedFor: null,
   meetingBatna: "",
   meetingTarget: "",
   meetingFloor: "",
@@ -79,6 +100,10 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
   todos: [],
   meetingContext: "",
   meetingTitle: "",
+  meetingNotes: "",
+  meetingAt: null,
+  reminderLeadMin: DEFAULT_REMINDER_LEAD_MIN,
+  remindedFor: null,
   draftOpen: false,
   setDraftOpen: (draftOpen) => set({ draftOpen }),
   meetingFolderId: null,
@@ -89,6 +114,10 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
 
   setMeetingContext: (text) => set({ meetingContext: text }),
   setMeetingTitle: (meetingTitle) => set({ meetingTitle }),
+  setMeetingNotes: (meetingNotes) => set({ meetingNotes }),
+  setMeetingAt: (meetingAt) => set({ meetingAt }),
+  setReminderLeadMin: (reminderLeadMin) => set({ reminderLeadMin }),
+  setRemindedFor: (remindedFor) => set({ remindedFor }),
   setMeetingOrgShare: (meetingOrgShare) => set({ meetingOrgShare }),
   setMeetingFolder: (meetingFolderId) => set({ meetingFolderId }),
   resetPrep: () =>

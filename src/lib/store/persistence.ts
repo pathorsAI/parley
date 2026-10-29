@@ -203,6 +203,44 @@ export function migratePersistedState(persisted: unknown, version: number): unkn
  * zustand-persist `merge`: backfill any settings fields missing from older
  * persisted state (runs after {@link migratePersistedState}). Exported for tests.
  */
+/** The prep a draft with a meeting time keeps across restarts — its reminder
+ *  has to survive the app being quit. A draft without a time stays per-session. */
+const SCHEDULED_DRAFT_KEYS = [
+  "meetingAt",
+  "reminderLeadMin",
+  "remindedFor",
+  "meetingTitle",
+  "meetingNotes",
+  "meetingContext",
+  "meetingBatna",
+  "meetingTarget",
+  "meetingFloor",
+  "todos",
+  "meetingFolderId",
+  "meetingOrgShare",
+] as const;
+
+type ScheduledDraft = Pick<ParleyState, (typeof SCHEDULED_DRAFT_KEYS)[number]>;
+
+/** The scheduled draft to persist, or null when the draft has no time. */
+export function scheduledDraft(state: ParleyState): ScheduledDraft | null {
+  if (state.meetingAt == null) return null;
+  const out: Partial<ScheduledDraft> = {};
+  for (const k of SCHEDULED_DRAFT_KEYS) (out as Record<string, unknown>)[k] = state[k];
+  return out as ScheduledDraft;
+}
+
+/** A persisted scheduled draft, if it is one (anything else is dropped). */
+function restoredDraft(persisted: unknown): Partial<ScheduledDraft> {
+  const d = (persisted as { draft?: Partial<ScheduledDraft> | null } | undefined)?.draft;
+  if (!d || typeof d.meetingAt !== "number") return {};
+  const out: Partial<ScheduledDraft> = {};
+  for (const k of SCHEDULED_DRAFT_KEYS) {
+    if (d[k] !== undefined) (out as Record<string, unknown>)[k] = d[k];
+  }
+  return out;
+}
+
 export function mergePersistedState(persisted: unknown, current: ParleyState): ParleyState {
   const persistedSettings =
     (persisted as { settings?: Partial<Settings> & { voiceTypingPolish?: unknown } } | undefined)
@@ -234,6 +272,7 @@ export function mergePersistedState(persisted: unknown, current: ParleyState): P
 
   return {
     ...current,
+    ...restoredDraft(persisted),
     settings: {
       ...DEFAULT_SETTINGS,
       ...p,
@@ -282,7 +321,12 @@ export const PERSIST_OPTIONS = {
   version: PERSIST_VERSION,
   migrate: migratePersistedState,
   // Persist settings + the cloud sign-in — transcript/eval state is per-session.
-  partialize: (state: ParleyState) => ({ settings: state.settings, cloudAuth: state.cloudAuth }),
+  // A draft with a meeting time rides along so its reminder survives a restart.
+  partialize: (state: ParleyState) => ({
+    settings: state.settings,
+    cloudAuth: state.cloudAuth,
+    draft: scheduledDraft(state),
+  }),
   // Backfill any settings fields missing from older persisted state.
   merge: mergePersistedState,
 };

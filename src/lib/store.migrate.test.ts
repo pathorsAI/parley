@@ -149,3 +149,23 @@ describe("voice typing polish style migration", () => {
     expect(mergePersistedState(undefined, current()).settings.voiceTypingPolishStyle).toBe("tidy");
   });
 });
+
+describe("scheduled meeting draft", () => {
+  it("rides along with settings only while it has a time", async () => {
+    const { scheduledDraft } = await import("./store/persistence");
+    expect(scheduledDraft({ ...current(), meetingAt: null })).toBeNull();
+    const at = Date.UTC(2026, 9, 30, 6, 0);
+    const saved = scheduledDraft({ ...current(), meetingAt: at, meetingTitle: "週會", meetingContext: "名單" });
+    expect(saved).toMatchObject({ meetingAt: at, meetingTitle: "週會", meetingContext: "名單" });
+    // ...and comes back on the next launch.
+    const restored = mergePersistedState({ settings: {}, draft: saved }, current());
+    expect(restored.meetingAt).toBe(at);
+    expect(restored.meetingTitle).toBe("週會");
+    expect(restored.meetingContext).toBe("名單");
+  });
+
+  it("ignores a persisted draft without a time", () => {
+    const restored = mergePersistedState({ settings: {}, draft: { meetingTitle: "x" } }, current());
+    expect(restored.meetingTitle).toBe(current().meetingTitle);
+  });
+});

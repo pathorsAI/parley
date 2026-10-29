@@ -185,6 +185,18 @@ export interface LiveMeetingSnapshot {
 /** Stopped meetings whose recording is still being encoded and saved. */
 export const liveSaves = new PendingSaves<LiveMeetingSnapshot>();
 
+/**
+ * The meeting's context as saved: the prepared context, then the notes typed
+ * during the meeting under a heading — so the report and every later analysis
+ * read them along with the context. Pure; exported for testing.
+ */
+export function contextWithNotes(context: string, notes: string, heading: string): string {
+  const n = notes.trim();
+  if (!n) return context;
+  const c = context.trim();
+  return c ? `${c}\n\n${heading}\n${n}` : `${heading}\n${n}`;
+}
+
 /** Snapshot the live meeting the store shows now (null when it has no id). */
 export function snapshotLiveMeeting(): LiveMeetingSnapshot | null {
   const s = useStore.getState();
@@ -192,7 +204,11 @@ export function snapshotLiveMeeting(): LiveMeetingSnapshot | null {
   return {
     id: s.liveMeetingId,
     createdAt: s.meetingStartedAt ?? Date.now(),
-    analysis: snapshotAnalysis(),
+    analysis: (() => {
+      const a = snapshotAnalysis();
+      const heading = translate(s.settings.language, "floating.notesHeading");
+      return { ...a, meetingContext: contextWithNotes(a.meetingContext, s.meetingNotes, heading) };
+    })(),
     transcriptionDropped: s.transcriptionDropped,
     micSessionRateHz: s.micSessionRateHz,
     save: resolveMeetingSave(),
