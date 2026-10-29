@@ -6,7 +6,7 @@ import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { DestinationField } from "./DestinationSheet";
-import { FieldHint, FieldLabel, FieldPanel, FORM_INPUT_CLASS, FormSection } from "./FormSection";
+import { Field, FieldHint, FieldTitle, FORM_INPUT_CLASS, FormSection } from "./FormSection";
 import { MeetingContextField } from "./MeetingContextField";
 import { MeetingTimePicker, defaultMeetingTime } from "./MeetingTimePicker";
 import { TodoAddForm, TodoRow } from "./sidebar/TodosPanel";
@@ -42,8 +42,8 @@ function MeetingWhenFields() {
 
   return (
     <>
-      <FieldPanel>
-        <FieldLabel label={t("floating.titleLabel")} htmlFor="draft-title" />
+      <Field>
+        <FieldTitle label={t("floating.titleLabel")} htmlFor="draft-title" />
         <input
           id="draft-title"
           value={title}
@@ -52,9 +52,9 @@ function MeetingWhenFields() {
           className={FORM_INPUT_CLASS}
         />
         <FieldHint>{t("draft.titleHint")}</FieldHint>
-      </FieldPanel>
-      <FieldPanel>
-        <FieldLabel label={t("draft.when")} />
+      </Field>
+      <Field>
+        <FieldTitle label={t("draft.when")} />
         {meetingAt == null ? (
           <button
             type="button"
@@ -98,7 +98,7 @@ function MeetingWhenFields() {
           </>
         )}
         <FieldHint>{meetingAt == null ? t("draft.whenHint") : t("draft.whenSet")}</FieldHint>
-      </FieldPanel>
+      </Field>
     </>
   );
 }
@@ -212,8 +212,8 @@ export function MeetingDraftSheet() {
             label={t("draft.section.filing")}
             note={t("draft.section.filingNote")}
           >
-            <FieldPanel>
-              <FieldLabel label={t("dest.title.save")} />
+            <Field>
+              <FieldTitle label={t("dest.title.save")} />
               <DestinationField
                 gateOnSync
                 verb="save"
@@ -223,7 +223,7 @@ export function MeetingDraftSheet() {
                 fresh={fresh}
                 onChange={pickDestination}
               />
-            </FieldPanel>
+            </Field>
           </FormSection>
 
           <FormSection
@@ -240,8 +240,8 @@ export function MeetingDraftSheet() {
             note={t("draft.section.prepNote")}
           >
             <MeetingContextField form rows={4} />
-            <FieldPanel>
-              <FieldLabel label={t("draft.agenda")} />
+            <Field>
+              <FieldTitle label={t("draft.agenda")} />
               {todos.length > 0 && (
                 <div className="-mx-1.5 flex flex-col gap-0.5">
                   {todos.map((todo) => (
@@ -251,7 +251,7 @@ export function MeetingDraftSheet() {
               )}
               <TodoAddForm bare />
               {todos.length === 0 && <FieldHint>{t("todos.empty")}</FieldHint>}
-            </FieldPanel>
+            </Field>
           </FormSection>
         </div>
       </SheetContent>

@@ -3,9 +3,10 @@ import { cn } from "@/lib/utils";
 
 /**
  * The form layout onboarding set: a section is a soft card headed by a pill
- * (icon + name) with a one-line note opposite, holding field panels; a panel
- * is one field — small grey label, the control, and an 11px hint under it.
- * Used by onboarding's model step and the meeting draft.
+ * (icon + name) with a one-line note opposite. Inside it, fields are either
+ * plain — a {@link FieldTitle}, the control, an 11px hint, spaced by gap only
+ * (onboarding's context step, the meeting draft) — or each on its own
+ * {@link FieldPanel} (onboarding's model step).
  */
 export function FormSection({
   icon,
@@ -14,7 +15,7 @@ export function FormSection({
   children,
 }: Readonly<{ icon: ReactNode; label: string; note?: string; children: ReactNode }>) {
   return (
-    <section className="flex flex-col gap-3 rounded-[8px] bg-linear-to-b from-[#f5f5f5] to-[#fafafa] p-4 dark:from-muted dark:to-muted/60">
+    <section className="flex flex-col gap-4 rounded-[8px] bg-linear-to-b from-[#f5f5f5] to-[#fafafa] p-4 dark:from-muted dark:to-muted/60">
       <div className="flex items-center justify-between gap-3">
         <span className="inline-flex w-fit shrink-0 items-center gap-2 rounded-full bg-white/70 px-3 py-1 text-sm leading-[1.3] dark:bg-white/10">
           {icon}
@@ -24,12 +25,27 @@ export function FormSection({
           <span className="text-right text-xs leading-relaxed text-[#333]/70 dark:text-muted-foreground">{note}</span>
         )}
       </div>
-      {children}
+      <div className="flex flex-col gap-5">{children}</div>
     </section>
   );
 }
 
-/** One field inside a {@link FormSection}. */
+/** One plain field: title, control and hint, no card of its own. */
+export function Field({ children }: Readonly<{ children: ReactNode }>) {
+  return <div className="flex flex-col gap-1.5">{children}</div>;
+}
+
+/** A plain field's title, as onboarding's context step sets it. */
+export function FieldTitle({ label, htmlFor }: Readonly<{ label: string; htmlFor?: string }>) {
+  const Tag = htmlFor ? "label" : "span";
+  return (
+    <Tag htmlFor={htmlFor} className="text-sm text-[#333] dark:text-foreground">
+      {label}
+    </Tag>
+  );
+}
+
+/** One field on its own panel inside a {@link FormSection}. */
 export function FieldPanel({ className, children }: Readonly<{ className?: string; children: ReactNode }>) {
   return <div className={cn("flex flex-col gap-2 rounded-[10px] bg-white/50 p-3 dark:bg-white/5", className)}>{children}</div>;
 }

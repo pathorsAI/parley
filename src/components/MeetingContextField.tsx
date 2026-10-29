@@ -3,7 +3,7 @@ import { useI18n } from "../i18n";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { FieldHint, FieldLabel, FieldPanel, FORM_INPUT_CLASS } from "./FormSection";
+import { Field, FieldHint, FieldTitle, FORM_INPUT_CLASS } from "./FormSection";
 
 /**
  * Per-meeting context, bound to the store. Shown wherever a meeting is set up
@@ -42,8 +42,8 @@ export function MeetingContextField({
   );
   if (form) {
     return (
-      <FieldPanel>
-        <FieldLabel label={t("draft.context")} htmlFor="draft-context" />
+      <Field>
+        <FieldTitle label={t("draft.context")} htmlFor="draft-context" />
         <textarea
           id="draft-context"
           rows={rows}
@@ -54,7 +54,7 @@ export function MeetingContextField({
         />
         <FieldHint>{t("analyze.contextHint")}</FieldHint>
         {negotiation}
-      </FieldPanel>
+      </Field>
     );
   }
   return (
