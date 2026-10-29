@@ -139,7 +139,7 @@ function NotesPad() {
       onChange={(e) => setNotes(e.target.value)}
       placeholder={t("floating.notesPlaceholder")}
       aria-label={t("floating.tabs.notes")}
-      className="block size-full resize-none bg-transparent p-5 text-base leading-6 text-foreground outline-none placeholder:text-muted-foreground"
+      className="block size-full resize-none bg-transparent p-5 text-sm leading-[22px] text-foreground outline-none placeholder:text-muted-foreground"
     />
   );
 }
