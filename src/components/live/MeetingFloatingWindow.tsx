@@ -353,7 +353,13 @@ export function MeetingFloatingWindow() {
           </button>
         </div>
         <div className="flex min-h-0 flex-1 flex-col px-4 pb-5">
-          <div className="min-h-0 flex-1 overflow-hidden rounded-lg bg-muted/50">
+          {/* 筆記 sits flush on the panel's left edge, so while it is the raised
+              tab that corner stays square and the two read as one surface. */}
+          <div
+            className={`min-h-0 flex-1 overflow-hidden rounded-lg bg-muted/50 ${
+              tab === "notes" ? "rounded-tl-none" : ""
+            }`}
+          >
             {tab === "transcript" && <TranscriptPanel variant="floating" />}
             {tab === "notes" && <NotesPad />}
             {tab === "coach" && (
