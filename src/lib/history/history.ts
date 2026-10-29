@@ -7,7 +7,7 @@
 // in the main window, so opening one is a plain `loadHistoryEntry` call rather
 // than a `history://open` message from a second window.
 
-import { useStore, hasSpokenSegment, isMeetingActive } from "../store";
+import { useStore, hasSpokenSegment, holdsLiveSession, isMeetingActive } from "../store";
 import { notify } from "../notify";
 import { writeStudyCache } from "./studyCache";
 import { isTauri } from "../tauriEvents";
@@ -502,7 +502,9 @@ export async function saveLiveToHistory(
   try {
     const now = useStore.getState();
     const showsThisMeeting = now.liveMeetingId === entry.id || snap.orphan;
-    if (!isMeetingActive(now.meetingStatus) && now.appMode === "live" && showsThisMeeting) {
+    // Opens unless the user went on to something of their own meanwhile (a
+    // recording, or a new meeting); the main window may be anywhere else.
+    if (!isMeetingActive(now.meetingStatus) && now.appMode !== "study" && showsThisMeeting) {
       now.setStudyTab("report");
       await loadHistoryEntry(entry.id).catch((e) =>
         log.warn("history: auto-open after stop failed", { id: entry.id, error: String(e) }),
@@ -637,7 +639,7 @@ async function applyPostSaveDiarization(entry: HistoryEntry): Promise<void> {
   const st = useStore.getState();
   const showsThisMeeting =
     st.loadedHistoryId === entry.id ||
-    (st.appMode === "live" && st.loadedHistoryId === null && st.liveMeetingId === entry.id);
+    (holdsLiveSession(st) && st.liveMeetingId === entry.id);
   if (showsThisMeeting) {
     const segments = applyCorrectedSpeakers(st.segments, result.segments);
     // `speakerNames` deliberately untouched — see applyCorrectedSpeakers.
@@ -1008,8 +1010,10 @@ export async function setEntryFolder(id: string, folderId: string | null): Promi
  */
 export function leaveStoppedCockpit(reasonKey: "meeting.notSaved.tooShort" | "meeting.notSaved.noTranscript"): void {
   const s = useStore.getState();
-  if (s.appMode !== "live" || isMeetingActive(s.meetingStatus)) return;
-  s.openHome();
+  if (isMeetingActive(s.meetingStatus)) return;
+  // Only the retired live route is a dead end to leave; elsewhere the user
+  // stays put and just hears why there is no report.
+  if (s.appMode === "live") s.openHome();
   notify.message(translate(s.settings.language, reasonKey));
 }
 

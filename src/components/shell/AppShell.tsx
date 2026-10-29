@@ -63,7 +63,14 @@ export function AppShell() {
   useCommandScope("main");
   useNavShortcuts();
 
-  const shellFacts = { meetingActive, liveRoute: appMode === "live", collapsed, peek };
+  // The meeting runs in its own window now, so it takes the tree only on the
+  // retired live cockpit route (reachable transiently between stop and save).
+  const shellFacts = {
+    meetingActive: meetingActive && appMode === "live",
+    liveRoute: appMode === "live",
+    collapsed,
+    peek,
+  };
   const hold = cockpitHold(shellFacts);
   const treeVisible = shellTreeVisible(shellFacts);
 
@@ -96,7 +103,7 @@ export function AppShell() {
             stays absent only while a meeting is RUNNING — see below. The
             cockpit hold keeps it: the meeting is over, and a long save must
             not lock the user onto the cockpit. */}
-        {!meetingActive && <CommandPalette tree={tree} />}
+        <CommandPalette tree={tree} />
         {/* Not gated on the meeting, unlike ⌘K: a question already asked has to
             stay answerable, or the caller awaiting it never hears back. */}
         <FolderDeleteConfirm tree={tree} />

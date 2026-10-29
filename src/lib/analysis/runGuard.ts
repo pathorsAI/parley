@@ -1,4 +1,4 @@
-import { useStore } from "../store";
+import { holdsLiveSession, useStore } from "../store";
 import { log } from "../log";
 import { runRegistry, type StudyStage } from "./runRegistry";
 import type { StageOutputPatch } from "../history/history";
@@ -80,7 +80,7 @@ type StoreState = ReturnType<typeof useStore.getState>;
 function recordSession(s: StoreState): void {
   // A live meeting leaves the previous replay session in place but clears
   // loadedHistoryId — that is not this session's entry changing.
-  if (!s.replay || s.appMode === "live") return;
+  if (!s.replay || holdsLiveSession(s)) return;
   runRegistry.recordSession(s.replay.id, {
     entryId: s.loadedHistoryId,
     readOnly: s.replayReadOnly,
@@ -94,6 +94,7 @@ function watchSessions(): void {
     if (
       s.replay !== p.replay ||
       s.appMode !== p.appMode ||
+      s.meetingStatus !== p.meetingStatus ||
       s.loadedHistoryId !== p.loadedHistoryId ||
       s.replayReadOnly !== p.replayReadOnly
     ) {
@@ -113,7 +114,7 @@ function keyOf(session: string | null): string {
  *  while leaving `replay` set, and a replay pass must not write into that. */
 function currentSession(): string | null {
   const s = useStore.getState();
-  return s.appMode === "live" ? null : s.replay?.id ?? null;
+  return holdsLiveSession(s) ? null : s.replay?.id ?? null;
 }
 
 export function makeRunGuard(stage: StudyStage): RunGuard {

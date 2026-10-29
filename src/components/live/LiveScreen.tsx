@@ -9,13 +9,8 @@ import {
 } from "@/components/ui/resizable";
 import { useStore } from "../../lib/store";
 import { isWindows } from "../../lib/platform";
-import {
-  endSilentMeeting,
-  keepRecording,
-  SILENCE_GRACE_MS,
-  SILENCE_PROMPT_MS,
-} from "../../lib/meeting/silenceGuard";
-import { log } from "../../lib/log";
+import { SILENCE_GRACE_MS, SILENCE_PROMPT_MS } from "../../lib/meeting/silenceGuard";
+import { meetingCommand } from "../../lib/meeting/meetingWindow";
 import { useI18n } from "../../i18n";
 import { MeetingView } from "../MeetingView";
 import { CoachFeed } from "./CoachFeed";
@@ -139,18 +134,14 @@ function SilencePromptBanner() {
           seconds: String(seconds),
         })}
       </span>
-      <Button size="sm" variant="outline" className="h-6 px-2 text-xs" onClick={keepRecording}>
+      <Button size="sm" variant="outline" className="h-6 px-2 text-xs" onClick={() => meetingCommand("keepRecording")}>
         {t("meeting.silence.keep")}
       </Button>
       <Button
         size="sm"
         variant="destructive"
         className="h-6 px-2 text-xs"
-        onClick={() =>
-          void endSilentMeeting("confirmed").catch((error) =>
-            log.error("meeting: silence prompt end failed", { error: String(error) }),
-          )
-        }
+        onClick={() => meetingCommand("endSilent")}
       >
         {t("meeting.silence.end")}
       </Button>

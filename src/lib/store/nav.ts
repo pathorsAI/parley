@@ -1,7 +1,6 @@
 // Shell navigation: which route is on screen, what the library shows, and the
 // transcript moment the UI should jump to.
 
-import { isMeetingActive } from "./meeting";
 import type { AppMode, LibrarySelection, SliceCreator } from "./types";
 
 export interface NavSlice {
@@ -36,12 +35,11 @@ export const createNavSlice: SliceCreator<NavSlice> = (set) => ({
   librarySelection: { kind: "personal", node: { kind: "unassigned" } },
   highlightMs: null,
 
-  openHome: () =>
-    set((s) => (isMeetingActive(s.meetingStatus) ? {} : { appMode: "home" })),
-  openLibrary: (librarySelection) =>
-    set((s) =>
-      isMeetingActive(s.meetingStatus) ? {} : { appMode: "library", librarySelection }
-    ),
+  // Open during a meeting too: it runs in its own window, and these routes
+  // only list things. Opening a recording is what a meeting holds back (it
+  // would replace the live transcript) — see history/open.ts.
+  openHome: () => set({ appMode: "home" }),
+  openLibrary: (librarySelection) => set({ appMode: "library", librarySelection }),
   showReplay: () => set((s) => (s.replay ? { appMode: "study" } : {})),
   setHighlightMs: (ms) => set({ highlightMs: ms }),
 });

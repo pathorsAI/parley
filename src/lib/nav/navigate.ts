@@ -1,4 +1,5 @@
 import { loadHistoryEntry } from "../history/history";
+import { refuseWhileRecording } from "../history/open";
 import { isMeetingActive, useStore, type LibrarySelection } from "../store";
 import { log } from "../log";
 import { listenIfTauri, type UnlistenFn } from "../ipc/events";
@@ -85,7 +86,7 @@ async function applyLocation(location: Location): Promise<NavOutcome> {
   const store = useStore.getState();
 
   if (location.kind === "entry") {
-    if (isMeetingActive(store.meetingStatus)) return { status: "refused" };
+    if (refuseWhileRecording()) return { status: "refused" };
     try {
       // Switches the app to the study route itself.
       await loadHistoryEntry(location.id);

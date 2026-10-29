@@ -5,7 +5,7 @@ import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
 import { useStore } from "../../lib/store";
 import { useStickToBottom } from "../../lib/useStickToBottom";
-import { runAnalysis } from "../../lib/analysis/engine";
+import { meetingCommand } from "../../lib/meeting/meetingWindow";
 import { useI18n } from "../../i18n";
 import { log } from "../../lib/log";
 import { FindingRow } from "../analysis/FindingRow";
@@ -198,11 +198,7 @@ export function CoachFeed({
             variant="outline"
             className="h-7 rounded-r-none border-r-0"
             disabled={running}
-            onClick={() =>
-              runAnalysis({ mode: "live" }).catch((e) =>
-                log.error("analysis: live run failed", { error: String(e) })
-              )
-            }
+            onClick={() => meetingCommand("analyze")}
           >
             {running ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
             {t("feed.analyze")}

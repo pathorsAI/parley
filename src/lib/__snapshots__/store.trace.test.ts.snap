@@ -205,7 +205,6 @@ exports[`store action trace > every action changes exactly what it did before, a
   },
   {
     "changed": {
-      "appMode": "live",
       "liveMeetingId": "uuid-4",
       "meetingStartedAt": 1700000000000,
       "meetingStatus": "recording",
@@ -223,7 +222,9 @@ exports[`store action trace > every action changes exactly what it did before, a
     "step": "openHome during meeting",
   },
   {
-    "changed": {},
+    "changed": {
+      "appMode": "library",
+    },
     "persistWrites": 1,
     "persisted": "unchanged",
     "speakerNameWrites": [],
@@ -2087,7 +2088,6 @@ checklist|流程遺漏|Given the meeting context provided, identify important to
   },
   {
     "changed": {
-      "appMode": "live",
       "filledPauseCount": 0,
       "filledPauseCounted": {},
       "liveMeetingId": "uuid-7",
@@ -2105,7 +2105,6 @@ checklist|流程遺漏|Given the meeting context provided, identify important to
   },
   {
     "changed": {
-      "appMode": "home",
       "liveMeetingId": null,
       "meetingStartedAt": null,
       "meetingStatus": "idle",

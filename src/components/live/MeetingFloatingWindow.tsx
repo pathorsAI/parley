@@ -18,7 +18,7 @@ import {
 import { useStore } from "../../lib/store";
 import { COMPACT_BELOW, dragWindowFrom, setMeetingPill, setPillAnswerOpen } from "../../lib/meeting/floatingWindow";
 import { useMeetingElapsed } from "../../lib/meeting/elapsed";
-import { cancelActiveMeeting, endMeeting, toggleMeetingPause } from "../../lib/meeting/controls";
+import { meetingCommand } from "../../lib/meeting/meetingWindow";
 import { useCommandShortcut } from "../../lib/commands/bind";
 import { isTauri } from "../../lib/platform";
 import { log } from "../../lib/log";
@@ -518,17 +518,19 @@ export function MeetingFloatingWindow() {
     useCoachAsk.getState().reset();
   }, [liveMeetingId]);
 
-  useCommandShortcut("meeting.togglePause", toggleMeetingPause, { enabled: meetingActive });
+  const togglePause = () => meetingCommand("togglePause");
+  useCommandShortcut("meeting.togglePause", togglePause, { enabled: meetingActive });
 
-  async function guarded(fn: () => Promise<void>) {
+  /** End / cancel run in the main window (it records); send each once. */
+  function once(cmd: "end" | "cancel") {
     if (busyRef.current) return;
     busyRef.current = true;
-    try {
-      await fn();
-    } finally {
-      busyRef.current = false;
-    }
+    meetingCommand(cmd);
   }
+  // A new meeting in the same window can be ended again.
+  useEffect(() => {
+    busyRef.current = false;
+  }, [liveMeetingId]);
 
   /** Resize first, then swap the view: the window is measured (on the way
    *  in) before anything shrinks it, and the full layout never renders into
@@ -620,7 +622,7 @@ export function MeetingFloatingWindow() {
             way back into the recording. */}
         <button
           type="button"
-          onClick={toggleMeetingPause}
+          onClick={togglePause}
           disabled={!meetingActive}
           className={`flex h-8 shrink-0 items-center gap-1.5 rounded-lg pr-3 pl-2.5 text-sm font-medium transition-colors disabled:opacity-50 ${
             paused
@@ -634,7 +636,7 @@ export function MeetingFloatingWindow() {
         <AskBox onAsked={() => setTab("coach")} />
         <button
           type="button"
-          onClick={() => void guarded(endMeeting)}
+          onClick={() => once("end")}
           disabled={!meetingActive || finalizing}
           className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg pr-3 pl-2.5 text-sm font-medium text-recording bg-recording/10 transition-colors hover:bg-recording/15 disabled:opacity-60"
         >
@@ -664,7 +666,7 @@ export function MeetingFloatingWindow() {
           onKeep={() => setConfirmCancel(false)}
           onConfirm={() => {
             setConfirmCancel(false);
-            void guarded(cancelActiveMeeting);
+            once("cancel");
           }}
         />
       )}

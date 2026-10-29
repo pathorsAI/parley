@@ -54,6 +54,12 @@ async function readyToStart(): Promise<boolean> {
   const t = (key: TranslationKey) => translate(s.settings.language, key);
   if (isMeetingActive(s.meetingStatus)) {
     log.info("meeting: start pressed while a meeting is recording");
+    // Its own window holds it: bring that up beside the explanation.
+    if (isTauri()) {
+      void import("./meetingWindow")
+        .then((m) => m.focusMeetingWindow())
+        .catch((error) => log.warn("meeting: focusing the meeting window failed", { error: String(error) }));
+    }
     toast.message(t("meeting.start.alreadyRecording"), {
       action: { label: t("meeting.start.endAndStartNew"), onClick: () => void endAndStartNew() },
     });

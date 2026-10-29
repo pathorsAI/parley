@@ -32,7 +32,8 @@ import { leaveRecordingTo } from "../lib/nav/navigate";
 import type { Settings as AppSettings } from "../lib/types";
 import { log } from "../lib/log";
 import { toast } from "sonner";
-import { isMac } from "../lib/platform";
+import { isMac, isTauri } from "../lib/platform";
+import { focusMeetingWindow } from "../lib/meeting/meetingWindow";
 import { beginMeeting } from "../lib/meeting/start";
 import { cancelActiveMeeting, endMeeting, toggleMeetingPause } from "../lib/meeting/controls";
 import { useCommandShortcut } from "../lib/commands/bind";
@@ -673,6 +674,12 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const paused = status === "paused";
   // Recording OR paused: the meeting owns the session (recorder controls show).
   const meetingActive = recording || paused;
+  // In the desktop app a meeting lives in its own floating window
+  // (meetingWindow.ts) and this title bar keeps its everyday look. The
+  // recorder cluster only stands in where there is no second window (the
+  // browser dev build).
+  const meetingHere = meetingActive && !isTauri();
+  const meetingElsewhere = (meetingActive || isFinalizingMeeting) && isTauri();
   const studyMode = appMode === "study";
 
   // Vitals timer (top-left): elapsed RECORDED time, ticking 1 Hz.
@@ -694,6 +701,11 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
 
   /** Start = record right now, riding whatever prep draft is already set. */
   function start() {
+    // One meeting at a time: while it runs, 直接錄音 brings its window up.
+    if (meetingElsewhere) {
+      void focusMeetingWindow();
+      return;
+    }
     void guarded(() => beginMeeting());
   }
 
@@ -720,12 +732,12 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   // ("reload"), so every state where the button is absent or disabled has to be
   // a genuine no-op rather than a second start racing the first.
   useCommandShortcut("meeting.start", start, {
-    enabled: appMode !== "study" && !meetingActive && !isFinalizingMeeting && !toggleBusy,
+    enabled: appMode !== "study" && !meetingHere && !(isFinalizingMeeting && !isTauri()) && !toggleBusy,
   });
   // Deliberately no ⌘-anything for End. Ending is not undoable, and someone
   // reaching for a refresh must not be able to stop a recording — so it stays a
   // button you have to look at. Do not "complete the symmetry" here.
-  useCommandShortcut("meeting.togglePause", togglePause, { enabled: meetingActive });
+  useCommandShortcut("meeting.togglePause", togglePause, { enabled: meetingHere });
 
   /** Cancel (from the confirm dialog): discard everything, back to idle. */
   async function cancel() {
@@ -770,7 +782,7 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
         {/* A loaded recording stays reachable while you look at something else.
             Navigating the tree away from it used to leave nothing on screen
             pointing back — the only route out was 離開, which discards it. */}
-        {!studyMode && !meetingActive && replayName && (
+        {!studyMode && !meetingHere && replayName && (
           <button
             type="button"
             onClick={showReplay}
@@ -781,7 +793,7 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
             <span className="max-w-40 truncate">{replayName}</span>
           </button>
         )}
-        {meetingActive && (
+        {meetingHere && (
           <>
             {/* ONE recording pill: dot + elapsed. Red while recording; the
                 warning family while paused, so a paused meeting doesn't read
@@ -835,9 +847,9 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
         <MicChip />
         <PrimaryAction
           mode={appMode}
-          meetingActive={meetingActive}
+          meetingActive={meetingHere}
           paused={paused}
-          finalizing={isFinalizingMeeting}
+          finalizing={isFinalizingMeeting && !isTauri()}
           busy={toggleBusy}
           hasPrepDraft={hasPrepDraft}
           onTogglePause={togglePause}
@@ -850,7 +862,7 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
         {/* The "prepare first" door, beside the "record now" one. Offered only
             where 直接錄音 is: the study tense loads the open recording into the
             same prep fields, so a draft there would edit that recording. */}
-        {!studyMode && !meetingActive && !isFinalizingMeeting && (
+        {!studyMode && !meetingHere && !(isFinalizingMeeting && !isTauri()) && (
           <Button
             size="sm"
             variant="outline"
@@ -877,13 +889,13 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
             doing nothing. The wrapping span exists because a disabled button
             has pointer-events:none — the reason-tooltip must live on a
             hoverable parent or it never shows. */}
-        <span title={meetingActive ? t("titlebar.lockedWhileMeeting") : t("titlebar.history")}>
+        <span title={meetingHere ? t("titlebar.lockedWhileMeeting") : t("titlebar.history")}>
           <Button
             size="icon"
             variant="ghost"
             className="h-8 w-8"
             aria-label={t("titlebar.history")}
-            disabled={meetingActive}
+            disabled={meetingHere}
             onClick={() => openLibrary({ kind: "personal", node: { kind: "unassigned" } })}
           >
             <History className="size-4" />

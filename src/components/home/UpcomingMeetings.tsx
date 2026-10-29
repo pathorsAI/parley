@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { CalendarClock, Folder, Plus } from "lucide-react";
 import { toast } from "sonner";
-import { useStore } from "../../lib/store";
+import { isMeetingActive, useStore } from "../../lib/store";
 import { sortDrafts, type MeetingDraft } from "../../lib/store/prep";
 import { beginMeeting } from "../../lib/meeting/start";
 import { startOfDay, untilStart } from "../../lib/meeting/timeSlots";
@@ -19,7 +19,12 @@ function leadLabel(d: MeetingDraft, now: number, locale: string, t: ReturnType<t
 
 /** Record a saved draft: it becomes the prep, then the meeting starts. */
 function startDraft(id: string) {
-  if (!useStore.getState().takeDraft(id)) return;
+  // Refused while a meeting records; beginMeeting then says so and brings
+  // that meeting's window up.
+  if (!useStore.getState().takeDraft(id)) {
+    if (isMeetingActive(useStore.getState().meetingStatus)) void beginMeeting();
+    return;
+  }
   beginMeeting().catch((e) => {
     log.error("home: start from draft failed", { error: String(e) });
     toast.error(String(e instanceof Error ? e.message : e));

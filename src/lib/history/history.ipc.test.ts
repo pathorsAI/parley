@@ -363,7 +363,8 @@ describe("live save race", () => {
     const s = useStore.getState();
     expect(s.liveMeetingId).toBe(b);
     expect(s.meetingStatus).toBe("recording");
-    expect(s.appMode).toBe("live");
+    // The meeting runs in its own window; the main window stays where it was.
+    expect(s.appMode).toBe("home");
     expect(history.liveSaves.hasPending()).toBe(false);
   });
 
@@ -382,7 +383,7 @@ describe("live save race", () => {
     fire("meeting://recording-discarded", { meetingId: a, startedAtMs: 1_000 });
     await flush();
     expect(history.liveSaves.hasPending()).toBe(false);
-    expect(useStore.getState().appMode).toBe("live");
+    expect(useStore.getState().appMode).toBe("home");
     expect(calls.filter((c) => (c as unknown[])[0] === "toast.message")).toEqual([]);
   });
 

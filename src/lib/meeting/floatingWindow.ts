@@ -4,7 +4,7 @@ import { log } from "../log";
 
 /** The floating meeting window's size (the Figma frame), in logical px. */
 export const FLOATING_SIZE = { width: 760, height: 858 } as const;
-/** The smallest the window OPENS at, on a cramped screen. */
+/** The smallest the meeting window OPENS at, on a cramped screen. */
 const FLOATING_MIN = { width: 420, height: 480 } as const;
 /** How small it may be dragged: below COMPACT it turns into the compact view. */
 const DRAG_MIN = { width: 300, height: 220 } as const;
@@ -41,92 +41,15 @@ export function floatingFrame(
   };
 }
 
-/** The startup repair has run (see repairMainWindow). */
-let repairedAtBoot = false;
-/** Where and how big the main window was before the meeting floated it. */
-let savedMain: Restore | null = null;
-
-const fitsMain = (r: { width: number; height: number }) =>
-  r.width >= MAIN_MIN.width && r.height >= MAIN_MIN.height;
-
-interface Restore {
-  width: number;
-  height: number;
-  x: number;
-  y: number;
-}
-
 /**
- * While a meeting runs the main window IS the floating window: it shrinks to
- * the frame's size, moves to the side of the screen and stays above the call.
- * When the meeting is over it goes back to where and how big it was.
- *
- * One window rather than a second one, so the live meeting state never has to
- * cross a window boundary — the store that records is the store that shows.
+ * The main window, at startup: undo anything a floating main window left
+ * behind (see repairMainWindow). The meeting floats in its own window now
+ * (meetingWindow.ts), but builds before that floated the main window itself.
  */
-export function useFloatingMeetingWindow(on: boolean): void {
+export function useMainWindowRepair(): void {
   useEffect(() => {
-    if (!isTauri()) return;
-    if (!on) {
-      // Only at startup: when a meeting ends, the restore below is the one
-      // that puts the window back, and the two must not race.
-      if (!repairedAtBoot) {
-        repairedAtBoot = true;
-        void repairMainWindow();
-      }
-      return;
-    }
-    let cancelled = false;
-
-    const enter = (async () => {
-      const { getCurrentWindow, LogicalSize, LogicalPosition, currentMonitor } = await import(
-        "@tauri-apps/api/window"
-      );
-      const win = getCurrentWindow();
-      if (await win.isFullscreen()) await win.setFullscreen(false);
-      const scale = await win.scaleFactor();
-      const [size, pos] = await Promise.all([win.outerSize(), win.outerPosition()]);
-      const measured = { width: size.width / scale, height: size.height / scale, x: pos.x / scale, y: pos.y / scale };
-      // Only a main-window-sized window is worth going back to: re-entering
-      // while already floating (a reload mid-meeting) must not record the
-      // floating window — or the capsule — as the size to restore.
-      if (fitsMain(measured)) savedMain = measured;
-      if (cancelled) return;
-      const monitor = await currentMonitor();
-      // The work area leaves out the menu bar, Dock and taskbar.
-      const area = monitor?.workArea;
-      const frame = monitor && area
-        ? floatingFrame(
-            { width: area.size.width / monitor.scaleFactor, height: area.size.height / monitor.scaleFactor },
-            { x: area.position.x / monitor.scaleFactor, y: area.position.y / monitor.scaleFactor },
-          )
-        : floatingFrame({ width: FLOATING_SIZE.width + EDGE * 2, height: FLOATING_SIZE.height + EDGE * 3 });
-      await win.setMinSize(new LogicalSize(DRAG_MIN.width, DRAG_MIN.height));
-      await win.setSize(new LogicalSize(frame.width, frame.height));
-      await win.setPosition(new LogicalPosition(frame.x, frame.y));
-      await win.setAlwaysOnTop(true);
-      log.info("meeting: floating window on", frame);
-    })().catch((error) => log.warn("meeting: floating window failed", { error: String(error) }));
-
-    return () => {
-      cancelled = true;
-      void enter
-        .then(async () => {
-          const { getCurrentWindow, LogicalSize, LogicalPosition } = await import("@tauri-apps/api/window");
-          const win = getCurrentWindow();
-          await win.setAlwaysOnTop(false);
-          await win.setMinSize(new LogicalSize(MAIN_MIN.width, MAIN_MIN.height));
-          if (savedMain) {
-            await win.setSize(new LogicalSize(savedMain.width, savedMain.height));
-            await win.setPosition(new LogicalPosition(savedMain.x, savedMain.y));
-          } else {
-            await repairMainWindow();
-          }
-          log.info("meeting: floating window off");
-        })
-        .catch((error) => log.warn("meeting: leaving the floating window failed", { error: String(error) }));
-    };
-  }, [on]);
+    if (isTauri()) void repairMainWindow();
+  }, []);
 }
 
 /** The floating window's size before it collapsed into the capsule. */
@@ -187,12 +110,14 @@ export function dragWindowFrom(e: { button: number; target: EventTarget; detail:
     .catch((error) => log.warn("meeting: capsule drag failed", { error: String(error) }));
 }
 
+const fitsMain = (r: { width: number; height: number }) =>
+  r.width >= MAIN_MIN.width && r.height >= MAIN_MIN.height;
+
 /**
- * Put the main window back to being the main window when no meeting runs.
- * The floating window's restore lives in memory, so a page reload mid-meeting
- * (a crash, or a dev reload) lost it and left the app in a capsule-sized,
- * always-on-top window that could not be dragged back. Run once at startup
- * when no meeting is on; a no-op on a healthy window.
+ * Put the main window back to being the main window: not always on top, its
+ * 900 x 600 minimum, and a normal size if it is smaller than that. A build
+ * that floated the main window during meetings could leave it capsule-sized
+ * and pinned when a reload lost its restore. A no-op on a healthy window.
  */
 async function repairMainWindow(): Promise<void> {
   try {

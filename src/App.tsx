@@ -4,8 +4,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { exit } from "@tauri-apps/plugin-process";
 import { TitleBar } from "./components/TitleBar";
 import { AppShell } from "./components/shell/AppShell";
-import { MeetingFloatingWindow } from "./components/live/MeetingFloatingWindow";
-import { useFloatingMeetingWindow } from "./lib/meeting/floatingWindow";
+import { useMainWindowRepair } from "./lib/meeting/floatingWindow";
+import { initMeetingWindowHost } from "./lib/meeting/meetingWindow";
 import { Onboarding } from "./components/Onboarding";
 import { AnalysisErrorDialog } from "./components/AnalysisErrorDialog";
 import { ReleaseNotesDialog } from "./components/ReleaseNotesDialog";
@@ -239,6 +239,9 @@ const App = () => {
     const unSilenceGuard = initSilenceGuard();
     // Reminds you before a drafted meeting's time (main window only).
     const unMeetingReminder = initMeetingReminder();
+    // Opens the floating meeting window while a meeting records and keeps it
+    // mirrored; this window keeps recording (main window only).
+    const unMeetingWindow = initMeetingWindowHost();
     return () => {
       listeners.dispose();
       unTemplates();
@@ -250,6 +253,7 @@ const App = () => {
       unDictionarySync();
       unSilenceGuard();
       unMeetingReminder();
+      unMeetingWindow();
     };
   }, []);
 
@@ -436,12 +440,9 @@ const App = () => {
   // Drive the standalone "how to reply" window (Tauri); no-op in browser dev.
   useFindingSolutionHost();
 
-  // While a meeting records (and until its save opens the report) the window
-  // becomes the floating meeting window, then goes back to its old place.
-  const floating = useStore(
-    (s) => isMeetingActive(s.meetingStatus) || s.isFinalizingMeeting,
-  );
-  useFloatingMeetingWindow(floating);
+  // The meeting floats in its own window (initMeetingWindowHost, below); this
+  // one stays the whole app. Undo anything an older floating main window left.
+  useMainWindowRepair();
 
   return (
     <div
@@ -469,14 +470,8 @@ const App = () => {
           useFindingSolutionHost); in plain browser dev we fall back to the
           in-app overlay so the feature still works without multi-window. */}
       {!isTauri() && <FindingSolutionWindow />}
-      {floating ? (
-        <MeetingFloatingWindow />
-      ) : (
-        <>
-          <TitleBar fullscreen={fullscreen} />
-          <AppShell />
-        </>
-      )}
+      <TitleBar fullscreen={fullscreen} />
+      <AppShell />
       <DeliveryNudgeHost />
     </div>
   );

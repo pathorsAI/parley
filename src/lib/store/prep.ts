@@ -4,6 +4,8 @@
 import type { TodoItem } from "../types";
 import type { MeetingShare } from "../history/history";
 import { log } from "../log";
+import { notify } from "../notify";
+import { translate } from "../../i18n/messages";
 import { isMeetingActive } from "./meeting";
 import type { SliceCreator } from "./types";
 
@@ -174,7 +176,16 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
   drafts: [],
   editingDraftId: null,
   draftOpen: false,
-  setDraftOpen: (draftOpen) => set({ draftOpen }),
+  setDraftOpen: (draftOpen) =>
+    set((s) => {
+      // The sheet edits the prep fields, which belong to the live meeting
+      // while one runs: a new draft waits for it to end.
+      if (draftOpen && isMeetingActive(s.meetingStatus)) {
+        notify.message(translate(s.settings.language, "draft.lockedWhileRecording"));
+        return {};
+      }
+      return { draftOpen };
+    }),
   meetingFolderId: null,
   meetingOrgShare: null,
   meetingBatna: "",
@@ -228,7 +239,11 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
   editDraft: (id) =>
     set((s) => {
       const d = s.drafts.find((x) => x.id === id);
-      if (!d || isMeetingActive(s.meetingStatus)) return {};
+      if (!d) return {};
+      if (isMeetingActive(s.meetingStatus)) {
+        notify.message(translate(s.settings.language, "draft.lockedWhileRecording"));
+        return {};
+      }
       return { ...prepFromDraft(d), editingDraftId: id, draftOpen: true };
     }),
   discardDraftEdit: () =>
