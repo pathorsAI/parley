@@ -156,7 +156,15 @@ function MeetingCapsule({ onExpand }: Readonly<{ onExpand: () => void }>) {
   const [open, setOpen] = useState(false);
   const presets = ASK_SUGGESTIONS.map((k) => t(k));
 
+  // Only an answer opening or closing resizes the capsule: on mount the
+  // window is already capsule-sized, and resizing then raced the collapse's
+  // reading of the size to restore later.
+  const firstRun = useRef(true);
   useEffect(() => {
+    if (firstRun.current) {
+      firstRun.current = false;
+      return;
+    }
     void setPillAnswerOpen(open);
   }, [open]);
 
@@ -522,19 +530,22 @@ export function MeetingFloatingWindow() {
     }
   }
 
-  function togglePill(on: boolean) {
+  /** Resize first, then swap the view: the window is measured (on the way
+   *  in) before anything shrinks it, and the full layout never renders into
+   *  a capsule-sized window on the way out. */
+  async function togglePill(on: boolean) {
+    await setMeetingPill(on);
     setPill(on);
-    void setMeetingPill(on);
   }
 
-  if (pill) return <MeetingCapsule onExpand={() => togglePill(false)} />;
+  if (pill) return <MeetingCapsule onExpand={() => void togglePill(false)} />;
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col bg-background">
       <FloatingTitleBar
         compact={compact}
         onClose={() => setConfirmCancel(true)}
-        onCollapse={() => togglePill(true)}
+        onCollapse={() => void togglePill(true)}
       />
       <LiveBanners />
       {compact ? (

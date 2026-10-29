@@ -129,7 +129,10 @@ export async function setMeetingPill(on: boolean): Promise<void> {
       await win.setMinSize(new LogicalSize(PILL_SIZE.width, PILL_SIZE.height));
       await win.setSize(new LogicalSize(PILL_SIZE.width, PILL_SIZE.height));
     } else {
-      const back = beforePill ?? FLOATING_SIZE;
+      // Never "restore" to something the capsule itself left behind.
+      const usable =
+        beforePill && beforePill.width >= DRAG_MIN.width && beforePill.height >= DRAG_MIN.height;
+      const back = usable && beforePill ? beforePill : FLOATING_SIZE;
       beforePill = null;
       await win.setMinSize(new LogicalSize(DRAG_MIN.width, DRAG_MIN.height));
       await win.setSize(new LogicalSize(back.width, back.height));
