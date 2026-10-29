@@ -20,9 +20,9 @@ import type { MemoryFile } from "../ipc/commands";
 import type { Settings } from "../types";
 
 /** The prompt cap. The Rust reader returns up to 24k characters, but the
- *  hosted model's proxy sits on a small per-minute token budget, and a prompt
- *  that size (CJK runs about a token a character) came back as 502 every
- *  time. The facts worth having are near the top of each file. */
+ *  hosted model's proxy sits on a small per-minute token budget shared by
+ *  every user (CJK runs about a token a character), and the facts worth
+ *  having are near the top of each file. */
 export const MAX_MEMORY_CHARS = 6_000;
 /** What stands in for a redacted secret. */
 export const REDACTED = "[redacted]";
