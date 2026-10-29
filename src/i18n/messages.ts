@@ -320,7 +320,7 @@ export const zhTW = {
   "draft.autoTitle": "{time} 會議",
   "draft.section.meeting": "會議資訊",
   "draft.section.meetingNote": "名稱和時間都可以之後再補",
-  "draft.section.prep": "會前準備",
+  "draft.section.prep": "前置作業",
   "draft.section.prepNote": "開始錄音時會一起帶進會議",
   "draft.section.filing": "存放位置",
   "draft.section.filingNote": "錄完自動歸檔到這裡",

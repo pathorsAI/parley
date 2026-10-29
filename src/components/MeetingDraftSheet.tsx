@@ -208,6 +208,25 @@ export function MeetingDraftSheet() {
       >
         <div className="flex flex-col gap-4 px-4 py-4">
           <FormSection
+            icon={<FolderOpen className="size-3.5" />}
+            label={t("draft.section.filing")}
+            note={t("draft.section.filingNote")}
+          >
+            <FieldPanel>
+              <FieldLabel label={t("dest.title.save")} />
+              <DestinationField
+                gateOnSync
+                verb="save"
+                title={t("dest.title.save")}
+                value={destination}
+                mode={mode}
+                fresh={fresh}
+                onChange={pickDestination}
+              />
+            </FieldPanel>
+          </FormSection>
+
+          <FormSection
             icon={<CalendarDays className="size-3.5" />}
             label={t("draft.section.meeting")}
             note={t("draft.section.meetingNote")}
@@ -232,25 +251,6 @@ export function MeetingDraftSheet() {
               )}
               <TodoAddForm bare />
               {todos.length === 0 && <FieldHint>{t("todos.empty")}</FieldHint>}
-            </FieldPanel>
-          </FormSection>
-
-          <FormSection
-            icon={<FolderOpen className="size-3.5" />}
-            label={t("draft.section.filing")}
-            note={t("draft.section.filingNote")}
-          >
-            <FieldPanel>
-              <FieldLabel label={t("dest.title.save")} />
-              <DestinationField
-                gateOnSync
-                verb="save"
-                title={t("dest.title.save")}
-                value={destination}
-                mode={mode}
-                fresh={fresh}
-                onChange={pickDestination}
-              />
             </FieldPanel>
           </FormSection>
         </div>
