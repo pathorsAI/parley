@@ -51,7 +51,6 @@ function MeetingWhenFields() {
           placeholder={t("floating.untitled")}
           className={`${FORM_INPUT_CLASS} h-8`}
         />
-        <FieldHint>{t("draft.titleHint")}</FieldHint>
       </Field>
       <Field>
         <FieldTitle label={t("draft.when")} />
@@ -97,7 +96,7 @@ function MeetingWhenFields() {
             </div>
           </>
         )}
-        <FieldHint>{meetingAt == null ? t("draft.whenHint") : t("draft.whenSet")}</FieldHint>
+        {meetingAt == null && <FieldHint>{t("draft.whenHint")}</FieldHint>}
       </Field>
     </>
   );
@@ -251,7 +250,6 @@ export function MeetingDraftSheet() {
                 </div>
               )}
               <TodoAddForm bare />
-              {todos.length === 0 && <FieldHint>{t("todos.empty")}</FieldHint>}
             </Field>
           </FormSection>
         </div>
