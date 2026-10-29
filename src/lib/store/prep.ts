@@ -7,6 +7,7 @@ import { log } from "../log";
 import { notify } from "../notify";
 import { translate } from "../../i18n/messages";
 import { isMeetingActive } from "./meeting";
+import { retitleForTime } from "../meeting/draftTitle";
 import type { SliceCreator } from "./types";
 
 /** Default reminder lead: enough to wrap up and join, short enough to still
@@ -34,6 +35,17 @@ export interface MeetingDraft {
   meetingFolderId: string | null;
   meetingOrgShare: MeetingShare;
   updatedAt: number;
+}
+
+/** What an MCP client gives `addDraft`. */
+export interface NewDraftFields {
+  title: string;
+  meetingAt: number | null;
+  meetingEndAt: number | null;
+  reminderLeadMin: number | null;
+  meetingContext: string;
+  meetingFolderId: string | null;
+  agenda: string[];
 }
 
 /** The prep fields a draft fills in when it is loaded. */
@@ -102,6 +114,9 @@ export interface PrepSlice {
   /** Load a saved draft into the prep to record it, taking it off the list. */
   takeDraft: (id: string) => boolean;
   deleteDraft: (id: string) => void;
+  /** File a draft made elsewhere (an MCP client) straight into the list,
+   *  leaving the prep alone — so it works mid-meeting too. */
+  addDraft: (fields: NewDraftFields) => MeetingDraft;
   /** Note that this draft's reminder fired for its `meetingAt`. */
   markDraftReminded: (id: string, at: number) => void;
   /** The meeting-draft sheet is open: the prep below, filled in before
@@ -195,7 +210,12 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
   setMeetingContext: (text) => set({ meetingContext: text }),
   setMeetingTitle: (meetingTitle) => set({ meetingTitle }),
   setMeetingNotes: (meetingNotes) => set({ meetingNotes }),
-  setMeetingAt: (meetingAt) => set({ meetingAt }),
+  // The title follows the time while it is still the time's auto name.
+  setMeetingAt: (meetingAt) =>
+    set((s) => ({
+      meetingAt,
+      meetingTitle: retitleForTime(s.meetingTitle, s.meetingAt, meetingAt, s.settings.language),
+    })),
   setMeetingEndAt: (meetingEndAt) => set({ meetingEndAt }),
   setReminderLeadMin: (reminderLeadMin) => set({ reminderLeadMin }),
   saveDraft: () => {
@@ -274,6 +294,27 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
         ? { ...CLEARED_PREP_SLICE, reminderLeadMin: DEFAULT_REMINDER_LEAD_MIN, editingDraftId: null }
         : {}),
     })),
+  addDraft: (f) => {
+    const draft: MeetingDraft = {
+      id: crypto.randomUUID(),
+      title: f.title.trim(),
+      meetingAt: f.meetingAt,
+      meetingEndAt: f.meetingEndAt,
+      reminderLeadMin: f.reminderLeadMin ?? DEFAULT_REMINDER_LEAD_MIN,
+      remindedFor: null,
+      meetingContext: f.meetingContext,
+      meetingBatna: "",
+      meetingTarget: "",
+      meetingFloor: "",
+      todos: f.agenda.map((text) => ({ id: crypto.randomUUID(), text, done: false })),
+      meetingFolderId: f.meetingFolderId,
+      meetingOrgShare: null,
+      updatedAt: Date.now(),
+    };
+    log.info("store: draft added", { id: draft.id, timed: draft.meetingAt != null });
+    set((s) => ({ drafts: [...s.drafts, draft] }));
+    return draft;
+  },
   markDraftReminded: (id, at) =>
     set((s) => ({ drafts: s.drafts.map((d) => (d.id === id ? { ...d, remindedFor: at } : d)) })),
   setMeetingOrgShare: (meetingOrgShare) => set({ meetingOrgShare }),

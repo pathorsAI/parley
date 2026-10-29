@@ -1,4 +1,4 @@
-import { BellRing, Mic, X } from "lucide-react";
+import { Mic, X } from "lucide-react";
 import { isMeetingActive, useStore } from "../lib/store";
 import { beginMeeting } from "../lib/meeting/start";
 import { reminderHeadline, useReminderDue } from "../lib/meeting/reminder";
@@ -34,7 +34,7 @@ export function MeetingReminderCard() {
       className="fixed right-4 bottom-4 z-[80] flex w-80 flex-col gap-3 rounded-xl border bg-background p-4 shadow-xl"
     >
       <div className="flex items-start gap-2.5">
-        <BellRing className="mt-0.5 size-4 shrink-0 text-primary" />
+        <img src="/parley.svg" alt="Parley" className="size-8 shrink-0 rounded-[7px]" draggable={false} />
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="text-sm font-semibold text-foreground">{reminderHeadline(language, title, minutes)}</span>
           <span className="text-xs text-muted-foreground">
