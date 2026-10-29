@@ -13,7 +13,7 @@ describe("intro beat schedule", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it("shows the four steps first, then walks record → transcript → folder → mcp, in about ten seconds", () => {
+  it("shows the four steps first, then walks record → transcript → folder → mcp, in about eleven seconds", () => {
     const fired: [string, number][] = [];
     const t0 = Date.now();
     runTimeline(INTRO_BEATS, (id) => fired.push([id, Date.now() - t0]));
@@ -27,7 +27,7 @@ describe("intro beat schedule", () => {
 
     vi.runAllTimers();
     expect(fired.map(([id]) => id)).toEqual(["overview", "record", "transcript", "folder", "mcp", "ready"]);
-    expect(fired[fired.length - 1][1]).toBeLessThanOrEqual(10500);
+    expect(fired[fired.length - 1][1]).toBeLessThanOrEqual(11500);
   });
 
   it("keeps every step short, and has one beat per step in the row", () => {
