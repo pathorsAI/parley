@@ -254,13 +254,13 @@ function AiMemory() {
           </div>
           {notCondensed && (
             <p className="text-[11px] leading-relaxed text-muted-foreground">
-              {why} {notCondensed.excerpt && t("onboarding.context.memory.excerpt")}
+              {why}
             </p>
           )}
           {reading && lines.length === 0 && (
             <p className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
               <Loader2 className="size-3.5 animate-spin" />
-              {t("onboarding.context.memory.reading")}
+              {t("context.memory.reading")}
             </p>
           )}
           {lines.length > 0 && (

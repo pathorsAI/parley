@@ -213,7 +213,8 @@ describe("refreshAiMemory", () => {
     };
     return { state, deps };
   }
-  const ready: Partial<Settings> = { apiKeys: { ...DEFAULT_SETTINGS.apiKeys, groq: "gsk_test" } };
+  // Groq on the realtime lane; a key makes it ready.
+  const ready: Partial<Settings> = { llmProviders: { realtime: "groq", deep: "groq" }, groqApiKey: "gsk_test" };
 
   it("says so when there is no memory", async () => {
     const { deps } = harness(ready);
@@ -221,7 +222,7 @@ describe("refreshAiMemory", () => {
   });
 
   it("needs an AI provider", async () => {
-    const { deps } = harness({ apiKeys: { ...DEFAULT_SETTINGS.apiKeys, groq: "" } });
+    const { deps } = harness({ llmProviders: { realtime: "groq", deep: "groq" }, groqApiKey: "" });
     expect(await refreshAiMemory(deps)).toMatchObject({ kind: "notCondensed", why: "needLlm" });
   });
 
