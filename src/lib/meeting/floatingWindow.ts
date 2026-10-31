@@ -6,15 +6,22 @@ import { log } from "../log";
 export const FLOATING_SIZE = { width: 760, height: 858 } as const;
 /** The smallest the meeting window OPENS at, on a cramped screen. */
 const FLOATING_MIN = { width: 420, height: 480 } as const;
-/** How small it may be dragged: below COMPACT it turns into the compact view. */
+/** How small it may be dragged: below COMPACT it turns into the mini view. */
 const DRAG_MIN = { width: 300, height: 220 } as const;
-/** Below either of these the window shows the compact view (latest caption
- *  and coach tip) instead of the tabs. */
+/** Below either of these the window shows the mini view of its tab instead
+ *  of the tabs. */
 export const COMPACT_BELOW = { width: 360, height: 400 } as const;
-/** The collapsed capsule ("小膠囊"): one row with the clock and an ask box. */
-export const PILL_SIZE = { width: 380, height: 48 } as const;
-/** The capsule with the coach's answer open under its row. */
-export const PILL_ANSWER_HEIGHT = 240;
+/** The mini window ("小窗"): one row — clock, tab icons, expand — over what
+ *  the tab it shrank from shows. Its width is fixed; its height follows that. */
+export const MINI_WIDTH = 440;
+/** The mini window's height per tab: the coach is the bare row (its answer
+ *  opens under it), the transcript its last lines, the notes a small box. */
+export const MINI_HEIGHT = { coach: 48, coachAnswer: 240, transcript: 176, notes: 200 } as const;
+/** Docking: a mini window let go this close to the middle of the screen's top
+ *  edge snaps to it — under the notch, by the camera. */
+const DOCK_REACH = { x: 160, y: 56 } as const;
+/** The docked window's gap under the menu bar. */
+const DOCK_GAP = 6;
 /** The main window's own minimum (tauri.conf.json), restored afterwards. */
 const MAIN_MIN = { width: 900, height: 600 } as const;
 /** The main window's default size (tauri.conf.json). */
@@ -52,48 +59,136 @@ export function useMainWindowRepair(): void {
   }, []);
 }
 
-/** The floating window's size before it collapsed into the capsule. */
-let beforePill: { width: number; height: number } | null = null;
+/** The floating window's frame before it shrank to the mini window. */
+let beforeMini: { x: number; y: number; width: number; height: number } | null = null;
+/** Whether the mini window sits docked under the notch. Remembered across
+ *  expanding: the next shrink goes straight back there. */
+let docked = false;
+
+/** Where a docked window of `width` goes: centered under the menu bar of the
+ *  screen it is on, in logical px. */
+async function dockSpot(width: number): Promise<{ x: number; y: number } | null> {
+  const { currentMonitor } = await import("@tauri-apps/api/window");
+  const monitor = await currentMonitor();
+  if (!monitor) return null;
+  const f = monitor.scaleFactor;
+  const area = monitor.workArea;
+  return {
+    x: Math.round(area.position.x / f + (area.size.width / f - width) / 2),
+    y: Math.round(area.position.y / f + DOCK_GAP),
+  };
+}
 
 /**
- * Collapse the floating window into the capsule, or open it back up to the
- * size it had. Its top-left corner stays put either way.
+ * Shrink the floating window to the mini window `height` tall, or open it
+ * back up to the frame it had. A mini window docked before goes back under
+ * the notch; otherwise the top-left corner stays put.
  */
-export async function setMeetingPill(on: boolean): Promise<void> {
+export async function setMeetingMini(on: boolean, height: number = MINI_HEIGHT.coach): Promise<void> {
   if (!isTauri()) return;
   try {
-    const { getCurrentWindow, LogicalSize } = await import("@tauri-apps/api/window");
+    const { getCurrentWindow, LogicalSize, LogicalPosition } = await import("@tauri-apps/api/window");
     const win = getCurrentWindow();
+    const scale = await win.scaleFactor();
     if (on) {
-      const scale = await win.scaleFactor();
       const size = await win.innerSize();
-      beforePill = { width: size.width / scale, height: size.height / scale };
-      await win.setMinSize(new LogicalSize(PILL_SIZE.width, PILL_SIZE.height));
-      await win.setSize(new LogicalSize(PILL_SIZE.width, PILL_SIZE.height));
+      const pos = await win.outerPosition();
+      beforeMini = { x: pos.x / scale, y: pos.y / scale, width: size.width / scale, height: size.height / scale };
+      await win.setMinSize(new LogicalSize(MINI_WIDTH, MINI_HEIGHT.coach));
+      await win.setSize(new LogicalSize(MINI_WIDTH, height));
+      const spot = docked ? await dockSpot(MINI_WIDTH) : null;
+      if (spot) await win.setPosition(new LogicalPosition(spot.x, spot.y));
     } else {
-      // Never "restore" to something the capsule itself left behind.
-      const usable =
-        beforePill && beforePill.width >= DRAG_MIN.width && beforePill.height >= DRAG_MIN.height;
-      const back = usable && beforePill ? beforePill : FLOATING_SIZE;
-      beforePill = null;
+      // Never "restore" to something the mini window itself left behind.
+      const usable = beforeMini && beforeMini.width >= DRAG_MIN.width && beforeMini.height >= DRAG_MIN.height;
+      const back = usable && beforeMini ? beforeMini : null;
       await win.setMinSize(new LogicalSize(DRAG_MIN.width, DRAG_MIN.height));
-      await win.setSize(new LogicalSize(back.width, back.height));
+      await win.setSize(new LogicalSize(back?.width ?? FLOATING_SIZE.width, back?.height ?? FLOATING_SIZE.height));
+      // Out of the dock, the full window goes back where it was.
+      if (docked && back) await win.setPosition(new LogicalPosition(back.x, back.y));
+      beforeMini = null;
     }
   } catch (error) {
-    log.warn("meeting: capsule toggle failed", { on, error: String(error) });
+    log.warn("meeting: mini window toggle failed", { on, error: String(error) });
   }
 }
 
-/** Grow the capsule to show an answer under its row, or shrink it back. */
-export async function setPillAnswerOpen(open: boolean): Promise<void> {
+/** Resize the mini window to `height`, for the tab it now shows. */
+export async function setMiniHeight(height: number): Promise<void> {
   if (!isTauri()) return;
   try {
     const { getCurrentWindow, LogicalSize } = await import("@tauri-apps/api/window");
-    const height = open ? PILL_ANSWER_HEIGHT : PILL_SIZE.height;
-    await getCurrentWindow().setSize(new LogicalSize(PILL_SIZE.width, height));
+    await getCurrentWindow().setSize(new LogicalSize(MINI_WIDTH, height));
   } catch (error) {
-    log.warn("meeting: capsule answer resize failed", { open, error: String(error) });
+    log.warn("meeting: mini window resize failed", { height, error: String(error) });
   }
+}
+
+/**
+ * Pure: whether a window whose frame is `win` (logical px) was let go close
+ * enough to the middle of `area`'s top edge to dock there.
+ */
+export function nearDock(
+  win: { x: number; y: number; width: number },
+  area: { x: number; y: number; width: number },
+): boolean {
+  const center = win.x + win.width / 2;
+  const areaCenter = area.x + area.width / 2;
+  return Math.abs(center - areaCenter) <= DOCK_REACH.x && win.y - area.y <= DOCK_REACH.y;
+}
+
+/**
+ * While the mini window shows: once a drag settles, snap it under the notch if
+ * it was let go near there, and undock it if it was dragged away.
+ */
+export function useMiniDocking(active: boolean): void {
+  useEffect(() => {
+    if (!active || !isTauri()) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let unlisten: (() => void) | undefined;
+    let gone = false;
+
+    async function settle() {
+      try {
+        const { getCurrentWindow, currentMonitor, LogicalPosition } = await import("@tauri-apps/api/window");
+        const win = getCurrentWindow();
+        const monitor = await currentMonitor();
+        if (!monitor) return;
+        const f = monitor.scaleFactor;
+        const pos = await win.outerPosition();
+        const size = await win.outerSize();
+        const frame = { x: pos.x / f, y: pos.y / f, width: size.width / f };
+        const area = monitor.workArea;
+        docked = nearDock(frame, {
+          x: area.position.x / f,
+          y: area.position.y / f,
+          width: area.size.width / f,
+        });
+        if (!docked) return;
+        const spot = await dockSpot(frame.width);
+        // Already there: setting it again would only fire another move.
+        if (spot && (Math.abs(spot.x - frame.x) > 1 || Math.abs(spot.y - frame.y) > 1)) {
+          await win.setPosition(new LogicalPosition(spot.x, spot.y));
+        }
+      } catch (error) {
+        log.warn("meeting: mini window dock failed", { error: String(error) });
+      }
+    }
+
+    void import("@tauri-apps/api/window").then(async ({ getCurrentWindow }) => {
+      const off = await getCurrentWindow().onMoved(() => {
+        clearTimeout(timer);
+        timer = setTimeout(() => void settle(), 220);
+      });
+      if (gone) off();
+      else unlisten = off;
+    });
+    return () => {
+      gone = true;
+      clearTimeout(timer);
+      unlisten?.();
+    };
+  }, [active]);
 }
 
 /**
@@ -107,7 +202,7 @@ export function dragWindowFrom(e: { button: number; target: EventTarget; detail:
   if (target.closest("button, input, textarea, a, [role=option]")) return;
   void import("@tauri-apps/api/window")
     .then(({ getCurrentWindow }) => getCurrentWindow().startDragging())
-    .catch((error) => log.warn("meeting: capsule drag failed", { error: String(error) }));
+    .catch((error) => log.warn("meeting: mini window drag failed", { error: String(error) }));
 }
 
 const fitsMain = (r: { width: number; height: number }) =>
