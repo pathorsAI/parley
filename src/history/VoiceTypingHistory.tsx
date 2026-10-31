@@ -98,10 +98,21 @@ export function VoiceTypingHistory({ locale }: Readonly<{ locale: string }>) {
     };
   }, [refresh]);
 
-  const fmt = useMemo(
-    () => new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }),
-    [locale],
-  );
+  // Dictations are read back the same day or the next, so the time leads:
+  // 「10:42」 today, 「昨天 18:03」, and a full date only past that.
+  const stamp = useMemo(() => {
+    const time = new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+    const full = new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" });
+    return (ts: number): string => {
+      const midnight = new Date();
+      midnight.setHours(0, 0, 0, 0);
+      const today = midnight.getTime();
+      midnight.setDate(midnight.getDate() - 1);
+      if (ts >= today) return time.format(ts);
+      if (ts >= midnight.getTime()) return `${t("library.timeline.yesterday")} ${time.format(ts)}`;
+      return full.format(ts);
+    };
+  }, [locale, t]);
 
   const filtered = useMemo(() => {
     if (!entries) return null;
@@ -217,12 +228,12 @@ export function VoiceTypingHistory({ locale }: Readonly<{ locale: string }>) {
                 </p>
               )}
               <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-[11px] text-muted-foreground">{fmt.format(e.ts)}</span>
+                <span className="text-[11px] tabular-nums text-muted-foreground">{stamp(e.ts)}</span>
                 {/* Which polish produced the text; tidy is the default, so only
                     concise names its style. Raw pastes and older lines carry
                     no style and get no label. */}
                 {e.polishStyle && (
-                  <span className="text-[11px] text-primary">
+                  <span className="rounded bg-muted px-1.5 text-[10px] text-muted-foreground">
                     {t(
                       e.polishStyle === "concise"
                         ? "history.voiceTyping.polishedConcise"
@@ -328,9 +339,7 @@ export function VoiceTypingHistory({ locale }: Readonly<{ locale: string }>) {
           {t("history.voiceTyping.title")}
         </h1>
         {entries && (
-          <span className="text-[11px] text-muted-foreground">
-            {t("history.count", { count: entries.length })}
-          </span>
+          <span className="text-[11px] tabular-nums text-muted-foreground">{entries.length}</span>
         )}
         {entries && entries.length > 0 && (
           <Button

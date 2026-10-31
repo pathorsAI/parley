@@ -3,14 +3,14 @@ import { ArrowUp, ChevronDown, Loader2, MessageCircle, Sparkles } from "lucide-r
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
-import { useStore, meetingBriefText } from "../../lib/store";
+import { useStore } from "../../lib/store";
 import { useStickToBottom } from "../../lib/useStickToBottom";
-import { missingProviderRequirement, providerGateKey } from "../../lib/ai/settings";
-import { runAnalysis } from "../../lib/analysis/engine";
+import { meetingCommand } from "../../lib/meeting/meetingWindow";
 import { useI18n } from "../../i18n";
 import { log } from "../../lib/log";
 import { FindingRow } from "../analysis/FindingRow";
 import { openSolution, selectAndSeek } from "../analysis/useAnalysis";
+import { ASK_SUGGESTIONS, useCoachAsk } from "./coachAsk";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -71,23 +71,6 @@ function AutoAnalyzeMenu() {
   );
 }
 
-interface AskCard {
-  id: string;
-  question: string;
-  answer: string;
-  busy: boolean;
-}
-
-/** Replace one ask card by id, leaving the rest untouched. */
-function patchCard(cards: AskCard[], id: string, patch: Partial<AskCard>): AskCard[] {
-  return cards.map((x) => (x.id === id ? { ...x, ...patch } : x));
-}
-
-/** Append a streamed chunk to one ask card's answer. */
-function appendToCard(cards: AskCard[], id: string, chunk: string): AskCard[] {
-  return cards.map((x) => (x.id === id ? { ...x, answer: x.answer + chunk } : x));
-}
-
 /**
  * The header upload button's other replacement: import from the idle feed —
  * the shared flow (R7), so it takes .txt transcripts too, not just audio.
@@ -101,15 +84,6 @@ async function importRecording() {
     toast.error(e instanceof Error ? e.message : String(e));
   }
 }
-
-/** Rotating ask-bar suggestions (same catalog the old Ask pane used). */
-const SUGGESTIONS = [
-  "ask.suggestion.next",
-  "ask.suggestion.agreed",
-  "ask.suggestion.unanswered",
-  "ask.suggestion.pushback",
-  "ask.suggestion.summary",
-] as const;
 
 /** Empty-state illustration: a quiet stack of coach cards waiting to arrive. */
 function FeedPlaceholder() {
@@ -149,18 +123,28 @@ function FeedPlaceholder() {
  * input bar at the bottom. Replaces the tabbed Ask/TODO WorkPanel: the coach
  * has one mouth, and the center of the screen belongs to it.
  */
-export function CoachFeed({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>) {
+export function CoachFeed({
+  onSeek,
+  askBar = true,
+  emptyText,
+}: Readonly<{
+  onSeek: (ms: number) => void;
+  /** Off where the ask box lives outside the feed (the floating window). */
+  askBar?: boolean;
+  emptyText?: string;
+}>) {
   const { t } = useI18n();
   const findings = useStore((s) => s.findings);
   const selectedId = useStore((s) => s.selectedFindingId);
   const analysisStatus = useStore((s) => s.analysisStatus);
   const running = analysisStatus === "running";
 
-  const [askCards, setAskCards] = useState<AskCard[]>([]);
+  const askCards = useCoachAsk((s) => s.cards);
+  const askCoach = useCoachAsk((s) => s.ask);
   const [input, setInput] = useState("");
   const [suggestionIdx, setSuggestionIdx] = useState(0);
   const busy = askCards.some((c) => c.busy);
-  const suggestion = t(SUGGESTIONS[suggestionIdx]);
+  const suggestion = t(ASK_SUGGESTIONS[suggestionIdx]);
   // Same follow-the-tail rule as the transcript: chase new cards only while
   // the reader is already at the bottom. No pill here — the feed's own ask bar
   // already sits under it, and a second floating control would crowd it.
@@ -169,7 +153,7 @@ export function CoachFeed({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>
   // Rotate the ghost suggestion while the input is empty.
   useEffect(() => {
     if (input) return;
-    const id = setInterval(() => setSuggestionIdx((i) => (i + 1) % SUGGESTIONS.length), 4000);
+    const id = setInterval(() => setSuggestionIdx((i) => (i + 1) % ASK_SUGGESTIONS.length), 4000);
     return () => clearInterval(id);
   }, [input]);
 
@@ -181,46 +165,17 @@ export function CoachFeed({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>
       setInput(suggestion);
     } else if (e.key === "ArrowDown") {
       e.preventDefault();
-      setSuggestionIdx((i) => (i + 1) % SUGGESTIONS.length);
+      setSuggestionIdx((i) => (i + 1) % ASK_SUGGESTIONS.length);
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      setSuggestionIdx((i) => (i - 1 + SUGGESTIONS.length) % SUGGESTIONS.length);
+      setSuggestionIdx((i) => (i - 1 + ASK_SUGGESTIONS.length) % ASK_SUGGESTIONS.length);
     }
   }
 
-  async function ask(raw: string) {
-    const q = raw.trim();
-    if (!q || busy) return;
+  function ask(raw: string) {
+    if (!raw.trim() || busy) return;
     setInput("");
-    const id = crypto.randomUUID();
-    setAskCards((c) => [...c, { id, question: q, answer: "", busy: true }]);
-    const state = useStore.getState();
-    const gate = providerGateKey(
-      missingProviderRequirement(state.settings, "realtime"),
-      "ask.missingKey",
-    );
-    if (gate) {
-      setAskCards((c) => patchCard(c, id, { answer: t(gate), busy: false }));
-      return;
-    }
-    try {
-      const { askAboutMeeting } = await import("../../lib/ai/ask");
-      await askAboutMeeting({
-        settings: state.settings,
-        segments: state.segments,
-        question: q,
-        meetingContext: meetingBriefText(state),
-        names: state.speakerNames,
-        onDelta: (chunk) => {
-          setAskCards((c) => appendToCard(c, id, chunk));
-        },
-      });
-    } catch (e) {
-      log.error("feed: ask failed", { error: String(e) });
-      setAskCards((c) => patchCard(c, id, { answer: String(e), busy: false }));
-    } finally {
-      setAskCards((c) => patchCard(c, id, { busy: false }));
-    }
+    void askCoach(raw);
   }
 
   const empty = findings.length === 0 && askCards.length === 0;
@@ -243,11 +198,7 @@ export function CoachFeed({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>
             variant="outline"
             className="h-7 rounded-r-none border-r-0"
             disabled={running}
-            onClick={() =>
-              runAnalysis({ mode: "live" }).catch((e) =>
-                log.error("analysis: live run failed", { error: String(e) })
-              )
-            }
+            onClick={() => meetingCommand("analyze")}
           >
             {running ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
             {t("feed.analyze")}
@@ -261,7 +212,7 @@ export function CoachFeed({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>
           {empty && (
             <div className="flex flex-col items-center gap-3 px-1 py-10">
               <FeedPlaceholder />
-              <p className="max-w-56 text-center text-sm text-muted-foreground">{t("feed.empty")}</p>
+              <p className="max-w-56 text-center text-sm text-muted-foreground">{emptyText ?? t("feed.empty")}</p>
               {!recording && (
                 <button
                   type="button"
@@ -307,6 +258,7 @@ export function CoachFeed({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>
       </ScrollArea>
 
       {/* The ask bar — Ask demoted from a resident chat pane to one input line. */}
+      {askBar && (
       <form
         className="flex shrink-0 gap-1.5 border-t px-3 py-2"
         onSubmit={(e) => {
@@ -333,6 +285,7 @@ export function CoachFeed({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>
           <ArrowUp className="size-4" />
         </Button>
       </form>
+      )}
     </div>
   );
 }

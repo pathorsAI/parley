@@ -1787,6 +1787,13 @@
     "tool": "delete_org_recording"
   },
   {
+    "args": {
+      "agenda": "not a list"
+    },
+    "error": "agenda must be an array of strings",
+    "tool": "create_meeting_draft"
+  },
+  {
     "file": "templates.json",
     "lines": [
       "{",
@@ -1942,6 +1949,45 @@
       }
     },
     "tool": "create_folder"
+  },
+  {
+    "args": {},
+    "result": {
+      "received": {
+        "action": "list_meeting_drafts",
+        "args": {},
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "list_meeting_drafts"
+  },
+  {
+    "args": {
+      "agenda": [
+        "Confirm volume"
+      ],
+      "context": "BATNA: renew with the current vendor",
+      "startAt": "2026-11-03T14:00:00+08:00",
+      "title": "Pricing call"
+    },
+    "result": {
+      "received": {
+        "action": "create_meeting_draft",
+        "args": {
+          "agenda": [
+            "Confirm volume"
+          ],
+          "context": "BATNA: renew with the current vendor",
+          "endAt": null,
+          "folderId": null,
+          "reminderLeadMin": null,
+          "startAt": "2026-11-03T14:00:00+08:00",
+          "title": "Pricing call"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "create_meeting_draft"
   },
   {
     "args": {

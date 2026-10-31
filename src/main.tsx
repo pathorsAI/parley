@@ -29,6 +29,7 @@ const ROUTES = [
   "finding-solution",
   "diagnostics",
   "voice-typing",
+  "meeting",
 ] as const;
 const window_ = ROUTES.find((r) => route.startsWith(r)) ?? "main";
 log.info("ui: boot", { window: window_ });
@@ -150,6 +151,9 @@ const FindingSolutionApp = lazy(() =>
 const DiagnosticsApp = lazy(() =>
   import("./diagnostics/DiagnosticsApp").then((module) => ({ default: module.DiagnosticsApp }))
 );
+const MeetingWindowApp = lazy(() =>
+  import("./meeting-window/MeetingWindowApp").then((module) => ({ default: module.MeetingWindowApp }))
+);
 const VoiceTypingApp = lazy(() =>
   import("./voice-typing/VoiceTypingApp").then((module) => ({ default: module.VoiceTypingApp }))
 );
@@ -164,6 +168,8 @@ function Root() {
       return <DiagnosticsApp />;
     case "voice-typing":
       return <VoiceTypingApp />;
+    case "meeting":
+      return <MeetingWindowApp />;
     default:
       return <App />;
   }
@@ -176,7 +182,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       {/* ⇧? in every window that is big enough to read it. The voice-typing
           overlay is a transient always-on-top strip — a cheat sheet there would
           have nowhere to go. */}
-      {window_ !== "voice-typing" && <ShortcutSheet />}
+      {window_ !== "voice-typing" && window_ !== "meeting" && <ShortcutSheet />}
     </Suspense>
   </React.StrictMode>,
 );

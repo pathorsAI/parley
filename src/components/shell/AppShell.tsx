@@ -27,6 +27,9 @@ import { useStore, isMeetingActive, type AppMode } from "../../lib/store";
 const LibraryScreen = lazy(() =>
   import("../library/LibraryScreen").then((m) => ({ default: m.LibraryScreen }))
 );
+const ContextLibraryScreen = lazy(() =>
+  import("../context/ContextLibraryScreen").then((m) => ({ default: m.ContextLibraryScreen }))
+);
 /**
  * The app shell (issue #195): one persistent left tree, and the route beside it.
  *
@@ -60,7 +63,14 @@ export function AppShell() {
   useCommandScope("main");
   useNavShortcuts();
 
-  const shellFacts = { meetingActive, liveRoute: appMode === "live", collapsed, peek };
+  // The meeting runs in its own window now, so it takes the tree only on the
+  // retired live cockpit route (reachable transiently between stop and save).
+  const shellFacts = {
+    meetingActive: meetingActive && appMode === "live",
+    liveRoute: appMode === "live",
+    collapsed,
+    peek,
+  };
   const hold = cockpitHold(shellFacts);
   const treeVisible = shellTreeVisible(shellFacts);
 
@@ -93,7 +103,7 @@ export function AppShell() {
             stays absent only while a meeting is RUNNING — see below. The
             cockpit hold keeps it: the meeting is over, and a long save must
             not lock the user onto the cockpit. */}
-        {!meetingActive && <CommandPalette tree={tree} />}
+        <CommandPalette tree={tree} />
         {/* Not gated on the meeting, unlike ⌘K: a question already asked has to
             stay answerable, or the caller awaiting it never hears back. */}
         <FolderDeleteConfirm tree={tree} />
@@ -161,7 +171,17 @@ function RouteContent({
   mode,
   tree,
 }: Readonly<{ mode: AppMode; tree: ReturnType<typeof useLibraryTree> }>) {
+  const selectionKind = useStore((s) => s.librarySelection.kind);
   if (mode === "study") return <StudyScreen libraryCount={tree.summaries.length} />;
+  // 語境庫 is a library selection (so the tree, ⌘K and back/forward treat it
+  // like any other node) but has nothing to do with listing recordings.
+  if (mode === "library" && selectionKind === "context") {
+    return (
+      <Suspense fallback={null}>
+        <ContextLibraryScreen />
+      </Suspense>
+    );
+  }
   if (mode === "library") {
     return (
       <Suspense fallback={null}>

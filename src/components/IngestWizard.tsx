@@ -18,11 +18,7 @@ import { useReplaySession } from "./replay/spine";
 import { MEETING_KINDS } from "../lib/analysis/lens";
 import { chooseMeetingKind } from "../lib/analysis/kindTemplate";
 import type { MeetingKind, Source } from "../lib/types";
-import {
-  personalDestination,
-  type LibraryDestination,
-  type OrgHandoffMode,
-} from "../lib/library/destination";
+import { useMeetingDestination } from "./useMeetingDestination";
 import { DIARIZE_PROGRESS_EVENT, listenEvent, type DiarizeProgressPayload } from "../lib/ipc/events";
 
 /** Speaker-count presets: `null` = auto-detect, then 2–8. */
@@ -57,10 +53,6 @@ export function IngestWizard() {
   const { t } = useI18n();
   const open = useStore((s) => s.ingestWizardOpen);
   const step = useStore((s) => s.ingestWizardStep);
-  const meetingFolderId = useStore((s) => s.meetingFolderId);
-  const setMeetingFolder = useStore((s) => s.setMeetingFolder);
-  const meetingOrgShare = useStore((s) => s.meetingOrgShare);
-  const setMeetingOrgShare = useStore((s) => s.setMeetingOrgShare);
   const wizardError = useStore((s) => s.ingestWizardError);
   const setStep = useStore((s) => s.setIngestWizardStep);
   const close = useStore((s) => s.closeIngestWizard);
@@ -286,28 +278,9 @@ export function IngestWizard() {
     }
   }
 
-  /**
-   * The destination the picker shows, and what committing one does.
-   *
-   * A per-meeting org pick rides on `meetingOrgShare`, which the save path
-   * already honours; the personal folder rides on `meetingFolderId`. They stay
-   * two fields because a "copy" lands in both — going back to a personal
-   * destination only clears the org side when this meeting had explicitly
-   * chosen one, so the settings-wide auto-share default is left alone.
-   */
-  const orgShare = typeof meetingOrgShare === "object" ? meetingOrgShare : null;
-  const destination: LibraryDestination = orgShare
-    ? { scope: "org", orgId: orgShare.orgId, folderId: orgShare.folderId }
-    : personalDestination(meetingFolderId);
-
-  function pickDestination(next: LibraryDestination, mode: OrgHandoffMode | null) {
-    if (next.scope === "org") {
-      setMeetingOrgShare({ orgId: next.orgId, folderId: next.folderId, mode: mode ?? "copy" });
-      return;
-    }
-    setMeetingFolder(next.folderId);
-    if (orgShare) setMeetingOrgShare(null);
-  }
+  // The destination the picker shows, and what committing one does.
+  const { destination, mode: destinationMode, fresh: destinationFresh, pickDestination } =
+    useMeetingDestination();
 
   const wide = step === "review" || step === "trim";
 
@@ -340,8 +313,8 @@ export function IngestWizard() {
                   verb="save"
                   title={t("dest.title.save")}
                   value={destination}
-                  mode={orgShare?.mode ?? null}
-                  fresh={meetingFolderId === null && !orgShare}
+                  mode={destinationMode}
+                  fresh={destinationFresh}
                   onChange={pickDestination}
                 />
               </div>

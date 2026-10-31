@@ -15,7 +15,8 @@ import type { TodoItem } from "../../lib/types";
  * the AI button runs that same check on demand.
  */
 
-function TodoRow({ todo }: Readonly<{ todo: TodoItem }>) {
+/** One checklist item: toggle, text, hover-to-remove. Also the meeting draft's agenda rows. */
+export function TodoRow({ todo }: Readonly<{ todo: TodoItem }>) {
   const toggleTodo = useStore((s) => s.toggleTodo);
   const removeTodo = useStore((s) => s.removeTodo);
   return (
@@ -43,7 +44,9 @@ function TodoRow({ todo }: Readonly<{ todo: TodoItem }>) {
   );
 }
 
-function AddForm() {
+/** The add-an-item input under the checklist (live rail and meeting draft);
+ *  `bare` drops its divider and padding for a form field panel. */
+export function TodoAddForm({ bare = false }: Readonly<{ bare?: boolean }> = {}) {
   const { t } = useI18n();
   const addTodo = useStore((s) => s.addTodo);
   const [input, setInput] = useState("");
@@ -55,18 +58,18 @@ function AddForm() {
   return (
     <form
       onSubmit={add}
-      className="flex items-center gap-2 border-t p-2.5"
+      className={bare ? "flex items-center gap-2" : "flex items-center gap-2 border-t p-2.5"}
     >
       <Input
         value={input}
         onChange={(e) => setInput(e.target.value)}
         placeholder={t("todos.addPlaceholder")}
-        className="h-8 text-sm"
+        className={bare ? "h-8 rounded-[8px] border-[#dadee5] text-sm dark:border-input" : "h-8 text-sm"}
       />
       <Button
         type="submit"
         size="icon"
-        className="size-8 shrink-0"
+        className={bare ? "size-8 shrink-0 rounded-[8px]" : "size-8 shrink-0"}
         disabled={!input.trim()}
       >
         <Plus className="size-4" />
@@ -131,7 +134,7 @@ export function TodosPanel() {
         </div>
       </ScrollArea>
 
-      <AddForm />
+      <TodoAddForm />
     </div>
   );
 }

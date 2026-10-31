@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode, type Ref } from "react";
 import { Dialog as DialogPrimitive } from "radix-ui";
-import { AudioLines, Folder, FolderClosed, House, Mic, Search, UsersRound } from "lucide-react";
+import { AudioLines, BookOpen, Folder, FolderClosed, House, Mic, Search, UsersRound } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { buildOwnershipIndex, countByNode, nodeKey, type LibraryNode } from "../../lib/library/scope";
@@ -87,6 +87,7 @@ export function CommandPalette({ tree }: Readonly<{ tree: LibraryTree }>) {
     all: t("library.all"),
     unassigned: t("library.unassigned"),
     voice: t("history.sidebar.voiceTyping"),
+    context: t("context.title"),
   };
 
   // The same index and the same rule the sidebar counts with (lib/library/scope),
@@ -101,6 +102,8 @@ export function CommandPalette({ tree }: Readonly<{ tree: LibraryTree }>) {
     // `all` owns nothing, so it is absent from the one-pass count — what it
     // opens is every summary (see lib/library/scope).
     { kind: "all", count: tree.summaries.length },
+    // Right under 所有錄音, where the sidebar has it.
+    { kind: "context" },
   ];
   for (const f of tree.personalFolders) {
     targets.push({
@@ -279,6 +282,8 @@ function locationOf(target: QuickTarget): Location {
       return { kind: "library", selection: { kind: "personal", node: { kind: "unassigned" } } };
     case "voice":
       return { kind: "library", selection: { kind: "voice" } };
+    case "context":
+      return { kind: "library", selection: { kind: "context" } };
     case "org":
       return {
         kind: "library",
@@ -308,6 +313,8 @@ function iconFor(target: QuickTarget): ReactNode {
       return <FolderClosed className="size-3.5" />;
     case "voice":
       return <Mic className="size-3.5" />;
+    case "context":
+      return <BookOpen className="size-3.5" />;
     case "org":
       return <UsersRound className="size-3.5" />;
     case "recording":

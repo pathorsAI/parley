@@ -10,10 +10,10 @@ import {
   loadLastDestination,
   needsFolderSearch,
   offersKeepCopy,
+  placeName,
   primaryAction,
   revealsToOrg,
   saveLastDestination,
-  workspaceControl,
   workspaceOf,
   workspaceRoot,
 } from "./destinationPicker";
@@ -29,13 +29,7 @@ const orgIn = (orgId: string, folderId: string | null): LibraryDestination => ({
   folderId,
 });
 
-describe("workspace control", () => {
-  it("is a segmented control up to three workspaces, a combobox past that", () => {
-    expect(workspaceControl(1)).toBe("segmented");
-    expect(workspaceControl(3)).toBe("segmented");
-    expect(workspaceControl(4)).toBe("combobox");
-  });
-
+describe("workspaces", () => {
   it("maps destinations to workspaces and back to their roots", () => {
     expect(workspaceOf(personalIn("f"))).toBe(PERSONAL_WORKSPACE);
     expect(workspaceOf(orgIn("org-1", "f"))).toBe("org-1");
@@ -98,6 +92,24 @@ describe("breadcrumb", () => {
     expect(breadcrumb(PERSONAL_ROOT, names([]))).toEqual(["個人"]);
     expect(breadcrumb(orgIn("org-1", null), names([]))).toEqual(["Pathors"]);
     expect(breadcrumb(personalIn("unknown"), names([]))).toEqual(["個人"]);
+  });
+});
+
+describe("place name", () => {
+  const names = { personal: "個人", orgs: ORGS, folders: [{ id: "f1", name: "東森" }] };
+
+  it("is the folder's own name, without its workspace", () => {
+    expect(placeName(personalIn("f1"), names, "不放資料夾")).toBe("東森");
+    expect(placeName(orgIn("org-1", "f1"), names, "不放資料夾")).toBe("東森");
+  });
+
+  it("says 不放資料夾 at the personal root and the org's name at an org root", () => {
+    expect(placeName(PERSONAL_ROOT, names, "不放資料夾")).toBe("不放資料夾");
+    expect(placeName(orgIn("org-2", null), names, "不放資料夾")).toBe("Cerana");
+  });
+
+  it("treats a folder it cannot name as the root", () => {
+    expect(placeName(personalIn("gone"), names, "不放資料夾")).toBe("不放資料夾");
   });
 });
 

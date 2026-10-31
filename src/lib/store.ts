@@ -61,7 +61,7 @@ export {
   migrateVoiceTypingShortcut,
 } from "./store/persistence";
 export { restoredStudyStatuses } from "./store/study";
-export { isMeetingActive, meetingElapsedMs } from "./store/meeting";
+export { holdsLiveSession, isMeetingActive, meetingElapsedMs } from "./store/meeting";
 export { setSettingsBroadcaster, settingsBroadcastSettled } from "./store/settings";
 export { isTrimmed, hasSpokenSegment } from "./replay/keepWindow";
 export { speakerKey, defaultSpeakerLabel, speakerLabel } from "./speakers/labels";

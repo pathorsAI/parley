@@ -13,7 +13,11 @@ import {
   redactSecrets,
   removeBackgroundLines,
   properNouns,
+  refreshAiMemory,
+  removeMemoryLine,
 } from "./memoryImport";
+import { DEFAULT_SETTINGS } from "../store/defaults";
+import type { Settings } from "../types";
 
 describe("cleanLines", () => {
   it("strips list markers, drops blanks and duplicates", () => {
@@ -172,5 +176,78 @@ describe("properNouns", () => {
     expect(
       properNouns(["派斯科技", "Parley", "Pensieve", "staging", "ticket", "weekly-summary", "CLAUDE.md", "BD", "CRM", "Pathors"]),
     ).toEqual(["派斯科技", "Parley", "Pensieve", "Pathors"]);
+  });
+});
+
+describe("removeMemoryLine", () => {
+  const notes = "Designer at Pathors\n\n  Works on Parley\nMeets Globex often";
+
+  it("drops the line at the index the list shows (blank lines don't count)", () => {
+    expect(removeMemoryLine(notes, 1)).toBe("Designer at Pathors\nMeets Globex often");
+    expect(removeMemoryLine(notes, 0)).toBe("Works on Parley\nMeets Globex often");
+  });
+
+  it("leaves the notes alone for an index that isn't there", () => {
+    expect(removeMemoryLine(notes, 3)).toBe(notes);
+    expect(removeMemoryLine(notes, -1)).toBe(notes);
+  });
+});
+
+describe("refreshAiMemory", () => {
+  const MEMORY = [{ label: "~/.claude/CLAUDE.md", kind: "global" as const, name: "~/.claude/CLAUDE.md", text: "Designer at Pathors." }];
+  const NOW = 1_700_000_000_000;
+
+  function harness(over: Partial<Settings> = {}) {
+    const state = { settings: { ...DEFAULT_SETTINGS, ...over } as Settings, added: [] as string[][] };
+    const deps = {
+      settings: () => state.settings,
+      patch: (p: Partial<Settings>) => {
+        state.settings = { ...state.settings, ...p };
+      },
+      addTerms: async (phrases: readonly string[]) => {
+        state.added.push([...phrases]);
+        return phrases.map((phrase, i) => ({ id: `t${i}`, phrase }));
+      },
+      readMemory: async () => MEMORY,
+      now: () => NOW,
+    };
+    return { state, deps };
+  }
+  // Groq on the realtime lane; a key makes it ready.
+  const ready: Partial<Settings> = { llmProviders: { realtime: "groq", deep: "groq" }, groqApiKey: "gsk_test" };
+
+  it("says so when there is no memory", async () => {
+    const { deps } = harness(ready);
+    expect(await refreshAiMemory({ ...deps, readMemory: async () => [] })).toEqual({ kind: "none" });
+  });
+
+  it("needs an AI provider", async () => {
+    const { deps } = harness({ llmProviders: { realtime: "groq", deep: "groq" }, groqApiKey: "" });
+    expect(await refreshAiMemory(deps)).toMatchObject({ kind: "notCondensed", why: "needLlm" });
+  });
+
+  it("replaces the lines an earlier read added, keeping what the user wrote", async () => {
+    const { state, deps } = harness({ ...ready, userBackground: "I design.\n身分：舊的", aiMemoryNotes: "身分：舊的" });
+    const out = await refreshAiMemory({
+      ...deps,
+      draft: async () => ({ background: ["身分：產品設計師"], terms: ["Pathors"] }),
+    });
+    expect(out).toMatchObject({ kind: "condensed", empty: false });
+    expect(state.settings.userBackground).toBe("I design.\n身分：產品設計師");
+    expect(state.settings.aiMemoryNotes).toBe("身分：產品設計師");
+    expect(state.settings.aiMemoryUpdatedAt).toBe(NOW);
+    expect(state.added).toEqual([["Pathors"]]);
+  });
+
+  it("reports a failed call without touching the background", async () => {
+    const { state, deps } = harness({ ...ready, userBackground: "I design." });
+    const out = await refreshAiMemory({
+      ...deps,
+      draft: async () => {
+        throw new Error("boom");
+      },
+    });
+    expect(out).toMatchObject({ kind: "notCondensed" });
+    expect(state.settings.userBackground).toBe("I design.");
   });
 });

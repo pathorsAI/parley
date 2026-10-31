@@ -328,6 +328,9 @@ export interface Settings {
    *  this only records that it was done, so revisiting the step doesn't call
    *  the model again (and rewrite the user's edits). Empty: not yet. */
   aiMemoryNotes: string;
+  /** When aiMemoryNotes was last written from the memory files (epoch ms; 0 =
+   *  never). Shown as 語境庫's "更新 …"; a per-line delete doesn't move it. */
+  aiMemoryUpdatedAt: number;
   /** Which provider serves each workload lane (#131) — realtime and deep can
    *  point at different vendors (e.g. Groq live, Anthropic for reports). */
   llmProviders: Record<LlmWorkload, LlmProvider>;
