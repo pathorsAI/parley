@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { isTauri } from "../platform";
 import { log } from "../log";
+import * as ipc from "../ipc/commands";
 
 /** The floating meeting window's size (the Figma frame), in logical px. */
 export const FLOATING_SIZE = { width: 760, height: 858 } as const;
@@ -17,14 +18,24 @@ export const MINI_WIDTH = 440;
 /** The mini window's height per tab: the coach is the bare row (its answer
  *  opens under it), the transcript its last lines, the notes a small box. */
 export const MINI_HEIGHT = { coach: 48, coachAnswer: 240, transcript: 176, notes: 200 } as const;
+/** One line of the mini window's transcript and notes. */
+export const MINI_LINE = 22;
+/** The least the mini window may be dragged to per tab: the coach's bare row;
+ *  the transcript and notes keep one whole line under it (row 48 + border 1
+ *  + 8px padding above and below). */
+export const MINI_MIN_HEIGHT = { coach: 48, transcript: 48 + 1 + 16 + MINI_LINE, notes: 48 + 1 + 16 + MINI_LINE } as const;
 /** Docking, like a magnet: a mini window brought this close to the screen's
- *  top edge — anywhere along it — snaps to its middle, under the notch, by
- *  the camera. */
+ *  top edge — anywhere along it — snaps to the nearer of its two spots: the
+ *  middle, under the notch by the camera, or the top-right corner. */
 const DOCK_REACH = 72;
 /** How long the window rests before the magnet pulls (or lets go). */
 const DOCK_SETTLE_MS = 120;
-/** The docked window's gap under the menu bar. */
-const DOCK_GAP = 6;
+/** A docked window's gap under the menu bar, and the corner spot's gap from
+ *  the screen's right edge. */
+const DOCK_GAP = 8;
+/** How long the window glides to a new frame: docking, shrinking, growing,
+ *  and its height following the mini window's tab. */
+const GLIDE_MS = 240;
 /** The main window's own minimum (tauri.conf.json), restored afterwards. */
 const MAIN_MIN = { width: 900, height: 600 } as const;
 /** The main window's default size (tauri.conf.json). */
@@ -62,87 +73,129 @@ export function useMainWindowRepair(): void {
   }, []);
 }
 
-/** The floating window's frame before it shrank to the mini window. */
-let beforeMini: { x: number; y: number; width: number; height: number } | null = null;
-/** Whether the mini window sits docked under the notch. Remembered across
- *  expanding: the next shrink goes straight back there. */
-let docked = false;
+type Frame = { x: number; y: number; width: number; height: number };
+type Area = { x: number; y: number; width: number };
 
-/** Where a docked window of `width` goes: centered under the menu bar of the
- *  screen it is on, in logical px. */
-async function dockSpot(width: number): Promise<{ x: number; y: number } | null> {
+/** Where a mini window can dock: under the notch, or the top-right corner. */
+export type DockSpot = "notch" | "corner";
+
+/** The floating window's frame before it shrank to the mini window. */
+let beforeMini: Frame | null = null;
+/** Where the mini window sits docked, if it does. Remembered across
+ *  expanding: the next shrink goes straight back there. */
+let docked: DockSpot | null = null;
+/** Until when the window is gliding: its own moves are not a drag to dock. */
+let glidingUntil = 0;
+
+/**
+ * Pure: the spot a window whose frame is `win` (logical px) docks to on
+ * `area` — the screen its middle is on — or null when it is not close enough
+ * to the top edge. Along that edge it goes to the nearer spot.
+ */
+export function dockTarget(win: { x: number; y: number; width: number }, area: Area): DockSpot | null {
+  const center = win.x + win.width / 2;
+  const onScreen = center >= area.x && center < area.x + area.width;
+  if (!onScreen || win.y - area.y > DOCK_REACH) return null;
+  const notch = dockPosition("notch", area, win.width).x + win.width / 2;
+  const corner = dockPosition("corner", area, win.width).x + win.width / 2;
+  return Math.abs(center - corner) < Math.abs(center - notch) ? "corner" : "notch";
+}
+
+/** Pure: the top-left corner of a window `width` wide docked at `spot`. */
+export function dockPosition(spot: DockSpot, area: Area, width: number): { x: number; y: number } {
+  const x = spot === "notch" ? area.x + (area.width - width) / 2 : area.x + area.width - width - DOCK_GAP;
+  return { x: Math.round(x), y: Math.round(area.y + DOCK_GAP) };
+}
+
+/** The work area (below the menu bar) of the screen the window is on, in
+ *  logical px. */
+async function screenArea(): Promise<Area | null> {
   const { currentMonitor } = await import("@tauri-apps/api/window");
   const monitor = await currentMonitor();
   if (!monitor) return null;
   const f = monitor.scaleFactor;
-  const area = monitor.workArea;
-  return {
-    x: Math.round(area.position.x / f + (area.size.width / f - width) / 2),
-    y: Math.round(area.position.y / f + DOCK_GAP),
-  };
+  const a = monitor.workArea;
+  return { x: a.position.x / f, y: a.position.y / f, width: a.size.width / f };
+}
+
+/** The window's current frame, in logical px. */
+async function currentFrame(): Promise<Frame> {
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  const win = getCurrentWindow();
+  const scale = await win.scaleFactor();
+  const pos = await win.outerPosition();
+  const size = await win.innerSize();
+  return { x: pos.x / scale, y: pos.y / scale, width: size.width / scale, height: size.height / scale };
+}
+
+/** Glide the window to `frame` (natively on macOS; set at once elsewhere).
+ *  Resolves when the glide has started, not when it ends. */
+async function glide(frame: Frame): Promise<void> {
+  glidingUntil = Date.now() + GLIDE_MS + 60;
+  await ipc.animateWindowFrame({ ...frame, durationMs: GLIDE_MS });
 }
 
 /**
  * Shrink the floating window to the mini window `height` tall, or open it
- * back up to the frame it had. A mini window docked before goes back under
- * the notch; otherwise the top-left corner stays put.
+ * back up to the frame it had. A mini window docked before goes back to its
+ * spot; otherwise the top-left corner stays put. Shrinking resolves as the
+ * glide starts (the mini view then shows while the window shrinks); growing
+ * resolves once it has ended, so the full layout only renders at full size.
  */
-export async function setMeetingMini(on: boolean, height: number = MINI_HEIGHT.coach): Promise<void> {
+export async function setMeetingMini(
+  on: boolean,
+  height: number = MINI_HEIGHT.coach,
+  minHeight: number = MINI_MIN_HEIGHT.coach,
+): Promise<void> {
   if (!isTauri()) return;
   try {
-    const { getCurrentWindow, LogicalSize, LogicalPosition } = await import("@tauri-apps/api/window");
+    const { getCurrentWindow, LogicalSize } = await import("@tauri-apps/api/window");
     const win = getCurrentWindow();
-    const scale = await win.scaleFactor();
+    const now = await currentFrame();
     if (on) {
-      const size = await win.innerSize();
-      const pos = await win.outerPosition();
-      beforeMini = { x: pos.x / scale, y: pos.y / scale, width: size.width / scale, height: size.height / scale };
-      await win.setMinSize(new LogicalSize(MINI_WIDTH, MINI_HEIGHT.coach));
-      await win.setSize(new LogicalSize(MINI_WIDTH, height));
-      const spot = docked ? await dockSpot(MINI_WIDTH) : null;
-      if (spot) await win.setPosition(new LogicalPosition(spot.x, spot.y));
+      beforeMini = now;
+      await win.setMinSize(new LogicalSize(MINI_WIDTH, minHeight));
+      const area = docked ? await screenArea() : null;
+      const at = docked && area ? dockPosition(docked, area, MINI_WIDTH) : now;
+      await glide({ x: at.x, y: at.y, width: MINI_WIDTH, height });
     } else {
       // Never "restore" to something the mini window itself left behind.
       const usable = beforeMini && beforeMini.width >= DRAG_MIN.width && beforeMini.height >= DRAG_MIN.height;
       const back = usable && beforeMini ? beforeMini : null;
-      await win.setMinSize(new LogicalSize(DRAG_MIN.width, DRAG_MIN.height));
-      await win.setSize(new LogicalSize(back?.width ?? FLOATING_SIZE.width, back?.height ?? FLOATING_SIZE.height));
-      // Out of the dock, the full window goes back where it was.
-      if (docked && back) await win.setPosition(new LogicalPosition(back.x, back.y));
       beforeMini = null;
+      await win.setMinSize(new LogicalSize(DRAG_MIN.width, DRAG_MIN.height));
+      // Out of the dock, the full window goes back where it was.
+      const at = docked && back ? back : now;
+      await glide({
+        x: at.x,
+        y: at.y,
+        width: back?.width ?? FLOATING_SIZE.width,
+        height: back?.height ?? FLOATING_SIZE.height,
+      });
+      await new Promise((resolve) => setTimeout(resolve, GLIDE_MS));
     }
   } catch (error) {
     log.warn("meeting: mini window toggle failed", { on, error: String(error) });
   }
 }
 
-/** Resize the mini window to `height`, for the tab it now shows. */
-export async function setMiniHeight(height: number): Promise<void> {
+/** Glide the mini window to `height` and hold it at least `minHeight`, for
+ *  the tab it now shows. */
+export async function setMiniHeight(height: number, minHeight: number = MINI_MIN_HEIGHT.coach): Promise<void> {
   if (!isTauri()) return;
   try {
     const { getCurrentWindow, LogicalSize } = await import("@tauri-apps/api/window");
-    await getCurrentWindow().setSize(new LogicalSize(MINI_WIDTH, height));
+    await getCurrentWindow().setMinSize(new LogicalSize(MINI_WIDTH, minHeight));
+    const now = await currentFrame();
+    await glide({ x: now.x, y: now.y, width: MINI_WIDTH, height });
   } catch (error) {
     log.warn("meeting: mini window resize failed", { height, error: String(error) });
   }
 }
 
 /**
- * Pure: whether a window whose frame is `win` (logical px) is close enough to
- * the top edge of `area` — the screen its middle is on — to dock there.
- */
-export function nearDock(
-  win: { x: number; y: number; width: number },
-  area: { x: number; y: number; width: number },
-): boolean {
-  const center = win.x + win.width / 2;
-  const onScreen = center >= area.x && center < area.x + area.width;
-  return onScreen && win.y - area.y <= DOCK_REACH;
-}
-
-/**
- * While the mini window shows: whenever it rests near the top edge, snap it
- * under the notch; dragged away from there, it undocks.
+ * While the mini window shows: whenever it rests near the top edge, pull it
+ * to the nearer dock spot; dragged away from there, it undocks.
  */
 export function useMiniDocking(active: boolean): void {
   useEffect(() => {
@@ -151,27 +204,24 @@ export function useMiniDocking(active: boolean): void {
     let unlisten: (() => void) | undefined;
     let gone = false;
 
+    const later = (ms: number) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => void settle(), ms);
+    };
+
     async function settle() {
+      // Its own glide moves the window too; look again once it has landed.
+      const wait = glidingUntil - Date.now();
+      if (wait > 0) return later(wait);
       try {
-        const { getCurrentWindow, currentMonitor, LogicalPosition } = await import("@tauri-apps/api/window");
-        const win = getCurrentWindow();
-        const monitor = await currentMonitor();
-        if (!monitor) return;
-        const f = monitor.scaleFactor;
-        const pos = await win.outerPosition();
-        const size = await win.outerSize();
-        const frame = { x: pos.x / f, y: pos.y / f, width: size.width / f };
-        const area = monitor.workArea;
-        docked = nearDock(frame, {
-          x: area.position.x / f,
-          y: area.position.y / f,
-          width: area.size.width / f,
-        });
+        const [frame, area] = await Promise.all([currentFrame(), screenArea()]);
+        if (!area) return;
+        docked = dockTarget(frame, area);
         if (!docked) return;
-        const spot = await dockSpot(frame.width);
-        // Already there: setting it again would only fire another move.
-        if (spot && (Math.abs(spot.x - frame.x) > 1 || Math.abs(spot.y - frame.y) > 1)) {
-          await win.setPosition(new LogicalPosition(spot.x, spot.y));
+        const at = dockPosition(docked, area, frame.width);
+        // Already there: gliding again would only fire another move.
+        if (Math.abs(at.x - frame.x) > 1 || Math.abs(at.y - frame.y) > 1) {
+          await glide({ ...frame, x: at.x, y: at.y });
         }
       } catch (error) {
         log.warn("meeting: mini window dock failed", { error: String(error) });
@@ -179,10 +229,7 @@ export function useMiniDocking(active: boolean): void {
     }
 
     void import("@tauri-apps/api/window").then(async ({ getCurrentWindow }) => {
-      const off = await getCurrentWindow().onMoved(() => {
-        clearTimeout(timer);
-        timer = setTimeout(() => void settle(), DOCK_SETTLE_MS);
-      });
+      const off = await getCurrentWindow().onMoved(() => later(DOCK_SETTLE_MS));
       if (gone) off();
       else unlisten = off;
     });

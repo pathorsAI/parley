@@ -11,6 +11,7 @@
 //! - `logs`: the in-app log viewer.
 //! - `ai_memory`: onboarding's read of Claude Code's memory files.
 //! - `key_check`: onboarding's check that a speech-to-text key is accepted.
+//! - `window_frame`: a window gliding to a new frame (the meeting's mini window).
 
 pub(crate) mod ai_memory;
 pub(crate) mod config;
@@ -23,6 +24,7 @@ pub(crate) mod mic_test;
 pub(crate) mod oauth;
 pub(crate) mod session_files;
 pub(crate) mod shared_files;
+pub(crate) mod window_frame;
 
 pub(crate) use self::export::documents_dir;
 pub use self::meeting::MeetingState;

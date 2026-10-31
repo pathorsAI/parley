@@ -23,6 +23,8 @@ import {
   COMPACT_BELOW,
   FLOATING_SIZE,
   MINI_HEIGHT,
+  MINI_LINE,
+  MINI_MIN_HEIGHT,
   dragWindowFrom,
   setMeetingMini,
   setMiniHeight,
@@ -99,38 +101,62 @@ function RecordingClock({ withLabel = true }: Readonly<{ withLabel?: boolean }>)
   );
 }
 
-/** The transcript's last few lines, oldest first, for the mini window. */
+/**
+ * The transcript's latest lines, for the mini window. However tall the window
+ * is dragged, the lines show whole: the view is a whole number of 22px lines
+ * tall, bottom-aligned, and the rest of the height is left above it.
+ */
 function MiniTranscript() {
   const { t } = useI18n();
   const segments = useStore((s) => s.segments);
   const names = useStore((s) => s.speakerNames);
-  const endRef = useRef<HTMLDivElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<HTMLDivElement>(null);
+  const [rows, setRows] = useState(1);
   const lines = useMemo(
     () =>
       segments
         .filter((s) => s.text.trim())
         .slice()
         .sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs)
-        .slice(-4),
+        .slice(-20),
     [segments],
   );
   const lastText = lines.length ? lines[lines.length - 1].text : "";
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ block: "end" });
-  }, [lines.length, lastText]);
 
-  if (!lines.length) {
-    return <p className="px-3 py-2.5 text-sm text-muted-foreground">{t("meeting.listening")}</p>;
-  }
+  useEffect(() => {
+    const box = boxRef.current;
+    if (!box) return;
+    const ro = new ResizeObserver(([entry]) =>
+      setRows(Math.max(1, Math.floor(entry.contentRect.height / MINI_LINE))),
+    );
+    ro.observe(box);
+    return () => ro.disconnect();
+  }, []);
+
+  // Pinned to the newest line, which the view's whole-line height keeps whole.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (view) view.scrollTop = view.scrollHeight;
+  }, [rows, lines.length, lastText]);
+
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
-      {lines.map((seg) => (
-        <p key={seg.id} className="text-sm leading-[22px] text-foreground">
-          <span className="mr-1.5 text-xs font-semibold text-primary">{speakerLabel(seg, names, t)}</span>
-          {seg.text}
-        </p>
-      ))}
-      <div ref={endRef} />
+    <div ref={boxRef} className="flex min-h-0 flex-1 flex-col justify-end overflow-hidden px-3 py-2">
+      <div ref={viewRef} style={{ height: rows * MINI_LINE }} className="shrink-0 overflow-hidden">
+        {lines.length ? (
+          lines.map((seg) => (
+            <p key={seg.id} className="text-sm leading-[22px] text-foreground">
+              {/* align-top: the smaller name must not grow the 22px line box. */}
+              <span className="mr-1.5 align-top text-xs leading-[22px] font-semibold text-primary">
+                {speakerLabel(seg, names, t)}
+              </span>
+              {seg.text}
+            </p>
+          ))
+        ) : (
+          <p className="truncate text-sm leading-[22px] text-muted-foreground">{t("meeting.listening")}</p>
+        )}
+      </div>
     </div>
   );
 }
@@ -163,7 +189,8 @@ const MINI_TABS: { tab: Tab; icon: typeof Captions }[] = [
  * the transcript's last lines, the notes box, or the coach's ask box (its
  * answer opens under the row). The window's height follows the tab. Dragged
  * from anywhere that is not a control; brought near the screen's top edge,
- * it snaps under the notch like a magnet.
+ * it snaps to the nearer dock — under the notch or the top-right
+ * corner — like a magnet.
  *
  * `fixed`: the full window dragged small shows this view too, at the size it
  * was dragged to — so the window is never resized under the user.
@@ -196,7 +223,7 @@ function MiniWindow({
       firstRun.current = false;
       return;
     }
-    if (!fixed) void setMiniHeight(miniHeight(tab, answerOpen));
+    if (!fixed) void setMiniHeight(miniHeight(tab, answerOpen), MINI_MIN_HEIGHT[tab]);
   }, [tab, answerOpen, fixed]);
 
   function send() {
@@ -604,7 +631,7 @@ export function MeetingFloatingWindow() {
    *  in) before anything shrinks it, and the full layout never renders into
    *  a mini-sized window on the way out. */
   async function toggleMini(on: boolean) {
-    await setMeetingMini(on, miniHeight(tab));
+    await setMeetingMini(on, miniHeight(tab), MINI_MIN_HEIGHT[tab]);
     setMini(on);
   }
 

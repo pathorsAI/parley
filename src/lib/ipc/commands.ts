@@ -150,6 +150,16 @@ export const stopMeeting = (args: { keepMs?: number | null } = {}) => invoke<voi
 export const cancelMeeting = () => invoke<void>("cancel_meeting");
 export const setMeetingPaused = (args: { paused: boolean }) => invoke<void>("set_meeting_paused", args);
 export const meetingActive = () => invoke<boolean>("meeting_active");
+/** Move and resize the calling window to a frame in logical px (top-left
+ *  origin), gliding there over `durationMs` on macOS; set at once elsewhere
+ *  (commands/window_frame.rs). */
+export const animateWindowFrame = (args: {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  durationMs: number;
+}) => invoke<void>("animate_window_frame", args);
 /** The meeting the backend is recording right now, or null. */
 export interface BackendMeeting {
   meetingId: string;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FLOATING_SIZE, MINI_WIDTH, floatingFrame, nearDock } from "./floatingWindow";
+import { FLOATING_SIZE, MINI_WIDTH, dockPosition, dockTarget, floatingFrame } from "./floatingWindow";
 
 describe("floatingFrame", () => {
   it("keeps the frame's size on a roomy screen, against the right edge", () => {
@@ -25,28 +25,43 @@ describe("floatingFrame", () => {
   });
 });
 
-describe("nearDock", () => {
+describe("dockTarget", () => {
   // A 1512-wide work area starting under a 38px menu bar.
   const area = { x: 0, y: 38, width: 1512 };
   const centered = (1512 - MINI_WIDTH) / 2;
 
-  it("docks a mini window brought near the top edge's middle", () => {
-    expect(nearDock({ x: centered + 100, y: 60, width: MINI_WIDTH }, area)).toBe(true);
+  it("pulls a mini window near the top edge's middle under the notch", () => {
+    expect(dockTarget({ x: centered + 100, y: 60, width: MINI_WIDTH }, area)).toBe("notch");
   });
 
-  it("docks one brought near the top edge anywhere along it", () => {
-    expect(nearDock({ x: 20, y: 40, width: MINI_WIDTH }, area)).toBe(true);
-    expect(nearDock({ x: 1512 - MINI_WIDTH - 10, y: 90, width: MINI_WIDTH }, area)).toBe(true);
+  it("pulls one near the top-left under the notch too", () => {
+    expect(dockTarget({ x: 20, y: 40, width: MINI_WIDTH }, area)).toBe("notch");
+  });
+
+  it("pulls one near the top-right to the corner", () => {
+    expect(dockTarget({ x: 1512 - MINI_WIDTH - 10, y: 90, width: MINI_WIDTH }, area)).toBe("corner");
   });
 
   it("leaves one further down the screen", () => {
-    expect(nearDock({ x: centered, y: 400, width: MINI_WIDTH }, area)).toBe(false);
-    expect(nearDock({ x: centered, y: 38 + 73, width: MINI_WIDTH }, area)).toBe(false);
+    expect(dockTarget({ x: centered, y: 400, width: MINI_WIDTH }, area)).toBeNull();
+    expect(dockTarget({ x: centered, y: 38 + 73, width: MINI_WIDTH }, area)).toBeNull();
   });
 
   it("only docks to the screen the window's middle is on", () => {
     const right = { x: 1512, y: 0, width: 1920 };
-    expect(nearDock({ x: 1600, y: 10, width: MINI_WIDTH }, right)).toBe(true);
-    expect(nearDock({ x: centered, y: 10, width: MINI_WIDTH }, right)).toBe(false);
+    expect(dockTarget({ x: 1512 + (1920 - MINI_WIDTH) / 2, y: 10, width: MINI_WIDTH }, right)).toBe("notch");
+    expect(dockTarget({ x: centered, y: 10, width: MINI_WIDTH }, right)).toBeNull();
+  });
+});
+
+describe("dockPosition", () => {
+  const area = { x: 1512, y: 25, width: 1920 };
+
+  it("centers the notch spot under the menu bar", () => {
+    expect(dockPosition("notch", area, 440)).toEqual({ x: 1512 + 740, y: 33 });
+  });
+
+  it("keeps the corner spot off the right edge", () => {
+    expect(dockPosition("corner", area, 440)).toEqual({ x: 1512 + 1920 - 440 - 8, y: 33 });
   });
 });
