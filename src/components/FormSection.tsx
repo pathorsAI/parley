@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 
 /**
  * The form layout onboarding set: a section is a soft card (its fill at 60%)
- * headed by a blue pill (icon + name) with a one-line note opposite. Inside it, fields are either
+ * headed by a blue icon + name with a one-line note opposite. Inside it, fields are either
  * plain — a {@link FieldTitle}, the control, an 11px hint, spaced by gap only
  * (onboarding's context step, the meeting draft) — or each on its own
  * {@link FieldPanel} (onboarding's model step).
@@ -17,7 +17,7 @@ export function FormSection({
   return (
     <section className="flex flex-col gap-4 rounded-[8px] bg-linear-to-b from-[#f5f5f5]/60 to-[#fafafa]/60 p-4 dark:from-muted/60 dark:to-muted/36">
       <div className="flex items-center justify-between gap-3">
-        <span className="inline-flex w-fit shrink-0 items-center gap-2 rounded-full bg-white/70 px-3 py-1 text-sm leading-[1.3] text-primary dark:bg-white/10">
+        <span className="inline-flex w-fit shrink-0 items-center gap-2 text-sm leading-[1.3] text-primary">
           {icon}
           {label}
         </span>
