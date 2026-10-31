@@ -14,7 +14,6 @@ import {
   primaryAction,
   revealsToOrg,
   saveLastDestination,
-  workspaceControl,
   workspaceOf,
   workspaceRoot,
 } from "./destinationPicker";
@@ -30,13 +29,7 @@ const orgIn = (orgId: string, folderId: string | null): LibraryDestination => ({
   folderId,
 });
 
-describe("workspace control", () => {
-  it("is a segmented control up to three workspaces, a combobox past that", () => {
-    expect(workspaceControl(1)).toBe("segmented");
-    expect(workspaceControl(3)).toBe("segmented");
-    expect(workspaceControl(4)).toBe("combobox");
-  });
-
+describe("workspaces", () => {
   it("maps destinations to workspaces and back to their roots", () => {
     expect(workspaceOf(personalIn("f"))).toBe(PERSONAL_WORKSPACE);
     expect(workspaceOf(orgIn("org-1", "f"))).toBe("org-1");

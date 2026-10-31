@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Check, ChevronDown, Folder, FolderClosed, Loader2, Plus, Search, User, UsersRound } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Folder, FolderClosed, Loader2, Plus, Search, User, UsersRound } from "lucide-react";
 import { toast } from "sonner";
 import {
   createLocalFolder,
@@ -15,9 +15,7 @@ import { useI18n } from "../i18n";
 import { log } from "../lib/log";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Combobox } from "@/components/ui/combobox";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { LibraryDestination, OrgHandoffMode } from "../lib/library/destination";
 import {
   PERSONAL_WORKSPACE,
@@ -36,7 +34,6 @@ import {
   primaryAction,
   revealsToOrg,
   saveLastDestination,
-  workspaceControl,
   workspaceFolders,
   workspaceOf,
   workspaceRoot,
@@ -247,7 +244,7 @@ export function DestinationSheet({
   const crumb = useCrumb(sources);
   const place = usePlaceName(sources);
   // Moving a recording that exists names places the way the library does — by
-  // the folder alone, under workspace tabs that already say where. The doors
+  // the folder alone, beside the workspace list that already says where. The doors
   // that choose for a recording still to come (save, auto-share) keep the
   // crumb, which carries the workspace in the one line they show.
   const named = verb === "move" ? place : crumb;
@@ -376,35 +373,36 @@ export function DestinationSheet({
           />
         }
       >
-        {/* The workspace switch and the search stay put while the list scrolls
-            under them — the list is the sheet's own scroll area. */}
-        <FolderPane
-          switcher={
-            showSwitch ? (
-              <WorkspaceSwitch workspaces={workspaces} value={workspace} onChange={pickWorkspace} />
-            ) : null
-          }
-          folders={showFolderList ? folders : []}
-          hidden={!showFolderList}
-          query={query}
-          onQueryChange={setQuery}
-          selectedFolderId={newFolder || unpicked ? undefined : selected.folderId}
-          currentFolderId={current && workspaceOf(current) === workspace ? current.folderId : undefined}
-          newFolder={newFolder}
-          creating={creating}
-          onStartCreate={() => setCreating(true)}
-          onPick={pickFolder}
-          onStage={stageNewFolder}
-        />
+        {/* Two columns once there is more than Personal: the workspaces down
+            the left, the picked one's folders on the right. The workspace list
+            and the search stay put while the folders scroll — the sheet's own
+            scroll area. */}
+        <div className={cn(showSwitch && "flex min-h-full")}>
+          {showSwitch && <WorkspaceList workspaces={workspaces} value={workspace} onChange={pickWorkspace} />}
+          <div className={cn(showSwitch && "min-w-0 flex-1")}>
+            <FolderPane
+              folders={showFolderList ? folders : []}
+              hidden={!showFolderList}
+              query={query}
+              onQueryChange={setQuery}
+              selectedFolderId={newFolder || unpicked ? undefined : selected.folderId}
+              currentFolderId={current && workspaceOf(current) === workspace ? current.folderId : undefined}
+              newFolder={newFolder}
+              creating={creating}
+              onStartCreate={() => setCreating(true)}
+              onPick={pickFolder}
+              onStage={stageNewFolder}
+            />
+          </div>
+        </div>
       </SheetContent>
     </Sheet>
   );
 }
 
-/** The workspace switch and search (sticky), then the folder list — the
- *  sheet's own scroll area, so the list scrolls with the sheet. */
+/** The search (sticky), then the folder list — the sheet's own scroll area,
+ *  so the list scrolls with the sheet. */
 function FolderPane({
-  switcher,
   folders,
   hidden,
   query,
@@ -417,7 +415,6 @@ function FolderPane({
   onPick,
   onStage,
 }: Readonly<{
-  switcher: ReactNode;
   /** null while loading. */
   folders: NamedFolder[] | null;
   /** No folder list at all (Personal in the auto-share setting). */
@@ -438,22 +435,19 @@ function FolderPane({
   const shown = folders ? filterFolders(folders, query) : [];
   const offerCreate = !!folders && canCreateFolder(folders, query);
   const showSearch = !hidden && !!folders && needsFolderSearch(folders.length);
-  const header = !!switcher || showSearch;
+  const header = showSearch;
 
   return (
     <>
       {header && (
-        <div className="sticky top-0 z-10 flex flex-col gap-3 bg-background px-4 pb-2 pt-3">
-          {switcher}
-          {showSearch && (
-            <FolderSearchField
-              value={query}
-              onChange={onQueryChange}
-              onSubmit={() => {
-                if (offerCreate && shown.length === 0) onStage(query);
-              }}
-            />
-          )}
+        <div className="sticky top-0 z-10 bg-background px-4 pb-2 pt-3">
+          <FolderSearchField
+            value={query}
+            onChange={onQueryChange}
+            onSubmit={() => {
+              if (offerCreate && shown.length === 0) onStage(query);
+            }}
+          />
         </div>
       )}
       {!hidden && (
@@ -584,44 +578,43 @@ function FolderSearchField({
   );
 }
 
-/** Personal + each org: a segmented control while they fit, a search past that. */
-function WorkspaceSwitch({
+/** Personal + each org, down the sheet's left column: the picked one is
+ *  marked, and a long list of orgs scrolls rather than squeezing. */
+function WorkspaceList({
   workspaces,
   value,
   onChange,
 }: Readonly<{ workspaces: WorkspaceRef[]; value: string; onChange: (id: string) => void }>) {
   const { t } = useI18n();
-  if (workspaceControl(workspaces.length) === "combobox") {
-    return (
-      <Combobox
-        value={value}
-        groups={[{ options: workspaces.map((w) => ({ value: w.id, label: w.name })) }]}
-        onChange={onChange}
-        contentClassName="w-[var(--radix-popover-trigger-width)]"
-        placeholder={t("destination.personal")}
-        searchPlaceholder={t("dest.searchWorkspace")}
-        emptyText={t("folder.noMatch")}
-        icon={
-          value === PERSONAL_WORKSPACE ? (
-            <User className="size-3.5 shrink-0 text-muted-foreground" />
-          ) : (
-            <UsersRound className="size-3.5 shrink-0 text-muted-foreground" />
-          )
-        }
-      />
-    );
-  }
   return (
-    <Tabs value={value} onValueChange={onChange}>
-      <TabsList aria-label={t("dest.workspace")} className="w-full">
-        {workspaces.map((w) => (
-          <TabsTrigger key={w.id} value={w.id} className="min-w-0 text-xs">
-            {w.id === PERSONAL_WORKSPACE ? <User className="size-3.5" /> : <UsersRound className="size-3.5" />}
-            <span className="truncate">{w.name}</span>
-          </TabsTrigger>
-        ))}
-      </TabsList>
-    </Tabs>
+    <nav
+      aria-label={t("dest.workspace")}
+      className="sticky top-0 flex w-36 shrink-0 flex-col gap-px self-start border-r px-2 py-3"
+    >
+      {workspaces.map((w) => {
+        const active = w.id === value;
+        return (
+          <button
+            key={w.id}
+            type="button"
+            aria-pressed={active}
+            title={w.name}
+            onClick={() => onChange(w.id)}
+            className={cn(
+              "flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm transition-colors hover:bg-muted",
+              active ? "bg-primary/10 font-medium text-primary hover:bg-primary/10" : "text-foreground"
+            )}
+          >
+            {w.id === PERSONAL_WORKSPACE ? (
+              <User className="size-3.5 shrink-0" />
+            ) : (
+              <UsersRound className="size-3.5 shrink-0" />
+            )}
+            <span className="min-w-0 flex-1 truncate">{w.name}</span>
+          </button>
+        );
+      })}
+    </nav>
   );
 }
 
@@ -774,6 +767,12 @@ export function DestinationField({
     verb === "share" && shownValue.scope === "personal" ? t("dest.action.shareOff") : crumb(shownValue);
   const isOrg = shownValue.scope === "org";
   const unpicked = shownValue.scope === "personal" && !shownValue.folderId;
+  // In an org the field names it as a tag before the folder, so two orgs'
+  // folders of the same name never read alike.
+  const orgFolder =
+    shownValue.scope === "org" && shownValue.folderId
+      ? (sources.orgFolders[shownValue.orgId] ?? []).find((f) => f.id === shownValue.folderId)?.name
+      : undefined;
 
   const trigger = chip ? (
     <button
@@ -806,11 +805,28 @@ export function DestinationField({
         } transition-colors hover:bg-muted/50 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50`}
       >
         {isOrg ? (
-          <UsersRound className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
+            <span className="inline-flex max-w-[60%] shrink-0 items-center gap-1 rounded-[4px] bg-primary/10 px-1.5 py-px text-xs font-medium text-primary">
+              <UsersRound className="size-3 shrink-0" />
+              <span className="truncate">{orgNameOf(sources.orgs, shownValue)}</span>
+            </span>
+            {orgFolder && (
+              <>
+                <ChevronRight aria-hidden className="size-3 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 truncate">{orgFolder}</span>
+              </>
+            )}
+          </span>
         ) : (
-          <Folder className="size-3.5 shrink-0 text-muted-foreground" />
+          <>
+            {isOrg ? (
+              <UsersRound className="size-3.5 shrink-0 text-muted-foreground" />
+            ) : (
+              <Folder className="size-3.5 shrink-0 text-muted-foreground" />
+            )}
+            <span className="min-w-0 flex-1 truncate text-left">{label}</span>
+          </>
         )}
-        <span className="min-w-0 flex-1 truncate text-left">{label}</span>
         {isOrg && mode === "copy" && (
           <span className="shrink-0 text-[10px] text-muted-foreground">{t("dest.keepCopyHint")}</span>
         )}

@@ -50,15 +50,6 @@ export function inWorkspace(workspace: string, folderId: string | null): Library
     : { scope: "org", orgId: workspace, folderId };
 }
 
-/**
- * Segmented control while every workspace fits on one row; a searchable
- * combobox past that. `count` includes Personal.
- */
-export const SEGMENTED_MAX = 3;
-export function workspaceControl(count: number): "segmented" | "combobox" {
-  return count <= SEGMENTED_MAX ? "segmented" : "combobox";
-}
-
 /** A folder list is long enough to need a search field. */
 export const SEARCH_THRESHOLD = 8;
 export function needsFolderSearch(folderCount: number): boolean {
