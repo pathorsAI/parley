@@ -587,33 +587,34 @@ function WorkspaceList({
 }: Readonly<{ workspaces: WorkspaceRef[]; value: string; onChange: (id: string) => void }>) {
   const { t } = useI18n();
   return (
-    <nav
-      aria-label={t("dest.workspace")}
-      className="sticky top-0 flex w-36 shrink-0 flex-col gap-px self-start border-r px-2 py-3"
-    >
-      {workspaces.map((w) => {
-        const active = w.id === value;
-        return (
-          <button
-            key={w.id}
-            type="button"
-            aria-pressed={active}
-            title={w.name}
-            onClick={() => onChange(w.id)}
-            className={cn(
-              "flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm transition-colors hover:bg-muted",
-              active ? "bg-primary/10 font-medium text-primary hover:bg-primary/10" : "text-foreground"
-            )}
-          >
-            {w.id === PERSONAL_WORKSPACE ? (
-              <User className="size-3.5 shrink-0" />
-            ) : (
-              <UsersRound className="size-3.5 shrink-0" />
-            )}
-            <span className="min-w-0 flex-1 truncate">{w.name}</span>
-          </button>
-        );
-      })}
+    // The column (and its divider) runs the sheet's full height; the list in
+    // it stays put while the folders scroll.
+    <nav aria-label={t("dest.workspace")} className="w-36 shrink-0 border-r">
+      <div className="sticky top-0 flex flex-col gap-px px-2 py-3">
+        {workspaces.map((w) => {
+          const active = w.id === value;
+          return (
+            <button
+              key={w.id}
+              type="button"
+              aria-pressed={active}
+              title={w.name}
+              onClick={() => onChange(w.id)}
+              className={cn(
+                "flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm transition-colors hover:bg-muted",
+                active ? "bg-primary/10 font-medium text-primary hover:bg-primary/10" : "text-foreground"
+              )}
+            >
+              {w.id === PERSONAL_WORKSPACE ? (
+                <User className="size-3.5 shrink-0" />
+              ) : (
+                <UsersRound className="size-3.5 shrink-0" />
+              )}
+              <span className="min-w-0 flex-1 truncate">{w.name}</span>
+            </button>
+          );
+        })}
+      </div>
     </nav>
   );
 }
