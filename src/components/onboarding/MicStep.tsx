@@ -88,15 +88,17 @@ export function MicStep({
       .catch((e) => log.warn("onboarding: list input devices failed", { error: String(e) }));
   }, [desktop]);
 
-  // Leaving the step ends the check and its listeners.
+  // Leaving the step mid-sentence is the same as pressing Stop: the check ends
+  // and what was said is still saved (background, profile, terms), so Next
+  // never throws a self-introduction away. A run already stopping finishes on
+  // its own.
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
-      const r = run.current;
-      if (!r) return;
-      if (r.live) ipc.stopMicCheck().catch((e) => log.warn("onboarding: stop mic check failed", { error: String(e) }));
-      teardown();
+      if (run.current?.live) {
+        stop().catch((e) => log.warn("onboarding: stopping the mic check on leave failed", { error: String(e) }));
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -204,7 +206,7 @@ export function MicStep({
     const r = run.current;
     if (!r || !r.live) return;
     r.live = false;
-    setPhase("stopping");
+    if (mounted.current) setPhase("stopping");
     // Wait for the provider to flush its last words (stt://closed), bounded.
     const flushed = new Promise<void>((resolve) => {
       r.closed = resolve;
@@ -218,13 +220,14 @@ export function MicStep({
   }
 
   async function finish(transcript: CheckTranscript) {
+    // Runs to the end even after the step unmounted (see the leave effect);
+    // only the on-screen state is skipped then.
     const said = await showText(transcript.text());
-    if (!mounted.current) return;
     if (!said.trim()) {
-      setPhase("empty");
+      if (mounted.current) setPhase("empty");
       return;
     }
-    setPhase("saving");
+    if (mounted.current) setPhase("saving");
     const settings = useStore.getState().settings;
     const summary = await summarizeIntro({ settings, transcript: said }).catch((e) => {
       // The sentence itself still makes a background line.

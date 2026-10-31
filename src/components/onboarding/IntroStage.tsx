@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { AudioLines, Check, FileAudio, Folder, House, Mic, Plug, Square } from "lucide-react";
+import { AudioLines, Check, FileAudio, Folder, House, Mic, Plug, RotateCcw, Square } from "lucide-react";
 import { useI18n } from "../../i18n";
 import type { TranslationKey } from "../../i18n/messages";
 import { sampleManifest } from "../../lib/onboarding/sample";
@@ -16,8 +16,8 @@ import { runTimeline, typingSchedule, type Beat } from "./timeline";
  * replay tabs replace the recording pill, the report's key points and action
  * items fill in, and the MCP plug lights up. Only the current step's
  * part of the demo is at full strength, so there is one thing to look at. It
- * runs in about eleven seconds and rests on its final frame; Next works at any
- * time. Real component styles (the titlebar pill, sidebar rows, a library
+ * runs in about eleven seconds and rests on its final frame, where Replay
+ * runs it again from the start; Next works at any time. Real component styles (the titlebar pill, sidebar rows, a library
  * row), not illustrations. Under reduced motion it shows the final frame.
  */
 
@@ -75,6 +75,13 @@ const CAPTION: Record<IntroBeatId, TranslationKey> = {
 };
 
 export function IntroStage() {
+  // Each run is a fresh mount: every part of the demo (typing, the flying
+  // card, the plug) starts from nothing again.
+  const [run, setRun] = useState(0);
+  return <IntroDemo key={run} onReplay={() => setRun((n) => n + 1)} />;
+}
+
+function IntroDemo({ onReplay }: Readonly<{ onReplay: () => void }>) {
   const { t, language } = useI18n();
   const [reduced] = useState(prefersReducedMotion);
   const [beat, setBeat] = useState<IntroBeatId>(reduced ? "ready" : "overview");
@@ -153,9 +160,22 @@ export function IntroStage() {
         </div>
       </div>
 
-      <p key={beat} aria-live="polite" className={cn("min-h-5 text-sm text-muted-foreground", !reduced && "ob-fade-in")}>
-        {t(CAPTION[beat])}
-      </p>
+      <div className="flex min-h-5 items-center justify-between gap-3">
+        <p key={beat} aria-live="polite" className={cn("text-sm text-muted-foreground", !reduced && "ob-fade-in")}>
+          {t(CAPTION[beat])}
+        </p>
+        {/* Under reduced motion the demo is its final frame: nothing to replay. */}
+        {beat === "ready" && !reduced && (
+          <button
+            type="button"
+            onClick={onReplay}
+            className="ob-fade-in -my-0.5 inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/10"
+          >
+            <RotateCcw className="size-3" />
+            {t("onboarding.stage.replay")}
+          </button>
+        )}
+      </div>
     </section>
   );
 }
