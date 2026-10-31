@@ -21,7 +21,14 @@ pub(crate) fn animate_window_frame(
         let ns = window.ns_window().map_err(|e| e.to_string())? as usize;
         window
             .run_on_main_thread(move || unsafe {
-                macos::glide(ns as *mut objc::runtime::Object, x, y, width, height, duration_ms)
+                macos::glide(
+                    ns as *mut objc::runtime::Object,
+                    x,
+                    y,
+                    width,
+                    height,
+                    duration_ms,
+                )
             })
             .map_err(|e| e.to_string())
     }
@@ -41,7 +48,6 @@ pub(crate) fn animate_window_frame(
 mod macos {
     use objc::runtime::{Class, Object, YES};
     use objc::{class, msg_send, sel, sel_impl};
-    use std::os::raw::c_char;
 
     // Foundation's geometry structs. CGFloat is f64 on every 64-bit Mac.
     #[repr(C)]
@@ -68,7 +74,14 @@ mod macos {
     /// Animate `w` to the top-left-origin frame through its animator proxy,
     /// inside an NSAnimationContext group that sets the duration and curve.
     /// Main thread only.
-    pub(super) unsafe fn glide(w: *mut Object, x: f64, y: f64, width: f64, height: f64, duration_ms: u32) {
+    pub(super) unsafe fn glide(
+        w: *mut Object,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        duration_ms: u32,
+    ) {
         // Cocoa's origin is the primary screen's bottom-left, y up; logical
         // positions are its points measured down from that screen's top.
         let screens: *mut Object = msg_send![class!(NSScreen), screens];
@@ -78,7 +91,10 @@ mod macos {
         }
         let screen: NSRect = msg_send![primary, frame];
         let frame = NSRect {
-            origin: NSPoint { x, y: screen.size.height - y - height },
+            origin: NSPoint {
+                x,
+                y: screen.size.height - y - height,
+            },
             size: NSSize { width, height },
         };
 
@@ -90,7 +106,7 @@ mod macos {
         if let Some(timing) = Class::get("CAMediaTimingFunction") {
             let name: *mut Object = msg_send![
                 class!(NSString),
-                stringWithUTF8String: b"easeOut\0".as_ptr() as *const c_char
+                stringWithUTF8String: c"easeOut".as_ptr()
             ];
             let curve: *mut Object = msg_send![timing, functionWithName: name];
             let _: () = msg_send![current, setTimingFunction: curve];
