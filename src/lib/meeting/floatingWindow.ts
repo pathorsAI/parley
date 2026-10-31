@@ -17,9 +17,12 @@ export const MINI_WIDTH = 440;
 /** The mini window's height per tab: the coach is the bare row (its answer
  *  opens under it), the transcript its last lines, the notes a small box. */
 export const MINI_HEIGHT = { coach: 48, coachAnswer: 240, transcript: 176, notes: 200 } as const;
-/** Docking: a mini window let go this close to the middle of the screen's top
- *  edge snaps to it — under the notch, by the camera. */
-const DOCK_REACH = { x: 160, y: 56 } as const;
+/** Docking, like a magnet: a mini window brought this close to the screen's
+ *  top edge — anywhere along it — snaps to its middle, under the notch, by
+ *  the camera. */
+const DOCK_REACH = 72;
+/** How long the window rests before the magnet pulls (or lets go). */
+const DOCK_SETTLE_MS = 120;
 /** The docked window's gap under the menu bar. */
 const DOCK_GAP = 6;
 /** The main window's own minimum (tauri.conf.json), restored afterwards. */
@@ -125,21 +128,21 @@ export async function setMiniHeight(height: number): Promise<void> {
 }
 
 /**
- * Pure: whether a window whose frame is `win` (logical px) was let go close
- * enough to the middle of `area`'s top edge to dock there.
+ * Pure: whether a window whose frame is `win` (logical px) is close enough to
+ * the top edge of `area` — the screen its middle is on — to dock there.
  */
 export function nearDock(
   win: { x: number; y: number; width: number },
   area: { x: number; y: number; width: number },
 ): boolean {
   const center = win.x + win.width / 2;
-  const areaCenter = area.x + area.width / 2;
-  return Math.abs(center - areaCenter) <= DOCK_REACH.x && win.y - area.y <= DOCK_REACH.y;
+  const onScreen = center >= area.x && center < area.x + area.width;
+  return onScreen && win.y - area.y <= DOCK_REACH;
 }
 
 /**
- * While the mini window shows: once a drag settles, snap it under the notch if
- * it was let go near there, and undock it if it was dragged away.
+ * While the mini window shows: whenever it rests near the top edge, snap it
+ * under the notch; dragged away from there, it undocks.
  */
 export function useMiniDocking(active: boolean): void {
   useEffect(() => {
@@ -178,7 +181,7 @@ export function useMiniDocking(active: boolean): void {
     void import("@tauri-apps/api/window").then(async ({ getCurrentWindow }) => {
       const off = await getCurrentWindow().onMoved(() => {
         clearTimeout(timer);
-        timer = setTimeout(() => void settle(), 220);
+        timer = setTimeout(() => void settle(), DOCK_SETTLE_MS);
       });
       if (gone) off();
       else unlisten = off;

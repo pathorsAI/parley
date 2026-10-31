@@ -162,8 +162,8 @@ const MINI_TABS: { tab: Tab; icon: typeof Captions }[] = [
  * three tabs as icons, expand — over a small view of the tab it shrank from:
  * the transcript's last lines, the notes box, or the coach's ask box (its
  * answer opens under the row). The window's height follows the tab. Dragged
- * from anywhere that is not a control; let go near the middle of the top
- * edge, it docks under the notch.
+ * from anywhere that is not a control; brought near the screen's top edge,
+ * it snaps under the notch like a magnet.
  *
  * `fixed`: the full window dragged small shows this view too, at the size it
  * was dragged to — so the window is never resized under the user.

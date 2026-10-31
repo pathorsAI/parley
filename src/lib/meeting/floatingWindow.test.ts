@@ -30,21 +30,23 @@ describe("nearDock", () => {
   const area = { x: 0, y: 38, width: 1512 };
   const centered = (1512 - MINI_WIDTH) / 2;
 
-  it("docks a mini window let go near the middle of the top edge", () => {
+  it("docks a mini window brought near the top edge's middle", () => {
     expect(nearDock({ x: centered + 100, y: 60, width: MINI_WIDTH }, area)).toBe(true);
   });
 
-  it("leaves one let go at a top corner", () => {
-    expect(nearDock({ x: 20, y: 40, width: MINI_WIDTH }, area)).toBe(false);
+  it("docks one brought near the top edge anywhere along it", () => {
+    expect(nearDock({ x: 20, y: 40, width: MINI_WIDTH }, area)).toBe(true);
+    expect(nearDock({ x: 1512 - MINI_WIDTH - 10, y: 90, width: MINI_WIDTH }, area)).toBe(true);
   });
 
-  it("leaves one let go in the middle of the screen", () => {
+  it("leaves one further down the screen", () => {
     expect(nearDock({ x: centered, y: 400, width: MINI_WIDTH }, area)).toBe(false);
+    expect(nearDock({ x: centered, y: 38 + 73, width: MINI_WIDTH }, area)).toBe(false);
   });
 
-  it("measures from the work area of a second screen", () => {
+  it("only docks to the screen the window's middle is on", () => {
     const right = { x: 1512, y: 0, width: 1920 };
-    expect(nearDock({ x: 1512 + (1920 - MINI_WIDTH) / 2, y: 10, width: MINI_WIDTH }, right)).toBe(true);
+    expect(nearDock({ x: 1600, y: 10, width: MINI_WIDTH }, right)).toBe(true);
     expect(nearDock({ x: centered, y: 10, width: MINI_WIDTH }, right)).toBe(false);
   });
 });
