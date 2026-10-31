@@ -26,6 +26,7 @@ import {
   MINI_LINE,
   MINI_MIN_HEIGHT,
   dragWindowFrom,
+  holdMiniMinHeight,
   setMeetingMini,
   setMiniHeight,
   useMiniDocking,
@@ -172,7 +173,7 @@ function MiniNotes() {
       onChange={(e) => setNotes(e.target.value)}
       placeholder={t("floating.notesPlaceholder")}
       aria-label={t("floating.tabs.notes")}
-      className="block min-h-0 w-full flex-1 resize-none bg-transparent px-3 py-2 text-sm leading-[22px] text-foreground outline-none placeholder:text-muted-foreground"
+      className="block min-h-0 w-full flex-1 resize-none bg-transparent px-3 py-2 select-text text-sm leading-[22px] text-foreground outline-none placeholder:text-muted-foreground"
     />
   );
 }
@@ -221,6 +222,8 @@ function MiniWindow({
   useEffect(() => {
     if (firstRun.current) {
       firstRun.current = false;
+      // Still hold its tab's least height: never half a line of transcript.
+      if (!fixed) void holdMiniMinHeight(MINI_MIN_HEIGHT[tab]);
       return;
     }
     if (!fixed) void setMiniHeight(miniHeight(tab, answerOpen), MINI_MIN_HEIGHT[tab]);
@@ -249,7 +252,7 @@ function MiniWindow({
       role="dialog"
       aria-label={t("floating.mini")}
       onMouseDown={(e) => dragWindowFrom(e)}
-      className="flex h-full min-h-0 w-full flex-1 flex-col bg-background"
+      className="flex h-full min-h-0 w-full flex-1 select-none flex-col bg-background"
     >
       <div className="flex h-12 shrink-0 items-center gap-2 pr-1.5 pl-2" title={fixed ? undefined : t("floating.dockHint")}>
         <RecordingClock withLabel={false} />
@@ -270,7 +273,7 @@ function MiniWindow({
               onKeyDown={onKeyDown}
               aria-label={t("feed.askPlaceholder")}
               placeholder={t("floating.capsuleAsk")}
-              className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground"
+              className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none select-text placeholder:text-muted-foreground"
             />
             <button
               type="submit"

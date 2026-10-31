@@ -193,6 +193,20 @@ export async function setMiniHeight(height: number, minHeight: number = MINI_MIN
   }
 }
 
+/** Hold the mini window at least `minHeight` tall, growing it to that if it
+ *  is shorter — the mini window as it first shows, whatever it was before. */
+export async function holdMiniMinHeight(minHeight: number): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    const { getCurrentWindow, LogicalSize } = await import("@tauri-apps/api/window");
+    await getCurrentWindow().setMinSize(new LogicalSize(MINI_WIDTH, minHeight));
+    const now = await currentFrame();
+    if (now.height < minHeight - 0.5) await glide({ ...now, height: minHeight });
+  } catch (error) {
+    log.warn("meeting: mini window minimum failed", { minHeight, error: String(error) });
+  }
+}
+
 /**
  * While the mini window shows: whenever it rests near the top edge, pull it
  * to the nearer dock spot; dragged away from there, it undocks.
