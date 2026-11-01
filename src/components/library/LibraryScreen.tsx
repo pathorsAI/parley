@@ -424,8 +424,8 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
     // Rows in the list's own shape, from the top, so the list lands in place
     // instead of replacing a spinner centred in the pane.
     body = <RecordingTimelineSkeleton label={t("history.loading")} />;
-  } else if (visible.length === 0 && orgFolderCards.length > 0) {
-    body = null;
+  } else if (visible.length === 0 && orgRoot) {
+    body = <p className="px-2 py-2 text-xs text-muted-foreground/70">{t("library.org.rootEmpty")}</p>;
   } else if (visible.length === 0) {
     body = (
       <div className="flex h-full flex-col items-center justify-center gap-1 text-center">
@@ -563,8 +563,18 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
       {/* The date headers are sticky, so the list owns its own top padding —
           rows must slide under the header, not through a gap above it. */}
       <div className="relative min-h-0 flex-1 overflow-y-auto px-4 pb-4">
-        {orgFolderCards.length > 0 && (
-          <div className="relative flex flex-wrap gap-5 px-2 pt-6 pb-4">{orgFolderCards}</div>
+        {/* An org's own page holds two things, kept apart: its folders, and the
+            recordings filed to the org without a folder (a recording can be
+            saved into an org and left at its root). */}
+        {orgRoot && (
+          <>
+            <h2 className="px-2 pt-5 pb-3 text-xs font-semibold text-muted-foreground">{t("library.org.folders")}</h2>
+            <div className="flex flex-wrap gap-5 px-2 pb-6">{orgFolderCards}</div>
+            <h2 className="px-2 pb-1 text-xs font-semibold text-muted-foreground">
+              {t("library.org.rootRecordings")}
+              {visible.length > 0 && <span className="ml-1.5 font-normal tabular-nums">{visible.length}</span>}
+            </h2>
+          </>
         )}
         <div className="relative">{body}</div>
         {isOrg && entries !== null && visible.length > 0 && (
