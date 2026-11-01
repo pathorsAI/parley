@@ -567,7 +567,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
             {/* One row that scrolls sideways, however many folders there are,
                 so the unfiled recordings below stay in view. */}
             <div className="-mx-4 flex flex-nowrap gap-5 overflow-x-auto px-6 pt-1 pb-6">{orgFolderCards}</div>
-            <h2 className="px-2 pb-1 text-xs font-semibold text-muted-foreground">
+            <h2 className="px-2 pt-6 pb-1 text-xs font-semibold text-muted-foreground">
               {t("library.org.rootRecordings")}
               {visible.length > 0 && <span className="ml-1.5 font-normal tabular-nums">{visible.length}</span>}
             </h2>
