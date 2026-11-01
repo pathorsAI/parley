@@ -47,6 +47,14 @@ jobs:
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
 
+      - name: Tauri npm packages match their crates
+        # `tauri build` refuses a plugin whose npm and crate versions differ in
+        # major or minor, and nothing before it does — which is why v0.35.0 and
+        # v0.35.1 were tagged, pushed, and built nothing (#657). Fail here, in
+        # the job every build waits on, rather than 13 minutes into macOS with a
+        # signing run already spent.
+        run: node scripts/check-tauri-versions.mjs
+
       - name: Resolve tag and release notes
         id: release
         shell: bash
