@@ -8,7 +8,6 @@ import { toast } from "sonner";
 import { useI18n } from "../../i18n";
 import { useStore, hasSpokenSegment } from "../../lib/store";
 import { isTauri } from "../../lib/tauriEvents";
-import { findActiveTemplate } from "../../lib/evaluations/presets";
 import { analysisSignature, hasSides, lensOf } from "../../lib/analysis/lens";
 import { useStudyArtifactDisplay } from "../../lib/analysis/studyPipeline";
 import { TranscriptCopyMenu } from "../TranscriptCopyMenu";
@@ -83,7 +82,6 @@ export function ReplayScreen() {
   const analysisStatus = useStore((s) => s.analysisStatus);
   const analysisError = useStore((s) => s.analysisError);
   const selectedId = useStore((s) => s.selectedFindingId);
-  const evalTemplates = useStore((s) => s.settings.evalTemplates);
   const evaluations = useStore((s) => s.settings.evaluations);
   const analyzedEvalSig = useStore((s) => s.analyzedEvalSig);
   const meetingKind = useStore((s) => s.meetingKind);
@@ -103,7 +101,6 @@ export function ReplayScreen() {
   }
 
   // Which eval template is active, and whether the findings predate an eval change.
-  const activeTemplate = findActiveTemplate(evalTemplates, evaluations);
   const templateStale =
     findings.length > 0 &&
     analysisStatus === "done" &&
@@ -189,7 +186,6 @@ export function ReplayScreen() {
         playheadMs={playheadMs}
         selectedId={selectedId}
         onSelect={(e) => selectAndSeek(e, player.seek)}
-        templateName={activeTemplate ? activeTemplate.name : t("timeline.templateCustom")}
         stale={templateStale}
         pending={findings.length === 0 && (findingsDisplay === "running" || findingsDisplay === "queued")}
         expectSides={hasSides(lensOf(meetingKind))}
