@@ -92,7 +92,12 @@ export function tauriVersionMismatches(bunLock, cargoLock) {
   const mismatches = [];
   let compared = 0;
 
-  for (const [pkg, version] of [...npm].sort()) {
+  // By package name, so a tree with two mismatches reports them in the same
+  // order every run — Array#sort would otherwise compare the [key, value]
+  // pairs as strings.
+  const byName = ([a], [b]) => (a < b ? -1 : a > b ? 1 : 0);
+
+  for (const [pkg, version] of [...npm].sort(byName)) {
     const crate = crateFor(pkg);
     if (!crate) continue;
     const crateVersion = crates.get(crate);
