@@ -625,7 +625,7 @@ function EmptyRecords({
     <div
       className={`flex flex-col items-center justify-center gap-1 text-center ${compact ? "py-8" : "h-full"}`}
     >
-      <img alt="" src="/library/empty-records.svg" className="mb-3 block h-[70.562px] w-[80px] max-w-none" />
+      <img alt="" src="/library/empty-records.svg" className="mb-4 block h-[105.84px] w-[120px] max-w-none" />
       <p className="text-sm text-muted-foreground">{title}</p>
       <p className="max-w-80 text-xs text-muted-foreground/70">{hint}</p>
     </div>
