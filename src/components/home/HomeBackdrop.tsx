@@ -37,10 +37,12 @@ const BARS: Bar[] = [
 const LAYER_TOP = -172;
 const LAYER_HEIGHT = 595;
 
-export function HomeBackdrop() {
+/** `bars` off leaves only the wash — the ground other pages share with 總覽. */
+export function HomeBackdrop({ bars = true }: Readonly<{ bars?: boolean }> = {}) {
   return (
     <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
       <div className="absolute inset-0 bg-linear-to-b from-[#f0f9ff] to-[#fafafa] opacity-60 dark:from-primary/10 dark:to-background" />
+      {bars && (
       <div className="absolute inset-x-0 opacity-20 dark:opacity-15" style={{ top: LAYER_TOP, height: LAYER_HEIGHT }}>
         {BARS.map((b, i) => (
           <div
@@ -62,6 +64,7 @@ export function HomeBackdrop() {
           </div>
         ))}
       </div>
+      )}
     </div>
   );
 }

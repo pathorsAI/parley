@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { FolderCard } from "./FolderCard";
+import { HomeBackdrop } from "../home/HomeBackdrop";
 import { Archive, ChevronRight, Folder, Loader2, Plus, RefreshCw, Search, UsersRound, X } from "lucide-react";
 import { toast } from "sonner";
 import { useI18n } from "../../i18n";
@@ -99,6 +101,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
     if (!open) setFileItem(null);
   }, []);
 
+  const openLibrary = useStore((s) => s.openLibrary);
   const isOrg = selection.kind === "org";
   const isVoice = selection.kind === "voice";
   const node = selection.kind === "personal" ? selection.node : null;
@@ -394,11 +397,28 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
     node?.kind === "folder" ? tree.personalFolders.find((f) => f.id === node.folderId) ?? null : null;
   const openArchived = !!openFolder && isArchived(openFolder);
 
+  // An org's own page (no folder picked, no search): its folders as cards over
+  // the 總覽 wash, then any recordings left at its root.
+  const orgRoot = isOrg && selection.folderId === null && !searching;
+  const orgFolderCards =
+    orgRoot && selection.kind === "org"
+      ? scopeFolders.map((f) => (
+          <FolderCard
+            key={f.id}
+            name={f.name}
+            count={(entries ?? []).filter((e) => e.folderId === f.id).length}
+            onOpen={() => openLibrary({ kind: "org", id: selection.id, name: selection.name, folderId: f.id })}
+          />
+        ))
+      : [];
+
   let body;
   if (entries === null) {
     // Rows in the list's own shape, from the top, so the list lands in place
     // instead of replacing a spinner centred in the pane.
     body = <RecordingTimelineSkeleton label={t("history.loading")} />;
+  } else if (visible.length === 0 && orgFolderCards.length > 0) {
+    body = null;
   } else if (visible.length === 0) {
     body = (
       <div className="flex h-full flex-col items-center justify-center gap-1 text-center">
@@ -530,8 +550,12 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
 
       {/* The date headers are sticky, so the list owns its own top padding —
           rows must slide under the header, not through a gap above it. */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
-        {body}
+      <div className="relative min-h-0 flex-1 overflow-y-auto px-4 pb-4">
+        {orgRoot && <HomeBackdrop bars={false} />}
+        {orgFolderCards.length > 0 && (
+          <div className="relative flex flex-wrap gap-5 px-2 pt-6 pb-4">{orgFolderCards}</div>
+        )}
+        <div className="relative">{body}</div>
         {isOrg && entries !== null && visible.length > 0 && (
           <p className="px-2 py-3 text-[11px] text-muted-foreground">{t("library.org.footer")}</p>
         )}
