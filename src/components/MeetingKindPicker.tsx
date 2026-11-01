@@ -9,7 +9,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { cn } from "@/lib/utils";
 import type { MeetingKind } from "../lib/types";
 
 /**
@@ -23,15 +22,7 @@ import type { MeetingKind } from "../lib/types";
 export function MeetingKindPicker({
   className = "",
   size = "sm",
-  tag = false,
-}: Readonly<{
-  className?: string;
-  size?: "sm" | "default";
-  /** Read as a label beside the recording's name rather than a form control:
-   *  the kind is detected by the analysis and only occasionally corrected, so
-   *  it should say what the meeting is, quietly, and still open on a click. */
-  tag?: boolean;
-}>) {
+}: Readonly<{ className?: string; size?: "sm" | "default" }>) {
   const { t } = useI18n();
   const kind = useStore((s) => s.meetingKind);
   const analysisStatus = useStore((s) => s.analysisStatus);
@@ -45,12 +36,7 @@ export function MeetingKindPicker({
       <SelectTrigger
         size={size}
         aria-label={t("meetingKind.label")}
-        className={cn(
-          "min-w-0 text-[11px]",
-          tag &&
-            "h-6 gap-0.5 rounded-full border-0 bg-muted py-0 pr-1.5 pl-2 text-muted-foreground hover:bg-muted/70 hover:text-foreground data-[size=sm]:h-6 data-[size=sm]:rounded-full dark:bg-muted [&_svg]:size-3!",
-          className
-        )}
+        className={`min-w-0 text-[11px] ${className}`}
       >
         {/* The menu items stack a hint under each name; without our own
             children the trigger would mirror that whole block and clip the

@@ -172,6 +172,13 @@ export const zhTW = {
   "study.saved": "已存下，之後打開不會重新生成",
   "study.regenerate": "重新生成",
   "study.notes.caption": "會議中在浮動視窗記的筆記",
+  "study.tab.context": "會議背景",
+  "study.context.caption": "會議前準備的背景，AI 分析時會一起讀",
+  "study.context.edit": "編輯",
+  "study.ai": "連接 AI",
+  "study.handoff.desktopConfig": "Claude Desktop 用這段設定",
+  "study.handoff.waiting": "等待連線… Parley 要保持開啟",
+  "study.handoff.tryAsking": "試試這樣問",
   "study.brief.section.highlights": "重點",
   "study.brief.section.decisions": "決議",
   "study.brief.section.openQuestions": "待解問題",
@@ -211,7 +218,6 @@ export const zhTW = {
   "study.link.unlinked": "還沒歸檔",
   "study.link.attach": "放進資料夾",
   "study.link.change": "變更",
-  "study.link.menu": "更多動作",
   "study.link.context": "會議背景",
 
   // ── 轉錄完成後的命名與歸檔建議 ──
@@ -1802,6 +1808,13 @@ export const en = {
   "study.saved": "Saved — reopening won't regenerate it",
   "study.regenerate": "Regenerate",
   "study.notes.caption": "Notes you took in the floating window during the meeting",
+  "study.tab.context": "Background",
+  "study.context.caption": "Prepared before the meeting; the AI reads it with the transcript",
+  "study.context.edit": "Edit",
+  "study.ai": "Connect AI",
+  "study.handoff.desktopConfig": "Using Claude Desktop? Copy this config",
+  "study.handoff.waiting": "Waiting for a connection… keep Parley open",
+  "study.handoff.tryAsking": "Try asking",
   "study.brief.section.highlights": "Highlights",
   "study.brief.section.decisions": "Decisions",
   "study.brief.section.openQuestions": "Open questions",
@@ -1841,7 +1854,6 @@ export const en = {
   "study.link.unlinked": "Not filed yet",
   "study.link.attach": "Put it in a folder",
   "study.link.change": "Change",
-  "study.link.menu": "More actions",
   "study.link.context": "Meeting context",
 
   // ── Post-transcription naming and filing suggestion ──

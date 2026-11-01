@@ -24,7 +24,7 @@ import {
   speakerDisplayNames,
 } from "./handoff";
 import { handoffQuestions, type HandoffQuestions } from "./handoffQuestions";
-import { meetingNotesOf } from "../history/meetingNotes";
+import { meetingBackgroundOf, meetingNotesOf } from "../history/meetingNotes";
 import type { StudyTab } from "../store/study";
 
 type StoreState = ReturnType<typeof useStore.getState>;
@@ -94,6 +94,8 @@ export function studyPageTextFromState(
       return buildActionItemsMarkdown(s.actionItems);
     case "notes":
       return meetingNotesOf(s.meetingContext);
+    case "context":
+      return meetingBackgroundOf(s.meetingContext);
     case "delivery":
       return buildDeliveryMarkdown(s.deliveryAssessment, lang);
     case "replay":

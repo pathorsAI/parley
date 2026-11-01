@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown, Copy, Pencil, Sparkles } from "lucide-react";
-import { MeetingKindPicker } from "../MeetingKindPicker";
+import { AskYourAi } from "./AskYourAi";
 import { toast } from "sonner";
 import { transcriptAsText, useStore } from "../../lib/store";
 import { STUDY_TABS, type StudyTab } from "../../lib/store/study";
@@ -24,6 +24,7 @@ const TAB_LABEL: Record<StudyTab, TranslationKey> = {
   summary: "study.tab.summary",
   actions: "study.tab.actions",
   notes: "study.tab.notes",
+  context: "study.tab.context",
   delivery: "study.tab.delivery",
   replay: "study.tab.replay",
 };
@@ -41,6 +42,7 @@ export const studyTabId = (tab: StudyTab) => `study-tab-${tab}`;
 export function StudyHeader({
   tab,
   notesCount,
+  hasContext,
   pickerOpen,
   onPickerOpenChange,
 }: Readonly<{
@@ -48,6 +50,8 @@ export function StudyHeader({
   tab: StudyTab;
   /** How many notes were taken in the meeting; 0 hides the notes tab. */
   notesCount: number;
+  /** Whether the meeting had a prepared background; false hides its tab. */
+  hasContext: boolean;
   pickerOpen: boolean;
   onPickerOpenChange: (open: boolean) => void;
 }>) {
@@ -57,12 +61,13 @@ export function StudyHeader({
       <div className="flex items-center gap-2">
         {/* Keyed by recording: the title types itself in once per recording. */}
         <RecordingTitle key={entryId ?? "unsaved"} />
+        <AskYourAi />
         <StudyCopyMenu tab={tab} />
       </div>
       <div className="mt-1.5">
         <FilingRow pickerOpen={pickerOpen} onPickerOpenChange={onPickerOpenChange} />
       </div>
-      <StudyTabs tab={tab} notesCount={notesCount} />
+      <StudyTabs tab={tab} notesCount={notesCount} hasContext={hasContext} />
     </header>
   );
 }
@@ -162,10 +167,6 @@ function RecordingTitle() {
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2">
       {title}
-      {/* What this recording is read AS — a tag the analysis fills in, changed
-          only to correct it. Changing it doesn't re-run anything on its own;
-          the analysis chip owns regeneration. */}
-      <MeetingKindPicker tag className="shrink-0" />
       {autoNamed && draft === null && (
         <span
           title={t("study.title.autoNamedHint")}
@@ -234,12 +235,19 @@ function StudyCopyMenu({ tab }: Readonly<{ tab: StudyTab }>) {
 }
 
 /** The underline tablist. Counts ride next to 後續行動 and 筆記 when non-zero;
- *  the notes tab exists only when notes were taken. */
-function StudyTabs({ tab, notesCount }: Readonly<{ tab: StudyTab; notesCount: number }>) {
+ *  the notes tab exists only when notes were taken, the 會議背景 tab only when
+ *  the meeting had a prepared background. */
+function StudyTabs({
+  tab,
+  notesCount,
+  hasContext,
+}: Readonly<{ tab: StudyTab; notesCount: number; hasContext: boolean }>) {
   const { t } = useI18n();
   const actionCount = useStore((s) => s.actionItems.length);
   const setStudyTab = useStore((s) => s.setStudyTab);
-  const tabs = STUDY_TABS.filter((id) => id !== "notes" || notesCount > 0);
+  const tabs = STUDY_TABS.filter(
+    (id) => (id !== "notes" || notesCount > 0) && (id !== "context" || hasContext)
+  );
   const counts: Partial<Record<StudyTab, number>> = { actions: actionCount, notes: notesCount };
 
   return (

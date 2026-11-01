@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Clock, MessageCircleQuestion, RotateCw, X } from "lucide-react";
+import { Clock, MessageCircleQuestion, Pencil, RotateCw, X } from "lucide-react";
 import { DEFAULT_GETTING_STARTED, useStore } from "../../lib/store";
 import { missingProviderRequirement, providerGateKey } from "../../lib/ai/settings";
 import { regenerateArtifact, useBriefQueued, type StudyArtifactKey } from "../../lib/analysis/studyPipeline";
 import { splitBrief, type BriefSection as BriefSectionPart } from "../../lib/analysis/briefSections";
-import { meetingNotesOf } from "../../lib/history/meetingNotes";
+import { meetingBackgroundOf, meetingNotesOf } from "../../lib/history/meetingNotes";
+import { MeetingContextSheet } from "../MeetingContextButton";
 import type { StudyTab } from "../../lib/store/study";
 import { useI18n } from "../../i18n";
 import { ReplayScreen } from "../replay/ReplayScreen";
@@ -36,12 +37,15 @@ export function StudyScreen({ libraryCount = 0 }: Readonly<{ libraryCount?: numb
   const entryId = useStore((s) => s.loadedHistoryId);
   const readOnly = useStore((s) => s.replayReadOnly);
   const notes = useStore((s) => meetingNotesOf(s.meetingContext));
+  const background = useStore((s) => meetingBackgroundOf(s.meetingContext));
   const lap = useLapState({ gettingStarted, entryId, readOnly, libraryCount });
   // The destination picker, owned here so the guide bar opens the same sheet
   // as the header's filing row.
   const [pickerOpen, setPickerOpen] = useState(false);
-  // A recording without notes has no notes tab; land on the summary instead.
-  const tab: StudyTab = storedTab === "notes" && !notes ? "summary" : storedTab;
+  // A recording without notes (or a background) has no such tab; land on the
+  // summary instead.
+  const missing = (storedTab === "notes" && !notes) || (storedTab === "context" && !background);
+  const tab: StudyTab = missing ? "summary" : storedTab;
 
   // The LLM pipeline (analysis → action items ∥ delivery → brief)
   // is NOT mounted here — it's a store subscription (initStudyPipeline, see
@@ -53,6 +57,7 @@ export function StudyScreen({ libraryCount = 0 }: Readonly<{ libraryCount?: numb
         <StudyHeader
           tab={tab}
           notesCount={noteCount(notes)}
+          hasContext={!!background}
           pickerOpen={pickerOpen}
           onPickerOpenChange={setPickerOpen}
         />
@@ -64,7 +69,7 @@ export function StudyScreen({ libraryCount = 0 }: Readonly<{ libraryCount?: numb
           aria-labelledby={studyTabId(tab)}
           className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
         >
-          {tab === "replay" ? <ReplayScreen /> : <TabPage tab={tab} notes={notes} />}
+          {tab === "replay" ? <ReplayScreen /> : <TabPage tab={tab} notes={notes} background={background} />}
           <AskDrawer />
         </div>
         <GuideBar onOpenPicker={() => setPickerOpen(true)} />
@@ -91,7 +96,11 @@ function useSeekToReplay(): (ms: number) => void {
 
 /** Every tab but replay: one centered reading column. Each piece is restored
  *  from the saved entry; only a missing one generates (once) and is saved. */
-function TabPage({ tab, notes }: Readonly<{ tab: Exclude<StudyTab, "replay">; notes: string }>) {
+function TabPage({
+  tab,
+  notes,
+  background,
+}: Readonly<{ tab: Exclude<StudyTab, "replay">; notes: string; background: string }>) {
   const seek = useSeekToReplay();
   const briefDone = useStore((s) => s.briefStatus === "done" && !!s.brief);
   const actionsDone = useStore((s) => s.actionItemsStatus === "done");
@@ -114,6 +123,8 @@ function TabPage({ tab, notes }: Readonly<{ tab: Exclude<StudyTab, "replay">; no
     );
   } else if (tab === "notes") {
     body = <NotesSection notes={notes} />;
+  } else if (tab === "context") {
+    body = <BackgroundSection background={background} />;
   } else {
     body = <DeliveryPanel mode="replay" variant="full" />;
   }
@@ -163,6 +174,36 @@ function NotesSection({ notes }: Readonly<{ notes: string }>) {
     <div>
       <p className="mb-2 text-[11px] text-muted-foreground/70">{t("study.notes.caption")}</p>
       <p className="whitespace-pre-wrap text-sm leading-relaxed">{notes}</p>
+    </div>
+  );
+}
+
+/** 會議背景: what was prepared before the meeting (the draft's context), the
+ *  notes taken during it left to their own tab. The tab exists only when there
+ *  is a background; editing it opens the same sheet the page's menu used to. */
+function BackgroundSection({ background }: Readonly<{ background: string }>) {
+  const { t } = useI18n();
+  const seek = useSeekToReplay();
+  const editable = useStore((s) => !s.replayReadOnly && !!s.loadedHistoryId);
+  const [editing, setEditing] = useState(false);
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <p className="text-[11px] text-muted-foreground/70">{t("study.context.caption")}</p>
+        {editable && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1 text-xs text-muted-foreground"
+            onClick={() => setEditing(true)}
+          >
+            <Pencil className="size-3" />
+            {t("study.context.edit")}
+          </Button>
+        )}
+      </div>
+      <ReportContent markdown={background} onTimestamp={seek} />
+      <MeetingContextSheet open={editing} onOpenChange={setEditing} />
     </div>
   );
 }

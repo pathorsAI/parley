@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronRight, Folder, FolderSearch, MoreHorizontal, Plus, UsersRound } from "lucide-react";
+import { ChevronRight, Folder, FolderSearch, Plus, UsersRound } from "lucide-react";
 import { useStore } from "../../lib/store";
 import { createLocalFolder, emitFoldersUpdated, listLocalFolders } from "../../lib/history/folders";
 import { personalDestination } from "../../lib/library/destination";
@@ -7,16 +7,9 @@ import { flyToFolder } from "../../lib/onboarding/motion";
 import { log } from "../../lib/log";
 import { useI18n } from "../../i18n";
 import type { FilingFolderSuggestion, FilingSuggestion } from "../../lib/types";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { DestinationSheet } from "../DestinationSheet";
 import { useRefile } from "../useRefile";
-import { MeetingContextSheet } from "../MeetingContextButton";
 
 /** Recordings whose folder suggestion has already made its entrance this session. */
 const introduced = new Set<string>();
@@ -68,7 +61,6 @@ export function FilingRow({
   const setFilingSuggestion = useStore((s) => s.setFilingSuggestion);
   const refile = useRefile();
   const folder = folderId ? (listLocalFolders().find((f) => f.id === folderId) ?? null) : null;
-  const [contextOpen, setContextOpen] = useState(false);
 
   // Drop the chip pointing at the folder the recording is ALREADY in. A
   // new-folder chip carries folderId === null, which is also the "personal root"
@@ -212,20 +204,6 @@ export function FilingRow({
       <Folder className="size-3.5 shrink-0 text-muted-foreground" />
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">{filing}</div>
 
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          aria-label={t("study.link.menu")}
-          className="grid size-7 shrink-0 cursor-pointer place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-        >
-          <MoreHorizontal className="size-4" />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem onSelect={() => setContextOpen(true)}>
-            {t("study.link.context")}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-
       {/* Edit flow → Sheet (repo rule). Nothing moves until the sheet's own
           button is pressed. */}
       <DestinationSheet
@@ -239,7 +217,6 @@ export function FilingRow({
         }}
       />
 
-      <MeetingContextSheet open={contextOpen} onOpenChange={setContextOpen} />
     </div>
   );
 }

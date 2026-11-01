@@ -24,22 +24,43 @@ export function contextWithNotes(context: string, notes: string, heading: string
  * the notes. "" when the context carries no notes.
  */
 export function notesFromContext(context: string, headings: readonly string[]): string {
-  let start = -1;
+  const at = notesAt(context, headings);
+  return at ? context.slice(at.body).trim() : "";
+}
+
+/** Where the notes begin in a saved context: the heading's start and the body's
+ *  start. The LAST heading of any language wins. Null when there are none. */
+function notesAt(context: string, headings: readonly string[]): { heading: number; body: number } | null {
+  let found: { heading: number; body: number } | null = null;
   for (const heading of headings) {
     if (!heading) continue;
-    const atStart = context.startsWith(`${heading}\n`) ? heading.length + 1 : -1;
     const marker = `\n\n${heading}\n`;
     const mid = context.lastIndexOf(marker);
-    const at = mid >= 0 ? mid + marker.length : atStart;
-    if (at > start) start = at;
+    let at: { heading: number; body: number } | null = null;
+    if (mid >= 0) at = { heading: mid, body: mid + marker.length };
+    else if (context.startsWith(`${heading}\n`)) at = { heading: 0, body: heading.length + 1 };
+    if (at && (!found || at.body > found.body)) found = at;
   }
-  return start < 0 ? "" : context.slice(start).trim();
+  return found;
+}
+
+/** The prepared context alone, without the notes {@link contextWithNotes}
+ *  appended — the inverse half of {@link notesFromContext}. */
+export function contextWithoutNotes(context: string, headings: readonly string[]): string {
+  const at = notesAt(context, headings);
+  return (at ? context.slice(0, at.heading) : context).trim();
 }
 
 /** The notes heading in every app language, whichever one wrote the entry. */
 const NOTES_HEADINGS = (Object.keys(DICTS) as AppLanguage[]).map((lang) =>
   translate(lang, "floating.notesHeading"),
 );
+
+/** The prepared background of a saved meeting context, notes left out ("" when
+ *  there was none). */
+export function meetingBackgroundOf(context: string | null | undefined): string {
+  return context ? contextWithoutNotes(context, NOTES_HEADINGS) : "";
+}
 
 /** The in-meeting notes of a saved meeting context ("" when none were taken). */
 export function meetingNotesOf(context: string | null | undefined): string {

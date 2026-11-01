@@ -24,7 +24,7 @@ export type StudyStatusField =
   | "filingStatus";
 
 /** The study page's tabs, in tablist order. */
-export const STUDY_TABS = ["summary", "actions", "notes", "delivery", "replay"] as const;
+export const STUDY_TABS = ["summary", "actions", "notes", "context", "delivery", "replay"] as const;
 export type StudyTab = (typeof STUDY_TABS)[number];
 
 /** A study tab from anything that may still carry the old two-page names: the

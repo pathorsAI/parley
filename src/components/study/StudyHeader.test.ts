@@ -38,9 +38,9 @@ const suggestion: FilingSuggestion = {
   ],
 };
 
-const render = (tab: StudyTab = "summary", notesCount = 0) =>
+const render = (tab: StudyTab = "summary", notesCount = 0, hasContext = false) =>
   renderToStaticMarkup(
-    createElement(StudyHeader, { tab, notesCount, pickerOpen: false, onPickerOpenChange: () => {} })
+    createElement(StudyHeader, { tab, notesCount, hasContext, pickerOpen: false, onPickerOpenChange: () => {} })
   );
 
 beforeEach(() => arrange());
@@ -119,6 +119,14 @@ describe("StudyHeader — tabs", () => {
     const withNotes = render("summary", 3);
     expect(withNotes.match(/role="tab"/g)).toHaveLength(5);
     const order = ["總結", "後續行動", "筆記", "評分", "回放"].map((l) => withNotes.indexOf(l));
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
+  it("shows the background tab only when the meeting had one, after the notes", () => {
+    expect(render()).not.toContain(">會議背景<");
+    const html = render("summary", 3, true);
+    expect(html.match(/role="tab"/g)).toHaveLength(6);
+    const order = ["總結", "後續行動", "筆記", "會議背景", "評分", "回放"].map((l) => html.indexOf(l));
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
 
