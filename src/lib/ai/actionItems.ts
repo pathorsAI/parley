@@ -11,7 +11,19 @@ import type { AnalysisLens, ActionItem, Settings, TimelineEvent, TranscriptSegme
 
 // Strict json_schema: every property present, `.nullable()` not `.optional()`.
 const itemSchema = z.object({
-  text: z.string().describe("A concrete next step / follow-up ME should take after this meeting."),
+  text: z.string().describe("A concrete next step / follow-up from this meeting, phrased as an action its owner can do."),
+  side: z
+    .enum(["us", "them"])
+    .nullable()
+    .describe(
+      'Whose follow-up this is. "us" = ME (the user) and my own side — my company / team; "them" = the other party. null only when it belongs to neither.'
+    ),
+  owner: z
+    .string()
+    .nullable()
+    .describe(
+      "The person who should do it, by the name the transcript uses (their speaker label, or a name someone said). null when the transcript doesn't make it clear — never invent a name."
+    ),
   linkedEventId: z
     .string()
     .nullable()
@@ -36,11 +48,17 @@ function systemFor(lens: AnalysisLens): string {
 }
 
 /** A (possibly half-streamed) raw action item — every field may be absent. */
-type RawItem = { text?: string | null; linkedEventId?: string | null; time?: string | null };
+type RawItem = {
+  text?: string | null;
+  side?: string | null;
+  owner?: string | null;
+  linkedEventId?: string | null;
+  time?: string | null;
+};
 
 /** Resolve ONE raw item → an ActionItem, or null if it isn't ready yet. `id` is
  *  caller-supplied so it's stable across partial updates. */
-function mapActionItem(it: RawItem, id: string, byId: Map<string, TimelineEvent>): ActionItem | null {
+export function mapActionItem(it: RawItem, id: string, byId: Map<string, TimelineEvent>): ActionItem | null {
   if (!it.text) return null; // still streaming → don't show a blank row
   const linked = it.linkedEventId && byId.has(it.linkedEventId) ? byId.get(it.linkedEventId)! : null;
   const atMs = linked ? linked.atMs : parseClockMs(it.time ?? undefined);
@@ -51,6 +69,8 @@ function mapActionItem(it: RawItem, id: string, byId: Map<string, TimelineEvent>
     linkedEventId: linked ? linked.id : null,
     atMs: atMs ?? null,
     severity: linked?.severity,
+    side: it.side === "us" || it.side === "them" ? it.side : undefined,
+    owner: it.owner?.trim() || undefined,
   };
 }
 

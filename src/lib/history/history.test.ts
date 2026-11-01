@@ -367,3 +367,28 @@ describe("a transcript that synced with no timing (#576)", () => {
     }
   });
 });
+
+describe("action item sides survive save → load", () => {
+  afterEach(() => useStore.setState({ actionItems: [] }));
+
+  it("keeps side and owner through the snapshot, the JSON on disk, and the stage merge", () => {
+    const items = [
+      { id: "a1", text: "Send the quote", done: false, linkedEventId: null, atMs: 1000, side: "us" as const, owner: "Kevin" },
+      { id: "a2", text: "Confirm the budget", done: true, linkedEventId: null, atMs: null, side: "them" as const },
+    ];
+    useStore.setState({ actionItems: items });
+    const onDisk = JSON.parse(JSON.stringify(mergeAnalysisSnapshot(entry(), snapshotAnalysis()))) as HistoryEntry;
+    expect(onDisk.actionItems).toEqual(items);
+    const merged = JSON.parse(JSON.stringify(mergeStageOutputs(entry(), { actionItems: items }))) as HistoryEntry;
+    expect(merged.actionItems).toEqual(items);
+  });
+
+  it("an entry saved before sides existed loads unchanged, with no side or owner", () => {
+    const old = JSON.parse(
+      '{"actionItems":[{"id":"o1","text":"Follow up","done":false,"linkedEventId":null,"atMs":null}]}'
+    ) as Pick<HistoryEntry, "actionItems">;
+    const loaded = mergeStageOutputs(entry(), { actionItems: old.actionItems });
+    expect(loaded.actionItems[0].side).toBeUndefined();
+    expect(loaded.actionItems[0].owner).toBeUndefined();
+  });
+});

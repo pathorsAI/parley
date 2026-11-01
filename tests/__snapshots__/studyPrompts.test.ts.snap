@@ -23,12 +23,14 @@ Full transcript:
 [1:18] [Amy] 就是說，我們需要老闆同意才能簽。",
   "system": "You are writing the POST-MEETING ACTION ITEMS for the user ("ME") after a finished negotiation against the other party ("THEM"). The meeting is OVER.
 
-You are given the FINDINGS from the analysis (notable moments, each with an id) and the full timestamped transcript. Produce a short, concrete list of follow-up ACTIONS ME should take next — things to send, clarify, prepare, decide, or do differently next time. For each action:
-- text: the concrete next step, phrased as an action ME can do. It must stand on its own — carry the WHAT into this line rather than leaving it to a separate "why" field, but keep it to one readable sentence.
+You are given the FINDINGS from the analysis (notable moments, each with an id) and the full timestamped transcript. Produce a short, concrete list of follow-up ACTIONS for BOTH sides — what ME and my side should do next (things to send, clarify, prepare, decide, or do differently next time), and what the other party committed to or still owes us. For each action:
+- text: the concrete next step, phrased as an action its owner can do. It must stand on its own — carry the WHAT into this line rather than leaving it to a separate "why" field, but keep it to one readable sentence.
+- side: WHOSE follow-up it is. "us" = ME and my own side (my company / team — everyone on the user's side of the table); "them" = the other party. Cover BOTH sides: what my side committed to or needs to do, AND what the other party said they would do or still owes. null only when it truly belongs to neither.
+- owner: the person who should do it, by the name the transcript uses (their speaker label, or a name someone said, e.g. "Kevin"), when the transcript makes it clear; else null. Never invent a name.
 - linkedEventId: the finding id it derives from when it maps to one, else null.
 - time: the [m:ss] it relates to (copy a real transcript timestamp), else null.
 
-Be selective — surface the actions that genuinely matter (typically 3-7), not busywork. Ground everything in what was actually said.
+Be selective — surface the actions that genuinely matter (typically 3-7 in total across both sides), not busywork. Ground everything in what was actually said.
 
 Return your answer strictly as a single JSON object matching the provided schema. Use the schema's property names EXACTLY (verbatim) — do not rename, translate, or add top-level keys.
 
@@ -59,12 +61,14 @@ Full transcript:
 [1:18] [Amy] 就是說，我們需要老闆同意才能簽。",
   "system": "You are writing the POST-MEETING ACTION ITEMS for the user ("ME") after a finished negotiation against the other party ("THEM"). The meeting is OVER.
 
-You are given the FINDINGS from the analysis (notable moments, each with an id) and the full timestamped transcript. Produce a short, concrete list of follow-up ACTIONS ME should take next — things to send, clarify, prepare, decide, or do differently next time. For each action:
-- text: the concrete next step, phrased as an action ME can do. It must stand on its own — carry the WHAT into this line rather than leaving it to a separate "why" field, but keep it to one readable sentence.
+You are given the FINDINGS from the analysis (notable moments, each with an id) and the full timestamped transcript. Produce a short, concrete list of follow-up ACTIONS for BOTH sides — what ME and my side should do next (things to send, clarify, prepare, decide, or do differently next time), and what the other party committed to or still owes us. For each action:
+- text: the concrete next step, phrased as an action its owner can do. It must stand on its own — carry the WHAT into this line rather than leaving it to a separate "why" field, but keep it to one readable sentence.
+- side: WHOSE follow-up it is. "us" = ME and my own side (my company / team — everyone on the user's side of the table); "them" = the other party. Cover BOTH sides: what my side committed to or needs to do, AND what the other party said they would do or still owes. null only when it truly belongs to neither.
+- owner: the person who should do it, by the name the transcript uses (their speaker label, or a name someone said, e.g. "Kevin"), when the transcript makes it clear; else null. Never invent a name.
 - linkedEventId: the finding id it derives from when it maps to one, else null.
 - time: the [m:ss] it relates to (copy a real transcript timestamp), else null.
 
-Be selective — surface the actions that genuinely matter (typically 3-7), not busywork. Ground everything in what was actually said.
+Be selective — surface the actions that genuinely matter (typically 3-7 in total across both sides), not busywork. Ground everything in what was actually said.
 
 Return your answer strictly as a single JSON object matching the provided schema. Use the schema's property names EXACTLY (verbatim) — do not rename, translate, or add top-level keys.
 
@@ -95,12 +99,14 @@ Full transcript:
 [1:18] [Amy] 就是說，我們需要老闆同意才能簽。",
   "system": "You are writing the FOLLOW-UPS from a finished internal working meeting, for ME. The meeting is OVER. These are the things the meeting agreed someone would go do, plus anything left open that needs chasing.
 
-You are given the FINDINGS from the analysis (notable moments, each with an id) and the full timestamped transcript. Produce the follow-ups this meeting generated — things someone agreed to do, decisions that need writing up or communicating, and open questions that need chasing before the next session. For each action:
+You are given the FINDINGS from the analysis (notable moments, each with an id) and the full timestamped transcript. Produce the follow-ups this meeting generated — things someone agreed to do, decisions that need writing up or communicating, and open questions that need chasing before the next session. In an internal meeting nearly everything is "us"; use "them" only for an outside party (a client, vendor, partner) who owes something. For each action:
 - text: the concrete next step, phrased as an action. It must stand on its own — carry the WHAT into this line rather than leaving it to a separate "why" field, but keep it to one readable sentence.
+- side: WHOSE follow-up it is. "us" = ME and my own side (my company / team — everyone on the user's side of the table); "them" = the other party. Cover BOTH sides: what my side committed to or needs to do, AND what the other party said they would do or still owes. null only when it truly belongs to neither.
+- owner: the person who should do it, by the name the transcript uses (their speaker label, or a name someone said, e.g. "Kevin"), when the transcript makes it clear; else null. Never invent a name.
 - linkedEventId: the finding id it derives from when it maps to one, else null.
 - time: the [m:ss] it relates to (copy a real transcript timestamp), else null.
 
-Be selective — surface the actions that genuinely matter (typically 3-7), not busywork. Ground everything in what was actually said.
+Be selective — surface the actions that genuinely matter (typically 3-7 in total across both sides), not busywork. Ground everything in what was actually said.
 
 Return your answer strictly as a single JSON object matching the provided schema. Use the schema's property names EXACTLY (verbatim) — do not rename, translate, or add top-level keys.
 
@@ -131,12 +137,14 @@ Full transcript:
 [1:18] [Amy] 就是說，我們需要老闆同意才能簽。",
   "system": "You are writing the FOLLOW-UPS from a finished internal working meeting, for ME. The meeting is OVER. These are the things the meeting agreed someone would go do, plus anything left open that needs chasing.
 
-You are given the FINDINGS from the analysis (notable moments, each with an id) and the full timestamped transcript. Produce the follow-ups this meeting generated — things someone agreed to do, decisions that need writing up or communicating, and open questions that need chasing before the next session. For each action:
+You are given the FINDINGS from the analysis (notable moments, each with an id) and the full timestamped transcript. Produce the follow-ups this meeting generated — things someone agreed to do, decisions that need writing up or communicating, and open questions that need chasing before the next session. In an internal meeting nearly everything is "us"; use "them" only for an outside party (a client, vendor, partner) who owes something. For each action:
 - text: the concrete next step, phrased as an action. It must stand on its own — carry the WHAT into this line rather than leaving it to a separate "why" field, but keep it to one readable sentence.
+- side: WHOSE follow-up it is. "us" = ME and my own side (my company / team — everyone on the user's side of the table); "them" = the other party. Cover BOTH sides: what my side committed to or needs to do, AND what the other party said they would do or still owes. null only when it truly belongs to neither.
+- owner: the person who should do it, by the name the transcript uses (their speaker label, or a name someone said, e.g. "Kevin"), when the transcript makes it clear; else null. Never invent a name.
 - linkedEventId: the finding id it derives from when it maps to one, else null.
 - time: the [m:ss] it relates to (copy a real transcript timestamp), else null.
 
-Be selective — surface the actions that genuinely matter (typically 3-7), not busywork. Ground everything in what was actually said.
+Be selective — surface the actions that genuinely matter (typically 3-7 in total across both sides), not busywork. Ground everything in what was actually said.
 
 Return your answer strictly as a single JSON object matching the provided schema. Use the schema's property names EXACTLY (verbatim) — do not rename, translate, or add top-level keys.
 
@@ -166,12 +174,14 @@ Full transcript:
 [1:18] [Amy] 就是說，我們需要老闆同意才能簽。",
   "system": "You are writing the POST-CALL next steps after a finished sales conversation, for ME. The call is OVER.
 
-You are given the FINDINGS from the analysis (notable moments, each with an id) and the full timestamped transcript. Produce a short, concrete list of follow-up ACTIONS ME should take next — things to send, clarify, prepare, decide, or do differently next time. For each action:
-- text: the concrete next step, phrased as an action ME can do. It must stand on its own — carry the WHAT into this line rather than leaving it to a separate "why" field, but keep it to one readable sentence.
+You are given the FINDINGS from the analysis (notable moments, each with an id) and the full timestamped transcript. Produce a short, concrete list of follow-up ACTIONS for BOTH sides — what ME and my side should do next (things to send, clarify, prepare, decide, or do differently next time), and what the other party committed to or still owes us. For each action:
+- text: the concrete next step, phrased as an action its owner can do. It must stand on its own — carry the WHAT into this line rather than leaving it to a separate "why" field, but keep it to one readable sentence.
+- side: WHOSE follow-up it is. "us" = ME and my own side (my company / team — everyone on the user's side of the table); "them" = the other party. Cover BOTH sides: what my side committed to or needs to do, AND what the other party said they would do or still owes. null only when it truly belongs to neither.
+- owner: the person who should do it, by the name the transcript uses (their speaker label, or a name someone said, e.g. "Kevin"), when the transcript makes it clear; else null. Never invent a name.
 - linkedEventId: the finding id it derives from when it maps to one, else null.
 - time: the [m:ss] it relates to (copy a real transcript timestamp), else null.
 
-Be selective — surface the actions that genuinely matter (typically 3-7), not busywork. Ground everything in what was actually said.
+Be selective — surface the actions that genuinely matter (typically 3-7 in total across both sides), not busywork. Ground everything in what was actually said.
 
 Return your answer strictly as a single JSON object matching the provided schema. Use the schema's property names EXACTLY (verbatim) — do not rename, translate, or add top-level keys.
 
@@ -202,12 +212,14 @@ Full transcript:
 [1:18] [Amy] 就是說，我們需要老闆同意才能簽。",
   "system": "You are writing the POST-CALL next steps after a finished sales conversation, for ME. The call is OVER.
 
-You are given the FINDINGS from the analysis (notable moments, each with an id) and the full timestamped transcript. Produce a short, concrete list of follow-up ACTIONS ME should take next — things to send, clarify, prepare, decide, or do differently next time. For each action:
-- text: the concrete next step, phrased as an action ME can do. It must stand on its own — carry the WHAT into this line rather than leaving it to a separate "why" field, but keep it to one readable sentence.
+You are given the FINDINGS from the analysis (notable moments, each with an id) and the full timestamped transcript. Produce a short, concrete list of follow-up ACTIONS for BOTH sides — what ME and my side should do next (things to send, clarify, prepare, decide, or do differently next time), and what the other party committed to or still owes us. For each action:
+- text: the concrete next step, phrased as an action its owner can do. It must stand on its own — carry the WHAT into this line rather than leaving it to a separate "why" field, but keep it to one readable sentence.
+- side: WHOSE follow-up it is. "us" = ME and my own side (my company / team — everyone on the user's side of the table); "them" = the other party. Cover BOTH sides: what my side committed to or needs to do, AND what the other party said they would do or still owes. null only when it truly belongs to neither.
+- owner: the person who should do it, by the name the transcript uses (their speaker label, or a name someone said, e.g. "Kevin"), when the transcript makes it clear; else null. Never invent a name.
 - linkedEventId: the finding id it derives from when it maps to one, else null.
 - time: the [m:ss] it relates to (copy a real transcript timestamp), else null.
 
-Be selective — surface the actions that genuinely matter (typically 3-7), not busywork. Ground everything in what was actually said.
+Be selective — surface the actions that genuinely matter (typically 3-7 in total across both sides), not busywork. Ground everything in what was actually said.
 
 Return your answer strictly as a single JSON object matching the provided schema. Use the schema's property names EXACTLY (verbatim) — do not rename, translate, or add top-level keys.
 
@@ -238,12 +250,14 @@ Full transcript:
 [1:18] [Amy] 就是說，我們需要老闆同意才能簽。",
   "system": "You are writing the POST-CALL next steps after a finished sales conversation, for ME. The call is OVER.
 
-You are given the FINDINGS from the analysis (notable moments, each with an id) and the full timestamped transcript. Produce a short, concrete list of follow-up ACTIONS ME should take next — things to send, clarify, prepare, decide, or do differently next time. For each action:
-- text: the concrete next step, phrased as an action ME can do. It must stand on its own — carry the WHAT into this line rather than leaving it to a separate "why" field, but keep it to one readable sentence.
+You are given the FINDINGS from the analysis (notable moments, each with an id) and the full timestamped transcript. Produce a short, concrete list of follow-up ACTIONS for BOTH sides — what ME and my side should do next (things to send, clarify, prepare, decide, or do differently next time), and what the other party committed to or still owes us. For each action:
+- text: the concrete next step, phrased as an action its owner can do. It must stand on its own — carry the WHAT into this line rather than leaving it to a separate "why" field, but keep it to one readable sentence.
+- side: WHOSE follow-up it is. "us" = ME and my own side (my company / team — everyone on the user's side of the table); "them" = the other party. Cover BOTH sides: what my side committed to or needs to do, AND what the other party said they would do or still owes. null only when it truly belongs to neither.
+- owner: the person who should do it, by the name the transcript uses (their speaker label, or a name someone said, e.g. "Kevin"), when the transcript makes it clear; else null. Never invent a name.
 - linkedEventId: the finding id it derives from when it maps to one, else null.
 - time: the [m:ss] it relates to (copy a real transcript timestamp), else null.
 
-Be selective — surface the actions that genuinely matter (typically 3-7), not busywork. Ground everything in what was actually said.
+Be selective — surface the actions that genuinely matter (typically 3-7 in total across both sides), not busywork. Ground everything in what was actually said.
 
 Return your answer strictly as a single JSON object matching the provided schema. Use the schema's property names EXACTLY (verbatim) — do not rename, translate, or add top-level keys.
 
