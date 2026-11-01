@@ -69,7 +69,7 @@ export function UpcomingMeetings({
       </div>
 
       {rows.length === 0 ? (
-        <p className="rounded-lg border border-dashed px-4 py-5 text-center text-xs text-muted-foreground">
+        <p className="rounded-lg border border-dashed bg-white/20 px-4 py-5 text-center text-xs text-muted-foreground">
           {t("home.upcoming.empty")}
         </p>
       ) : (
