@@ -3,11 +3,9 @@ import { createPortal } from "react-dom";
 import {
   AudioLines,
   Calendar,
-  Check,
   ChevronDown,
-  ChevronRight,
+  ChevronLeft,
   Eraser,
-  FileAudio,
   Folder as FolderIcon,
   FolderClosed,
   History,
@@ -15,7 +13,6 @@ import {
   Mic,
   Minus,
   Pause,
-  Pencil,
   Play,
   Settings,
   Square,
@@ -26,12 +23,9 @@ import { useStore, type AppMode } from "../lib/store";
 import { usePersonalFolders, useOrgFolders } from "../lib/library/useFolders";
 import { useWindowFocused, useWindowMaximized, controlWindow, type WindowAction } from "../lib/shell/windowState";
 import { useMeetingElapsed } from "../lib/meeting/elapsed";
-import { renameLoadedRecording, renameTarget } from "../lib/replay/rename";
 import { breadcrumbParents, type CrumbIcon, type ParentCrumb } from "../lib/library/breadcrumb";
 import { leaveRecordingTo } from "../lib/nav/navigate";
 import type { Settings as AppSettings } from "../lib/types";
-import { log } from "../lib/log";
-import { toast } from "sonner";
 import { isMac, isTauri } from "../lib/platform";
 import { focusMeetingWindow } from "../lib/meeting/meetingWindow";
 import { beginMeeting } from "../lib/meeting/start";
@@ -134,10 +128,11 @@ function crumbLabel(crumb: ParentCrumb, t: TFn): string {
 }
 
 /**
- * Where the open recording lives, then its name: `和運租車 › 第二次報價`. The
- * parent crumb IS the way out — it closes the recording and opens that node of
- * the tree (through the nav stack, so ⌘[ comes back). It replaced a loud
- * 關閉這場錄音 button at the other end of the titlebar.
+ * The way out of the open recording: `‹ 和運租車`, back to the node of the tree
+ * it lives in. It closes the recording and opens that node (through the nav
+ * stack, so ⌘[ comes back). The recording's name and its folder are the page
+ * header's to show and change — repeating them here made two breadcrumbs and
+ * two places to rename.
  */
 function RecordingBreadcrumb({ t }: Readonly<{ t: TFn }>) {
   const loadedHistoryId = useStore((s) => s.loadedHistoryId);
@@ -158,122 +153,23 @@ function RecordingBreadcrumb({ t }: Readonly<{ t: TFn }>) {
     personalFolders,
     orgFolders,
   });
+  const back = parents[parents.length - 1];
+  if (!back) return null;
+  const label = crumbLabel(back, t);
 
   return (
     <nav aria-label={t("replay.breadcrumb")} className="min-w-0">
-      <ol className="flex min-w-0 items-center gap-0.5 text-xs">
-        {parents.map((crumb) => {
-          const label = crumbLabel(crumb, t);
-          return (
-            <li key={`${crumb.icon}:${label}`} className="flex min-w-0 shrink items-center gap-0.5">
-              <button
-                type="button"
-                title={t("replay.breadcrumb.open", { name: label })}
-                onClick={() => void leaveRecordingTo(crumb.selection)}
-                className="flex min-w-0 items-center gap-1 rounded px-1.5 py-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              >
-                <CrumbGlyph icon={crumb.icon} />
-                <span className="max-w-28 truncate">{label}</span>
-              </button>
-              <ChevronRight aria-hidden className="size-3 shrink-0 text-muted-foreground/60" />
-            </li>
-          );
-        })}
-        <li aria-current="page" className="flex min-w-0 items-center pl-1">
-          <RecordingName t={t} />
-        </li>
-      </ol>
+      <button
+        type="button"
+        title={t("replay.breadcrumb.open", { name: label })}
+        onClick={() => void leaveRecordingTo(back.selection)}
+        className="flex min-w-0 items-center gap-1 rounded px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      >
+        <ChevronLeft aria-hidden className="size-3.5 shrink-0" />
+        <CrumbGlyph icon={back.icon} />
+        <span className="max-w-40 truncate">{label}</span>
+      </button>
     </nav>
-  );
-}
-
-/**
- * The breadcrumb's last crumb: the loaded recording's name, doubling as an
- * inline rename affordance (hover → pencil → input; Enter/blur commits, Escape
- * cancels — the same interaction as the History card). Rename persists to disk
- * + cloud + the History window via renameHistoryEntry, then updates the header
- * immediately via renameReplay. Only offered for recordings saved in the local
- * library; an unsaved upload or a read-only org recording (loadedHistoryId
- * null) renders the name read-only.
- */
-function RecordingName({ t }: Readonly<{ t: TFn }>) {
-  const replayName = useStore((s) => s.replay?.name ?? "");
-  const loadedHistoryId = useStore((s) => s.loadedHistoryId);
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(replayName);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  function startEdit() {
-    setDraft(replayName);
-    setEditing(true);
-    requestAnimationFrame(() => inputRef.current?.select());
-  }
-  async function commit() {
-    setEditing(false);
-    const clean = renameTarget(draft, replayName, loadedHistoryId);
-    if (!clean || !loadedHistoryId) return;
-    try {
-      await renameLoadedRecording(loadedHistoryId, clean);
-    } catch (e) {
-      log.error("replay: rename failed", { error: String(e) });
-      const message = e instanceof Error ? e.message : String(e);
-      toast.error(t("replay.renameFailed", { error: message }));
-    }
-  }
-
-  if (editing) {
-    return (
-      <span className="flex min-w-0 items-center gap-1.5 text-xs text-foreground">
-        <FileAudio className="size-3.5 shrink-0 text-muted-foreground" />
-        <input
-          ref={inputRef}
-          value={draft}
-          onChange={(ev) => setDraft(ev.target.value)}
-          onKeyDown={(ev) => {
-            ev.stopPropagation();
-            if (ev.key === "Enter") {
-              ev.preventDefault();
-              void commit();
-            } else if (ev.key === "Escape") {
-              ev.preventDefault();
-              setDraft(replayName);
-              setEditing(false);
-            }
-          }}
-          onBlur={() => void commit()}
-          className="h-6 w-44 min-w-0 rounded border bg-background px-1.5 text-xs text-foreground outline-none focus:border-primary"
-        />
-        <button
-          type="button"
-          aria-label={t("history.renameSave")}
-          onMouseDown={(ev) => ev.preventDefault()}
-          onClick={() => void commit()}
-          className="grid size-5 shrink-0 place-items-center rounded text-muted-foreground hover:text-foreground"
-        >
-          <Check className="size-3" />
-        </button>
-      </span>
-    );
-  }
-
-  return (
-    <span className="group/rename flex min-w-0 items-center gap-1.5 text-xs text-foreground">
-      <FileAudio className="size-3.5 shrink-0 text-muted-foreground" />
-      <span className="max-w-48 truncate" title={replayName}>
-        {replayName}
-      </span>
-      {loadedHistoryId && (
-        <button
-          type="button"
-          aria-label={t("replay.rename")}
-          title={t("replay.rename")}
-          onClick={startEdit}
-          className="grid size-5 shrink-0 place-items-center rounded text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/rename:opacity-100"
-        >
-          <Pencil className="size-3" />
-        </button>
-      )}
-    </span>
   );
 }
 
