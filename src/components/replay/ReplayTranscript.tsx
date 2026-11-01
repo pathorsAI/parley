@@ -6,7 +6,7 @@ import { modChordCap } from "../../lib/commands/format";
 import { speakerLabel, speakerKey, defaultSpeakerLabel, formatClock, isTrimmed, useStore, type ReplayTrim } from "../../lib/store";
 import { cn } from "@/lib/utils";
 import { useCommandShortcut } from "../../lib/commands/bind";
-import { markGettingStarted, useHint } from "../../lib/onboarding/gettingStarted";
+import { markGettingStarted } from "../../lib/onboarding/gettingStarted";
 import { useLapContext } from "../../lib/onboarding/lap";
 import { emitTranscriptSeek } from "../../lib/onboarding/motion";
 import { isTextSelected } from "../../lib/replay/selection";
@@ -62,16 +62,11 @@ export function ReplayTranscript({
   const seekNonce = useStore((s) => s.replaySeekNonce);
   // Which speaker key is being edited inline (null = none).
   const [editingKey, setEditingKey] = useState<string | null>(null);
-  // First-visit hint: the transcript is a seek surface, and ⌘F searches it.
-  // Not in the ingest-wizard preview, where neither is the point.
-  const [seekHintVisible, dismissSeekHint] = useHint("replay.seek");
-  // The guide bar teaches the same thing while it's up; saying it twice is noise.
-  const lap = useLapContext();
-  const showSeekHint = seekHintVisible && !preview && !lap.visible;
   // A transcript that synced with no timing shows an estimated clock (#576) —
   // say so, so a jump that lands a few lines off doesn't read as a bug.
   const timingEstimated = useStore((s) => !preview && !!s.replay?.timingEstimated);
 
+  const lap = useLapContext();
   // While the guide bar is on its replay step, the first line pulses once, for
   // about two seconds — "this, click this" — then settles.
   const pulseDue = !preview && lap.visible && lap.phase === "replayed" && !lap.justCompleted;
@@ -99,7 +94,6 @@ export function ReplayTranscript({
     onSeek(ms);
     if (preview) return;
     markGettingStarted("replayed");
-    if (seekHintVisible) dismissSeekHint();
   }
 
   // Ctrl/⌘F-style find: a floating bar over the transcript. A "match" is a LINE
@@ -294,23 +288,6 @@ export function ReplayTranscript({
               className="mb-1 border-b border-border pb-2 pl-2 pr-10 text-xs text-muted-foreground"
             >
               {t("replay.timingEstimated")}
-            </div>
-          )}
-          {showSeekHint && (
-            // pr-10 keeps the × clear of the floating search button.
-            <div className="mb-1 flex items-center gap-2 border-b border-border pb-2 pl-2 pr-10 text-xs text-muted-foreground">
-              <span className="min-w-0 flex-1">
-                {t("replay.seekHint", { shortcut: modChordCap("F") })}
-              </span>
-              <button
-                type="button"
-                aria-label={t("common.dismiss")}
-                title={t("common.dismiss")}
-                onClick={dismissSeekHint}
-                className="grid size-5 shrink-0 place-items-center rounded text-muted-foreground hover:text-foreground"
-              >
-                <X className="size-3.5" />
-              </button>
             </div>
           )}
           {rows.map((seg, i) => {

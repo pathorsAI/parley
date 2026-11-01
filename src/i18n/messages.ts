@@ -1357,7 +1357,6 @@ export const zhTW = {
   "meeting.recovered": "Parley 上次意外關閉時有 {count} 場會議還在錄音，錄音已復原並存到紀錄裡（沒有逐字稿，可重新轉錄）。",
   "history.recoveredSuffix": "（已復原）",
   "speakers.voiceBusyPostSave": "正在自動依聲紋校正說話者，完成後即可再手動辨識",
-  "speakers.hintWhoAmI": "哪一位是你？把那一欄改成你的名字，AI 才知道哪邊是我方。",
 
   "replay.upload": "上傳錄音",
   "ingest.title": "分析錄音",
@@ -1411,7 +1410,6 @@ export const zhTW = {
   "replay.pause": "暫停",
   "replay.empty": "尚未載入錄音。按「匯入錄音」開始。",
   "replay.noTranscript": "這段錄音沒有逐字稿，但音訊仍可以播放。",
-  "replay.seekHint": "點任一句就跳到那個時間。{shortcut} 搜尋逐字稿。",
   "replay.timingEstimated": "這份逐字稿同步時沒有帶到時間，下面的時間是依錄音長度估算的，可能差幾秒到幾十秒。重新產生分析，重點會照估算的時間重新標位置。",
   "replay.export": "另存音檔…",
   "replay.audio.unplayable": "這段音檔無法播放（{error}）",
@@ -3004,7 +3002,6 @@ export const en = {
   "meeting.recovered": "{count} meeting(s) were still recording when Parley last closed unexpectedly. The recordings were recovered and saved to your library (without a transcript — you can transcribe them again).",
   "history.recoveredSuffix": " (recovered)",
   "speakers.voiceBusyPostSave": "Speakers are being corrected from the recording — try again once that finishes",
-  "speakers.hintWhoAmI": "Which one is you? Rename that column to your name so the AI knows which side is yours.",
 
   "replay.upload": "Upload recording",
   "ingest.title": "Analyze recording",
@@ -3058,7 +3055,6 @@ export const en = {
   "replay.pause": "Pause",
   "replay.empty": "No recording loaded. Click \"Import recording\" to start.",
   "replay.noTranscript": "This recording has no transcript, but its audio can still be played back.",
-  "replay.seekHint": "Click any line to jump to that moment. {shortcut} searches the transcript.",
   "replay.timingEstimated": "This transcript synced without timestamps, so the times below are estimated from the recording's length and may be off by several seconds or more. Regenerate the analysis to re-anchor its highlights to these times.",
   "replay.export": "Save audio…",
   "replay.audio.unplayable": "This recording's audio cannot be played ({error})",
