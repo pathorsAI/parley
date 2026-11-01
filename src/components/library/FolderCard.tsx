@@ -1,6 +1,7 @@
 import { useRef, useState, type ReactNode } from "react";
 import { Plus } from "lucide-react";
 import { useI18n } from "../../i18n";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 /** The card's drawn size in the UX file (3541:9358 / 3541:9359), and the size
  *  it is shown at: the drawing is laid out in its own 151×136 coordinates and
@@ -119,45 +120,55 @@ function FolderDrawing({ hover = false, children }: Readonly<{ hover?: boolean; 
 
 /**
  * The first card on an org's page: 新增資料夾, from the UX file (3541:9360
- * default, 3541:9412 hover) — a pale-blue frame with a folder front and the
- * button on it; on hover the front widens and the button turns solid. A click
+ * default, 3541:9412 hover) — a pale-blue frame with a folder front and a
+ * dashed + in a circle; on hover the frame deepens, the front widens and the +
+ * fills. The whole card is the button, named by a 新增資料夾 tooltip. A click
  * adds a grey folder card right after it, its name typed into the card
  * ({@link DraftFolderCard}).
  */
 export function NewFolderCard({ onCreate }: Readonly<{ onCreate: (name: string) => void }>) {
   const { t } = useI18n();
   const [drafting, setDrafting] = useState(false);
+  const label = t("sidebar.menu.newFolder");
 
   return (
     <>
-      <div className="group relative shrink-0" style={{ width: SHOWN_W, height: DRAWN.h * SCALE }}>
-        <div
-          className="absolute top-0 left-0 origin-top-left"
-          style={{ width: DRAWN.w, height: DRAWN.h, transform: `scale(${SCALE})` }}
-        >
-          <div className="absolute top-0 left-0 h-[136px] w-[151px] rounded-[8px] bg-[#f6fcff]" />
-          {/* The front, widening leftward on hover (the hover drawing is 162px
-              wide, starting 11px further left). */}
-          <img
-            alt=""
-            src="/library/folder-new-front.svg"
-            className="absolute top-[29px] left-0 block h-[107px] w-[151px] max-w-none transition-opacity duration-300 group-hover:opacity-0"
-          />
-          <img
-            alt=""
-            src="/library/folder-new-front-hover.svg"
-            className="absolute top-[29px] left-[-11px] block h-[107px] w-[162px] max-w-none opacity-0 transition-opacity duration-300 group-hover:opacity-100"
-          />
-          <button
-            type="button"
-            onClick={() => setDrafting(true)}
-            className="absolute top-[68px] left-[calc(50%+0.5px)] flex -translate-x-1/2 cursor-pointer items-center justify-center gap-[6px] rounded-[6px] bg-[rgba(59,130,246,0.8)] px-[10px] py-[4px] text-[12px] leading-[20px] font-medium whitespace-nowrap text-[#fafafa] outline-none transition-colors duration-300 group-hover:bg-[#3b82f6] focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <Plus className="size-[14px]" />
-            {t("sidebar.menu.newFolder")}
-          </button>
-        </div>
-      </div>
+      <TooltipProvider delayDuration={300}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label={label}
+              onClick={() => setDrafting(true)}
+              className="group relative shrink-0 cursor-pointer rounded-[10px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              style={{ width: SHOWN_W, height: DRAWN.h * SCALE }}
+            >
+              <div
+                className="absolute top-0 left-0 origin-top-left"
+                style={{ width: DRAWN.w, height: DRAWN.h, transform: `scale(${SCALE})` }}
+              >
+                <div className="absolute top-0 left-0 h-[136px] w-[151px] rounded-[8px] bg-[#f6fcff] transition-colors duration-300 group-hover:bg-[#e0edf4]" />
+                {/* The front, widening leftward on hover (the hover drawing is
+                    162px wide, starting 11px further left). */}
+                <img
+                  alt=""
+                  src="/library/folder-new-front.svg"
+                  className="absolute top-[29px] left-0 block h-[107px] w-[151px] max-w-none transition-opacity duration-300 group-hover:opacity-0"
+                />
+                <img
+                  alt=""
+                  src="/library/folder-new-front-hover.svg"
+                  className="absolute top-[29px] left-[-11px] block h-[107px] w-[162px] max-w-none opacity-0 transition-opacity duration-300 group-hover:opacity-100"
+                />
+                <span className="absolute top-[69px] left-[63px] flex items-center rounded-full border border-dashed border-[rgba(59,130,246,0.3)] p-[4px] transition-colors duration-300 group-hover:border-[#3b82f6] group-hover:bg-[rgba(45,182,243,0.2)]">
+                  <Plus className="size-[16px] text-[#3b82f6]" strokeWidth={2} />
+                </span>
+              </div>
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="top">{label}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
       {drafting && (
         <DraftFolderCard
           onDone={(name) => {
