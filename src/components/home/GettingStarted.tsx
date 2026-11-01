@@ -9,6 +9,7 @@ import {
   gettingStartedProgress,
 } from "../../lib/onboarding/gettingStarted";
 import { useI18n, type TranslationKey } from "../../i18n";
+import type { StudyTab } from "../../lib/store/study";
 import { log } from "../../lib/log";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -21,9 +22,9 @@ import {
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** Open a saved recording on one of the two study pages. The tab is set first so
- *  the study screen mounts straight onto it. */
-export async function openRecording(id: string, tab: "report" | "replay"): Promise<void> {
+/** Open a saved recording on one of its study tabs. The tab is set first so the
+ *  study screen mounts straight onto it. */
+export async function openRecording(id: string, tab: StudyTab): Promise<void> {
   useStore.getState().setStudyTab(tab);
   await loadHistoryEntry(id);
 }
@@ -43,7 +44,7 @@ export async function openSampleRecording(
   // The loader owns the failure toast; a null here has already been reported.
   const id = await wait(loadSampleRecording);
   if (!id) return null;
-  await openRecording(id, "report");
+  await openRecording(id, "summary");
   return id;
 }
 
@@ -83,7 +84,7 @@ export function GettingStarted({
   const startFresh = !state.recorded || !lapEntryId;
   const go = () => {
     if (startFresh) void openSampleRecording(pulse.run).catch(fail("sample"));
-    else void openRecording(lapEntryId, "report").catch(fail("open"));
+    else void openRecording(lapEntryId, "summary").catch(fail("open"));
   };
 
   return (

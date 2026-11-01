@@ -88,7 +88,7 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
   // OWN their recordings (buildOwnershipIndex above is fed the whole list), so
   // putting one away can't dump what is inside it into 還沒歸檔.
   const liveFolders = tree.personalFolders.filter((f) => !isArchived(f));
-  // A recording just filed into a folder (the filing card's fly-in): its row
+  // A recording just filed into a folder (a suggested folder's fly-in): its row
   // flashes once so the eye lands on where the recording went.
   const pulsingFolder = usePulsingFolder();
   const archivedFolders = tree.personalFolders.filter(isArchived);

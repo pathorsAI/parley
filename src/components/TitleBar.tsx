@@ -53,7 +53,6 @@ import { StudyGenerationChip } from "./study/StudyGenerationChip";
 
 
 type TFn = ReturnType<typeof useI18n>["t"];
-type StudyTab = "report" | "replay";
 type Layout = AppSettings["layout"];
 
 
@@ -341,39 +340,23 @@ function SwitchTab({
 
 /**
  * The center slot does ONE thing (R6): page tabs for a tense that has pages —
- * the live postures, or the study report/replay pair. Every other route
- * renders nothing here; "where am I" is the sidebar highlight + the tense
- * badge on the left, not a passive label in a control slot.
+ * the live postures. A loaded recording's tabs (summary, actions, notes,
+ * delivery, replay) live in the study page's own header, under its title, so
+ * study renders nothing here. Every other route renders nothing either; "where
+ * am I" is the sidebar highlight + the tense badge on the left, not a passive
+ * label in a control slot.
  */
 function CenterSwitcher({
   mode,
-  studyTab,
   layout,
-  onStudyTab,
   onLayout,
   t,
 }: Readonly<{
   mode: AppMode;
-  studyTab: StudyTab;
   layout: Layout;
-  onStudyTab: (tab: StudyTab) => void;
   onLayout: (layout: Layout) => void;
   t: TFn;
 }>) {
-  if (mode === "study") {
-    return (
-      <SwitchTrack>
-        {(["report", "replay"] as const).map((tab) => (
-          <SwitchTab
-            key={tab}
-            active={studyTab === tab}
-            label={t(`study.${tab}`)}
-            onClick={() => onStudyTab(tab)}
-          />
-        ))}
-      </SwitchTrack>
-    );
-  }
   if (mode === "live") {
     return (
       <SwitchTrack>
@@ -646,8 +629,6 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const layout = useStore((s) => s.settings.layout);
   const updateSettings = useStore((s) => s.updateSettings);
   const meetingStartedAt = useStore((s) => s.meetingStartedAt);
-  const studyTab = useStore((s) => s.studyTab);
-  const setStudyTab = useStore((s) => s.setStudyTab);
   const appMode = useStore((s) => s.appMode);
   const openLibrary = useStore((s) => s.openLibrary);
   const showReplay = useStore((s) => s.showReplay);
@@ -822,19 +803,17 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
         )}
       </div>
 
-      {/* Titlebar-center switcher — two tenses, one slot: live shows the
-          posture switch (coach/transcript); a loaded recording swaps in the
-          study tabs (report/replay) plus the analysis-status
-          chip (the ONE generation surface for the whole study tense).
+      {/* Titlebar-center switcher: live shows the posture switch
+          (coach/transcript); a loaded recording shows only the
+          analysis-status chip (the ONE generation surface for the whole study
+          tense) — its tabs sit in the page header.
           A grid column, not an absolutely-centred overlay: equal side tracks
           keep it centred, and a long breadcrumb truncates in its own track
           instead of sliding underneath the tabs. */}
       <div className="flex items-center gap-2">
         <CenterSwitcher
           mode={appMode}
-          studyTab={studyTab}
           layout={layout}
-          onStudyTab={setStudyTab}
           onLayout={(v) => updateSettings({ layout: v })}
           t={t}
         />

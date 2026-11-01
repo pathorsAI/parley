@@ -11,6 +11,14 @@ const { suggestFiling, landStage } = vi.hoisted(() => ({
   }),
 }));
 vi.mock("../ai/filing", () => ({ suggestFiling }));
+// The rename path a user rename takes; the real one clears the suggestion's
+// title in the store, which the fake mirrors.
+const { renameHistoryEntry, readEntry } = vi.hoisted(() => ({
+  renameHistoryEntry: vi.fn(async (_id: string, _title: string) => {}),
+  readEntry: vi.fn(async (_id: string) => ({ meta: { title: "" } })),
+}));
+vi.mock("../history/history", () => ({ renameHistoryEntry }));
+vi.mock("../history/entryStore", () => ({ readEntry }));
 vi.mock("../ai/settings", () => ({ hasProviderKey: () => true }));
 vi.mock("../history/folders", () => ({ filingChoices: (f: unknown[]) => f, listLocalFolders: () => [] }));
 vi.mock("./runGuard", async (orig) => ({
@@ -32,12 +40,15 @@ function arrange(id: string) {
     replayTrim: null,
     filingStatus: "idle",
     filingSuggestion: null,
+    titleAutoApplied: null,
   });
 }
 
 afterEach(() => {
   suggestFiling.mockReset();
   landStage.mockClear();
+  renameHistoryEntry.mockClear();
+  readEntry.mockClear();
 });
 
 describe("runFilingSuggestion — what gets persisted", () => {
@@ -74,5 +85,39 @@ describe("runFilingSuggestion — what gets persisted", () => {
     });
     await runFilingSuggestion();
     expect(useStore.getState().filingSuggestion).toEqual({ title: "", folders });
+    // The user's name stands: nothing is renamed, nothing flagged as auto-named.
+    expect(renameHistoryEntry).not.toHaveBeenCalled();
+    expect(useStore.getState().titleAutoApplied).toBeNull();
+  });
+});
+
+describe("runFilingSuggestion — the title is applied, not suggested", () => {
+  it("renames the recording through the rename path and flags it as auto-named", async () => {
+    arrange("rec-d");
+    suggestFiling.mockResolvedValue({ title: "  Acme 需求訪談 ", folders: [] });
+    await runFilingSuggestion();
+    expect(renameHistoryEntry).toHaveBeenCalledWith("rec-d", "Acme 需求訪談");
+    // The suggestion lands (and persists) BEFORE the rename, whose write then
+    // clears its title — so the rename's write is the last one.
+    expect(landStage.mock.invocationCallOrder[0]).toBeLessThan(renameHistoryEntry.mock.invocationCallOrder[0]);
+    expect(useStore.getState().replay?.name).toBe("Acme 需求訪談");
+    expect(useStore.getState().titleAutoApplied).toBe("rec-d");
+  });
+
+  it("leaves a folders-only suggestion's recording named as it was", async () => {
+    arrange("rec-e");
+    suggestFiling.mockResolvedValue({ title: "", folders: [{ folderId: "f", name: "F", reason: "" }] });
+    await runFilingSuggestion();
+    expect(renameHistoryEntry).not.toHaveBeenCalled();
+    expect(useStore.getState().titleAutoApplied).toBeNull();
+  });
+
+  it("never renames a read-only org recording", async () => {
+    arrange("rec-f");
+    useStore.setState({ replayReadOnly: true });
+    suggestFiling.mockResolvedValue({ title: "Acme", folders: [] });
+    await runFilingSuggestion();
+    expect(suggestFiling).not.toHaveBeenCalled();
+    expect(renameHistoryEntry).not.toHaveBeenCalled();
   });
 });

@@ -273,7 +273,7 @@ export function Onboarding() {
     const id = await samplePulse.run(loadSampleRecording);
     finish();
     if (id) {
-      await openRecording(id, "report");
+      await openRecording(id, "summary");
     } else {
       log.warn("onboarding: sample recording unavailable");
     }

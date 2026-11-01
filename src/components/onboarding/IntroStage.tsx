@@ -114,12 +114,12 @@ function IntroDemo({ onReplay }: Readonly<{ onReplay: () => void }>) {
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex h-[41px] shrink-0 items-center justify-between border-b px-2.5">
             {reached("mcp") ? (
-              // The meeting is over: the titlebar's report / replay switch.
-              <span className={cn("flex items-center gap-0.5 rounded-md bg-muted p-0.5", !reduced && "ob-fade-in")}>
-                <span className="rounded-[5px] bg-background px-2 py-0.5 text-[10px] font-medium text-foreground shadow-sm">
-                  {t("study.report")}
+              // The meeting is over: the recording page's tabs (summary first).
+              <span className={cn("flex items-center gap-3", !reduced && "ob-fade-in")}>
+                <span className="border-b-2 border-primary pb-0.5 text-[10px] font-semibold text-foreground">
+                  {t("study.tab.summary")}
                 </span>
-                <span className="px-2 py-0.5 text-[10px] font-medium text-muted-foreground">{t("study.replay")}</span>
+                <span className="pb-0.5 text-[10px] font-medium text-muted-foreground">{t("study.tab.replay")}</span>
               </span>
             ) : reached("record") ? (
               <span

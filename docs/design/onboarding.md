@@ -98,7 +98,7 @@ Each hint is one line of inline text with a close button — no spotlight, no ov
 
 | `HintId` | When | Where | Replaces |
 |---|---|---|---|
-| `report.filing` | First visit to a Report whose recording is unfiled | Above the filing-suggestion card, or beside `StudyLinkBar` when there is none | — |
+| `report.filing` | First visit to a recording that is unfiled | Under the recording page header, below its filing row | — |
 | `replay.seek` | First visit to Replay | A thin line at the top of the transcript: "Click any line to jump there. ⌘F to search." | — |
 | `copy.handoff` | First time the copy menu opens | Above the "with analysis prompt" item | — |
 | `speakers.whoAmI` | First time the user names speakers | `SpeakerBar` / the speaker list: 哪一位是你？/ Which one is you? — the choice is written to `userName` | the *profile* step |
@@ -241,18 +241,18 @@ The sample loads in well under a second. Opened that fast, the report would alre
 
 `src/components/study/GuideBar.tsx` renders the bar. State and derivation live in `src/lib/onboarding/lap.ts` and reach the page through `LapContext`, which `StudyScreen` provides.
 
-**Visibility** (`isLapEligible`): the checklist is live (`isGettingStartedVisible`), the open recording is a saved personal entry (not an org copy, not an unsaved session), and it is either the sample (`isSampleEntry`) or the user's only recording (library count ≤ 1). The bar appears under both the Report and Replay tabs as a hairline-topped strip on the page background. It is not a card, and it has at most one filled button. Once the last step lands the checklist is complete and eligibility ends, but a bar that was already up keeps its done card until the user closes it or leaves the recording. Reopening the recording afterwards shows nothing.
+**Visibility** (`isLapEligible`): the checklist is live (`isGettingStartedVisible`), the open recording is a saved personal entry (not an org copy, not an unsaved session), and it is either the sample (`isSampleEntry`) or the user's only recording (library count ≤ 1). The bar appears under every tab of the recording page as a hairline-topped strip on the page background. It is not a card, and it has at most one filled button. Once the last step lands the checklist is complete and eligibility ends, but a bar that was already up keeps its done card until the user closes it or leaves the recording. Reopening the recording afterwards shows nothing.
 
 **Steps** are derived, never stored: the first of `filed → replayed → handedOff` that is not done yet (`lapPhase`). `recorded` is already true once there is an entry. The bar also ticks it if a checklist reset left it false while a recording is open. Every route to an outcome advances the bar, including the bar's own CTA, the titlebar, the library and an MCP call.
 
 | Step | Says | Primary CTA | Completes on |
 |---|---|---|---|
-| 1 / 3 · 先看 Parley 幫你做了什麼 | the recording is named and a folder is suggested; both can be changed | 看建議 / Show me: Report tab, scroll to `#filing-suggestion`; if the card is gone, open the destination picker | `filed` |
+| 1 / 3 · 先看 Parley 幫你做了什麼 | the recording is named and a folder is suggested; both can be changed | 看建議 / Show me: focus the suggested folders in the page header (`#filing-suggestion`); if they are gone, open the destination picker | `filed` |
 | 2 / 3 · 回放 | click any line to jump there | 開回放 / Open replay (hidden when already on Replay) | `replayed` |
-| 3 / 3 · 交給你的 AI | Claude Code reads the library directly | 看完整說明 / Full instructions: scroll to `#handoff` | `handedOff` |
+| 3 / 3 · 交給你的 AI | Claude Code reads the library directly | on Replay only, 看完整說明 / Full instructions: switch to the Summary tab | `handedOff` |
 | 完成 / Done | record → named and filed → replay → hand to AI; next time it happens on its own | 開始第一場真的會議 / Start your first real meeting (`beginMeeting()`), plus text 關閉 / Close | — |
 
-On the Report tab, step 3 carries the working parts inline: the `claude mcp add` command with a copy button, live MCP status (等待連線… / 已連線：{client}), the recording's three `mcpQuestions` as copyable lines, and a text fallback 沒有 Claude Code？先複製給 ChatGPT that calls `copyHandoffPrompt()`. On the Replay tab, where those parts would cover half the transcript, step 3 is compact: its label, one line, and the CTA, which switches to the Report tab and scrolls to `#handoff`. Every step also has × 不用了 / No thanks, which calls `dismissGettingStarted()`.
+On every tab but Replay, step 3 carries the working parts inline (and has no CTA): the `claude mcp add` command with a copy button, live MCP status (等待連線… / 已連線：{client}), the recording's three `mcpQuestions` as copyable lines, and a text fallback 沒有 Claude Code？先複製給 ChatGPT that calls `copyHandoffPrompt()`. On the Replay tab, where those parts would cover half the transcript, step 3 is compact: its label, one line, and the CTA, which switches to the Summary tab. Every step also has × 不用了 / No thanks, which calls `dismissGettingStarted()`.
 
 **Timing.** When a flag flips, the bar holds a ✓ line for the step it was teaching for 1.5 s (`LAP_CONFIRM_MS`) before it teaches the next step. `createLapTimer` holds this logic without React and is tested with fake timers:
 
@@ -266,6 +266,8 @@ The ✓ after step 1 reads 已改名，放進「{folder}」。之後每一場錄
 **Hints yield to the bar.** While the bar is visible, the `report.filing` and `replay.seek` hints stay quiet, because they would repeat what the bar says.
 
 ### Filing suggestion card changes
+
+> **Superseded:** the card is gone. The recording page now has one header — the name (click to rename), a filing row and five tabs (總結 / 後續行動 / 筆記 / 評分 / 回放). The filing pass applies the suggested title on its own (`filingRun.applySuggestedTitle`, shown with a 「自動命名」 tag until anyone renames it); only the folder stays a suggestion, as chips in the filing row with 選其他資料夾… and 先不歸檔. The notes below describe the card as it was.
 
 - **採用建議 / Accept suggestion takes the whole suggestion in one click.** It applies the proposed title (as edited) and files the recording into the first suggested folder, creating that folder if its `folderId` is null. The three writes (rename, move, clear the suggestion) run in sequence because they all modify the same `meta.json`. The button sits in the card's header because it accepts both halves.
 - **A folder chip files the recording without renaming it.** The last chip, 選其他資料夾… / Choose another…, opens the same destination picker sheet as the filing bar. The sheet's open state moved from `StudyLinkBar` up to `StudyScreen`, so the card and the guide bar can open it too.
