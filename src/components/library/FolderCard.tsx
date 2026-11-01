@@ -149,7 +149,7 @@ export function NewFolderCard({ onCreate }: Readonly<{ onCreate: (name: string) 
               >
                 <div className="absolute top-0 left-0 h-[136px] w-[151px] rounded-[8px] bg-[#f6fcff] transition-colors duration-500 ease-[var(--ob-ease)] group-hover:bg-[#eef8ff]" />
                 {/* Hover is #eef8ff, not the file's #e0edf4: that grey-blue read
-                    muddy beside the front's clear #def3ff. Same sky hue, and
+                    muddy beside the front's clear blue. Same sky hue, and
                     kept well lighter than the front's top, so the opened front
                     still stands out from the frame behind it. */}
                 {/* The front tips open. The hover drawing is the default one
