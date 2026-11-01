@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Folder, FolderSearch, MoreHorizontal, Plus } from "lucide-react";
+import { ChevronRight, Folder, FolderSearch, MoreHorizontal, Plus, UsersRound } from "lucide-react";
 import { useStore } from "../../lib/store";
 import { createLocalFolder, emitFoldersUpdated, listLocalFolders } from "../../lib/history/folders";
 import { personalDestination } from "../../lib/library/destination";
@@ -64,6 +64,7 @@ export function FilingRow({
   // has nothing for the picker to act on.
   const readOnly = useStore((s) => s.replayReadOnly) || !loadedHistoryId;
   const folderId = useStore((s) => s.replayFolderId);
+  const orgPlace = useStore((s) => s.replayOrgPlace);
   const suggestion = useStore((s) => s.filingSuggestion);
   const setFilingSuggestion = useStore((s) => s.setFilingSuggestion);
   const refile = useRefile();
@@ -143,7 +144,24 @@ export function FilingRow({
   const openPicker = () => onPickerOpenChange(true);
 
   let filing;
-  if (folder) {
+  if (orgPlace) {
+    // A shared org recording: where it lives in the org, read-only — filing it
+    // is the org's business, from the library.
+    filing = (
+      <span className="flex min-w-0 items-center gap-1">
+        <span className="inline-flex shrink-0 items-center gap-1 rounded-[4px] bg-primary/10 px-1.5 py-0.5 font-medium text-primary">
+          <UsersRound className="size-3" />
+          {orgPlace.orgName}
+        </span>
+        {orgPlace.folderName && (
+          <>
+            <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
+            <span className="truncate font-medium">{orgPlace.folderName}</span>
+          </>
+        )}
+      </span>
+    );
+  } else if (folder) {
     filing = (
       <>
         <span className="max-w-full truncate rounded-full border bg-background px-2 py-0.5 font-medium">

@@ -194,7 +194,8 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   const openItem = useCallback(
     async (item: HistoryCardItem) => {
       if (selection.kind === "org") {
-        await loadOrgEntry(selection.id, item.id);
+        const folder = tree.orgFolders[selection.id]?.find((f) => f.id === item.folderId);
+        await loadOrgEntry(selection.id, item.id, { orgName: selection.name, folderName: folder?.name ?? null });
         return;
       }
       if (item.sync === "cloud" || item.sync === "stale") {
@@ -211,7 +212,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
       }
       await loadHistoryEntry(item.id);
     },
-    [selection, t]
+    [selection, t, tree.orgFolders]
   );
 
   const remove = useCallback(

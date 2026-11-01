@@ -45,6 +45,11 @@ export interface ReplaySlice {
    *  recording is filed without a History-window round trip. */
   replayFolderId: string | null;
   setReplayFolderId: (id: string | null) => void;
+  /** Where a read-only org recording lives — its org and org folder (null =
+   *  the org's root) — so the page shows that instead of "not filed". Null for
+   *  every personal recording. */
+  replayOrgPlace: { orgName: string; folderName: string | null } | null;
+  setReplayOrgPlace: (place: { orgName: string; folderName: string | null } | null) => void;
   /** Scrub position (ms) in replay mode — drives audio + transcript highlight. */
   replayPlayheadMs: number;
   /** Load an uploaded recording and switch into replay mode. */
@@ -87,12 +92,14 @@ export const createReplaySlice: SliceCreator<ReplaySlice> = (set) => ({
   loadedHistoryId: null,
   replayReadOnly: false,
   replayFolderId: null,
+  replayOrgPlace: null,
   replayPlayheadMs: 0,
   replaySeekNonce: 0,
   replayTrim: null,
 
   setLoadedHistoryId: (loadedHistoryId) => set({ loadedHistoryId }),
   setReplayFolderId: (replayFolderId) => set({ replayFolderId }),
+  setReplayOrgPlace: (replayOrgPlace) => set({ replayOrgPlace }),
   renameReplay: (title) =>
     set((s) => (s.replay ? { replay: { ...s.replay, name: title } } : {})),
   attachReplayAudio: (id, audioPath, audioSrc) =>
@@ -111,6 +118,7 @@ export const createReplaySlice: SliceCreator<ReplaySlice> = (set) => ({
       loadedHistoryId: null,
       replayReadOnly: false,
       replayFolderId: null,
+      replayOrgPlace: null,
       // Start at the beginning of the recording (the full transcript always
       // shows now — no masking); the playhead is just for playback/navigation.
       replayPlayheadMs: 0,
@@ -144,6 +152,7 @@ export const createReplaySlice: SliceCreator<ReplaySlice> = (set) => ({
       loadedHistoryId: readOnly ? null : entry.id,
       replayReadOnly: readOnly,
       replayFolderId: readOnly ? null : entry.folderId ?? null,
+      replayOrgPlace: null,
       replayPlayheadMs: 0,
       replaySeekNonce: state.replaySeekNonce + 1,
       replayTrim: null,
@@ -183,6 +192,7 @@ export const createReplaySlice: SliceCreator<ReplaySlice> = (set) => ({
       loadedHistoryId: null,
       replayReadOnly: false,
       replayFolderId: null,
+      replayOrgPlace: null,
       replayPlayheadMs: 0,
       replayTrim: null,
       ingestWizardOpen: false,

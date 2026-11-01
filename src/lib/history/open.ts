@@ -119,9 +119,14 @@ async function fetchOrgAudio(id: string, url: string, token: string): Promise<vo
  * full entry (transcript + analysis) comes over HTTP; the audio is streamed to a
  * temp cache file by Rust (`download_remote_audio`). Loaded read-only so the
  * re-analysis-persist subscription leaves someone else's shared recording alone.
- * The audio arrives after the page has opened ({@link fetchOrgAudio}).
+ * The audio arrives after the page has opened ({@link fetchOrgAudio}). `place`
+ * (its org and org folder) is what the page shows for where it is filed.
  */
-export async function loadOrgEntry(orgId: string, id: string): Promise<void> {
+export async function loadOrgEntry(
+  orgId: string,
+  id: string,
+  place: { orgName: string; folderName: string | null } | null = null,
+): Promise<void> {
   if (refuseWhileRecording()) return;
   const base = `/orgs/${encodeURIComponent(orgId)}/recordings/${encodeURIComponent(id)}`;
   const meta = (await (await cloudFetch(`${base}/meta`)).json()) as HistoryEntry;
@@ -140,6 +145,7 @@ export async function loadOrgEntry(orgId: string, id: string): Promise<void> {
   const cached = orgAudio.get(id) ?? "";
   const session = replaySessionFor(meta, cached, cached ? convertFileSrc(cached) : "");
   useStore.getState().loadHistory({ ...meta, segments: session.segments }, session, { readOnly: true });
+  useStore.getState().setReplayOrgPlace(place);
   const t = cloudToken();
   if (meta.audio && t && !cached) void fetchOrgAudio(id, `${CLOUD_URL}${base}/audio`, t);
   log.info("history: org entry loaded", { orgId, id, audioCached: !!cached });
