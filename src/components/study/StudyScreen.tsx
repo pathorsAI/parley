@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Clock, MessageCircleQuestion, Pencil, RotateCw, X } from "lucide-react";
 import { DEFAULT_GETTING_STARTED, useStore } from "../../lib/store";
 import { missingProviderRequirement, providerGateKey } from "../../lib/ai/settings";
@@ -14,9 +14,7 @@ import { DeliveryPanel } from "../delivery/DeliveryPanel";
 import { ActionItemsPanel } from "../replay/ActionItemsPanel";
 import { AskPanel } from "../sidebar/AskPanel";
 import { StudyHeader, STUDY_TABPANEL_ID, studyTabId } from "./StudyHeader";
-import { OnboardingHint } from "../OnboardingHint";
-import { markHintSeen, useHint } from "../../lib/onboarding/gettingStarted";
-import { LapContext, useLapContext, useLapState } from "../../lib/onboarding/lap";
+import { LapContext, useLapState } from "../../lib/onboarding/lap";
 import { GuideBar } from "./GuideBar";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -61,7 +59,6 @@ export function StudyScreen({ libraryCount = 0 }: Readonly<{ libraryCount?: numb
           pickerOpen={pickerOpen}
           onPickerOpenChange={setPickerOpen}
         />
-        <FilingHint />
         {/* Ask floats over the page, so it sits above the guide bar, not on it. */}
         <div
           id={STUDY_TABPANEL_ID}
@@ -206,30 +203,6 @@ function BackgroundSection({ background }: Readonly<{ background: string }>) {
       <MeetingContextSheet open={editing} onOpenChange={setEditing} />
     </div>
   );
-}
-
-/** One-time "one customer, one folder" line, shown while the recording is
- *  unfiled. Filing the recording counts as having taken the point. Quiet while
- *  the guide bar is up — it teaches the same thing, and once is enough. */
-function FilingHint() {
-  const { t } = useI18n();
-  const [visible, dismiss] = useHint("report.filing");
-  const lapVisible = useLapContext().visible;
-  const loadedHistoryId = useStore((s) => s.loadedHistoryId);
-  // An org copy (read-only) or an unsaved session can't be filed from here.
-  const fileable = useStore((s) => !s.replayReadOnly) && !!loadedHistoryId;
-  const folderId = useStore((s) => s.replayFolderId);
-
-  // Unfiled → filed on the SAME recording retires the hint.
-  const prev = useRef<{ id: string | null; folderId: string | null }>({ id: null, folderId: null });
-  useEffect(() => {
-    const was = prev.current;
-    prev.current = { id: loadedHistoryId, folderId };
-    if (was.id && was.id === loadedHistoryId && !was.folderId && folderId) markHintSeen("report.filing");
-  }, [loadedHistoryId, folderId]);
-
-  if (!visible || lapVisible || !fileable || folderId) return null;
-  return <OnboardingHint text={t("study.hint.filing")} onDismiss={dismiss} className="mx-6 mt-3" />;
 }
 
 /** The auto-generated debrief. Store-backed + persisted onto the entry, so it
