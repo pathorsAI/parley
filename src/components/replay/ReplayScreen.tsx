@@ -203,8 +203,10 @@ export function ReplayScreen() {
       >
         <ResizablePanel id="transcript" defaultSize={62} minSize={32}>
           <div className="flex h-full min-h-0 flex-col">
-            <div className="flex h-9 shrink-0 items-center justify-between border-b px-4">
-              <span className="text-xs font-medium text-foreground">{t("replay.transcript")}</span>
+            {/* Same height and title weight as the 時間軸分析 header beside it
+                (FindingsPanel), so the two bars read as one line. */}
+            <div className="flex h-10 shrink-0 items-center justify-between border-b px-4">
+              <span className="text-xs font-semibold text-foreground">{t("replay.transcript")}</span>
               <TranscriptCopyMenu
                 segments={segments}
                 speakerNames={speakerNames}
