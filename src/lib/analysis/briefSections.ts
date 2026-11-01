@@ -68,6 +68,16 @@ function keyOf(title: string): BriefSectionKey | null {
   return KEY_BY_HEADING[normalized] ?? null;
 }
 
+/**
+ * Undo a model's habit of bolding its section headings: `**## Highlights**`
+ * (or `__## Highlights__`) is neither a heading to markdown nor to the cutter
+ * below, so it showed as literal "## Highlights" and the brief came out uncut.
+ * Unwraps only lines that are a heading inside the emphasis.
+ */
+export function normalizeBriefHeadings(markdown: string): string {
+  return markdown.replace(/^[ \t]*(\*\*|__)(#{1,6}[ \t]+[^\n]*?)\1[ \t]*$/gm, "$2");
+}
+
 /** Cut a brief at its level-two headings. A brief without any comes back as
  *  one untitled lead, to be shown whole. */
 export function splitBrief(markdown: string): SplitBrief {
@@ -78,7 +88,7 @@ export function splitBrief(markdown: string): SplitBrief {
     if (!current) return;
     sections.push({ key: keyOf(current.title), title: current.title.trim(), body: current.lines.join("\n").trim() });
   };
-  for (const line of markdown.split("\n")) {
+  for (const line of normalizeBriefHeadings(markdown).split("\n")) {
     const heading = /^##\s+(.+?)\s*$/.exec(line);
     if (heading) {
       close();

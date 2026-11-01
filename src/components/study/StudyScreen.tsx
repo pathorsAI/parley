@@ -3,7 +3,7 @@ import { Clock, MessageCircleQuestion, Pencil, RotateCw, X } from "lucide-react"
 import { DEFAULT_GETTING_STARTED, useStore } from "../../lib/store";
 import { missingProviderRequirement, providerGateKey } from "../../lib/ai/settings";
 import { regenerateArtifact, useBriefQueued, type StudyArtifactKey } from "../../lib/analysis/studyPipeline";
-import { splitBrief, type BriefSection as BriefSectionPart } from "../../lib/analysis/briefSections";
+import { normalizeBriefHeadings, splitBrief, type BriefSection as BriefSectionPart } from "../../lib/analysis/briefSections";
 import { meetingBackgroundOf, meetingNotesOf } from "../../lib/history/meetingNotes";
 import { MeetingContextSheet } from "../MeetingContextButton";
 import type { StudyTab } from "../../lib/store/study";
@@ -307,7 +307,7 @@ function BriefTabs({ brief, onSeek }: Readonly<{ brief: string; onSeek: (ms: num
 
   if (sections.length < 2) {
     const whole = [lead, ...sections.map((s) => s.body)].filter(Boolean).join("\n\n");
-    return <ReportContent markdown={whole || brief} onTimestamp={onSeek} />;
+    return <ReportContent markdown={whole || normalizeBriefHeadings(brief)} onTimestamp={onSeek} />;
   }
   return (
     <div className="flex flex-col gap-3">

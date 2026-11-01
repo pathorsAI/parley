@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { splitBrief } from "./briefSections";
+import { normalizeBriefHeadings, splitBrief } from "./briefSections";
 
 const DECISION = [
   "## Highlights",
@@ -43,5 +43,16 @@ describe("splitBrief", () => {
 
   it("returns a brief without headings as its lead alone", () => {
     expect(splitBrief("只有一段文字")).toEqual({ lead: "只有一段文字", sections: [], next: [] });
+  });
+});
+
+describe("normalizeBriefHeadings", () => {
+  it("unwraps bolded headings, and the brief then cuts as usual", () => {
+    const md = "**## Highlights**\n- a\n**## Decisions**  \n- b\n__## Open questions__\n- c";
+    expect(normalizeBriefHeadings(md)).toBe("## Highlights\n- a\n## Decisions\n- b\n## Open questions\n- c");
+    expect(splitBrief(md).sections.map((s) => s.key)).toEqual(["highlights", "decisions", "openQuestions"]);
+  });
+  it("leaves ordinary bold text alone", () => {
+    expect(normalizeBriefHeadings("- **Channel** 欄位")).toBe("- **Channel** 欄位");
   });
 });
