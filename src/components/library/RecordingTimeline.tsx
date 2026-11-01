@@ -241,8 +241,19 @@ function TimelineRow({
   );
 
   const row = (
-    // Rows are split by hairlines, not boxed.
-    <div className="group relative flex min-h-9 items-center gap-2.5 border-b border-border px-2 py-2 transition-colors last:border-b-0 hover:bg-muted/60">
+    // Rows are split by hairlines, not boxed. The whole row opens the recording,
+    // as its hover suggests: the open button only spans the title, so a click on
+    // the date, the icons or the stats used to do nothing. Clicks on the row's
+    // own controls (the open button included) are theirs, not the row's; the
+    // keyboard path stays on the open button.
+    // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
+    <div
+      onClick={(ev) => {
+        if (editing || (ev.target as HTMLElement).closest("button, input, a, [role='menuitem']")) return;
+        onOpen();
+      }}
+      className="group relative flex min-h-9 cursor-pointer items-center gap-2.5 border-b border-border px-2 py-2 transition-colors last:border-b-0 hover:bg-muted/60"
+    >
       <span
         className="w-11 shrink-0 text-[11px] tabular-nums text-muted-foreground"
         title={new Date(entry.createdAt).toLocaleString(locale)}
