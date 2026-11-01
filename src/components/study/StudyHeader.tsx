@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown, Copy, Pencil, Sparkles } from "lucide-react";
+import { MeetingKindPicker } from "../MeetingKindPicker";
 import { toast } from "sonner";
 import { transcriptAsText, useStore } from "../../lib/store";
 import { STUDY_TABS, type StudyTab } from "../../lib/store/study";
@@ -161,6 +162,10 @@ function RecordingTitle() {
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2">
       {title}
+      {/* What this recording is read AS — a tag the analysis fills in, changed
+          only to correct it. Changing it doesn't re-run anything on its own;
+          the analysis chip owns regeneration. */}
+      <MeetingKindPicker tag className="shrink-0" />
       {autoNamed && draft === null && (
         <span
           title={t("study.title.autoNamedHint")}

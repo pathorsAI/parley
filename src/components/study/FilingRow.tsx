@@ -17,7 +17,6 @@ import { cn } from "@/lib/utils";
 import { DestinationSheet } from "../DestinationSheet";
 import { useRefile } from "../useRefile";
 import { MeetingContextSheet } from "../MeetingContextButton";
-import { MeetingKindPicker } from "../MeetingKindPicker";
 
 /** Recordings whose folder suggestion has already made its entrance this session. */
 const introduced = new Set<string>();
@@ -212,10 +211,6 @@ export function FilingRow({
     <div className="flex items-center gap-2 text-xs">
       <Folder className="size-3.5 shrink-0 text-muted-foreground" />
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">{filing}</div>
-
-      {/* What this recording is being read AS. Changing it doesn't re-run
-          anything on its own — the analysis chip owns regeneration. */}
-      <MeetingKindPicker className="h-7 w-[132px] shrink-0" />
 
       <DropdownMenu>
         <DropdownMenuTrigger
