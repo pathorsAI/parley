@@ -2,7 +2,10 @@ name: CI
 
 # Pre-merge gate for the desktop app: the frontend typecheck + unit tests that
 # CLAUDE.md already requires before every PR, plus a Rust compile check on both
-# desktop targets. The Windows job exists to keep the codebase building for the
+# desktop targets. The unit suite carries one release-blocking invariant that
+# looks like neither: tests/tauriVersions.test.ts holds every Tauri npm package
+# to its crate's minor, because `tauri build` refuses a mismatch and no job here
+# ever packages the app (#657). The Windows job exists to keep the codebase building for the
 # Windows port even before any Windows-specific feature lands — native build
 # regressions (audiopus_sys, knf-rs-sys, cfg-gated code) surface here instead of
 # at release time.
