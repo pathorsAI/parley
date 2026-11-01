@@ -42,17 +42,27 @@ describe("CancelLedger", () => {
   it("drops it when the offer runs out, and a late settle still never delivers", () => {
     const l = new CancelLedger();
     l.cancel(1);
-    expect(l.expire()).toBe(1);
+    // Nothing had settled, so the drop carries no text: the host records this
+    // one off the late settle's "discard" instead (see host.keepDiscarded).
+    expect(l.expire()).toEqual({ gen: 1, text: "" });
     expect(l.isCancelled(1)).toBe(true);
     expect(l.undo()).toEqual({ kind: "none" });
     expect(l.settle(1, "太晚了", false)).toBe("discard");
+  });
+
+  /** #640: the drop hands the text back so the history can keep it. */
+  it("hands back the settled text it drops when the offer runs out", () => {
+    const l = new CancelLedger();
+    l.cancel(1);
+    l.settle(1, "整段六分鐘的聽寫", false);
+    expect(l.expire()).toEqual({ gen: 1, text: "整段六分鐘的聽寫" });
   });
 
   it("drops an un-recovered cancel on a new press, which still never delivers", () => {
     const l = new CancelLedger();
     l.cancel(1);
     l.settle(1, "舊的", false);
-    expect(l.supersede()).toBe(true);
+    expect(l.supersede()).toEqual({ gen: 1, text: "舊的" });
     expect(l.isCancelled(1)).toBe(true);
     expect(l.undo()).toEqual({ kind: "none" });
   });
@@ -61,7 +71,7 @@ describe("CancelLedger", () => {
     const l = new CancelLedger();
     l.cancel(1);
     l.undo();
-    expect(l.supersede()).toBe(false);
+    expect(l.supersede()).toBeNull();
     expect(l.expire()).toBeNull();
     expect(l.settle(1, "要回來", false)).toBe("recover");
   });
@@ -103,7 +113,7 @@ describe("CancelLedger", () => {
     expect(l.isCancelled(2)).toBe(false);
     expect(l.settle(2, "照常", false)).toBe("discard");
     expect(l.expire()).toBeNull();
-    expect(l.supersede()).toBe(false);
+    expect(l.supersede()).toBeNull();
   });
 
   it("only remembers the most recent cancels", () => {

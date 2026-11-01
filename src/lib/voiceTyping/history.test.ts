@@ -94,6 +94,21 @@ describe("appendVoiceEntry", () => {
     );
   });
 
+  /** #640: a cancelled dictation is recorded too, and the flag is what lets
+   *  the list say the text never left Parley. */
+  it("carries the cancelled outcome, and omits it for an ordinary insert", async () => {
+    await appendVoiceEntry("取消掉的那一段", null, undefined, "cancelled");
+    await appendVoiceEntry("照常貼上的", "com.apple.Notes");
+
+    const lines = calls("append_voice_history").map(
+      (c) => JSON.parse((c[1] as { line: string }).line) as { text: string; outcome?: string },
+    );
+    expect(lines).toEqual([
+      expect.objectContaining({ text: "取消掉的那一段", outcome: "cancelled" }),
+      expect.not.objectContaining({ outcome: expect.anything() }),
+    ]);
+  });
+
   it("logs and broadcasts nothing when the write fails", async () => {
     routeInvoke(["append_voice_history"]);
 

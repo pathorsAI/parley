@@ -11,6 +11,11 @@ import { emitEvent, listenEvent, type UnlistenFn } from "../ipc/events";
 /** A style that produced text — never `off`, which produces none. */
 export type PolishedStyle = Exclude<VoiceTypingPolishStyle, "off">;
 
+/** How a dictation ended, when it never reached a field. Absent on an
+ *  ordinary insert, on an Undo's clipboard copy, and on every line written
+ *  before the field existed. */
+export type VoiceEntryOutcome = "cancelled";
+
 export interface VoiceEntry {
   id: string;
   text: string;
@@ -22,6 +27,9 @@ export interface VoiceEntry {
   /** The polish style that produced `text`, when it is the AI polish. Absent
    *  for a raw paste and for lines written before the style choice existed. */
   polishStyle?: PolishedStyle;
+  /** Set when the text never left Parley: Esc cancelled the dictation and no
+   *  Undo brought it back, so this line is the only copy of it. */
+  outcome?: VoiceEntryOutcome;
 }
 
 /**
@@ -67,6 +75,7 @@ export async function appendVoiceEntry(
   text: string,
   appBundleId?: string | null,
   polishStyle?: PolishedStyle,
+  outcome?: VoiceEntryOutcome,
 ): Promise<void> {
   if (!isTauri() || !text.trim()) return;
   const entry: VoiceEntry = { id: crypto.randomUUID(), text, ts: Date.now() };
@@ -74,6 +83,7 @@ export async function appendVoiceEntry(
   // by an older build and lines from a blocked paste look the same.
   if (appBundleId) entry.appBundleId = appBundleId;
   if (polishStyle) entry.polishStyle = polishStyle;
+  if (outcome) entry.outcome = outcome;
   try {
     await ipc.appendVoiceHistory({ line: JSON.stringify(entry) });
   } catch (error) {

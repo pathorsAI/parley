@@ -9,7 +9,9 @@
 //! - The overlay offers Undo for {@link CANCEL_UNDO_MS}. Undo copies the text to
 //!   the clipboard (never pastes: the caret may have moved since) and records
 //!   it in the history. Undo before the text has settled waits for it.
-//! - With no Undo, or a new press first, the text is dropped and never saved.
+//! - With no Undo, or a new press first, the text is delivered nowhere — but
+//!   it is still written to the dictation history, flagged `cancelled`, so a
+//!   long dictation lost to a stray Esc can be read back (#640).
 //!
 //! The host (host.ts) owns the timer, the overlay and the session state; this
 //! ledger only answers "what happens to this generation's text".
@@ -37,6 +39,15 @@ export const CANCEL_UNDO_MS = 5000;
 
 /** What the host does with a cancelled dictation's settled text. */
 export type HoldVerdict = "hold" | "recover" | "discard";
+
+/** A cancelled dictation the host must drop: no Undo asked for it, so nothing
+ *  is delivered. `text` is what it settled on — empty while it is still
+ *  settling, in which case the host records it off {@link CancelLedger.settle}'s
+ *  "discard" verdict instead. */
+export interface Dropped {
+  gen: number;
+  text: string;
+}
 
 /** What an Undo click asks the host to do. */
 export type UndoResult =
@@ -123,19 +134,23 @@ export class CancelLedger {
     return { kind: "now", gen: o.gen, text: o.text, polished: o.polished, gateText: o.gateText };
   }
 
-  /** The Undo offer ran out. The generation whose text is now dropped, or
-   *  null when nothing was on offer (an Undo already asked is not). */
-  expire(): number | null {
-    const o = this.offer;
-    this.offer = null;
-    return o ? o.gen : null;
+  /** The Undo offer ran out: the dictation that is now dropped, or null when
+   *  nothing was on offer (an Undo already asked is not). */
+  expire(): Dropped | null {
+    return this.drop();
   }
 
-  /** A new press: withdraw the offer. True when an un-recovered dictation was
-   *  dropped; one whose Undo was already asked is still recovered. */
-  supersede(): boolean {
-    const had = this.offer !== null;
+  /** A new press: withdraw the offer. The dropped dictation, or null when its
+   *  Undo was already asked — that one is still recovered. */
+  supersede(): Dropped | null {
+    return this.drop();
+  }
+
+  /** Withdraw the offer and say what it was holding. The text is empty when it
+   *  had not settled yet: the host hears about that one through `settle`. */
+  private drop(): Dropped | null {
+    const o = this.offer;
     this.offer = null;
-    return had;
+    return o ? { gen: o.gen, text: o.settled ? o.text : "" } : null;
   }
 }

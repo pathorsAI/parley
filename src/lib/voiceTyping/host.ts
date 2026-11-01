@@ -1059,6 +1059,10 @@ async function holdCancelled(
   log.info("voice-typing: cancelled dictation held", { chars: text.length, verdict });
   if (verdict === "recover") {
     await deliverRecovered(g, text, polished, gateText);
+  } else if (verdict === "discard") {
+    // Its offer was already gone when it settled (the window closed, or a new
+    // press took the overlay), so this is where the text arrives.
+    keepDiscarded(text);
   } else if (verdict === "hold" && gen === g) {
     // Put the Undo back on screen in case a "polishing" sent just before the
     // Esc reached the overlay after the "cancelled" that followed it.
@@ -1140,13 +1144,14 @@ async function deliverRecovered(
   scheduleHide();
 }
 
-/** The Undo offer ran out: drop the text (never saved) and take the overlay
- *  down, unless a newer dictation owns it. */
+/** The Undo offer ran out: the text goes nowhere but the history, and the
+ *  overlay comes down unless a newer dictation owns it. */
 function expireCancel(): void {
-  const g = cancels.expire();
-  if (g === null) return;
+  const dropped = cancels.expire();
+  if (!dropped) return;
   log.info("voice-typing: cancelled dictation discarded", { reason: "undo window closed" });
-  if (gen === g) {
+  keepDiscarded(dropped.text);
+  if (gen === dropped.gen) {
     hideOverlay().catch((error) =>
       log.warn("voice-typing: cancel hide failed", { error: String(error) }),
     );
@@ -1156,9 +1161,31 @@ function expireCancel(): void {
 /** A new press withdraws the Undo offer (see startSession). */
 function dropCancel(): void {
   clearTimeout(cancelTimer);
-  if (cancels.supersede()) {
+  const dropped = cancels.supersede();
+  if (dropped) {
     log.info("voice-typing: cancelled dictation discarded", { reason: "new press" });
+    keepDiscarded(dropped.text);
   }
+}
+
+/**
+ * A cancelled dictation nobody brought back still reaches the history (#640).
+ *
+ * Nothing is delivered — no paste, no clipboard, the Undo is over — but the
+ * history line is then the only copy of what was said, and losing six minutes
+ * of speech to a stray Esc is worse than a line the user can delete. Recorded
+ * as dictated: polish is a model call for text the user did not ask to keep,
+ * and the entry's `cancelled` flag already says it never left Parley.
+ *
+ * Fire-and-forget like the delivered append, and silent on empty text, so a
+ * cancel that heard nothing writes nothing.
+ */
+function keepDiscarded(text: string): void {
+  if (!text.trim()) return;
+  appendVoiceEntry(text, null, undefined, "cancelled").catch((error) =>
+    log.warn("voice-typing: append history failed", { error: String(error) }),
+  );
+  log.info("voice-typing: discarded dictation kept", { chars: text.length });
 }
 
 // ── Learn from an in-place correction ───────────────────────────────────────
