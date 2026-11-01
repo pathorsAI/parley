@@ -147,7 +147,10 @@ export function NewFolderCard({ onCreate }: Readonly<{ onCreate: (name: string) 
                 className="absolute top-0 left-0 origin-top-left"
                 style={{ width: DRAWN.w, height: DRAWN.h, transform: `scale(${SCALE})` }}
               >
-                <div className="absolute top-0 left-0 h-[136px] w-[151px] rounded-[8px] bg-[#f6fcff] transition-colors duration-500 ease-[var(--ob-ease)] group-hover:bg-[#e0edf4]" />
+                <div className="absolute top-0 left-0 h-[136px] w-[151px] rounded-[8px] bg-[#f6fcff] transition-colors duration-500 ease-[var(--ob-ease)] group-hover:bg-[#e5f3fe]" />
+                {/* Hover is #e5f3fe, not the file's #e0edf4: that grey-blue read
+                    muddy beside the front's clear #def3ff; this keeps the same
+                    sky hue at full saturation. */}
                 {/* The front tips open. The hover drawing is the default one
                     sheared: same bottom edge, top edge 11px to the left — a
                     skewX of atan(11/107) about the bottom. So both layers shear
