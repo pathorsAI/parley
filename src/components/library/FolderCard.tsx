@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Plus } from "lucide-react";
 import { useI18n } from "../../i18n";
 
@@ -31,51 +31,23 @@ export function FolderCard({
       className="group relative shrink-0 cursor-pointer rounded-[10px] text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
       style={{ width: SHOWN_W, height: DRAWN.h * SCALE }}
     >
-      <div
-        className="absolute top-0 left-0 origin-top-left"
-        style={{ width: DRAWN.w, height: DRAWN.h, transform: `scale(${SCALE})` }}
-      >
-        {/* Back panel. */}
-        <div className="absolute top-0 left-0 h-[106px] w-[151px] rounded-[8px] bg-[#e1e1e1] transition-colors duration-300 group-hover:bg-[#d4e5ef]" />
-        {/* The two papers, rising a little on hover. */}
-        <div className="absolute top-[10.9px] left-[9.89px] flex h-[116.122px] w-[111.626px] items-center justify-center transition-transform duration-300 ease-out group-hover:translate-x-[3.11px] group-hover:-translate-y-[10.9px]">
-          <div className="h-[104.765px] w-[99.601px] rotate-7 rounded-[4px] bg-white/80 shadow-[0px_4px_7px_0px_rgba(0,0,0,0.1)]" />
-        </div>
-        <div className="absolute top-[31.16px] left-[29.14px] flex h-[95.204px] w-[106px] items-center justify-center transition-transform duration-300 ease-out group-hover:translate-x-[3.11px] group-hover:-translate-y-[10.89px]">
-          <div className="h-[84.074px] w-[96.473px] rotate-7 rounded-[4px] bg-white shadow-[0px_4px_7px_0px_rgba(0,0,0,0.1)]" />
-        </div>
-        {/* The folder's front, its grey and blue washes crossfading. */}
-        <img
-          alt=""
-          src="/library/folder-front.svg"
-          className="absolute top-[29px] left-0 block h-[107px] w-[151px] max-w-none transition-opacity duration-300 group-hover:opacity-0"
-        />
-        <img
-          alt=""
-          src="/library/folder-front-hover.svg"
-          className="absolute top-[29px] left-0 block h-[107px] w-[151px] max-w-none opacity-0 transition-opacity duration-300 group-hover:opacity-100"
-        />
-        <div className="absolute top-[95px] right-[12px] left-[12px] flex flex-col gap-[2px] leading-normal">
-          <p className="truncate text-[12px] text-[#333] transition-colors duration-300 group-hover:text-[#3b82f6]">
-            {name}
-          </p>
-          <p className="text-[10px] text-[#a3a3a3]">{t("library.folderCard.count", { count })}</p>
-        </div>
-      </div>
+      <FolderDrawing hover>
+        <p className="truncate text-[12px] text-[#333] transition-colors duration-300 group-hover:text-[#3b82f6]">
+          {name}
+        </p>
+        <p className="text-[10px] text-[#a3a3a3]">{t("library.folderCard.count", { count })}</p>
+      </FolderDrawing>
     </button>
   );
 }
 
 /**
- * The first card on an org's page: 新增資料夾, from the UX file (3541:9360
- * default, 3541:9412 hover) — a dashed pale-blue frame with a folder front and
- * the button on it; on hover the front widens and the button turns solid. A
- * click turns the button into a name field (Enter creates, Esc or an empty name
- * cancels), as the sidebar's add-folder row does.
+ * The folder being created: the same grey card, its name typed straight into
+ * the name's place — no field box, just the text and a caret. Enter (or
+ * clicking away) creates it; Esc or an empty name drops the card.
  */
-export function NewFolderCard({ onCreate }: Readonly<{ onCreate: (name: string) => void }>) {
+function DraftFolderCard({ onDone }: Readonly<{ onDone: (name: string | null) => void }>) {
   const { t } = useI18n();
-  const [naming, setNaming] = useState(false);
   const [name, setName] = useState("");
   // Enter / Esc unmount the field, and its blur then fires on the way out —
   // the first of the two settles it.
@@ -83,60 +55,117 @@ export function NewFolderCard({ onCreate }: Readonly<{ onCreate: (name: string) 
   const finish = (commit: boolean) => {
     if (settled.current) return;
     settled.current = true;
-    const clean = name.trim();
-    setNaming(false);
-    setName("");
-    if (commit && clean) onCreate(clean);
+    onDone(commit && name.trim() ? name.trim() : null);
   };
+  return (
+    <div className="relative shrink-0" style={{ width: SHOWN_W, height: DRAWN.h * SCALE }}>
+      <FolderDrawing>
+        <input
+          // eslint-disable-next-line jsx-a11y/no-autofocus -- the card exists only because the user just asked to name a folder
+          autoFocus
+          value={name}
+          aria-label={t("history.folder.namePlaceholder")}
+          placeholder={t("history.folder.namePlaceholder")}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") finish(true);
+            else if (e.key === "Escape") finish(false);
+          }}
+          onBlur={() => finish(true)}
+          className="w-full min-w-0 border-0 bg-transparent p-0 text-[12px] leading-normal text-[#333] caret-[#3b82f6] outline-none placeholder:text-[#a3a3a3]"
+        />
+        <p className="text-[10px] text-[#a3a3a3]">{t("library.folderCard.count", { count: 0 })}</p>
+      </FolderDrawing>
+    </div>
+  );
+}
+
+/** The folder drawing in its own 151×136 coordinates, scaled to the shown
+ *  size; `children` fill the name slot. `hover` turns on the design's hover
+ *  state under a `group` ancestor. */
+function FolderDrawing({ hover = false, children }: Readonly<{ hover?: boolean; children: ReactNode }>) {
+  const h = (cls: string) => (hover ? cls : "");
+  return (
+    <div
+      className="absolute top-0 left-0 origin-top-left"
+      style={{ width: DRAWN.w, height: DRAWN.h, transform: `scale(${SCALE})` }}
+    >
+      {/* Back panel. */}
+      <div className={`absolute top-0 left-0 h-[106px] w-[151px] rounded-[8px] bg-[#e1e1e1] transition-colors duration-300 ${h("group-hover:bg-[#d4e5ef]")}`} />
+      {/* The two papers, rising a little on hover. */}
+      <div className={`absolute top-[10.9px] left-[9.89px] flex h-[116.122px] w-[111.626px] items-center justify-center transition-transform duration-300 ease-out ${h("group-hover:translate-x-[3.11px] group-hover:-translate-y-[10.9px]")}`}>
+        <div className="h-[104.765px] w-[99.601px] rotate-7 rounded-[4px] bg-white/80 shadow-[0px_4px_7px_0px_rgba(0,0,0,0.1)]" />
+      </div>
+      <div className={`absolute top-[31.16px] left-[29.14px] flex h-[95.204px] w-[106px] items-center justify-center transition-transform duration-300 ease-out ${h("group-hover:translate-x-[3.11px] group-hover:-translate-y-[10.89px]")}`}>
+        <div className="h-[84.074px] w-[96.473px] rotate-7 rounded-[4px] bg-white shadow-[0px_4px_7px_0px_rgba(0,0,0,0.1)]" />
+      </div>
+      {/* The folder's front, its grey and blue washes crossfading. */}
+      <img
+        alt=""
+        src="/library/folder-front.svg"
+        className={`absolute top-[29px] left-0 block h-[107px] w-[151px] max-w-none transition-opacity duration-300 ${h("group-hover:opacity-0")}`}
+      />
+      {hover && (
+        <img
+          alt=""
+          src="/library/folder-front-hover.svg"
+          className="absolute top-[29px] left-0 block h-[107px] w-[151px] max-w-none opacity-0 transition-opacity duration-300 group-hover:opacity-100"
+        />
+      )}
+      <div className="absolute top-[95px] right-[12px] left-[12px] flex flex-col gap-[2px] leading-normal">{children}</div>
+    </div>
+  );
+}
+
+/**
+ * The first card on an org's page: 新增資料夾, from the UX file (3541:9360
+ * default, 3541:9412 hover) — a pale-blue frame with a folder front and the
+ * button on it; on hover the front widens and the button turns solid. A click
+ * adds a grey folder card right after it, its name typed into the card
+ * ({@link DraftFolderCard}).
+ */
+export function NewFolderCard({ onCreate }: Readonly<{ onCreate: (name: string) => void }>) {
+  const { t } = useI18n();
+  const [drafting, setDrafting] = useState(false);
 
   return (
-    <div className="group relative shrink-0" style={{ width: SHOWN_W, height: DRAWN.h * SCALE }}>
-      <div
-        className="absolute top-0 left-0 origin-top-left"
-        style={{ width: DRAWN.w, height: DRAWN.h, transform: `scale(${SCALE})` }}
-      >
-        <div className="absolute top-0 left-0 h-[136px] w-[151px] rounded-[8px] border border-dashed border-[#d4e5ef] bg-[rgba(212,229,239,0.3)]" />
-        {/* The front, widening leftward on hover (the hover drawing is 162px
-            wide, starting 11px further left). */}
-        <img
-          alt=""
-          src="/library/folder-new-front.svg"
-          className="absolute top-[29px] left-0 block h-[107px] w-[151px] max-w-none transition-opacity duration-300 group-hover:opacity-0"
-        />
-        <img
-          alt=""
-          src="/library/folder-new-front-hover.svg"
-          className="absolute top-[29px] left-[-11px] block h-[107px] w-[162px] max-w-none opacity-0 transition-opacity duration-300 group-hover:opacity-100"
-        />
-        {naming ? (
-          <input
-            // eslint-disable-next-line jsx-a11y/no-autofocus -- the field exists only because the user just asked to name a folder
-            autoFocus
-            value={name}
-            aria-label={t("history.folder.namePlaceholder")}
-            placeholder={t("history.folder.namePlaceholder")}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") finish(true);
-              else if (e.key === "Escape") finish(false);
-            }}
-            onBlur={() => finish(true)}
-            className="absolute top-[68px] left-[12px] h-[36px] w-[127px] rounded-[6px] border border-[#3b82f6] bg-white px-[8px] text-[12px] text-[#333] outline-none"
+    <>
+      <div className="group relative shrink-0" style={{ width: SHOWN_W, height: DRAWN.h * SCALE }}>
+        <div
+          className="absolute top-0 left-0 origin-top-left"
+          style={{ width: DRAWN.w, height: DRAWN.h, transform: `scale(${SCALE})` }}
+        >
+          <div className="absolute top-0 left-0 h-[136px] w-[151px] rounded-[8px] bg-[#f6fcff]" />
+          {/* The front, widening leftward on hover (the hover drawing is 162px
+              wide, starting 11px further left). */}
+          <img
+            alt=""
+            src="/library/folder-new-front.svg"
+            className="absolute top-[29px] left-0 block h-[107px] w-[151px] max-w-none transition-opacity duration-300 group-hover:opacity-0"
           />
-        ) : (
+          <img
+            alt=""
+            src="/library/folder-new-front-hover.svg"
+            className="absolute top-[29px] left-[-11px] block h-[107px] w-[162px] max-w-none opacity-0 transition-opacity duration-300 group-hover:opacity-100"
+          />
           <button
             type="button"
-            onClick={() => {
-              settled.current = false;
-              setNaming(true);
-            }}
-            className="absolute top-[68px] left-[calc(50%+0.5px)] flex h-[36px] -translate-x-1/2 cursor-pointer items-center justify-center gap-[6px] rounded-[6px] bg-[rgba(59,130,246,0.8)] px-[10px] py-[6px] text-[12px] leading-[20px] font-medium whitespace-nowrap text-[#fafafa] outline-none transition-colors duration-300 group-hover:bg-[#3b82f6] focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => setDrafting(true)}
+            className="absolute top-[68px] left-[calc(50%+0.5px)] flex -translate-x-1/2 cursor-pointer items-center justify-center gap-[6px] rounded-[6px] bg-[rgba(59,130,246,0.8)] px-[10px] py-[4px] text-[12px] leading-[20px] font-medium whitespace-nowrap text-[#fafafa] outline-none transition-colors duration-300 group-hover:bg-[#3b82f6] focus-visible:ring-2 focus-visible:ring-ring"
           >
             <Plus className="size-[14px]" />
             {t("sidebar.menu.newFolder")}
           </button>
-        )}
+        </div>
       </div>
-    </div>
+      {drafting && (
+        <DraftFolderCard
+          onDone={(name) => {
+            setDrafting(false);
+            if (name) onCreate(name);
+          }}
+        />
+      )}
+    </>
   );
 }
