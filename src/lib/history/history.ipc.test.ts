@@ -319,6 +319,38 @@ describe("history IPC traffic", () => {
 // The save race (C1): the recording of a stopped meeting is encoded while the
 // user may already be in the next one. Its save must use what the stopped
 // meeting looked like, never the live store.
+describe("persistTranscriptText", () => {
+  it("writes only the edited text onto the saved transcript, then tells listeners", async () => {
+    disk.set(
+      "e1",
+      baseMeta("e1", {
+        // Untimed on disk; the screen shows an estimate (replay/timing).
+        segments: [seg({ id: "s1", text: "東昇 hi", startMs: 0, endMs: 0 }), seg({ id: "s2", text: "ok", startMs: 0, endMs: 0 })],
+        brief: "kept",
+      }),
+    );
+    await history.persistTranscriptText("e1", [
+      seg({ id: "s1", text: "東森 hi", startMs: 400, endMs: 900 }),
+      seg({ id: "s2", text: "ok", startMs: 900, endMs: 1200 }),
+    ]);
+    await flush();
+    const meta = disk.get("e1") as HistoryEntry;
+    expect(meta.segments.map((s) => [s.text, s.startMs, s.endMs])).toEqual([
+      ["東森 hi", 0, 0],
+      ["ok", 0, 0],
+    ]);
+    expect(meta.brief).toBe("kept");
+    expect(calls.some((c) => (c as unknown[])[0] === "emit")).toBe(true);
+  });
+
+  it("writes nothing when the text on disk already matches", async () => {
+    disk.set("e1", baseMeta("e1"));
+    await history.persistTranscriptText("e1", [seg({ id: "s1", text: "hello there" })]);
+    await flush();
+    expect(calls.filter((c) => (c as unknown[])[1] === "save_history_entry")).toEqual([]);
+  });
+});
+
 describe("live save race", () => {
   const fire = (name: string, payload: unknown) => handlers.get(name)!({ payload });
   const savedEntries = () => [...disk.values()] as HistoryEntry[];

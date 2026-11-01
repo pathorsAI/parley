@@ -322,6 +322,16 @@ const TABLE = [
     // Must keep working once the find field it opens has focus.
     whileTyping: true,
   },
+  {
+    id: "replay.replace",
+    group: "replay",
+    scope: "replay",
+    // ⌥⌘F / Ctrl+Alt+F — the find-and-replace chord of VS Code and Xcode.
+    keys: [{ ...MOD, alt: true, key: "f" }],
+    labelKey: "cmd.replay.replace",
+    // Same as find: it re-targets the bar while one of its fields has focus.
+    whileTyping: true,
+  },
 
   // ── voice typing ────────────────────────────────────────────────────────
   {

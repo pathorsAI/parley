@@ -409,6 +409,7 @@ export const zhTW = {
   "cmd.replay.toStart": "跳到開頭",
   "cmd.replay.toEnd": "跳到結尾",
   "cmd.replay.find": "在逐字稿中尋找",
+  "cmd.replay.replace": "在逐字稿中取代",
   "cmd.voice.pushToTalk": "按住說話",
 
   // ── 側邊欄的右鍵選單 ──
@@ -1452,6 +1453,18 @@ export const zhTW = {
   "replay.searchPrev": "上一個結果",
   "replay.searchNext": "下一個結果",
   "replay.searchClose": "關閉搜尋",
+  "replay.replaceToggle": "取代（{key}）",
+  "replay.replacePlaceholder": "取代為",
+  "replay.replaceOne": "取代這一筆",
+  "replay.replaceAll": "全部取代（{count}）",
+  "replay.replaceSelection": "取代…",
+  "replay.replaced": "已取代 {count} 筆",
+  "replay.replacedTeach": "加入常用詞",
+  "replay.replacedTaught": "已加入常用詞：{term}",
+  "replay.replacedKnown": "「{term}」已經在常用詞裡了",
+  "replay.replacedTeachFailed": "加入常用詞失敗",
+  "replay.transcriptEdited": "逐字稿改過了，總結和後續行動還是舊的",
+  "replay.transcriptEditedRegen": "重新產生",
   // Time-anchored retro timeline (whole-recording analysis → markers).
   "timeline.title": "時間軸分析",
   "timeline.analyze": "分析",
@@ -2046,6 +2059,7 @@ export const en = {
   "cmd.replay.toStart": "Jump to start",
   "cmd.replay.toEnd": "Jump to end",
   "cmd.replay.find": "Find in transcript",
+  "cmd.replay.replace": "Replace in transcript",
   "cmd.voice.pushToTalk": "Hold to talk",
 
   // ── Sidebar right-click menu ──
@@ -3099,6 +3113,18 @@ export const en = {
   "replay.searchPrev": "Previous match",
   "replay.searchNext": "Next match",
   "replay.searchClose": "Close search",
+  "replay.replaceToggle": "Replace ({key})",
+  "replay.replacePlaceholder": "Replace with",
+  "replay.replaceOne": "Replace",
+  "replay.replaceAll": "Replace all ({count})",
+  "replay.replaceSelection": "Replace…",
+  "replay.replaced": "Replaced {count} matches",
+  "replay.replacedTeach": "Add to dictionary",
+  "replay.replacedTaught": "Added to dictionary: {term}",
+  "replay.replacedKnown": "“{term}” is already in your dictionary",
+  "replay.replacedTeachFailed": "Couldn't add to dictionary",
+  "replay.transcriptEdited": "The transcript changed — the summary and action items are from before",
+  "replay.transcriptEditedRegen": "Regenerate",
   // Time-anchored retro timeline (whole-recording analysis → markers).
   "timeline.title": "Timeline analysis",
   "timeline.analyze": "Analyze",
