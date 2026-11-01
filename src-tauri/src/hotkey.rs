@@ -179,6 +179,12 @@ fn current_id() -> String {
 // to the clipboard, and disarms it after. While armed, Esc is a global
 // shortcut (Carbon `RegisterEventHotKey` / Win32 `RegisterHotKey`) that only
 // Parley receives; the rest of the time it belongs to the app in front.
+//
+// A dictation that has run a while narrows that claim to the trigger's own
+// modifier+Esc (`armed: true, bare: false`, host.ts ESC_BARE_CLAIM_MS): past
+// the first minute a stray Esc is likelier to be meant for the app in front
+// than for Parley, and swallowing it there cost a user several minutes of
+// dictation (#640).
 
 /// Esc cancelled the dictation. Payload `{ "fromTrigger": bool }`: true when
 /// the Windows hook caught it under the held trigger and swallowed it, which
@@ -188,6 +194,11 @@ pub(crate) const CANCEL_EVENT: &str = "voicetyping://cancel";
 /// A dictation is cancellable right now. The Windows hook reads it on every
 /// key, so it is the Rust side's own record rather than a JS mirror.
 pub(crate) static CANCEL_ARMED: AtomicBool = AtomicBool::new(false);
+
+/// Whether the bare Esc is claimed as well as the trigger's modifier+Esc.
+/// Only read while [`CANCEL_ARMED`]; disarmed it is merely what the next arm
+/// starts from. See [`cancel_shortcuts_narrowed`].
+static CANCEL_BARE: AtomicBool = AtomicBool::new(true);
 
 /// The Esc shortcuts registered while armed, so disarming removes exactly
 /// those and never the push-to-talk trigger.
@@ -257,6 +268,22 @@ fn cancel_shortcuts_for(id: &str, windows: bool) -> Vec<Shortcut> {
     out
 }
 
+/// [`cancel_shortcuts_for`] without the bare Esc, for a dictation long enough
+/// that an Esc is likelier to belong to the app in front (host.ts narrows the
+/// claim at ESC_BARE_CLAIM_MS). A trigger whose Esc has no modifier variant —
+/// `fn`, Windows' right Ctrl / right Alt, a plain key, the tray — keeps the
+/// bare one: dropping it would leave a long dictation with no cancel at all,
+/// which is worse than swallowing the key.
+fn cancel_shortcuts_narrowed(id: &str, windows: bool) -> Vec<Shortcut> {
+    let all = cancel_shortcuts_for(id, windows);
+    let chords: Vec<Shortcut> = all.iter().copied().filter(|sc| !sc.mods.is_empty()).collect();
+    if chords.is_empty() {
+        all
+    } else {
+        chords
+    }
+}
+
 /// Bumped by every arm request, repeats included: a press re-arms Esc while
 /// an earlier dictation may still hold it, and the backstop below must not
 /// take a claim made after the session it watches ended.
@@ -273,12 +300,19 @@ pub(crate) const CANCEL_BACKSTOP_DELAY: std::time::Duration = std::time::Duratio
 /// purpose, like [`set_voice_typing_shortcut`]: it runs on the main thread,
 /// where the plugin's registration runs inline. A repeat of the current state
 /// does nothing, so the frontend keeps no mirror of it.
+/// `bare` (absent = true) also claims the bare Esc; false keeps only the
+/// trigger's chord, so Esc reaches the app in front again.
 #[tauri::command]
-pub fn set_voice_typing_cancel_armed(app: AppHandle, armed: bool) {
+pub fn set_voice_typing_cancel_armed(app: AppHandle, armed: bool, bare: Option<bool>) {
+    let bare = bare.unwrap_or(true);
     if armed {
         CANCEL_ARM_SEQ.fetch_add(1, Ordering::SeqCst);
     }
-    if CANCEL_ARMED.swap(armed, Ordering::SeqCst) == armed {
+    let was_armed = CANCEL_ARMED.swap(armed, Ordering::SeqCst);
+    let was_bare = CANCEL_BARE.swap(bare, Ordering::SeqCst);
+    // A repeat registers nothing again — and while disarmed, `bare` alone
+    // changes nothing to register.
+    if was_armed == armed && (!armed || was_bare == bare) {
         return;
     }
     apply_cancel_shortcuts(&app);
@@ -305,7 +339,7 @@ pub(crate) fn release_cancel_after_session(
         );
         let main = app.clone();
         // The plugin's registration wants the main thread (see above).
-        let _ = app.run_on_main_thread(move || set_voice_typing_cancel_armed(main, false));
+        let _ = app.run_on_main_thread(move || set_voice_typing_cancel_armed(main, false, None));
     });
 }
 
@@ -331,7 +365,14 @@ fn apply_cancel_shortcuts(app: &AppHandle) {
     if !CANCEL_ARMED.load(Ordering::SeqCst) {
         return;
     }
-    for sc in cancel_shortcuts_for(&current_id(), cfg!(target_os = "windows")) {
+    let id = current_id();
+    let windows = cfg!(target_os = "windows");
+    let claim = if CANCEL_BARE.load(Ordering::SeqCst) {
+        cancel_shortcuts_for(&id, windows)
+    } else {
+        cancel_shortcuts_narrowed(&id, windows)
+    };
+    for sc in claim {
         match gs.on_shortcut(sc, on_cancel) {
             Ok(()) => registered.push(sc),
             Err(e) => log::warn!("voice-typing: escape cancel {sc} not registered: {e}"),
@@ -1035,6 +1076,37 @@ mod tests {
                 [esc(None)]
             );
         }
+    }
+
+    /// Narrowing drops the bare Esc wherever the trigger leaves a chord that
+    /// still cancels, and nowhere else.
+    #[test]
+    fn narrowing_keeps_a_cancel_for_every_trigger() {
+        let alt = Some(Modifiers::ALT);
+        assert_eq!(cancel_shortcuts_narrowed("alt-space", MAC), [esc(alt)]);
+        assert_eq!(cancel_shortcuts_narrowed("right-option", MAC), [esc(alt)]);
+        assert_eq!(
+            cancel_shortcuts_narrowed("combo:control+alt+Space", WIN),
+            [esc(Some(Modifiers::CONTROL | Modifiers::ALT))]
+        );
+        // No chord to fall back on: the bare Esc stays, or a long dictation
+        // could not be cancelled at all.
+        assert_eq!(cancel_shortcuts_narrowed("fn", MAC), [esc(None)]);
+        assert_eq!(cancel_shortcuts_narrowed("combo:F13", MAC), [esc(None)]);
+        // Windows leaves the held modifier keys to the keyboard hook.
+        assert_eq!(cancel_shortcuts_narrowed("right-control", WIN), [esc(None)]);
+        // Reserved chords were never claimed, so there is nothing to keep.
+        assert_eq!(
+            cancel_shortcuts_narrowed("combo:super+alt+KeyD", MAC),
+            [esc(None)]
+        );
+        // The trigger's own chord is not a cancel, so Esc alone remains.
+        assert_eq!(
+            cancel_shortcuts_narrowed("combo:alt+Escape", MAC),
+            [esc(None)]
+        );
+        // Esc as the trigger claims nothing either way.
+        assert!(cancel_shortcuts_narrowed("combo:Escape", MAC).is_empty());
     }
 
     #[test]

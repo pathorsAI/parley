@@ -6,9 +6,13 @@
 //!   host sends the text to the field. The mic stops as on a release, and the
 //!   recognizer still answers, so the text settles as usual — the host just
 //!   never inserts or records a cancelled dictation. It holds the text.
-//! - The overlay offers Undo for {@link CANCEL_UNDO_MS}. Undo copies the text to
-//!   the clipboard (never pastes: the caret may have moved since) and records
-//!   it in the history. Undo before the text has settled waits for it.
+//! - The overlay offers Undo for a window that follows the dictation's own
+//!   length ({@link undoWindowMs}). Undo copies the text to the clipboard
+//!   (never pastes: the caret may have moved since) and records it in the
+//!   history. Undo before the text has settled waits for it.
+//! - Esc is a global shortcut while it is armed, so no other app sees it. A
+//!   long dictation gives the bare one back and keeps only the trigger's own
+//!   modifier+Esc (see {@link ESC_BARE_CLAIM_MS}).
 //! - With no Undo, or a new press first, the text is delivered nowhere — but
 //!   it is still written to the dictation history, flagged `cancelled`, so a
 //!   long dictation lost to a stray Esc can be read back (#640).
@@ -34,8 +38,39 @@ export interface CancelActionPayload {
   action: "undo";
 }
 
-/** How long a cancelled dictation can be brought back. */
+/** The floor of the Undo window: enough to take back a sentence. */
 export const CANCEL_UNDO_MS = 5000;
+
+/** Its ceiling, however long the dictation ran. */
+export const CANCEL_UNDO_MAX_MS = 30_000;
+
+/**
+ * How long Undo stays on offer for a dictation that recorded `speechMs`: half
+ * the time spent talking, inside
+ * [{@link CANCEL_UNDO_MS}, {@link CANCEL_UNDO_MAX_MS}].
+ *
+ * Five seconds is plenty for taking back a sentence and nowhere near enough to
+ * notice that a stray Esc just ended seven minutes of dictation (#640). The
+ * text reaches the history either way, so this only decides how long the
+ * one-click route back into the field stays open.
+ */
+export function undoWindowMs(speechMs: number): number {
+  if (!Number.isFinite(speechMs) || speechMs <= 0) return CANCEL_UNDO_MS;
+  return Math.min(CANCEL_UNDO_MAX_MS, Math.max(CANCEL_UNDO_MS, Math.round(speechMs / 2)));
+}
+
+/**
+ * How long a dictation keeps the BARE Esc claimed globally.
+ *
+ * An armed Esc is a global shortcut: no other app sees it. That is the right
+ * trade for a dictation a few seconds old, where Esc can only mean "never mind
+ * this" — but not for a long one, where an Esc meant for the app in front is
+ * both swallowed and destructive (#640). Past this the host hands the bare Esc
+ * back and keeps the trigger's own modifier+Esc, which no stray press hits. A
+ * trigger that leaves no such chord (fn, Windows' modifier triggers, the tray)
+ * keeps the bare Esc: otherwise a long dictation would have no cancel key.
+ */
+export const ESC_BARE_CLAIM_MS = 60_000;
 
 /** What the host does with a cancelled dictation's settled text. */
 export type HoldVerdict = "hold" | "recover" | "discard";

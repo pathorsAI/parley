@@ -317,7 +317,9 @@ export const setVoiceOverlayHitRects = (args: { rects: HitRect[]; page: number; 
 export const setVoiceTypingShortcut = (args: { shortcut: string }) =>
   invoke<HotkeyStatus>("set_voice_typing_shortcut", args);
 export const voiceTypingHotkeyStatus = () => invoke<HotkeyStatus>("voice_typing_hotkey_status");
-export const setVoiceTypingCancelArmed = (args: { armed: boolean }) =>
+/** `bare` (default true) claims the bare Esc as well as the trigger's
+ *  modifier+Esc; false keeps only the chord (see ESC_BARE_CLAIM_MS). */
+export const setVoiceTypingCancelArmed = (args: { armed: boolean; bare?: boolean }) =>
   invoke<void>("set_voice_typing_cancel_armed", args);
 export const ensureFnListener = () => invoke<boolean>("ensure_fn_listener");
 export const requestInputMonitoring = () => invoke<boolean>("request_input_monitoring");

@@ -109,21 +109,34 @@ the overlay:
   right ⌘ and right ⌥. The overlay turns to "Transcription cancelled · Undo",
   nothing is pasted, and releasing the key does nothing. Also in toggle mode
   (tap, speak, Esc), and during "Polishing…". Then:
-  - Undo within 5 s: the text is on the clipboard, a history entry appears,
-    nothing is pasted, and the target app keeps focus. Undo clicked before
-    the text has settled turns the pill into the spinner until it does, then
-    copies it the same way. Undo at the last moment works too, just
-    before the pill starts to fade (about 4 s): with polish on, "Polishing…"
-    and then "Copied to clipboard" show in full rather than the overlay
-    fading out with no answer.
+  - Undo inside the window: the text is on the clipboard, a history entry
+    appears, nothing is pasted, and the target app keeps focus. Undo clicked
+    before the text has settled turns the pill into the spinner until it does,
+    then copies it the same way. Undo at the last moment works too, just
+    before the pill starts to fade (the window less about a second): with
+    polish on, "Polishing…" and then "Copied to clipboard" show in full rather
+    than the overlay fading out with no answer.
+  - The window follows the dictation's own length (`undoWindowMs`): 5 s for
+    anything short, half the time spoken past that, 30 s at most. Speak for a
+    minute, press Esc, and the pill is still there 20 s later.
   - Undo with polish on and the network off: after "Polishing…" the pill
     reads "Copied as dictated (polish unavailable)", and the raw text is on
     the clipboard.
-  - No Undo: the overlay fades and hides at about 5 s, with no history
-    entry.
-  - A new press during those 5 s starts a fresh dictation.
+  - No Undo: the overlay fades and hides at the end of that window, and the
+    dictation is in Settings › 語音輸入 history marked "已取消 · 只存在這裡" —
+    that line is the only copy of it.
+  - A new press during the window starts a fresh dictation, and the dropped
+    one reaches the history the same way.
   - Esc with no dictation running still reaches the app in front, and so
     does Esc right after a dictation has pasted.
+  - **A long dictation gives the bare Esc back** (`ESC_BARE_CLAIM_MS`, and
+    `cancel_shortcuts_narrowed` in `src-tauri/src/hotkey.rs`). In toggle mode
+    with a trigger that holds a modifier (⌥Space, right ⌥), tap to start, wait
+    a minute, and press Esc in another app: that app gets the Esc, the
+    dictation keeps recording, and `parley.log` has `bare Escape handed back`.
+    Holding the trigger and pressing Esc still cancels it. With fn, a plain
+    key such as F13, or the Windows tray — no chord to fall back on — the bare
+    Esc stays claimed and still cancels a dictation of any length.
   - Esc still reaches the app in front after the main window's page started
     over mid-dictation: in a dev build (`bun tauri dev`) in toggle mode, tap
     to start a dictation, reload the main window (right-click › Reload), then

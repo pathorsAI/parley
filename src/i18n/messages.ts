@@ -636,7 +636,8 @@ export const zhTW = {
   "settings.voiceTyping.mode.toggle": "切換",
   "settings.voiceTyping.mode.holdHint": "按住觸發鍵說話，放開即結束並貼上。",
   "settings.voiceTyping.mode.toggleHint": "按一下開始，再按一下結束並貼上（放開不影響）。",
-  "settings.voiceTyping.cancelHint": "說話或潤飾時按 Esc 可取消；{seconds} 秒內按「復原」會改為複製到剪貼簿（不會自動貼上）。",
+  "settings.voiceTyping.cancelHint":
+    "說話或潤飾時按 Esc 可取消；按「復原」會改為複製到剪貼簿（不會自動貼上）。復原的時間至少 {seconds} 秒，說得越久越長，而取消掉的內容一律留在語音輸入紀錄裡。",
   "settings.voiceTyping.shortcut": "觸發按鍵",
   "settings.voiceTyping.shortcut.alt-space": "Option+Space",
   "settings.voiceTyping.shortcut.fn": "fn 🌐",
@@ -2246,7 +2247,7 @@ export const en = {
   "settings.voiceTyping.mode.toggleHint":
     "Tap once to start, tap again to finish and paste (release is ignored).",
   "settings.voiceTyping.cancelHint":
-    "Press Esc while dictating or polishing to cancel. Click Undo within {seconds} seconds to copy it to the clipboard instead (it won't be pasted).",
+    "Press Esc while dictating or polishing to cancel. Undo then copies it to the clipboard instead (it won't be pasted). You get at least {seconds} seconds to undo, longer the longer you spoke, and a cancelled dictation is kept in the dictation history either way.",
   "settings.voiceTyping.shortcut": "Push-to-talk key",
   "settings.voiceTyping.shortcut.alt-space": "Option+Space",
   "settings.voiceTyping.shortcut.fn": "fn 🌐",

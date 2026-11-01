@@ -54,6 +54,8 @@ import {
   CANCEL_EVENT,
   CANCEL_UNDO_MS,
   CancelLedger,
+  ESC_BARE_CLAIM_MS,
+  undoWindowMs,
   type CancelActionPayload,
   type CancelPayload,
 } from "./cancel";
@@ -186,8 +188,15 @@ let cancellable: number | null = null;
  *  a server close can settle the dictation while the mic is still open. */
 let capturing = false;
 const cancels = new CancelLedger();
-/** Closes the Undo offer CANCEL_UNDO_MS after the Esc. */
+/** Closes the Undo offer undoWindowMs after the Esc. */
 let cancelTimer: ReturnType<typeof setTimeout> | undefined;
+/** The window the offer now on screen was given, so the re-send below shows
+ *  the same clock as the "cancelled" that opened it. */
+let cancelUndoMs = CANCEL_UNDO_MS;
+/** Hands the bare Esc back ESC_BARE_CLAIM_MS into a dictation, leaving only
+ *  the trigger's modifier+Esc. Dropped by every disarm (see armCancel), or it
+ *  would re-claim Esc for a dictation that has already reached its field. */
+let bareEscTimer: ReturnType<typeof setTimeout> | undefined;
 /** The polish round trip in flight, so an Esc can abandon it. */
 let polishing: { gen: number; ctl: AbortController } | null = null;
 
@@ -584,6 +593,8 @@ async function startSession() {
   });
   // Esc cancels from here on — claimed right behind the mic, never before it.
   armCancel(true);
+  clearTimeout(bareEscTimer);
+  bareEscTimer = setTimeout(narrowCancelClaim, ESC_BARE_CLAIM_MS);
   const shown = showOverlay().catch((error) =>
     log.warn("voice-typing: overlay show failed", { error: String(error) }),
   );
@@ -965,13 +976,26 @@ function scheduleHide() {
 
 // ── Esc and Undo ────────────────────────────────────────────────────────────
 
-/** Claim Esc for the cancel, or hand it back to the app in front. Never
+/** Claim Esc for the cancel, or hand it back to the app in front. `bare`
+ *  false keeps only the trigger's modifier+Esc (see narrowCancelClaim). Never
  *  awaited — arming must not hold up a press — and Rust ignores a repeat of
  *  the current state, so no mirror of it is kept here. */
-function armCancel(armed: boolean): void {
-  ipc.setVoiceTypingCancelArmed({ armed }).catch((error) =>
-    log.warn("voice-typing: escape cancel arming failed", { armed, error: String(error) }),
+function armCancel(armed: boolean, bare = true): void {
+  // Here rather than at each disarm: a pending narrowing left to fire after a
+  // dictation ends would claim Esc again, with nothing to cancel.
+  if (!armed) clearTimeout(bareEscTimer);
+  ipc.setVoiceTypingCancelArmed({ armed, bare }).catch((error) =>
+    log.warn("voice-typing: escape cancel arming failed", { armed, bare, error: String(error) }),
   );
+}
+
+/** ESC_BARE_CLAIM_MS into a dictation: hand the bare Esc back to the app in
+ *  front and keep the trigger's own modifier+Esc, which no stray press hits.
+ *  Rust keeps the bare one anyway for a trigger that leaves no such chord, so
+ *  every dictation stays cancellable. */
+function narrowCancelClaim(): void {
+  log.info("voice-typing: bare Escape handed back", { afterMs: ESC_BARE_CLAIM_MS });
+  armCancel(true, false);
 }
 
 /**
@@ -1031,8 +1055,12 @@ async function applyCancel(g: number): Promise<void> {
   down = false;
   clearTimeout(hideTimer);
   clearTimeout(cancelTimer);
-  cancelTimer = setTimeout(expireCancel, CANCEL_UNDO_MS);
-  await emitEvent(VOICE_TYPING_SESSION_EVENT, { phase: "cancelled" });
+  // The window follows what this dictation cost: the longer it ran, the longer
+  // the one click that brings it back stays reachable. The overlay is told, so
+  // its pill fades with the same clock.
+  cancelUndoMs = undoWindowMs(pressedAt ? (releasedAt || Date.now()) - pressedAt : 0);
+  cancelTimer = setTimeout(expireCancel, cancelUndoMs);
+  await emitEvent(VOICE_TYPING_SESSION_EVENT, { phase: "cancelled", undoMs: cancelUndoMs });
   if (capturing) {
     // A release with no tail, whether or not the dictation has settled
     // meanwhile (a server close can do that with the mic still open). The
@@ -1065,8 +1093,9 @@ async function holdCancelled(
     keepDiscarded(text);
   } else if (verdict === "hold" && gen === g) {
     // Put the Undo back on screen in case a "polishing" sent just before the
-    // Esc reached the overlay after the "cancelled" that followed it.
-    await emitEvent(VOICE_TYPING_SESSION_EVENT, { phase: "cancelled" });
+    // Esc reached the overlay after the "cancelled" that followed it — with
+    // this offer's own window, not the floor.
+    await emitEvent(VOICE_TYPING_SESSION_EVENT, { phase: "cancelled", undoMs: cancelUndoMs });
   }
 }
 
