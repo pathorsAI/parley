@@ -547,7 +547,6 @@ export const zhTW = {
   "home.greetingNamed": "{name}，今天要開什麼會?",
   "home.recordNow": "直接錄音",
   "home.newDraft": "新增會議草稿",
-  "home.dropHint": "趕時間就直接錄；要先準備背景的會議先建草稿。也可以把音檔或逐字稿拖進視窗匯入。",
   "home.recent": "最近錄音",
   "home.viewAll": "查看全部",
   "home.emptyRecordings": "還沒有錄音——開一場會議,或匯入一段錄音。",
@@ -2183,8 +2182,6 @@ export const en = {
   "home.greetingNamed": "{name}, what are you meeting about today?",
   "home.recordNow": "Record now",
   "home.newDraft": "New meeting draft",
-  "home.dropHint":
-    "In a hurry, just record; for a meeting that needs background, start a draft first. You can also drop an audio file or transcript onto the window to import it.",
   "home.recent": "Recent recordings",
   "home.viewAll": "See all",
   "home.emptyRecordings": "No recordings yet — start a meeting or import one.",

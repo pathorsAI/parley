@@ -338,8 +338,18 @@ textarea,
 .animate-fade-up {
   animation: fade-up-in 0.4s ease-out both;
 }
+/* 總覽's backdrop bars (HomeBackdrop): each rises 50 px and fades in, one after
+   another, on the design's curve. */
+@keyframes home-bar-rise {
+  from { opacity: 0; transform: translateY(49.56px); }
+  to { opacity: 1; transform: none; }
+}
+.home-bar {
+  animation: home-bar-rise 0.5s cubic-bezier(0.16, 1, 0.3, 1) var(--home-bar-delay, 0ms) both;
+}
 @media (prefers-reduced-motion: reduce) {
-  .animate-fade-up {
+  .animate-fade-up,
+  .home-bar {
     animation: none;
   }
 }
