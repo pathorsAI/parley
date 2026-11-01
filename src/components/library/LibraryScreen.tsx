@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FolderCard } from "./FolderCard";
-import { HomeBackdrop } from "../home/HomeBackdrop";
 import { Archive, ChevronRight, Folder, Loader2, Plus, RefreshCw, Search, UsersRound, X } from "lucide-react";
 import { toast } from "sonner";
 import { useI18n } from "../../i18n";
@@ -397,8 +396,8 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
     node?.kind === "folder" ? tree.personalFolders.find((f) => f.id === node.folderId) ?? null : null;
   const openArchived = !!openFolder && isArchived(openFolder);
 
-  // An org's own page (no folder picked, no search): its folders as cards over
-  // the 總覽 wash, then any recordings left at its root.
+  // An org's own page (no folder picked, no search): its folders as cards,
+  // then any recordings left at its root.
   const orgRoot = isOrg && selection.folderId === null && !searching;
   const orgFolderCards =
     orgRoot && selection.kind === "org"
@@ -551,7 +550,6 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
       {/* The date headers are sticky, so the list owns its own top padding —
           rows must slide under the header, not through a gap above it. */}
       <div className="relative min-h-0 flex-1 overflow-y-auto px-4 pb-4">
-        {orgRoot && <HomeBackdrop bars={false} />}
         {orgFolderCards.length > 0 && (
           <div className="relative flex flex-wrap gap-5 px-2 pt-6 pb-4">{orgFolderCards}</div>
         )}
