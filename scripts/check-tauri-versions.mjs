@@ -95,7 +95,10 @@ export function tauriVersionMismatches(bunLock, cargoLock) {
   // By package name, so a tree with two mismatches reports them in the same
   // order every run — Array#sort would otherwise compare the [key, value]
   // pairs as strings.
-  const byName = ([a], [b]) => (a < b ? -1 : a > b ? 1 : 0);
+  const byName = ([a], [b]) => {
+    if (a === b) return 0;
+    return a < b ? -1 : 1;
+  };
 
   for (const [pkg, version] of [...npm].sort(byName)) {
     const crate = crateFor(pkg);
