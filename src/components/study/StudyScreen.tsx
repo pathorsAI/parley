@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Clock, MessageCircleQuestion, RotateCw, X } from "lucide-react";
 import { DEFAULT_GETTING_STARTED, useStore } from "../../lib/store";
 import { missingProviderRequirement, providerGateKey } from "../../lib/ai/settings";
 import { regenerateArtifact, useBriefQueued, type StudyArtifactKey } from "../../lib/analysis/studyPipeline";
+import { splitBrief, type BriefSection as BriefSectionPart } from "../../lib/analysis/briefSections";
 import { meetingNotesOf } from "../../lib/history/meetingNotes";
 import type { StudyTab } from "../../lib/store/study";
 import { useI18n } from "../../i18n";
@@ -19,6 +20,7 @@ import { GuideBar } from "./GuideBar";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 
 /**
  * The STUDY tense: a loaded recording, under one header (its name, where it is
@@ -106,6 +108,7 @@ function TabPage({ tab, notes }: Readonly<{ tab: Exclude<StudyTab, "replay">; no
     body = (
       <>
         <ActionItemsPanel onSeek={seek} embedded />
+        <BriefNextSection onSeek={seek} />
         {actionsDone && <SavedFooter artifact="actions" />}
       </>
     );
@@ -198,6 +201,7 @@ function BriefSection({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>) {
   const { t } = useI18n();
   const brief = useStore((s) => s.brief);
   const status = useStore((s) => s.briefStatus);
+  const entryId = useStore((s) => s.loadedHistoryId);
   // null = configured. Otherwise the i18n key naming what's still missing.
   const gate = useStore((s) =>
     providerGateKey(missingProviderRequirement(s.settings, "deep"), "study.brief.missingKey")
@@ -229,7 +233,81 @@ function BriefSection({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>) {
       {status === "error" && (
         <p className="text-sm text-muted-foreground">{t("study.brief.error")}</p>
       )}
-      {brief && <ReportContent markdown={brief} onTimestamp={onSeek} />}
+      {/* Keyed by recording: another recording opens on its first section. */}
+      {brief && <BriefTabs key={entryId ?? ""} brief={brief} onSeek={onSeek} />}
+    </div>
+  );
+}
+
+/** One label per brief section: the prompt's known headings translated, any
+ *  other heading as the model wrote it. */
+function useSectionLabel(): (s: BriefSectionPart) => string {
+  const { t } = useI18n();
+  return (s) => (s.key ? t(`study.brief.section.${s.key}`) : s.title);
+}
+
+/**
+ * The brief a section at a time: a row of small tabs (重點／決議／待解問題…),
+ * one section under it. The forward-looking section isn't here — it reads
+ * under 後續行動 ({@link BriefNextSection}). A brief that can't be cut (no
+ * headings, or a single section) is shown whole, with no tabs.
+ */
+function BriefTabs({ brief, onSeek }: Readonly<{ brief: string; onSeek: (ms: number) => void }>) {
+  const label = useSectionLabel();
+  const { lead, sections } = useMemo(() => splitBrief(brief), [brief]);
+  const [picked, setPicked] = useState(0);
+  // A streaming brief grows sections; a regenerated one may have fewer.
+  const index = Math.min(picked, Math.max(0, sections.length - 1));
+
+  if (sections.length < 2) {
+    const whole = [lead, ...sections.map((s) => s.body)].filter(Boolean).join("\n\n");
+    return <ReportContent markdown={whole || brief} onTimestamp={onSeek} />;
+  }
+  return (
+    <div className="flex flex-col gap-3">
+      {lead && <ReportContent markdown={lead} onTimestamp={onSeek} />}
+      <div role="tablist" className="flex flex-wrap gap-1.5">
+        {sections.map((s, i) => (
+          <button
+            key={`${s.title}-${i}`}
+            type="button"
+            role="tab"
+            aria-selected={i === index}
+            onClick={() => setPicked(i)}
+            className={cn(
+              "h-7 rounded-full px-3 text-xs font-medium transition-colors",
+              i === index
+                ? "bg-primary/10 text-primary"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground"
+            )}
+          >
+            {label(s)}
+          </button>
+        ))}
+      </div>
+      <div role="tabpanel">
+        <ReportContent markdown={sections[index].body} onTimestamp={onSeek} />
+      </div>
+    </div>
+  );
+}
+
+/** Under the action items: the brief's forward-looking section (the next
+ *  agenda, or how to move the deal on), moved here from 總結 because it is the
+ *  same question — what happens after this meeting. */
+function BriefNextSection({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>) {
+  const label = useSectionLabel();
+  const brief = useStore((s) => s.brief);
+  const next = useMemo(() => (brief ? splitBrief(brief).next : []), [brief]);
+  if (next.length === 0) return null;
+  return (
+    <div className="mt-8 flex flex-col gap-6">
+      {next.map((s, i) => (
+        <section key={`${s.title}-${i}`}>
+          <h2 className="mb-2 text-xs font-semibold text-muted-foreground">{label(s)}</h2>
+          <ReportContent markdown={s.body} onTimestamp={onSeek} />
+        </section>
+      ))}
     </div>
   );
 }
