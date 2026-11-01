@@ -113,6 +113,7 @@ function TabPage({
   } else if (tab === "actions") {
     body = (
       <>
+        <UnsidedActionsNote />
         <ActionItemsPanel onSeek={seek} embedded />
         <BriefNextSection onSeek={seek} />
         {actionsDone && <SavedFooter artifact="actions" />}
@@ -133,6 +134,37 @@ function TabPage({
         {body}
       </div>
     </ScrollArea>
+  );
+}
+
+/**
+ * Action items made before they said who does what (no side on any item) are
+ * one flat list. Say why, and offer the regeneration that sorts them into 我們
+ * and 對方 — otherwise an old recording just looks like the grouping is broken.
+ */
+function UnsidedActionsNote() {
+  const { t } = useI18n();
+  const show = useStore(
+    (s) =>
+      s.actionItemsStatus === "done" &&
+      !!s.loadedHistoryId &&
+      s.actionItems.length > 0 &&
+      s.actionItems.every((a) => !a.side)
+  );
+  if (!show) return null;
+  return (
+    <div className="mb-3 flex items-center justify-between gap-3 rounded-md bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
+      <span>{t("study.actions.unsided")}</span>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-6 shrink-0 gap-1 px-2 text-xs"
+        onClick={() => regenerateArtifact("actions")}
+      >
+        <RotateCw className="size-3" />
+        {t("study.regenerate")}
+      </Button>
+    </div>
   );
 }
 
