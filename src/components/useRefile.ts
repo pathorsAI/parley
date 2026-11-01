@@ -10,7 +10,7 @@ import type { LibraryDestination, OrgHandoffMode } from "../lib/library/destinat
 
 /**
  * "事後歸位" for the recording currently open in replay — the action behind both
- * the titlebar chip and the report page's filing bar, which ask the same
+ * the titlebar chip and the recording page header's filing row, which ask the same
  * question and so must not answer it two different ways.
  *
  * A personal destination just retags the local entry. An org destination is a
