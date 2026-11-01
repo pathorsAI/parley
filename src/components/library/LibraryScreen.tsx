@@ -482,6 +482,11 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
           orgName={selection.kind === "org" ? selection.name : null}
           folderName={folderName}
           rootLabel={isAll ? t("library.all") : t("library.unassigned")}
+          onOrg={
+            selection.kind === "org"
+              ? () => openLibrary({ kind: "org", id: selection.id, name: selection.name, folderId: null })
+              : undefined
+          }
         />
         <span className="text-xs text-muted-foreground">
           {t("history.count", { count: visible.length })}
@@ -604,17 +609,37 @@ function ScopeTitle({
   orgName,
   folderName,
   rootLabel,
+  onOrg,
 }: Readonly<{
   isOrg: boolean;
   orgName: string | null;
   folderName: string | null;
   rootLabel: string;
+  /** Back to the org's own page (its folder cards), from one of its folders. */
+  onOrg?: () => void;
 }>) {
   if (isOrg) {
-    return (
-      <span className="inline-flex items-center gap-1.5 text-sm font-semibold tracking-tight">
+    const org = (
+      <>
         <UsersRound className="size-4 text-muted-foreground" />
         {orgName}
+      </>
+    );
+    return (
+      <span className="inline-flex items-center gap-1.5 text-sm font-semibold tracking-tight">
+        {/* Inside a folder the org's name is the way up, as in any breadcrumb;
+            on the org's own page it is just the title. */}
+        {folderName && onOrg ? (
+          <button
+            type="button"
+            onClick={onOrg}
+            className="-mx-1 inline-flex cursor-pointer items-center gap-1.5 rounded-md px-1 py-0.5 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          >
+            {org}
+          </button>
+        ) : (
+          org
+        )}
         {folderName && (
           <>
             <ChevronRight className="size-3.5 text-muted-foreground" />
