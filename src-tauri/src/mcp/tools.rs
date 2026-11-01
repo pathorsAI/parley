@@ -7,6 +7,7 @@ use super::registry::Domain;
 
 mod app_context;
 mod dictionary;
+mod drafts;
 mod folders;
 mod live;
 mod orgs;
@@ -21,6 +22,7 @@ pub(super) const DOMAINS: &[Domain] = &[
     recordings::DOMAIN,
     folders::DOMAIN,
     orgs::DOMAIN,
+    drafts::DOMAIN,
 ];
 
 /// JSON-Schema for one TimelineEvent, shared by set_findings. Which fields apply

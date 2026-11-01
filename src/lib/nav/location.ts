@@ -27,6 +27,8 @@ function selectionKey(selection: LibrarySelection): string {
       return `org:${selection.id}:${selection.folderId ?? ""}`;
     case "voice":
       return "voice";
+    case "context":
+      return "context";
   }
 }
 

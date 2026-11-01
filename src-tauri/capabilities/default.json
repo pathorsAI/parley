@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the main and secondary (settings / finding-solution / diagnostics / history / voice-typing) windows",
-  "windows": ["main", "settings", "finding-solution", "diagnostics", "history", "voice-typing"],
+  "windows": ["main", "settings", "finding-solution", "diagnostics", "history", "voice-typing", "meeting"],
   "permissions": [
     "core:default",
     "opener:default",
@@ -22,6 +22,8 @@
     "core:window:allow-hide",
     "core:window:allow-set-position",
     "core:window:allow-set-size",
+    "core:window:allow-set-min-size",
+    "core:window:allow-start-resize-dragging",
     "core:window:allow-set-always-on-top",
     "core:window:allow-set-theme",
     "core:window:allow-current-monitor",
@@ -33,6 +35,7 @@
     "updater:default",
     "process:default",
     "os:default",
+    "notification:default",
     "global-shortcut:allow-register",
     "global-shortcut:allow-unregister",
     "global-shortcut:allow-is-registered"

@@ -3,7 +3,9 @@
 
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useStore } from "../store";
+import { isMeetingActive, useStore } from "../store";
+import { notify } from "../notify";
+import { translate } from "../../i18n";
 import { isTauri } from "../tauriEvents";
 import { log } from "../log";
 import { CLOUD_URL, cloudFetch, cloudToken } from "../cloud/client";
@@ -45,10 +47,23 @@ export function replaySessionFor(meta: HistoryEntry, audioPath: string, audioSrc
 }
 
 /**
+ * Opening a recording loads its transcript into the one the live meeting is
+ * writing, so it waits for the meeting to end. Says so, and reports whether it
+ * refused. The main window is otherwise free during a meeting.
+ */
+export function refuseWhileRecording(): boolean {
+  const s = useStore.getState();
+  if (!isMeetingActive(s.meetingStatus)) return false;
+  notify.message(translate(s.settings.language, "meeting.openLockedWhileRecording"));
+  return true;
+}
+
+/**
  * Read a saved entry and load it into the replay UI (restoring its analysis), then
  * focus the main window. Called by the main-window listener on `history://open`.
  */
 export async function loadHistoryEntry(id: string): Promise<void> {
+  if (refuseWhileRecording()) return;
   // A stage that finished after the user left may still be writing its result
   // onto this entry — read after it lands, or the open would restore the stale
   // meta and re-run that stage.
@@ -92,6 +107,7 @@ function foldStudyCache(meta: HistoryEntry, cached: ReturnType<typeof readStudyC
  * re-analysis-persist subscription leaves someone else's shared recording alone.
  */
 export async function loadOrgEntry(orgId: string, id: string): Promise<void> {
+  if (refuseWhileRecording()) return;
   const base = `/orgs/${encodeURIComponent(orgId)}/recordings/${encodeURIComponent(id)}`;
   const meta = (await (await cloudFetch(`${base}/meta`)).json()) as HistoryEntry;
   // Server meta shapes vary across versions — never trust the arrays to exist.

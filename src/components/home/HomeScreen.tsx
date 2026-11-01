@@ -1,14 +1,14 @@
-import { ArrowRight, ClipboardList, FileAudio, Import, Keyboard, Mic, X } from "lucide-react";
+import { ArrowRight, CalendarDays, ClipboardList, FileAudio, Keyboard, Mic, X } from "lucide-react";
 import { toast } from "sonner";
 import { DEFAULT_GETTING_STARTED, useStore } from "../../lib/store";
 import { loadHistoryEntry } from "../../lib/history/history";
-import { startImportFlow } from "../../lib/replay/ingest";
 import { beginMeeting } from "../../lib/meeting/start";
 import { useI18n } from "../../i18n";
 import { log } from "../../lib/log";
 import { Button } from "@/components/ui/button";
 import type { LibraryTree } from "../shell/useLibraryTree";
 import { GettingStarted, openSampleRecording } from "./GettingStarted";
+import { UpcomingMeetings } from "./UpcomingMeetings";
 import {
   GETTING_STARTED_STEPS,
   isGettingStartedVisible,
@@ -18,12 +18,16 @@ import { shortcutCaps } from "../../lib/voiceTyping/caps";
 import { isSampleEntry } from "../../lib/onboarding/sample";
 import { TranscribingPulse, useTranscribingPulse } from "../onboarding/TranscribingPulse";
 
+/** How many recordings the 最近錄音 list shows before 查看全部 takes over. */
+const RECENT_COUNT = 4;
+
 /**
  * The idle landing (R8c). Before this, idle showed the live cockpit with three
  * empty columns — a screen for a meeting that wasn't happening — while all
  * browsing weight fell on the 240px tree. Home flips that: the cockpit exists
  * only while a meeting runs; idle surfaces what the user actually acts on next
- * (start / recent recordings / import).
+ * (record now or draft first / recent recordings). Importing lives on the
+ * library header and on drag-in, which the helper line under the buttons names.
  */
 export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   const { t, language } = useI18n();
@@ -42,7 +46,7 @@ export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
 
   const folderName = (id: string | null | undefined) =>
     id ? tree.personalFolders.find((f) => f.id === id)?.name : undefined;
-  const recent = tree.summaries.slice(0, 6);
+  const recent = tree.summaries.slice(0, RECENT_COUNT);
   const locale = language === "en" ? "en-US" : "zh-TW";
 
   // Staged entrance: sections land in reading order (start → recent), then the
@@ -80,24 +84,24 @@ export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
               }
             >
               <Mic className="size-4" />
-              {t("titlebar.startMeeting")}
+              {t("home.recordNow")}
             </Button>
+            {/* The other way in: a meeting that wants background gets a draft
+                first. The sheet itself lives at the app root (App.tsx). */}
             <Button
               variant="outline"
               className="h-9"
-              onClick={() =>
-                startImportFlow().catch((e) => {
-                  log.error("home: import failed", { error: String(e) });
-                  toast.error(String(e instanceof Error ? e.message : e));
-                })
-              }
+              onClick={() => useStore.getState().setDraftOpen(true)}
             >
-              <Import className="size-4" />
-              {t("home.import")}
+              <CalendarDays className="size-4" />
+              {t("home.newDraft")}
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">{t("home.dropHint")}</p>
         </section>
+
+        {/* ── The meeting drafted next ─────────────────────────────────────── */}
+        <UpcomingMeetings folderName={(id) => folderName(id)} style={delay(60)} />
 
         {/* ── Getting started (first lap) ─────────────────────────────────── */}
         {showChecklist && (
@@ -136,8 +140,8 @@ export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
             <h2 className="text-xs font-semibold text-muted-foreground">
               {t("home.recent")}
             </h2>
-            {/* Six is a shortcut, not a browser (#330) — this is the way out of it. */}
-            {tree.summaries.length > recent.length && (
+            {/* Four is a shortcut, not a browser (#330) — this is the way out of it. */}
+            {recent.length > 0 && (
               <button
                 type="button"
                 onClick={() => openLibrary({ kind: "personal", node: { kind: "all" } })}

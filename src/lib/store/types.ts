@@ -50,7 +50,11 @@ export type SettingsCategory =
 export type LibrarySelection =
   | { kind: "personal"; node: LibraryNode }
   | { kind: "org"; id: string; name: string; folderId: string | null }
-  | { kind: "voice" };
+  | { kind: "voice" }
+  // The 語境庫 page (terms + speaker background + AI memory). A library
+  // selection rather than its own AppMode, the same way voice typing is: it is
+  // a node of the tree, so the sidebar, ⌘K and back/forward reach it unchanged.
+  | { kind: "context" };
 
 /** Lifecycle status of an async pass (analysis, delivery assessment, action items). */
 export type AsyncTaskStatus = "idle" | "running" | "done" | "error";

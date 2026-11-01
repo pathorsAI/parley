@@ -28,6 +28,7 @@ import { IntroHero, IntroStage } from "./onboarding/IntroStage";
 import { ConfirmCard } from "./onboarding/ConfirmCard";
 import { DoneScribbles } from "./onboarding/DoneScribbles";
 import { ChoiceCard, OrDivider, SelectCard } from "./onboarding/ChoiceCard";
+import { FieldLabel, FieldPanel } from "./FormSection";
 import { checkModelKeys, type KeyProblems } from "../lib/onboarding/keyCheck";
 import { OrgStep } from "./onboarding/OrgStep";
 import { MicStep } from "./onboarding/MicStep";
@@ -830,7 +831,7 @@ function ModelStep({
       {showProviders && (
         <>
           {/* Transcription — required: it is what the gate checks. */}
-          <div className="flex flex-col gap-2 rounded-[10px] bg-white/50 p-3 dark:bg-white/5">
+          <FieldPanel>
             <FieldLabel label={t("onboarding.stt.provider")} tag={t("onboarding.account.required")} />
             <Select
               value={settings.transcriptionProvider}
@@ -877,10 +878,10 @@ function ModelStep({
               }
             />
             {problem(keyProblems.stt)}
-          </div>
+          </FieldPanel>
 
           {/* AI model — optional: recording works without it. */}
-          <div className="flex flex-col gap-2 rounded-[10px] bg-white/50 p-3 dark:bg-white/5">
+          <FieldPanel>
             <FieldLabel label={t("onboarding.llm.provider")} tag={t("onboarding.account.optional")} />
             <Select
               value={settings.llmProviders.deep}
@@ -951,20 +952,11 @@ function ModelStep({
             )}
             {problem(keyProblems.llm)}
             <p className="text-[11px] text-muted-foreground">{t("onboarding.account.llmLater")}</p>
-          </div>
+          </FieldPanel>
         </>
       )}
       </SelectCard>
     </div>
-  );
-}
-
-function FieldLabel({ label, tag }: Readonly<{ label: string; tag: string }>) {
-  return (
-    <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-      {label}
-      <span className="rounded bg-muted px-1.5 py-px text-[10px] font-normal">{tag}</span>
-    </span>
   );
 }
 

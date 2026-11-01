@@ -31,6 +31,8 @@ tauri-plugin-dialog = "2"
 tauri-plugin-log = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-process = "2"
+# Meeting-draft reminders (src/lib/meeting/reminder.ts).
+tauri-plugin-notification = "2"
 tauri-plugin-updater = "2"
 log = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }

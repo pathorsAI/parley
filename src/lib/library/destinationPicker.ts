@@ -50,15 +50,6 @@ export function inWorkspace(workspace: string, folderId: string | null): Library
     : { scope: "org", orgId: workspace, folderId };
 }
 
-/**
- * Segmented control while every workspace fits on one row; a searchable
- * combobox past that. `count` includes Personal.
- */
-export const SEGMENTED_MAX = 3;
-export function workspaceControl(count: number): "segmented" | "combobox" {
-  return count <= SEGMENTED_MAX ? "segmented" : "combobox";
-}
-
 /** A folder list is long enough to need a search field. */
 export const SEARCH_THRESHOLD = 8;
 export function needsFolderSearch(folderCount: number): boolean {
@@ -124,6 +115,20 @@ export function breadcrumb(d: LibraryDestination, names: CrumbNames): string[] {
       : (names.orgs.find((o) => o.id === d.orgId)?.name ?? "");
   const folder = d.folderId ? names.folders.find((f) => f.id === d.folderId)?.name : undefined;
   return [head, folder].filter((s): s is string => !!s);
+}
+
+/**
+ * A place by its own name, for the move sheet's subtitle and button
+ * (「目前在 東森」, 「移到 東森」): the folder's name, or — at a root — 不放資料夾 in
+ * Personal and the org's name in an org. The workspace tabs sit right above,
+ * so the workspace does not need repeating; the crumb form is for the doors
+ * where nothing else on screen says which workspace is meant.
+ */
+export function placeName(d: LibraryDestination, names: CrumbNames, noFolder: string): string {
+  const folder = d.folderId ? names.folders.find((f) => f.id === d.folderId)?.name : undefined;
+  if (folder) return folder;
+  if (d.scope === "personal") return noFolder;
+  return names.orgs.find((o) => o.id === d.orgId)?.name ?? noFolder;
 }
 
 export const CRUMB_SEPARATOR = " › ";

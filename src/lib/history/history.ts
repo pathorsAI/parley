@@ -7,7 +7,7 @@
 // in the main window, so opening one is a plain `loadHistoryEntry` call rather
 // than a `history://open` message from a second window.
 
-import { useStore, hasSpokenSegment, isMeetingActive } from "../store";
+import { useStore, hasSpokenSegment, holdsLiveSession, isMeetingActive } from "../store";
 import { notify } from "../notify";
 import { writeStudyCache } from "./studyCache";
 import { isTauri } from "../tauriEvents";
@@ -175,6 +175,8 @@ export interface LiveMeetingSnapshot {
   transcriptionDropped: boolean;
   micSessionRateHz: number | null;
   save: MeetingSaveTarget;
+  /** The name typed in the floating window; absent = the dated default. */
+  title?: string;
   /** The backend recorded it without this window knowing (the page reloaded
    *  under a running capture): its transcript is gone, keep the audio. */
   orphan: boolean;
@@ -183,6 +185,18 @@ export interface LiveMeetingSnapshot {
 /** Stopped meetings whose recording is still being encoded and saved. */
 export const liveSaves = new PendingSaves<LiveMeetingSnapshot>();
 
+/**
+ * The meeting's context as saved: the prepared context, then the notes typed
+ * during the meeting under a heading — so the report and every later analysis
+ * read them along with the context. Pure; exported for testing.
+ */
+export function contextWithNotes(context: string, notes: string, heading: string): string {
+  const n = notes.trim();
+  if (!n) return context;
+  const c = context.trim();
+  return c ? `${c}\n\n${heading}\n${n}` : `${heading}\n${n}`;
+}
+
 /** Snapshot the live meeting the store shows now (null when it has no id). */
 export function snapshotLiveMeeting(): LiveMeetingSnapshot | null {
   const s = useStore.getState();
@@ -190,10 +204,15 @@ export function snapshotLiveMeeting(): LiveMeetingSnapshot | null {
   return {
     id: s.liveMeetingId,
     createdAt: s.meetingStartedAt ?? Date.now(),
-    analysis: snapshotAnalysis(),
+    analysis: (() => {
+      const a = snapshotAnalysis();
+      const heading = translate(s.settings.language, "floating.notesHeading");
+      return { ...a, meetingContext: contextWithNotes(a.meetingContext, s.meetingNotes, heading) };
+    })(),
     transcriptionDropped: s.transcriptionDropped,
     micSessionRateHz: s.micSessionRateHz,
     save: resolveMeetingSave(),
+    title: s.meetingTitle.trim() || undefined,
     orphan: false,
   };
 }
@@ -434,7 +453,7 @@ export async function saveLiveToHistory(
     // The meeting's own id: a second save of the same meeting (a recovered
     // journal, a repeated event) overwrites its entry instead of duplicating it.
     id: snap.id,
-    title: `${translate(s.settings.language, "history.liveTitle")} · ${dateLabel}`,
+    title: snap.title ?? `${translate(s.settings.language, "history.liveTitle")} · ${dateLabel}`,
     source: "live",
     createdAt,
     durationMs,
@@ -483,7 +502,9 @@ export async function saveLiveToHistory(
   try {
     const now = useStore.getState();
     const showsThisMeeting = now.liveMeetingId === entry.id || snap.orphan;
-    if (!isMeetingActive(now.meetingStatus) && now.appMode === "live" && showsThisMeeting) {
+    // Opens unless the user went on to something of their own meanwhile (a
+    // recording, or a new meeting); the main window may be anywhere else.
+    if (!isMeetingActive(now.meetingStatus) && now.appMode !== "study" && showsThisMeeting) {
       now.setStudyTab("report");
       await loadHistoryEntry(entry.id).catch((e) =>
         log.warn("history: auto-open after stop failed", { id: entry.id, error: String(e) }),
@@ -618,7 +639,7 @@ async function applyPostSaveDiarization(entry: HistoryEntry): Promise<void> {
   const st = useStore.getState();
   const showsThisMeeting =
     st.loadedHistoryId === entry.id ||
-    (st.appMode === "live" && st.loadedHistoryId === null && st.liveMeetingId === entry.id);
+    (holdsLiveSession(st) && st.liveMeetingId === entry.id);
   if (showsThisMeeting) {
     const segments = applyCorrectedSpeakers(st.segments, result.segments);
     // `speakerNames` deliberately untouched — see applyCorrectedSpeakers.
@@ -989,8 +1010,10 @@ export async function setEntryFolder(id: string, folderId: string | null): Promi
  */
 export function leaveStoppedCockpit(reasonKey: "meeting.notSaved.tooShort" | "meeting.notSaved.noTranscript"): void {
   const s = useStore.getState();
-  if (s.appMode !== "live" || isMeetingActive(s.meetingStatus)) return;
-  s.openHome();
+  if (isMeetingActive(s.meetingStatus)) return;
+  // Only the retired live route is a dead end to leave; elsewhere the user
+  // stays put and just hears why there is no report.
+  if (s.appMode === "live") s.openHome();
   notify.message(translate(s.settings.language, reasonKey));
 }
 

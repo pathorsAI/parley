@@ -26,6 +26,7 @@ import {
   tFor,
 } from "./defaults";
 import type { ParleyState } from "./types";
+import type { MeetingDraft } from "./prep";
 
 /**
  * #131: map legacy single-provider settings (provider + {ask,eval} model roles)
@@ -203,6 +204,21 @@ export function migratePersistedState(persisted: unknown, version: number): unkn
  * zustand-persist `merge`: backfill any settings fields missing from older
  * persisted state (runs after {@link migratePersistedState}). Exported for tests.
  */
+/** Saved meeting drafts from a persisted payload (anything malformed is
+ *  dropped, so a bad entry can't take the store down). */
+export function restoredDrafts(persisted: unknown): MeetingDraft[] {
+  const raw = (persisted as { drafts?: unknown } | undefined)?.drafts;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (d): d is MeetingDraft =>
+      !!d &&
+      typeof d === "object" &&
+      typeof (d as MeetingDraft).id === "string" &&
+      Array.isArray((d as MeetingDraft).todos) &&
+      ((d as MeetingDraft).meetingAt === null || typeof (d as MeetingDraft).meetingAt === "number"),
+  );
+}
+
 export function mergePersistedState(persisted: unknown, current: ParleyState): ParleyState {
   const persistedSettings =
     (persisted as { settings?: Partial<Settings> & { voiceTypingPolish?: unknown } } | undefined)
@@ -234,6 +250,7 @@ export function mergePersistedState(persisted: unknown, current: ParleyState): P
 
   return {
     ...current,
+    drafts: restoredDrafts(persisted),
     settings: {
       ...DEFAULT_SETTINGS,
       ...p,
@@ -282,7 +299,12 @@ export const PERSIST_OPTIONS = {
   version: PERSIST_VERSION,
   migrate: migratePersistedState,
   // Persist settings + the cloud sign-in — transcript/eval state is per-session.
-  partialize: (state: ParleyState) => ({ settings: state.settings, cloudAuth: state.cloudAuth }),
+  // Saved meeting drafts ride along: 即將開始 and their reminders survive a restart.
+  partialize: (state: ParleyState) => ({
+    settings: state.settings,
+    cloudAuth: state.cloudAuth,
+    drafts: state.drafts,
+  }),
   // Backfill any settings fields missing from older persisted state.
   merge: mergePersistedState,
 };

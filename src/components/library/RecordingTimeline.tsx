@@ -1,44 +1,58 @@
 import { useMemo, useRef, useState } from "react";
 import {
+  AudioLines,
   Check,
   Clock,
   Folder,
   FolderClosed,
-  ListChecks,
+  FolderInput,
   Loader2,
   Mic,
+  Pencil,
+  Trash2,
   Upload,
   Users,
-  Volume2,
 } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuLabel,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+  openMenuFromKeyboard,
+  preventFocusRestore,
+} from "@/components/ui/context-menu";
 import { groupByDate, type TimelineBucket } from "../../lib/library/timeline";
-import { CardActions, formatDuration, SyncIcon } from "./LibraryCards";
+import { CardActions, cardCapabilities, formatDuration, SyncIcon } from "./LibraryCards";
 import type { HistoryCardItem } from "../../lib/cloud/sync";
 import type { Folder as LocalFolder } from "../../lib/history/folders";
 import type { CloudOrg } from "../../lib/cloud/types";
 
 /**
- * The all-recordings view (issue #330): every personal recording down one
- * calendar, newest first.
+ * Every library list — 所有錄音, a folder, 還沒歸檔, an archived folder and an
+ * org's shared recordings — as one calendar of rows, newest first.
  *
- * Deliberately NOT the card grid the folder nodes use. A folder answers "what is
- * in here", and a card — title, snippet, four stats — is the right shape for it.
- * This node answers "what did I sit through lately", which is a scanning
- * question: rows are read down a column, the date headers give the eye somewhere
- * to stop, and roughly twice as many recordings fit on screen. The two live side
- * by side on purpose; nothing about the folder grid changes.
+ * It began as the all-recordings view only (issue #330), beside a card grid for
+ * the folder nodes. The v2 board draws the same rows for every scope, and one
+ * shape means one place for the actions: open, rename, file, delete, each on
+ * the row and again on its right-click menu. Rows are read down a column, the
+ * sticky date headers give the eye somewhere to stop, and roughly twice as many
+ * recordings fit on screen as cards did.
  */
 export function RecordingTimeline({
   entries,
   locale,
   signedIn,
+  isOrgContext,
   orgs,
   busyId,
   downloadingId,
   sharingId,
   folders,
+  folderNames,
   onOpen,
   onDelete,
   onRename,
@@ -47,12 +61,16 @@ export function RecordingTimeline({
   entries: HistoryCardItem[];
   locale: string;
   signedIn: boolean;
+  /** An org's shared list: no folder chip, no sync badge, delete means remove. */
+  isOrgContext: boolean;
   orgs: CloudOrg[];
   busyId: string | null;
   downloadingId: string | null;
   sharingId: string | null;
-  /** The personal folders — what names a row's folder chip. */
+  /** Where a row can be filed — the scope's folders, archived ones left out. */
   folders: LocalFolder[];
+  /** Every personal folder, archived included — what names a row's chip. */
+  folderNames: LocalFolder[];
   onOpen: (entry: HistoryCardItem) => void;
   onDelete: (entry: HistoryCardItem) => void;
   onRename: (id: string, title: string) => void;
@@ -65,7 +83,7 @@ export function RecordingTimeline({
   // and re-bucketing on a timer would reshuffle the page under the user.
   const groups = useMemo(() => groupByDate(entries, Date.now()), [entries]);
   const folderName = (id: string | null | undefined) =>
-    id ? folders.find((f) => f.id === id)?.name : undefined;
+    id ? folderNames.find((f) => f.id === id)?.name : undefined;
 
   return (
     <div className="flex flex-col">
@@ -82,7 +100,8 @@ export function RecordingTimeline({
               bucket={group.bucket}
               locale={locale}
               signedIn={signedIn}
-              orgs={orgs}
+              isOrgContext={isOrgContext}
+              canShare={!isOrgContext && signedIn && orgs.length > 0}
               folders={folders}
               folderLabel={folderName(entry.folderId)}
               busy={busyId === entry.id}
@@ -100,7 +119,8 @@ export function RecordingTimeline({
   );
 }
 
-/** The date band's heading. Months drop the year while it is the current one. */
+/** The date band's heading: 今天 / 昨天 / 本週稍早, then one band per month,
+ *  which drops the year while it is the current one. */
 function groupLabel(
   bucket: TimelineBucket,
   locale: string,
@@ -114,11 +134,15 @@ function groupLabel(
     case "thisWeek":
       return t("library.timeline.thisWeek");
     case "month": {
-      const sameYear = bucket.year === new Date().getFullYear();
-      return new Date(bucket.year, bucket.month, 1).toLocaleDateString(
-        locale,
-        sameYear ? { month: "long" } : { year: "numeric", month: "long" }
-      );
+      // zh-TW spells it from the number (「10 月」); English wants the name.
+      const vars = {
+        month: bucket.month + 1,
+        year: bucket.year,
+        name: new Date(bucket.year, bucket.month, 1).toLocaleDateString(locale, { month: "long" }),
+      };
+      return bucket.year === new Date().getFullYear()
+        ? t("library.timeline.month", vars)
+        : t("library.timeline.monthYear", vars);
     }
   }
 }
@@ -140,7 +164,8 @@ function TimelineRow({
   bucket,
   locale,
   signedIn,
-  orgs,
+  isOrgContext,
+  canShare,
   folders,
   folderLabel,
   busy,
@@ -155,7 +180,9 @@ function TimelineRow({
   bucket: TimelineBucket;
   locale: string;
   signedIn: boolean;
-  orgs: CloudOrg[];
+  isOrgContext: boolean;
+  /** An org exists to file into. */
+  canShare: boolean;
   folders: LocalFolder[];
   /** The folder this recording is filed in, or undefined for 還沒歸檔. */
   folderLabel: string | undefined;
@@ -168,11 +195,23 @@ function TimelineRow({
   onFile: () => void;
 }>) {
   const { t } = useI18n();
-  const isCloudOnly = entry.sync === "cloud";
-  const canShare = signedIn && orgs.length > 0;
+  const isCloudOnly = !isOrgContext && entry.sync === "cloud";
+  const { canMove, canRename } = cardCapabilities({
+    isOrgContext,
+    isCloudOnly,
+    folderCount: folders.length,
+  });
+  const canFile = canMove || canShare;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(entry.title);
   const inputRef = useRef<HTMLInputElement>(null);
+  const openRef = useRef<HTMLButtonElement>(null);
+  // The menu's close handler runs from a listener Radix registered on an earlier
+  // render, so reading `editing` through the closure can report the stale value
+  // and steal focus back off the name input.
+  const editingRef = useRef(editing);
+  editingRef.current = editing;
+  const handingOffRef = useRef(false);
 
   function startEdit() {
     setDraft(entry.title);
@@ -197,27 +236,13 @@ function TimelineRow({
         <Clock className="size-3" />
         {formatDuration(entry.durationMs)}
       </span>
-      {typeof entry.actionItemsCount === "number" && entry.actionItemsCount > 0 && (
-        <span
-          className="inline-flex items-center gap-1"
-          title={t("history.actions", { count: entry.actionItemsCount })}
-        >
-          <ListChecks className="size-3" />
-          {entry.actionItemsCount}
-        </span>
-      )}
-      {entry.hasAudio && (
-        <span className="inline-flex" title={t("history.hasAudio")}>
-          <Volume2 className="size-3" />
-        </span>
-      )}
-      <SyncIcon sync={entry.sync} signedIn={signedIn} />
+      {!isOrgContext && <SyncIcon sync={entry.sync} signedIn={signedIn} />}
     </span>
   );
 
-  return (
+  const row = (
     // Rows are split by hairlines, not boxed.
-    <div className="group relative flex items-center gap-2.5 border-b border-border px-2 py-2 transition-colors last:border-b-0 hover:bg-muted/60">
+    <div className="group relative flex min-h-9 items-center gap-2.5 border-b border-border px-2 py-2 transition-colors last:border-b-0 hover:bg-muted/60">
       <span
         className="w-11 shrink-0 text-[11px] tabular-nums text-muted-foreground"
         title={new Date(entry.createdAt).toLocaleString(locale)}
@@ -235,6 +260,9 @@ function TimelineRow({
         <div className="flex min-w-0 flex-1 items-center gap-1">
           <input
             ref={inputRef}
+            // Right-clicking a text field has to reach the webview's own edit
+            // menu; without this the row's menu swallows cut/copy/paste.
+            onContextMenu={(ev) => ev.stopPropagation()}
             value={draft}
             onChange={(ev) => setDraft(ev.target.value)}
             onKeyDown={(ev) => {
@@ -263,21 +291,29 @@ function TimelineRow({
         </div>
       ) : (
         <button
+          ref={openRef}
           type="button"
           onClick={onOpen}
+          // The row's main focusable element, so it is where a keyboard user is
+          // standing when they ask for the menu; the event bubbles to the trigger.
+          onKeyDown={openMenuFromKeyboard}
           className={`flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 rounded text-left outline-none focus-visible:ring-2 focus-visible:ring-ring ${
             isCloudOnly ? "opacity-70" : ""
           }`}
         >
           <span className="min-w-0 truncate text-sm font-medium">{entry.title}</span>
-          <span
-            className={`hidden shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] text-muted-foreground sm:inline-flex ${
-              folderLabel ? "" : "border-dashed"
-            }`}
-          >
-            {folderLabel ? <Folder className="size-2.5" /> : <FolderClosed className="size-2.5" />}
-            {folderLabel ?? t("library.unassigned")}
-          </span>
+          {/* Solid when filed, dashed while it is still waiting for a folder.
+              An org list has no personal folders to name. */}
+          {!isOrgContext && (
+            <span
+              className={`hidden h-5 shrink-0 items-center gap-1 rounded-full border px-2 text-[10px] text-muted-foreground sm:inline-flex ${
+                folderLabel ? "" : "border-dashed border-muted-foreground/30"
+              }`}
+            >
+              {folderLabel ? <Folder className="size-2.5" /> : <FolderClosed className="size-2.5" />}
+              {folderLabel ?? t("library.unassigned")}
+            </span>
+          )}
           {/* Eats the slack so the stats stay pinned to the right edge. */}
           <span className="min-w-0 flex-1" />
         </button>
@@ -295,7 +331,8 @@ function TimelineRow({
       {!editing && (
         <CardActions
           className="flex shrink-0 items-center gap-0.5 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100"
-          isOrgContext={false}
+          showFile={false}
+          isOrgContext={isOrgContext}
           isCloudOnly={isCloudOnly}
           canShare={canShare}
           busy={busy}
@@ -306,11 +343,83 @@ function TimelineRow({
           onFile={onFile}
         />
       )}
+
+      {/* Filing stays on screen: putting a recording where it belongs is what
+          these lists are for. Rename and delete wait for hover. */}
+      {canFile && (
+        <button
+          type="button"
+          aria-label={t("library.menu.move")}
+          title={t("library.menu.move")}
+          disabled={sharing}
+          onClick={(ev) => {
+            ev.stopPropagation();
+            onFile();
+          }}
+          className="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
+        >
+          {sharing ? <Loader2 className="size-3.5 animate-spin" /> : <FolderInput className="size-3.5" />}
+        </button>
+      )}
     </div>
+  );
+
+  // A second way to reach the row's own actions, not a second set of them — one
+  // that does not depend on noticing icons that only appear on hover, and that a
+  // keyboard can summon at all.
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
+      <ContextMenuContent
+        onCloseAutoFocus={(event) => {
+          preventFocusRestore(event);
+          // Closing without renaming should leave the keyboard where it was, and
+          // Radix's own restore aims at the trigger — a plain <div>, which
+          // cannot take focus, so it would drop to the body instead.
+          if (handingOffRef.current) {
+            handingOffRef.current = false;
+            return;
+          }
+          if (!editingRef.current) openRef.current?.focus();
+        }}
+      >
+        <ContextMenuLabel>{entry.title}</ContextMenuLabel>
+        <ContextMenuSeparator />
+        <ContextMenuItem onSelect={onOpen}>
+          <AudioLines className="size-3.5" />
+          {t("library.menu.open")}
+        </ContextMenuItem>
+        {canRename && (
+          <ContextMenuItem onSelect={startEdit}>
+            <Pencil className="size-3.5" />
+            {t("library.menu.rename")}
+          </ContextMenuItem>
+        )}
+        {canFile && (
+          <ContextMenuItem
+            onSelect={() => {
+              // The sheet takes focus; don't pull it back to the row.
+              handingOffRef.current = true;
+              onFile();
+            }}
+          >
+            <FolderInput className="size-3.5" />
+            {t("library.menu.move")}
+          </ContextMenuItem>
+        )}
+        <ContextMenuSeparator />
+        {/* Same path as the trash button: both go through the library's one
+            delete dialog. */}
+        <ContextMenuItem variant="destructive" disabled={busy} onSelect={onDelete}>
+          <Trash2 className="size-3.5" />
+          {isOrgContext ? t("library.menu.removeFromOrg") : t("library.menu.delete")}
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 
-/** The timeline while it loads: one date band of rows in {@link TimelineRow}'s
+/** The list while it loads: one date band of rows in {@link TimelineRow}'s
  *  shape — lead time, source icon, title, stats — so the real bands land in
  *  place. `label` is announced, not shown. */
 export function RecordingTimelineSkeleton({ label }: Readonly<{ label: string }>) {

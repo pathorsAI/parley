@@ -163,6 +163,14 @@ html[data-platform="macos"][data-app-window="main"] #root {
   background: transparent;
 }
 
+/* The floating meeting window is undecorated + transparent on every platform:
+   it draws its own rounded white card (and the capsule) over the call. */
+html[data-app-window="meeting"],
+html[data-app-window="meeting"] body,
+html[data-app-window="meeting"] #root {
+  background: transparent;
+}
+
 body {
   /* Right for macOS: WKWebView subpixel-antialiases by default, which is too
      heavy for DM Sans at these sizes. WebView2 ignores the property outright, so

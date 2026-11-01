@@ -4,6 +4,7 @@ import { CLOUD_ENABLED } from "./flags";
 import { syncEnabled } from "./cloud/client";
 import { log } from "./log";
 import type { ActionItem, EvalDef, TimelineEvent } from "./types";
+import type { MeetingDraft } from "./store/prep";
 import * as ipc from "./ipc/commands";
 import { SESSION_COMMANDS_EVENT, listenEvent, type UnlistenFn } from "./ipc/events";
 
@@ -647,6 +648,61 @@ async function rpcDeleteRecording(a: RpcArgs): Promise<unknown> {
   return { id, deleted: true };
 }
 
+/** An ISO 8601 time (or epoch ms) as epoch ms; null when absent. */
+function asTime(v: unknown, name: string): number | null {
+  if (v == null || v === "") return null;
+  const ms = typeof v === "number" ? v : Date.parse(String(v));
+  if (!Number.isFinite(ms)) throw new Error(`${name} is not a valid ISO 8601 time`);
+  return ms;
+}
+
+function draftForMcp(d: MeetingDraft) {
+  const iso = (ms: number | null) => (ms == null ? null : new Date(ms).toISOString());
+  return {
+    id: d.id,
+    title: d.title,
+    startAt: iso(d.meetingAt),
+    endAt: iso(d.meetingEndAt),
+    reminderLeadMin: d.reminderLeadMin,
+    context: d.meetingContext,
+    folderId: d.meetingFolderId,
+    agenda: d.todos.map((t) => t.text),
+  };
+}
+
+async function rpcListMeetingDrafts(): Promise<unknown> {
+  const { sortDrafts } = await import("./store/prep");
+  return sortDrafts(useStore.getState().drafts).map(draftForMcp);
+}
+
+async function rpcCreateMeetingDraft(a: RpcArgs): Promise<unknown> {
+  const meetingAt = asTime(a.startAt, "startAt");
+  let meetingEndAt = asTime(a.endAt, "endAt");
+  if (meetingAt == null && meetingEndAt != null) throw new Error("endAt needs a startAt");
+  if (meetingAt != null && (meetingEndAt == null || meetingEndAt <= meetingAt)) {
+    const { DEFAULT_DURATION_MIN } = await import("./meeting/timeSlots");
+    meetingEndAt = meetingAt + DEFAULT_DURATION_MIN * 60_000;
+  }
+  const s = useStore.getState();
+  let title = asTrimmed(a.title) ?? "";
+  if (!title && meetingAt != null) {
+    // Named after its time, as the draft sheet prefills it.
+    const { autoMeetingTitle } = await import("./meeting/draftTitle");
+    title = autoMeetingTitle(meetingAt, s.settings.language);
+  }
+  const lead = typeof a.reminderLeadMin === "number" && a.reminderLeadMin >= 0 ? Math.round(a.reminderLeadMin) : null;
+  const draft = s.addDraft({
+    title,
+    meetingAt,
+    meetingEndAt,
+    reminderLeadMin: lead,
+    meetingContext: asString(a.context, "").trim(),
+    meetingFolderId: asNonEmptyString(a.folderId) ?? null,
+    agenda: (asStringArray(a.agenda) ?? []).map((t) => t.trim()).filter(Boolean),
+  });
+  return draftForMcp(draft);
+}
+
 /** Every RPC action the frontend answers, keyed by the MCP tool's name. A Map,
  *  not an object: the action string comes off disk and must never resolve to
  *  something inherited from Object.prototype. */
@@ -674,6 +730,8 @@ const RPC_HANDLERS = new Map<string, (a: RpcArgs) => Promise<unknown>>([
   ["copy_org_recording_to_personal", rpcCopyOrgRecordingToPersonal],
   ["delete_org_recording", rpcDeleteOrgRecording],
   ["delete_recording", rpcDeleteRecording],
+  ["list_meeting_drafts", rpcListMeetingDrafts],
+  ["create_meeting_draft", rpcCreateMeetingDraft],
 ]);
 
 /**

@@ -16,8 +16,15 @@ import { generateObjectResilient } from "../ai/generate";
 import { JSON_MODE_INSTRUCTION } from "../ai/provider";
 import { outputLanguageInstruction } from "../ai/profile";
 import { recordLlmUsage } from "../usage/log";
+import { isProviderReady } from "../ai/settings";
+import { describeAiError } from "../ai/errors";
+import { log } from "../log";
+import * as ipc from "../ipc/commands";
 import type { MemoryFile } from "../ipc/commands";
 import type { Settings } from "../types";
+// Type-only: micCheck imports this module, so its addTerms comes in as a
+// dependency (see refreshAiMemory) rather than as a runtime import.
+import type { AddedTerm } from "./micCheck";
 
 /** The prompt cap. The Rust reader returns up to 24k characters, but the
  *  hosted model's proxy sits on a small per-minute token budget shared by
@@ -274,4 +281,85 @@ export function removeBackgroundLines(background: string, lines: readonly string
     })
     .join("\n")
     .replace(/\s+$/u, "");
+}
+
+// ── 語境庫's 重新讀取 ───────────────────────────────────────────────────────
+
+/** Why memory that WAS found couldn't be written in: no AI provider set up,
+ *  or the call failed (the error, described for the user). */
+export type MemoryNotCondensed = "needLlm" | { failed: string };
+
+/** What one {@link refreshAiMemory} run ended in. */
+export type AiMemoryOutcome =
+  /** No memory files on this machine (or not the desktop app). */
+  | { kind: "none" }
+  /** Read and written into the background, unless the model found nothing to
+   *  add (`empty`; earlier lines are left as they were). `added` are the names
+   *  that went to the dictionary. */
+  | { kind: "condensed"; empty: boolean; added: AddedTerm[] }
+  /** Found but nothing written; earlier lines stay. */
+  | { kind: "notCondensed"; why: MemoryNotCondensed; excerpt: false }
+  /** The caller went away (`alive` turned false) before anything was written. */
+  | { kind: "cancelled" };
+
+export interface AiMemoryDeps {
+  /** The settings as of NOW — read again after each await. */
+  settings: () => Settings;
+  patch: (p: Partial<Settings>) => void;
+  /** micCheck's addTerms: the names in the memory join the dictionary. */
+  addTerms: (phrases: readonly string[]) => Promise<AddedTerm[]>;
+  /** False once the caller has gone away (an unmounted screen). */
+  alive?: () => boolean;
+  /** Seams for tests; default to the real reader, model and clock. */
+  readMemory?: () => Promise<MemoryFile[]>;
+  draft?: typeof draftBackground;
+  now?: () => number;
+}
+
+/**
+ * Onboarding's "how you work" again, on demand (語境庫's 重新讀取): read Claude
+ * Code's memory files and write what they add into the speaker background, in
+ * place of the lines an earlier read added (settings.aiMemoryNotes), stamping
+ * aiMemoryUpdatedAt. The names in them join the dictionary.
+ */
+export async function refreshAiMemory(deps: AiMemoryDeps): Promise<AiMemoryOutcome> {
+  const alive = deps.alive ?? (() => true);
+  const now = deps.now ?? Date.now;
+  const files = await (deps.readMemory ?? ipc.readClaudeMemory)();
+  if (files.length === 0) return { kind: "none" };
+  if (!alive()) return { kind: "cancelled" };
+  const settings = deps.settings();
+  if (!isProviderReady(settings, "realtime")) return { kind: "notCondensed", why: "needLlm", excerpt: false };
+  try {
+    const draft = await (deps.draft ?? draftBackground)({
+      settings,
+      current: removeBackgroundLines(settings.userBackground, backgroundLines(settings.aiMemoryNotes)),
+      text: memoryFilesToText(files),
+    });
+    if (!alive()) return { kind: "cancelled" };
+    const added = await deps.addTerms(draft.terms);
+    if (draft.background.length === 0) return { kind: "condensed", empty: true, added };
+    // Read again: the user may have typed while the model ran.
+    const latest = deps.settings();
+    const own = removeBackgroundLines(latest.userBackground, backgroundLines(latest.aiMemoryNotes));
+    const { text, lines } = appendBackground(own, draft.background);
+    deps.patch({
+      userBackground: text,
+      aiMemoryNotes: (lines.length > 0 ? lines : draft.background).join("\n"),
+      aiMemoryUpdatedAt: now(),
+    });
+    return { kind: "condensed", empty: false, added };
+  } catch (e) {
+    log.warn("memory: writing the background from memory failed", { error: String(e) });
+    return { kind: "notCondensed", why: { failed: describeAiError(e) }, excerpt: false };
+  }
+}
+
+/** The notes without their `index`-th line, counted the way
+ *  {@link backgroundLines} lists them — 語境庫's per-line delete. Out of range
+ *  leaves them unchanged. */
+export function removeMemoryLine(notes: string, index: number): string {
+  const lines = backgroundLines(notes);
+  if (index < 0 || index >= lines.length) return notes;
+  return lines.filter((_, i) => i !== index).join("\n");
 }

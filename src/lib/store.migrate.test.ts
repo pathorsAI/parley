@@ -149,3 +149,36 @@ describe("voice typing polish style migration", () => {
     expect(mergePersistedState(undefined, current()).settings.voiceTypingPolishStyle).toBe("tidy");
   });
 });
+
+describe("saved meeting drafts", () => {
+  const draft = {
+    id: "d1",
+    title: "週會",
+    meetingAt: Date.UTC(2026, 9, 30, 6, 0),
+    meetingEndAt: null,
+    reminderLeadMin: 5,
+    remindedFor: null,
+    meetingContext: "名單",
+    meetingBatna: "",
+    meetingTarget: "",
+    meetingFloor: "",
+    todos: [],
+    meetingFolderId: null,
+    meetingOrgShare: null,
+    updatedAt: 1,
+  };
+
+  it("come back on the next launch", () => {
+    const restored = mergePersistedState({ settings: {}, drafts: [draft] }, current());
+    expect(restored.drafts).toEqual([draft]);
+  });
+
+  it("drop anything malformed", () => {
+    const restored = mergePersistedState(
+      { settings: {}, drafts: [draft, { id: 3 }, null, { ...draft, id: "d2", meetingAt: "soon" }] },
+      current(),
+    );
+    expect(restored.drafts.map((d) => d.id)).toEqual(["d1"]);
+    expect(mergePersistedState({ settings: {} }, current()).drafts).toEqual([]);
+  });
+});

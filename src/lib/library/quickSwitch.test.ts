@@ -19,6 +19,7 @@ const labels: QuickSwitchLabels = {
   home: "首頁",
   unassigned: "還沒歸檔",
   voice: "語音輸入",
+  context: "語境庫",
 };
 
 /** Score, asserting the match exists — keeps the comparisons below readable. */
@@ -85,6 +86,7 @@ describe("targetKey", () => {
       targetKey({ kind: "folder", id: "x", name: "X", count: 0 }),
       targetKey({ kind: "unassigned", count: 0 }),
       targetKey({ kind: "voice" }),
+      targetKey({ kind: "context" }),
       targetKey({ kind: "org", orgId: "x", orgName: "X" }),
       targetKey({ kind: "orgFolder", orgId: "o", orgName: "O", id: "x", name: "X" }),
       targetKey({ kind: "recording", id: "x", title: "X", createdAt: 1, folderId: null }),
@@ -99,6 +101,7 @@ describe("targetLabel", () => {
     expect(targetLabel({ kind: "all", count: 18 }, labels)).toBe("所有錄音");
     expect(targetLabel({ kind: "unassigned", count: 3 }, labels)).toBe("還沒歸檔");
     expect(targetLabel({ kind: "voice" }, labels)).toBe("語音輸入");
+    expect(targetLabel({ kind: "context" }, labels)).toBe("語境庫");
   });
 });
 

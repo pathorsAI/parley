@@ -1333,6 +1333,56 @@
       },
       "name": "delete_org_recording",
       "title": "Remove a recording from an org (DESTRUCTIVE)"
+    },
+    {
+      "description": "List the saved meeting drafts — the upcoming meetings the user has prepared — as { id, title, startAt, endAt, reminderLeadMin, context, folderId, agenda }. Times are ISO 8601 strings, or null for a draft with no time yet.",
+      "inputSchema": {
+        "properties": {},
+        "type": "object"
+      },
+      "name": "list_meeting_drafts",
+      "title": "List meeting drafts"
+    },
+    {
+      "description": "Save a draft for an upcoming meeting. It appears under 即將開始 on the home screen, reminds the user before its start time, and one click starts recording with this preparation loaded. Put everything the analysis should know into `context`: who attends and their roles, the goal, history with this party. When the meeting is a negotiation or a deal, ALWAYS also write the user's BATNA (best alternative if no deal), target and bottom line into `context` as plain lines, e.g. 'BATNA: …', 'Target: …', 'Bottom line: …' — Parley has no separate fields for them. `title` may be left out: a draft with a start time is then named after it. Safe to call while a meeting is recording.",
+      "inputSchema": {
+        "properties": {
+          "agenda": {
+            "description": "Checklist items to cover in the meeting.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "context": {
+            "description": "Background for the analysis, including any BATNA / target / bottom line.",
+            "type": "string"
+          },
+          "endAt": {
+            "description": "End time, ISO 8601. Defaults to one hour after startAt.",
+            "type": "string"
+          },
+          "folderId": {
+            "description": "Personal folder to file the recording into (see list_folders).",
+            "type": "string"
+          },
+          "reminderLeadMin": {
+            "description": "Minutes before the start to remind the user (default 5).",
+            "type": "number"
+          },
+          "startAt": {
+            "description": "Start time, ISO 8601 with a UTC offset (e.g. 2026-11-03T14:00:00+08:00). Omit for an untimed draft.",
+            "type": "string"
+          },
+          "title": {
+            "description": "Meeting name. Optional.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "create_meeting_draft",
+      "title": "Create a meeting draft"
     }
   ]
 }

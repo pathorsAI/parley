@@ -20,6 +20,7 @@ export type QuickTarget =
   | { kind: "folder"; id: string; name: string; count: number }
   | { kind: "unassigned"; count: number }
   | { kind: "voice" }
+  | { kind: "context" }
   | { kind: "org"; orgId: string; orgName: string }
   | { kind: "orgFolder"; orgId: string; orgName: string; id: string; name: string }
   | { kind: "recording"; id: string; title: string; createdAt: number; folderId: string | null };
@@ -34,6 +35,7 @@ export interface QuickSwitchLabels {
   all: string;
   unassigned: string;
   voice: string;
+  context: string;
 }
 
 /** Stable identity for a target — for React keys and selection comparison. */
@@ -49,6 +51,8 @@ export function targetKey(t: QuickTarget): string {
       return "unassigned";
     case "voice":
       return "voice";
+    case "context":
+      return "context";
     case "org":
       return `org:${t.orgId}`;
     case "orgFolder":
@@ -69,6 +73,8 @@ export function targetLabel(t: QuickTarget, labels: QuickSwitchLabels): string {
       return labels.unassigned;
     case "voice":
       return labels.voice;
+    case "context":
+      return labels.context;
     case "folder":
     case "orgFolder":
       return t.name;

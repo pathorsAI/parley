@@ -380,7 +380,8 @@ fn local_cases() -> Value {
         ["list_org_recordings", {}],
         ["rename_org_folder", { "orgId": "o1", "name": "x" }],
         ["share_recording_to_org", { "id": "r1" }],
-        ["delete_org_recording", { "id": "r1" }]
+        ["delete_org_recording", { "id": "r1" }],
+        ["create_meeting_draft", { "agenda": "not a list" }]
     ]"#,
     )
     .unwrap()
@@ -394,6 +395,8 @@ fn rpc_cases() -> Value {
         ["set_recording_analysis", { "id": "r1", "findings": [], "brief": "b" }],
         ["list_folders", { "ignored": true }],
         ["create_folder", { "name": "Clients" }],
+        ["list_meeting_drafts", {}],
+        ["create_meeting_draft", { "title": "Pricing call", "startAt": "2026-11-03T14:00:00+08:00", "context": "BATNA: renew with the current vendor", "agenda": ["Confirm volume"] }],
         ["rename_folder", { "id": "f1", "name": "Renamed" }],
         ["delete_folder", { "id": "f1" }],
         ["delete_folder", { "id": "fail-me" }],

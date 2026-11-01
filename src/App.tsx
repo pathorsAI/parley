@@ -4,6 +4,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { exit } from "@tauri-apps/plugin-process";
 import { TitleBar } from "./components/TitleBar";
 import { AppShell } from "./components/shell/AppShell";
+import { useMainWindowRepair } from "./lib/meeting/floatingWindow";
+import { initMeetingWindowHost } from "./lib/meeting/meetingWindow";
 import { Onboarding } from "./components/Onboarding";
 import { AnalysisErrorDialog } from "./components/AnalysisErrorDialog";
 import { ReleaseNotesDialog } from "./components/ReleaseNotesDialog";
@@ -11,6 +13,7 @@ import { toast } from "sonner";
 import { Toaster } from "./components/ui/sonner";
 import { IngestWizard } from "./components/IngestWizard";
 import { TranscriptImportDialog } from "./components/TranscriptImportDialog";
+import { MeetingDraftSheet } from "./components/MeetingDraftSheet";
 import { FindingSolutionWindow } from "./components/analysis/FindingSolutionWindow";
 import { useFindingSolutionHost } from "./components/analysis/useFindingSolutionHost";
 import { DeliveryNudgeHost } from "./components/delivery/DeliveryNudgeHost";
@@ -33,6 +36,7 @@ import {
 } from "./lib/tray";
 import { listenForLocalSttSlow } from "./lib/transcription/localAlerts";
 import { listenForSettings } from "./lib/settingsSync";
+import { listenForMainNavigate } from "./lib/nav/navigate";
 import { listenForViewLogsMenu } from "./lib/diagnostics";
 import { listenForSttUsage } from "./lib/usage/log";
 import { initTemplatesSync } from "./lib/templatesSync";
@@ -45,6 +49,8 @@ import { listenForSpeakerCacheClear } from "./lib/speakers/namesCache";
 import { initHistoryPersistSync, listenForRecordingSaved, recoverCrashedMeetings } from "./lib/history/history";
 import { endMeeting, recoverOrphanedMeeting } from "./lib/meeting/controls";
 import { initSilenceGuard } from "./lib/meeting/silenceGuard";
+import { initMeetingReminder } from "./lib/meeting/reminder";
+import { MeetingReminderCard } from "./components/MeetingReminderCard";
 import { listenForSystemWake } from "./lib/meeting/sleepWake";
 import { checkForUpdate } from "./lib/update";
 import {
@@ -197,6 +203,8 @@ const App = () => {
     // A meeting the computer slept through ends (and is saved) on wake.
     track(listenForSystemWake());
     track(listenForSettings());
+    // Another window sending this one somewhere (Settings › 詞庫 → 語境庫).
+    track(listenForMainNavigate());
     track(listenForSttUsage());
     track(listenForCacheClear());
     track(listenForSpeakerCacheClear());
@@ -229,6 +237,11 @@ const App = () => {
     // Asks whether a meeting nobody has spoken in for a long time is over,
     // and ends it when nobody answers (main window only, like the save).
     const unSilenceGuard = initSilenceGuard();
+    // Reminds you before a drafted meeting's time (main window only).
+    const unMeetingReminder = initMeetingReminder();
+    // Opens the floating meeting window while a meeting records and keeps it
+    // mirrored; this window keeps recording (main window only).
+    const unMeetingWindow = initMeetingWindowHost();
     return () => {
       listeners.dispose();
       unTemplates();
@@ -239,6 +252,8 @@ const App = () => {
       unVoiceTyping();
       unDictionarySync();
       unSilenceGuard();
+      unMeetingReminder();
+      unMeetingWindow();
     };
   }, []);
 
@@ -425,6 +440,10 @@ const App = () => {
   // Drive the standalone "how to reply" window (Tauri); no-op in browser dev.
   useFindingSolutionHost();
 
+  // The meeting floats in its own window (initMeetingWindowHost, below); this
+  // one stays the whole app. Undo anything an older floating main window left.
+  useMainWindowRepair();
+
   return (
     <div
       className={`flex h-screen flex-col overflow-hidden text-foreground ${
@@ -445,13 +464,15 @@ const App = () => {
       <Toaster />
       <IngestWizard />
       <TranscriptImportDialog />
+      <MeetingDraftSheet />
+      <MeetingReminderCard />
       {/* In the Tauri app the drilldown is its own OS window (see
           useFindingSolutionHost); in plain browser dev we fall back to the
           in-app overlay so the feature still works without multi-window. */}
       {!isTauri() && <FindingSolutionWindow />}
       <TitleBar fullscreen={fullscreen} />
-      <DeliveryNudgeHost />
       <AppShell />
+      <DeliveryNudgeHost />
     </div>
   );
 };

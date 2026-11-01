@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { TriangleAlert, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 /**
  * "Are you sure?" for something destructive, asked INSIDE the app window.
@@ -15,6 +16,9 @@ import { Button } from "@/components/ui/button";
  *
  * Every string arrives as a prop and no i18n key is named here, so this stays
  * usable for the next destructive question without growing a vocabulary.
+ *
+ * `tone="default"` is for a question that loses nothing — archiving a folder:
+ * no warning sign, an outlined cancel and a primary (not red) confirm.
  */
 export function ConfirmDialog({
   title,
@@ -23,7 +27,9 @@ export function ConfirmDialog({
   cancelLabel,
   onConfirm,
   onCancel,
+  tone = "destructive",
 }: Readonly<{
+  tone?: "destructive" | "default";
   title: string;
   body: string;
   confirmLabel: string;
@@ -32,6 +38,7 @@ export function ConfirmDialog({
   onCancel: () => void;
 }>) {
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const destructive = tone === "destructive";
 
   // Land on CANCEL, never on the destructive button. This dialog can appear
   // under a cursor that is already mid-click, or under a held Return, and an
@@ -68,16 +75,27 @@ export function ConfirmDialog({
       />
       <div className="relative w-full max-w-sm rounded-lg border bg-popover p-4 shadow-lg">
         <div className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
-          <TriangleAlert className="size-4 text-destructive" />
+          {destructive && <TriangleAlert className="size-4 text-destructive" />}
           {title}
         </div>
         <p className="mb-4 text-xs leading-relaxed text-muted-foreground">{body}</p>
-        <div className="flex justify-end gap-2">
-          <Button ref={cancelRef} variant="ghost" size="sm" onClick={onCancel}>
-            <X className="mr-1 size-3.5" />
+        <div className={cn("flex justify-end", destructive ? "gap-2" : "gap-1.5")}>
+          <Button
+            ref={cancelRef}
+            variant={destructive ? "ghost" : "outline"}
+            size="sm"
+            className={destructive ? undefined : "h-8"}
+            onClick={onCancel}
+          >
+            {destructive && <X className="mr-1 size-3.5" />}
             {cancelLabel}
           </Button>
-          <Button variant="destructive" size="sm" onClick={onConfirm}>
+          <Button
+            variant={destructive ? "destructive" : "default"}
+            size="sm"
+            className={destructive ? undefined : "h-8"}
+            onClick={onConfirm}
+          >
             {confirmLabel}
           </Button>
         </div>

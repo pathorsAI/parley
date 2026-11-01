@@ -311,11 +311,15 @@ describe("leaveStoppedCockpit (a meeting that ended without a report)", () => {
     expect(toast.message).toHaveBeenCalledTimes(1);
   });
 
-  it("does nothing once the user has moved on or started another meeting", () => {
+  it("leaves the user where they are once they moved on, and is silent over another meeting", () => {
     vi.mocked(toast.message).mockClear();
+    // The meeting ran in its own window: the main window stays put, and the
+    // user still hears why there is no report.
     useStore.setState({ appMode: "library", meetingStatus: "stopped" });
     leaveStoppedCockpit("meeting.notSaved.noTranscript");
     expect(useStore.getState().appMode).toBe("library");
+    expect(toast.message).toHaveBeenCalledTimes(1);
+    vi.mocked(toast.message).mockClear();
 
     useStore.setState({ appMode: "live", meetingStatus: "recording" });
     leaveStoppedCockpit("meeting.notSaved.noTranscript");

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ChevronRight, Folder, Loader2, Plus, RefreshCw, Search, UsersRound, X } from "lucide-react";
+import { Archive, ChevronRight, Folder, Loader2, Plus, RefreshCw, Search, UsersRound, X } from "lucide-react";
 import { toast } from "sonner";
 import { useI18n } from "../../i18n";
 import { useStore } from "../../lib/store";
@@ -13,6 +13,8 @@ import {
   emitHistoryUpdated,
 } from "../../lib/history/history";
 import { setOrgRecordingFolder } from "../../lib/cloud/folders";
+import { isArchived, listLocalFolders } from "../../lib/history/folders";
+import { formatBreadcrumb } from "../../lib/library/destinationPicker";
 import {
   deleteCloudRecording,
   deleteOrgRecording,
@@ -31,10 +33,10 @@ import { log } from "../../lib/log";
 import { markGettingStarted } from "../../lib/onboarding/gettingStarted";
 import { isTauri } from "../../lib/tauriEvents";
 import { VoiceTypingHistory } from "../../history/VoiceTypingHistory";
-import { LibraryCard, LibraryCardsSkeleton } from "./LibraryCards";
 import { DestinationSheet } from "../DestinationSheet";
 import { ConfirmDialog } from "../shell/ConfirmDialog";
 import { RecordingTimeline, RecordingTimelineSkeleton } from "./RecordingTimeline";
+import { useArchiveFolder } from "./useArchiveFolder";
 import { useRenderWindow } from "./useRenderWindow";
 import type { LibraryTree } from "../shell/useLibraryTree";
 import {
@@ -97,6 +99,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   const isVoice = selection.kind === "voice";
   const node = selection.kind === "personal" ? selection.node : null;
   const isAll = node?.kind === "all";
+  const archive = useArchiveFolder(tree);
 
   // ── Entries for the selected scope ────────────────────────────────────────
   const refresh = useCallback(() => {
@@ -270,6 +273,10 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
         await setEntryFolder(item.id, folderId);
         if (folderId) markGettingStarted("filed");
         await emitHistoryUpdated(item.id);
+        // Read the registry, not the tree: a folder made in the sheet a moment
+        // ago is there before the tree has reloaded.
+        const name = folderId ? listLocalFolders().find((f) => f.id === folderId)?.name : null;
+        toast.success(name ? t("library.moved", { name }) : t("library.movedOut"));
         // A folder node shows one node's worth, so a re-filed recording leaves
         // it. The all node shows every node's worth, so the same recording
         // stays put and only its folder chip changes — dropping it there would
@@ -311,11 +318,18 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   const handOffToOrg = useCallback(
     async (item: HistoryCardItem, orgId: string, folderId: string | null, mode: OrgHandoffMode) => {
       const orgName = tree.orgs.find((o) => o.id === orgId)?.name ?? "";
+      const folderName = folderId
+        ? tree.orgFolders[orgId]?.find((f) => f.id === folderId)?.name
+        : undefined;
       setSharingId(item.id);
       try {
         if (mode === "copy") {
           await shareRecordingToOrg(item.id, orgId, folderId);
-          toast.success(t("history.move.copied", { org: orgName }));
+          toast.success(
+            t("library.copiedTo", {
+              place: formatBreadcrumb([orgName, folderName].filter((s): s is string => !!s)),
+            })
+          );
         } else {
           await moveRecordingToOrg(item.id, orgId, folderId);
           setEntries((prev) => prev?.filter((e) => e.id !== item.id) ?? null);
@@ -370,11 +384,16 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   const searching = searchQuery.length > 0;
   const empty = emptyStateCopy(t, { searching, hasFolder: !!folderName, isOrg, isAll });
 
+  // The personal folder the header stands on — what 封存資料夾 / 取消封存 act on.
+  const openFolder =
+    node?.kind === "folder" ? tree.personalFolders.find((f) => f.id === node.folderId) ?? null : null;
+  const openArchived = !!openFolder && isArchived(openFolder);
+
   let body;
   if (entries === null) {
     // Rows in the list's own shape, from the top, so the list lands in place
     // instead of replacing a spinner centred in the pane.
-    body = <ListSkeleton timeline={isAll} label={t("history.loading")} />;
+    body = <RecordingTimelineSkeleton label={t("history.loading")} />;
   } else if (visible.length === 0) {
     body = (
       <div className="flex h-full flex-col items-center justify-center gap-1 text-center">
@@ -382,19 +401,21 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
         <p className="max-w-80 text-xs text-muted-foreground/70">{empty.hint}</p>
       </div>
     );
-  } else if (isAll) {
-    // A different question deserves a different shape — see RecordingTimeline.
+  } else {
+    // One list shape for every scope — see RecordingTimeline.
     body = (
       <>
         <RecordingTimeline
           entries={shown}
           locale={locale}
           signedIn={tree.signedIn}
+          isOrgContext={isOrg}
           orgs={tree.orgs}
           busyId={busyId}
           downloadingId={downloadingId}
           sharingId={sharingId}
           folders={moveFolders}
+          folderNames={tree.personalFolders}
           onOpen={(entry) => {
             openItem(entry).catch((error) =>
               log.error("library: open failed", { id: entry.id, error: String(error) })
@@ -406,38 +427,6 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
           }}
           onFile={setFileItem}
         />
-        {sentinel}
-      </>
-    );
-  } else {
-    body = (
-      <>
-        <div className="flex flex-col divide-y divide-border">
-          {shown.map((entry) => (
-            <LibraryCard
-              key={entry.id}
-              entry={entry}
-              locale={locale}
-              signedIn={tree.signedIn}
-              isOrgContext={isOrg}
-              orgs={tree.orgs}
-              busy={busyId === entry.id}
-              downloading={downloadingId === entry.id}
-              sharing={sharingId === entry.id}
-              folders={moveFolders}
-              onOpen={() => {
-                openItem(entry).catch((error) =>
-                  log.error("library: open failed", { id: entry.id, error: String(error) })
-                );
-              }}
-              onDelete={() => setPendingDelete(entry)}
-              onRename={(title) => {
-                rename(entry.id, title).catch(() => {});
-              }}
-              onFile={() => setFileItem(entry)}
-            />
-          ))}
-        </div>
         {sentinel}
       </>
     );
@@ -455,6 +444,11 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
         <span className="text-xs text-muted-foreground">
           {t("history.count", { count: visible.length })}
         </span>
+        {openArchived && (
+          <span className="rounded-full bg-muted px-2 py-px text-[11px] text-muted-foreground">
+            {t("history.folder.archived")}
+          </span>
+        )}
         {!isOrg && syncing && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
         <div className="relative ml-auto w-48 min-w-0 shrink">
           <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground/70" />
@@ -478,28 +472,55 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
             </button>
           )}
         </div>
+        {openFolder && !openArchived && (
+          <button
+            type="button"
+            onClick={() => archive.requestArchive(openFolder)}
+            className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <Archive className="size-3" />
+            {t("library.archiveFolder")}
+          </button>
+        )}
+        {openFolder && openArchived && (
+          <button
+            type="button"
+            onClick={() => archive.restore(openFolder)}
+            className="shrink-0 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            {t("sidebar.menu.unarchive")}
+          </button>
+        )}
         <button
           type="button"
           onClick={() => void importRecording(node?.kind === "folder" ? node.folderId : null)}
-          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         >
           <Plus className="size-3.5" />
           {t("history.import")}
         </button>
+        {/* Not on the board, but the only way to re-read the cloud by hand —
+            kept, as an icon, after the board's own controls. */}
         <button
           type="button"
           onClick={refresh}
-          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          aria-label={t("history.refresh")}
+          title={t("history.refresh")}
+          className="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         >
           <RefreshCw className="size-3.5" />
-          {t("history.refresh")}
         </button>
       </header>
 
 
-      {/* The timeline's date headers are sticky, so it owns its own top padding
-          — rows must slide under the header, not through a gap above it. */}
-      <div className={`min-h-0 flex-1 overflow-y-auto ${isAll ? "px-4 pb-4" : "p-4"}`}>{body}</div>
+      {/* The date headers are sticky, so the list owns its own top padding —
+          rows must slide under the header, not through a gap above it. */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
+        {body}
+        {isOrg && entries !== null && visible.length > 0 && (
+          <p className="px-2 py-3 text-[11px] text-muted-foreground">{t("library.org.footer")}</p>
+        )}
+      </div>
 
       {pendingDelete && (
         <ConfirmDialog
@@ -516,6 +537,8 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
         />
       )}
 
+      {archive.dialog}
+
       <DestinationSheet
         open={!!fileItem}
         onOpenChange={closeFiling}
@@ -529,11 +552,6 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
       />
     </div>
   );
-}
-
-/** The loading rows, in the shape of whichever list is about to land. */
-function ListSkeleton({ timeline, label }: Readonly<{ timeline: boolean; label: string }>) {
-  return timeline ? <RecordingTimelineSkeleton label={label} /> : <LibraryCardsSkeleton label={label} />;
 }
 
 function ScopeTitle({
