@@ -19,7 +19,10 @@ export interface Segment {
 export type SessionEvent =
   | { phase: "start"; session: number }
   | { phase: "done"; message?: string; text?: string }
-  | { phase: "stop" | "polishing" | "error" | "limit" | "cancelled"; message?: string };
+  /** `undoMs` is how long the host leaves the Undo on offer for THIS
+   *  dictation (undoWindowMs); absent means the floor, CANCEL_UNDO_MS. */
+  | { phase: "cancelled"; message?: string; undoMs?: number }
+  | { phase: "stop" | "polishing" | "error" | "limit"; message?: string };
 
 /** One dictation's text as `report()` renders it: what the overlay shows while
  *  it runs and what the host delivers once it settles — the two windows fold

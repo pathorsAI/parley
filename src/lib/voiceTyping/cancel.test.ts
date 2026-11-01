@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CancelLedger } from "./cancel";
+import { CANCEL_UNDO_MAX_MS, CANCEL_UNDO_MS, CancelLedger, undoWindowMs } from "./cancel";
 
 describe("CancelLedger", () => {
   it("holds a cancelled dictation's settled text instead of delivering it", () => {
@@ -121,5 +121,28 @@ describe("CancelLedger", () => {
     for (let g = 1; g <= 20; g++) l.cancel(g);
     expect(l.isCancelled(1)).toBe(false);
     expect(l.isCancelled(20)).toBe(true);
+  });
+});
+
+describe("undoWindowMs", () => {
+  it("gives back half the time spent talking", () => {
+    expect(undoWindowMs(40_000)).toBe(20_000);
+    expect(undoWindowMs(21_000)).toBe(10_500);
+  });
+
+  it("never goes under the floor or over the ceiling", () => {
+    expect(undoWindowMs(1)).toBe(CANCEL_UNDO_MS);
+    expect(undoWindowMs(10_000)).toBe(CANCEL_UNDO_MS);
+    expect(undoWindowMs(60_000)).toBe(CANCEL_UNDO_MAX_MS);
+    expect(undoWindowMs(3_600_000)).toBe(CANCEL_UNDO_MAX_MS);
+  });
+
+  /** A dictation whose start time was never recorded, and a clock that went
+   *  backwards: the floor, never a window of zero. */
+  it("falls back to the floor for a length it cannot trust", () => {
+    expect(undoWindowMs(0)).toBe(CANCEL_UNDO_MS);
+    expect(undoWindowMs(-5000)).toBe(CANCEL_UNDO_MS);
+    expect(undoWindowMs(Number.NaN)).toBe(CANCEL_UNDO_MS);
+    expect(undoWindowMs(Number.POSITIVE_INFINITY)).toBe(CANCEL_UNDO_MS);
   });
 });

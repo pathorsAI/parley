@@ -666,6 +666,20 @@ function armed(): boolean[] {
   return calls("set_voice_typing_cancel_armed").map((a) => (a as { armed: boolean }).armed);
 }
 
+/** Every arm/disarm as Rust sees it, the bare-Esc claim included. */
+function armCalls(): { armed: boolean; bare?: boolean }[] {
+  return calls("set_voice_typing_cancel_armed") as { armed: boolean; bare?: boolean }[];
+}
+
+/** The Undo window the host announced with each cancel. */
+function undoWindows(): (number | undefined)[] {
+  return mocks.emitted
+    .filter((e) => e.name === "voicetyping://session")
+    .map((e) => e.payload as { phase: string; undoMs?: number })
+    .filter((p) => p.phase === "cancelled")
+    .map((p) => p.undoMs);
+}
+
 /** A polish round trip of `ms` that gives up the moment its signal aborts. */
 function slowPolish(ms: number) {
   return (opts: { raw: string; signal?: AbortSignal }) =>
@@ -995,6 +1009,73 @@ describe("voice-typing host: Esc cancels, Undo copies", () => {
     });
   });
 
+  /** #640: five seconds is nothing after minutes of talking, and the Esc that
+   *  started that report was a stray one. The window is half the time spent
+   *  talking, so the longer the dictation, the longer the way back. */
+  it("gives a long dictation a long Undo window", async () => {
+    await key(true);
+    segment(1, "0", "講了很久的一段", true);
+    await tick(40_000);
+    await escape();
+    await tick();
+    expect(undoWindows()).toEqual([20_000]);
+    finish(1, "0", "講了很久的一段話");
+    await tick(19_000);
+    // Long past the old five seconds, still on offer.
+    expect(mocks.append).not.toHaveBeenCalled();
+    await tick(1500);
+    expect(mocks.append).toHaveBeenCalledWith("講了很久的一段話", null, "cancelled");
+  });
+
+  it("caps that window, and keeps its floor for a short one", async () => {
+    await key(true);
+    await tick(300_000); // five minutes of talking
+    await escape();
+    await tick();
+    expect(undoWindows()).toEqual([30_000]);
+
+    await key(false);
+    // A new press takes the offer, so this one never settles and the host has
+    // no reason to re-send its pill.
+    await key(true); // a one-second dictation
+    await tick(1000);
+    await escape();
+    await tick();
+    expect(undoWindows()).toEqual([30_000, 5000]);
+  });
+
+  /** The other half of #640: while Esc is armed it is a global shortcut, so
+   *  no other app sees it. A dictation past the first minute gives the bare
+   *  one back and keeps the trigger's chord. */
+  it("hands the bare Esc back a minute into a dictation, and still cancels", async () => {
+    await key(true);
+    expect(armCalls()).toEqual([{ armed: true, bare: true }]);
+    await tick(60_000);
+    expect(armCalls()).toEqual([
+      { armed: true, bare: true },
+      { armed: true, bare: false },
+    ]);
+    expect(mocks.log.info).toHaveBeenCalledWith("voice-typing: bare Escape handed back", {
+      afterMs: 60_000,
+    });
+
+    await escape();
+    expect(last(phases())).toBe("cancelled");
+  });
+
+  /** The narrowing is a timer, and a timer left running after the dictation
+   *  ended would claim Esc again with nothing to cancel — in every app, until
+   *  the next dictation gave it back. */
+  it("never re-claims Esc after the dictation is delivered", async () => {
+    await key(true);
+    await key(false);
+    finish(1, "0", "短短一句");
+    await tick();
+    expect(inserted()).toEqual(["短短一句"]);
+    await tick(120_000);
+    expect(armCalls()).toEqual([{ armed: true, bare: true }, { armed: false, bare: true }]);
+  });
+
   it("an Esc the Windows hook swallowed under the held trigger settles its silent release", async () => {
     await key(true);
     await escape(true);
@@ -1088,7 +1169,7 @@ describe("voice-typing host: Esc cancels, Undo copies", () => {
       boot.indexOf("set_voice_typing_shortcut"),
     );
     expect(bootCalls.filter((c) => c[0] === "set_voice_typing_cancel_armed")).toEqual([
-      ["set_voice_typing_cancel_armed", { armed: false }],
+      ["set_voice_typing_cancel_armed", { armed: false, bare: true }],
     ]);
   });
 

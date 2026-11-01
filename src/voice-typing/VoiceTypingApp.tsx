@@ -140,6 +140,10 @@ export const VoiceTypingApp = () => {
   useThemePreference(); // so `foreground`/`background` reflect the user's theme
   const [text, setText] = useState("");
   const [phase, setPhase] = useState<Phase>("listening");
+  // How long the Undo on a cancelled dictation stays on offer: the host sizes
+  // it from the dictation's own length (undoWindowMs) and sends it with the
+  // "cancelled" phase. The floor stands in until one arrives.
+  const [undoMs, setUndoMs] = useState(CANCEL_UNDO_MS);
   const [error, setError] = useState<string | null>(null);
   // Set when the hosted single-dictation cap ended the session: a note shown
   // alongside the (still delivered) transcript so the abrupt stop is explained.
@@ -323,16 +327,19 @@ export const VoiceTypingApp = () => {
           enterPhase("done");
           return;
         }
-        const { phase: p, message } = ev;
-        if (p === "cancelled") {
+        if (ev.phase === "cancelled") {
           // The host re-sends it in case a "polishing" overtook it; a repeat
           // must not restart the Undo pill's fade clock.
           if (phaseRef.current === "cancelled") return;
           // Undo stays reachable even over a session that had failed.
           setError(null);
           setFading(false);
+          setUndoMs(ev.undoMs ?? CANCEL_UNDO_MS);
           enterPhase("cancelled");
-        } else if (p === "stop") {
+          return;
+        }
+        const { phase: p, message } = ev;
+        if (p === "stop") {
           // Also an Undo clicked before the text settled, possibly as the
           // cancelled pill had started to fade.
           setFading(false);
@@ -401,7 +408,7 @@ export const VoiceTypingApp = () => {
 
   // A cancelled dictation is not "done": its Undo stays fully visible for
   // (almost) the whole offer, then fades just before the host takes the
-  // overlay down at CANCEL_UNDO_MS.
+  // overlay down at the end of that dictation's own window (undoMs).
   // Leaving "cancelled" takes that fade back, however the phase changed. The
   // Undo stays clickable until the fade starts, and the host's answer to a
   // click just before it ("polishing" for the recovery's polish, then "done")
@@ -409,12 +416,12 @@ export const VoiceTypingApp = () => {
   // recovery would play out at opacity 0, reading as an Undo that did nothing.
   useEffect(() => {
     if (phase !== "cancelled") return;
-    const id = setTimeout(() => setFading(true), CANCEL_UNDO_MS - FADE_MS - 300);
+    const id = setTimeout(() => setFading(true), undoMs - FADE_MS - 300);
     return () => {
       clearTimeout(id);
       setFading(false);
     };
-  }, [phase]);
+  }, [phase, undoMs]);
 
   // The host's start blocks ("no-key", …) and the backend's failure codes
   // share this channel; anything else gets the generic line.
