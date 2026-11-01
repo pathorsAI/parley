@@ -71,7 +71,7 @@
   --chart-4: oklch(0.83 0.12 85);
   --chart-5: oklch(0.76 0.13 55);
   --radius: 0.625rem;
-  --sidebar: oklch(0.975 0.005 257);
+  --sidebar: #f5f7f9;
   --sidebar-foreground: oklch(0.205 0.02 257);
   --sidebar-primary: oklch(0.6231 0.188 259.8145);
   --sidebar-primary-foreground: oklch(1 0 0);
@@ -135,11 +135,9 @@
 
 /* The macOS main window sits on a native "sidebar" material (windowEffects in
    tauri.macos.conf.json), so the rail is drawn translucent and lets the
-   vibrancy show through. Every other surface stays opaque. Windows keeps the
-   solid --sidebar above: its main window is opaque by design. */
-html[data-platform="macos"][data-app-window="main"] {
-  --sidebar: oklch(0.975 0.005 257 / 55%);
-}
+   vibrancy show through — in the dark theme. The light rail is the solid
+   #f5f7f9 above on every platform, so it reads as one flat grey. Every other
+   surface stays opaque. */
 html[data-platform="macos"][data-app-window="main"].dark {
   --sidebar: oklch(0.2 0.028 250 / 55%);
 }

@@ -40,8 +40,8 @@ const LAYER_HEIGHT = 595;
 export function HomeBackdrop() {
   return (
     <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
-      <div className="absolute inset-0 bg-linear-to-b from-[#f0f9ff] to-[#fafafa] dark:from-primary/10 dark:to-background" />
-      <div className="absolute inset-x-0 opacity-30 dark:opacity-20" style={{ top: LAYER_TOP, height: LAYER_HEIGHT }}>
+      <div className="absolute inset-0 bg-linear-to-b from-[#f0f9ff] to-[#fafafa] opacity-60 dark:from-primary/10 dark:to-background" />
+      <div className="absolute inset-x-0 opacity-20 dark:opacity-15" style={{ top: LAYER_TOP, height: LAYER_HEIGHT }}>
         {BARS.map((b, i) => (
           <div
             key={b.left}
