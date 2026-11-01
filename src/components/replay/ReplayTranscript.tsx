@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronUp, Replace, Search, X } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Replace, ReplaceAll, Search, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -378,121 +378,108 @@ export function ReplayTranscript({
       )}
       {!preview &&
         (searchOpen ? (
-          <div className="absolute right-3 top-2 z-10 flex flex-col gap-1 rounded-md border bg-background/95 py-1 pl-1 pr-1 shadow-md backdrop-blur">
-            <div className="flex items-center gap-0.5">
-              {canReplace && (
-                <button
-                  type="button"
-                  aria-label={t("replay.replaceToggle", { key: replaceChordLabel })}
-                  aria-expanded={replaceOpen}
-                  title={t("replay.replaceToggle", { key: replaceChordLabel })}
-                  onClick={toggleReplace}
-                  className="grid size-5 place-items-center rounded text-muted-foreground hover:text-foreground"
-                >
-                  {replaceOpen ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
-                </button>
-              )}
-              <Search className={cn("size-3.5 shrink-0 text-muted-foreground/70", !canReplace && "ml-1")} />
-              <input
-                ref={searchInputRef}
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    stepMatch(e.shiftKey ? -1 : 1);
-                  } else if (e.key === "Escape") {
-                    e.preventDefault();
-                    closeSearch();
-                  }
-                }}
-                placeholder={t("replay.searchPlaceholder")}
-                className="h-6 w-40 bg-transparent px-1.5 text-xs outline-none placeholder:text-muted-foreground/60"
-              />
-              {trimmedQuery && (
-                <span
-                  className={cn(
-                    "select-none whitespace-nowrap px-1 text-[10px] tabular-nums",
-                    matchIds.length === 0 ? "text-destructive" : "text-muted-foreground"
-                  )}
-                >
-                  {matchIds.length === 0 ? 0 : Math.min(matchIdx, matchIds.length - 1) + 1}/{matchIds.length}
-                </span>
-              )}
+          // VS Code's find widget: a full-height toggle strip on the left (›
+          // closed, ⌄ open) that owns the replace row, each query in its own
+          // field, arrows — not chevrons — to step through hits, and the two
+          // replace actions as icon buttons named by their tooltips.
+          <div className="absolute right-3 top-2 z-10 flex items-stretch rounded-md border bg-background/95 shadow-md backdrop-blur">
+            {canReplace && (
               <button
                 type="button"
-                aria-label={t("replay.searchPrev")}
-                title={t("replay.searchPrev")}
-                disabled={matchIds.length === 0}
-                onClick={() => stepMatch(-1)}
-                className="grid size-5 place-items-center rounded text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:hover:text-muted-foreground"
+                aria-label={t("replay.replaceToggle", { key: replaceChordLabel })}
+                aria-expanded={replaceOpen}
+                title={t("replay.replaceToggle", { key: replaceChordLabel })}
+                onClick={toggleReplace}
+                className="flex w-5 shrink-0 items-start justify-center rounded-l-md pt-[9px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               >
-                <ChevronUp className="size-3.5" />
+                {replaceOpen ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
               </button>
-              <button
-                type="button"
-                aria-label={t("replay.searchNext")}
-                title={t("replay.searchNext")}
-                disabled={matchIds.length === 0}
-                onClick={() => stepMatch(1)}
-                className="grid size-5 place-items-center rounded text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:hover:text-muted-foreground"
-              >
-                <ChevronDown className="size-3.5" />
-              </button>
-              <button
-                type="button"
-                aria-label={t("replay.searchClose")}
-                title={t("replay.searchClose")}
-                onClick={closeSearch}
-                className="grid size-5 place-items-center rounded text-muted-foreground hover:text-foreground"
-              >
-                <X className="size-3.5" />
-              </button>
-            </div>
-            {canReplace && replaceOpen && (
-              // Lined up under the find field: the toggle's width plus the icon's.
-              <div className="flex items-center gap-1 pl-[38px]">
+            )}
+            <div className={cn("flex flex-col gap-1 py-1 pr-1", canReplace ? "pl-1" : "pl-1.5")}>
+              <div className="flex items-center gap-0.5">
                 <input
-                  ref={replaceInputRef}
-                  value={replacement}
-                  onChange={(e) => setReplacement(e.target.value)}
+                  ref={searchInputRef}
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
                       e.preventDefault();
-                      // ⌘/Ctrl+Enter replaces everything; plain Enter, this one.
-                      if (e.metaKey || e.ctrlKey) replaceAll();
-                      else replaceCurrent();
+                      stepMatch(e.shiftKey ? -1 : 1);
                     } else if (e.key === "Escape") {
                       e.preventDefault();
                       closeSearch();
                     }
                   }}
-                  placeholder={t("replay.replacePlaceholder")}
-                  aria-label={t("replay.replacePlaceholder")}
-                  className="h-6 w-40 bg-transparent px-1.5 text-xs outline-none placeholder:text-muted-foreground/60"
+                  placeholder={t("replay.searchPlaceholder")}
+                  aria-label={t("replay.searchPlaceholder")}
+                  className={FIND_FIELD}
                 />
-                <Button
-                  type="button"
-                  size="xs"
-                  variant="ghost"
-                  disabled={replaceDisabled}
-                  onClick={replaceCurrent}
-                  className="h-6 px-1.5 text-[11px]"
+                <span
+                  className={cn(
+                    "w-12 select-none whitespace-nowrap px-1 text-center text-[10px] tabular-nums",
+                    trimmedQuery && matchIds.length === 0 ? "text-destructive" : "text-muted-foreground"
+                  )}
                 >
-                  {t("replay.replaceOne")}
-                </Button>
-                <Button
-                  type="button"
-                  size="xs"
-                  variant="ghost"
-                  disabled={replaceDisabled}
-                  onClick={replaceAll}
-                  className="h-6 px-1.5 text-[11px] tabular-nums"
+                  {trimmedQuery
+                    ? `${matchIds.length === 0 ? 0 : Math.min(matchIdx, matchIds.length - 1) + 1}/${matchIds.length}`
+                    : ""}
+                </span>
+                <FindIconButton
+                  label={t("replay.searchPrev")}
+                  disabled={matchIds.length === 0}
+                  onClick={() => stepMatch(-1)}
                 >
-                  {t("replay.replaceAll", { count: occurrenceCount })}
-                </Button>
+                  <ArrowUp className="size-3.5" />
+                </FindIconButton>
+                <FindIconButton
+                  label={t("replay.searchNext")}
+                  disabled={matchIds.length === 0}
+                  onClick={() => stepMatch(1)}
+                >
+                  <ArrowDown className="size-3.5" />
+                </FindIconButton>
+                <FindIconButton label={t("replay.searchClose")} onClick={closeSearch}>
+                  <X className="size-3.5" />
+                </FindIconButton>
               </div>
-            )}
+              {canReplace && replaceOpen && (
+                <div className="flex items-center gap-0.5">
+                  <input
+                    ref={replaceInputRef}
+                    value={replacement}
+                    onChange={(e) => setReplacement(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        // ⌘/Ctrl+Enter replaces everything; plain Enter, this one.
+                        if (e.metaKey || e.ctrlKey) replaceAll();
+                        else replaceCurrent();
+                      } else if (e.key === "Escape") {
+                        e.preventDefault();
+                        closeSearch();
+                      }
+                    }}
+                    placeholder={t("replay.replacePlaceholder")}
+                    aria-label={t("replay.replacePlaceholder")}
+                    className={FIND_FIELD}
+                  />
+                  <FindIconButton
+                    label={t("replay.replaceOneTip")}
+                    disabled={replaceDisabled}
+                    onClick={replaceCurrent}
+                  >
+                    <Replace className="size-3.5" />
+                  </FindIconButton>
+                  <FindIconButton
+                    label={t("replay.replaceAllTip", { count: occurrenceCount, key: modChordCap("Enter") })}
+                    disabled={replaceDisabled}
+                    onClick={replaceAll}
+                  >
+                    <ReplaceAll className="size-3.5" />
+                  </FindIconButton>
+                </div>
+              )}
+            </div>
           </div>
         ) : (
           <button
@@ -723,5 +710,31 @@ function SpeakerNameInput({
       onBlur={(e) => onCommit(e.currentTarget.value)}
       className="mb-0.5 h-5 w-28 rounded-md border border-input bg-background px-1.5 text-[11px] focus:outline-none focus:ring-1 focus:ring-ring"
     />
+  );
+}
+
+/** A find/replace query field: bordered like VS Code's, so the two rows read
+ *  as two inputs and line up. */
+const FIND_FIELD =
+  "h-6 w-44 rounded border border-input bg-background px-1.5 text-xs outline-none placeholder:text-muted-foreground/60 focus:border-primary";
+
+/** One icon action in the find bar, named by its tooltip (and aria-label). */
+function FindIconButton({
+  label,
+  disabled = false,
+  onClick,
+  children,
+}: Readonly<{ label: string; disabled?: boolean; onClick: () => void; children: ReactNode }>) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      disabled={disabled}
+      onClick={onClick}
+      className="grid size-6 shrink-0 place-items-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+    >
+      {children}
+    </button>
   );
 }
