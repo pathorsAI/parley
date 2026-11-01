@@ -214,10 +214,16 @@ function StudyCopyMenu({ tab }: Readonly<{ tab: StudyTab }>) {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-[220px]">
-        <DropdownMenuItem onSelect={() => void copy(studyPageTextFromState(useStore.getState(), tab))}>
-          {t("study.copy.page")}
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
+        {/* Named after the open tab, so it says what lands on the clipboard. On
+            回放 the tab IS the transcript, already the next item. */}
+        {tab !== "replay" && (
+          <>
+            <DropdownMenuItem onSelect={() => void copy(studyPageTextFromState(useStore.getState(), tab))}>
+              {t("study.copy.page", { page: t(TAB_LABEL[tab]) })}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        )}
         <DropdownMenuItem
           onSelect={() => {
             const s = useStore.getState();
