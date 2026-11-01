@@ -631,8 +631,6 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const meetingStartedAt = useStore((s) => s.meetingStartedAt);
   const appMode = useStore((s) => s.appMode);
   const openLibrary = useStore((s) => s.openLibrary);
-  const showReplay = useStore((s) => s.showReplay);
-  const replayName = useStore((s) => s.replay?.name ?? null);
   const resetPrep = useStore((s) => s.resetPrep);
   const setDraftOpen = useStore((s) => s.setDraftOpen);
   // A non-empty prep draft unlocks the explicit "clear prep" menu item.
@@ -760,20 +758,6 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
             OUT, not a filing prompt — filing still has ONE home, the report
             page's link bar. */}
         {studyMode && <RecordingBreadcrumb t={t} />}
-        {/* A loaded recording stays reachable while you look at something else.
-            Navigating the tree away from it used to leave nothing on screen
-            pointing back — the only route out was 離開, which discards it. */}
-        {!studyMode && !meetingHere && replayName && (
-          <button
-            type="button"
-            onClick={showReplay}
-            title={replayName}
-            className="flex min-w-0 items-center gap-1.5 rounded-md border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          >
-            <FileAudio className="size-3.5 shrink-0" />
-            <span className="max-w-40 truncate">{replayName}</span>
-          </button>
-        )}
         {meetingHere && (
           <>
             {/* ONE recording pill: dot + elapsed. Red while recording; the
