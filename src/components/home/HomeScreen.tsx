@@ -69,7 +69,7 @@ export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   return (
     <div className="relative min-h-0 flex-1 overflow-y-auto">
       <HomeBackdrop />
-      <div className="relative mx-auto flex max-w-2xl flex-col gap-8 px-6 py-10">
+      <div className="relative mx-auto flex max-w-2xl flex-col gap-8 px-6 pt-20 pb-10">
         {/* ── Start ─────────────────────────────────────────────────────── */}
         <section className="animate-fade-up flex flex-col gap-3">
           <h1 className="text-2xl font-bold tracking-tight">
