@@ -7,6 +7,7 @@ import type { HistoryEntry } from "../history/types";
 import { analysisSignature } from "../analysis/lens";
 import { inFlightStagesFor } from "../analysis/runRegistry";
 import { log } from "../log";
+import { foldSegmentTexts } from "../replay/findReplace";
 import { CLEARED_STUDY_SLICE, restoredStudyStatuses } from "./study";
 import type { ReplayTrim, SliceCreator } from "./types";
 
@@ -85,6 +86,18 @@ export interface ReplaySlice {
    *  items land together, the keep-window clears, and the playhead and
    *  selection reset — one update. */
   applyTrimmedRecording: (trimmed: TrimmedRecording) => void;
+
+  /** Replay id of the recording whose transcript text was edited (find &
+   *  replace) in this session — its summary, action items and findings were
+   *  generated from the old text. Drives the transcript's "outputs are stale"
+   *  notice; cleared when another recording opens or "regenerate all" runs.
+   *  Session-only: never persisted. */
+  transcriptEditedId: string | null;
+  /** Land an edited transcript: the on-screen `segments` and the session's
+   *  own `replay.segments` take the new TEXT together (by segment id, so the
+   *  two copies stay consistent), and the recording is marked edited. */
+  applyTranscriptEdit: (segments: TranscriptSegment[]) => void;
+  clearTranscriptEdited: () => void;
 }
 
 export const createReplaySlice: SliceCreator<ReplaySlice> = (set) => ({
@@ -96,6 +109,7 @@ export const createReplaySlice: SliceCreator<ReplaySlice> = (set) => ({
   replayPlayheadMs: 0,
   replaySeekNonce: 0,
   replayTrim: null,
+  transcriptEditedId: null,
 
   setLoadedHistoryId: (loadedHistoryId) => set({ loadedHistoryId }),
   setReplayFolderId: (replayFolderId) => set({ replayFolderId }),
@@ -123,6 +137,7 @@ export const createReplaySlice: SliceCreator<ReplaySlice> = (set) => ({
       // shows now — no masking); the playhead is just for playback/navigation.
       replayPlayheadMs: 0,
       replayTrim: null,
+      transcriptEditedId: null,
       segments: session.segments,
       speakerNames: session.speakerNames,
       meetingStatus: "stopped",
@@ -156,6 +171,7 @@ export const createReplaySlice: SliceCreator<ReplaySlice> = (set) => ({
       replayPlayheadMs: 0,
       replaySeekNonce: state.replaySeekNonce + 1,
       replayTrim: null,
+      transcriptEditedId: null,
       ingestWizardOpen: false,
       ingestAudioPath: null,
       segments: entry.segments,
@@ -195,6 +211,7 @@ export const createReplaySlice: SliceCreator<ReplaySlice> = (set) => ({
       replayOrgPlace: null,
       replayPlayheadMs: 0,
       replayTrim: null,
+      transcriptEditedId: null,
       ingestWizardOpen: false,
       ingestAudioPath: null,
       segments: [],
@@ -219,4 +236,12 @@ export const createReplaySlice: SliceCreator<ReplaySlice> = (set) => ({
       replayPlayheadMs: 0,
       selectedFindingId: null,
     }),
+
+  applyTranscriptEdit: (segments) =>
+    set((s) => ({
+      segments,
+      replay: s.replay ? { ...s.replay, segments: foldSegmentTexts(s.replay.segments, segments) } : s.replay,
+      transcriptEditedId: s.replay?.id ?? null,
+    })),
+  clearTranscriptEdited: () => set({ transcriptEditedId: null }),
 });

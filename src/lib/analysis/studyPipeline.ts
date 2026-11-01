@@ -270,6 +270,9 @@ export async function reanalyzeAll(): Promise<void> {
   // Pin BEFORE the pass: with auto-analysis off, the downstream invalidation
   // below would otherwise never be picked up by the scheduler.
   useStore.getState().setStudyManualForId(startedFor);
+  // Every output is about to be rebuilt from the transcript as it now reads,
+  // so the transcript's "outputs are from before your edit" notice is done.
+  useStore.getState().clearTranscriptEdited();
   if (useStore.getState().analysisStatus === "running") {
     cancelRunning("findings");
     forceNextFindings = true;

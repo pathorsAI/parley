@@ -21,6 +21,7 @@ import { translate } from "../../i18n/messages";
 import { markGettingStarted } from "../onboarding/gettingStarted";
 import type { ReplaySession } from "../replay/types";
 import { withoutEstimatedTiming } from "../replay/timing";
+import { foldSegmentTexts } from "../replay/findReplace";
 import type {
   DefaultSaveLocation,
   FilingSuggestion,
@@ -893,6 +894,31 @@ export async function persistReadOnlyStudyOutputs(): Promise<void> {
     deliveryAssessment: s.deliveryAssessment,
   });
   log.info("history: study outputs cached (read-only entry)", { id: s.replay.id });
+}
+
+/**
+ * Write an edited transcript's TEXT onto a saved entry — the replay find bar's
+ * replace. The same per-entry read-modify-write as {@link patchEntryOutputs}:
+ * serialized with every other in-place update, waiting out an upload's initial
+ * save, then the cloud copy is refreshed. Only segment text moves (folded by
+ * id onto what is on disk), so a recording whose on-screen timing is an
+ * estimate keeps its untimed transcript, and nothing else the entry holds —
+ * title, folder, speaker labels, the analysis — is touched. No change, no write.
+ */
+export async function persistTranscriptText(id: string, segments: readonly TranscriptSegment[]): Promise<void> {
+  if (!isTauri()) return;
+  const written = await withEntryWrite(id, async () => {
+    // An upload's initial save may still be compressing — wait so the entry exists.
+    await Promise.resolve(uploadSaveInFlight).catch(() => {});
+    return rewriteEntryNow(id, (meta) => {
+      const next = foldSegmentTexts(meta.segments, segments);
+      return next === meta.segments ? null : { ...meta, segments: next };
+    });
+  });
+  if (!written) return;
+  await emitHistoryUpdated(id).catch(() => {});
+  pushToCloud(id).catch((e) => log.warn("history: cloud push failed", { id, error: String(e) }));
+  log.info("history: transcript text saved", { id });
 }
 
 /**

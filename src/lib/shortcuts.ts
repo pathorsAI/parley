@@ -41,6 +41,9 @@ export interface KeyStroke {
   ctrlKey?: boolean;
   shiftKey?: boolean;
   altKey?: boolean;
+  /** `KeyboardEvent.code` — the physical key. Only consulted for ⌥ chords; see
+   *  {@link matchShortcut}. */
+  code?: string;
 }
 
 /**
@@ -65,7 +68,10 @@ export function matchShortcut(e: KeyStroke, spec: ShortcutSpec, mac: boolean = i
   }
   if (spec.shift !== "any" && !!e.shiftKey !== !!spec.shift) return false;
   if (!!e.altKey !== !!spec.alt) return false;
-  return e.key.toLowerCase() === spec.key.toLowerCase();
+  if (e.key.toLowerCase() === spec.key.toLowerCase()) return true;
+  // On a Mac, ⌥ turns a letter into another character (⌥⌘F arrives as "ƒ"), so
+  // a letter chord with ⌥ is matched by the physical key instead.
+  return !!spec.alt && /^[a-z]$/i.test(spec.key) && e.code === `Key${spec.key.toUpperCase()}`;
 }
 
 /** The parts of an event target the focus guards read (see {@link KeyStroke}). */
