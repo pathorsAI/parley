@@ -425,14 +425,9 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
     // instead of replacing a spinner centred in the pane.
     body = <RecordingTimelineSkeleton label={t("history.loading")} />;
   } else if (visible.length === 0 && orgRoot) {
-    body = <p className="px-2 py-2 text-xs text-muted-foreground/70">{t("library.org.rootEmpty")}</p>;
+    body = <EmptyRecords title={t("library.org.rootEmptyTitle")} hint={t("library.org.rootEmpty")} compact />;
   } else if (visible.length === 0) {
-    body = (
-      <div className="flex h-full flex-col items-center justify-center gap-1 text-center">
-        <p className="text-sm text-muted-foreground">{empty.title}</p>
-        <p className="max-w-80 text-xs text-muted-foreground/70">{empty.hint}</p>
-      </div>
-    );
+    body = <EmptyRecords title={empty.title} hint={empty.hint} />;
   } else {
     // One list shape for every scope — see RecordingTimeline.
     body = (
@@ -569,7 +564,9 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
         {orgRoot && (
           <>
             <h2 className="px-2 pt-5 pb-3 text-xs font-semibold text-muted-foreground">{t("library.org.folders")}</h2>
-            <div className="flex flex-wrap gap-5 px-2 pb-6">{orgFolderCards}</div>
+            {/* One row that scrolls sideways, however many folders there are,
+                so the unfiled recordings below stay in view. */}
+            <div className="-mx-4 flex flex-nowrap gap-5 overflow-x-auto px-6 pt-1 pb-6">{orgFolderCards}</div>
             <h2 className="px-2 pb-1 text-xs font-semibold text-muted-foreground">
               {t("library.org.rootRecordings")}
               {visible.length > 0 && <span className="ml-1.5 font-normal tabular-nums">{visible.length}</span>}
@@ -610,6 +607,27 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
           if (fileItem) fileTo(fileItem, destination, mode);
         }}
       />
+    </div>
+  );
+}
+
+/**
+ * Nothing to list: the UX file's empty-box illustration (3541:9456) over a
+ * title and a hint. `compact` sits inline under a section heading (an org's
+ * unfiled recordings) instead of centring in the whole pane.
+ */
+function EmptyRecords({
+  title,
+  hint,
+  compact = false,
+}: Readonly<{ title: string; hint: string; compact?: boolean }>) {
+  return (
+    <div
+      className={`flex flex-col items-center justify-center gap-1 text-center ${compact ? "py-8" : "h-full"}`}
+    >
+      <img alt="" src="/library/empty-records.svg" className="mb-3 block h-[70.562px] w-[80px] max-w-none" />
+      <p className="text-sm text-muted-foreground">{title}</p>
+      <p className="max-w-80 text-xs text-muted-foreground/70">{hint}</p>
     </div>
   );
 }
