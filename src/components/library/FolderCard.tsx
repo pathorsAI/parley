@@ -1,3 +1,5 @@
+import { useRef, useState } from "react";
+import { Plus } from "lucide-react";
 import { useI18n } from "../../i18n";
 
 /** The card's drawn size in the UX file (3541:9358 / 3541:9359), and the size
@@ -61,5 +63,80 @@ export function FolderCard({
         </div>
       </div>
     </button>
+  );
+}
+
+/**
+ * The first card on an org's page: 新增資料夾, from the UX file (3541:9360
+ * default, 3541:9412 hover) — a dashed pale-blue frame with a folder front and
+ * the button on it; on hover the front widens and the button turns solid. A
+ * click turns the button into a name field (Enter creates, Esc or an empty name
+ * cancels), as the sidebar's add-folder row does.
+ */
+export function NewFolderCard({ onCreate }: Readonly<{ onCreate: (name: string) => void }>) {
+  const { t } = useI18n();
+  const [naming, setNaming] = useState(false);
+  const [name, setName] = useState("");
+  // Enter / Esc unmount the field, and its blur then fires on the way out —
+  // the first of the two settles it.
+  const settled = useRef(false);
+  const finish = (commit: boolean) => {
+    if (settled.current) return;
+    settled.current = true;
+    const clean = name.trim();
+    setNaming(false);
+    setName("");
+    if (commit && clean) onCreate(clean);
+  };
+
+  return (
+    <div className="group relative shrink-0" style={{ width: SHOWN_W, height: DRAWN.h * SCALE }}>
+      <div
+        className="absolute top-0 left-0 origin-top-left"
+        style={{ width: DRAWN.w, height: DRAWN.h, transform: `scale(${SCALE})` }}
+      >
+        <div className="absolute top-0 left-0 h-[136px] w-[151px] rounded-[8px] border border-dashed border-[#d4e5ef] bg-[rgba(212,229,239,0.3)]" />
+        {/* The front, widening leftward on hover (the hover drawing is 162px
+            wide, starting 11px further left). */}
+        <img
+          alt=""
+          src="/library/folder-new-front.svg"
+          className="absolute top-[29px] left-0 block h-[107px] w-[151px] max-w-none transition-opacity duration-300 group-hover:opacity-0"
+        />
+        <img
+          alt=""
+          src="/library/folder-new-front-hover.svg"
+          className="absolute top-[29px] left-[-11px] block h-[107px] w-[162px] max-w-none opacity-0 transition-opacity duration-300 group-hover:opacity-100"
+        />
+        {naming ? (
+          <input
+            // eslint-disable-next-line jsx-a11y/no-autofocus -- the field exists only because the user just asked to name a folder
+            autoFocus
+            value={name}
+            aria-label={t("history.folder.namePlaceholder")}
+            placeholder={t("history.folder.namePlaceholder")}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") finish(true);
+              else if (e.key === "Escape") finish(false);
+            }}
+            onBlur={() => finish(true)}
+            className="absolute top-[68px] left-[12px] h-[36px] w-[127px] rounded-[6px] border border-[#3b82f6] bg-white px-[8px] text-[12px] text-[#333] outline-none"
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => {
+              settled.current = false;
+              setNaming(true);
+            }}
+            className="absolute top-[68px] left-[calc(50%+0.5px)] flex h-[36px] -translate-x-1/2 cursor-pointer items-center justify-center gap-[6px] rounded-[6px] bg-[rgba(59,130,246,0.8)] px-[10px] py-[6px] text-[12px] leading-[20px] font-medium whitespace-nowrap text-[#fafafa] outline-none transition-colors duration-300 group-hover:bg-[#3b82f6] focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <Plus className="size-[14px]" />
+            {t("sidebar.menu.newFolder")}
+          </button>
+        )}
+      </div>
+    </div>
   );
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FolderCard } from "./FolderCard";
+import { FolderCard, NewFolderCard } from "./FolderCard";
 import { Archive, ChevronRight, Folder, Loader2, Plus, RefreshCw, Search, UsersRound, X } from "lucide-react";
 import { toast } from "sonner";
 import { useI18n } from "../../i18n";
@@ -396,19 +396,27 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
     node?.kind === "folder" ? tree.personalFolders.find((f) => f.id === node.folderId) ?? null : null;
   const openArchived = !!openFolder && isArchived(openFolder);
 
-  // An org's own page (no folder picked, no search): its folders as cards,
-  // then any recordings left at its root.
+  // An org's own page (no folder picked, no search): 新增資料夾 first, its
+  // folders as cards, then any recordings left at its root.
   const orgRoot = isOrg && selection.folderId === null && !searching;
   const orgFolderCards =
     orgRoot && selection.kind === "org"
-      ? scopeFolders.map((f) => (
+      ? [
+          <NewFolderCard
+            key="new"
+            onCreate={(name) => {
+              tree.createOrgFolder(selection.id, name).catch(() => {});
+            }}
+          />,
+          ...scopeFolders.map((f) => (
           <FolderCard
             key={f.id}
             name={f.name}
             count={(entries ?? []).filter((e) => e.folderId === f.id).length}
             onOpen={() => openLibrary({ kind: "org", id: selection.id, name: selection.name, folderId: f.id })}
           />
-        ))
+        )),
+        ]
       : [];
 
   let body;
