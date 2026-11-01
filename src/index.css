@@ -336,6 +336,26 @@ textarea,
 .animate-fade-up {
   animation: fade-up-in 0.4s ease-out both;
 }
+/* The org page's folder cards (FolderCard): a folder opening. The new-folder
+   front shears and crossfades on one curve; the papers rise on a curve that
+   overshoots a hair and settles, so they read as lifted out, not slid. */
+.folder-open {
+  transition: transform 0.5s var(--ob-ease), opacity 0.5s var(--ob-ease);
+}
+.folder-paper {
+  transition: transform 0.55s cubic-bezier(0.34, 1.36, 0.64, 1);
+}
+/* The front sheet follows the back one a beat later. */
+.folder-paper-late {
+  transition-delay: 40ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  .folder-open,
+  .folder-paper {
+    transition: none;
+  }
+}
+
 /* 總覽's backdrop bars (HomeBackdrop): each rises 50 px and fades in, one after
    another, on the design's curve. */
 @keyframes home-bar-rise {
