@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Archive, ChevronRight, Folder, Loader2, Plus, RefreshCw, Search, UsersRound, X } from "lucide-react";
 import { toast } from "sonner";
 import { useI18n } from "../../i18n";
@@ -82,6 +82,10 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   const [query, setQuery] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  // The recording being opened: its row spins, and clicks while it loads don't
+  // start a second load.
+  const [openingId, setOpeningId] = useState<string | null>(null);
+  const openingRef = useRef<string | null>(null);
   const [sharingId, setSharingId] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   /** The delete waiting on an answer. Both doors onto the action — the card's
@@ -413,13 +417,23 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
           orgs={tree.orgs}
           busyId={busyId}
           downloadingId={downloadingId}
+          openingId={openingId}
           sharingId={sharingId}
           folders={moveFolders}
           folderNames={tree.personalFolders}
           onOpen={(entry) => {
-            openItem(entry).catch((error) =>
-              log.error("library: open failed", { id: entry.id, error: String(error) })
-            );
+            if (openingRef.current) return;
+            openingRef.current = entry.id;
+            setOpeningId(entry.id);
+            openItem(entry)
+              .catch((error) => {
+                log.error("library: open failed", { id: entry.id, error: String(error) });
+                toast.error(t("history.openFailed", { error: errText(error) }));
+              })
+              .finally(() => {
+                openingRef.current = null;
+                setOpeningId(null);
+              });
           }}
           onDelete={(entry) => setPendingDelete(entry)}
           onRename={(id, title) => {

@@ -50,6 +50,7 @@ export function RecordingTimeline({
   orgs,
   busyId,
   downloadingId,
+  openingId,
   sharingId,
   folders,
   folderNames,
@@ -66,6 +67,8 @@ export function RecordingTimeline({
   orgs: CloudOrg[];
   busyId: string | null;
   downloadingId: string | null;
+  /** The row whose recording is being opened (its transcript is on its way). */
+  openingId: string | null;
   sharingId: string | null;
   /** Where a row can be filed — the scope's folders, archived ones left out. */
   folders: LocalFolder[];
@@ -106,6 +109,7 @@ export function RecordingTimeline({
               folderLabel={folderName(entry.folderId)}
               busy={busyId === entry.id}
               downloading={downloadingId === entry.id}
+              opening={openingId === entry.id}
               sharing={sharingId === entry.id}
               onOpen={() => onOpen(entry)}
               onDelete={() => onDelete(entry)}
@@ -170,6 +174,7 @@ function TimelineRow({
   folderLabel,
   busy,
   downloading,
+  opening,
   sharing,
   onOpen,
   onDelete,
@@ -188,6 +193,7 @@ function TimelineRow({
   folderLabel: string | undefined;
   busy: boolean;
   downloading: boolean;
+  opening: boolean;
   sharing: boolean;
   onOpen: () => void;
   onDelete: () => void;
@@ -330,10 +336,10 @@ function TimelineRow({
         </button>
       )}
 
-      {downloading ? (
+      {downloading || opening ? (
         <span className="inline-flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
           <Loader2 className="size-3.5 animate-spin" />
-          {t("history.sync.downloading")}
+          {t(downloading ? "history.sync.downloading" : "history.opening")}
         </span>
       ) : (
         stats

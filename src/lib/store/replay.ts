@@ -30,6 +30,10 @@ export interface ReplaySlice {
   /** Update the loaded recording's display name (after a rename persisted via
    *  renameHistoryEntry) so the replay header reflects it immediately. */
   renameReplay: (title: string) => void;
+  /** Give the open recording its audio once it has downloaded — an org
+   *  recording opens before its audio arrives. Ignored once another recording
+   *  is open. */
+  attachReplayAudio: (id: string, audioPath: string, audioSrc: string) => void;
   /** True while a READ-ONLY (org-shared) recording is loaded. Its generated study
    *  outputs can't be written back to the shared entry, so they persist into the
    *  local {@link import("../history/studyCache").writeStudyCache} instead —
@@ -91,6 +95,8 @@ export const createReplaySlice: SliceCreator<ReplaySlice> = (set) => ({
   setReplayFolderId: (replayFolderId) => set({ replayFolderId }),
   renameReplay: (title) =>
     set((s) => (s.replay ? { replay: { ...s.replay, name: title } } : {})),
+  attachReplayAudio: (id, audioPath, audioSrc) =>
+    set((s) => (s.replay?.id === id ? { replay: { ...s.replay, audioPath, audioSrc } } : {})),
 
   enterReplay: (session) => {
     log.info("store: enter replay", {

@@ -713,6 +713,8 @@ export const zhTW = {
   "history.sync.cloudOnly": "在雲端（尚未下載）",
   "history.sync.stale": "雲端有較新版本（點擊更新）",
   "history.sync.downloading": "下載中…",
+  "history.opening": "開啟中…",
+  "history.openFailed": "無法開啟這筆錄音：{error}",
   "history.sync.downloadFailed": "下載失敗：{error}",
   "history.sync.deleteFailed": "刪除失敗：{error}",
 
@@ -2348,6 +2350,8 @@ export const en = {
   "history.sync.cloudOnly": "In cloud (not downloaded)",
   "history.sync.stale": "Newer version in cloud (click to update)",
   "history.sync.downloading": "Downloading…",
+  "history.opening": "Opening…",
+  "history.openFailed": "Couldn't open this recording: {error}",
   "history.sync.downloadFailed": "Download failed: {error}",
   "history.sync.deleteFailed": "Delete failed: {error}",
 
