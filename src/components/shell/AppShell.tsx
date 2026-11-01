@@ -124,7 +124,12 @@ export function AppShell() {
         <ResizablePanel id="tree" defaultSize="19%" minSize="180px" maxSize="30%">
           <AppSidebar tree={tree} />
         </ResizablePanel>
-        <ResizableHandle withHandle />
+        {/* Draggable, so it says so under the pointer: the line (and its grip)
+            darken on hover and stay dark while dragging. */}
+        <ResizableHandle
+          withHandle
+          className="transition-colors data-[separator=active]:bg-muted-foreground/50 data-[separator=hover]:bg-muted-foreground/35 data-[separator=active]:[&>div]:bg-muted-foreground/60 data-[separator=hover]:[&>div]:bg-muted-foreground/45 [&>div]:transition-colors"
+        />
         <ResizablePanel id="route" defaultSize="81%" minSize="480px">
           <div className="flex h-full min-h-0 flex-col bg-background">
             <RouteContent mode={appMode} tree={tree} />
