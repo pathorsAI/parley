@@ -120,7 +120,8 @@ export async function copyHandoffPrompt(): Promise<boolean> {
 }
 
 export interface HandoffState extends HandoffQuestions {
-  /** Anything to copy: spoken transcript, and not a read-only org copy. */
+  /** Anything to copy: a spoken transcript. A shared org recording copies too —
+   *  its plain transcript always could, and the prompt is that same text. */
   canCopy: boolean;
   copyPrompt: () => Promise<boolean>;
   /** Evaluated at click time so the export always reflects the live report. */
@@ -131,14 +132,13 @@ export function useHandoff(): HandoffState {
   const lang = useStore((s) => s.settings.language);
   const id = useStore((s) => s.replay?.id ?? s.loadedHistoryId ?? "");
   const title = useStore((s) => s.replay?.name ?? "");
-  const readOnly = useStore((s) => s.replayReadOnly);
   const hasSpoken = useStore((s) => hasSpokenSegment(s.segments));
   const { questions, mcpQuestions } = handoffQuestions({ id, title }, lang);
   const reportMarkdown = useCallback(() => reportMarkdownFromState(useStore.getState()), []);
   return {
     questions,
     mcpQuestions,
-    canCopy: hasSpoken && !readOnly,
+    canCopy: hasSpoken,
     copyPrompt: copyHandoffPrompt,
     reportMarkdown,
   };

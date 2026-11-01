@@ -183,7 +183,7 @@ function RecordingTitle() {
 /**
  * 複製: the open tab as text, the transcript, or the transcript wrapped in the
  * analysis prompt (the transcript copy menu's hand-off — same text, same toast,
- * same getting-started tick). Read-only org copies and empty transcripts can't
+ * same getting-started tick). An empty transcript can't
  * hand off, as everywhere else.
  */
 function StudyCopyMenu({ tab }: Readonly<{ tab: StudyTab }>) {
