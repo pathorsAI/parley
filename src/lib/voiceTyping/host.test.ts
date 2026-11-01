@@ -13,7 +13,9 @@ const mocks = vi.hoisted(() => {
     emitted: [] as { name: string; payload: unknown }[],
     invoke: vi.fn(),
     hide: vi.fn(async () => {}),
-    append: vi.fn<(text: string, appBundleId: string | null) => Promise<void>>(async () => {}),
+    append: vi.fn<(text: string, appBundleId: string | null, outcome?: string) => Promise<void>>(
+      async () => {},
+    ),
     log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     settings: {} as Record<string, unknown>,
     /** What `sttApiKey` returns for the configured provider. */
@@ -76,7 +78,12 @@ vi.mock("./overlay", async (importActual) => ({
   prewarmOverlay: async () => {},
 }));
 vi.mock("./history", () => ({
-  appendVoiceEntry: (text: string, appBundleId: string | null) => mocks.append(text, appBundleId),
+  appendVoiceEntry: (
+    text: string,
+    appBundleId: string | null,
+    _polishStyle?: unknown,
+    outcome?: string,
+  ) => mocks.append(text, appBundleId, outcome),
 }));
 vi.mock("./polish", () => ({
   canPolish: () => mocks.polish.on,
@@ -558,7 +565,7 @@ describe("voice-typing host", () => {
     expect(inserted()).toEqual(["貼到哪裡了"]);
     expect(dones()).toEqual([{ message: "clipboard-only", text: "貼到哪裡了" }]);
     expect(calls("observe_pasted_field")).toEqual([]);
-    expect(mocks.append).toHaveBeenCalledWith("貼到哪裡了", "com.apple.Notes");
+    expect(mocks.append).toHaveBeenCalledWith("貼到哪裡了", "com.apple.Notes", undefined);
   });
 
   /** A paste into Parley's own Ask box was once reported as clipboard-only,
@@ -576,7 +583,7 @@ describe("voice-typing host", () => {
     expect(inserted()).toEqual(["幫我整理待辦事項"]);
     expect(dones()).toEqual([{ message: "ok-copied", text: "幫我整理待辦事項" }]);
     expect(calls("observe_pasted_field")).toEqual([{ insertedText: "幫我整理待辦事項" }]);
-    expect(mocks.append).toHaveBeenCalledWith("幫我整理待辦事項", "com.pathors.parley");
+    expect(mocks.append).toHaveBeenCalledWith("幫我整理待辦事項", "com.pathors.parley", undefined);
   });
 
   it("watches the field a pasted dictation landed in", async () => {
@@ -693,9 +700,24 @@ describe("voice-typing host: Esc cancels, Undo copies", () => {
     expect(phases()).not.toContain("stop");
     expect(mocks.hide).not.toHaveBeenCalled();
 
-    // The offer runs out: the overlay goes, and nothing was saved.
+    // The offer runs out: the overlay goes and nothing is delivered, but the
+    // text is kept in the history, flagged, as the only copy left (#640).
     await tick(1);
     expect(mocks.hide).toHaveBeenCalledTimes(1);
+    expect(copied()).toEqual([]);
+    expect(inserted()).toEqual([]);
+    expect(mocks.append).toHaveBeenCalledWith("不要了", null, "cancelled");
+    expect(mocks.log.info).toHaveBeenCalledWith("voice-typing: discarded dictation kept", {
+      chars: 3,
+    });
+  });
+
+  it("keeps nothing when the cancelled dictation heard nothing", async () => {
+    await key(true);
+    await escape();
+    await key(false);
+    finish(1, "0", "");
+    await tick(6000);
     expect(mocks.append).not.toHaveBeenCalled();
   });
 
@@ -711,7 +733,7 @@ describe("voice-typing host: Esc cancels, Undo copies", () => {
     expect(copied()).toEqual(["先取消再復原"]);
     expect(inserted()).toEqual([]);
     expect(calls("observe_pasted_field")).toEqual([]);
-    expect(mocks.append).toHaveBeenCalledWith("先取消再復原", null);
+    expect(mocks.append).toHaveBeenCalledWith("先取消再復原", null, undefined);
     expect(dones()).toEqual([{ message: "recovered", text: "先取消再復原" }]);
 
     // The offer's clock stopped at the Undo: only the done's own hide follows.
@@ -806,7 +828,7 @@ describe("voice-typing host: Esc cancels, Undo copies", () => {
       await undo();
       expect(mocks.polish.run).toHaveBeenCalledTimes(2);
       expect(copied()).toEqual(["潤飾沒有回來的一句話"]);
-      expect(mocks.append).toHaveBeenCalledWith("潤飾沒有回來的一句話", null);
+      expect(mocks.append).toHaveBeenCalledWith("潤飾沒有回來的一句話", null, undefined);
       // Not the plain "copied": the user just sat through "polishing…".
       expect(dones()).toEqual([{ message: "recovered-unpolished", text: "潤飾沒有回來的一句話" }]);
     },
@@ -940,7 +962,11 @@ describe("voice-typing host: Esc cancels, Undo copies", () => {
     await tick(6000);
     expect(inserted()).toEqual(["新的"]);
     expect(copied()).toEqual([]);
-    expect(mocks.append).toHaveBeenCalledTimes(1);
+    // Two lines: the one that was delivered, and the dropped one kept as the
+    // only copy of what the Esc threw away (#640).
+    expect(mocks.append).toHaveBeenCalledWith("新的", "com.apple.Notes", undefined);
+    expect(mocks.append).toHaveBeenCalledWith("舊的", null, "cancelled");
+    expect(mocks.append).toHaveBeenCalledTimes(2);
   });
 
   it("a new press still recovers a cancel whose Undo was already asked", async () => {
