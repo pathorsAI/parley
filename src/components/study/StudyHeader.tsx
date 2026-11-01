@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import { ChevronDown, Copy, Sparkles } from "lucide-react";
+import { ChevronDown, Copy, Pencil, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { transcriptAsText, useStore } from "../../lib/store";
 import { STUDY_TABS, type StudyTab } from "../../lib/store/study";
@@ -143,9 +143,11 @@ function RecordingTitle() {
           cancelled.current = false;
           setDraft(name);
         }}
-        className="-mx-1.5 min-w-0 cursor-text truncate rounded-md px-1.5 text-left text-lg font-semibold transition-colors hover:bg-muted/60"
+        className="group/title -mx-1.5 flex min-w-0 cursor-text items-center gap-1.5 rounded-md px-1.5 text-left text-lg font-semibold transition-colors hover:bg-muted/60"
       >
-        {shown}
+        <span className="min-w-0 truncate">{shown}</span>
+        {/* Says the title is editable before anyone has to discover it. */}
+        <Pencil className="size-3.5 shrink-0 text-muted-foreground/50 transition-colors group-hover/title:text-muted-foreground" />
       </button>
     );
   } else {
