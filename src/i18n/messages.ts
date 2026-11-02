@@ -356,6 +356,7 @@ export const zhTW = {
 
   // ── 通話偵測（#606）──
   "detect.title": "開始記錄這場會議",
+  "detect.close": "關閉",
   "detect.subline": "{who} · 錄音會在 Parley 進行",
   "detect.who.app": "{app} 正在通話",
   "detect.who.browser": "瀏覽器通話（例如 Google Meet）",
@@ -2019,6 +2020,7 @@ export const en = {
 
   // ── Call detection (#606) ──
   "detect.title": "Record this meeting",
+  "detect.close": "Close",
   "detect.subline": "{who} · recording happens in Parley",
   "detect.who.app": "{app} is on a call",
   "detect.who.browser": "A browser call (e.g. Google Meet)",

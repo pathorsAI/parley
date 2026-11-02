@@ -44,8 +44,10 @@ pub const ENDED_EVENT: &str = "meeting://ended";
 const POLL: Duration = Duration::from_secs(3);
 /// How long an app must hold the mic before it counts as a call.
 pub const HOLD: Duration = Duration::from_secs(5);
-/// How long an app must leave the mic alone before a new hold is a new call.
-pub const REARM: Duration = Duration::from_secs(60);
+/// How long an app must leave the mic alone before a new hold is a new call:
+/// long enough to ride out a device switch (the mic drops for a poll or two),
+/// short enough that leaving a call and joining again asks again.
+pub const REARM: Duration = Duration::from_secs(6);
 
 /// What kind of app holds the mic; the prompt words the two first apart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -770,20 +772,20 @@ mod tests {
     }
 
     #[test]
-    fn re_arms_only_after_a_minute_away() {
+    fn rejoining_a_call_asks_again() {
         let mut t = Tracker::default();
         let held = [zoom()];
         t.tick(S(0), &held, Busy::Idle, &[]);
         assert_eq!(t.tick(S(6), &held, Busy::Idle, &[]).len(), 1);
+        // A blip of one poll (a device switch) is the same call.
         t.tick(S(9), &[], Busy::Idle, &[]);
-        // Back within the minute: the same call (a device switch, a rejoin).
-        assert!(t.tick(S(30), &held, Busy::Idle, &[]).is_empty());
-        assert!(t.tick(S(40), &held, Busy::Idle, &[]).is_empty());
-        t.tick(S(50), &[], Busy::Idle, &[]);
-        t.tick(S(111), &[], Busy::Idle, &[]);
-        // A minute and more away: a new call.
-        t.tick(S(120), &held, Busy::Idle, &[]);
-        assert_eq!(t.tick(S(126), &held, Busy::Idle, &[]).len(), 1);
+        assert!(t.tick(S(12), &held, Busy::Idle, &[]).is_empty());
+        assert!(t.tick(S(20), &held, Busy::Idle, &[]).is_empty());
+        // Leaving and joining again is a new call: asked again.
+        t.tick(S(23), &[], Busy::Idle, &[]);
+        t.tick(S(30), &[], Busy::Idle, &[]);
+        t.tick(S(33), &held, Busy::Idle, &[]);
+        assert_eq!(t.tick(S(39), &held, Busy::Idle, &[]).len(), 1);
     }
 
     #[test]

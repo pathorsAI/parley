@@ -105,11 +105,27 @@ export function MeetingPromptApp() {
 
   return (
     <div className="h-screen w-screen" style={{ padding: PROMPT_MARGIN }}>
+      {/* The pill clips its countdown line, so the close button sits on an
+          unclipped wrapper, over the pill's top-left corner as in Notion's
+          prompt; it shows while the pointer is on the prompt (or it's focused). */}
+      <div
+        className="group relative"
+        style={{ width: PILL_SIZE.width, height: PILL_SIZE.height }}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+      >
+      <button
+        type="button"
+        aria-label={t("detect.close")}
+        title={t("detect.close")}
+        onClick={() => sendPromptAction("dismiss")}
+        className="absolute -top-2 -left-2 z-10 grid size-6 place-items-center rounded-full border border-border bg-background text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+      >
+        <X className="size-3.5" />
+      </button>
       <div
         role="alertdialog"
         aria-label={t("detect.title")}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
         className="relative flex items-center gap-3 overflow-hidden rounded-full border border-border bg-background pr-3 pl-4 text-foreground shadow-[0_6px_20px_rgba(15,23,42,0.14),0_1px_3px_rgba(15,23,42,0.08)]"
         style={{ width: PILL_SIZE.width, height: PILL_SIZE.height }}
       >
@@ -146,6 +162,7 @@ export function MeetingPromptApp() {
           className="absolute bottom-0 left-0 h-[2px] bg-primary/50"
           style={{ width: `${left * 100}%` }}
         />
+      </div>
       </div>
       {menuOpen && (
         <>
