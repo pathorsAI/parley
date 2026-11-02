@@ -41,13 +41,16 @@ pub const DETECTED_EVENT: &str = "meeting://detected";
 pub const ENDED_EVENT: &str = "meeting://ended";
 
 /// How often the mic users are polled.
-const POLL: Duration = Duration::from_secs(3);
-/// How long an app must hold the mic before it counts as a call.
-pub const HOLD: Duration = Duration::from_secs(5);
-/// How long an app must leave the mic alone before a new hold is a new call:
-/// long enough to ride out a device switch (the mic drops for a poll or two),
-/// short enough that leaving a call and joining again asks again.
-pub const REARM: Duration = Duration::from_secs(6);
+const POLL: Duration = Duration::from_secs(1);
+/// How long an app must hold the mic before it counts as a call: enough to
+/// skip a one-off blip (a permission check, a notification sound), short
+/// enough that the prompt shows as the call starts.
+pub const HOLD: Duration = Duration::from_secs(2);
+/// How long an app must leave the mic alone before a new hold is a new call.
+/// Zero: every release ends the call, so leaving a meeting and joining again —
+/// a few seconds in Meet — always asks again. A device switch that drops the
+/// mic for a moment may ask again too; asking once more beats missing a call.
+pub const REARM: Duration = Duration::ZERO;
 
 /// What kind of app holds the mic; the prompt words the two first apart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -477,8 +480,8 @@ struct Track {
 }
 
 /// The trigger state machine: one prompt per continuous mic session of an
-/// app, after [`HOLD`], re-armed only once the app has left the mic alone for
-/// [`REARM`]. Times are offsets from any fixed origin. Pure.
+/// app, after [`HOLD`]; a release ends the session (after [`REARM`], which is
+/// zero), so the next hold is a new call. Times are offsets from any fixed origin. Pure.
 #[derive(Default)]
 pub struct Tracker {
     apps: HashMap<String, Track>,
@@ -783,18 +786,18 @@ mod tests {
     }
 
     #[test]
-    fn a_hold_is_announced_after_five_seconds_once() {
+    fn a_hold_is_announced_after_two_seconds_once() {
         let mut t = Tracker::default();
         let z = zoom();
         let held = [z.clone()];
         assert!(t.tick(S(0), &held, Busy::Idle, &[]).is_empty());
-        assert!(t.tick(S(3), &held, Busy::Idle, &[]).is_empty());
+        assert!(t.tick(S(1), &held, Busy::Idle, &[]).is_empty());
         assert_eq!(
-            t.tick(S(6), &held, Busy::Idle, &[]),
+            t.tick(S(2), &held, Busy::Idle, &[]),
             vec![Signal::Detected(z.clone())]
         );
-        assert!(t.tick(S(9), &held, Busy::Idle, &[]).is_empty());
-        assert_eq!(t.tick(S(12), &[], Busy::Idle, &[]), vec![Signal::Ended(z)]);
+        assert!(t.tick(S(3), &held, Busy::Idle, &[]).is_empty());
+        assert_eq!(t.tick(S(4), &[], Busy::Idle, &[]), vec![Signal::Ended(z)]);
     }
 
     #[test]
@@ -802,11 +805,11 @@ mod tests {
         let mut t = Tracker::default();
         let held = [zoom()];
         t.tick(S(0), &held, Busy::Idle, &[]);
-        t.tick(S(3), &[], Busy::Idle, &[]);
-        // Back again: the five seconds start over.
-        assert!(t.tick(S(6), &held, Busy::Idle, &[]).is_empty());
-        assert!(t.tick(S(9), &held, Busy::Idle, &[]).is_empty());
-        assert_eq!(t.tick(S(12), &held, Busy::Idle, &[]).len(), 1);
+        t.tick(S(1), &[], Busy::Idle, &[]);
+        // Back again: the two seconds start over.
+        assert!(t.tick(S(2), &held, Busy::Idle, &[]).is_empty());
+        assert!(t.tick(S(3), &held, Busy::Idle, &[]).is_empty());
+        assert_eq!(t.tick(S(4), &held, Busy::Idle, &[]).len(), 1);
     }
 
     #[test]
@@ -814,16 +817,12 @@ mod tests {
         let mut t = Tracker::default();
         let held = [zoom()];
         t.tick(S(0), &held, Busy::Idle, &[]);
-        assert_eq!(t.tick(S(6), &held, Busy::Idle, &[]).len(), 1);
-        // A blip of one poll (a device switch) is the same call.
-        t.tick(S(9), &[], Busy::Idle, &[]);
-        assert!(t.tick(S(12), &held, Busy::Idle, &[]).is_empty());
-        assert!(t.tick(S(20), &held, Busy::Idle, &[]).is_empty());
-        // Leaving and joining again is a new call: asked again.
-        t.tick(S(23), &[], Busy::Idle, &[]);
-        t.tick(S(30), &[], Busy::Idle, &[]);
-        t.tick(S(33), &held, Busy::Idle, &[]);
-        assert_eq!(t.tick(S(39), &held, Busy::Idle, &[]).len(), 1);
+        assert_eq!(t.tick(S(2), &held, Busy::Idle, &[]).len(), 1);
+        assert!(t.tick(S(3), &held, Busy::Idle, &[]).is_empty());
+        // Leaving and joining again moments later is a new call: asked again.
+        assert_eq!(t.tick(S(4), &[], Busy::Idle, &[]).len(), 1); // ended
+        t.tick(S(5), &held, Busy::Idle, &[]);
+        assert_eq!(t.tick(S(7), &held, Busy::Idle, &[]).len(), 1);
     }
 
     #[test]
@@ -861,13 +860,13 @@ mod tests {
         let mut t = Tracker::default();
         let chrome = identify(&proc("com.google.chrome", None)).unwrap();
         t.tick(S(0), &[zoom()], Busy::Idle, &[]);
-        t.tick(S(3), &[zoom(), chrome.clone()], Busy::Idle, &[]);
+        t.tick(S(1), &[zoom(), chrome.clone()], Busy::Idle, &[]);
         assert_eq!(
-            t.tick(S(6), &[zoom(), chrome.clone()], Busy::Idle, &[]),
+            t.tick(S(2), &[zoom(), chrome.clone()], Busy::Idle, &[]),
             vec![Signal::Detected(zoom())]
         );
         assert_eq!(
-            t.tick(S(9), &[zoom(), chrome.clone()], Busy::Idle, &[]),
+            t.tick(S(3), &[zoom(), chrome.clone()], Busy::Idle, &[]),
             vec![Signal::Detected(chrome)]
         );
     }

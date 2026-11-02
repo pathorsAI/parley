@@ -107,7 +107,9 @@ export function MeetingPromptApp() {
     <div className="h-screen w-screen" style={{ padding: PROMPT_MARGIN }}>
       {/* The pill clips its countdown line, so the close button sits on an
           unclipped wrapper, over the pill's top-left corner as in Notion's
-          prompt; it shows while the pointer is on the prompt (or it's focused). */}
+          prompt. Always shown: the prompt window never takes focus (it mustn't
+          pull the call out of focus), and macOS sends no hover to a web view in
+          a window that isn't key, so a hover-only × would never appear. */}
       <div
         className="group relative"
         style={{ width: PILL_SIZE.width, height: PILL_SIZE.height }}
@@ -119,7 +121,7 @@ export function MeetingPromptApp() {
         aria-label={t("detect.close")}
         title={t("detect.close")}
         onClick={() => sendPromptAction("dismiss")}
-        className="absolute -top-2 -left-2 z-10 grid size-6 place-items-center rounded-full border border-border bg-background text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+        className="absolute -top-2 -left-2 z-10 grid size-6 place-items-center rounded-full border border-border bg-background text-muted-foreground shadow-sm transition-colors hover:text-foreground"
       >
         <X className="size-3.5" />
       </button>
