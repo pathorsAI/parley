@@ -179,7 +179,7 @@ function SavedFooter({ artifact }: Readonly<{ artifact: Extract<StudyArtifactKey
   const saved = useStore((s) => !!s.loadedHistoryId);
   if (!saved) return null;
   return (
-    <div className="mt-6 flex items-center justify-between gap-3 border-t border-border pt-3">
+    <div className="mt-6 flex items-center justify-between gap-3">
       <p className="text-[11px] text-muted-foreground/70">{t("study.saved")}</p>
       <Button
         variant="ghost"
