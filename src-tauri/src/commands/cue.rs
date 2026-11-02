@@ -19,14 +19,14 @@ pub(crate) enum Cue {
 }
 
 impl Cue {
-    /// The macOS system sound (`/System/Library/Sounds/<name>.aiff`): Hero's
-    /// rising chime to start, Glass's bright ring to stop — distinct from each
-    /// other and easy to hear over a call (Tink and Pop were too faint).
+    /// The macOS system sound (`/System/Library/Sounds/<name>.aiff`): Ping to
+    /// start, Bottle to stop — clear enough to hear over a call without the
+    /// fanfare (Tink and Pop were too faint, Hero and Glass too loud).
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     fn macos_sound(self) -> &'static str {
         match self {
-            Cue::Start => "Hero",
-            Cue::Stop => "Glass",
+            Cue::Start => "Ping",
+            Cue::Stop => "Bottle",
         }
     }
 
@@ -134,8 +134,8 @@ mod tests {
 
     #[test]
     fn each_cue_maps_to_a_distinct_system_sound() {
-        assert_eq!(Cue::Start.macos_sound(), "Hero");
-        assert_eq!(Cue::Stop.macos_sound(), "Glass");
+        assert_eq!(Cue::Start.macos_sound(), "Ping");
+        assert_eq!(Cue::Stop.macos_sound(), "Bottle");
         assert_eq!(Cue::Start.windows_alias(), "Notification.Default");
         assert_eq!(Cue::Stop.windows_alias(), "SystemDefault");
     }
