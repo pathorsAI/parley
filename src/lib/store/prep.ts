@@ -77,6 +77,19 @@ export function sortDrafts(drafts: readonly MeetingDraft[]): MeetingDraft[] {
   });
 }
 
+/** Drafts destined for this org — its root or any of its folders. Only a
+ *  draft's own org pick counts: one that rides the settings-wide default
+ *  share has no org of its own. Pure. */
+export function draftsForOrg(drafts: readonly MeetingDraft[], orgId: string): MeetingDraft[] {
+  return drafts.filter((d) => typeof d.meetingOrgShare === "object" && d.meetingOrgShare?.orgId === orgId);
+}
+
+/** Where a new draft opened from somewhere specific (an org's page) starts. */
+export interface DraftPreset {
+  orgId: string;
+  folderId: string | null;
+}
+
 export interface PrepSlice {
   /** Meeting to-do / agenda checklist. */
   todos: TodoItem[];
@@ -122,7 +135,10 @@ export interface PrepSlice {
   /** The meeting-draft sheet is open: the prep below, filled in before
    *  recording ("新增會議草稿"). UI state only; not part of the draft itself. */
   draftOpen: boolean;
-  setDraftOpen: (open: boolean) => void;
+  /** Open or close the sheet. `preset` points a new draft at an org (how an
+   *  org's page opens it); without one the prep's own destination stands, as
+   *  總覽 opens it. Ignored while a saved draft is being edited. */
+  setDraftOpen: (open: boolean, preset?: DraftPreset) => void;
   /** Principled-negotiation setup for THIS deal (per-meeting, not global). Feeds
    *  BATNA / ZOPA / walk-away reasoning in the analysis. */
   meetingBatna: string;
@@ -191,13 +207,21 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
   drafts: [],
   editingDraftId: null,
   draftOpen: false,
-  setDraftOpen: (draftOpen) =>
+  setDraftOpen: (draftOpen, preset) =>
     set((s) => {
       // The sheet edits the prep fields, which belong to the live meeting
       // while one runs: a new draft waits for it to end.
       if (draftOpen && isMeetingActive(s.meetingStatus)) {
         notify.message(translate(s.settings.language, "draft.lockedWhileRecording"));
         return {};
+      }
+      // "copy" is what a per-meeting org pick defaults to elsewhere
+      // (useMeetingDestination, the settings default share).
+      if (draftOpen && preset && s.editingDraftId == null) {
+        return {
+          draftOpen,
+          meetingOrgShare: { orgId: preset.orgId, folderId: preset.folderId, mode: "copy" as const },
+        };
       }
       return { draftOpen };
     }),

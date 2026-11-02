@@ -37,6 +37,8 @@ import { VoiceTypingHistory } from "../../history/VoiceTypingHistory";
 import { DestinationSheet } from "../DestinationSheet";
 import { ConfirmDialog } from "../shell/ConfirmDialog";
 import { RecordingTimeline, RecordingTimelineSkeleton } from "./RecordingTimeline";
+import { EmptyRecords } from "./EmptyRecords";
+import { OrgMeetingDrafts } from "./OrgMeetingDrafts";
 import { useArchiveFolder } from "./useArchiveFolder";
 import { useRenderWindow } from "./useRenderWindow";
 import type { LibraryTree } from "../shell/useLibraryTree";
@@ -469,6 +471,10 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
     );
   }
 
+  const orgFooter = isOrg && entries !== null && visible.length > 0 && (
+    <p className="px-2 py-3 text-[11px] text-muted-foreground">{t("library.org.footer")}</p>
+  );
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex shrink-0 items-center gap-2 border-b px-4 py-3">
@@ -558,24 +564,38 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
       {/* The date headers are sticky, so the list owns its own top padding —
           rows must slide under the header, not through a gap above it. */}
       <div className="relative min-h-0 flex-1 overflow-y-auto px-4 pb-4">
-        {/* An org's own page holds two things, kept apart: its folders, and the
-            recordings filed to the org without a folder (a recording can be
-            saved into an org and left at its root). */}
-        {orgRoot && (
+        {/* An org's own page holds three things, kept apart: its folders, the
+            meeting drafts headed for it, and the recordings filed to the org
+            without a folder (a recording can be saved into an org and left at
+            its root). */}
+        {orgRoot && selection.kind === "org" ? (
           <>
             <h2 className="px-2 pt-5 pb-3 text-xs font-semibold text-muted-foreground">{t("library.org.folders")}</h2>
             {/* One row that scrolls sideways, however many folders there are,
-                so the unfiled recordings below stay in view. */}
+                so the columns below stay in view. */}
             <div className="-mx-4 flex flex-nowrap gap-5 overflow-x-auto px-6 pt-1 pb-6">{orgFolderCards}</div>
-            <h2 className="px-2 pt-6 pb-1 text-xs font-semibold text-muted-foreground">
-              {t("library.org.rootRecordings")}
-              {visible.length > 0 && <span className="ml-1.5 font-normal tabular-nums">{visible.length}</span>}
-            </h2>
+            {/* Side by side when the pane has room, stacked when it doesn't —
+                measured on the pane, not the window, since the tree and the
+                window's own width both eat into it. */}
+            <div className="@container">
+              <div className="grid grid-cols-1 gap-x-8 @min-[720px]:grid-cols-2">
+                <OrgMeetingDrafts orgId={selection.id} folders={scopeFolders} />
+                <section className="min-w-0">
+                  <h2 className="px-2 pt-6 pb-1 text-xs font-semibold text-muted-foreground">
+                    {t("library.org.rootRecordings")}
+                    {visible.length > 0 && <span className="ml-1.5 font-normal tabular-nums">{visible.length}</span>}
+                  </h2>
+                  <div className="relative">{body}</div>
+                  {orgFooter}
+                </section>
+              </div>
+            </div>
           </>
-        )}
-        <div className="relative">{body}</div>
-        {isOrg && entries !== null && visible.length > 0 && (
-          <p className="px-2 py-3 text-[11px] text-muted-foreground">{t("library.org.footer")}</p>
+        ) : (
+          <>
+            <div className="relative">{body}</div>
+            {orgFooter}
+          </>
         )}
       </div>
 
@@ -607,27 +627,6 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
           if (fileItem) fileTo(fileItem, destination, mode);
         }}
       />
-    </div>
-  );
-}
-
-/**
- * Nothing to list: the UX file's empty-box illustration (3541:9456) over a
- * title and a hint. `compact` sits inline under a section heading (an org's
- * unfiled recordings) instead of centring in the whole pane.
- */
-function EmptyRecords({
-  title,
-  hint,
-  compact = false,
-}: Readonly<{ title: string; hint: string; compact?: boolean }>) {
-  return (
-    <div
-      className={`flex flex-col items-center justify-center gap-1 text-center ${compact ? "py-8" : "h-full"}`}
-    >
-      <img alt="" src="/library/empty-records.svg" className="mb-4 block h-[105.84px] w-[120px] max-w-none" />
-      <p className="text-sm text-muted-foreground">{title}</p>
-      <p className="max-w-80 text-xs text-muted-foreground/70">{hint}</p>
     </div>
   );
 }
