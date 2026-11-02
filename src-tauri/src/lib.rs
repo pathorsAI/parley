@@ -10,6 +10,7 @@ mod history;
 mod hotkey;
 mod local_stt;
 mod mcp;
+mod meeting_detect;
 mod menu;
 mod model_download;
 mod permissions;
@@ -124,6 +125,9 @@ pub fn run() {
         // The clipboard a dictation borrows for its paste, and the restore
         // that gives it back — see voice_typing::ClipboardState.
         .manage(voice_typing::ClipboardState::default())
+        // The "another app started a call" watcher, started and stopped by the
+        // frontend per its setting — see meeting_detect.rs.
+        .manage(meeting_detect::MeetingDetectState::default())
         // Native menu-bar "Diagnostics" submenu (View Logs + Clear Cache).
         .menu(menu::build)
         .on_menu_event(|app, event| menu::on_event(app, event.id().as_ref()))
@@ -281,6 +285,7 @@ pub fn run() {
             local_stt::local_stt_hardware,
             mcp::get_mcp_server_info,
             mcp::get_mcp_activity,
+            meeting_detect::set_meeting_detection,
             cache::clear_cache,
             cache::cache_sizes,
             autostart::launch_at_login_status,

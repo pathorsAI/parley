@@ -349,3 +349,10 @@ export const launchAtLoginStatus = () => invoke<boolean>("launch_at_login_status
 export const setLaunchAtLogin = (args: { enabled: boolean }) => invoke<boolean>("set_launch_at_login", args);
 export const markShowOnNextLaunch = () => invoke<void>("mark_show_on_next_launch");
 export const clearShowOnNextLaunch = () => invoke<void>("clear_show_on_next_launch");
+
+// ── Call detection (meeting_detect.rs) ──────────────────────────────────────
+
+/** Start (or stop) the watcher that reports another app starting a call, with
+ *  the app ids the user muted. Safe to call repeatedly. */
+export const setMeetingDetection = (args: { enabled: boolean; mutedApps: string[] }) =>
+  invoke<void>("set_meeting_detection", args);

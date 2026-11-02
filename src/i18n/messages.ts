@@ -354,6 +354,22 @@ export const zhTW = {
   "reminder.openDraft": "查看草稿",
   "reminder.later": "稍後",
 
+  // ── 通話偵測（#606）──
+  "detect.title": "開始記錄這場會議",
+  "detect.subline": "{who} · 錄音會在 Parley 進行",
+  "detect.who.app": "{app} 正在通話",
+  "detect.who.browser": "瀏覽器通話（例如 Google Meet）",
+  "detect.who.unknown": "有 app 正在使用麥克風",
+  "detect.start": "開始錄音",
+  "detect.startDraft": "開始錄音：{title}",
+  "detect.more": "更多選項",
+  "detect.notNow": "不用",
+  "detect.mute": "不要再對 {app} 詢問",
+  "settings.meetingDetect.title": "偵測到通話時提醒我開始錄音",
+  "settings.meetingDetect.hint": "只會偵測其他 app 是否正在使用麥克風，不會錄下任何內容。",
+  "settings.meetingDetect.muted": "不再詢問的 app",
+  "settings.meetingDetect.unmute": "恢復詢問 {app}",
+
   // ── 資料夾挑選器 ──
   "folder.noMatch": "找不到符合的項目",
 
@@ -882,7 +898,7 @@ export const zhTW = {
   "settings.kw.account": "登入 Google 帳號 同步 雲端 儲存位置",
   "settings.kw.organizations": "組織 團隊 成員 邀請 角色 管理員 擁有者 轉讓 退出 移除",
   "settings.kw.provider": "模型 API 金鑰 key LLM OpenAI Anthropic Gemini Groq OpenRouter 推理強度 自訂 自架 custom base URL vLLM LM Studio LiteLLM 測試連線",
-  "settings.kw.transcription": "轉錄 STT 語音辨識 麥克風 mic 輸入裝置 Soniox Deepgram 講者 分離",
+  "settings.kw.transcription": "轉錄 STT 語音辨識 麥克風 mic 輸入裝置 Soniox Deepgram 講者 分離 通話 偵測 提醒 會議 Zoom Meet",
   "settings.kw.dictionary": "詞庫 專有名詞 人名 術語 校正 替換 聽錯 vocabulary",
   "settings.kw.voiceTyping": "語音輸入 聽寫 快捷鍵 熱鍵 貼上",
   "settings.kw.permissions": "權限 麥克風 系統音訊 螢幕錄製 輔助使用 麥克風隱私權 隱私權設定 Windows 隱私權",
@@ -2001,6 +2017,22 @@ export const en = {
   "reminder.openDraft": "View draft",
   "reminder.later": "Later",
 
+  // ── Call detection (#606) ──
+  "detect.title": "Record this meeting",
+  "detect.subline": "{who} · recording happens in Parley",
+  "detect.who.app": "{app} is on a call",
+  "detect.who.browser": "A browser call (e.g. Google Meet)",
+  "detect.who.unknown": "An app is using the microphone",
+  "detect.start": "Start recording",
+  "detect.startDraft": "Start recording: {title}",
+  "detect.more": "More options",
+  "detect.notNow": "Not now",
+  "detect.mute": "Don't ask for {app}",
+  "settings.meetingDetect.title": "Ask to record when a call starts",
+  "settings.meetingDetect.hint": "Parley only checks whether another app is using the microphone; nothing is recorded.",
+  "settings.meetingDetect.muted": "Apps not to ask about",
+  "settings.meetingDetect.unmute": "Ask about {app} again",
+
   // ── Folder picker ──
   "folder.noMatch": "No match",
 
@@ -2534,7 +2566,7 @@ export const en = {
   "settings.kw.account": "sign in Google account sync cloud save location",
   "settings.kw.organizations": "organization team members invite role admin owner transfer leave remove",
   "settings.kw.provider": "model API key LLM OpenAI Anthropic Gemini Groq OpenRouter reasoning effort custom self-hosted base URL vLLM LM Studio LiteLLM test connection",
-  "settings.kw.transcription": "transcription STT speech recognition microphone mic input device Soniox Deepgram speaker diarization",
+  "settings.kw.transcription": "transcription STT speech recognition microphone mic input device Soniox Deepgram speaker diarization call detection prompt meeting Zoom Meet",
   "settings.kw.dictionary": "dictionary phrases vocabulary terms proper nouns names corrections replacements misheard",
   "settings.kw.voiceTyping": "voice typing dictation shortcut hotkey paste",
   "settings.kw.permissions": "permissions microphone system audio screen recording accessibility microphone privacy Windows privacy settings",
