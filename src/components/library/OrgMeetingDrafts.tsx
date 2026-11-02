@@ -3,7 +3,6 @@ import { useStore } from "../../lib/store";
 import { draftsForOrg, sortDrafts } from "../../lib/store/prep";
 import { useI18n } from "../../i18n";
 import { DraftRow, useNow } from "../home/DraftRow";
-import { EmptyRecords } from "./EmptyRecords";
 
 /**
  * An org's 會議草稿: the saved drafts headed for this org — its root or one
@@ -42,7 +41,10 @@ export function OrgMeetingDrafts({
         </button>
       </div>
       {rows.length === 0 ? (
-        <EmptyRecords title={t("library.org.draftsEmptyTitle")} hint={t("library.org.draftsEmpty")} compact />
+        // The same dashed note 總覽 shows when nothing is scheduled.
+        <p className="mt-2 rounded-lg border border-dashed bg-white/20 px-4 py-5 text-center text-xs text-muted-foreground">
+          {t("library.org.draftsEmpty")}
+        </p>
       ) : (
         <ul className="flex flex-col">
           {rows.map((d) => (
