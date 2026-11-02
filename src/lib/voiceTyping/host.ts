@@ -82,6 +82,7 @@ import {
   type SuggestActionPayload,
 } from "./suggestEvents";
 import * as ipc from "../ipc/commands";
+import { playCue } from "../meeting/cue";
 import {
   STT_CLOSED_EVENT,
   STT_CONNECTED_EVENT,
@@ -578,6 +579,10 @@ async function startSession() {
   // work elsewhere in the app stretched that window arbitrarily. The overlay
   // webview is prewarmed and already subscribed, so Rust's `start` event can
   // reset it before its window is on screen and it simply catches up.
+  // The start cue (#607), fired, not awaited: a dictation can't wait the way a
+  // meeting does, so it isn't kept out of the audio — its strike lands before
+  // the mic is open, and a chime is no speech to the recognizer anyway.
+  void playCue("start");
   const starting = ipc.startVoiceTyping({
     provider,
     apiKey: request.apiKey,
@@ -641,6 +646,8 @@ async function endSession() {
   // Rust keeps a short tail of audio, then cuts the capture, which tells the
   // STT adapter to finalize; the final tokens arrive over the next moments.
   await stopCapture({ tail: true });
+  // After the mic is cut, so the stop cue is not dictated.
+  void playCue("stop");
   // The close (or a failure) may have settled it while the stop was in flight,
   // or an Esc cancelled it (its applyCancel, queued behind this, settles it).
   if (!busy || gen !== myGen || cancels.isCancelled(myGen)) return;

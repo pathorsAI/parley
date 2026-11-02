@@ -4,8 +4,9 @@ import { isTauri } from "../platform";
 import { log } from "../log";
 
 /**
- * The short system sound a meeting recording starts and stops with (issue
- * #607), so the user knows Parley is listening without looking at it. The
+ * The short system sound a meeting recording — and a voice-typing dictation —
+ * starts and stops with (issue #607), so the user knows Parley is listening
+ * without looking at it. The
  * sound itself is the OS's own (commands/cue.rs); this decides whether to
  * play it. Pause and resume stay silent.
  */

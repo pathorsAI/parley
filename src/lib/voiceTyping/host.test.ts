@@ -69,6 +69,13 @@ vi.mock("../transcription/providers", () => ({
 }));
 vi.mock("../transcription/languageHints", () => ({ languageHintsFromSettings: () => [] }));
 vi.mock("../log", () => ({ log: mocks.log }));
+const cues = vi.hoisted(() => ({ played: [] as string[] }));
+vi.mock("../meeting/cue", () => ({
+  playCue: (cue: string) => {
+    cues.played.push(cue);
+    return Promise.resolve(true);
+  },
+}));
 vi.mock("../textNormalize", () => ({ normalizeTranscriptText: async (raw: string) => raw }));
 vi.mock("../zhConvert", () => ({ preloadZhConverter: () => {} }));
 vi.mock("./overlay", async (importActual) => ({
@@ -286,6 +293,18 @@ afterEach(() => {
 });
 
 describe("voice-typing host", () => {
+  it("plays the start cue on the press and the stop cue once the mic is cut", async () => {
+    cues.played.length = 0;
+    await key(true);
+    expect(cues.played).toEqual(["start"]);
+    await tick(300);
+    await key(false);
+    expect(calls("stop_voice_typing")).toEqual([{ tail: true }]);
+    expect(cues.played).toEqual(["start", "stop"]);
+    finish(1, "0", "好");
+    await tick();
+  });
+
   /** Regression: the relay answers a short tap seconds after the release, and
    *  the old quiet rule had already pasted nothing 60 ms after it. */
   it("waits for a short tap's answer and pastes it", async () => {
