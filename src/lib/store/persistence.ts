@@ -27,6 +27,7 @@ import {
 } from "./defaults";
 import type { ParleyState } from "./types";
 import type { MeetingDraft } from "./prep";
+import { sanitizeMutedApps } from "../meeting/detect";
 
 /**
  * #131: map legacy single-provider settings (provider + {ask,eval} model roles)
@@ -285,6 +286,9 @@ export function mergePersistedState(persisted: unknown, current: ParleyState): P
       hintsSeen: Array.isArray(p.hintsSeen)
         ? p.hintsSeen.filter((h): h is HintId => typeof h === "string")
         : [],
+      meetingDetectEnabled:
+        typeof p.meetingDetectEnabled === "boolean" ? p.meetingDetectEnabled : DEFAULT_SETTINGS.meetingDetectEnabled,
+      meetingDetectMutedApps: sanitizeMutedApps(p.meetingDetectMutedApps),
     },
     evaluations: evalsFromDefs(relabeledEvals),
     // Restore the persisted cloud sign-in (re-validated on startup).

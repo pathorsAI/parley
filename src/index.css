@@ -169,6 +169,14 @@ html[data-app-window="meeting"] #root {
   background: transparent;
 }
 
+/* The call prompt is undecorated + transparent too: a pill with its own
+   shadow, over the call. */
+html[data-app-window="meeting-prompt"],
+html[data-app-window="meeting-prompt"] body,
+html[data-app-window="meeting-prompt"] #root {
+  background: transparent;
+}
+
 body {
   /* Right for macOS: WKWebView subpixel-antialiases by default, which is too
      heavy for DM Sans at these sizes. WebView2 ignores the property outright, so
