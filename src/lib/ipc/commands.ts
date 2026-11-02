@@ -160,6 +160,9 @@ export const animateWindowFrame = (args: {
   height: number;
   durationMs: number;
 }) => invoke<void>("animate_window_frame", args);
+/** Play the short system sound a meeting recording starts or stops with
+ *  (commands/cue.rs); returns at once, the sound plays on. */
+export const playCue = (args: { cue: "start" | "stop" }) => invoke<void>("play_cue", args);
 /** The meeting the backend is recording right now, or null. */
 export interface BackendMeeting {
   meetingId: string;

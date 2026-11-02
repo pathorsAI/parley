@@ -122,10 +122,12 @@ winreg = "0.55"
 # Win32_Storage_FileSystem (GetDiskFreeSpaceExW), Win32_Graphics_Dxgi (the GPU
 # list) and Win32_System_LibraryLoader (the Vulkan loader probe and the
 # delay-load hooks, see vulkan_delayload.rs) are the local STT provider's
-# hardware probe (see hardware.rs).
+# hardware probe (see hardware.rs). Win32_Media_Audio is PlaySoundW, the
+# system sound a meeting recording starts and stops with (see commands/cue.rs).
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Dxgi",
+    "Win32_Media_Audio",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
     "Win32_System_DataExchange",

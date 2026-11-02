@@ -48,7 +48,7 @@ describe("endsMeetingOnWake", () => {
 describe("handleSystemWake", () => {
   it("ends and saves the meeting after a night asleep, untrimmed, and says so", async () => {
     await handleSystemWake(10 * 3_600_000);
-    expect(mocks.invoke.mock.calls).toEqual([["stop_meeting", {}]]);
+    expect(mocks.invoke.mock.calls).toEqual([["stop_meeting", {}], ["play_cue", { cue: "stop" }]]);
     expect(useStore.getState().meetingStatus).toBe("stopped");
     expect(mocks.notify).toHaveBeenCalledTimes(1);
     expect(String(mocks.notify.mock.calls[0][0])).toContain("600 minutes");
