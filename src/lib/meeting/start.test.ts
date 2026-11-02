@@ -247,3 +247,46 @@ describe("beginMeeting", () => {
     expect(startCalls()).toHaveLength(1);
   });
 });
+
+describe("beginMeeting's start cue (#607)", () => {
+  const cueCalls = () => mocks.invoke.mock.calls.filter((c) => c[0] === "play_cue").map((c) => c[1]);
+  const commandNames = () => mocks.invoke.mock.calls.map((c) => c[0] as string);
+
+  it("plays once, before the UI flips and the capture opens", async () => {
+    setup({ transcriptionProvider: "soniox", sonioxApiKey: "sk" });
+    let statusAtCue: string | undefined;
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "play_cue") statusAtCue = useStore.getState().meetingStatus;
+      return undefined;
+    });
+    await beginMeeting();
+    expect(cueCalls()).toEqual([{ cue: "start" }]);
+    expect(statusAtCue).toBe("idle");
+    const names = commandNames();
+    expect(names.indexOf("play_cue")).toBeLessThan(names.indexOf("start_meeting"));
+  });
+
+  it("stays silent when the setting is off", async () => {
+    setup({ transcriptionProvider: "soniox", sonioxApiKey: "sk", recordingCueEnabled: false });
+    await beginMeeting();
+    expect(startCalls()).toHaveLength(1);
+    expect(cueCalls()).toEqual([]);
+  });
+
+  it("stays silent when the start is refused", async () => {
+    vi.stubEnv("DEV", false);
+    setup({ transcriptionProvider: "deepgram", deepgramApiKey: "" });
+    await beginMeeting();
+    expect(cueCalls()).toEqual([]);
+  });
+
+  it("still starts when the cue fails to play", async () => {
+    setup({ transcriptionProvider: "soniox", sonioxApiKey: "sk" });
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "play_cue") throw new Error("no sound");
+      return undefined;
+    });
+    expect(await statusesDuring(beginMeeting)).toEqual(["recording"]);
+    expect(startCalls()).toHaveLength(1);
+  });
+});

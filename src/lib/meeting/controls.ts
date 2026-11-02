@@ -6,6 +6,7 @@ import { meetingUsesRealPipeline } from "../transcription/prepare";
 import { log } from "../log";
 import * as ipc from "../ipc/commands";
 import { liveSaves, orphanSnapshot, snapshotLiveMeeting } from "../history/history";
+import { playCue } from "./cue";
 
 /**
  * The live meeting's recorder controls — end, pause/resume, cancel — and the
@@ -55,6 +56,9 @@ export async function endMeeting(opts: { keepMs?: number } = {}): Promise<void> 
     log.error("meeting: stop failed", { error: String(e) });
     useStore.getState().setFinalizingMeeting(false);
   }
+  // The stop cue (#607), once stop_meeting has torn the captures down so the
+  // recording does not end on it. Cancel discards the meeting and stays silent.
+  void playCue("stop");
 }
 
 /**

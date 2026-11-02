@@ -48,7 +48,8 @@ describe("endMeeting", () => {
   it("stops the real session and shows finalizing until the save reports back", async () => {
     setup({ key: "sk" });
     await endMeeting();
-    expect(commands()).toEqual([["stop_meeting", {}]]);
+    // The stop cue plays after the captures are down, so it is not recorded.
+    expect(commands()).toEqual([["stop_meeting", {}], ["play_cue", { cue: "stop" }]]);
     expect(useStore.getState().meetingStatus).toBe("stopped");
     expect(useStore.getState().isFinalizingMeeting).toBe(true);
     expect(mocks.stopMockStream).not.toHaveBeenCalled();
@@ -60,6 +61,20 @@ describe("endMeeting", () => {
     await endMeeting();
     expect(useStore.getState().isFinalizingMeeting).toBe(false);
     expect(mocks.log.error).toHaveBeenCalledWith("meeting: stop failed", { error: "Error: gone" });
+  });
+
+  it("plays no stop cue when the setting is off", async () => {
+    setup({ key: "sk" });
+    useStore.setState({ settings: { ...useStore.getState().settings, recordingCueEnabled: false } });
+    await endMeeting();
+    expect(commands()).toEqual([["stop_meeting", {}]]);
+  });
+
+  it("still plays the stop cue once when the backend stop fails", async () => {
+    setup({ key: "sk" });
+    mocks.invoke.mockRejectedValueOnce(new Error("gone"));
+    await endMeeting();
+    expect(commands()).toEqual([["stop_meeting", {}], ["play_cue", { cue: "stop" }]]);
   });
 
   it("stops the mock stream when there is no real pipeline", async () => {
@@ -135,7 +150,7 @@ describe("endMeeting with a trim", () => {
   it("passes keepMs to the backend stop", async () => {
     setup({ key: "sk" });
     await endMeeting({ keepMs: 90_000 });
-    expect(commands()).toEqual([["stop_meeting", { keepMs: 90_000 }]]);
+    expect(commands()).toEqual([["stop_meeting", { keepMs: 90_000 }], ["play_cue", { cue: "stop" }]]);
   });
 });
 

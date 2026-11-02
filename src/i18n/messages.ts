@@ -370,6 +370,8 @@ export const zhTW = {
   "settings.meetingDetect.hint": "只會偵測其他 app 是否正在使用麥克風，不會錄下任何內容。",
   "settings.meetingDetect.muted": "不再詢問的 app",
   "settings.meetingDetect.unmute": "恢復詢問 {app}",
+  "settings.recordingCue.title": "錄音開始與結束時播放提示音",
+  "settings.recordingCue.hint": "用系統內建的提示音，不看畫面也知道已經開始錄音。",
 
   // ── 資料夾挑選器 ──
   "folder.noMatch": "找不到符合的項目",
@@ -2037,6 +2039,8 @@ export const en = {
   "settings.meetingDetect.hint": "Parley only checks whether another app is using the microphone; nothing is recorded.",
   "settings.meetingDetect.muted": "Apps not to ask about",
   "settings.meetingDetect.unmute": "Ask about {app} again",
+  "settings.recordingCue.title": "Play a sound when recording starts and stops",
+  "settings.recordingCue.hint": "A short system sound, so you know Parley is listening without looking.",
 
   // ── Folder picker ──
   "folder.noMatch": "No match",
