@@ -138,7 +138,11 @@ export async function loadOrgEntry(
   // "done" and the pipeline doesn't re-spend a generation. The shared entry's
   // own saved GENERATED outputs win — the cache only fills what the org copy
   // lacks.
-  foldStudyCache(meta, readStudyCache(id));
+  // Keyed by the ENTRY's id (meta.id) — the id the pipeline writes the cache
+  // under (replay.id) — not the org's id for its copy, which differs: looking
+  // it up by the org id missed every time, so each open re-ran the analysis
+  // and showed a different summary. The org id is still read as a fallback.
+  foldStudyCache(meta, readStudyCache(meta.id || id) ?? (meta.id && meta.id !== id ? readStudyCache(id) : null));
   // The page opens on the meta alone; the audio (the whole file, often tens of
   // MB) follows in the background. Waiting for it first left the click with no
   // visible effect for many seconds, so people clicked again and again.
