@@ -58,10 +58,8 @@ pub const REARM: Duration = Duration::ZERO;
 pub enum AppKind {
     /// A browser — most likely Google Meet or another web call.
     Browser,
-    /// A native app (known or not).
+    /// A native meeting tool.
     App,
-    /// The mic is in use, but the OS did not say by whom (macOS < 14.2).
-    Unknown,
 }
 
 /// An app using the microphone, as the frontend sees it.
@@ -69,9 +67,9 @@ pub enum AppKind {
 #[serde(rename_all = "camelCase")]
 pub struct MicApp {
     /// Stable, lowercase id: a bundle id (macOS), an exe name or a package
-    /// family name (Windows). What the muted list stores. Empty for `Unknown`.
+    /// family name (Windows). What the muted list stores.
     pub app_id: String,
-    /// A name to show the user ("Zoom", "Google Chrome"). Empty for `Unknown`.
+    /// A name to show the user ("Zoom", "Google Chrome").
     pub app_name: String,
     pub kind: AppKind,
 }
@@ -107,7 +105,9 @@ const KNOWN: &[(&str, Match, &str, &str, AppKind)] = {
     use AppKind::{App, Browser};
     use Match::{Exact, Prefix};
     &[
-        // Meeting and chat apps.
+        // Meeting tools. Only these — and browsers, for Google Meet and the
+        // web versions — ever ask: a call in a messenger (LINE, WhatsApp,
+        // FaceTime…) is a personal call, not a meeting to record.
         ("us.zoom.", Prefix, "us.zoom.xos", "Zoom", App),
         ("zoom.exe", Exact, "zoom.exe", "Zoom", App),
         (
@@ -166,76 +166,6 @@ const KNOWN: &[(&str, Match, &str, &str, AppKind)] = {
             App,
         ),
         ("atmgr.exe", Exact, "atmgr.exe", "Webex", App),
-        (
-            "com.apple.facetime",
-            Prefix,
-            "com.apple.facetime",
-            "FaceTime",
-            App,
-        ),
-        // FaceTime's audio runs in this daemon rather than the app.
-        (
-            "com.apple.avconferenced",
-            Exact,
-            "com.apple.facetime",
-            "FaceTime",
-            App,
-        ),
-        ("com.skype.", Prefix, "com.skype.skype", "Skype", App),
-        ("skype.exe", Exact, "skype.exe", "Skype", App),
-        (
-            "microsoft.skypeapp_",
-            Prefix,
-            "microsoft.skypeapp",
-            "Skype",
-            App,
-        ),
-        ("jp.naver.line", Prefix, "jp.naver.line.mac", "LINE", App),
-        ("line.exe", Exact, "line.exe", "LINE", App),
-        (
-            "ru.keepcoder.telegram",
-            Prefix,
-            "ru.keepcoder.telegram",
-            "Telegram",
-            App,
-        ),
-        (
-            "org.telegram.",
-            Prefix,
-            "org.telegram.desktop",
-            "Telegram",
-            App,
-        ),
-        ("telegram.exe", Exact, "telegram.exe", "Telegram", App),
-        (
-            "telegrammessengerllp.telegramdesktop_",
-            Prefix,
-            "telegramdesktop",
-            "Telegram",
-            App,
-        ),
-        (
-            "net.whatsapp.",
-            Prefix,
-            "net.whatsapp.whatsapp",
-            "WhatsApp",
-            App,
-        ),
-        (
-            "desktop.whatsapp",
-            Prefix,
-            "desktop.whatsapp",
-            "WhatsApp",
-            App,
-        ),
-        ("whatsapp.exe", Exact, "whatsapp.exe", "WhatsApp", App),
-        (
-            "5319275a.whatsappdesktop_",
-            Prefix,
-            "whatsappdesktop",
-            "WhatsApp",
-            App,
-        ),
         // Browsers: a web call (Google Meet, Teams on the web, …). Helper
         // processes share the browser's id prefix.
         (
@@ -303,8 +233,9 @@ const KNOWN: &[(&str, Match, &str, &str, AppKind)] = {
     ]
 };
 
-/// Mic users that are never a meeting: Parley itself, and dictation / voice
-/// assistant tools that hold the mic while someone talks to their computer.
+/// Mic users that are never a meeting: Parley itself, dictation / voice
+/// assistant tools that hold the mic while someone talks to their computer,
+/// and messengers whose calls are personal ones.
 const IGNORED: &[(&str, Match)] = {
     use Match::{Exact, Prefix};
     &[
@@ -316,6 +247,27 @@ const IGNORED: &[(&str, Match)] = {
         ("wisprflow.exe", Exact),
         ("com.superduper.superwhisper", Prefix),
         ("now.typeless.", Prefix),
+        // Messengers and personal calls: a call there is not a meeting.
+        ("com.apple.facetime", Prefix),
+        ("com.apple.avconferenced", Exact),
+        ("com.skype.", Prefix),
+        ("skype.exe", Exact),
+        ("microsoft.skypeapp_", Prefix),
+        ("jp.naver.line", Prefix),
+        ("line.exe", Exact),
+        ("linecall.exe", Exact),
+        ("ru.keepcoder.telegram", Prefix),
+        ("org.telegram.", Prefix),
+        ("telegram.exe", Exact),
+        ("telegrammessengerllp.telegramdesktop_", Prefix),
+        ("net.whatsapp.", Prefix),
+        ("desktop.whatsapp", Prefix),
+        ("whatsapp.exe", Exact),
+        ("5319275a.whatsappdesktop_", Prefix),
+        ("com.facebook.archon", Prefix),
+        ("messenger.exe", Exact),
+        ("com.tencent.xinwechat", Prefix),
+        ("wechat.exe", Exact),
         ("typeless.exe", Exact),
         ("com.apple.speechrecognitioncore", Prefix),
         ("com.apple.speech.", Prefix),
@@ -347,6 +299,33 @@ const DICTATION_NAMES: &[&str] = &[
     "dragon",
 ];
 
+/// Meeting tools by the name their app goes by, for those whose bundle id or
+/// exe isn't in [`KNOWN`]. Matched as a lowercase substring of the app name.
+const MEETING_NAMES: &[&str] = &[
+    "zoom",
+    "teams",
+    "webex",
+    "lark",
+    "feishu",
+    "飛書",
+    "飞书",
+    "tencent meeting",
+    "voov",
+    "騰訊會議",
+    "腾讯会议",
+    "goto meeting",
+    "gotomeeting",
+    "bluejeans",
+    "whereby",
+    "jitsi",
+    "ringcentral",
+];
+
+fn is_meeting_name(name: &str) -> bool {
+    let name = name.to_lowercase();
+    MEETING_NAMES.iter().any(|m| name.contains(m))
+}
+
 fn is_dictation_name(name: &str) -> bool {
     let name = name.to_lowercase();
     DICTATION_NAMES.iter().any(|d| name.contains(d))
@@ -363,13 +342,9 @@ fn matches(id: &str, pattern: &str, how: Match) -> bool {
 /// a dictation tool, a background daemon that is not an app). Pure.
 pub fn identify(holder: &Holder) -> Option<MicApp> {
     let (id, app_name) = match holder {
-        Holder::Unidentified => {
-            return Some(MicApp {
-                app_id: String::new(),
-                app_name: String::new(),
-                kind: AppKind::Unknown,
-            })
-        }
+        // The OS can't say who (macOS < 14.2): it could be a messenger as
+        // easily as a meeting, and only meeting tools ask.
+        Holder::Unidentified => return None,
         Holder::Process { id, app_name } => (id.trim().to_lowercase(), app_name),
     };
     if id.is_empty()
@@ -387,10 +362,12 @@ pub fn identify(holder: &Holder) -> Option<MicApp> {
             kind: *kind,
         });
     }
+    // An app by a meeting tool's name; anything else is not a meeting tool
+    // we know of, and gets no question.
     let name = app_name
         .as_deref()
         .map(str::trim)
-        .filter(|n| !n.is_empty())?;
+        .filter(|n| is_meeting_name(n))?;
     Some(MicApp {
         app_id: id,
         app_name: name.to_string(),
@@ -702,20 +679,8 @@ mod tests {
         assert_eq!(chrome.kind, AppKind::Browser);
         let teams = identify(&proc("MS-Teams.exe", Some("ms-teams"))).unwrap();
         assert_eq!(teams.app_name, "Microsoft Teams");
-        let wa = identify(&proc("5319275A.WhatsAppDesktop_cv1g1gvanyjgm", None)).unwrap();
-        assert_eq!(wa.app_name, "WhatsApp");
         let edge = identify(&proc("msedge.exe", Some("msedge"))).unwrap();
         assert_eq!(edge.kind, AppKind::Browser);
-        let ft = identify(&proc("com.apple.avconferenced", None)).unwrap();
-        assert_eq!(ft.app_name, "FaceTime");
-    }
-
-    #[test]
-    fn unknown_apps_use_their_own_name() {
-        let a = identify(&proc("com.example.Recorder", Some("Recorder"))).unwrap();
-        assert_eq!(a.app_id, "com.example.recorder");
-        assert_eq!(a.app_name, "Recorder");
-        assert_eq!(a.kind, AppKind::App);
     }
 
     #[test]
@@ -745,15 +710,24 @@ mod tests {
         for name in ["Typeless", "Aqua Voice", "VoiceInk", "MacWhisper", "Dragon Professional"] {
             assert_eq!(identify(&proc("com.example.unlisted", Some(name))), None, "{name}");
         }
-        // A meeting app whose name merely shares letters is still asked about.
-        assert!(identify(&proc("com.example.dragonfly", Some("Zoomie Calls"))).is_some());
+        // A meeting tool is still asked about, whatever its process is named.
+        assert!(identify(&proc("us.zoom.xos", Some("zoom.us"))).is_some());
     }
 
     #[test]
-    fn an_unidentified_user_is_unknown() {
-        let a = identify(&Holder::Unidentified).unwrap();
-        assert_eq!(a.kind, AppKind::Unknown);
-        assert!(a.app_id.is_empty());
+    fn only_meeting_tools_ask() {
+        // Messengers' calls are personal calls.
+        for id in ["jp.naver.line.mac", "LINE.exe", "net.whatsapp.WhatsApp", "com.apple.FaceTime",
+            "com.apple.avconferenced", "ru.keepcoder.Telegram", "com.skype.skype", "WeChat.exe"]
+        {
+            assert_eq!(identify(&proc(id, Some("X"))), None, "{id}");
+        }
+        // Neither an app we don't know, nor a mic user the OS can't name.
+        assert_eq!(identify(&proc("com.example.Recorder", Some("Recorder"))), None);
+        // A meeting tool missing from the id table still asks, by its name.
+        let lark = identify(&proc("com.example.lark", Some("Lark"))).unwrap();
+        assert_eq!((lark.app_name.as_str(), lark.kind), ("Lark", AppKind::App));
+        assert_eq!(identify(&Holder::Unidentified), None);
     }
 
     #[test]
