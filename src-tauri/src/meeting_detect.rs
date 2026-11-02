@@ -312,6 +312,8 @@ const IGNORED: &[(&str, Match)] = {
         ("wispr flow.exe", Exact),
         ("wisprflow.exe", Exact),
         ("com.superduper.superwhisper", Prefix),
+        ("now.typeless.", Prefix),
+        ("typeless.exe", Exact),
         ("com.apple.speechrecognitioncore", Prefix),
         ("com.apple.speech.", Prefix),
         ("com.apple.dictation", Prefix),
@@ -324,6 +326,28 @@ const IGNORED: &[(&str, Match)] = {
         ("microsoftwindows.client.cbs_", Prefix),
     ]
 };
+
+/// Dictation tools by the name their app goes by, for the ones whose bundle id
+/// or exe isn't in [`IGNORED`]: a voice-typing tool holds the mic while someone
+/// talks to their own computer, which is never a meeting. Matched as a
+/// lowercase substring of the app name.
+const DICTATION_NAMES: &[&str] = &[
+    "typeless",
+    "wispr",
+    "superwhisper",
+    "macwhisper",
+    "aqua voice",
+    "voiceink",
+    "willow voice",
+    "spokenly",
+    "monologue",
+    "dragon",
+];
+
+fn is_dictation_name(name: &str) -> bool {
+    let name = name.to_lowercase();
+    DICTATION_NAMES.iter().any(|d| name.contains(d))
+}
 
 fn matches(id: &str, pattern: &str, how: Match) -> bool {
     match how {
@@ -345,7 +369,10 @@ pub fn identify(holder: &Holder) -> Option<MicApp> {
         }
         Holder::Process { id, app_name } => (id.trim().to_lowercase(), app_name),
     };
-    if id.is_empty() || IGNORED.iter().any(|(p, how)| matches(&id, p, *how)) {
+    if id.is_empty()
+        || IGNORED.iter().any(|(p, how)| matches(&id, p, *how))
+        || app_name.as_deref().is_some_and(is_dictation_name)
+    {
         return None;
     }
     if let Some((_, _, canonical, name, kind)) =
@@ -703,9 +730,20 @@ mod tests {
             "com.apple.SpeechRecognitionCore.speechrecognitiond",
             "com.apple.siri.embeddedspeech",
             "Wispr Flow.exe",
+            "now.typeless.desktop",
+            "Typeless.exe",
         ] {
             assert_eq!(identify(&proc(id, Some("X"))), None, "{id}");
         }
+    }
+
+    #[test]
+    fn dictation_tools_are_ignored_by_name_too() {
+        for name in ["Typeless", "Aqua Voice", "VoiceInk", "MacWhisper", "Dragon Professional"] {
+            assert_eq!(identify(&proc("com.example.unlisted", Some(name))), None, "{name}");
+        }
+        // A meeting app whose name merely shares letters is still asked about.
+        assert!(identify(&proc("com.example.dragonfly", Some("Zoomie Calls"))).is_some());
     }
 
     #[test]
