@@ -15,11 +15,11 @@ export type RecordingCue = "start" | "stop";
  * How long Start lets the start cue play before the capture opens. The
  * system-audio capture is a tap of everything the Mac plays (Parley
  * included), and the mic hears the speakers, so a cue played into a running
- * capture would land in the recording. Tink's click is in its first few tens
- * of ms; by this point only a faint tail is left. Kept short because it
- * delays the start by as much.
+ * capture would land in the recording. Hero (about 1 s) rises and peaks in
+ * its first half; by this point only its fading tail is left. Kept under a
+ * second because it delays the start by as much.
  */
-export const START_CUE_LEAD_MS = 300;
+export const START_CUE_LEAD_MS = 600;
 
 /**
  * Play `cue` if the setting allows it. Never throws: a sound that fails to
