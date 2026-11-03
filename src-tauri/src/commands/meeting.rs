@@ -30,8 +30,13 @@ pub struct MeetingState {
     /// in that window must not tear down whatever meeting runs NEXT — see
     /// `run_metered_session`.
     error_mute: Mutex<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>>,
-    /// Buffers the recorded audio of the in-progress live meeting (see RecorderBuf).
-    recorder: RecorderBuf,
+    /// The in-progress live meeting's recording buffer (see RecorderBuf). A new
+    /// buffer per meeting, swapped in by `arm_meeting`: a session of an earlier
+    /// meeting that outlives its stop holds that meeting's (already taken)
+    /// buffer, so it can never write into this one. A shared buffer let every
+    /// leaked capture append another copy of the room to the next meeting's
+    /// recording (pathorsAI/parley#660).
+    recorder: Mutex<RecorderBuf>,
     /// Meeting pause (the titlebar ⏸): while true, captured PCM is dropped
     /// before the STT upload, the recording tee and the usage counter — nothing
     /// is transcribed, recorded or billed, but the capture + sockets stay open
@@ -291,7 +296,8 @@ fn arm_meeting(app: &AppHandle, state: &MeetingState, meeting_id: Option<String>
             None
         }
     });
-    *state.recorder.lock().unwrap() = Some(Recording::new(journal));
+    let recorder: RecorderBuf = std::sync::Arc::new(Mutex::new(Some(Recording::new(journal))));
+    *state.recorder.lock().unwrap() = recorder.clone();
     *state.current.lock().unwrap() = Some(meta);
     // A new meeting always starts unpaused.
     state
@@ -301,7 +307,7 @@ fn arm_meeting(app: &AppHandle, state: &MeetingState, meeting_id: Option<String>
     let error_mute = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     *state.error_mute.lock().unwrap() = Some(error_mute.clone());
     MeetingWiring {
-        recorder: state.recorder.clone(),
+        recorder,
         error_mute,
         paused: state.meeting_paused.clone(),
     }
@@ -541,7 +547,7 @@ fn teardown_meeting(
     // session via channel close. See MicCoordinator for the gate/detach story.
     coord.stop(MicUser::Meeting);
     let _ = app.emit("meeting://status", "stopped");
-    let recording = state.recorder.lock().unwrap().take()?;
+    let recording = state.recorder.lock().unwrap().lock().unwrap().take()?;
     Some((recording, state.current.lock().unwrap().clone()))
 }
 

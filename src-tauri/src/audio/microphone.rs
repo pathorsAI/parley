@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -40,6 +40,17 @@ pub struct Microphone {
 /// `start_meeting` (a main-thread command) any longer would freeze the UI.
 const OPEN_VERDICT_GRACE: Duration = Duration::from_millis(1500);
 
+/// The stream callback's PCM sender, shared with the capture thread so the
+/// stop can drop it itself. Dropping the `cpal::Stream` is not enough on macOS:
+/// for a device picked by name (the Settings picker), cpal 0.15's disconnect
+/// listener holds a clone of the stream inside the stream, so the drop frees
+/// nothing — the AudioUnit keeps running and its
+/// callback keeps this sender alive for the life of the app. Every meeting and
+/// every dictation left its microphone open that way, and each leaked one fed
+/// the next meeting's recording another copy of the room
+/// (pathorsAI/parley#660).
+type SenderSlot = Arc<Mutex<Option<UnboundedSender<Vec<i16>>>>>;
+
 impl AudioSource for Microphone {
     /// The device can only be opened on the thread that will own it — the cpal
     /// stream is `!Send` on macOS — which is why the verdict has to come back
@@ -57,10 +68,11 @@ impl AudioSource for Microphone {
     ) -> Result<JoinHandle<()>> {
         let device_name = self.device_name.clone();
         let (verdict_tx, verdict_rx) = std::sync::mpsc::channel::<Result<()>>();
-        let handle = std::thread::spawn(move || match open(device_name, tx) {
+        let slot: SenderSlot = Arc::new(Mutex::new(Some(tx)));
+        let handle = std::thread::spawn(move || match open(device_name, slot.clone()) {
             Ok(stream) => {
                 let _ = verdict_tx.send(Ok(()));
-                capture_until_stopped(stream, running);
+                capture_until_stopped(stream, running, &slot);
             }
             // Logged here as well as sent: past the grace below nobody is
             // listening on the channel any more, and the device's own reason is
@@ -93,7 +105,7 @@ impl AudioSource for Microphone {
 /// fail about a microphone happens in here, so the verdict [`Microphone::start`]
 /// waits on carries a real reason. The returned stream must stay on the calling
 /// thread — it is `!Send` on macOS.
-fn open(device_name: Option<String>, tx: UnboundedSender<Vec<i16>>) -> Result<cpal::Stream> {
+fn open(device_name: Option<String>, tx: SenderSlot) -> Result<cpal::Stream> {
     let host = cpal::default_host();
     // Select the requested device by name, else fall back to the default.
     let device = match device_name.as_deref().filter(|n| !n.is_empty()) {
@@ -133,14 +145,20 @@ fn open(device_name: Option<String>, tx: UnboundedSender<Vec<i16>>) -> Result<cp
     Ok(stream)
 }
 
-/// Hold an opened device until the session's gate clears, then release it.
-fn capture_until_stopped(stream: cpal::Stream, running: Arc<AtomicBool>) {
+/// Hold an opened device until the session's gate clears, then release it:
+/// stop the AudioUnit and drop the sender explicitly (see [`SenderSlot`]), so
+/// the device goes quiet and the PCM channel closes whatever cpal leaks.
+fn capture_until_stopped(stream: cpal::Stream, running: Arc<AtomicBool>, tx: &SenderSlot) {
     // Poll the gate tightly so the stream (and the device) is released within a
     // few ms of stop — voice typing cuts on release and a lingering device would
     // keep feeding the next moments of audio. A 10 ms tick is negligible CPU.
     while running.load(Ordering::Relaxed) {
         std::thread::sleep(Duration::from_millis(10));
     }
+    if let Err(e) = stream.pause() {
+        log::warn!("[mic] stopping the input stream failed: {e}");
+    }
+    tx.lock().unwrap().take();
     drop(stream);
 }
 
@@ -149,7 +167,7 @@ fn build_stream<T>(
     config: &cpal::StreamConfig,
     channels: usize,
     in_rate: u32,
-    tx: UnboundedSender<Vec<i16>>,
+    tx: SenderSlot,
 ) -> Result<cpal::Stream>
 where
     T: SizedSample,
@@ -171,7 +189,10 @@ where
             }
             let mut out = Vec::new();
             resampler.process(&mono, &mut out);
-            if !out.is_empty() {
+            if out.is_empty() {
+                return;
+            }
+            if let Some(tx) = tx.lock().unwrap().as_ref() {
                 let _ = tx.send(out);
             }
         },
@@ -182,4 +203,44 @@ where
         None,
     )?;
     Ok(stream)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Needs a real input device (and mic permission), so it only runs on
+    /// request: `cargo test --lib microphone -- --ignored`.
+    #[test]
+    #[ignore]
+    fn a_stopped_capture_closes_its_pcm_channel() {
+        // A device picked by name, as the Settings picker does: only then does
+        // cpal install the disconnect listener that leaked the stream.
+        let device_name = list_input_devices().into_iter().next();
+        assert!(device_name.is_some(), "no input device to test with");
+        let running = Arc::new(AtomicBool::new(true));
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+        let handle = Microphone { device_name }
+            .start(tx, running.clone())
+            .expect("open the default input device");
+        std::thread::sleep(Duration::from_millis(500));
+        running.store(false, Ordering::SeqCst);
+        handle.join().unwrap();
+        // Whatever was captured before the stop drains; then the channel ends.
+        // With cpal holding the sender past the drop, it never did.
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            match rx.try_recv() {
+                Ok(_) => continue,
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "the stopped microphone still holds its sender"
+                    );
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            }
+        }
+    }
 }
