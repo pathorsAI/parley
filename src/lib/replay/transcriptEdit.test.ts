@@ -12,6 +12,7 @@ vi.mock("../dictionary", () => ({ addEntry, whenDictionaryReady: async () => {} 
 import { useStore } from "../store";
 import { seg, replaySession } from "../test/fixtures";
 import {
+  editChangeVars,
   redoTranscriptEdit,
   replaceInTranscript,
   resetTranscriptHistory,
@@ -104,11 +105,11 @@ describe("undo / redo of transcript edits", () => {
     open();
     replaceInTranscript("東昇", "東森", { onlySegmentId: "a" });
     replaceInTranscript("bye", "再見");
-    expect(undoTranscriptEdit()).toBe(true);
+    expect(undoTranscriptEdit()).toEqual({ from: "再見", to: "bye" });
     expect(texts()).toEqual(["東森 said hi", "bye 東昇, 東昇"]);
-    expect(undoTranscriptEdit()).toBe(true);
+    expect(undoTranscriptEdit()).toEqual({ from: "東森", to: "東昇" });
     expect(texts()).toEqual(["東昇 said hi", "bye 東昇, 東昇"]);
-    expect(undoTranscriptEdit()).toBe(false);
+    expect(undoTranscriptEdit()).toBeNull();
     expect(persistTranscriptText).toHaveBeenLastCalledWith("e1", useStore.getState().segments);
   });
 
@@ -116,24 +117,31 @@ describe("undo / redo of transcript edits", () => {
     open();
     replaceInTranscript("東昇", "東森");
     undoTranscriptEdit();
-    expect(redoTranscriptEdit()).toBe(true);
+    expect(redoTranscriptEdit()).toEqual({ from: "東昇", to: "東森" });
     expect(texts()).toEqual(["東森 said hi", "bye 東森, 東森"]);
     undoTranscriptEdit();
     replaceInTranscript("hi", "hello");
-    expect(redoTranscriptEdit()).toBe(false);
+    expect(redoTranscriptEdit()).toBeNull();
   });
 
   it("does not carry one recording's history into another", () => {
     open();
     replaceInTranscript("東昇", "東森");
     useStore.getState().enterReplay(replaySession(LINES, { id: "rec-2" }));
-    expect(undoTranscriptEdit()).toBe(false);
+    expect(undoTranscriptEdit()).toBeNull();
   });
 
   it("does nothing on a read-only recording", () => {
     open();
     replaceInTranscript("東昇", "東森");
     useStore.setState({ replayReadOnly: true });
-    expect(undoTranscriptEdit()).toBe(false);
+    expect(undoTranscriptEdit()).toBeNull();
+  });
+});
+
+describe("editChangeVars", () => {
+  it("names an empty side instead of leaving a dangling arrow", () => {
+    expect(editChangeVars("zh-TW", { from: "party", to: "parley" })).toEqual({ from: "party", to: "parley" });
+    expect(editChangeVars("zh-TW", { from: "嗯", to: "" })).toEqual({ from: "嗯", to: "（空白）" });
   });
 });

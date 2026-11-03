@@ -4,7 +4,12 @@ import { useStore } from "../store";
 import { translate } from "../../i18n";
 import { isTauri } from "../platform";
 import { log } from "../log";
-import { redoTranscriptEdit, undoTranscriptEdit } from "../replay/transcriptEdit";
+import {
+  editChangeVars,
+  redoTranscriptEdit,
+  undoTranscriptEdit,
+  type TranscriptEditChange,
+} from "../replay/transcriptEdit";
 
 /**
  * ⌘Z / ⌘⇧Z (Edit › Undo / Redo). Typing in a field, they are the field's own
@@ -43,16 +48,19 @@ function nativeEdit(action: "undo" | "redo"): void {
 /** Say a transcript step happened: nothing on screen moves much when one
  *  word in a long transcript changes back, so the toast is the evidence. One
  *  toast, replaced by the next press rather than stacking. */
-function announce(key: "replay.undone" | "replay.redone"): void {
-  toast(translate(useStore.getState().settings.language, key), { id: "transcript-undo" });
+function announce(key: "replay.undone" | "replay.redone", change: TranscriptEditChange): void {
+  const language = useStore.getState().settings.language;
+  toast(translate(language, key, editChangeVars(language, change)), { id: "transcript-undo" });
 }
 
 export function editUndo(): void {
-  if (appFirst() && undoTranscriptEdit()) return announce("replay.undone");
+  const change = appFirst() ? undoTranscriptEdit() : null;
+  if (change) return announce("replay.undone", change);
   nativeEdit("undo");
 }
 
 export function editRedo(): void {
-  if (appFirst() && redoTranscriptEdit()) return announce("replay.redone");
+  const change = appFirst() ? redoTranscriptEdit() : null;
+  if (change) return announce("replay.redone", change);
   nativeEdit("redo");
 }

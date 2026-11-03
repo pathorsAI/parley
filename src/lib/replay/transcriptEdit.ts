@@ -2,6 +2,7 @@
 // replace, end to end — store, saved entry, and the dictionary nudge after.
 
 import { useStore } from "../store";
+import { translate } from "../../i18n/messages";
 import { log } from "../log";
 import { addEntry, whenDictionaryReady, type AddResult } from "../dictionary";
 import { persistTranscriptText } from "../history/history";
@@ -28,7 +29,7 @@ export function replaceInTranscript(
   if (!s.replay || s.replayReadOnly) return 0;
   const { segments, count } = replaceInSegments(s.segments, query, replacement, opts);
   if (count === 0) return 0;
-  record({ replayId: s.replay.id, before: s.segments, after: segments });
+  record({ replayId: s.replay.id, before: s.segments, after: segments, from: query, to: replacement });
   apply(segments);
   log.info("replay: transcript text replaced", { count, single: opts.onlySegmentId !== undefined });
   return count;
@@ -51,6 +52,15 @@ interface TranscriptEditStep {
   replayId: string;
   before: TranscriptSegment[];
   after: TranscriptSegment[];
+  /** The replace it was, for saying what an undo or redo changed. */
+  from: string;
+  to: string;
+}
+
+/** What an undo or redo changed: the text that was there, and what it reads now. */
+export interface TranscriptEditChange {
+  from: string;
+  to: string;
 }
 
 /** How many edits back ⌘Z reaches. */
@@ -67,28 +77,39 @@ function record(step: TranscriptEditStep): void {
 
 /**
  * Step the loaded recording's transcript back (`undo`) or forward (`redo`)
- * one edit, saving it as any edit is. Returns false when there is nothing to
- * step — no edit, a read-only recording, or the history belongs to another
+ * one edit, saving it as any edit is. Returns what changed (an undo of
+ * party → parley reads parley → party), or null when there is nothing to step
+ * — no edit, a read-only recording, or the history belongs to another
  * recording (opening one starts a fresh history).
  */
-function step(from: TranscriptEditStep[], to: TranscriptEditStep[], undo: boolean): boolean {
+function step(from: TranscriptEditStep[], to: TranscriptEditStep[], undo: boolean): TranscriptEditChange | null {
   const s = useStore.getState();
-  if (!s.replay || s.replayReadOnly) return false;
+  if (!s.replay || s.replayReadOnly) return null;
   if (from.length > 0 && from[from.length - 1].replayId !== s.replay.id) {
     undoStack.length = 0;
     redoStack.length = 0;
-    return false;
+    return null;
   }
   const last = from.pop();
-  if (!last) return false;
+  if (!last) return null;
   to.push(last);
   apply(undo ? last.before : last.after);
   log.info(undo ? "replay: transcript edit undone" : "replay: transcript edit redone");
-  return true;
+  return undo ? { from: last.to, to: last.from } : { from: last.from, to: last.to };
 }
 
-export const undoTranscriptEdit = (): boolean => step(undoStack, redoStack, true);
-export const redoTranscriptEdit = (): boolean => step(redoStack, undoStack, false);
+/** The {from} / {to} of a change's message. Deleting a word replaces it with
+ *  nothing, which would read as a dangling arrow, so the empty side is named. */
+export function editChangeVars(
+  language: Parameters<typeof translate>[0],
+  change: TranscriptEditChange,
+): { from: string; to: string } {
+  const side = (text: string) => text.trim() || translate(language, "replay.emptyText");
+  return { from: side(change.from), to: side(change.to) };
+}
+
+export const undoTranscriptEdit = (): TranscriptEditChange | null => step(undoStack, redoStack, true);
+export const redoTranscriptEdit = (): TranscriptEditChange | null => step(redoStack, undoStack, false);
 
 /** For tests: start from an empty history. */
 export function resetTranscriptHistory(): void {

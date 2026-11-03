@@ -14,7 +14,7 @@ import { useLapContext } from "../../lib/onboarding/lap";
 import { emitTranscriptSeek } from "../../lib/onboarding/motion";
 import { isTextSelected } from "../../lib/replay/selection";
 import { countOccurrences } from "../../lib/replay/findReplace";
-import { replaceInTranscript, teachReplacement } from "../../lib/replay/transcriptEdit";
+import { editChangeVars, replaceInTranscript, teachReplacement } from "../../lib/replay/transcriptEdit";
 import { useStudyPipeline } from "../../lib/analysis/studyPipeline";
 import { log } from "../../lib/log";
 import type { TranscriptSegment } from "../../lib/types";
@@ -222,7 +222,8 @@ export function ReplayTranscript({
           toast.error(t("replay.replacedTeachFailed"));
         });
     };
-    toast(t("replay.replaced", { count }), {
+    const { language } = useStore.getState().settings;
+    toast(t("replay.replaced", { count, ...editChangeVars(language, { from, to }) }), {
       // Deleting a word (empty replacement) leaves nothing to teach.
       action: term ? { label: t("replay.replacedTeach"), onClick: teach } : undefined,
     });
