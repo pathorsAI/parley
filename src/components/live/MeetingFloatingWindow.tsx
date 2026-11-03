@@ -10,6 +10,7 @@ import {
   Loader2,
   Maximize2,
   MessageCircle,
+  Minimize2,
   Minus,
   NotebookPen,
   Pause,
@@ -372,7 +373,19 @@ function miniHeight(tab: Tab, answerOpen = false): number {
   return MINI_HEIGHT[tab];
 }
 
-/** Title bar: drag handle, the recording clock, the mic, collapse and close. */
+/** Into the Dock (the taskbar on Windows); the recording carries on, and the window comes back from there. */
+async function minimizeWindow() {
+  if (!isTauri()) return;
+  try {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    await getCurrentWindow().minimize();
+  } catch (error) {
+    log.warn("meeting: floating window minimize failed", { error: String(error) });
+  }
+}
+
+/** Title bar: drag handle, the recording clock, the mic, then shrink to the
+ *  mini window, minimize into the Dock, and close. */
 function FloatingTitleBar({
   onClose,
   onCollapse,
@@ -394,6 +407,15 @@ function FloatingTitleBar({
           aria-label={t("floating.collapse")}
           title={t("floating.collapse")}
           onClick={onCollapse}
+          className="grid size-8 place-items-center rounded-md text-foreground/80 transition-colors hover:bg-muted"
+        >
+          <Minimize2 className="size-3.5" />
+        </button>
+        <button
+          type="button"
+          aria-label={t("floating.minimize")}
+          title={t("floating.minimize")}
+          onClick={() => void minimizeWindow()}
           className="grid size-8 place-items-center rounded-md text-foreground/80 transition-colors hover:bg-muted"
         >
           <Minus className="size-4" />
