@@ -256,14 +256,15 @@ export function useMiniDocking(active: boolean): void {
 }
 
 /**
- * Drag the window from a press anywhere on `el` that is not a control. Not a
+ * Drag the window from a press anywhere on `el` that is not a control (or
+ * marked `data-no-drag`, like the selectable transcript). Not a
  * `data-tauri-drag-region`: a double-click there zooms the window to fill the
  * screen, which turned the capsule into a screen-sized oval.
  */
 export function dragWindowFrom(e: { button: number; target: EventTarget; detail: number }): void {
   if (e.button !== 0 || !isTauri()) return;
   const target = e.target as HTMLElement;
-  if (target.closest("button, input, textarea, a, [role=option]")) return;
+  if (target.closest("button, input, textarea, a, [role=option], [data-no-drag]")) return;
   void import("@tauri-apps/api/window")
     .then(({ getCurrentWindow }) => getCurrentWindow().startDragging())
     .catch((error) => log.warn("meeting: mini window drag failed", { error: String(error) }));
