@@ -5,6 +5,7 @@ mod cache;
 mod capture;
 mod commands;
 mod diarize;
+mod dock_tile;
 mod hardware;
 mod history;
 mod hotkey;
@@ -106,6 +107,13 @@ pub fn run() {
         // (src/lib/platform.ts) — window chrome, hidden panels, key caps.
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_notification::init())
+        // The floating meeting window minimizes to the Parley logo in the
+        // Dock, not a snapshot of its borderless pill.
+        .on_page_load(|webview, _| {
+            if webview.label() == "meeting" {
+                dock_tile::use_logo_when_minimized(&webview.window());
+            }
+        })
         // Unconditional like single-instance: the crate only builds for desktop.
         .plugin(autostart_plugin.build())
         // Single source of truth for "who owns the mic" (meeting / mic test /
