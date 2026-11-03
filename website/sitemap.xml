@@ -19,6 +19,7 @@
   </url>
   <url>
     <loc>https://parley.tw/privacy/</loc>
+    <lastmod>2026-11-04</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.6</priority>
   </url>
@@ -47,6 +48,12 @@
   <url>
     <loc>https://parley.tw/guides/meeting-notes-with-mcp/</loc>
     <lastmod>2026-10-10</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://parley.tw/guides/connect-claude-chatgpt/</loc>
+    <lastmod>2026-11-04</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
