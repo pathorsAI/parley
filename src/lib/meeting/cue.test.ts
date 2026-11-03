@@ -12,7 +12,7 @@ vi.mock("../log", () => ({ log: mocks.log, attachConsoleOnce: vi.fn() }));
 
 import { useStore } from "../store";
 import { DEFAULT_SETTINGS } from "../store/defaults";
-import { playCue, playStartCue, START_CUE_LEAD_MS } from "./cue";
+import { playCue, playStartCue, playVoiceTypingCue, START_CUE_LEAD_MS } from "./cue";
 
 const base = useStore.getState().settings;
 
@@ -68,6 +68,20 @@ describe("playCue", () => {
       cue: "start",
       error: "Error: no sound",
     });
+  });
+});
+
+describe("playVoiceTypingCue", () => {
+  it("plays even when the recording cue setting is off", async () => {
+    setup(false);
+    expect(await playVoiceTypingCue("start")).toBe(true);
+    expect(mocks.invoke.mock.calls).toEqual([["play_cue", { cue: "start" }]]);
+  });
+
+  it("plays nothing outside Tauri", async () => {
+    setup(false, { tauri: false });
+    expect(await playVoiceTypingCue("stop")).toBe(false);
+    expect(mocks.invoke).not.toHaveBeenCalled();
   });
 });
 

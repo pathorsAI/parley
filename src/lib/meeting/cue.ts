@@ -6,9 +6,11 @@ import { log } from "../log";
 /**
  * The short system sound a meeting recording — and a voice-typing dictation —
  * starts and stops with (issue #607), so the user knows Parley is listening
- * without looking at it. The
- * sound itself is the OS's own (commands/cue.rs); this decides whether to
- * play it. Pause and resume stay silent.
+ * without looking at it. The sound itself is the OS's own (commands/cue.rs);
+ * this decides whether to play it. Pause and resume stay silent.
+ *
+ * The setting only silences meeting recordings: a dictation is short and
+ * started blind from a hotkey, so its cues always play.
  */
 export type RecordingCue = "start" | "stop";
 
@@ -28,7 +30,17 @@ export const START_CUE_LEAD_MS = 400;
  * was asked to play.
  */
 export async function playCue(cue: RecordingCue): Promise<boolean> {
-  if (!isTauri() || !useStore.getState().settings.recordingCueEnabled) return false;
+  if (!useStore.getState().settings.recordingCueEnabled) return false;
+  return play(cue);
+}
+
+/** Play a voice-typing cue: always on, whatever the recording setting says. */
+export function playVoiceTypingCue(cue: RecordingCue): Promise<boolean> {
+  return play(cue);
+}
+
+async function play(cue: RecordingCue): Promise<boolean> {
+  if (!isTauri()) return false;
   try {
     await ipc.playCue({ cue });
     return true;

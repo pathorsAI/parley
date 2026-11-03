@@ -71,7 +71,7 @@ vi.mock("../transcription/languageHints", () => ({ languageHintsFromSettings: ()
 vi.mock("../log", () => ({ log: mocks.log }));
 const cues = vi.hoisted(() => ({ played: [] as string[] }));
 vi.mock("../meeting/cue", () => ({
-  playCue: (cue: string) => {
+  playVoiceTypingCue: (cue: string) => {
     cues.played.push(cue);
     return Promise.resolve(true);
   },
