@@ -390,7 +390,10 @@ export function ReplayTranscript({
           // closed, ⌄ open) that owns the replace row, each query in its own
           // field, arrows — not chevrons — to step through hits, and the two
           // replace actions as icon buttons named by their tooltips.
-          <div className="absolute right-3 top-2 z-10 flex items-stretch rounded-md border bg-background/95 shadow-md backdrop-blur">
+          <div
+            data-transcript-undo
+            className="absolute right-3 top-2 z-10 flex items-stretch rounded-md border bg-background/95 shadow-md backdrop-blur"
+          >
             {canReplace && (
               <button
                 type="button"

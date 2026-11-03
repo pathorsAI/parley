@@ -163,6 +163,8 @@ export const animateWindowFrame = (args: {
 /** Play the short system sound a meeting recording starts or stops with
  *  (commands/cue.rs); returns at once, the sound plays on. */
 export const playCue = (args: { cue: "start" | "stop" }) => invoke<void>("play_cue", args);
+/** Hand Edit › Undo / Redo back to the focused text field (macOS; see lib/edit/undo.ts). */
+export const nativeEdit = (args: { action: "undo" | "redo" }) => invoke<void>("native_edit", args);
 /** The meeting the backend is recording right now, or null. */
 export interface BackendMeeting {
   meetingId: string;

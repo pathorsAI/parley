@@ -249,6 +249,7 @@ pub fn run() {
             commands::session_files::append_session_command_result,
             commands::window_frame::animate_window_frame,
             commands::cue::play_cue,
+            menu::native_edit,
             usage::append_usage_event,
             usage::read_usage_events,
             permissions::check_permissions,

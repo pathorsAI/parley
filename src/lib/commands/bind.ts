@@ -8,6 +8,7 @@ import { isMeetingActive, useStore } from "../store";
 import { cockpitHold, toggleSidebar, toggleSidebarPeek } from "../shell/sidebar";
 import { zoomIn, zoomOut, zoomReset } from "../zoom";
 import { toggleShortcutSheet } from "./sheet";
+import { editRedo, editUndo } from "../edit/undo";
 import {
   command,
   commandsInScope,
@@ -55,6 +56,8 @@ const HANDLERS: Partial<Record<CommandId, () => void>> = {
   "zoom.in": () => zoomIn(),
   "zoom.out": () => zoomOut(),
   "zoom.reset": () => zoomReset(),
+  "edit.undo": () => editUndo(),
+  "edit.redo": () => editRedo(),
 
   // Routed through navigateTo, not straight at the store, so ⌘1/⌘2 land in the
   // back stack (⌘1 then ⌘[ has to work) and inherit the one meeting guard

@@ -11,7 +11,13 @@ vi.mock("../dictionary", () => ({ addEntry, whenDictionaryReady: async () => {} 
 
 import { useStore } from "../store";
 import { seg, replaySession } from "../test/fixtures";
-import { replaceInTranscript, teachReplacement } from "./transcriptEdit";
+import {
+  redoTranscriptEdit,
+  replaceInTranscript,
+  resetTranscriptHistory,
+  teachReplacement,
+  undoTranscriptEdit,
+} from "./transcriptEdit";
 
 const INITIAL = useStore.getInitialState();
 const LINES = [seg({ id: "a", text: "東昇 said hi" }), seg({ id: "b", text: "bye 東昇, 東昇" })];
@@ -28,6 +34,7 @@ function open(opts: { entryId?: string | null; readOnly?: boolean } = {}) {
 
 beforeEach(() => {
   useStore.setState(INITIAL, true);
+  resetTranscriptHistory();
   persistTranscriptText.mockClear();
   addEntry.mockClear();
 });
@@ -87,5 +94,46 @@ describe("teachReplacement", () => {
   it("adds no variant for a case-only fix", async () => {
     await teachReplacement("parley", "Parley");
     expect(addEntry).toHaveBeenCalledWith({ phrase: "Parley", variants: [], source: "correction" });
+  });
+});
+
+describe("undo / redo of transcript edits", () => {
+  const texts = () => useStore.getState().segments.map((x) => x.text);
+
+  it("undoes replaces one at a time, newest first, and saves each step", () => {
+    open();
+    replaceInTranscript("東昇", "東森", { onlySegmentId: "a" });
+    replaceInTranscript("bye", "再見");
+    expect(undoTranscriptEdit()).toBe(true);
+    expect(texts()).toEqual(["東森 said hi", "bye 東昇, 東昇"]);
+    expect(undoTranscriptEdit()).toBe(true);
+    expect(texts()).toEqual(["東昇 said hi", "bye 東昇, 東昇"]);
+    expect(undoTranscriptEdit()).toBe(false);
+    expect(persistTranscriptText).toHaveBeenLastCalledWith("e1", useStore.getState().segments);
+  });
+
+  it("redoes what was undone, until a new edit forks the history", () => {
+    open();
+    replaceInTranscript("東昇", "東森");
+    undoTranscriptEdit();
+    expect(redoTranscriptEdit()).toBe(true);
+    expect(texts()).toEqual(["東森 said hi", "bye 東森, 東森"]);
+    undoTranscriptEdit();
+    replaceInTranscript("hi", "hello");
+    expect(redoTranscriptEdit()).toBe(false);
+  });
+
+  it("does not carry one recording's history into another", () => {
+    open();
+    replaceInTranscript("東昇", "東森");
+    useStore.getState().enterReplay(replaySession(LINES, { id: "rec-2" }));
+    expect(undoTranscriptEdit()).toBe(false);
+  });
+
+  it("does nothing on a read-only recording", () => {
+    open();
+    replaceInTranscript("東昇", "東森");
+    useStore.setState({ replayReadOnly: true });
+    expect(undoTranscriptEdit()).toBe(false);
   });
 });
