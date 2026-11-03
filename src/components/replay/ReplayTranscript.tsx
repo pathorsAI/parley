@@ -366,8 +366,16 @@ export function ReplayTranscript({
           type="button"
           size="xs"
           variant="outline"
-          // Keep the selection alive through the press — it is the prefill.
-          onMouseDown={(e) => e.preventDefault()}
+          // Act on the press, not the click: WebKit collapses the selection
+          // as the mouse comes up, which unmounted this button before its
+          // click could land — so clicking it did nothing. preventDefault
+          // keeps the selection (the prefill) alive until then. The click
+          // is still there for the keyboard.
+          onMouseDown={(e) => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            replaceSelection();
+          }}
           onClick={replaceSelection}
           style={{ left: selectionAction.left, top: selectionAction.top }}
           className="absolute z-20 -translate-x-1/2 -translate-y-full gap-1 bg-background shadow-md"
