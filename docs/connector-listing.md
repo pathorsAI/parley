@@ -110,7 +110,7 @@ Fallback if taken: `parley-meetings`. **⚠ Decide before publishing — the slu
 | Field | Value |
 |---|---|
 | Server URL | `https://api.parley.tw/mcp` |
-| Documentation | `https://parley.tw/guides/connect-claude-chatgpt/` **⚠ placeholder slug — confirm against the connector guide being written in parallel** |
+| Documentation | `https://parley.tw/guides/connect-claude-chatgpt/` (added in #664) |
 | Privacy policy | `https://parley.tw/privacy/` |
 | Support | `https://parley.tw/support/` |
 | Website | `https://parley.tw/` |
@@ -448,7 +448,7 @@ Create a second throwaway account with one recording of its own ("Private test n
 
 ## 4. Brandon's checklist (in order)
 
-1. **Confirm the parallel pieces are live**: `tools/list` shows read-only annotations and titles; `parley.tw/privacy/`, `/terms/`, `/support/` and the connector guide all load. Replace the guide placeholder slug in this doc if it differs.
+1. **Confirm the parallel pieces are live**: `tools/list` shows read-only annotations and titles; `parley.tw/privacy/`, `/terms/`, `/support/` and the connector guide (#664) all load.
 2. **Create the demo account** (§3) on a mailbox we control, turn on cloud sync, create Northwind Demo Team.
 3. **Seed the 6 recordings**, rename speakers, run analysis, file into folders, share recording 6 into the org. Wait for sync.
 4. **Create the second account** and `Other Demo Org` for N2 and N3; note the recording id and org id.
