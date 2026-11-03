@@ -293,7 +293,7 @@ type MemoryOutcome =
   | { kind: "failed"; error: string };
 
 /** Each reading step shows at least this long before the next one. */
-const STEP_MS = 900;
+const STEP_MS = 1500;
 
 /** The three steps the status line walks through while it fills in. */
 const READ_STEPS = [
