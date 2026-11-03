@@ -347,13 +347,9 @@ export const zhTW = {
   "draft.lead": "提醒時間",
   "draft.lead.atStart": "開始時提醒",
   "draft.lead.before": "提前 {minutes} 分鐘提醒",
-  "reminder.label": "會議提醒",
   "reminder.soon": "「{title}」{minutes} 分鐘後開始",
   "reminder.now": "「{title}」現在開始",
   "reminder.body": "會議草稿已經準備好，打開 Parley 就能開始錄音。",
-  "reminder.at": "{time} 開始",
-  "reminder.openDraft": "查看草稿",
-  "reminder.later": "稍後",
 
   // ── 通話偵測（#606）──
   "detect.title": "開始記錄這場會議",
@@ -2014,13 +2010,9 @@ export const en = {
   "draft.lead": "Remind me",
   "draft.lead.atStart": "When it starts",
   "draft.lead.before": "{minutes} minutes before",
-  "reminder.label": "Meeting reminder",
   "reminder.soon": "\"{title}\" starts in {minutes} min",
   "reminder.now": "\"{title}\" is starting now",
   "reminder.body": "Your meeting draft is ready — open Parley to start recording.",
-  "reminder.at": "Starts at {time}",
-  "reminder.openDraft": "View draft",
-  "reminder.later": "Later",
 
   // ── Call detection (#606) ──
   "detect.title": "Record this meeting",

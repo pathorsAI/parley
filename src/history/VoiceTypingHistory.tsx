@@ -244,7 +244,7 @@ export function VoiceTypingHistory({ locale }: Readonly<{ locale: string }>) {
                 {/* Esc cancelled it and no Undo brought it back: the text
                     never left Parley, so this line is the only copy (#640). */}
                 {e.outcome === "cancelled" && (
-                  <span className="rounded bg-amber-500/15 px-1.5 py-px text-[10px] text-amber-700 dark:text-amber-400">
+                  <span className="rounded bg-warning px-1.5 py-px text-[10px] text-warning-foreground">
                     {t("history.voiceTyping.cancelled")}
                   </span>
                 )}

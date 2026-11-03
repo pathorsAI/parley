@@ -59,9 +59,10 @@
   --success: oklch(0.95 0.04 160);
   --success-foreground: oklch(0.45 0.13 160);
   --success-border: oklch(0.85 0.08 160);
-  --warning: oklch(0.96 0.045 80);
-  --warning-foreground: oklch(0.52 0.13 65);
-  --warning-border: oklch(0.87 0.08 80);
+  /* Soft apricot: warm enough to read as "attention", quiet beside the blue. */
+  --warning: oklch(0.97 0.025 70);
+  --warning-foreground: oklch(0.6 0.12 60);
+  --warning-border: oklch(0.9 0.05 70);
   --danger: oklch(0.96 0.03 25);
   --danger-foreground: oklch(0.5 0.19 25);
   --danger-border: oklch(0.88 0.07 25);
@@ -112,9 +113,9 @@
   --success: oklch(0.3 0.06 160);
   --success-foreground: oklch(0.84 0.1 160);
   --success-border: oklch(0.42 0.1 160);
-  --warning: oklch(0.32 0.065 75);
-  --warning-foreground: oklch(0.86 0.11 80);
-  --warning-border: oklch(0.44 0.1 75);
+  --warning: oklch(0.3 0.045 60);
+  --warning-foreground: oklch(0.84 0.09 70);
+  --warning-border: oklch(0.43 0.07 60);
   --danger: oklch(0.3 0.07 25);
   --danger-foreground: oklch(0.83 0.11 25);
   --danger-border: oklch(0.44 0.12 25);

@@ -51,7 +51,6 @@ import { endMeeting, recoverOrphanedMeeting } from "./lib/meeting/controls";
 import { initSilenceGuard } from "./lib/meeting/silenceGuard";
 import { initMeetingReminder } from "./lib/meeting/reminder";
 import { initMeetingDetect } from "./lib/meeting/detectPrompt";
-import { MeetingReminderCard } from "./components/MeetingReminderCard";
 import { listenForSystemWake } from "./lib/meeting/sleepWake";
 import { checkForUpdate } from "./lib/update";
 import {
@@ -470,7 +469,6 @@ const App = () => {
       <IngestWizard />
       <TranscriptImportDialog />
       <MeetingDraftSheet />
-      <MeetingReminderCard />
       {/* In the Tauri app the drilldown is its own OS window (see
           useFindingSolutionHost); in plain browser dev we fall back to the
           in-app overlay so the feature still works without multi-window. */}
