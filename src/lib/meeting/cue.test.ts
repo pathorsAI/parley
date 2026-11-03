@@ -12,7 +12,7 @@ vi.mock("../log", () => ({ log: mocks.log, attachConsoleOnce: vi.fn() }));
 
 import { useStore } from "../store";
 import { DEFAULT_SETTINGS } from "../store/defaults";
-import { playCue, playStartCue, playVoiceTypingCue, START_CUE_LEAD_MS } from "./cue";
+import { playCue, playVoiceTypingCue } from "./cue";
 
 const base = useStore.getState().settings;
 
@@ -81,27 +81,6 @@ describe("playVoiceTypingCue", () => {
   it("plays nothing outside Tauri", async () => {
     setup(false, { tauri: false });
     expect(await playVoiceTypingCue("stop")).toBe(false);
-    expect(mocks.invoke).not.toHaveBeenCalled();
-  });
-});
-
-describe("playStartCue", () => {
-  it("waits for the cue's click before resolving", async () => {
-    vi.useFakeTimers();
-    setup(true);
-    let done = false;
-    const p = playStartCue().then(() => (done = true));
-    await vi.advanceTimersByTimeAsync(START_CUE_LEAD_MS - 1);
-    expect(done).toBe(false);
-    await vi.advanceTimersByTimeAsync(1);
-    await p;
-    expect(done).toBe(true);
-  });
-
-  it("does not wait when no cue plays", async () => {
-    vi.useFakeTimers();
-    setup(false);
-    await playStartCue();
     expect(mocks.invoke).not.toHaveBeenCalled();
   });
 });

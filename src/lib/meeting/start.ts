@@ -11,7 +11,6 @@ import * as ipc from "../ipc/commands";
 import { isTauri } from "../platform";
 import { liveSaves } from "../history/history";
 import { endMeeting, recoverOrphanedMeeting } from "./controls";
-import { playStartCue } from "./cue";
 
 /** How long Start waits for the previous meeting's save before going ahead
  *  anyway. Its Stop-time snapshot keeps that save correct regardless; the
@@ -117,10 +116,7 @@ async function start(): Promise<void> {
     return;
   }
 
-  // The start cue (#607) plays before the UI flips and the capture opens, so
-  // the capture does not record it (see START_CUE_LEAD_MS). Only on the real
-  // path: a start refused below must not sound like one that worked.
-  if (prepared.ok) await playStartCue();
+  // No start cue: a meeting starts silently (only its end sounds, #607).
 
   s.startMeeting();
 
