@@ -1,4 +1,4 @@
-// Language toggle for the bilingual legal pages (/support/, /privacy/, /account-deletion/).
+// Language toggle for the bilingual legal pages (/support/, /privacy/, /terms/, /account-deletion/).
 // Each page carries both languages in the DOM: <article lang="zh-Hant-TW" data-lang="zh"> and
 // <article lang="en" data-lang="en">, plus footer navs marked the same way. Without this script
 // both are shown (zh first) and the header switcher is a plain in-page link to #en.
