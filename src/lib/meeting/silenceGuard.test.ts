@@ -145,7 +145,6 @@ describe("initSilenceGuard", () => {
     await vi.advanceTimersByTimeAsync(SILENCE_GRACE_MS + 5_000);
     expect(mocks.invoke.mock.calls).toEqual([
       ["stop_meeting", { keepMs: 60_000 + TRIM_MARGIN_MS }],
-      ["play_cue", { cue: "stop" }],
     ]);
     expect(useStore.getState().meetingStatus).toBe("stopped");
     expect(useStore.getState().silencePromptAt).toBeNull();
@@ -205,7 +204,7 @@ describe("initSilenceGuard", () => {
     expect(useStore.getState().silencePromptAt).not.toBeNull();
     await vi.advanceTimersByTimeAsync(SILENCE_GRACE_MS + 5_000);
     // No trim: words after the last transcribed ones may be in the audio.
-    expect(mocks.invoke.mock.calls).toEqual([["stop_meeting", {}], ["play_cue", { cue: "stop" }]]);
+    expect(mocks.invoke.mock.calls).toEqual([["stop_meeting", {}]]);
     expect(useStore.getState().meetingStatus).toBe("stopped");
   });
 });

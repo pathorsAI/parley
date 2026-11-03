@@ -289,8 +289,6 @@ export function mergePersistedState(persisted: unknown, current: ParleyState): P
       meetingDetectEnabled:
         typeof p.meetingDetectEnabled === "boolean" ? p.meetingDetectEnabled : DEFAULT_SETTINGS.meetingDetectEnabled,
       meetingDetectMutedApps: sanitizeMutedApps(p.meetingDetectMutedApps),
-      recordingCueEnabled:
-        typeof p.recordingCueEnabled === "boolean" ? p.recordingCueEnabled : DEFAULT_SETTINGS.recordingCueEnabled,
     },
     evaluations: evalsFromDefs(relabeledEvals),
     // Restore the persisted cloud sign-in (re-validated on startup).

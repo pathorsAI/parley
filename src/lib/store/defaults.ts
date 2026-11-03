@@ -111,6 +111,4 @@ export const DEFAULT_SETTINGS: Settings = {
   // Asking when a call starts is the point of #606 — on unless turned off.
   meetingDetectEnabled: true,
   meetingDetectMutedApps: [],
-  // Hearing that it started is the point of #607 — on unless turned off.
-  recordingCueEnabled: true,
 };

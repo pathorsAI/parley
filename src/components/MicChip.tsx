@@ -130,8 +130,12 @@ function SystemAudioStatus({ perms }: Readonly<{ perms: Permissions | null }>) {
  *
  * Device switching and the test are locked during a meeting — the mic belongs
  * to the live capture then (the same rule as Settings › 轉錄).
+ *
+ * `shrink`: in a bar that can get narrow (the floating meeting window), the
+ * chip gives up width first — the device name truncates — so the controls
+ * after it stay in view.
  */
-export function MicChip() {
+export function MicChip({ shrink = false }: Readonly<{ shrink?: boolean }> = {}) {
   const { t } = useI18n();
   const inputDevice = useStore((s) => s.settings.inputDevice);
   const updateSettings = useStore((s) => s.updateSettings);
@@ -215,10 +219,10 @@ export function MicChip() {
           type="button"
           aria-label={t("mic.chip.label", { name: deviceName })}
           title={t("mic.chip.title", { name: deviceName })}
-          className="inline-flex h-7 min-w-0 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border bg-background px-2 text-xs font-medium text-foreground transition-colors hover:bg-muted aria-expanded:bg-muted"
+          className={`inline-flex h-7 min-w-0 ${shrink ? "shrink" : "shrink-0"} cursor-pointer items-center gap-1.5 rounded-full border bg-background px-2 text-xs font-medium text-foreground transition-colors hover:bg-muted aria-expanded:bg-muted`}
         >
           <Mic className="size-3.5 shrink-0" />
-          <span className="max-w-[150px] truncate">{deviceName}</span>
+          <span className="min-w-0 max-w-[150px] truncate">{deviceName}</span>
           <ChipMeter level={level} />
           <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
         </button>

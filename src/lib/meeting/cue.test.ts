@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// The recording cue (#607): whether it asks the backend to play, and that a
+// The voice-typing cue (#607): that it asks the backend to play, and that a
 // sound that fails never fails the caller.
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -10,14 +10,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...args: unknown[]) => mocks.invoke(...args) }));
 vi.mock("../log", () => ({ log: mocks.log, attachConsoleOnce: vi.fn() }));
 
-import { useStore } from "../store";
-import { DEFAULT_SETTINGS } from "../store/defaults";
-import { playCue, playVoiceTypingCue } from "./cue";
+import { playVoiceTypingCue } from "./cue";
 
-const base = useStore.getState().settings;
-
-function setup(enabled: boolean, opts: { tauri?: boolean } = {}) {
-  useStore.setState({ settings: { ...base, recordingCueEnabled: enabled } });
+function setup(opts: { tauri?: boolean } = {}) {
   if (opts.tauri === false) delete (globalThis as Record<string, unknown>).__TAURI_INTERNALS__;
   else (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = {};
 }
@@ -29,58 +24,33 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  vi.useRealTimers();
   delete (globalThis as Record<string, unknown>).__TAURI_INTERNALS__;
 });
 
-describe("playCue", () => {
-  it("is on by default", () => {
-    expect(DEFAULT_SETTINGS.recordingCueEnabled).toBe(true);
-  });
-
-  it("asks the backend to play the cue when the setting is on", async () => {
-    setup(true);
-    expect(await playCue("start")).toBe(true);
-    expect(await playCue("stop")).toBe(true);
+describe("playVoiceTypingCue", () => {
+  it("asks the backend to play each cue", async () => {
+    setup();
+    expect(await playVoiceTypingCue("start")).toBe(true);
+    expect(await playVoiceTypingCue("stop")).toBe(true);
     expect(mocks.invoke.mock.calls).toEqual([
       ["play_cue", { cue: "start" }],
       ["play_cue", { cue: "stop" }],
     ]);
   });
 
-  it("plays nothing when the setting is off", async () => {
-    setup(false);
-    expect(await playCue("start")).toBe(false);
-    expect(mocks.invoke).not.toHaveBeenCalled();
-  });
-
   it("plays nothing outside Tauri", async () => {
-    setup(true, { tauri: false });
-    expect(await playCue("stop")).toBe(false);
+    setup({ tauri: false });
+    expect(await playVoiceTypingCue("stop")).toBe(false);
     expect(mocks.invoke).not.toHaveBeenCalled();
   });
 
   it("logs a failed sound instead of throwing", async () => {
-    setup(true);
+    setup();
     mocks.invoke.mockRejectedValueOnce(new Error("no sound"));
-    expect(await playCue("start")).toBe(false);
-    expect(mocks.log.warn).toHaveBeenCalledWith("meeting: recording cue failed", {
+    expect(await playVoiceTypingCue("start")).toBe(false);
+    expect(mocks.log.warn).toHaveBeenCalledWith("voice-typing: cue failed", {
       cue: "start",
       error: "Error: no sound",
     });
-  });
-});
-
-describe("playVoiceTypingCue", () => {
-  it("plays even when the recording cue setting is off", async () => {
-    setup(false);
-    expect(await playVoiceTypingCue("start")).toBe(true);
-    expect(mocks.invoke.mock.calls).toEqual([["play_cue", { cue: "start" }]]);
-  });
-
-  it("plays nothing outside Tauri", async () => {
-    setup(false, { tauri: false });
-    expect(await playVoiceTypingCue("stop")).toBe(false);
-    expect(mocks.invoke).not.toHaveBeenCalled();
   });
 });

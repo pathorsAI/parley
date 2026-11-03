@@ -440,9 +440,6 @@ export interface Settings {
   meetingDetectEnabled: boolean;
   /** Apps the user said not to ask about ("不要再對 Zoom 詢問"). */
   meetingDetectMutedApps: MutedMeetingApp[];
-  /** Play a short system sound when a meeting recording starts and when it
-   *  ends (issue #607; see src/lib/meeting/cue.ts). Default on. */
-  recordingCueEnabled: boolean;
 }
 
 /** An app the call prompt no longer asks about. */

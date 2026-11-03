@@ -158,20 +158,6 @@ export function TranscriptionCategory({
       {/* Ask to record when another app starts a call (#606). */}
       <MeetingDetectField settings={settings} patch={patch} />
 
-      {/* A short system sound when recording starts and stops (#607). */}
-      <div className="flex max-w-md flex-col gap-2 rounded-lg border p-3">
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            className="size-3.5 accent-primary"
-            checked={settings.recordingCueEnabled}
-            onChange={(e) => patch({ recordingCueEnabled: e.target.checked })}
-          />
-          {t("settings.recordingCue.title")}
-        </label>
-        <p className="text-[11px] text-muted-foreground">{t("settings.recordingCue.hint")}</p>
-      </div>
-
       {/* Live delivery coaching (issue #22): mic-only pace/pitch/pause/tone. */}
       <div className="flex max-w-md flex-col gap-2 rounded-lg border p-3">
         <p className="text-xs font-medium">{t("settings.delivery.title")}</p>
