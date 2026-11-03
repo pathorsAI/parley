@@ -1,4 +1,7 @@
+import { toast } from "sonner";
 import * as ipc from "../ipc/commands";
+import { useStore } from "../store";
+import { translate } from "../../i18n";
 import { isTauri } from "../platform";
 import { log } from "../log";
 import { redoTranscriptEdit, undoTranscriptEdit } from "../replay/transcriptEdit";
@@ -37,12 +40,19 @@ function nativeEdit(action: "undo" | "redo"): void {
   ipc.nativeEdit({ action }).catch((error) => log.warn("edit: native undo failed", { action, error: String(error) }));
 }
 
+/** Say a transcript step happened: nothing on screen moves much when one
+ *  word in a long transcript changes back, so the toast is the evidence. One
+ *  toast, replaced by the next press rather than stacking. */
+function announce(key: "replay.undone" | "replay.redone"): void {
+  toast(translate(useStore.getState().settings.language, key), { id: "transcript-undo" });
+}
+
 export function editUndo(): void {
-  if (appFirst() && undoTranscriptEdit()) return;
+  if (appFirst() && undoTranscriptEdit()) return announce("replay.undone");
   nativeEdit("undo");
 }
 
 export function editRedo(): void {
-  if (appFirst() && redoTranscriptEdit()) return;
+  if (appFirst() && redoTranscriptEdit()) return announce("replay.redone");
   nativeEdit("redo");
 }
