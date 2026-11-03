@@ -768,7 +768,7 @@ export function MeetingFloatingWindow() {
           className={`flex h-8 shrink-0 items-center gap-1.5 rounded-lg pr-3 pl-2.5 text-sm font-medium transition-colors disabled:opacity-50 ${
             paused
               ? "bg-primary text-primary-foreground hover:bg-primary/90"
-              : "bg-warning text-warning-foreground hover:bg-warning/80"
+              : "bg-warning text-warning-foreground hover:bg-warning-hover"
           }`}
         >
           {paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
