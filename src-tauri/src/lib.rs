@@ -11,6 +11,7 @@ mod history;
 mod hotkey;
 mod local_stt;
 mod mcp;
+mod notify_sender;
 mod meeting_detect;
 mod menu;
 mod model_download;
@@ -140,6 +141,7 @@ pub fn run() {
         .menu(menu::build)
         .on_menu_event(|app, event| menu::on_event(app, event.id().as_ref()))
         .setup(|app| {
+            notify_sender::claim(&app.config().identifier);
             app.manage(mcp::start(app.handle().clone()));
             // The boot-default push-to-talk combo, live until the frontend
             // applies the saved selection. A failure is logged, not fatal.

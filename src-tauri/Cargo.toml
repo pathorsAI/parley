@@ -90,6 +90,9 @@ libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 coreaudio-sys = "0.2"
+# Claims Parley as the notification sender before tauri-plugin-notification
+# can (see notify_sender.rs). Already in the tree through that plugin.
+notify-rust = "4.18"
 core-foundation = "0.10"
 objc = "0.2"
 block2 = "0.6"
