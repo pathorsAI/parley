@@ -16,7 +16,7 @@ website/
   script.js            # progressive enhancement only (see below)
   site.config.json     # build settings (analytics token)
   assets/              # fonts, screenshots, OG cards, logos, the Play badge
-  support/ privacy/ account-deletion/   # legal pages, copied as-is (bilingual, own toggle)
+  support/ privacy/ terms/ account-deletion/   # legal pages, copied as-is (bilingual, own toggle)
   legal.css legal.js   # their styles and language toggle
   sitemap.xml robots.txt CNAME
   tools/               # generators for the screenshots, OG cards and waveform (not deployed)
@@ -203,5 +203,5 @@ To reproduce or move it:
    domain check and tick **Enforce HTTPS**. If that box is greyed out the first time, set the
    record to **DNS only** until GitHub issues the certificate, then flip it back.
 
-The legal pages' URLs (`/support/`, `/privacy/`, `/account-deletion/`) are hard-coded in the
+The legal pages' URLs (`/support/`, `/privacy/`, `/terms/`, `/account-deletion/`) are hard-coded in the
 iOS and Android apps and in the store listings: do not move them.
