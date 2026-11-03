@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, CircleAlert, Info, Loader2, Plus, RotateCcw, X } from "lucide-react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { useI18n } from "../../i18n";
 import { useStore } from "../../lib/store";
 import { isTauri } from "../../lib/tauriEvents";
@@ -394,7 +394,11 @@ function AiMemory({
   let text = t(READ_STEPS[Math.min(step, READ_STEPS.length - 1)]);
   let title = text;
   if (done) {
-    icon = outcome.kind === "failed" ? "error" : outcome.kind === "needLlm" ? "info" : "done";
+    if (outcome.kind === "failed") icon = "error";
+    else if (outcome.kind === "needLlm") icon = "info";
+    // Just written: the one outcome that celebrates.
+    else if (outcome.kind === "written") icon = "success";
+    else icon = "done";
     text = t(outcome.kind === "needLlm" ? "onboarding.context.memory.needLlmShort" : `onboarding.context.memory.${outcome.kind}`);
     if (outcome.kind === "failed") title = t("onboarding.context.memory.failedLong", { error: outcome.error });
     else if (outcome.kind === "needLlm") title = t("onboarding.context.memory.needLlm");
@@ -420,17 +424,51 @@ function AiMemory({
   );
 }
 
-type LogIcon = "spin" | "done" | "info" | "error";
+type LogIcon = "spin" | "done" | "success" | "info" | "error";
 
 function StatusLine({ icon, text, title }: Readonly<{ icon: LogIcon; text: string; title: string }>) {
   return (
     <span className="ob-rise flex min-w-0 items-center gap-1.5">
       {icon === "spin" && <Loader2 className="size-3 shrink-0 animate-spin" />}
       {icon === "done" && <Check className="size-3 shrink-0 text-primary" />}
+      {icon === "success" && <SuccessMark />}
       {icon === "info" && <Info className="size-3 shrink-0" />}
       {icon === "error" && <CircleAlert className="size-3 shrink-0 text-destructive" />}
-      <span className={cn("min-w-0 truncate", icon === "error" && "text-destructive")} title={title}>
+      <span
+        className={cn(
+          "min-w-0 truncate",
+          icon === "error" && "text-destructive",
+          icon === "success" && "text-[#333] dark:text-foreground",
+        )}
+        title={title}
+      >
         {text}
+      </span>
+    </span>
+  );
+}
+
+/**
+ * The background was just written: a filled dot pops in, its check draws
+ * itself, and a ring spreads out once. Under reduced motion it is just there.
+ */
+function SuccessMark() {
+  return (
+    <span className="relative grid size-3.5 shrink-0 place-items-center">
+      <span
+        aria-hidden
+        className="ob-ripple left-1/2"
+        style={{ "--ob-ripple-size": "26px", animationDelay: "120ms", animationFillMode: "both" } as CSSProperties}
+      />
+      <span className="ob-pop grid size-3.5 place-items-center rounded-full bg-primary text-primary-foreground">
+        <svg viewBox="0 0 24 24" className="size-2.5" fill="none" stroke="currentColor" strokeWidth={3.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path
+            d="M5 12.5l4.5 4.5L19 7.5"
+            pathLength={1}
+            className="ob-draw"
+            style={{ "--ob-draw-ms": "320ms", "--ob-draw-delay": "220ms" } as CSSProperties}
+          />
+        </svg>
       </span>
     </span>
   );
