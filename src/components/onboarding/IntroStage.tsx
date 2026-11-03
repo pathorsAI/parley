@@ -17,7 +17,9 @@ import { runTimeline, typingSchedule, type Beat } from "./timeline";
  * items fill in, and the MCP plug lights up. Only the current step's
  * part of the demo is at full strength, so there is one thing to look at. It
  * runs in about eleven seconds and rests on its final frame, where Replay
- * runs it again from the start; Next works at any time. Real component styles (the titlebar pill, sidebar rows, a library
+ * runs it again from the start; clicking a step in the row plays the demo
+ * from that step, with the steps before it already done. Next works at any
+ * time. Real component styles (the titlebar pill, sidebar rows, a library
  * row), not illustrations. Under reduced motion it shows the final frame.
  */
 
@@ -74,24 +76,40 @@ const CAPTION: Record<IntroBeatId, TranslationKey> = {
   ready: "onboarding.stage.ready",
 };
 
-export function IntroStage() {
-  // Each run is a fresh mount: every part of the demo (typing, the flying
-  // card, the plug) starts from nothing again.
-  const [run, setRun] = useState(0);
-  return <IntroDemo key={run} onReplay={() => setRun((n) => n + 1)} />;
+/** The beats from `from` on, shifted so `from` is at 0. */
+export function beatsFrom(from: IntroBeatId): Beat<IntroBeatId>[] {
+  const i = ORDER.indexOf(from);
+  const t0 = INTRO_BEATS[i].at;
+  return INTRO_BEATS.slice(i).map((b) => ({ id: b.id, at: b.at - t0 }));
 }
 
-function IntroDemo({ onReplay }: Readonly<{ onReplay: () => void }>) {
+export function IntroStage() {
+  // Each run is a fresh mount: every part of the demo (typing, the flying
+  // card, the plug) starts from nothing again — or, jumping to a step, from
+  // the steps before it already done.
+  const [run, setRun] = useState<{ n: number; from: IntroBeatId }>({ n: 0, from: "overview" });
+  return (
+    <IntroDemo
+      key={run.n}
+      from={run.from}
+      onPlay={(from) => setRun((r) => ({ n: r.n + 1, from }))}
+    />
+  );
+}
+
+function IntroDemo({ from, onPlay }: Readonly<{ from: IntroBeatId; onPlay: (from: IntroBeatId) => void }>) {
   const { t, language } = useI18n();
   const [reduced] = useState(prefersReducedMotion);
-  const [beat, setBeat] = useState<IntroBeatId>(reduced ? "ready" : "overview");
+  const [beat, setBeat] = useState<IntroBeatId>(reduced ? "ready" : from);
 
   useEffect(() => {
     if (reduced) return;
-    return runTimeline(INTRO_BEATS, (id) => setBeat(id));
-  }, [reduced]);
+    return runTimeline(beatsFrom(from), (id) => setBeat(id));
+  }, [reduced, from]);
 
   const reached = (id: IntroBeatId) => ORDER.indexOf(beat) >= ORDER.indexOf(id);
+  // A step before the one jumped to is shown done, without its animation.
+  const skipped = (id: IntroStepId) => reduced || ORDER.indexOf(id) < ORDER.indexOf(from);
   // One part of the demo at full strength: the current step's. Parts already
   // shown step back; at rest (ready) everything is back to full.
   const focus = (id: IntroStepId) =>
@@ -100,12 +118,12 @@ function IntroDemo({ onReplay }: Readonly<{ onReplay: () => void }>) {
 
   return (
     <section className="flex flex-col gap-4" aria-label={t("onboarding.stage.aria")}>
-      <StepRow beat={beat} reduced={reduced} />
+      <StepRow beat={beat} reduced={reduced} landed={from !== "overview"} onJump={onPlay} />
 
       <div className="relative flex h-[184px] overflow-hidden rounded-lg border bg-background" data-testid="intro-stage">
         <MiniSidebar
           running={reached("folder")}
-          instant={reduced}
+          instant={skipped("folder")}
           className={focus("folder")}
           highlight={beat === "folder"}
           folderName={manifest.suggestion.folders[0]?.name ?? ""}
@@ -115,7 +133,7 @@ function IntroDemo({ onReplay }: Readonly<{ onReplay: () => void }>) {
           <div className="flex h-[41px] shrink-0 items-center justify-between border-b px-2.5">
             {reached("mcp") ? (
               // The meeting is over: the recording page's tabs (summary first).
-              <span className={cn("flex items-center gap-3", !reduced && "ob-fade-in")}>
+              <span className={cn("flex items-center gap-3", !skipped("mcp") && "ob-fade-in")}>
                 <span className="border-b-2 border-primary pb-0.5 text-[10px] font-semibold text-foreground">
                   {t("study.tab.summary")}
                 </span>
@@ -125,7 +143,7 @@ function IntroDemo({ onReplay }: Readonly<{ onReplay: () => void }>) {
               <span
                 className={cn(
                   "inline-flex items-center gap-1.5 rounded-full bg-recording/10 px-2.5 py-0.5 text-recording",
-                  !reduced && "ob-scale-in",
+                  !skipped("record") && "ob-scale-in",
                   focus("record"),
                 )}
               >
@@ -136,18 +154,18 @@ function IntroDemo({ onReplay }: Readonly<{ onReplay: () => void }>) {
             ) : (
               <span />
             )}
-            <McpPlug lit={reached("mcp")} instant={reduced} />
+            <McpPlug lit={reached("mcp")} instant={skipped("mcp")} />
           </div>
           {reached("mcp") ? (
             <ReportPreview
-              instant={reduced}
+              instant={skipped("mcp")}
               points={manifest.findings.slice(0, 2).map((f) => f.title)}
               actions={manifest.actionItems.slice(0, 2).map((a) => a.text)}
             />
           ) : (
             <TranscriptLines
               running={reached("transcript")}
-              instant={reduced}
+              instant={skipped("transcript")}
               className={focus("transcript")}
               lines={manifest.segments.slice(0, TRANSCRIPT_LINES).map((s) => ({
                 id: `${s.speaker}-${s.startMs}`,
@@ -168,7 +186,7 @@ function IntroDemo({ onReplay }: Readonly<{ onReplay: () => void }>) {
         {beat === "ready" && !reduced && (
           <button
             type="button"
-            onClick={onReplay}
+            onClick={() => onPlay("overview")}
             className="ob-fade-in -my-0.5 inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/10"
           >
             <RotateCcw className="size-3" />
@@ -232,11 +250,20 @@ export function IntroHero() {
 
 /**
  * The four steps as a row, each just a label over a progress bar: upcoming
- * (muted), current (blue, its bar fills over the step), done (checked, full). It lands first, on its own, before the demo starts.
+ * (muted), current (blue, its bar fills over the step), done (checked, full).
+ * It lands first, on its own, before the demo starts (not again when the demo
+ * is replayed from a step: `landed`). Each step is a button that plays the
+ * demo from it.
  */
-function StepRow({ beat, reduced }: Readonly<{ beat: IntroBeatId; reduced: boolean }>) {
+function StepRow({
+  beat,
+  reduced,
+  landed,
+  onJump,
+}: Readonly<{ beat: IntroBeatId; reduced: boolean; landed: boolean; onJump: (id: IntroStepId) => void }>) {
   const { t } = useI18n();
   const at = ORDER.indexOf(beat);
+  const rise = !reduced && !landed;
   return (
     <ol className="grid grid-cols-4 gap-3">
       {INTRO_STEPS.map((id, i) => {
@@ -245,9 +272,16 @@ function StepRow({ beat, reduced }: Readonly<{ beat: IntroBeatId; reduced: boole
           <li
             key={id}
             aria-current={state === "current" ? "step" : undefined}
-            className={cn("flex flex-col gap-2.5", !reduced && "ob-rise")}
-            style={reduced ? undefined : { animationDelay: `${i * OVERVIEW_STAGGER_MS}ms` }}
+            className={cn(rise && "ob-rise")}
+            style={rise ? { animationDelay: `${i * OVERVIEW_STAGGER_MS}ms` } : undefined}
           >
+            <button
+              type="button"
+              disabled={reduced}
+              title={t("onboarding.stage.jump", { step: t(STEP_LABEL[id]) })}
+              onClick={() => onJump(id)}
+              className="group -m-1 flex w-[calc(100%+0.5rem)] cursor-pointer flex-col gap-2.5 rounded-md p-1 text-left transition-colors hover:bg-muted/60 disabled:cursor-default disabled:hover:bg-transparent"
+            >
             <span className="flex items-center gap-1.5 text-xs font-medium">
               <span
                 className={cn(
@@ -279,6 +313,7 @@ function StepRow({ beat, reduced }: Readonly<{ beat: IntroBeatId; reduced: boole
                 />
               )}
             </span>
+            </button>
           </li>
         );
       })}

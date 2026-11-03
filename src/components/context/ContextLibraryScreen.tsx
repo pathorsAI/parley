@@ -211,7 +211,7 @@ function AiMemory() {
   const notCondensed = typeof state === "object" ? state : null;
   let why = "";
   if (notCondensed?.why === "needLlm") why = t("onboarding.context.memory.needLlm");
-  else if (notCondensed) why = t("onboarding.context.memory.failed", { error: notCondensed.why.failed });
+  else if (notCondensed) why = t("onboarding.context.memory.failedLong", { error: notCondensed.why.failed });
 
   let emptyText = "";
   if (!desktop) emptyText = t("context.memory.desktopOnly");
