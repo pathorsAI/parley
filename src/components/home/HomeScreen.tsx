@@ -8,7 +8,9 @@ import { log } from "../../lib/log";
 import { Button } from "@/components/ui/button";
 import type { LibraryTree } from "../shell/useLibraryTree";
 import { GettingStarted, openSampleRecording } from "./GettingStarted";
-import { UpcomingMeetings } from "./UpcomingMeetings";
+import { MeetingDrafts, StartingSoon } from "./UpcomingMeetings";
+import { FolderCard, NewFolderCard } from "../library/FolderCard";
+import { isArchived } from "../../lib/history/folders";
 import {
   GETTING_STARTED_STEPS,
   isGettingStartedVisible,
@@ -48,6 +50,7 @@ export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   const folderName = (id: string | null | undefined) =>
     id ? tree.personalFolders.find((f) => f.id === id)?.name : undefined;
   const recent = tree.summaries.slice(0, RECENT_COUNT);
+  const folders = tree.personalFolders.filter((f) => !isArchived(f));
   const locale = language === "en" ? "en-US" : "zh-TW";
 
   // Staged entrance: sections land in reading order (start → recent), then the
@@ -69,7 +72,7 @@ export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   return (
     <div className="relative min-h-0 flex-1 overflow-y-auto">
       <HomeBackdrop />
-      <div className="relative mx-auto flex max-w-2xl flex-col gap-8 px-6 pt-20 pb-10">
+      <div className="relative mx-auto flex max-w-5xl flex-col gap-8 px-6 pt-20 pb-10">
         {/* ── Start ─────────────────────────────────────────────────────── */}
         <section className="animate-fade-up flex flex-col gap-3">
           <h1 className="text-2xl font-bold tracking-tight">
@@ -101,8 +104,8 @@ export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
           </div>
         </section>
 
-        {/* ── The meeting drafted next ─────────────────────────────────────── */}
-        <UpcomingMeetings folderName={(id) => folderName(id)} style={delay(60)} />
+        {/* ── The meetings starting within the hour ───────────────────────── */}
+        <StartingSoon folderName={(id) => folderName(id)} style={delay(60)} />
 
         {/* ── Getting started (first lap) ─────────────────────────────────── */}
         {showChecklist && (
@@ -135,83 +138,105 @@ export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
           </p>
         )}
 
-        {/* ── Recent recordings ───────────────────────────────────────────── */}
-        <section className="flex flex-col gap-1.5">
-          <div className="animate-fade-up flex items-center gap-2" style={delay(180)}>
-            <h2 className="text-xs font-semibold text-muted-foreground">
-              {t("home.recent")}
-            </h2>
-            {/* Four is a shortcut, not a browser (#330) — this is the way out of it. */}
-            {recent.length > 0 && (
-              <button
-                type="button"
-                onClick={() => openLibrary({ kind: "personal", node: { kind: "all" } })}
-                className="ml-auto inline-flex cursor-pointer items-center gap-1 rounded px-1 text-xs text-primary transition-colors hover:text-primary/80"
-              >
-                {t("home.viewAll")}
-                <ArrowRight className="size-3" />
-              </button>
-            )}
+        {/* ── Folders, as on an org's page: one row that scrolls sideways ─── */}
+        <section className="animate-fade-up flex flex-col gap-1.5" style={delay(120)}>
+          <h2 className="text-xs font-semibold text-muted-foreground">{t("library.org.folders")}</h2>
+          <div className="-mx-6 flex flex-nowrap gap-5 overflow-x-auto px-6 pt-1 pb-2">
+            <NewFolderCard onCreate={(name) => tree.createPersonalFolder(name)} />
+            {folders.map((f) => (
+              <FolderCard
+                key={f.id}
+                name={f.name}
+                count={tree.summaries.filter((e) => e.folderId === f.id).length}
+                onOpen={() => openLibrary({ kind: "personal", node: { kind: "folder", folderId: f.id } })}
+              />
+            ))}
           </div>
-          {recent.length === 0 && (
-            <div
-              className="animate-fade-up flex flex-col items-center gap-2 rounded-md border border-dashed px-3 py-6 text-center text-xs text-muted-foreground"
-              style={delay(220)}
-            >
-              <p>{t("home.emptyRecordings")}</p>
-              {/* The checklist already offers the sample — don't say it twice. */}
-              {!showChecklist &&
-                (samplePulse.active ? (
-                  <TranscribingPulse />
-                ) : (
-                  <Button variant="ghost" size="sm" onClick={openSample}>
-                    {t("home.gs.useSample")}
-                  </Button>
-                ))}
-            </div>
-          )}
-          {/* One list, rows split by hairlines — no box around each recording. */}
-          {recent.length > 0 && (
-            <div className="flex flex-col divide-y divide-border">
-              {recent.map((e, i) => {
-                const folder = folderName(e.folderId);
-                return (
-                  <button
-                    key={e.id}
-                    type="button"
-                    onClick={() =>
-                      void loadHistoryEntry(e.id).catch((err) => {
-                        log.error("home: open recording failed", { id: e.id, error: String(err) });
-                        toast.error(String(err instanceof Error ? err.message : err));
-                      })
-                    }
-                    className="animate-fade-up flex cursor-pointer items-center gap-2.5 rounded-none px-2 py-2.5 text-left transition-colors hover:bg-muted/60"
-                    style={delay(220 + i * 40)}
-                  >
-                    <FileAudio className="size-4 shrink-0 text-muted-foreground" />
-                    <span className="flex min-w-0 flex-1 flex-col">
-                      <span className="truncate text-sm font-medium">{e.title}</span>
-                      <span className="truncate text-xs text-muted-foreground">
-                        {new Date(e.createdAt).toLocaleDateString(locale, {
-                          month: "short",
-                          day: "numeric",
-                        })}
-                        {folder ? ` · ${folder}` : ""}
-                        {e.snippet ? ` · ${e.snippet}` : ""}
-                      </span>
-                    </span>
-                    {(e.actionItemsCount ?? 0) > 0 && (
-                      <span className="flex shrink-0 items-center gap-1 text-xs tabular-nums text-muted-foreground">
-                        <ClipboardList className="size-3.5" />
-                        {e.actionItemsCount}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          )}
         </section>
+
+        {/* ── Drafts | recent recordings: side by side when the pane has room,
+            stacked when it doesn't (measured on the pane, like an org's page). */}
+        <div className="@container">
+          <div className="grid grid-cols-1 gap-x-8 gap-y-8 @min-[720px]:grid-cols-2">
+            <MeetingDrafts folderName={(id) => folderName(id)} style={delay(150)} />
+            <section className="flex min-w-0 flex-col gap-1.5">
+              <div className="animate-fade-up flex min-h-6 items-center gap-2" style={delay(180)}>
+                <h2 className="text-xs font-semibold text-muted-foreground">
+                  {t("home.recent")}
+                </h2>
+                {/* Four is a shortcut, not a browser (#330) — this is the way out of it. */}
+                {recent.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => openLibrary({ kind: "personal", node: { kind: "all" } })}
+                    className="ml-auto inline-flex cursor-pointer items-center gap-1 rounded px-1 text-xs text-primary transition-colors hover:text-primary/80"
+                  >
+                    {t("home.viewAll")}
+                    <ArrowRight className="size-3" />
+                  </button>
+                )}
+              </div>
+              {recent.length === 0 && (
+                <div
+                  className="animate-fade-up flex flex-col items-center gap-2 rounded-md border border-dashed px-3 py-6 text-center text-xs text-muted-foreground"
+                  style={delay(220)}
+                >
+                  <p>{t("home.emptyRecordings")}</p>
+                  {/* The checklist already offers the sample — don't say it twice. */}
+                  {!showChecklist &&
+                    (samplePulse.active ? (
+                      <TranscribingPulse />
+                    ) : (
+                      <Button variant="ghost" size="sm" onClick={openSample}>
+                        {t("home.gs.useSample")}
+                      </Button>
+                    ))}
+                </div>
+              )}
+              {/* One list, rows split by hairlines — no box around each recording. */}
+              {recent.length > 0 && (
+                <div className="flex flex-col divide-y divide-border">
+                  {recent.map((e, i) => {
+                    const folder = folderName(e.folderId);
+                    return (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onClick={() =>
+                          void loadHistoryEntry(e.id).catch((err) => {
+                            log.error("home: open recording failed", { id: e.id, error: String(err) });
+                            toast.error(String(err instanceof Error ? err.message : err));
+                          })
+                        }
+                        className="animate-fade-up flex cursor-pointer items-center gap-2.5 rounded-none px-2 py-2.5 text-left transition-colors hover:bg-muted/60"
+                        style={delay(220 + i * 40)}
+                      >
+                        <FileAudio className="size-4 shrink-0 text-muted-foreground" />
+                        <span className="flex min-w-0 flex-1 flex-col">
+                          <span className="truncate text-sm font-medium">{e.title}</span>
+                          <span className="truncate text-xs text-muted-foreground">
+                            {new Date(e.createdAt).toLocaleDateString(locale, {
+                              month: "short",
+                              day: "numeric",
+                            })}
+                            {folder ? ` · ${folder}` : ""}
+                            {e.snippet ? ` · ${e.snippet}` : ""}
+                          </span>
+                        </span>
+                        {(e.actionItemsCount ?? 0) > 0 && (
+                          <span className="flex shrink-0 items-center gap-1 text-xs tabular-nums text-muted-foreground">
+                            <ClipboardList className="size-3.5" />
+                            {e.actionItemsCount}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          </div>
+        </div>
       </div>
     </div>
   );

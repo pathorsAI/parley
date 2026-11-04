@@ -77,6 +77,18 @@ export function sortDrafts(drafts: readonly MeetingDraft[]): MeetingDraft[] {
   });
 }
 
+/** How far ahead 總覽's 即將開始的會議 looks: a meeting moves up there an
+ *  hour before it starts. */
+export const STARTING_SOON_MS = 60 * 60_000;
+
+/** Is this draft's meeting about to start (within STARTING_SOON_MS) or under
+ *  way? A meeting without an end time counts as running for an hour. Pure. */
+export function isStartingSoon(d: MeetingDraft, now: number): boolean {
+  if (d.meetingAt == null) return false;
+  const end = d.meetingEndAt ?? d.meetingAt + STARTING_SOON_MS;
+  return d.meetingAt <= now + STARTING_SOON_MS && end > now;
+}
+
 /** Drafts destined for this org — its root or any of its folders. Only a
  *  draft's own org pick counts: one that rides the settings-wide default
  *  share has no org of its own. Pure. */

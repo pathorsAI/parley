@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 // The store first: prep.ts reaches it through ./meeting, and entering the
 // cycle from the slice side would build the store before the slice exists.
 import "../store";
-import { draftsForOrg, sortDrafts, type MeetingDraft } from "./prep";
+import { draftsForOrg, isStartingSoon, sortDrafts, STARTING_SOON_MS, type MeetingDraft } from "./prep";
 
 function draft(id: string, over: Partial<MeetingDraft> = {}): MeetingDraft {
   return {
@@ -76,5 +76,27 @@ describe("setDraftOpen with a preset", () => {
     expect(useStore.getState().meetingOrgShare).toEqual({ orgId: "acme", folderId: null, mode: "copy" });
     useStore.getState().setDraftOpen(false);
     useStore.getState().resetPrep();
+  });
+});
+
+describe("isStartingSoon", () => {
+  const now = 1_000_000_000;
+  const min = 60_000;
+
+  it("takes a meeting starting within the hour, and not one further out", () => {
+    expect(isStartingSoon(draft("a", { meetingAt: now + 30 * min }), now)).toBe(true);
+    expect(isStartingSoon(draft("b", { meetingAt: now + STARTING_SOON_MS }), now)).toBe(true);
+    expect(isStartingSoon(draft("c", { meetingAt: now + 61 * min }), now)).toBe(false);
+  });
+
+  it("keeps a meeting under way until it ends, an hour when it has no end", () => {
+    expect(isStartingSoon(draft("a", { meetingAt: now - 10 * min, meetingEndAt: now + 20 * min }), now)).toBe(true);
+    expect(isStartingSoon(draft("b", { meetingAt: now - 90 * min, meetingEndAt: now - min }), now)).toBe(false);
+    expect(isStartingSoon(draft("c", { meetingAt: now - 30 * min }), now)).toBe(true);
+    expect(isStartingSoon(draft("d", { meetingAt: now - 61 * min }), now)).toBe(false);
+  });
+
+  it("never takes an untimed draft", () => {
+    expect(isStartingSoon(draft("a"), now)).toBe(false);
   });
 });
