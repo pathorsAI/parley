@@ -33,10 +33,10 @@ export function FolderCard({
       style={{ width: SHOWN_W, height: DRAWN.h * SCALE }}
     >
       <FolderDrawing hover>
-        <p className="truncate text-[12px] text-[#333] transition-colors duration-500 ease-[var(--ob-ease)] group-hover:text-[#3b82f6]">
+        <p className="truncate text-[12px] text-[#333] transition-colors duration-500 ease-[var(--ob-ease)] group-hover:text-[#3b82f6] dark:text-[#e5e7eb] dark:group-hover:text-[#60a5fa]">
           {name}
         </p>
-        <p className="text-[10px] text-[#a3a3a3]">{t("library.folderCard.count", { count })}</p>
+        <p className="text-[10px] text-[#a3a3a3] dark:text-[#8b95a3]">{t("library.folderCard.count", { count })}</p>
       </FolderDrawing>
     </button>
   );
@@ -73,9 +73,9 @@ function DraftFolderCard({ onDone }: Readonly<{ onDone: (name: string | null) =>
             else if (e.key === "Escape") finish(false);
           }}
           onBlur={() => finish(true)}
-          className="w-full min-w-0 border-0 bg-transparent p-0 text-[12px] leading-normal text-[#333] caret-[#3b82f6] outline-none placeholder:text-[#a3a3a3]"
+          className="w-full min-w-0 border-0 bg-transparent p-0 text-[12px] leading-normal text-[#333] caret-[#3b82f6] dark:text-[#e5e7eb] outline-none placeholder:text-[#a3a3a3]"
         />
-        <p className="text-[10px] text-[#a3a3a3]">{t("library.folderCard.count", { count: 0 })}</p>
+        <p className="text-[10px] text-[#a3a3a3] dark:text-[#8b95a3]">{t("library.folderCard.count", { count: 0 })}</p>
       </FolderDrawing>
     </div>
   );
@@ -92,27 +92,32 @@ function FolderDrawing({ hover = false, children }: Readonly<{ hover?: boolean; 
       style={{ width: DRAWN.w, height: DRAWN.h, transform: `scale(${SCALE})` }}
     >
       {/* Back panel. */}
-      <div className={`absolute top-0 left-0 h-[106px] w-[151px] rounded-[8px] bg-[#e1e1e1] transition-colors duration-500 ease-[var(--ob-ease)] ${h("group-hover:bg-[#d4e5ef]")}`} />
+      <div className={`absolute top-0 left-0 h-[106px] w-[151px] rounded-[8px] bg-[#e1e1e1] transition-colors duration-500 ease-[var(--ob-ease)] dark:bg-[#1c2533] ${h("group-hover:bg-[#d4e5ef] dark:group-hover:bg-[#1d3350]")}`} />
       {/* The two papers, rising a little on hover. */}
       <div className={`absolute top-[10.9px] left-[9.89px] flex h-[116.122px] w-[111.626px] items-center justify-center folder-paper ${h("group-hover:translate-x-[3.11px] group-hover:-translate-y-[10.9px]")}`}>
-        <div className="h-[104.765px] w-[99.601px] rotate-7 rounded-[4px] bg-white/80 shadow-[0px_4px_7px_0px_rgba(0,0,0,0.1)]" />
+        <div className="h-[104.765px] w-[99.601px] rotate-7 rounded-[4px] bg-white/80 shadow-[0px_4px_7px_0px_rgba(0,0,0,0.1)] dark:bg-[#2b3646]/80" />
       </div>
       <div className={`absolute top-[31.16px] left-[29.14px] flex h-[95.204px] w-[106px] items-center justify-center folder-paper folder-paper-late ${h("group-hover:translate-x-[3.11px] group-hover:-translate-y-[10.89px]")}`}>
-        <div className="h-[84.074px] w-[96.473px] rotate-7 rounded-[4px] bg-white shadow-[0px_4px_7px_0px_rgba(0,0,0,0.1)]" />
+        <div className="h-[84.074px] w-[96.473px] rotate-7 rounded-[4px] bg-white shadow-[0px_4px_7px_0px_rgba(0,0,0,0.1)] dark:bg-[#334052]" />
       </div>
       {/* The folder's front, its grey and blue washes crossfading. */}
-      <img
-        alt=""
-        src="/library/folder-front.svg"
-        className={`absolute top-[29px] left-0 block h-[107px] w-[151px] max-w-none transition-opacity duration-500 ease-[var(--ob-ease)] ${h("group-hover:opacity-0")}`}
-      />
-      {hover && (
-        <img
-          alt=""
-          src="/library/folder-front-hover.svg"
-          className="absolute top-[29px] left-0 block h-[107px] w-[151px] max-w-none opacity-0 transition-opacity duration-500 ease-[var(--ob-ease)] group-hover:opacity-100"
-        />
-      )}
+      {/* Light and dark drawings of the front (the dark ones fade to navy). */}
+      {(["", "-dark"] as const).map((v) => (
+        <span key={v} className={v ? "hidden dark:contents" : "contents dark:hidden"}>
+          <img
+            alt=""
+            src={`/library/folder-front${v}.svg`}
+            className={`absolute top-[29px] left-0 block h-[107px] w-[151px] max-w-none transition-opacity duration-500 ease-[var(--ob-ease)] ${h("group-hover:opacity-0")}`}
+          />
+          {hover && (
+            <img
+              alt=""
+              src={`/library/folder-front-hover${v}.svg`}
+              className="absolute top-[29px] left-0 block h-[107px] w-[151px] max-w-none opacity-0 transition-opacity duration-500 ease-[var(--ob-ease)] group-hover:opacity-100"
+            />
+          )}
+        </span>
+      ))}
       <div className="absolute top-[95px] right-[12px] left-[12px] flex flex-col gap-[2px] leading-normal">{children}</div>
     </div>
   );
