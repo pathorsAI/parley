@@ -123,15 +123,15 @@ export function AppShell() {
         {/* Sizes carry explicit units: a bare number is read as a PIXEL size by
             this version, which pinned the tree to a 32px sliver on first run. */}
         <ResizablePanel id="tree" defaultSize="19%" minSize="180px" maxSize="30%">
-          {/* The tree scrolls; the theme switch stays pinned under it. */}
-          {/* The sidebar colour is translucent and layers: the column paints it,
-              the tree paints it again on top, and so does the footer — so the
-              switch sits on exactly the tree's colour, not on a lighter strip. */}
+          {/* The tree scrolls; the theme switch stays pinned under it. The
+              sidebar colour is translucent on macOS dark (it layers over the
+              window's vibrancy), so it is painted exactly ONCE, here — the tree
+              and the footer stay transparent, or stacked layers shift the tone. */}
           <div className="flex h-full min-h-0 flex-col bg-sidebar">
             <div className="min-h-0 flex-1">
               <AppSidebar tree={tree} />
             </div>
-            <div className="shrink-0 bg-sidebar px-3 pt-1 pb-2.5">
+            <div className="shrink-0 px-3 pt-1 pb-2.5">
               <SidebarThemeSwitch />
             </div>
           </div>

@@ -116,11 +116,13 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
   const startChord = command("meeting.start").keys.find((c) => !c.alias);
 
   const nav = (
-    // `bg-sidebar`, not `bg-background`: on macOS the token is translucent so
-    // the window's native sidebar material shows through. No right border: the
-    // shell's resize handle is the 1px line between the rail and the page, and
-    // a border of its own beside it drew that line twice as thick.
-    <nav className="flex h-full min-h-0 w-full flex-col overflow-y-auto bg-sidebar px-2 py-2 text-sidebar-foreground">
+    // No background of its own: the column around it (AppShell) paints
+    // `bg-sidebar` once — on macOS the token is translucent so the window's
+    // native sidebar material shows through, and a second layer would darken
+    // it. No right border: the shell's resize handle is the 1px line between
+    // the rail and the page, and a border of its own beside it drew that line
+    // twice as thick.
+    <nav className="flex h-full min-h-0 w-full flex-col overflow-y-auto px-2 py-2 text-sidebar-foreground">
       {/* Blue text, not a blue fill: the titlebar already carries the filled
           start button and Home repeats it as its hero, so a third filled
           control here would spend the whole accent budget on one action. */}
