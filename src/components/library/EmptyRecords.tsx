@@ -12,7 +12,9 @@ export function EmptyRecords({
     <div
       className={`flex flex-col items-center justify-center gap-1 text-center ${compact ? "py-8" : "h-full"}`}
     >
-      <img alt="" src="/library/empty-records.svg" className="mb-4 block h-[105.84px] w-[120px] max-w-none" />
+      <img alt="" src="/library/empty-records.svg" className="mb-4 block h-[105.84px] w-[120px] max-w-none dark:hidden" />
+      {/* The same box drawn for the dark theme: slate faces, a navy sheet. */}
+      <img alt="" src="/library/empty-records-dark.svg" className="mb-4 hidden h-[105.84px] w-[120px] max-w-none dark:block" />
       <p className="text-sm text-muted-foreground">{title}</p>
       <p className="max-w-80 text-xs text-muted-foreground/70">{hint}</p>
     </div>
