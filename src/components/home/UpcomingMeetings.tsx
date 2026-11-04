@@ -27,7 +27,7 @@ function DraftList({
 }: Readonly<{ rows: MeetingDraft[]; now: number; folderName: FolderName; empty: string }>) {
   if (rows.length === 0) {
     return (
-      <p className="rounded-lg border border-dashed bg-white/20 px-4 py-5 text-center text-xs text-muted-foreground">
+      <p className="rounded-lg border border-dashed bg-white/20 dark:bg-black/20 px-4 py-5 text-center text-xs text-muted-foreground">
         {empty}
       </p>
     );

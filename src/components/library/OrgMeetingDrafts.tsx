@@ -42,7 +42,7 @@ export function OrgMeetingDrafts({
       </div>
       {rows.length === 0 ? (
         // The same dashed note 總覽 shows when nothing is scheduled.
-        <p className="mt-2 rounded-lg border border-dashed bg-white/20 px-4 py-5 text-center text-xs text-muted-foreground">
+        <p className="mt-2 rounded-lg border border-dashed bg-white/20 dark:bg-black/20 px-4 py-5 text-center text-xs text-muted-foreground">
           {t("library.org.draftsEmpty")}
         </p>
       ) : (
