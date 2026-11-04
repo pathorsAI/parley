@@ -124,9 +124,8 @@ export function AppShell() {
             this version, which pinned the tree to a 32px sliver on first run. */}
         <ResizablePanel id="tree" defaultSize="19%" minSize="180px" maxSize="30%">
           {/* The tree scrolls; the theme switch stays pinned under it. The
-              sidebar colour is translucent on macOS dark (it layers over the
-              window's vibrancy), so it is painted exactly ONCE, here — the tree
-              and the footer stay transparent, or stacked layers shift the tone. */}
+              sidebar colour is painted once, here, for the tree and the footer
+              alike, so the two always read as one surface. */}
           <div className="flex h-full min-h-0 flex-col bg-sidebar">
             <div className="min-h-0 flex-1">
               <AppSidebar tree={tree} />
