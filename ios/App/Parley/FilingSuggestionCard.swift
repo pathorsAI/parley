@@ -484,6 +484,7 @@ struct FilingSuggestionCard: View {
             canCreate: true,
             title: "Choose a folder",
             confirm: .choose,
+            orgTransfer: .copy,
             onConfirm: { destination, label in
                 if !chipDestinations.contains(destination) {
                     picked = (destination, label)

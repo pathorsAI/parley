@@ -93,11 +93,10 @@ struct FolderGroup: Identifiable {
 /// new-folder field it selects the name typed, and neither commits.
 ///
 /// Personal folders and each organization's folders are listed under their
-/// own heading, because they are different places: filing a personal
-/// recording into an org folder shares a COPY there (the server's
-/// `POST /recordings/:id/share`) and leaves the original where it is, the
-/// desktop's rule for org destinations. The subtitle says so whenever such a
-/// row is selected.
+/// own heading, because they are different places: a personal recording
+/// reaches an org folder through the server's `POST /recordings/:id/share`,
+/// and what happens to the personal original depends on the caller
+/// (`orgTransfer`). The subtitle says which whenever such a row is selected.
 ///
 /// Plain rows on the page, no cards and no fills (`ios-visual-language.md`).
 /// Blue appears where it means something: the selection's checkmark, the
@@ -126,6 +125,9 @@ struct FolderPickerSheet: View {
     /// the pick back to a screen that saves it with something else (the
     /// filing suggestion saves the name and the folder together).
     var confirm: ConfirmAction = .move
+    /// What filing a personal recording into an organization does to the
+    /// personal original.
+    var orgTransfer: OrgTransfer = .move
     /// The pick, with the label the sheet drew it under. Not called for the
     /// place the recording already is.
     let onConfirm: (FolderDestination, _ label: String) async throws -> Void
@@ -248,8 +250,14 @@ struct FolderPickerSheet: View {
         guard let selection else { return String(localized: "Tap a folder to select it.") }
         let label = label(for: selection)
         if current.orgId == nil, selection.orgId != nil {
-            return String(
-                localized: "Shares a copy to “\(label)”. The original stays in Personal.")
+            switch orgTransfer {
+            case .move:
+                return String(
+                    localized: "Moves to “\(label)”. It leaves Personal once the organization has it.")
+            case .copy:
+                return String(
+                    localized: "Shares a copy to “\(label)”. The original stays in Personal.")
+            }
         }
         return String(localized: "Into “\(label)”.")
     }
@@ -565,6 +573,14 @@ struct FolderPickerSheet: View {
 }
 
 extension FolderPickerSheet {
+    /// A personal recording into an organization: an explicit move takes it
+    /// out of Personal once the org copy exists (share, then delete); the
+    /// filing card keeps it, the way the default save location does.
+    enum OrgTransfer {
+        case move
+        case copy
+    }
+
     enum ConfirmAction {
         case move
         case choose

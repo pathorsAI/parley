@@ -26,6 +26,7 @@ struct RecordingDetailView: View {
     @EnvironmentObject private var downloads: AudioDownloadModel
     /// "Start your first real meeting" at the end of the guided lap.
     @EnvironmentObject private var router: TabRouter
+    @Environment(\.dismiss) private var dismissScreen
     let summary: CloudRecordingSummary
     /// nil = personal scope; set = org scope.
     let orgId: String?
@@ -167,9 +168,8 @@ struct RecordingDetailView: View {
     @State private var currentFolderId: String?
     /// The folder picker is up. See `FolderPickerSheet`.
     @State private var choosingFolder = false
-    /// The last confirm shared a copy into an organization; said under the
-    /// folder chip, because the chip itself does not change.
-    @State private var sharedNotice: String?
+    /// The recording moved out of this library; pop once the picker is gone.
+    @State private var leaveAfterMove = false
 
     /// The pending filing suggestion, if the recording carries one — shown above
     /// the face switcher. See `FilingSuggestionCard`.
@@ -276,7 +276,9 @@ struct RecordingDetailView: View {
         // A sheet, not the action sheet it used to be: a folder is a customer,
         // and forty customers as a scrolling wall of buttons with no search
         // was the complaint. See `FolderPickerSheet`.
-        .sheet(isPresented: $choosingFolder) {
+        .sheet(isPresented: $choosingFolder, onDismiss: {
+            if leaveAfterMove { dismissScreen() }
+        }) {
             folderPicker
         }
         .task {
@@ -1621,19 +1623,14 @@ struct RecordingDetailView: View {
             .disabled(!movable)
             .accessibilityLabel(Text("Folder: \(label)"))
             .accessibilityHint(movable ? Text("Move to another folder") : Text(verbatim: ""))
-            if let sharedNotice {
-                Text(verbatim: sharedNotice)
-                    .font(.parley.caption)
-                    .foregroundStyle(Theme.success)
-            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 20)
     }
 
-    /// The same picker the Library uses. A personal recording can also go to
-    /// an organization's folder (a shared copy); an org recording only moves
-    /// within its own organization, the one place its endpoint reaches.
+    /// The same picker the Library uses. A personal recording can also move to
+    /// an organization's folder; an org recording only moves within its own
+    /// organization, the one place its endpoint reaches.
     private var folderPicker: some View {
         let group: FolderGroup =
             orgId.map { FolderGroup(orgId: $0, name: orgName ?? "", folders: folders) }
@@ -1652,7 +1649,6 @@ struct RecordingDetailView: View {
     /// The picker's confirm. Throws back to the sheet, which stays up with the
     /// error.
     private func file(to destination: FolderDestination, label: String) async throws {
-        sharedNotice = nil
         if case .newFolder(let name) = destination {
             // The folder is created in the cloud: it is a real folder, the
             // user named it.
@@ -1662,8 +1658,11 @@ struct RecordingDetailView: View {
         } else if destination.orgId == orgId {
             try await moveToFolder(destination.folderId)
         } else if let target = destination.orgId {
-            // A personal recording into an organization: the server copies it
-            // and the original stays here, the desktop's rule.
+            // A personal recording into an organization is a move: share it
+            // into the folder, then delete the personal original, in that
+            // order, so a failure part-way leaves the original intact. The
+            // recording is then no longer in the library this screen was
+            // opened from, so the screen goes back to it.
             do {
                 try await app.cloud.shareRecording(
                     id: summary.id, orgId: target, folderId: destination.folderId)
@@ -1672,7 +1671,16 @@ struct RecordingDetailView: View {
                     message: String(localized: "You don't have permission to share to “\(label)”"))
             }
             GettingStartedStore.shared.mark(.filed)
-            sharedNotice = String(localized: "Shared a copy to “\(label)”")
+            do {
+                try await app.cloud.deleteRecording(id: summary.id)
+            } catch {
+                throw FilingError(
+                    message: String(
+                        localized: "Copied to “\(label)”, but the original couldn't be removed from Personal: \(error.localizedDescription)"))
+            }
+            TranscriptHealthCache.forget(summary.id)
+            app.noteLibraryChanged()
+            leaveAfterMove = true
         }
     }
 

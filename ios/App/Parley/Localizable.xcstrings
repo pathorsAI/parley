@@ -1145,6 +1145,23 @@
         }
       }
     },
+    "Copied to “%@”, but the original couldn't be removed from Personal: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copied to “%@”, but the original couldn't be removed from Personal: %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已複製到「%@」，但個人裡的原始錄音沒能移除：%@"
+          }
+        }
+      }
+    },
     "Copy" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3467,6 +3484,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "移到…"
+          }
+        }
+      }
+    },
+    "Moved to “%@”" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moved to “%@”"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已移到「%@」"
+          }
+        }
+      }
+    },
+    "Moves to “%@”. It leaves Personal once the organization has it." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moves to “%@”. It leaves Personal once the organization has it."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "會移到「%@」。組織收到後，就會從個人移除。"
           }
         }
       }
@@ -6067,23 +6118,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "分享到組織（複製）"
-          }
-        }
-      }
-    },
-    "Shared a copy to “%@”" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Shared a copy to “%@”"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已分享副本到「%@」"
           }
         }
       }

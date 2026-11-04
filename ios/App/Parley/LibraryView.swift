@@ -1208,8 +1208,9 @@ struct LibraryView: View {
         } else if destination.orgId == scope {
             try await moveToFolder(rec, folderId: destination.folderId)
         } else if let orgId = destination.orgId {
-            // A personal recording into an organization: the server copies it,
-            // and the original stays where it is (the desktop's rule).
+            // A personal recording into an organization is a move: share it
+            // into the folder, then delete the personal original, in that
+            // order, so a failure part-way leaves the original intact.
             busyId = rec.id
             defer { busyId = nil }
             do {
@@ -1220,7 +1221,17 @@ struct LibraryView: View {
                     message: String(localized: "You don't have permission to share to “\(label)”"))
             }
             gettingStarted.mark(.filed)
-            notice = String(localized: "Shared a copy to “\(label)”")
+            do {
+                try await app.cloud.deleteRecording(id: rec.id)
+            } catch {
+                await load()
+                throw FilingError(
+                    message: String(
+                        localized: "Copied to “\(label)”, but the original couldn't be removed from Personal: \(error.localizedDescription)"))
+            }
+            recordings.removeAll { $0.id == rec.id }
+            TranscriptHealthCache.forget(rec.id)
+            notice = String(localized: "Moved to “\(label)”")
         }
     }
 
