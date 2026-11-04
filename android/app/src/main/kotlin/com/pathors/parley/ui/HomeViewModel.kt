@@ -1000,10 +1000,11 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         }
 
         /**
-         * What the list shows: the selected folder page of the scope, then the
-         * search, which is one query across the whole scope — a search on "All"
-         * and the same search two chips over are the same search, narrowed
-         * (iOS `LibraryView.filtered` makes the same choice).
+         * What the list shows: the scope newest first, narrowed to the selected
+         * folder page, then the search, which is one query across the whole
+         * scope — a search on "All" and the same search two chips over are the
+         * same search, narrowed (iOS `LibraryView.filtered` makes the same
+         * choice).
          */
         internal fun visibleRecordings(
             recordings: List<RecordingSummary>,
@@ -1011,7 +1012,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             filter: FolderFilter,
             query: String,
         ): List<RecordingSummary> =
-            filterRecordings(LibraryFolders.filter(recordings, folders, filter), query)
+            filterRecordings(LibraryFolders.filter(LibraryFolders.newestFirst(recordings), folders, filter), query)
 
         /**
          * The library narrowed to a query: titles and snippets, nothing else.
