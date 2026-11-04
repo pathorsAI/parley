@@ -11,6 +11,7 @@ import { useI18n } from "../../i18n";
 import { ReplayScreen } from "../replay/ReplayScreen";
 import { ReportContent } from "../sidebar/ReportContent";
 import { DeliveryPanel } from "../delivery/DeliveryPanel";
+import { ReportNav } from "./ReportNav";
 import { ActionItemsPanel } from "../replay/ActionItemsPanel";
 import { AskPanel } from "../sidebar/AskPanel";
 import { StudyHeader, STUDY_TABPANEL_ID, studyTabId } from "./StudyHeader";
@@ -295,46 +296,50 @@ function useSectionLabel(): (s: BriefSectionPart) => string {
 }
 
 /**
- * The brief a section at a time: a row of small tabs (重點／決議／待解問題…),
- * one section under it. The forward-looking section isn't here — it reads
- * under 後續行動 ({@link BriefNextSection}). A brief that can't be cut (no
- * headings, or a single section) is shown whole, with no tabs.
+ * The brief laid out like the 評分 report: every section down the left column
+ * under a numbered heading, and a nav on the right that tracks and jumps
+ * between them. The forward-looking section isn't here — it reads under
+ * 後續行動 ({@link BriefNextSection}). A brief that can't be cut (no
+ * headings, or a single section) is shown whole, with no nav.
  */
 function BriefTabs({ brief, onSeek }: Readonly<{ brief: string; onSeek: (ms: number) => void }>) {
+  const { t } = useI18n();
   const label = useSectionLabel();
   const { lead, sections } = useMemo(() => splitBrief(brief), [brief]);
-  const [picked, setPicked] = useState(0);
-  // A streaming brief grows sections; a regenerated one may have fewer.
-  const index = Math.min(picked, Math.max(0, sections.length - 1));
 
   if (sections.length < 2) {
     const whole = [lead, ...sections.map((s) => s.body)].filter(Boolean).join("\n\n");
     return <ReportContent markdown={whole || normalizeBriefHeadings(brief)} onTimestamp={onSeek} plain />;
   }
+  const num = (i: number) => String(i + 1).padStart(2, "0");
+  const nav = [
+    ...(lead ? [{ id: "brief-lead", label: t("study.brief.nav.lead") }] : []),
+    ...sections.map((s, i) => ({ id: `brief-${i}`, label: `${num(i)} ${label(s)}` })),
+  ];
   return (
-    <div className="flex flex-col gap-3">
-      {lead && <ReportContent markdown={lead} onTimestamp={onSeek} plain />}
-      <div role="tablist" className="flex flex-wrap gap-1.5">
-        {sections.map((s, i) => (
-          <button
-            key={`${s.title}-${i}`}
-            type="button"
-            role="tab"
-            aria-selected={i === index}
-            onClick={() => setPicked(i)}
-            className={cn(
-              "h-7 rounded-full px-3 text-xs font-medium transition-colors",
-              i === index
-                ? "bg-primary/10 text-primary"
-                : "text-muted-foreground hover:bg-muted hover:text-foreground"
-            )}
-          >
-            {label(s)}
-          </button>
-        ))}
-      </div>
-      <div role="tabpanel">
-        <ReportContent markdown={sections[index].body} onTimestamp={onSeek} plain />
+    <div className="@container">
+      <div className="grid grid-cols-1 gap-3 @min-[680px]:grid-cols-[minmax(0,1fr)_128px] @min-[680px]:gap-8">
+        <div className="order-1 flex min-w-0 flex-col gap-6 @min-[680px]:order-none">
+          {lead && (
+            <section id="brief-lead" className="scroll-mt-4">
+              <ReportContent markdown={lead} onTimestamp={onSeek} plain />
+            </section>
+          )}
+          {sections.map((s, i) => (
+            <section
+              key={`${s.title}-${i}`}
+              id={`brief-${i}`}
+              className={cn("scroll-mt-4", (lead || i > 0) && "border-t pt-6")}
+            >
+              <div className="mb-2 flex items-baseline gap-2">
+                <span className="font-mono text-xs font-semibold text-primary">{num(i)}</span>
+                <h3 className="text-base font-semibold">{label(s)}</h3>
+              </div>
+              <ReportContent markdown={s.body} onTimestamp={onSeek} plain />
+            </section>
+          ))}
+        </div>
+        <ReportNav items={nav} label={t("study.brief.nav.aria")} />
       </div>
     </div>
   );
