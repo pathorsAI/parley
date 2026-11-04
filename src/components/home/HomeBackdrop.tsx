@@ -41,7 +41,9 @@ export function HomeBackdrop() {
   return (
     <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden bg-white dark:bg-background">
       <div className="absolute inset-0 bg-linear-to-b from-[#f0f9ff] to-white opacity-20 dark:from-primary/10 dark:to-background dark:opacity-60" />
-      <div className="absolute inset-x-0 opacity-20 dark:opacity-15" style={{ top: LAYER_TOP, height: LAYER_HEIGHT }}>
+      {/* Mirrored left to right (-scale-x-100): the tall, dark-cored bars sit
+          on the right of the page, the short bright ones on the left. */}
+      <div className="absolute inset-x-0 -scale-x-100 opacity-20 dark:opacity-15" style={{ top: LAYER_TOP, height: LAYER_HEIGHT }}>
         {BARS.map((b, i) => (
           <div
             key={b.left}
