@@ -418,6 +418,17 @@
                 orgId: nil, createdAt: nil, updatedAt: nil),
         ]
 
+        /// The demo org's shared folders, so the picker shows an organization
+        /// heading under the personal ones.
+        static let orgFolders = [
+            CloudFolder(
+                id: "f-org-pipeline", name: t("Pipeline review", "業務檢討"),
+                orgId: "demo-org", createdAt: nil, updatedAt: nil),
+            CloudFolder(
+                id: "f-org-accounts", name: t("Key accounts", "重點客戶"),
+                orgId: "demo-org", createdAt: nil, updatedAt: nil),
+        ]
+
         /// Enough folders that the picker has to scroll and the search earns its
         /// place — the account the action sheet failed. The first two are the
         /// library's own, so the featured recording's folder is ticked.

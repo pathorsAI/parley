@@ -42,7 +42,7 @@ struct LibraryView: View {
     @State private var importing = false
     /// What the last finished import landed, shown above the list until the
     /// user moves on. Failures go to `error` instead, with everything else.
-    @State private var importNotice: String?
+    @State private var notice: String?
     /// The getting-started checklist above the list, and the sample recording
     /// it can put in it. Both are local to this phone.
     @ObservedObject private var gettingStarted = GettingStartedStore.shared
@@ -283,7 +283,7 @@ struct LibraryView: View {
         search = ""
         if scope != nil {
             scope = nil
-            importNotice = nil
+            notice = nil
         }
         folderFilter = nil
         // A beat for the pop and the tab switch to settle: a scroll issued
@@ -400,7 +400,7 @@ struct LibraryView: View {
                 Button {
                     scope = nil
                     folderFilter = nil
-                    importNotice = nil
+                    notice = nil
                 } label: {
                     Label("Personal", systemImage: scope == nil ? "checkmark" : "folder")
                 }
@@ -408,7 +408,7 @@ struct LibraryView: View {
                     Button {
                         scope = org.id
                         folderFilter = nil
-                        importNotice = nil
+                        notice = nil
                     } label: {
                         Label(
                             org.name,
@@ -539,7 +539,7 @@ struct LibraryView: View {
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
             }
-            if importer.isRunning || importNotice != nil {
+            if importer.isRunning || notice != nil {
                 importStatus
                     .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
                     .listRowSeparator(.hidden)
@@ -592,6 +592,13 @@ struct LibraryView: View {
                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                     Button("Delete", systemImage: "trash", role: .destructive) {
                         requestDelete(rec)
+                    }
+                    // The quick way to re-file, next to Delete rather than in
+                    // the long-press menu alone. Not a tap target that moves
+                    // anything: it opens the picker, which asks for a confirm.
+                    if canMove {
+                        Button("Move", systemImage: "folder") { moving = rec }
+                            .tint(Theme.primary)
                     }
                 }
                 // Leading, so the destructive edge stays the one it has always
@@ -649,8 +656,8 @@ struct LibraryView: View {
                     .foregroundStyle(Color(.secondaryLabel))
             }
         case .idle:
-            if let importNotice {
-                Text(verbatim: importNotice)
+            if let notice {
+                Text(verbatim: notice)
                     .font(.parley.caption)
                     .foregroundStyle(Theme.success)
             }
@@ -1003,7 +1010,7 @@ struct LibraryView: View {
                     || ($0.snippet ?? "").localizedCaseInsensitiveContains(search)
             }
         }
-        return items.sorted { $0.createdAt > $1.createdAt }
+        return RecordingOrder.newestFirst(items)
     }
 
     // MARK: audio on this phone
@@ -1054,11 +1061,8 @@ struct LibraryView: View {
         downloadAction(for: rec)
         // The picker sheet rather than a submenu of every folder: a submenu
         // has no search and no way to add the customer you have just met.
-        // Personal scope can create a folder, so it always has somewhere to
-        // go; an org scope's picker does not create (its folders are made from
-        // the chip row's "+"), so it needs folders.
-        if scope == nil || !folders.isEmpty {
-            Button("Move to folder…", systemImage: "folder") { moving = rec }
+        if canMove {
+            Button("Move to…", systemImage: "folder") { moving = rec }
         }
         // Not for the sample: sharing is a server-side copy of something the
         // server does not have.
@@ -1081,6 +1085,12 @@ struct LibraryView: View {
         }
     }
 
+    /// Personal scope can create a folder, and can share into an
+    /// organization's, so it always has somewhere to go; an org scope's
+    /// picker does neither (its folders are made from the chip row's "+"),
+    /// so it needs folders.
+    private var canMove: Bool { scope == nil || !folders.isEmpty }
+
     /// The one entry point for the row's Delete, from either the swipe or the
     /// context menu. The sample skips the dialog: removing it only takes it out
     /// of the Library, and the checklist can load it again.
@@ -1092,23 +1102,31 @@ struct LibraryView: View {
         }
     }
 
-    /// The same picker the recording screen uses, over this scope's folders.
+    /// The same picker the recording screen uses. A personal recording sees
+    /// its own folders and every organization's (a copy is shared there); an
+    /// org recording sees its organization's folders, the only ones its
+    /// endpoint can move it between.
     private func folderPicker(for rec: CloudRecordingSummary) -> some View {
-        // The orphan→root rule the list renders by, so the tick agrees with
-        // the page the row is on.
+        // The orphan→root rule the list renders by, so the "here now" mark
+        // agrees with the page the row is on.
         let current = rec.folderId.flatMap { id in folders.contains { $0.id == id } ? id : nil }
-        let create: ((String) async throws -> Void)? =
-            scope == nil
-            ? { name in
-                let folder = try await app.cloud.createFolder(name: name)
-                folders.append(folder)
-                await moveToFolder(rec, folderId: folder.id)
-            } : nil
+        let isSample = SampleManifest.isSample(id: rec.id)
+        let group: FolderGroup =
+            scope.map { orgId in
+                FolderGroup(orgId: orgId, name: scopeName, folders: folders)
+            } ?? .personal(folders)
+        // The sample is not on the server, so there is nothing to share.
+        let orgGroups: (() async -> [FolderGroup])? =
+            scope == nil && !isSample && !app.orgs.isEmpty
+            ? { await FolderGroup.organizations(app: app) } : nil
         return FolderPickerSheet(
-            folders: folders,
-            currentFolderId: current,
-            onSelect: { folderId in Task { await moveToFolder(rec, folderId: folderId) } },
-            onCreate: create)
+            groups: [group],
+            loadMoreGroups: orgGroups,
+            current: .current(orgId: scope, folderId: current),
+            canCreate: scope == nil,
+            onConfirm: { destination, label in
+                try await file(rec, to: destination, label: label)
+            })
     }
 
     // MARK: data ops
@@ -1121,7 +1139,7 @@ struct LibraryView: View {
     /// carries a server-side `updatedAt` and may have been auto-shared to an
     /// org, and re-reading is the only way to show what is actually there.
     private func runImport(_ result: Result<[URL], Error>) async {
-        importNotice = nil
+        notice = nil
         error = nil
         let completion = await importer.run(result, app: app)
         switch completion {
@@ -1131,7 +1149,7 @@ struct LibraryView: View {
             error = message
         case .landed(let title, let sharedToOrgName):
             await load()
-            importNotice =
+            notice =
                 sharedToOrgName.map { org in
                     String(localized: "Imported “\(title)” and shared to “\(org)”")
                 } ?? String(localized: "Imported “\(title)”")
@@ -1177,8 +1195,37 @@ struct LibraryView: View {
         loading = false
     }
 
+    /// The picker's confirm. Throws back to the sheet, which keeps itself up
+    /// with the error rather than closing over a move that did not happen.
+    private func file(
+        _ rec: CloudRecordingSummary, to destination: FolderDestination, label: String
+    ) async throws {
+        notice = nil
+        if case .newFolder(let name) = destination {
+            let folder = try await app.cloud.createFolder(name: name)
+            folders.append(folder)
+            try await moveToFolder(rec, folderId: folder.id)
+        } else if destination.orgId == scope {
+            try await moveToFolder(rec, folderId: destination.folderId)
+        } else if let orgId = destination.orgId {
+            // A personal recording into an organization: the server copies it,
+            // and the original stays where it is (the desktop's rule).
+            busyId = rec.id
+            defer { busyId = nil }
+            do {
+                try await app.cloud.shareRecording(
+                    id: rec.id, orgId: orgId, folderId: destination.folderId)
+            } catch let e as CloudError where e.status == 403 {
+                throw FilingError(
+                    message: String(localized: "You don't have permission to share to “\(label)”"))
+            }
+            gettingStarted.mark(.filed)
+            notice = String(localized: "Shared a copy to “\(label)”")
+        }
+    }
+
     /// Personal: meta re-push (full POST upsert). Org: dedicated PATCH.
-    private func moveToFolder(_ rec: CloudRecordingSummary, folderId: String?) async {
+    private func moveToFolder(_ rec: CloudRecordingSummary, folderId: String?) async throws {
         // Filed on this phone and nowhere else — see `SampleRecordingStore`.
         if SampleManifest.isSample(id: rec.id) {
             sample.setFolder(folderId)
@@ -1187,26 +1234,22 @@ struct LibraryView: View {
         }
         busyId = rec.id
         defer { busyId = nil }
-        do {
-            if let orgId = scope {
-                try await app.cloud.moveOrgRecordingToFolder(
-                    orgId: orgId, id: rec.id, folderId: folderId)
-            } else {
-                // The row this list holds can be older than the recording —
-                // renamed on the record screen or on the Mac since the list
-                // loaded — so the summary is rebuilt from the meta just read,
-                // never carried over from `rec`.
-                var meta = try await app.cloud.recordingMeta(id: rec.id)
-                meta.folderId = folderId
-                try await app.cloud.pushRecording(
-                    id: rec.id, summary: CloudRecordingSummary(projecting: meta, fallback: rec),
-                    meta: meta)
-            }
-            if folderId != nil { gettingStarted.mark(.filed) }
-            await load()
-        } catch {
-            self.error = String(localized: "Move failed: \(error.localizedDescription)")
+        if let orgId = scope {
+            try await app.cloud.moveOrgRecordingToFolder(
+                orgId: orgId, id: rec.id, folderId: folderId)
+        } else {
+            // The row this list holds can be older than the recording —
+            // renamed on the record screen or on the Mac since the list
+            // loaded — so the summary is rebuilt from the meta just read,
+            // never carried over from `rec`.
+            var meta = try await app.cloud.recordingMeta(id: rec.id)
+            meta.folderId = folderId
+            try await app.cloud.pushRecording(
+                id: rec.id, summary: CloudRecordingSummary(projecting: meta, fallback: rec),
+                meta: meta)
         }
+        if folderId != nil { gettingStarted.mark(.filed) }
+        await load()
     }
 
     /// Copy first; delete the original only after the copy succeeded.
@@ -1783,9 +1826,17 @@ private struct RecordingCard: View {
 
     /// Locale-formatted rather than one hard-coded `M/d HH:mm`: an English phone
     /// expects Aug 9, 3:20 PM where a Chinese one expects 8月9日 下午3:20.
-    static func dateLabel(_ epochMs: Double) -> String {
-        Date(timeIntervalSince1970: epochMs / 1000)
-            .formatted(.dateTime.month(.abbreviated).day().hour().minute())
+    ///
+    /// The year is added for anything outside the current one. Without it a
+    /// list sorted newest first reads as out of order the moment it crosses a
+    /// new year: Mar 8 (this year) above Jul 17 (last year) looks backwards.
+    static func dateLabel(_ epochMs: Double, now: Date = .now) -> String {
+        let date = Date(timeIntervalSince1970: epochMs / 1000)
+        let style = Date.FormatStyle.dateTime.month(.abbreviated).day().hour().minute()
+        guard Calendar.current.isDate(date, equalTo: now, toGranularity: .year) else {
+            return date.formatted(style.year())
+        }
+        return date.formatted(style)
     }
 }
 
