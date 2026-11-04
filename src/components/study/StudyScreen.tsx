@@ -38,6 +38,8 @@ export function StudyScreen({ libraryCount = 0 }: Readonly<{ libraryCount?: numb
   const notes = useStore((s) => meetingNotesOf(s.meetingContext));
   const background = useStore((s) => meetingBackgroundOf(s.meetingContext));
   const lap = useLapState({ gettingStarted, entryId, readOnly, libraryCount });
+  // Kept tabs belong to one recording; another one starts them afresh.
+  const replayId = useStore((st) => st.replay?.id ?? null);
   // The destination picker, owned here so the guide bar opens the same sheet
   // as the header's filing row.
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -67,7 +69,8 @@ export function StudyScreen({ libraryCount = 0 }: Readonly<{ libraryCount?: numb
           aria-labelledby={studyTabId(tab)}
           className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
         >
-          {tab === "replay" ? <ReplayScreen /> : <TabPage tab={tab} notes={notes} background={background} />}
+          {tab === "replay" && <ReplayScreen />}
+          <KeptTabs key={replayId ?? ""} tab={tab} notes={notes} background={background} />
           <AskDrawer />
         </div>
         <GuideBar onOpenPicker={() => setPickerOpen(true)} />
@@ -94,11 +97,38 @@ function useSeekToReplay(): (ms: number) => void {
 
 /** Every tab but replay: one reading column, edge to edge with the header. Each piece is restored
  *  from the saved entry; only a missing one generates (once) and is saved. */
+type PageTab = Exclude<StudyTab, "replay">;
+
+/**
+ * The reading tabs, each built the first time it is opened and then KEPT:
+ * switching away only hides it, so coming back shows exactly what was there —
+ * same content, same scroll position, same section — instead of a fresh
+ * render. Keyed by recording (in StudyScreen), so another recording starts
+ * clean. 回放 is not kept: it owns the audio player and its shortcuts.
+ */
+function KeptTabs({
+  tab,
+  notes,
+  background,
+}: Readonly<{ tab: StudyTab; notes: string; background: string }>) {
+  const [opened, setOpened] = useState<PageTab[]>([]);
+  if (tab !== "replay" && !opened.includes(tab)) setOpened([...opened, tab]);
+  return (
+    <>
+      {opened.map((t) => (
+        <div key={t} className={cn("min-h-0 flex-1", t !== tab && "hidden")}>
+          <TabPage tab={t} notes={notes} background={background} />
+        </div>
+      ))}
+    </>
+  );
+}
+
 function TabPage({
   tab,
   notes,
   background,
-}: Readonly<{ tab: Exclude<StudyTab, "replay">; notes: string; background: string }>) {
+}: Readonly<{ tab: PageTab; notes: string; background: string }>) {
   const seek = useSeekToReplay();
   const briefDone = useStore((s) => s.briefStatus === "done" && !!s.brief);
   const actionsDone = useStore((s) => s.actionItemsStatus === "done");
@@ -130,10 +160,9 @@ function TabPage({
 
   return (
     <ScrollArea className="h-full">
-      {/* Keyed by tab: each tab starts at its top. Same edges as the header
-          above and the replay tab (px-6, full width), so switching tabs never
-          shifts the page's left edge. */}
-      <div key={tab} className="px-6 py-5 pb-10">
+      {/* Same edges as the header above and the replay tab (px-6, full
+          width), so switching tabs never shifts the page's left edge. */}
+      <div className="px-6 py-5 pb-10">
         {body}
       </div>
     </ScrollArea>
