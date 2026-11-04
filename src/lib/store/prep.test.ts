@@ -55,6 +55,21 @@ describe("sortDrafts", () => {
     expect(sorted.map((d) => d.id)).toEqual(["sooner", "later", "untimed-new", "untimed-old"]);
   });
 
+  it("given now, drops meetings already over below the rest, the latest first", () => {
+    const now = 10 * 3_600_000;
+    const sorted = sortDrafts(
+      [
+        draft("over-long-ago", { meetingAt: now - 5 * 3_600_000 }),
+        draft("untimed", { updatedAt: 1 }),
+        draft("in-2h", { meetingAt: now + 2 * 3_600_000 }),
+        draft("over-recently", { meetingAt: now - 3 * 3_600_000, meetingEndAt: now - 3_600_000 }),
+        draft("in-10m", { meetingAt: now + 600_000 }),
+      ],
+      now,
+    );
+    expect(sorted.map((d) => d.id)).toEqual(["in-10m", "in-2h", "untimed", "over-recently", "over-long-ago"]);
+  });
+
   it("sorts an org's drafts the same way, without touching the input", () => {
     const input = [
       draft("b", { meetingAt: 20, meetingOrgShare: { orgId: "acme", folderId: "f1", mode: "copy" } }),

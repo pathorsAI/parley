@@ -11,7 +11,7 @@ type FolderName = (id: string | null) => string | undefined;
 function useDraftSplit(): { now: number; soon: MeetingDraft[]; rest: MeetingDraft[] } {
   const drafts = useStore((s) => s.drafts);
   const now = useNow();
-  const sorted = sortDrafts(drafts);
+  const sorted = sortDrafts(drafts, now);
   return {
     now,
     soon: sorted.filter((d) => isStartingSoon(d, now)),

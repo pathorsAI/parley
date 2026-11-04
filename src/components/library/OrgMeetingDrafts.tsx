@@ -16,7 +16,7 @@ export function OrgMeetingDrafts({
   const { t } = useI18n();
   const drafts = useStore((s) => s.drafts);
   const now = useNow();
-  const rows = sortDrafts(draftsForOrg(drafts, orgId));
+  const rows = sortDrafts(draftsForOrg(drafts, orgId), now);
 
   const folderName = (d: (typeof rows)[number]) => {
     const share = d.meetingOrgShare;
