@@ -147,7 +147,7 @@ export function NewFolderCard({ onCreate }: Readonly<{ onCreate: (name: string) 
                 className="absolute top-0 left-0 origin-top-left"
                 style={{ width: DRAWN.w, height: DRAWN.h, transform: `scale(${SCALE})` }}
               >
-                <div className="absolute top-0 left-0 h-[136px] w-[151px] rounded-[8px] bg-[#f6fcff] transition-colors duration-500 ease-[var(--ob-ease)] group-hover:bg-[#eef8ff]" />
+                <div className="absolute top-0 left-0 h-[136px] w-[151px] rounded-[8px] bg-[#f6fcff] transition-colors duration-500 ease-[var(--ob-ease)] group-hover:bg-[#eef8ff] dark:bg-[#15223a] dark:group-hover:bg-[#1a2b47]" />
                 {/* Hover is #eef8ff, not the file's #e0edf4: that grey-blue read
                     muddy beside the front's clear blue. Same sky hue, and
                     kept well lighter than the front's top, so the opened front
@@ -158,16 +158,22 @@ export function NewFolderCard({ onCreate }: Readonly<{ onCreate: (name: string) 
                     together while they crossfade: the default leans into the
                     hover shape, and the hover layer starts leaned back into the
                     default one. Nothing jumps; the folder opens. */}
-                <img
-                  alt=""
-                  src="/library/folder-new-front.svg"
-                  className="folder-open absolute top-[29px] left-0 block h-[107px] w-[151px] max-w-none origin-bottom group-hover:opacity-0 group-hover:skew-x-[5.87deg]"
-                />
-                <img
-                  alt=""
-                  src="/library/folder-new-front-hover.svg"
-                  className="folder-open absolute top-[29px] left-[-11px] block h-[107px] w-[162px] max-w-none origin-bottom -skew-x-[5.87deg] opacity-0 group-hover:skew-x-0 group-hover:opacity-100"
-                />
+                {/* Light and dark drawings of each front: the dark ones keep
+                    the blue at the top and fade to the page's navy, not white. */}
+                {(["", "-dark"] as const).map((v) => (
+                  <span key={v} className={v ? "hidden dark:contents" : "contents dark:hidden"}>
+                    <img
+                      alt=""
+                      src={`/library/folder-new-front${v}.svg`}
+                      className="folder-open absolute top-[29px] left-0 block h-[107px] w-[151px] max-w-none origin-bottom group-hover:opacity-0 group-hover:skew-x-[5.87deg]"
+                    />
+                    <img
+                      alt=""
+                      src={`/library/folder-new-front-hover${v}.svg`}
+                      className="folder-open absolute top-[29px] left-[-11px] block h-[107px] w-[162px] max-w-none origin-bottom -skew-x-[5.87deg] opacity-0 group-hover:skew-x-0 group-hover:opacity-100"
+                    />
+                  </span>
+                ))}
                 <span className="absolute top-[69px] left-[63px] flex items-center rounded-full border border-dashed border-[rgba(59,130,246,0.3)] p-[4px] transition-[background-color,border-color,transform] duration-500 ease-[var(--ob-ease)] group-hover:scale-110 group-hover:border-[#3b82f6] group-hover:bg-[rgba(45,182,243,0.2)]">
                   <Plus className="size-[16px] text-[#3b82f6]" strokeWidth={2} />
                 </span>
