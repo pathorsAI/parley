@@ -426,9 +426,8 @@
     <string name="library_folder_meta">Folder</string>
     <string name="home_error_forbidden_org">You don\'t have access to this organization\'s recordings any more.</string>
     <!-- Library row actions -->
-    <string name="library_move_to_folder">Move to folder…</string>
+    <string name="library_move_to_folder">Move to…</string>
     <string name="library_share_to_org">Share to organization (copy)</string>
-    <string name="library_move_to_org">Move to organization</string>
     <string name="library_menu_back">Back</string>
     <string name="library_working">Updating…</string>
     <!-- Audio on this phone, from the library row -->
@@ -449,7 +448,7 @@
     <string name="home_delete_error_forbidden_org">Only the uploader or an admin can delete this recording.</string>
     <string name="home_delete_confirm_body_org">This permanently deletes “%1$s” from “%2$s” for everyone in the organization. It cannot be undone.</string>
     <!-- Folder picker (FolderPickerSheet) -->
-    <string name="folder_picker_title">Move to folder</string>
+    <string name="folder_picker_title">Move to</string>
     <string name="folder_picker_subtitle">One customer, one folder.</string>
     <string name="folder_picker_search">Search folders</string>
     <string name="folder_picker_new">New folder…</string>
@@ -460,7 +459,15 @@
     <string name="folder_picker_current">Current folder</string>
     <string name="folder_picker_create_failed">Couldn\'t create the folder. Check your connection and try again.</string>
     <string name="folder_picker_suggested">Suggested</string>
-    <string name="folder_picker_all">All folders</string>
+    <string name="folder_picker_move_here">Move here</string>
+    <string name="folder_picker_save_title">Save to folder</string>
+    <string name="folder_picker_choose">Choose</string>
+    <string name="folder_picker_org_root">No folder</string>
+    <string name="folder_picker_org_badge">Organization</string>
+    <string name="folder_picker_org_move_note">Moves it into “%1$s”. It leaves your personal library.</string>
+    <string name="folder_picker_org_copy_note">Shares a copy into “%1$s”. The recording stays in your personal library.</string>
+    <string name="filing_selected">Selected</string>
+    <string name="detail_folder_chip">Folder: %1$s. Move to another folder.</string>
     <!-- Default save location (AccountSheet) -->
     <string name="account_save_location_title">Default save location</string>
     <string name="account_save_location_personal_folder">Personal · %1$s</string>

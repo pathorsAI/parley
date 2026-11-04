@@ -20,8 +20,12 @@ import com.pathors.parley.kit.GettingStartedStep
 import com.pathors.parley.kit.LapMotion
 import com.pathors.parley.kit.SampleManifest
 import com.pathors.parley.kit.TranscriptSearch
+import com.pathors.parley.library.FolderDirectory
 import com.pathors.parley.library.FolderFilter
+import com.pathors.parley.library.FolderScope
 import com.pathors.parley.library.LibraryFolders
+import com.pathors.parley.library.MovePlan
+import com.pathors.parley.library.MoveRules
 import com.pathors.parley.library.SaveDestination
 import com.pathors.parley.meeting.ImportNotice
 import com.pathors.parley.playback.AudioDownloadState
@@ -34,7 +38,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -164,15 +167,6 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         val scopeOrg: CloudOrg? get() = orgs.firstOrNull { it.id == scopeOrgId }
     }
 
-    /**
-     * Every place a recording can be saved to, for the account sheet's "Default
-     * save location" picker: the personal folders, and each organization's.
-     */
-    data class SaveTargets(
-        val personalFolders: List<CloudFolder> = emptyList(),
-        val orgFolders: Map<String, List<CloudFolder>> = emptyMap(),
-    )
-
     data class AccountState(
         val loading: Boolean = false,
         val user: CloudUser? = null,
@@ -181,7 +175,12 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         /** True while `DELETE /me` is in flight — the destructive action is disabled. */
         val deleting: Boolean = false,
         val deleteError: DeleteAccountError? = null,
-        val saveTargets: SaveTargets = SaveTargets(),
+        /**
+         * Every place a recording can be filed — the personal folders and each
+         * organization's — for the account sheet's "Default save location" and
+         * the library's "Move to…" picker.
+         */
+        val directory: FolderDirectory = FolderDirectory(),
     )
 
     private val _state = MutableStateFlow(UiState())
@@ -526,27 +525,50 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     /**
-     * "New folder…" in the picker: create the folder in the personal library,
-     * then move [recording] into it.
+     * The "Move to…" picker's confirm: file [recording] wherever [destination]
+     * is — a folder of the library it is in, or (from the personal library)
+     * an organization, which is "Move to organization" into that folder. See
+     * [MoveRules] for what each takes, and what is not offered.
+     */
+    fun moveTo(recording: RecordingSummary, destination: SaveDestination) {
+        val state = _state.value
+        val from = LibraryFolders.liveFolderId(recording.folderId, state.folders)
+        when (val plan = MoveRules.plan(state.scopeOrgId, from, destination)) {
+            MovePlan.Stay, MovePlan.Unsupported -> Unit
+            is MovePlan.RefilePersonal -> moveToFolder(recording, plan.folderId)
+            is MovePlan.RefileInOrg -> moveToFolder(recording, plan.folderId)
+            is MovePlan.MoveIntoOrg -> {
+                val org = state.orgs.firstOrNull { it.id == plan.orgId }
+                    ?: _account.value.directory.orgs.firstOrNull { it.id == plan.orgId }
+                    ?: return
+                shareToOrg(recording, org, thenDelete = true, folderId = plan.folderId)
+            }
+        }
+    }
+
+    /**
+     * "New folder…" in the picker: create the folder in the library that is
+     * showing — the personal one, or the organization's (any member may) —
+     * and hand it back for the picker to select. Nothing is moved until the
+     * picker's confirm.
      *
      * Throws when the folder could not be created, so the picker can keep the
      * name on screen with the error under it — the one failure the person can
-     * fix right there. A move that fails after a successful create lands in
-     * [UiState.actionError] like any other move, and the folder stays: it was
-     * made, and it is exactly the folder they will want for the retry.
+     * fix right there.
      */
-    suspend fun createFolderAndMove(recording: RecordingSummary, name: String) {
-        check(_state.value.isPersonal) { "folders are only created in the personal library" }
-        val folder = if (DemoMode.isActive) {
-            CloudFolder(id = CloudClient.newCloudId(), name = name)
-                .also { demoFolders[null] = demoFoldersFor(null) + it }
-        } else {
-            container.cloud.createFolder(name)
+    suspend fun createFolder(name: String): CloudFolder {
+        val scope = _state.value.scopeOrgId
+        val folder = when {
+            DemoMode.isActive -> CloudFolder(id = CloudClient.newCloudId(), name = name, orgId = scope)
+                .also { demoFolders[scope] = demoFoldersFor(scope) + it }
+            scope == null -> container.cloud.createFolder(name)
+            else -> container.cloud.createOrgFolder(scope, name)
         }
         _state.update { current ->
-            if (current.isPersonal) current.copy(folders = current.folders + folder) else current
+            if (current.scopeOrgId == scope) current.copy(folders = current.folders + folder) else current
         }
-        moveToFolder(recording, folder.id)
+        _account.update { it.copy(directory = it.directory.withFolder(scope, folder)) }
+        return folder
     }
 
     /**
@@ -555,30 +577,34 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
      *
      * Copy first, delete only once the copy exists: a failure half-way must
      * leave the original where it was (desktop `moveRecordingToOrg`, iOS
-     * `shareToOrg`). The copy lands at the org's root; filing it there is the
-     * org library's business.
+     * `shareToOrg`). The copy lands in [folderId] of the org, or at its root.
      */
-    fun shareToOrg(recording: RecordingSummary, org: CloudOrg, thenDelete: Boolean) {
+    fun shareToOrg(
+        recording: RecordingSummary,
+        org: CloudOrg,
+        thenDelete: Boolean,
+        folderId: String? = null,
+    ) {
         val state = _state.value
         if (!state.isPersonal || recording.id in state.busy) return
         if (DemoMode.isActive) {
-            if (thenDelete) demoMoveToOrg(recording, org)
+            if (thenDelete) demoMoveToOrg(recording, org, folderId)
             return
         }
-        viewModelScope.launch { share(recording, org, thenDelete) }
+        viewModelScope.launch { share(recording, org, thenDelete, folderId) }
     }
 
     /** The demo library's "Move to organization": the fixtures change hands, nothing is sent. */
-    private fun demoMoveToOrg(recording: RecordingSummary, org: CloudOrg) {
+    private fun demoMoveToOrg(recording: RecordingSummary, org: CloudOrg, folderId: String?) {
         demoLibrary[null] = demoRecordingsFor(null).filterNot { it.id == recording.id }
-        demoLibrary[org.id] = listOf(recording.copy(folderId = null)) + demoRecordingsFor(org.id)
+        demoLibrary[org.id] = listOf(recording.copy(folderId = folderId)) + demoRecordingsFor(org.id)
         refresh()
     }
 
-    private suspend fun share(recording: RecordingSummary, org: CloudOrg, thenDelete: Boolean) {
+    private suspend fun share(recording: RecordingSummary, org: CloudOrg, thenDelete: Boolean, folderId: String?) {
         markBusy(recording.id, true)
         val shared = runCatchingCancellable {
-            container.cloud.shareRecording(recording.id, org.id)
+            container.cloud.shareRecording(recording.id, org.id, folderId)
         }
         if (shared.isFailure) {
             val error = LibraryRules.shareError(forbidden = shared.isForbidden(), orgName = org.name)
@@ -842,10 +868,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             _account.value = AccountState(
                 user = DemoMode.user(),
                 quota = DemoMode.quota(),
-                saveTargets = SaveTargets(
-                    personalFolders = DemoMode.folders(),
-                    orgFolders = orgs.associate { it.id to DemoMode.orgFolders(it.id) },
-                ),
+                directory = demoDirectory(orgs),
             )
             if (_state.value.orgs.isEmpty()) _state.update { it.copy(orgs = orgs) }
             return
@@ -863,37 +886,37 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 // quota that loaded under an identity that did not still
                 // offers Refresh.
                 failed = user.getOrNull() == null,
-                saveTargets = _account.value.saveTargets,
+                directory = _account.value.directory,
             )
-            loadSaveTargets()
+            loadDirectory()
         }
     }
 
     /**
-     * The folders the "Default save location" picker offers, every scope's.
-     * Best-effort throughout: a picker missing one org's folders still offers
-     * the org itself, which is the choice that matters most.
+     * The folders the "Default save location" picker and the "Move to…" picker
+     * offer, every scope's. Best-effort throughout: a picker missing one org's
+     * folders still offers the org itself, which is the choice that matters most.
      */
-    private suspend fun loadSaveTargets() {
-        val orgs = runCatchingCancellable { container.cloud.myOrgs() }.getOrNull()
-        if (orgs != null) _state.update { it.copy(orgs = orgs) }
-        val known = orgs ?: _state.value.orgs
-        val targets = coroutineScope {
-            val personal = async {
-                runCatchingCancellable {
-                    LibraryFolders.personalFolders(container.cloud.listFolders())
-                }.getOrDefault(emptyList())
-            }
-            val perOrg = known.map { org ->
-                async {
-                    org.id to runCatchingCancellable { container.cloud.orgFolders(org.id) }
-                        .getOrDefault(emptyList())
-                }
-            }
-            SaveTargets(personalFolders = personal.await(), orgFolders = perOrg.awaitAll().toMap())
-        }
-        _account.update { it.copy(saveTargets = targets) }
+    private suspend fun loadDirectory() {
+        val directory = FolderDirectory.load(container.cloud, knownOrgs = _state.value.orgs)
+        if (directory.orgs.isNotEmpty()) _state.update { it.copy(orgs = directory.orgs) }
+        _account.update { it.copy(directory = directory) }
     }
+
+    /** Refresh the directory for a "Move to…" picker that is about to open. */
+    fun refreshDirectory() {
+        if (DemoMode.isActive) {
+            _account.update { it.copy(directory = demoDirectory(DemoMode.orgs())) }
+            return
+        }
+        viewModelScope.launch { loadDirectory() }
+    }
+
+    private fun demoDirectory(orgs: List<CloudOrg>) = FolderDirectory(
+        personalFolders = demoFoldersFor(null),
+        orgs = orgs,
+        orgFolders = orgs.associate { it.id to demoFoldersFor(it.id) },
+    )
 
     /** "Default save location" in the account sheet. */
     fun setSaveDestination(destination: SaveDestination) {
@@ -981,6 +1004,28 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
 
     companion object {
         private const val MILLIS_PER_SECOND = 1_000
+
+        /**
+         * What the "Move to…" picker lists for [recording]: the library that is
+         * showing, with its folders as the screen has them, then — from the
+         * personal library — every organization. The sample lives on this
+         * phone only, so it is filed among the personal folders and nowhere else.
+         */
+        internal fun moveScopes(
+            state: UiState,
+            directory: FolderDirectory,
+            recording: RecordingSummary,
+        ): List<FolderScope> {
+            if (SampleManifest.isSample(recording.id)) return listOf(FolderScope(null, state.folders))
+            val scope = state.scopeOrgId
+            val known = directory.copy(orgs = directory.orgs.ifEmpty { state.orgs })
+            val live = if (scope == null) {
+                known.copy(personalFolders = state.folders)
+            } else {
+                known.copy(orgFolders = known.orgFolders + (scope to state.folders))
+            }
+            return live.scopesFor(scope)
+        }
 
         /**
          * The personal library with the sample merged in, at its place by date

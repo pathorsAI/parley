@@ -113,7 +113,6 @@ class HandoffStringsParityTest {
         "filing_edit_title" to "Edit the title",
         "filing_title" to "Title",
         "folder_picker_suggested" to "Suggested",
-        "folder_picker_all" to "All folders",
         // Re-transcribe says queued, not running (iOS 1.14).
         "retranscribe_running" to "Re-transcribing… this can take a few minutes.",
         "retranscribe_waiting_last_tried" to "Waiting to re-transcribe. It last tried %@, and tries again " +

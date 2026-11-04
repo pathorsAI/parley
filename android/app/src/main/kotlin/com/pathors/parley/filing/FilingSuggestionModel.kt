@@ -44,10 +44,32 @@ sealed interface FolderTarget {
     /** The personal root — "Unfiled" in the picker. */
     data object Root : FolderTarget
 
+    /**
+     * An organization, or one of its folders: a copy is shared in and the
+     * personal recording stays where it is — what the default save location
+     * means by an organization ([SaveDestination]).
+     */
+    data class Org(val orgId: String, val folderId: String? = null) : FolderTarget
+
     companion object {
         fun of(suggestion: FilingFolderSuggestion): FolderTarget =
             suggestion.folderId?.let(::Existing) ?: New(suggestion.name)
     }
+}
+
+/**
+ * Which folder the card will file into when Accept is pressed. Tapping a chip
+ * or confirming the picker only changes this; nothing is written until Accept.
+ */
+sealed interface FolderPick {
+    /** The model's best folder — the first chip — as offered. */
+    data object Suggested : FolderPick
+
+    /** No folder: Accept answers the folder half by leaving the recording where it is. */
+    data object None : FolderPick
+
+    /** A chip, or a place picked in "Choose another…"; [label] is what its chip says. */
+    data class Chosen(val target: FolderTarget, val label: String) : FolderPick
 }
 
 /**
@@ -110,6 +132,8 @@ data class FilingUiState(
     val isWriting: Boolean = false,
     /** A push the user asked for did not land. Never raised for the pass itself. */
     val writeFailed: Boolean = false,
+    /** The folder Accept files into. */
+    val folderPick: FolderPick = FolderPick.Suggested,
 ) {
     /**
      * The proposed name, or null when there is nothing left to propose: an
@@ -136,8 +160,30 @@ data class FilingUiState(
             return folders.filter { it.folderId == null || it.folderId != currentFolderId }.take(MAX_FOLDERS)
         }
 
-    /** The folder the one-tap accept files into: the model's best answer. */
+    /** The model's best answer: what the card selects before anyone taps a chip. */
     val proposedFolder: FilingFolderSuggestion? get() = proposedFolders.firstOrNull()
+
+    /** Where Accept files the recording, or null for "leave it where it is". */
+    val selectedFolder: FolderTarget?
+        get() = when (val pick = folderPick) {
+            FolderPick.Suggested -> proposedFolder?.let(FolderTarget::of)
+            FolderPick.None -> null
+            is FolderPick.Chosen -> pick.target
+        }
+
+    /**
+     * A place picked in the picker that is none of the chips, drawn as one more
+     * (selected) chip so the card shows where Accept will put the recording.
+     */
+    val chosenElsewhere: FolderPick.Chosen?
+        get() = (folderPick as? FolderPick.Chosen)
+            ?.takeIf { chosen -> proposedFolders.none { FolderTarget.of(it) == chosen.target } }
+
+    /** A chip's tap: select it, or — when it is the selected one — select nothing. */
+    fun toggled(chip: FilingFolderSuggestion): FolderPick {
+        val target = FolderTarget.of(chip)
+        return if (selectedFolder == target) FolderPick.None else FolderPick.Chosen(target, chip.name)
+    }
 
     val hasSomethingToOffer: Boolean get() = proposedTitle != null || proposedFolders.isNotEmpty()
 
@@ -212,7 +258,7 @@ class FilingSuggestionModel(
      * screenshot demo, where the sample can be filed but nothing may reach the
      * network.
      */
-    private val createFolder: suspend (String) -> CloudFolder = { cloud.createFolder(it) },
+    private val makeFolder: suspend (String) -> CloudFolder = { cloud.createFolder(it) },
 ) {
     private val _state = MutableStateFlow(FilingUiState())
     val state: StateFlow<FilingUiState> = _state.asStateFlow()
@@ -319,6 +365,42 @@ class FilingSuggestionModel(
 
     // ── accepting ────────────────────────────────────────────────────────────
 
+    /** Move the card's selection. Writes nothing; ignored while a write is out. */
+    fun pick(pick: FolderPick) {
+        _state.update { if (it.isWriting) it else it.copy(folderPick = pick, writeFailed = false) }
+    }
+
+    /**
+     * Accept: the name as given (null = leave it) and the selected folder, in
+     * one write, and then the offer is over — both halves answered, whatever
+     * Accept left as it was. An Accept with nothing to change still tells the
+     * desktop the offer was answered, as Skip does.
+     *
+     * @return whether the offer is now answered. False keeps it open with
+     *   [FilingUiState.writeFailed] up.
+     */
+    suspend fun accept(title: String?): Boolean {
+        val target = this.target
+        if (_state.value.isWriting) return false
+        _state.update { it.copy(writeFailed = false) }
+        val wrote = apply(title, _state.value.selectedFolder)
+        if (_state.value.writeFailed) return false
+        if (target != null && (!wrote || target is FilingTarget.Sample)) markAnswered(target)
+        _state.update { it.copy(titleAnswered = true, folderAnswered = true) }
+        return true
+    }
+
+    /**
+     * "New folder…" in the picker: make it now, in the personal library, and
+     * list it — the picker selects it, and Accept files into it. Throws when it
+     * could not be made, so the picker keeps the name on screen with its error.
+     */
+    suspend fun createFolder(name: String): CloudFolder {
+        val created = makeFolder(name)
+        _state.update { it.copy(existingFolders = it.existingFolders + created) }
+        return created
+    }
+
     /** Take the suggestion as offered: the proposed name and the best proposed folder. */
     suspend fun acceptSuggested(): Boolean {
         val current = _state.value
@@ -363,10 +445,17 @@ class FilingSuggestionModel(
     }
 
     private suspend fun write(target: FilingTarget, newTitle: String?, move: FolderTarget?) {
-        val folderId = move?.let { resolve(it) }
-        val moved = move != null
+        val share = move as? FolderTarget.Org
+        val refile = move?.takeUnless { it is FolderTarget.Org }
+        val folderId = refile?.let { resolve(it) }
+        val moved = refile != null
         when (target) {
-            is FilingTarget.Cloud -> writeCloud(target.recordingId, newTitle, moved, folderId)
+            is FilingTarget.Cloud -> {
+                writeCloud(target.recordingId, newTitle, moved, folderId)
+                // After the rename, so the organization's copy carries the new name.
+                if (share != null) cloud.shareRecording(target.recordingId, share.orgId, share.folderId)
+            }
+            // The sample is on this phone only; there is nothing to share.
             is FilingTarget.Sample -> writeSample(target.store, newTitle, moved, folderId)
         }
         // Both halves are settled only once the push is back.
@@ -375,10 +464,10 @@ class FilingSuggestionModel(
                 currentTitle = newTitle ?: state.currentTitle,
                 titleAnswered = state.titleAnswered || newTitle != null,
                 currentFolderId = if (moved) folderId else state.currentFolderId,
-                folderAnswered = state.folderAnswered || moved,
+                folderAnswered = state.folderAnswered || move != null,
             )
         }
-        if (folderId != null) onFiled()
+        if (folderId != null || share != null) onFiled()
         // The sample's offer is over once both halves are: it must not come
         // back the next time the sample is opened. (A cloud recording's is
         // already cleared by the push above.)
@@ -402,15 +491,11 @@ class FilingSuggestionModel(
         if (moved) store.setFolder(folderId)
     }
 
-    /** The folder id a target files into, creating a new folder when asked to. */
+    /** The personal folder id a target files into, creating a new folder when asked to. */
     private suspend fun resolve(target: FolderTarget): String? = when (target) {
         is FolderTarget.Existing -> target.id
-        FolderTarget.Root -> null
-        is FolderTarget.New -> {
-            val created = createFolder(target.name)
-            _state.update { it.copy(existingFolders = it.existingFolders + created) }
-            created.id
-        }
+        FolderTarget.Root, is FolderTarget.Org -> null
+        is FolderTarget.New -> createFolder(target.name).id
     }
 
     // ── declining ────────────────────────────────────────────────────────────
@@ -513,5 +598,5 @@ data class PendingFiling(
 private fun FolderTarget.isWhere(currentFolderId: String?): Boolean = when (this) {
     is FolderTarget.Existing -> id == currentFolderId
     FolderTarget.Root -> currentFolderId == null
-    is FolderTarget.New -> false
+    is FolderTarget.New, is FolderTarget.Org -> false
 }

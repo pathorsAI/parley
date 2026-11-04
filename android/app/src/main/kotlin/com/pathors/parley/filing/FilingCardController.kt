@@ -1,7 +1,10 @@
 package com.pathors.parley.filing
 
+import com.pathors.parley.cloud.CloudFolder
 import com.pathors.parley.kit.FilingFolderSuggestion
 import com.pathors.parley.kit.FilingMotion
+import com.pathors.parley.library.FolderDirectory
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -64,8 +67,10 @@ class FilingCardCues(private val scope: CoroutineScope) {
  * which differ only in how the offer arrives (a pass run on the spot, or a
  * suggestion already pending on the recording) — the answers are the same.
  *
- * Every write goes through [FilingSuggestionModel.apply], one at a time, so a
- * rename followed by a chip tap is two pushes in order, never two racing.
+ * The card is a form with one commit. A chip tap, Return in the name field,
+ * and the picker's confirm only change what is selected; [accept] is the one
+ * write. A tester filed a meeting into the wrong customer when a single tap
+ * on a chip used to be the whole answer.
  *
  * @param scope where the writes run: the owning ViewModel's.
  * @param backgroundScope where Skip's flag write runs — the app's, so a screen
@@ -73,45 +78,55 @@ class FilingCardCues(private val scope: CoroutineScope) {
  * @param onWritten told after every write that landed, so the owning screen
  *   can bring what it shows (the title, the folder, the folder list) into
  *   step with the model's state.
+ * @param loadDirectory the organizations "Choose another…" offers beside the
+ *   personal folders. Read the first time the picker opens; none by default.
  */
 class FilingCardController(
     val model: FilingSuggestionModel,
     private val scope: CoroutineScope,
     private val backgroundScope: CoroutineScope,
     private val onWritten: () -> Unit = {},
+    private val loadDirectory: suspend () -> FolderDirectory = { FolderDirectory() },
 ) {
     val state: StateFlow<FilingUiState> = model.state
 
     /** The guide's hooks: see [FilingCardCues]. */
     val cues: FilingCardCues = FilingCardCues(scope)
 
+    private val _directory = MutableStateFlow(FolderDirectory())
+
+    /** The organizations and their folders, once the picker has asked for them. */
+    val directory: StateFlow<FolderDirectory> = _directory.asStateFlow()
+
+    private var directoryLoad: Job? = null
+
+    /** A chip: select it, or unselect it when it is the selected one. Writes nothing. */
+    fun toggle(chip: FilingFolderSuggestion) = model.pick(state.value.toggled(chip))
+
+    /** The picker's confirm: select that place. Writes nothing. */
+    fun choose(target: FolderTarget, label: String) = model.pick(FolderPick.Chosen(target, label))
+
     /**
-     * Accept: the name as the field shows it (or the proposed one, when the
-     * field was left alone) and the first chip, in one push.
+     * Accept: the name as the field shows it (null = the proposed one) and the
+     * selected folder, in one write.
      */
     fun accept(title: String?) {
         val current = state.value
         val name = title?.trim()?.takeIf { it.isNotEmpty() } ?: current.proposedTitle
-        write(name, current.proposedFolder?.let(FolderTarget::of))
+        scope.launch {
+            if (model.accept(name)) onWritten()
+        }
     }
 
-    /** Return in the title field: rename, and leave the folder half on offer. */
-    fun rename(title: String) = write(title, null)
-
-    /** A chip: file into that folder, and leave the name to its own answer. */
-    fun file(folder: FilingFolderSuggestion) = write(null, FolderTarget.of(folder))
-
-    /** The picker's pick. Filed exactly as a chip would be. */
-    fun pick(target: FolderTarget) = write(null, target)
-
     /**
-     * The picker's "New folder": create it and file into it. Suspends so the
-     * picker can keep the name on screen with its error when the write fails.
+     * The picker's "New folder": make it, in the personal library, for the
+     * picker to select. Throws when it could not be made, so the picker keeps
+     * the name on screen with its error.
      */
-    suspend fun create(name: String): Boolean {
-        val landed = model.apply(null, FolderTarget.New(name))
-        if (landed) onWritten()
-        return landed
+    suspend fun createFolder(name: String): CloudFolder {
+        val folder = model.createFolder(name)
+        onWritten()
+        return folder
     }
 
     /** The user said no: the card goes now, the answer is written behind it. */
@@ -124,12 +139,20 @@ class FilingCardController(
     /** GuideBar hook: wash the card for 1.2 s. */
     fun wash() = cues.wash()
 
-    /** GuideBar hook: open "Choose another…". */
-    fun openPicker() = cues.openPicker()
-
-    private fun write(title: String?, folder: FolderTarget?) {
-        scope.launch {
-            if (model.apply(title, folder)) onWritten()
+    /** GuideBar hook, and "Choose another…": open the picker, fetching the organizations once. */
+    fun openPicker() {
+        cues.openPicker()
+        if (directoryLoad != null) return
+        directoryLoad = scope.launch {
+            try {
+                _directory.value = loadDirectory()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                // Best-effort: the personal folders are still on offer without it.
+            }
         }
     }
+
+    fun closePicker() = cues.closePicker()
 }

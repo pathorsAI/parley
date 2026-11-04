@@ -38,24 +38,21 @@ class LibraryRulesTest {
     )
 
     @Test
-    fun `a personal row can always be filed and shared to every org`() {
+    fun `a personal row can be shared to every org`() {
         val state = HomeViewModel.UiState(orgs = listOf(team))
         val row = LibraryRules.recordingRow(state, recording)
-        assertTrue(row.canMoveToFolder)
         assertEquals(listOf(team), row.shareTargets)
         assertTrue(row.canShare)
         assertNull("an orphaned folder id reads as unfiled", row.folderName)
     }
 
     @Test
-    fun `an org row can be filed only when the org has folders, and never shared`() {
+    fun `an org row is never shared`() {
         val empty = HomeViewModel.UiState(scopeOrgId = team.id, orgs = listOf(team))
-        assertFalse(LibraryRules.recordingRow(empty, recording).canMoveToFolder)
         assertFalse(LibraryRules.recordingRow(empty, recording).canShare)
 
         val withFolders = empty.copy(folders = listOf(northwind))
         val row = LibraryRules.recordingRow(withFolders, recording)
-        assertTrue(row.canMoveToFolder)
         assertEquals("Northwind", row.folderName)
         assertTrue(row.shareTargets.isEmpty())
     }

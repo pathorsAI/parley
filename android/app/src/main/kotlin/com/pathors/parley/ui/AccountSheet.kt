@@ -76,6 +76,7 @@ import com.pathors.parley.cloud.CloudOrg
 import com.pathors.parley.cloud.CloudUser
 import com.pathors.parley.cloud.HostedQuota
 import com.pathors.parley.feedback.FeedbackSettings
+import com.pathors.parley.library.FolderDirectory
 import com.pathors.parley.library.SaveDestination
 import com.pathors.parley.playback.AudioStorageSection
 import com.pathors.parley.ui.theme.ParleyTextStyles
@@ -161,7 +162,7 @@ fun AccountSheet(
             SaveLocationSection(
                 destination = destination,
                 orgs = library.orgs,
-                targets = account.saveTargets,
+                targets = account.directory,
                 onSelect = viewModel::setSaveDestination,
             )
 
@@ -515,7 +516,7 @@ private fun QuotaBar(label: String, used: Double, limit: Double?, unit: String) 
 private fun SaveLocationSection(
     destination: SaveDestination,
     orgs: List<CloudOrg>,
-    targets: HomeViewModel.SaveTargets,
+    targets: FolderDirectory,
     onSelect: (SaveDestination) -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
@@ -619,7 +620,7 @@ private fun SaveLocationItem(
 private fun saveDestinationLabel(
     destination: SaveDestination,
     orgs: List<CloudOrg>,
-    targets: HomeViewModel.SaveTargets,
+    targets: FolderDirectory,
 ): String {
     val orgId = destination.orgId
     if (orgId != null) {

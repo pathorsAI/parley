@@ -419,9 +419,8 @@
     <string name="library_folder_meta">資料夾</string>
     <string name="home_error_forbidden_org">你已沒有權限查看這個組織的錄音。</string>
     <!-- Library row actions -->
-    <string name="library_move_to_folder">移到資料夾…</string>
+    <string name="library_move_to_folder">移到…</string>
     <string name="library_share_to_org">分享到組織（複製）</string>
-    <string name="library_move_to_org">搬移到組織</string>
     <string name="library_menu_back">返回</string>
     <string name="library_working">更新中…</string>
     <!-- Audio on this phone, from the library row -->
@@ -442,7 +441,7 @@
     <string name="home_delete_error_forbidden_org">只有上傳者或管理員可以刪除這筆錄音。</string>
     <string name="home_delete_confirm_body_org">這會從「%2$s」永久刪除「%1$s」，組織裡的每個人都將看不到。此動作無法復原。</string>
     <!-- Folder picker (FolderPickerSheet) -->
-    <string name="folder_picker_title">移到資料夾</string>
+    <string name="folder_picker_title">移到</string>
     <string name="folder_picker_subtitle">一個客戶一個資料夾。</string>
     <string name="folder_picker_search">搜尋資料夾</string>
     <string name="folder_picker_new">新增資料夾…</string>
@@ -453,7 +452,15 @@
     <string name="folder_picker_current">目前的資料夾</string>
     <string name="folder_picker_create_failed">無法建立資料夾。請檢查網路連線後再試一次。</string>
     <string name="folder_picker_suggested">建議</string>
-    <string name="folder_picker_all">所有資料夾</string>
+    <string name="folder_picker_move_here">移到這裡</string>
+    <string name="folder_picker_save_title">存到資料夾</string>
+    <string name="folder_picker_choose">選擇</string>
+    <string name="folder_picker_org_root">不放資料夾</string>
+    <string name="folder_picker_org_badge">組織</string>
+    <string name="folder_picker_org_move_note">會移到「%1$s」，並從你的個人空間移除。</string>
+    <string name="folder_picker_org_copy_note">會分享一份到「%1$s」，原本的錄音仍留在你的個人空間。</string>
+    <string name="filing_selected">已選取</string>
+    <string name="detail_folder_chip">資料夾：%1$s。移到其他資料夾。</string>
     <!-- Default save location (AccountSheet) -->
     <string name="account_save_location_title">預設儲存位置</string>
     <string name="account_save_location_personal_folder">個人 · %1$s</string>
