@@ -66,6 +66,11 @@
   /* A warning-coloured button under the pointer: one step deeper, like the
      other buttons' hover. */
   --warning-hover: oklch(0.935 0.04 66);
+  /* Large warning text that stands on its own, with no --warning wash behind it (a
+     big number in the 評分 report): between the pale wash and the
+     foreground, so it reads as a soft apricot rather than a heavy orange. Too
+     light for small text: that keeps --warning-foreground. */
+  --warning-text: oklch(0.69 0.105 63);
   --danger: oklch(0.96 0.03 25);
   --danger-foreground: oklch(0.5 0.19 25);
   --danger-border: oklch(0.88 0.07 25);
@@ -120,6 +125,7 @@
   --warning-foreground: oklch(0.84 0.09 70);
   --warning-border: oklch(0.43 0.07 60);
   --warning-hover: oklch(0.35 0.055 60);
+  --warning-text: oklch(0.76 0.08 66);
   --danger: oklch(0.3 0.07 25);
   --danger-foreground: oklch(0.83 0.11 25);
   --danger-border: oklch(0.44 0.12 25);
@@ -276,6 +282,7 @@ textarea,
   --color-warning-foreground: var(--warning-foreground);
   --color-warning-border: var(--warning-border);
   --color-warning-hover: var(--warning-hover);
+  --color-warning-text: var(--warning-text);
   --color-danger: var(--danger);
   --color-danger-foreground: var(--danger-foreground);
   --color-danger-border: var(--danger-border);

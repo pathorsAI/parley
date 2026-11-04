@@ -17,7 +17,7 @@ const sec = (ms: number) => (ms / 1000).toFixed(1);
 function Kpi({ label, value, unit, sub, watch }: Readonly<{ label: string; value: string; unit?: string; sub?: string; watch?: boolean }>) {
   return (
     <div className="min-w-0">
-      <div className={`text-3xl leading-tight font-bold tabular-nums ${watch ? "text-warning-foreground" : ""}`}>
+      <div className={`text-3xl leading-tight font-bold tabular-nums ${watch ? "text-warning-text" : ""}`}>
         {value}
         {unit && <small className="ml-1 text-sm font-medium text-muted-foreground">{unit}</small>}
       </div>
