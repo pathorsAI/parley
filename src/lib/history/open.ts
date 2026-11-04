@@ -13,6 +13,7 @@ import type { ReplaySession } from "../replay/types";
 import { withTimingRepaired } from "../replay/timing";
 import * as ipc from "../ipc/commands";
 import { readStudyCache } from "./studyCache";
+import { refreshSampleOutputs } from "../onboarding/sampleOutputs";
 import type { HistoryEntry } from "./types";
 import { entryWritesSettled, readEntry } from "./entryStore";
 
@@ -68,7 +69,9 @@ export async function loadHistoryEntry(id: string): Promise<void> {
   // onto this entry — read after it lands, or the open would restore the stale
   // meta and re-run that stage.
   await entryWritesSettled(id);
-  const { meta, audioPath } = await readEntry(id);
+  const { meta: saved, audioPath } = await readEntry(id);
+  // The bundled sample may predate its current prewritten outputs.
+  const meta = refreshSampleOutputs(saved);
   const audioSrc = audioPath ? convertFileSrc(audioPath) : "";
   const session = replaySessionFor(meta, audioPath ?? "", audioSrc);
   useStore.getState().loadHistory({ ...meta, segments: session.segments }, session);
