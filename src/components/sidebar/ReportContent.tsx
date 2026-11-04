@@ -49,7 +49,15 @@ export function ReportContent({
   markdown,
   onJump,
   onTimestamp,
-}: Readonly<{ markdown: string; onJump?: () => void; onTimestamp?: (ms: number) => void }>) {
+  plain = false,
+}: Readonly<{
+  markdown: string;
+  onJump?: () => void;
+  onTimestamp?: (ms: number) => void;
+  /** No rules at all: no table row lines, no horizontal rules, no underlined
+   *  links (the 總結 tab reads as plain text blocks). */
+  plain?: boolean;
+}>) {
   const setHighlightMs = useStore((s) => s.setHighlightMs);
   const components = makeMarkdownComponents(onTimestamp ?? setHighlightMs, onJump);
 
@@ -59,7 +67,7 @@ export function ReportContent({
     // light mode is white on white — the debrief lost every heading and kept only
     // its paragraphs, because `text-foreground` below colours those and nothing
     // else. Body text reading fine is exactly what made this hard to see.
-    <div className="prose prose-sm max-w-none select-text text-foreground dark:prose-invert prose-p:my-1.5 prose-headings:mb-1 prose-headings:mt-3 prose-ul:my-1.5 prose-li:my-0.5">
+    <div className={`prose prose-sm max-w-none select-text text-foreground dark:prose-invert prose-p:my-1.5 prose-headings:mb-1 prose-headings:mt-3 prose-ul:my-1.5 prose-li:my-0.5${plain ? " prose-hr:hidden prose-a:no-underline prose-thead:border-0 prose-tr:border-0 prose-blockquote:border-0 [&_td]:border-0 [&_th]:border-0" : ""}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={components}

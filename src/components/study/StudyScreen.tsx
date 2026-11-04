@@ -309,11 +309,11 @@ function BriefTabs({ brief, onSeek }: Readonly<{ brief: string; onSeek: (ms: num
 
   if (sections.length < 2) {
     const whole = [lead, ...sections.map((s) => s.body)].filter(Boolean).join("\n\n");
-    return <ReportContent markdown={whole || normalizeBriefHeadings(brief)} onTimestamp={onSeek} />;
+    return <ReportContent markdown={whole || normalizeBriefHeadings(brief)} onTimestamp={onSeek} plain />;
   }
   return (
     <div className="flex flex-col gap-3">
-      {lead && <ReportContent markdown={lead} onTimestamp={onSeek} />}
+      {lead && <ReportContent markdown={lead} onTimestamp={onSeek} plain />}
       <div role="tablist" className="flex flex-wrap gap-1.5">
         {sections.map((s, i) => (
           <button
@@ -334,7 +334,7 @@ function BriefTabs({ brief, onSeek }: Readonly<{ brief: string; onSeek: (ms: num
         ))}
       </div>
       <div role="tabpanel">
-        <ReportContent markdown={sections[index].body} onTimestamp={onSeek} />
+        <ReportContent markdown={sections[index].body} onTimestamp={onSeek} plain />
       </div>
     </div>
   );
