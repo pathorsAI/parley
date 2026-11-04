@@ -8,6 +8,7 @@ import {
 import { LiveScreen } from "../live/LiveScreen";
 import { StudyScreen } from "../study/StudyScreen";
 import { HomeScreen } from "../home/HomeScreen";
+import { SidebarThemeSwitch } from "./SidebarThemeSwitch";
 import { AppSidebar } from "./AppSidebar";
 import { CommandPalette } from "./CommandPalette";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -122,7 +123,15 @@ export function AppShell() {
         {/* Sizes carry explicit units: a bare number is read as a PIXEL size by
             this version, which pinned the tree to a 32px sliver on first run. */}
         <ResizablePanel id="tree" defaultSize="19%" minSize="180px" maxSize="30%">
-          <AppSidebar tree={tree} />
+          {/* The tree scrolls; the theme switch stays pinned under it. */}
+          <div className="flex h-full min-h-0 flex-col bg-sidebar">
+            <div className="min-h-0 flex-1">
+              <AppSidebar tree={tree} />
+            </div>
+            <div className="shrink-0 border-t border-sidebar-border px-2 py-2">
+              <SidebarThemeSwitch />
+            </div>
+          </div>
         </ResizablePanel>
         {/* Draggable, so it says so under the pointer: the line (and its grip)
             darken on hover and stay dark while dragging. */}
