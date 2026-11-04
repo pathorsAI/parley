@@ -23,7 +23,7 @@ function resolveTheme(theme: AppTheme, prefersDark: boolean): "light" | "dark" {
  * boots; on macOS and Linux Tauri makes this app-wide rather than per-window,
  * which is harmless — the value is the same in every window either way.
  */
-function applyNativeTheme(resolved: "light" | "dark") {
+function applyNativeTheme(resolved: "light" | "dark" | null) {
   if (!isTauri()) return;
   void (async () => {
     try {
@@ -47,10 +47,13 @@ export function useThemePreference() {
       const resolved = resolveTheme(theme, media.matches);
       document.documentElement.classList.toggle("dark", resolved === "dark");
       document.documentElement.style.colorScheme = resolved;
-      // Inside `apply` rather than beside it so the native chrome follows the
-      // SAME two triggers the document already does: the setting changing, and
-      // — while the setting is "system" — the OS flipping under us.
-      applyNativeTheme(resolved);
+      // "system" hands the window back to the OS (null) instead of pinning it
+      // to what the OS says now. A pinned window theme is what the webview's
+      // prefers-color-scheme then reports, so after choosing Dark the media
+      // query kept saying dark and System could never get back to a light OS.
+      // Releasing it lets the query read the OS again; its change event then
+      // re-runs this with the real answer.
+      applyNativeTheme(theme === "system" ? null : resolved);
     }
 
     apply();

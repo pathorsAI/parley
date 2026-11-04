@@ -4,8 +4,9 @@ import { useI18n } from "../../i18n";
 import type { AppTheme } from "../../lib/types";
 
 /**
- * Light / Dark / System at the foot of the sidebar: the same setting as
- * Settings › Basic › Theme, one click away instead of a window away.
+ * Light / Dark / System at the foot of the sidebar, as a small icon-only
+ * toggle (names on hover): the same setting as Settings › Basic › Theme, one
+ * click away instead of a window away.
  */
 export function SidebarThemeSwitch() {
   const { t } = useI18n();
@@ -19,7 +20,7 @@ export function SidebarThemeSwitch() {
     <div
       role="radiogroup"
       aria-label={t("settings.basic.theme")}
-      className="grid shrink-0 grid-cols-3 rounded-md bg-muted p-0.5"
+      className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-muted/70 p-0.5"
     >
       {options.map(([value, label, Icon]) => {
         const on = theme === value;
@@ -29,14 +30,14 @@ export function SidebarThemeSwitch() {
             type="button"
             role="radio"
             aria-checked={on}
+            aria-label={label}
             title={label}
             onClick={() => useStore.getState().updateSettings({ theme: value as AppTheme })}
-            className={`flex h-7 min-w-0 cursor-pointer items-center justify-center gap-1 rounded-[5px] px-1 text-[11px] transition-colors ${
-              on ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+            className={`grid size-6 cursor-pointer place-items-center rounded-full transition-colors ${
+              on ? "bg-background text-foreground shadow-sm" : "text-muted-foreground/70 hover:text-foreground"
             }`}
           >
-            <Icon className="size-3.5 shrink-0" />
-            <span className="truncate">{label}</span>
+            <Icon className="size-3.5" />
           </button>
         );
       })}

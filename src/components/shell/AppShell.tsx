@@ -128,7 +128,7 @@ export function AppShell() {
             <div className="min-h-0 flex-1">
               <AppSidebar tree={tree} />
             </div>
-            <div className="shrink-0 border-t border-sidebar-border px-2 py-2">
+            <div className="shrink-0 px-3 pt-1 pb-2.5">
               <SidebarThemeSwitch />
             </div>
           </div>
