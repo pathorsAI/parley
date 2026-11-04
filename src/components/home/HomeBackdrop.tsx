@@ -2,7 +2,7 @@ import type { CSSProperties } from "react";
 
 /**
  * 總覽's backdrop, from the UX file (Figma "Integrations — Main Content",
- * 3105:4659): a pale blue wash fading to the page grey, under a row of thirteen
+ * 3105:4659): a white page under a pale blue wash (20%), under a row of thirteen
  * vertical light bars that rise into place one after another when the page
  * opens (60 ms apart, half a second each).
  *
@@ -39,8 +39,8 @@ const LAYER_HEIGHT = 595;
 
 export function HomeBackdrop() {
   return (
-    <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
-      <div className="absolute inset-0 bg-linear-to-b from-[#f0f9ff] to-[#fafafa] opacity-60 dark:from-primary/10 dark:to-background" />
+    <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden bg-white dark:bg-background">
+      <div className="absolute inset-0 bg-linear-to-b from-[#f0f9ff] to-white opacity-20 dark:from-primary/10 dark:to-background dark:opacity-60" />
       <div className="absolute inset-x-0 opacity-20 dark:opacity-15" style={{ top: LAYER_TOP, height: LAYER_HEIGHT }}>
         {BARS.map((b, i) => (
           <div
