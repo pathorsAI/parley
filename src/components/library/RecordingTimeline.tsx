@@ -230,19 +230,25 @@ function TimelineRow({
   }
 
   const stats = (
+    // Fixed-width columns, so each stat lines up down the list whatever its
+    // digits (1 vs 12 people, 0:05 vs 4:53:29) or whether there is a sync icon.
     <span className="flex shrink-0 items-center gap-3 text-[11px] tabular-nums text-muted-foreground">
       <span
-        className="inline-flex items-center gap-1"
+        className="inline-flex w-8 items-center gap-1"
         title={t("history.speakers", { count: entry.speakerCount })}
       >
-        <Users className="size-3" />
+        <Users className="size-3 shrink-0" />
         {entry.speakerCount}
       </span>
-      <span className="inline-flex items-center gap-1 tabular-nums">
-        <Clock className="size-3" />
+      <span className="inline-flex w-[3.75rem] items-center gap-1">
+        <Clock className="size-3 shrink-0" />
         {formatDuration(entry.durationMs)}
       </span>
-      {!isOrgContext && <SyncIcon sync={entry.sync} signedIn={signedIn} />}
+      {!isOrgContext && signedIn && (
+        <span className="inline-flex w-3 justify-center">
+          <SyncIcon sync={entry.sync} signedIn={signedIn} />
+        </span>
+      )}
     </span>
   );
 
@@ -345,6 +351,10 @@ function TimelineRow({
         stats
       )}
 
+      {/* The row's own controls share one fixed-width slot, right-aligned: a
+          cloud-only row has no rename or 移動, and without the slot its stats
+          slid right of every other row's. */}
+      <div className="flex w-[4.75rem] shrink-0 items-center justify-end gap-0.5">
       {!editing && (
         <CardActions
           className="flex shrink-0 items-center gap-0.5 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100"
@@ -378,6 +388,7 @@ function TimelineRow({
           {sharing ? <Loader2 className="size-3.5 animate-spin" /> : <FolderInput className="size-3.5" />}
         </button>
       )}
+      </div>
     </div>
   );
 
