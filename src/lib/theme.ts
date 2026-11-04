@@ -23,18 +23,22 @@ function resolveTheme(theme: AppTheme, prefersDark: boolean): "light" | "dark" {
  * boots; on macOS and Linux Tauri makes this app-wide rather than per-window,
  * which is harmless — the value is the same in every window either way.
  */
-function applyNativeTheme(resolved: "light" | "dark" | null) {
+async function setNativeTheme(theme: "light" | "dark" | null): Promise<void> {
   if (!isTauri()) return;
-  void (async () => {
-    try {
-      const { getCurrentWindow } = await import("@tauri-apps/api/window");
-      await getCurrentWindow().setTheme(resolved);
-    } catch (error) {
-      // Non-fatal: the body is already themed by the class below, so the worst
-      // case is the mismatch we started with.
-      log.warn("theme: native window theme failed", { error: String(error) });
-    }
-  })();
+  try {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    await getCurrentWindow().setTheme(theme);
+  } catch (error) {
+    // Non-fatal: the body is already themed by the class, so the worst case is
+    // the mismatch we started with.
+    log.warn("theme: native window theme failed", { error: String(error) });
+  }
+}
+
+/** Two frames: long enough for WebKit to re-evaluate prefers-color-scheme
+ *  after the window's appearance changes. */
+function nextFrames(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
 }
 
 export function useThemePreference() {
@@ -42,22 +46,56 @@ export function useThemePreference() {
 
   useEffect(() => {
     const media = globalThis.matchMedia("(prefers-color-scheme: dark)");
+    let cancelled = false;
+    let syncing = false;
 
-    function apply() {
-      const resolved = resolveTheme(theme, media.matches);
+    function paint(resolved: "light" | "dark") {
       document.documentElement.classList.toggle("dark", resolved === "dark");
       document.documentElement.style.colorScheme = resolved;
-      // "system" hands the window back to the OS (null) instead of pinning it
-      // to what the OS says now. A pinned window theme is what the webview's
-      // prefers-color-scheme then reports, so after choosing Dark the media
-      // query kept saying dark and System could never get back to a light OS.
-      // Releasing it lets the query read the OS again; its change event then
-      // re-runs this with the real answer.
-      applyNativeTheme(theme === "system" ? null : resolved);
     }
 
-    apply();
-    media.addEventListener("change", apply);
-    return () => media.removeEventListener("change", apply);
+    // The window is always PINNED to the theme the page shows: on macOS the
+    // translucent sidebar sits on the window's vibrancy, which follows the
+    // window's appearance, and a light window under the dark theme turns the
+    // rail grey. But a pinned window is also what the webview then reports as
+    // prefers-color-scheme, so for "system" the OS can't be read off the media
+    // query directly — after choosing Dark it kept saying dark. System
+    // therefore releases the window (null), lets WebKit re-read the OS, takes
+    // that answer, and pins it.
+    async function sync() {
+      if (syncing) return;
+      syncing = true;
+      try {
+        if (theme !== "system") {
+          paint(theme);
+          await setNativeTheme(theme);
+          return;
+        }
+        await setNativeTheme(null);
+        await nextFrames();
+        if (cancelled) return;
+        const resolved = resolveTheme(theme, media.matches);
+        paint(resolved);
+        await setNativeTheme(resolved);
+      } finally {
+        syncing = false;
+      }
+    }
+
+    void sync();
+    // While pinned, the OS flipping is invisible to the media query, so
+    // "system" re-checks whenever the window comes back to the front.
+    const recheck = () => {
+      if (theme === "system") void sync();
+    };
+    media.addEventListener("change", recheck);
+    globalThis.addEventListener("focus", recheck);
+    document.addEventListener("visibilitychange", recheck);
+    return () => {
+      cancelled = true;
+      media.removeEventListener("change", recheck);
+      globalThis.removeEventListener("focus", recheck);
+      document.removeEventListener("visibilitychange", recheck);
+    };
   }, [theme]);
 }
