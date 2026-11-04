@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useI18n } from "../../i18n";
 import type { DeliveryAssessment } from "../../lib/types";
 import { syllablesPerMin } from "../../lib/analysis/delivery";
@@ -15,25 +15,35 @@ const sec = (ms: number) => (ms / 1000).toFixed(1);
 /** One headline number at the top of the report. */
 function Kpi({ label, value, unit, sub, watch }: Readonly<{ label: string; value: string; unit?: string; sub?: string; watch?: boolean }>) {
   return (
-    <div className="min-w-0 rounded-lg border bg-muted/20 px-3 py-2.5">
-      <div className="truncate text-[11px] text-muted-foreground">{label}</div>
-      <div className={`mt-0.5 text-xl leading-tight font-bold tabular-nums ${watch ? "text-warning-foreground" : ""}`}>
+    <div className="min-w-0">
+      <div className={`text-3xl leading-tight font-bold tabular-nums ${watch ? "text-warning-foreground" : ""}`}>
         {value}
-        {unit && <small className="ml-0.5 text-xs font-medium text-muted-foreground">{unit}</small>}
+        {unit && <small className="ml-1 text-sm font-medium text-muted-foreground">{unit}</small>}
       </div>
-      {sub && <div className="truncate text-[10.5px] text-muted-foreground">{sub}</div>}
+      <div className="mt-0.5 truncate text-xs text-muted-foreground">
+        {label}
+        {sub && <span className="ml-1.5 text-muted-foreground/70">· {sub}</span>}
+      </div>
     </div>
   );
 }
 
 /** A numbered section of the report. */
-export function ReportGroup({ n, title, desc, children }: Readonly<{ n: string; title: string; desc: string; children: ReactNode }>) {
+function ReportGroup({
+  id,
+  n,
+  title,
+  en,
+  desc,
+  children,
+}: Readonly<{ id: string; n: string; title: string; en: string; desc: string; children: ReactNode }>) {
   return (
-    <section className="flex flex-col gap-3 border-t pt-5">
+    <section id={id} data-report-section className="flex scroll-mt-4 flex-col gap-3 border-t pt-6">
       <div>
-        <div className="flex items-baseline gap-2">
-          <span className="font-mono text-[11px] font-semibold text-primary">{n}</span>
-          <h3 className="text-sm font-semibold">{title}</h3>
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <span className="font-mono text-xs font-semibold text-primary">{n}</span>
+          <h3 className="text-base font-semibold">{title}</h3>
+          <span className="text-xs text-muted-foreground">{en}</span>
         </div>
         <p className="mt-0.5 text-[11px] text-muted-foreground">{desc}</p>
       </div>
@@ -266,10 +276,21 @@ export function DeliveryReport({
   const avgPause = stats.pauses.length ? stats.pauses.reduce((a, p) => a + p.ms, 0) / stats.pauses.length : 0;
   const frequent = assessment?.fillers.level === "frequent";
 
+  const nav = [
+    { id: "delivery-profile", label: t("delivery.nav.profile") },
+    ...(stats.paceTimeline.length > 1 || stats.pauses.length > 0 ? [{ id: "delivery-pace", label: `01 ${t("delivery.nav.pace")}` }] : []),
+    { id: "delivery-habits", label: `02 ${t("delivery.nav.habits")}` },
+    ...(ratio || stats.talk.length > 1 ? [{ id: "delivery-interaction", label: `03 ${t("delivery.nav.interaction")}` }] : []),
+    { id: "delivery-tone", label: `04 ${t("delivery.nav.tone")}` },
+  ];
+
   return (
-    <div className="flex flex-col gap-5">
-      {/* Headline numbers. */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+    <div className="grid grid-cols-1 gap-3 @min-[680px]:grid-cols-[minmax(0,1fr)_128px] @min-[680px]:gap-8">
+    <div className="order-1 flex min-w-0 flex-col gap-6 @min-[680px]:order-none">
+      {/* 這場你的說話特徵: the headline numbers. */}
+      <section id="delivery-profile" data-report-section className="scroll-mt-4">
+      <h2 className="mb-3 text-base font-semibold">{t("delivery.profile")}</h2>
+      <div className="grid grid-cols-2 gap-x-6 gap-y-4 @min-[520px]:grid-cols-4">
         {pace != null && (
           <Kpi
             label={t("delivery.kpi.pace")}
@@ -296,10 +317,11 @@ export function DeliveryReport({
           sub={stats.pauses.length ? t("delivery.kpi.avgSec", { s: sec(avgPause) }) : undefined}
         />
       </div>
+      </section>
 
       {/* 01 語速與停頓 */}
       {(stats.paceTimeline.length > 1 || stats.pauses.length > 0) && (
-        <ReportGroup n="01" title={t("delivery.group.pace")} desc={t("delivery.group.pace.desc")}>
+        <ReportGroup id="delivery-pace" n="01" en="Speech Fluency" title={t("delivery.group.pace")} desc={t("delivery.group.pace.desc")}>
           <div className="grid grid-cols-1 gap-3 @min-[640px]:grid-cols-2">
             {stats.paceTimeline.length > 1 && <PaceLine stats={stats} t={t} />}
             {stats.pauses.length > 0 && <PauseStrip stats={stats} t={t} />}
@@ -308,7 +330,7 @@ export function DeliveryReport({
       )}
 
       {/* 02 語言習慣 */}
-      <ReportGroup n="02" title={t("delivery.group.habits")} desc={t("delivery.group.habits.desc")}>
+      <ReportGroup id="delivery-habits" n="02" en="Disfluency Patterns" title={t("delivery.group.habits")} desc={t("delivery.group.habits.desc")}>
         <div className="grid grid-cols-1 gap-3 @min-[640px]:grid-cols-2">
           <Chart
             title={t("delivery.chart.fillers")}
@@ -352,7 +374,7 @@ export function DeliveryReport({
 
       {/* 03 對話互動 */}
       {(ratio || stats.talk.length > 1) && (
-        <ReportGroup n="03" title={t("delivery.group.interaction")} desc={t("delivery.group.interaction.desc")}>
+        <ReportGroup id="delivery-interaction" n="03" en="Conversational Dynamics" title={t("delivery.group.interaction")} desc={t("delivery.group.interaction.desc")}>
           <div className="grid grid-cols-1 gap-3 @min-[640px]:grid-cols-2">
             {ratio && share && (
               <Chart title={t("delivery.card.talkRatio")}>
@@ -394,10 +416,63 @@ export function DeliveryReport({
       )}
 
       {/* 04 語氣與整體表達 */}
-      <ReportGroup n="04" title={t("delivery.group.tone")} desc={t("delivery.group.tone.desc")}>
+      <ReportGroup id="delivery-tone" n="04" en="Tone & Delivery" title={t("delivery.group.tone")} desc={t("delivery.group.tone.desc")}>
         {tone}
       </ReportGroup>
     </div>
+    <ReportNav items={nav} />
+    </div>
+  );
+}
+
+/**
+ * The report's module nav, on the right: one entry per section, the one being
+ * read highlighted, a click scrolling to it. Sticks while the report scrolls;
+ * on a narrow pane it becomes a row above the report.
+ */
+function ReportNav({ items }: Readonly<{ items: { id: string; label: string }[] }>) {
+  const { t } = useI18n();
+  const [active, setActive] = useState(items[0]?.id ?? "");
+  const ids = items.map((i) => i.id).join(",");
+  useEffect(() => {
+    const sections = ids
+      .split(",")
+      .map((id) => document.getElementById(id))
+      .filter((el): el is HTMLElement => !!el);
+    if (sections.length === 0) return;
+    // The section whose top has passed the upper third of the pane is current.
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        if (visible[0]) setActive(visible[0].target.id);
+      },
+      { rootMargin: "0px 0px -65% 0px" },
+    );
+    for (const el of sections) observer.observe(el);
+    return () => observer.disconnect();
+  }, [ids]);
+  return (
+    <nav
+      aria-label={t("delivery.nav.aria")}
+      className="order-0 flex flex-row flex-wrap gap-1 border-b pb-2 text-xs @min-[680px]:sticky @min-[680px]:top-2 @min-[680px]:order-none @min-[680px]:flex-col @min-[680px]:self-start @min-[680px]:border-b-0 @min-[680px]:border-l @min-[680px]:pb-0 @min-[680px]:pl-2.5"
+    >
+      {items.map((item) => (
+        <button
+          key={item.id}
+          type="button"
+          aria-current={active === item.id ? "true" : undefined}
+          onClick={() => {
+            setActive(item.id);
+            document.getElementById(item.id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+          }}
+          className={`cursor-pointer truncate rounded-md px-2 py-1 text-left transition-colors ${
+            active === item.id ? "bg-primary/10 font-semibold text-primary" : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          {item.label}
+        </button>
+      ))}
+    </nav>
   );
 }
 
