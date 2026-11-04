@@ -139,10 +139,10 @@ class SampleFilingTest {
     }
 
     @Test
-    fun `accept renames and files the local entry, and the offer is over`() {
+    fun `save renames and files the local entry, and the offer is over`() {
         val folders = listOf(CloudFolder(id = CUSTOMER_ID, name = CUSTOMER))
         val model = card(folders)
-        runBlocking { FilingCardController(model, this, this).accept(null) }
+        runBlocking { FilingCardController(model, this, this).save(null) }
 
         val stored = entry()
         assertEquals(CUSTOMER_ID, stored.folderId)

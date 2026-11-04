@@ -123,28 +123,28 @@ import kotlinx.coroutines.launch
  * and the actions as blue text. No card, no fill — the chips are the only
  * shapes, because they are the only things here that are choices.
  *
- * It is also a form with ONE commit, Accept. Everything else only changes what
- * Accept will do: a tester filed a meeting into the wrong customer back when a
+ * It is also a form with ONE commit, Save. Everything else only changes what
+ * Save will do: a tester filed a meeting into the wrong customer back when a
  * chip tap was the whole answer, and pressed Return expecting to rename only.
  *
  * - **The name** is the proposal, and tapping it edits it in place. Done on
- *   the keyboard closes the field and keeps what was typed; Accept writes it.
+ *   the keyboard closes the field and keeps what was typed; Save writes it.
  * - **The chips** are the folders, best first, at most three; the first one
  *   starts selected. A folder that does not exist yet is dashed and captioned
- *   "New folder", because Accept creates it; the rest say "Existing folder". The
+ *   "New folder", because Save creates it; the rest say "Existing folder". The
  *   model's reason is read by TalkBack after the chip's name. Tapping a chip
  *   selects it (filled, with a tick); tapping the selected one selects none.
  * - **Choose another…** opens the folder picker — the personal folders with
  *   the chips' existing ones on top, then each organization's — and its
  *   confirm selects that place, drawn as one more chip.
- * - **Accept** writes the name as the field shows it and the selected folder in
+ * - **Save** writes the name as the field shows it and the selected folder in
  *   one push, and the offer is over. **Skip suggestion** answers it with no.
  *
  * ## Motion
  *
  * The card arrives on a spring (16 dp low, 98 %, transparent → in place). The
  * proposed name types itself in once per session, 22 ms a character. On
- * Accept, a ghost of the card flies from the name into the selected chip, the
+ * Save, a ghost of the card flies from the name into the selected chip, the
  * chip pops, a success haptic plays, and only then is the answer written. With
  * the system's "Remove animations" on, all of it is skipped and the write
  * happens at once. Numbers: [FilingMotion].
@@ -179,8 +179,8 @@ fun FilingSuggestionCard(
 /** What the card can ask for. See [FilingCardController] for what each one writes. */
 @Immutable
 class FilingCardActions(
-    /** Accept: the field's title (null = the proposed one) and the selected folder. */
-    val onAccept: (String?) -> Unit,
+    /** Save: the field's title (null = the proposed one) and the selected folder. */
+    val onSave: (String?) -> Unit,
     /** A chip: select it, or none when it is the selected one. */
     val onToggle: (FilingFolderSuggestion) -> Unit,
     /** The picker's confirm: select that place, under that chip label. */
@@ -193,7 +193,7 @@ class FilingCardActions(
 ) {
     companion object {
         fun of(card: FilingCardController) = FilingCardActions(
-            onAccept = card::accept,
+            onSave = card::save,
             onToggle = card::toggle,
             onChoose = card::choose,
             onCreate = { name -> card.createFolder(name) },
@@ -335,7 +335,7 @@ private fun FilingBlock(
                     busy = busy,
                 ),
                 editor = editor,
-                onAccept = { accept(state, editor, flight, actions) },
+                onSave = { save(state, editor, flight, actions) },
                 modifier = inset.onGloballyPositioned { flight.title = it },
             )
             if (state.proposedFolders.isNotEmpty() || state.chosenElsewhere != null) {
@@ -361,15 +361,15 @@ private fun FilingBlock(
     }
 }
 
-/** Accept: the name as the field shows it, and the selected chip — flown into. */
-private fun accept(state: FilingUiState, editor: TitleEditor, flight: Flight, actions: FilingCardActions) {
+/** Save: the name as the field shows it, and the selected chip — flown into. */
+private fun save(state: FilingUiState, editor: TitleEditor, flight: Flight, actions: FilingCardActions) {
     editor.editing = false
     val typed = editor.draft.trim().ifEmpty { null }
     val key = state.selectedFolder?.let(::filingChipKey)
     if (key == null) {
-        actions.onAccept(typed)
+        actions.onSave(typed)
     } else {
-        flight.fly(key) { actions.onAccept(typed) }
+        flight.fly(key) { actions.onSave(typed) }
     }
 }
 
@@ -426,7 +426,7 @@ private class TitleEditor(initial: String) {
     var draft by mutableStateOf(initial)
     var editing by mutableStateOf(false)
 
-    /** Done: close the field and keep what was typed, for Accept. An emptied field goes back to [fallback]. */
+    /** Done: close the field and keep what was typed, for Save. An emptied field goes back to [fallback]. */
     fun close(fallback: String) {
         editing = false
         if (draft.isBlank()) draft = fallback
@@ -471,7 +471,7 @@ private fun rememberTypedCount(title: String, reduceMotion: Boolean): Int? {
 }
 
 /**
- * The proposed name, editable in place, with Accept beside it. Under it, while
+ * The proposed name, editable in place, with Save beside it. Under it, while
  * the proposal is on offer, what the recording is called now — "Meeting Sep
  * 7, 3:20 PM" is most of the argument for the suggestion; once the name has
  * been answered, "Renamed ✓" instead.
@@ -480,7 +480,7 @@ private fun rememberTypedCount(title: String, reduceMotion: Boolean): Int? {
 private fun FilingTitle(
     title: TitleView,
     editor: TitleEditor,
-    onAccept: () -> Unit,
+    onSave: () -> Unit,
     modifier: Modifier,
 ) {
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -501,8 +501,8 @@ private fun FilingTitle(
                     strokeWidth = 2.dp,
                 )
             } else {
-                TextButton(onClick = onAccept) {
-                    Text(stringResource(R.string.filing_accept), style = ParleyTextStyles.bodyEmphasized)
+                TextButton(onClick = onSave) {
+                    Text(stringResource(R.string.filing_save), style = ParleyTextStyles.bodyEmphasized)
                 }
             }
         }
@@ -548,7 +548,7 @@ private fun TitleText(title: TitleView, enabled: Boolean, onEdit: () -> Unit) {
     }
 }
 
-/** The name in a field. Done closes it — Accept is the rename; a title is one line. */
+/** The name in a field. Done closes it — Save is the rename; a title is one line. */
 @Composable
 private fun TitleField(editor: TitleEditor, onDone: () -> Unit) {
     val focus = remember { FocusRequester() }
@@ -655,9 +655,9 @@ private fun FolderChips(
 
 /**
  * An outlined chip: the name in the tint (it is a thing to tap), a caption
- * saying what Accept does to the folder list, and a dashed outline for the
+ * saying what Save does to the folder list, and a dashed outline for the
  * folder that does not exist yet. Selected, it fills with the tint and leads
- * with a tick — the folder Accept will file into.
+ * with a tick — the folder Save will file into.
  */
 @Composable
 private fun FolderChip(
@@ -802,7 +802,7 @@ private fun Modifier.chipOutline(color: Color, dashed: Boolean): Modifier = draw
 
 /**
  * "Choose another…": the personal folders with the chips' real ones offered
- * first, then each organization's. Its confirm selects the place for Accept;
+ * first, then each organization's. Its confirm selects the place for Save;
  * picking an organization shares a copy there and keeps the recording in the
  * personal library, which is what the default save location means by one.
  */

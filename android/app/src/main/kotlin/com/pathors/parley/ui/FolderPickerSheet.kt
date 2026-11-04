@@ -131,7 +131,7 @@ fun FolderPickerSheet(
     suggested: List<CloudFolder> = emptyList(),
     showsRoot: Boolean = true,
     title: String = stringResource(R.string.folder_picker_title),
-    confirmLabel: String = stringResource(R.string.folder_picker_move_here),
+    confirmLabel: String = stringResource(R.string.folder_picker_move),
     orgHandoff: OrgHandoff = OrgHandoff.MOVE,
 ) {
     // Fully expanded from the start. iOS opens at its medium detent and grows
@@ -351,13 +351,10 @@ private fun PickerHeader(
 @Composable
 private fun HandoffNote(org: CloudOrg, handoff: OrgHandoff) {
     Text(
-        text = stringResource(
-            when (handoff) {
-                OrgHandoff.MOVE -> R.string.folder_picker_org_move_note
-                OrgHandoff.COPY -> R.string.folder_picker_org_copy_note
-            },
-            org.name,
-        ),
+        text = when (handoff) {
+            OrgHandoff.MOVE -> stringResource(R.string.folder_picker_org_move_note)
+            OrgHandoff.COPY -> stringResource(R.string.folder_picker_org_copy_note, org.name)
+        },
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 8.dp),

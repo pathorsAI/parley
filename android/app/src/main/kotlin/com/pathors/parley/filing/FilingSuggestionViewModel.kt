@@ -37,7 +37,7 @@ class FilingSuggestionViewModel(
     loadDirectory: suspend () -> FolderDirectory,
 ) : ViewModel() {
 
-    /** What the card does — select, accept, skip — and the guide's hooks. */
+    /** What the card does — select, save, skip — and the guide's hooks. */
     val card = FilingCardController(model, viewModelScope, backgroundScope, loadDirectory = loadDirectory)
 
     val state: StateFlow<FilingUiState> = model.state

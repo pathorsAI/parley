@@ -58,14 +58,14 @@ sealed interface FolderTarget {
 }
 
 /**
- * Which folder the card will file into when Accept is pressed. Tapping a chip
- * or confirming the picker only changes this; nothing is written until Accept.
+ * Which folder the card will file into when Save is pressed. Tapping a chip
+ * or confirming the picker only changes this; nothing is written until Save.
  */
 sealed interface FolderPick {
     /** The model's best folder — the first chip — as offered. */
     data object Suggested : FolderPick
 
-    /** No folder: Accept answers the folder half by leaving the recording where it is. */
+    /** No folder: Save answers the folder half by leaving the recording where it is. */
     data object None : FolderPick
 
     /** A chip, or a place picked in "Choose another…"; [label] is what its chip says. */
@@ -132,7 +132,7 @@ data class FilingUiState(
     val isWriting: Boolean = false,
     /** A push the user asked for did not land. Never raised for the pass itself. */
     val writeFailed: Boolean = false,
-    /** The folder Accept files into. */
+    /** The folder Save files into. */
     val folderPick: FolderPick = FolderPick.Suggested,
 ) {
     /**
@@ -163,7 +163,7 @@ data class FilingUiState(
     /** The model's best answer: what the card selects before anyone taps a chip. */
     val proposedFolder: FilingFolderSuggestion? get() = proposedFolders.firstOrNull()
 
-    /** Where Accept files the recording, or null for "leave it where it is". */
+    /** Where Save files the recording, or null for "leave it where it is". */
     val selectedFolder: FolderTarget?
         get() = when (val pick = folderPick) {
             FolderPick.Suggested -> proposedFolder?.let(FolderTarget::of)
@@ -173,7 +173,7 @@ data class FilingUiState(
 
     /**
      * A place picked in the picker that is none of the chips, drawn as one more
-     * (selected) chip so the card shows where Accept will put the recording.
+     * (selected) chip so the card shows where Save will put the recording.
      */
     val chosenElsewhere: FolderPick.Chosen?
         get() = (folderPick as? FolderPick.Chosen)
@@ -371,15 +371,15 @@ class FilingSuggestionModel(
     }
 
     /**
-     * Accept: the name as given (null = leave it) and the selected folder, in
+     * Save: the name as given (null = leave it) and the selected folder, in
      * one write, and then the offer is over — both halves answered, whatever
-     * Accept left as it was. An Accept with nothing to change still tells the
+     * Save left as it was. A Save with nothing to change still tells the
      * desktop the offer was answered, as Skip does.
      *
      * @return whether the offer is now answered. False keeps it open with
      *   [FilingUiState.writeFailed] up.
      */
-    suspend fun accept(title: String?): Boolean {
+    suspend fun save(title: String?): Boolean {
         val target = this.target
         if (_state.value.isWriting) return false
         _state.update { it.copy(writeFailed = false) }
@@ -392,7 +392,7 @@ class FilingSuggestionModel(
 
     /**
      * "New folder…" in the picker: make it now, in the personal library, and
-     * list it — the picker selects it, and Accept files into it. Throws when it
+     * list it — the picker selects it, and Save files into it. Throws when it
      * could not be made, so the picker keeps the name on screen with its error.
      */
     suspend fun createFolder(name: String): CloudFolder {

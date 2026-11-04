@@ -106,13 +106,24 @@ class HandoffStringsParityTest {
         "filing_write_failed" to "That didn't save. Try again.",
         "filing_was" to "Was: %@",
         "filing_renamed" to "Renamed",
-        "filing_accept" to "Accept",
+        "filing_save" to "Save",
         "filing_choose_another" to "Choose another…",
         "filing_new_folder" to "New folder",
         "filing_existing_folder" to "Existing folder",
         "filing_edit_title" to "Edit the title",
         "filing_title" to "Title",
         "folder_picker_suggested" to "Suggested",
+        // The folder picker's sections and its select-then-confirm header (iOS #667).
+        "folder_picker_move" to "Move",
+        "folder_picker_choose" to "Choose",
+        "folder_picker_subtitle" to "Tap a folder to select it.",
+        "folder_picker_current" to "Here now",
+        "folder_picker_org_root" to "Not in a folder",
+        "folder_picker_org_badge" to "Organization",
+        "folder_picker_org_copy_note" to "Shares a copy to “%@”. The original stays in Personal.",
+        "folder_picker_org_move_note" to "A copy goes to the organization, and the recording leaves your personal library.",
+        "library_scope_personal" to "Personal",
+        "library_move_to_folder" to "Move to…",
         // Re-transcribe says queued, not running (iOS 1.14).
         "retranscribe_running" to "Re-transcribing… this can take a few minutes.",
         "retranscribe_waiting_last_tried" to "Waiting to re-transcribe. It last tried %@, and tries again " +
@@ -127,7 +138,7 @@ class HandoffStringsParityTest {
         // The guided lap's guide bar and done card (iOS #450 GuideBar).
         "guide_file_title" to "1 / 3 · See what Parley did for you",
         "guide_file_body" to "Every recording gets a name and a suggested folder when it's done. You can change the " +
-            "title or pick your own folder — tap Accept or any folder to try it.",
+            "title or pick your own folder, then tap Save.",
         "guide_show_me" to "Show me",
         "guide_choose_folder" to "Choose a folder",
         "guide_filed" to "Filed. Every recording will get a suggestion like this.",

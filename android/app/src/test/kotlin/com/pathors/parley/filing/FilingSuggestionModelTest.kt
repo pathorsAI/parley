@@ -554,10 +554,10 @@ class FilingSuggestionModelTest {
     // ── the card's actions ───────────────────────────────────────────────────
 
     @Test
-    fun `accept takes the name as the field shows it and the first chip`() {
+    fun `save takes the name as the field shows it and the first chip`() {
         model.present(pending(), FilingTarget.Cloud(RECORDING))
         runBlocking {
-            FilingCardController(model, this, this).accept(" $TYPED ")
+            FilingCardController(model, this, this).save(" $TYPED ")
         }
         assertEquals(1, pushes.size)
         assertEquals(TYPED, lastMeta().title)
@@ -567,7 +567,7 @@ class FilingSuggestionModelTest {
 
     /** The tester's report: one tap on a chip filed the meeting before they had chosen. */
     @Test
-    fun `a chip tap only selects, and nothing is written until accept`() {
+    fun `a chip tap only selects, and nothing is written until save`() {
         model.present(pending(), FilingTarget.Cloud(RECORDING))
         val chip = SUGGESTION.folders.first()
         runBlocking {
@@ -583,12 +583,12 @@ class FilingSuggestionModelTest {
     }
 
     @Test
-    fun `accept with no folder selected renames and answers the folder half too`() {
+    fun `save with no folder selected renames and answers the folder half too`() {
         model.present(pending(), FilingTarget.Cloud(RECORDING))
         runBlocking {
             val card = FilingCardController(model, this, this)
             card.toggle(SUGGESTION.folders.first())
-            card.accept(null)
+            card.save(null)
         }
         assertEquals(RENEWAL, lastMeta().title)
         assertNull(lastMeta().folderId)
@@ -597,13 +597,13 @@ class FilingSuggestionModelTest {
     }
 
     @Test
-    fun `a place chosen in the picker is what accept files into`() {
+    fun `a place chosen in the picker is what save files into`() {
         model.present(pending(), FilingTarget.Cloud(RECORDING))
         runBlocking {
             val card = FilingCardController(model, this, this)
             card.choose(FolderTarget.Existing("f-other"), "Northwind")
             assertEquals(FolderPick.Chosen(FolderTarget.Existing("f-other"), "Northwind"), state.chosenElsewhere)
-            card.accept(null)
+            card.save(null)
         }
         assertEquals("f-other", lastMeta().folderId)
     }
@@ -615,7 +615,7 @@ class FilingSuggestionModelTest {
         runBlocking {
             val card = FilingCardController(model, this, this, onWritten = { filed++ })
             card.choose(FolderTarget.Org("org-1", "f-shared"), "Pathors · Sales")
-            card.accept(null)
+            card.save(null)
         }
         assertEquals(listOf("POST /recordings/$RECORDING", "POST /recordings/$RECORDING/share"), paths.filter { it.startsWith("POST") })
         assertEquals(RENEWAL, lastMeta().title)
@@ -633,14 +633,14 @@ class FilingSuggestionModelTest {
         runBlocking {
             val card = FilingCardController(model, this, this)
             card.choose(FolderTarget.Org("org-1"), "Pathors")
-            card.accept(null)
+            card.save(null)
         }
         assertTrue(state.writeFailed)
         assertTrue(state.hasSomethingToOffer)
     }
 
     @Test
-    fun `a folder made in the picker is listed, and filed into only on accept`() {
+    fun `a folder made in the picker is listed, and filed into only on save`() {
         model.present(pending(), FilingTarget.Cloud(RECORDING))
         val made = runBlocking { FilingCardController(model, this, this).createFolder("Globex") }
         assertEquals(1, count("POST /folders"))

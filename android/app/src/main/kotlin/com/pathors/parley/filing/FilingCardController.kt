@@ -68,7 +68,7 @@ class FilingCardCues(private val scope: CoroutineScope) {
  * suggestion already pending on the recording) — the answers are the same.
  *
  * The card is a form with one commit. A chip tap, Return in the name field,
- * and the picker's confirm only change what is selected; [accept] is the one
+ * and the picker's confirm only change what is selected; [save] is the one
  * write. A tester filed a meeting into the wrong customer when a single tap
  * on a chip used to be the whole answer.
  *
@@ -107,14 +107,14 @@ class FilingCardController(
     fun choose(target: FolderTarget, label: String) = model.pick(FolderPick.Chosen(target, label))
 
     /**
-     * Accept: the name as the field shows it (null = the proposed one) and the
+     * Save: the name as the field shows it (null = the proposed one) and the
      * selected folder, in one write.
      */
-    fun accept(title: String?) {
+    fun save(title: String?) {
         val current = state.value
         val name = title?.trim()?.takeIf { it.isNotEmpty() } ?: current.proposedTitle
         scope.launch {
-            if (model.accept(name)) onWritten()
+            if (model.save(name)) onWritten()
         }
     }
 
