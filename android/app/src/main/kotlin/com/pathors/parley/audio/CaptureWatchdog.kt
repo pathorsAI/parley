@@ -89,7 +89,7 @@ class CaptureWatchdog(
     /**
      * The full gate: should the watchdog actually speak up this tick?
      *
-     * All three conjuncts are load-bearing, and the two flags are ported
+     * All four conjuncts are load-bearing, and the two flags are ported
      * straight from the iOS watchdog's guard
      * (`ios/App/Parley/AudioCapture.swift` lines 619-640, `!rebuilding` and the
      * `!lost` folded into `needsRebuild()`).
@@ -109,18 +109,22 @@ class CaptureWatchdog(
      *   churn in exchange for nothing. What revives a given-up capture is an
      *   event that announces itself — the user returning to the foreground, a
      *   route change, the device coming back — not another poll.
+     * - **`!paused`** — a paused capture has released its record, so no chunks
+     *   is the expected state, not a stall.
      *
      * @param recovering `CaptureRecovery.isRecovering` — a rebuild is in
      *   flight, or the capture is sitting interrupted waiting to resume.
      * @param givenUp `CaptureRecovery.hasGivenUp` — the ladder is exhausted and
      *   the machine has settled in `Phase.LOST`.
+     * @param paused the user paused the recording and the record is released.
      */
     fun shouldProbe(
         nowMillis: Long,
         lastChunkAtMillis: Long,
         recovering: Boolean,
         givenUp: Boolean,
-    ): Boolean = !recovering && !givenUp && isStalled(nowMillis, lastChunkAtMillis)
+        paused: Boolean,
+    ): Boolean = !paused && !recovering && !givenUp && isStalled(nowMillis, lastChunkAtMillis)
 
     companion object {
         /** Matches the iOS watchdog's cadence (`AudioCapture.swift` line 83). */

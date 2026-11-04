@@ -14,6 +14,8 @@
     <string name="action_back">Back</string>
     <string name="action_refresh">Refresh</string>
     <string name="action_stop">Stop</string>
+    <string name="action_pause_recording">Pause</string>
+    <string name="action_resume_recording">Resume</string>
     <string name="action_copy">Copy</string>
     <string name="action_share">Share</string>
     <string name="action_clear">Clear</string>
@@ -124,6 +126,7 @@
     <string name="meeting_connecting">Connecting…</string>
     <string name="meeting_recording">Recording</string>
     <string name="meeting_recording_live">Recording · live transcript</string>
+    <string name="meeting_paused">Paused</string>
     <string name="meeting_panel_resize">Resize controls</string>
     <string name="meeting_panel_expand">Expand controls</string>
     <string name="meeting_panel_collapse">Collapse controls</string>
@@ -359,6 +362,8 @@
     <string name="notification_channel_description">Shows while Parley is recording a meeting.</string>
     <string name="notification_title">Recording a meeting</string>
     <string name="notification_text">Tap to return to Parley.</string>
+    <string name="notification_title_paused">Meeting recording paused</string>
+    <string name="notification_text_paused">The microphone is off. Resume or stop from here.</string>
 
     <!-- Hand-off to the user's own AI. Word for word the iOS catalogue
          (ios/App/Parley/Localizable.xcstrings): the same meeting hands off

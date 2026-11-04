@@ -55,6 +55,12 @@ sealed interface MeetingState {
     /** Microphone is live; audio is being encoded and streamed. */
     data object Recording : MeetingState
 
+    /**
+     * The user paused: the microphone is released, nothing reaches the file or
+     * the relay, and the timer is frozen. Resuming continues the same recording.
+     */
+    data object Paused : MeetingState
+
     /** Input drained; waiting for the relay to flush the last utterance. */
     data object Finishing : MeetingState
 
@@ -106,6 +112,11 @@ sealed interface MeetingState {
     /** The recording could not happen (or could not be saved). */
     data class Failed(val reason: MeetingFailure, val detail: String? = null) : MeetingState
 }
+
+/** Started and not yet winding down: the meeting can be stopped or discarded. */
+val MeetingState.isInProgress: Boolean
+    get() = this == MeetingState.Connecting || this == MeetingState.Recording ||
+        this == MeetingState.Paused
 
 /** Why a meeting ended badly. The UI owns the (bilingual) copy for each case. */
 enum class MeetingFailure {
@@ -244,7 +255,8 @@ private fun defaultSessionScope(): CoroutineScope = CoroutineScope(
  * loudly.
  *
  * Hosted by [MeetingService] so the capture survives the screen going away; the
- * UI observes the flows and never touches the pipeline directly beyond [stop].
+ * UI observes the flows and never touches the pipeline directly beyond [stop],
+ * [pause] and [resume].
  *
  * The session owns its own coroutine scope: it must outlive both the composable
  * that shows it and the service that started it (the upload tail runs while the
@@ -335,10 +347,12 @@ class MeetingSession(
     /** When there is too little room left to start, and when to stop and save. */
     private val storage = StorageHeadroom()
 
-    /** `elapsedRealtime` when recording began — the clock the ticker shows.
-     *  Not the relay's offset: that comes from [bridge], which counts the
-     *  audio actually captured rather than the time that passed. */
-    private var captureStartedAt = 0L
+    /** What the ticker shows, on `elapsedRealtime`. Not the relay's offset:
+     *  that comes from [bridge], which counts the audio actually captured. */
+    @Volatile private var clock: RecordingClock = RecordingClock.Paused(0)
+
+    /** A leg ended by [pause], still flushing its last utterance. */
+    private var parkedLeg: Job? = null
 
     @Volatile private var finishRequested = false
 
@@ -417,7 +431,7 @@ class MeetingSession(
         bridge.attach { client }
         // Collect before connecting: open() does not wait for the handshake, and
         // a rejected one arrives as an event rather than an exception.
-        eventsJob = scope.launch { client.events.collect(::onRelayEvent) }
+        eventsJob = scope.launch { client.events.collect { onRelayEvent(client, it) } }
         // `open()` rather than `connect()`: the socket does not have to be up
         // before the microphone does. Audio queued before the upgrade lands is
         // held and written in order, so the recording begins when the user
@@ -433,7 +447,7 @@ class MeetingSession(
         if (finishRequested) return
 
         _state.value = MeetingState.Recording
-        captureStartedAt = SystemClock.elapsedRealtime()
+        clock = RecordingClock.Running(SystemClock.elapsedRealtime())
         startTicker()
         startMicMonitor()
         startForegroundMonitor()
@@ -456,7 +470,14 @@ class MeetingSession(
         }
     }
 
-    private fun onRelayEvent(event: SttRelayEvent) {
+    /**
+     * [leg] is the client that emitted [event]. Segments land from any leg, so a
+     * parked leg's flushed tail is kept; terminal events count only from the
+     * current one, or a parked leg closing after a quick resume would tear down
+     * the new leg.
+     */
+    private fun onRelayEvent(leg: SttRelayClient, event: SttRelayEvent) {
+        if (event !is SttRelayEvent.Segment && leg !== relay) return
         when (event) {
             is SttRelayEvent.Segment -> {
                 upsert(event.segment)
@@ -551,18 +572,7 @@ class MeetingSession(
                 return@launch
             }
 
-            relayLeg += 1
-            val leg = relayLeg
-            // The bridge decides the offset, because the bridge is what knows
-            // where in the recording the audio it is holding was spoken. The
-            // wall clock ("now") would file the gap's speech after the words
-            // that followed it — and would drift from the file whenever the
-            // microphone itself paused.
-            val next = bridge.attach { offsetMs -> newRelay(token, leg, offsetMs) }
-                ?: return@launch
-            relay = next
-            eventsJob = scope.launch { next.events.collect(::onRelayEvent) }
-            next.open()
+            val next = dialLeg(token) ?: return@launch
 
             // Only a handshake that actually completed starts the stability
             // clock (the ladder resets once the leg has stayed up a while).
@@ -579,6 +589,25 @@ class MeetingSession(
                 _issue.value = null
             }
         }
+    }
+
+    /** Attach the next leg to [bridge], listen to it and open it. */
+    private fun dialLeg(token: String): SttRelayClient? {
+        // Re-checked here, after the caller's token fetch: a pause or stop that
+        // landed during it must not get a fresh leg.
+        if (finishRequested || !isCapturing()) return null
+        relayLeg += 1
+        val leg = relayLeg
+        // The bridge decides the offset, because the bridge is what knows
+        // where in the recording the audio it is holding was spoken. The
+        // wall clock ("now") would file the gap's speech after the words
+        // that followed it — and would drift from the file whenever the
+        // microphone itself paused.
+        val next = bridge.attach { offsetMs -> newRelay(token, leg, offsetMs) } ?: return null
+        relay = next
+        eventsJob = scope.launch { next.events.collect { onRelayEvent(next, it) } }
+        next.open()
+        return next
     }
 
     /**
@@ -738,10 +767,9 @@ class MeetingSession(
 
     private fun startTicker() {
         if (finishRequested) return
-        val startedAt = captureStartedAt
         val job = scope.launch {
             while (true) {
-                _elapsedMs.value = SystemClock.elapsedRealtime() - startedAt
+                publishElapsed()
                 delay(TICK_MS)
             }
         }
@@ -750,6 +778,88 @@ class MeetingSession(
         // have just started a loop nobody will ever stop. Cheaper to re-check
         // than to give the session a lock.
         if (finishRequested) job.cancel()
+    }
+
+    private fun publishElapsed() {
+        _elapsedMs.value = clock.elapsedAt(SystemClock.elapsedRealtime())
+    }
+
+    /**
+     * Pause the recording: release the microphone, freeze the timer and end the
+     * relay leg. A no-op unless recording.
+     *
+     * No keepalive while paused. The relay meters bytes, so silence would bill
+     * the pause, and the server-side STT idles out anyway. [SttRelayClient.finish]
+     * flushes the last utterance, so what was said before the pause is
+     * transcribed right away; [resume] dials a fresh leg.
+     *
+     * Segment times stay positions in the saved audio: the file holds no paused
+     * audio, and [bridge] counts only chunks it was handed, so both skip the
+     * pause the same way and playback sync holds. The wall-clock gap is not
+     * represented.
+     */
+    fun pause() {
+        if (!transition(PauseToggle.PAUSE)) return
+        clock = clock.paused(SystemClock.elapsedRealtime())
+        publishElapsed()
+        mic.pause()
+        reconnectJob?.cancel()
+        reconnectJob = null
+        _issue.compareAndSet(TranscriptionIssue.RECONNECTING, null)
+        // Chunks still in flight are counted by the bridge but reach no leg.
+        // They still reach the file, so file and relay clocks stay aligned.
+        bridge.discard()
+        val client = relay
+        val events = eventsJob
+        relay = null
+        eventsJob = null
+        if (client != null) {
+            parkedLeg = scope.launch {
+                try {
+                    runCatching { client.finish() }
+                    withTimeoutOrNull(TAIL_TIMEOUT_MS) { events?.join() }
+                } finally {
+                    client.cancel()
+                    events?.cancel()
+                }
+            }
+        }
+    }
+
+    /**
+     * Continue a paused recording on the same file. Redials the relay unless the
+     * live transcript already ended for good (quota, signed out), in which case
+     * the backfill pass repairs it after upload.
+     */
+    fun resume() {
+        if (!transition(PauseToggle.RESUME)) return
+        clock = clock.resumed(SystemClock.elapsedRealtime())
+        if (_issue.value?.isTerminal == true) {
+            mic.resume()
+            return
+        }
+        // Hold before the mic reopens, so the words said while the leg dials
+        // reach it instead of the bridge dropping them.
+        bridge.hold()
+        mic.resume()
+        scope.launch {
+            if (finishRequested || _state.value != MeetingState.Recording) return@launch
+            val token = auth.currentToken()
+            if (token == null) {
+                bridge.discard()
+                _issue.value = TranscriptionIssue.SIGNED_OUT
+                return@launch
+            }
+            dialLeg(token)
+        }
+    }
+
+    private fun transition(toggle: PauseToggle): Boolean {
+        while (true) {
+            val current = _state.value
+            val next = current.after(toggle) ?: return false
+            if (_state.compareAndSet(current, next)) return true
+        }
     }
 
     /**
@@ -819,9 +929,7 @@ class MeetingSession(
     private fun beginFinishing(): Boolean {
         while (true) {
             val current = _state.value
-            if (current !is MeetingState.Recording && current !is MeetingState.Connecting) {
-                return false
-            }
+            if (!current.isInProgress) return false
             // Compare-and-set rather than a plain write: the user tapping Stop
             // and the capture loop throwing are genuinely concurrent, and
             // exactly one of them may own the wind-down.
@@ -855,6 +963,8 @@ class MeetingSession(
 
     /** Finalize the transcript and let the relay flush its tail, then hang up. */
     private suspend fun closeRelay() {
+        // A stop from Paused still saves the sentences the parked leg flushes.
+        withTimeoutOrNull(TAIL_TIMEOUT_MS) { parkedLeg?.join() }
         relay?.let { client ->
             runCatching { client.finish() }
             // The relay keeps the socket open to flush the last utterance; the
@@ -1002,6 +1112,7 @@ class MeetingSession(
     private fun release(ending: CaptureEnding) {
         quiesce()
         bridge.discard()
+        parkedLeg?.cancel()
         eventsJob?.cancel()
         runCatching { relay?.cancel() }
         if (ending.deletesAudio) {

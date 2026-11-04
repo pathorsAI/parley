@@ -230,7 +230,8 @@ class AppContainer(private val app: Application) {
         },
         meetingHoldsMic = {
             when (MeetingService.activeSession.value?.state?.value) {
-                MeetingState.Connecting, MeetingState.Recording, MeetingState.Finishing -> true
+                MeetingState.Connecting, MeetingState.Recording, MeetingState.Paused,
+                MeetingState.Finishing -> true
                 else -> false
             }
         },

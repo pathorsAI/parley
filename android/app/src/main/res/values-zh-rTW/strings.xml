@@ -13,6 +13,8 @@
     <string name="action_back">返回</string>
     <string name="action_refresh">重新整理</string>
     <string name="action_stop">停止</string>
+    <string name="action_pause_recording">暫停</string>
+    <string name="action_resume_recording">繼續錄音</string>
     <string name="action_copy">複製</string>
     <string name="action_share">分享</string>
     <string name="action_clear">清除</string>
@@ -122,6 +124,7 @@
     <string name="meeting_connecting">連線中…</string>
     <string name="meeting_recording">錄音中</string>
     <string name="meeting_recording_live">錄音中 · 即時轉錄</string>
+    <string name="meeting_paused">已暫停</string>
     <string name="meeting_panel_resize">調整控制區高度</string>
     <string name="meeting_panel_expand">展開控制區</string>
     <string name="meeting_panel_collapse">收合控制區</string>
@@ -354,6 +357,8 @@
     <string name="notification_channel_description">Parley 正在錄製會議時顯示。</string>
     <string name="notification_title">正在錄製會議</string>
     <string name="notification_text">點一下回到 Parley。</string>
+    <string name="notification_title_paused">會議錄音已暫停</string>
+    <string name="notification_text_paused">麥克風已關閉，可在此繼續或停止錄音。</string>
 
     <!-- 交給使用者自己的 AI。與 iOS 字串表逐字相同。 -->
     <string name="handoff_preamble">你是我的會議分析助理。以下是一場會議的完整逐字稿，請先讀完，再回答：</string>

@@ -54,9 +54,10 @@ class MeetingStatusTest {
     }
 
     @Test
-    fun `only connecting and recording are live`() {
+    fun `connecting, recording and paused are live`() {
         assertTrue(isLive(MeetingState.Connecting))
         assertTrue(isLive(MeetingState.Recording))
+        assertTrue(isLive(MeetingState.Paused))
         assertFalse(isLive(MeetingState.Idle))
         assertFalse(isLive(MeetingState.Finishing))
         assertFalse(isLive(MeetingState.Uploading))

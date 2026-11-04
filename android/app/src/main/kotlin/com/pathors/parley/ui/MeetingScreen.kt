@@ -217,6 +217,13 @@ fun MeetingScreen(onDone: () -> Unit) {
             MeetingService.requestDiscard(context)
             onDone()
         },
+        onTogglePause = {
+            if (active.state.value == MeetingState.Paused) {
+                MeetingService.requestResume(context)
+            } else {
+                MeetingService.requestPause(context)
+            }
+        },
         onDone = onDone,
     )
 }
@@ -269,6 +276,7 @@ private fun DemoMeetingScreen(onDone: () -> Unit) {
         session = demo,
         onStop = onDone,
         onDiscard = onDone,
+        onTogglePause = {},
         onDone = onDone,
         demoFiling = navigation?.scenario?.takeIf { it.isSettled },
     )
@@ -384,6 +392,7 @@ private fun MeetingContent(
     session: LiveMeeting,
     onStop: () -> Unit,
     onDiscard: () -> Unit,
+    onTogglePause: () -> Unit,
     onDone: () -> Unit,
     demoFiling: DemoMode.MeetingScenario? = null,
 ) {
@@ -422,6 +431,7 @@ private fun MeetingContent(
             ),
             onStop = onStop,
             onDiscard = onDiscard,
+            onTogglePause = onTogglePause,
         )
         return
     }
@@ -478,9 +488,14 @@ private fun LiveMeetingLayout(
     notices: List<PanelNotice>,
     onStop: () -> Unit,
     onDiscard: () -> Unit,
+    onTogglePause: () -> Unit,
 ) {
     val context = LocalContext.current
-    val recording = state is MeetingState.Recording
+    val phase = when (state) {
+        MeetingState.Recording -> LivePhase.RECORDING
+        MeetingState.Paused -> LivePhase.PAUSED
+        else -> LivePhase.STARTING
+    }
     val transcript = {
         TranscriptClipboard.liveTranscript(segments) {
             speakerLabel(context, it.speaker)
@@ -497,11 +512,11 @@ private fun LiveMeetingLayout(
         }
         LiveControlsPanel(
             readout = LiveReadout(
-                recording = recording,
-                statusText = if (recording) {
-                    stringResource(R.string.meeting_recording_live)
-                } else {
-                    statusLabel(state)
+                phase = phase,
+                statusText = when (phase) {
+                    LivePhase.RECORDING -> stringResource(R.string.meeting_recording_live)
+                    LivePhase.PAUSED -> stringResource(R.string.meeting_paused)
+                    LivePhase.STARTING -> statusLabel(state)
                 },
                 elapsedMs = elapsed,
                 level = level,
@@ -509,6 +524,7 @@ private fun LiveMeetingLayout(
             ),
             onStop = onStop,
             onDiscard = onDiscard,
+            onTogglePause = onTogglePause,
         ) {
             // Copying works mid-meeting on purpose: the reason to grab a line
             // is usually that it was just said.
@@ -854,6 +870,7 @@ private fun ScrollingDialogText(text: String) {
 private fun statusLabel(state: MeetingState): String = when (state) {
     MeetingState.Idle, MeetingState.Connecting -> stringResource(R.string.meeting_connecting)
     MeetingState.Recording -> stringResource(R.string.meeting_recording)
+    MeetingState.Paused -> stringResource(R.string.meeting_paused)
     MeetingState.Finishing -> stringResource(R.string.meeting_finishing)
     MeetingState.Uploading -> stringResource(R.string.meeting_uploading)
     is MeetingState.Finished -> when {

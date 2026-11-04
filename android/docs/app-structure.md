@@ -177,6 +177,12 @@ instead of being dropped. When no leg is coming (out of quota,
 signed out, stop, discard) the bridge drops what it holds. See
 `api-parleykit.md`.
 
+Pause (`MeetingState.Paused`) releases the microphone and ends the current leg
+with `finish()`, so the last utterance is flushed. Nothing is sent while
+paused: silence would be metered. Resume dials a fresh leg through
+`bridge.attach`. The file and the bridge both skip the paused time, so segment
+times stay positions in the saved audio.
+
 An import splits the same failures differently (`meeting/ImportRelayOutcome.kt`),
 because the user still holds the source file:
 
