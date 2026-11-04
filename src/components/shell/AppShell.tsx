@@ -124,11 +124,14 @@ export function AppShell() {
             this version, which pinned the tree to a 32px sliver on first run. */}
         <ResizablePanel id="tree" defaultSize="19%" minSize="180px" maxSize="30%">
           {/* The tree scrolls; the theme switch stays pinned under it. */}
-          <div className="flex h-full min-h-0 flex-col bg-sidebar">
+          {/* No background of its own: the tree paints the (translucent) sidebar
+              colour, and the footer paints the same once, so the two read as
+              one surface instead of a lighter strip at the bottom. */}
+          <div className="flex h-full min-h-0 flex-col">
             <div className="min-h-0 flex-1">
               <AppSidebar tree={tree} />
             </div>
-            <div className="shrink-0 px-3 pt-1 pb-2.5">
+            <div className="shrink-0 bg-sidebar px-3 pt-1 pb-2.5">
               <SidebarThemeSwitch />
             </div>
           </div>
