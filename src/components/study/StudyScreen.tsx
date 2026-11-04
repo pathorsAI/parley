@@ -91,7 +91,7 @@ function useSeekToReplay(): (ms: number) => void {
   }, []);
 }
 
-/** Every tab but replay: one centered reading column. Each piece is restored
+/** Every tab but replay: one reading column, edge to edge with the header. Each piece is restored
  *  from the saved entry; only a missing one generates (once) and is saved. */
 function TabPage({
   tab,
@@ -129,8 +129,10 @@ function TabPage({
 
   return (
     <ScrollArea className="h-full">
-      {/* Keyed by tab: each tab starts at its top. */}
-      <div key={tab} className="mx-auto max-w-2xl px-6 py-5 pb-10">
+      {/* Keyed by tab: each tab starts at its top. Same edges as the header
+          above and the replay tab (px-6, full width), so switching tabs never
+          shifts the page's left edge. */}
+      <div key={tab} className="px-6 py-5 pb-10">
         {body}
       </div>
     </ScrollArea>
