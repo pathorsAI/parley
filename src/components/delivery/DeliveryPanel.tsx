@@ -204,30 +204,6 @@ function DeliveryReadout({
   return null;
 }
 
-/** One stat tile of the full-variant replay scorecard. */
-function StatTile({
-  label,
-  value,
-  sub,
-  watch,
-}: Readonly<{ label: string; value: ReactNode; sub?: string; watch?: boolean }>) {
-  return (
-    <div className="rounded-lg border bg-muted/20 px-3 py-2">
-      <div className="text-[11px] font-semibold text-muted-foreground">
-        {label}
-      </div>
-      <div className={`mt-0.5 truncate text-base font-semibold tabular-nums ${watch ? "text-warning-foreground" : ""}`}>
-        {value}
-      </div>
-      {sub && (
-        <div className={`truncate text-[10px] ${watch ? "text-warning-foreground" : "text-muted-foreground"}`}>
-          {sub}
-        </div>
-      )}
-    </div>
-  );
-}
-
 /** One slice of the talk-volume strip. `startMs` doubles as its identity — the
  *  buckets tile a recording of at least 3 min into at most 60 slices, so no two
  *  ever start at the same offset. */
@@ -258,26 +234,6 @@ function talkVolumeBuckets(segments: TranscriptSegment[]): TalkBucket[] {
   return buckets;
 }
 
-function TalkVolumeStrip({ buckets, title }: Readonly<{ buckets: TalkBucket[]; title: string }>) {
-  const max = Math.max(...buckets.map((b) => b.voicedMs), 1);
-  return (
-    <div className="rounded-lg border bg-muted/20 p-3">
-      <div className="mb-2 text-[11px] font-semibold text-muted-foreground">
-        {title}
-      </div>
-      <div className="flex h-10 items-end gap-px">
-        {buckets.map((b) => (
-          <span
-            key={b.startMs}
-            className={`min-w-0 flex-1 rounded-t-sm ${b.voicedMs === max ? "bg-primary" : "bg-primary/50"}`}
-            style={{ height: `${Math.max(4, Math.round((b.voicedMs / max) * 100))}%` }}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
 /** Talk-share band: ≥65% of the talking reads as steamrolling, ≤35% as quiet. */
 function talkBand(me: number): { key: TranslationKey; watch: boolean } {
   if (me >= 0.65) return { key: "delivery.talk.high", watch: true };
@@ -300,27 +256,6 @@ function computeLocalStats(segments: TranscriptSegment[]): LocalDeliveryStats {
     if (s.isFinal && s.source === "me") fillers += countFillerSounds(s.text);
   }
   return { ratio, fillers, buckets: talkVolumeBuckets(segments) };
-}
-
-/** The pace tile's sub-label: the measured band when there is one, otherwise
- *  the LLM's coarse read, otherwise nothing. */
-function paceTileSub(
-  t: TFn,
-  measuredRate: number | null,
-  band: ReturnType<typeof paceBand> | null,
-  assessment: DeliveryAssessment | null,
-): string | undefined {
-  if (measuredRate && band) return `${t("delivery.unit.sylPerMin")} · ${t(band.key)}`;
-  if (assessment) return t(`delivery.pace.${assessment.pace}` as TranslationKey);
-  return undefined;
-}
-
-/** The tone tile's value: the verdict once assessed, a placeholder bar the
- *  height of the value line while the pass is queued or running, a dash when
- *  there is nothing to say. */
-function toneTileValue(t: TFn, assessment: DeliveryAssessment | null, pending: boolean): ReactNode {
-  if (assessment) return t(TONE_KEY[assessment.tone]);
-  return pending ? <Skeleton className="my-1 h-4 w-12" /> : "—";
 }
 
 /** The LLM read's placeholder, in the loaded readout's shape: tone row, the
@@ -349,13 +284,243 @@ function DeliveryReadoutSkeleton({ caption }: Readonly<{ caption: ReactNode }>) 
   );
 }
 
-/** Sharp and above warrants a warning tile. */
-function toneNeedsWatch(assessment: DeliveryAssessment | null): boolean {
-  if (!assessment) return false;
-  return assessment.tone === "sharp" || assessment.tone === "aggressive" || assessment.tone === "rude";
+
+/** The per-minute strip of the user's own voiced time. */
+function TalkVolumeStrip({ buckets }: Readonly<{ buckets: TalkBucket[] }>) {
+  const max = Math.max(...buckets.map((b) => b.voicedMs), 1);
+  return (
+    <div className="flex h-8 w-full max-w-72 items-end gap-px" aria-hidden="true">
+      {buckets.map((b) => (
+        <span
+          key={b.startMs}
+          className={`min-w-0 flex-1 rounded-t-sm ${b.voicedMs === max ? "bg-primary" : "bg-primary/50"}`}
+          style={{ height: `${Math.max(4, Math.round((b.voicedMs / max) * 100))}%` }}
+        />
+      ))}
+    </div>
+  );
 }
 
-/** The study tense's locally-computed scorecard (`variant="full"`). */
+/**
+ * One group of the 評分 report: a number, a title, what it covers, then its
+ * rows. Groups follow the speech-analysis proposal's modules (fluency, speech
+ * habits, interaction) plus the AI's tone read, each holding only the metrics
+ * Parley already has for a recording.
+ */
+function ReportGroup({
+  n,
+  title,
+  desc,
+  children,
+}: Readonly<{ n: string; title: string; desc: string; children: ReactNode }>) {
+  return (
+    <section className="border-t pt-4 first:border-t-0 first:pt-0">
+      <div className="flex items-baseline gap-2">
+        <span className="font-mono text-[11px] font-semibold text-primary">{n}</span>
+        <h3 className="text-sm font-semibold">{title}</h3>
+      </div>
+      <p className="mt-0.5 mb-2 text-[11px] text-muted-foreground">{desc}</p>
+      <div className="grid grid-cols-[max-content_max-content_minmax(0,1fr)] items-center gap-x-4">{children}</div>
+    </section>
+  );
+}
+
+/** One metric row: label | value | detail. Rows of a group share columns. */
+function ReportRow({
+  label,
+  value,
+  detail,
+  watch,
+}: Readonly<{ label: string; value: ReactNode; detail?: ReactNode; watch?: boolean }>) {
+  return (
+    <div className="col-span-3 grid grid-cols-subgrid items-center border-b border-border/60 py-2 text-xs last:border-b-0">
+      <span className="whitespace-nowrap text-muted-foreground">{label}</span>
+      <span className={`whitespace-nowrap font-semibold tabular-nums ${watch ? "text-warning-foreground" : ""}`}>
+        {value}
+      </span>
+      <span className="min-w-0 text-[11px] text-muted-foreground">{detail}</span>
+    </div>
+  );
+}
+
+/** 01 語速: the measured pace when there is one, else the AI's read of it —
+ *  one row either way (the old tile and the AI note said the same thing). */
+function PaceGroup({
+  t,
+  measuredRate,
+  assessment,
+}: Readonly<{ t: TFn; measuredRate: number | null; assessment: DeliveryAssessment | null }>) {
+  let row: ReactNode = null;
+  if (measuredRate) {
+    const band = paceBand(measuredRate);
+    row = (
+      <ReportRow
+        label={t("delivery.card.pace")}
+        value={
+          <>
+            {syllablesPerMin(measuredRate)} <small className="font-normal text-muted-foreground">{t("delivery.unit.sylPerMin")}</small>
+          </>
+        }
+        detail={t(band.key)}
+        watch={band.watch}
+      />
+    );
+  } else if (assessment?.pace) {
+    row = (
+      <ReportRow
+        label={t("delivery.card.pace")}
+        value={t(`delivery.pace.${assessment.pace}` as TranslationKey)}
+        detail={t("delivery.card.tone.advisory")}
+      />
+    );
+  }
+  if (!row) return null;
+  return (
+    <ReportGroup n="01" title={t("delivery.group.pace")} desc={t("delivery.group.pace.desc")}>
+      {row}
+    </ReportGroup>
+  );
+}
+
+/** 02 口頭禪與贅字: the counted 痾/嗯 sounds and the AI's filler-word read,
+ *  merged into one row — count, how dense, and the words themselves. */
+function HabitsGroup({
+  t,
+  fillers,
+  assessment,
+}: Readonly<{ t: TFn; fillers: number; assessment: DeliveryAssessment | null }>) {
+  const frequent = assessment?.fillers.level === "frequent";
+  const examples = assessment?.fillers.examples.slice(0, 5) ?? [];
+  let level: string | null = null;
+  if (assessment) level = t(frequent ? "delivery.filler.frequent" : "delivery.filler.ok");
+  return (
+    <ReportGroup n="02" title={t("delivery.group.habits")} desc={t("delivery.group.habits.desc")}>
+      <ReportRow
+        label={t("delivery.row.fillers")}
+        value={
+          <>
+            {fillers} <small className="font-normal text-muted-foreground">{t("delivery.unit.times")}</small>
+          </>
+        }
+        watch={fillers >= 10 || frequent}
+        detail={
+          (level || examples.length > 0) && (
+            <span className="flex flex-wrap items-center gap-1">
+              {level && <span className={frequent ? "text-warning-foreground" : ""}>{level}</span>}
+              {examples.map((w) => (
+                <span key={w} className="rounded-full border bg-muted/40 px-1.5 text-[10.5px] text-foreground/80">
+                  {w}
+                </span>
+              ))}
+            </span>
+          )
+        }
+      />
+    </ReportGroup>
+  );
+}
+
+/** 03 對話互動: talk share and where in the meeting you talked. Absent when
+ *  the session can't tell you from the others. */
+function InteractionGroup({ t, stats }: Readonly<{ t: TFn; stats: LocalDeliveryStats }>) {
+  const ratio = stats.ratio;
+  if (!ratio && stats.buckets.length === 0) return null;
+  const band = ratio ? talkBand(ratio.me) : null;
+  const me = ratio ? Math.round(ratio.me * 100) : 0;
+  return (
+    <ReportGroup n="03" title={t("delivery.group.interaction")} desc={t("delivery.group.interaction.desc")}>
+      {ratio && band && (
+        <ReportRow
+          label={t("delivery.card.talkRatio")}
+          value={`${me}%`}
+          watch={band.watch}
+          detail={
+            <span className="flex flex-col gap-0.5">
+              <span className="flex h-1.5 w-full max-w-56 overflow-hidden rounded-full bg-muted">
+                <span className="bg-primary" style={{ width: `${me}%` }} />
+              </span>
+              <span>
+                {t(band.key)} · {t("delivery.share", { me: String(me), them: String(100 - me) })}
+              </span>
+            </span>
+          }
+        />
+      )}
+      {stats.buckets.length > 0 && (
+        <ReportRow label={t("delivery.row.timeline")} value="" detail={<TalkVolumeStrip buckets={stats.buckets} />} />
+      )}
+    </ReportGroup>
+  );
+}
+
+/** 04 語氣與整體表達: the AI's tone verdict, its quote and its one-line read,
+ *  together — they are one judgement, so they sit in one group. */
+function ToneGroup({
+  t,
+  mode,
+  status,
+  running,
+  assessment,
+  pending,
+}: Readonly<{
+  t: TFn;
+  mode: "live" | "replay";
+  status: DeliveryStatus;
+  running: boolean;
+  assessment: DeliveryAssessment | null;
+  pending: boolean;
+}>) {
+  let body: ReactNode;
+  if (pending) {
+    body = (
+      <div className="col-span-3 flex flex-col gap-1.5 py-2 text-[11px]">
+        <DeliveryReadoutSkeleton
+          caption={
+            running ? (
+              <>
+                <Loader2 className="size-2.5 animate-spin" />
+                {t("delivery.card.analyzing")}
+              </>
+            ) : (
+              <>
+                <Clock className="size-2.5" />
+                {t("delivery.card.queued")}
+              </>
+            )
+          }
+        />
+      </div>
+    );
+  } else if (assessment) {
+    body = (
+      <>
+        <ReportRow
+          label={t("delivery.card.tone")}
+          value={<span className={toneClass(assessment.tone)}>{t(TONE_KEY[assessment.tone])}</span>}
+          detail={assessment.toneEvidence && <span className="italic">“{assessment.toneEvidence}”</span>}
+        />
+        {assessment.summary && (
+          <p className="col-span-3 pt-2 text-xs leading-relaxed text-foreground/85">{assessment.summary}</p>
+        )}
+        <p className="col-span-3 pt-1 text-[10px] text-muted-foreground/70">{t("delivery.card.tone.advisory")}</p>
+      </>
+    );
+  } else {
+    body = (
+      <div className="col-span-3 py-2 text-xs">
+        <DeliveryReadout mode={mode} status={status} running={running} assessment={null} t={t} />
+      </div>
+    );
+  }
+  return (
+    <ReportGroup n="04" title={t("delivery.group.tone")} desc={t("delivery.group.tone.desc")}>
+      {body}
+    </ReportGroup>
+  );
+}
+
+/** The study tense's 評分 report (`variant="full"`): the metrics grouped, the
+ *  duplicates merged — numbers from the saved transcript, the tone from AI. */
 function DeliveryScorecard({
   mode,
   stats,
@@ -373,77 +538,15 @@ function DeliveryScorecard({
   running: boolean;
   t: TFn;
 }>) {
-  const measuredBand = measuredRate ? paceBand(measuredRate) : null;
-  const ratioBand = stats.ratio ? talkBand(stats.ratio.me) : null;
-  // Queued (waiting on the findings pass) or running, with nothing to show yet:
-  // the LLM-backed slots hold placeholders instead of collapsing to one line.
+  // Queued (waiting on the findings pass) or running, with nothing to show yet.
   const display = useStudyArtifactDisplay("delivery");
-  const queued = display === "queued";
-  const pending = !assessment && (running || queued);
+  const pending = !assessment && (running || display === "queued");
   return (
-    <div className="flex flex-col gap-3">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <StatTile
-          label={t("delivery.card.pace")}
-          value={measuredRate ? `${syllablesPerMin(measuredRate)}` : "—"}
-          sub={paceTileSub(t, measuredRate, measuredBand, assessment)}
-          watch={!!measuredBand?.watch}
-        />
-        {stats.ratio && ratioBand && (
-          <StatTile
-            label={t("delivery.card.talkRatio")}
-            value={`${Math.round(stats.ratio.me * 100)}%`}
-            sub={t(ratioBand.key)}
-            watch={ratioBand.watch}
-          />
-        )}
-        <StatTile
-          label={t("delivery.tile.fillers")}
-          value={`${stats.fillers}`}
-          sub={t("delivery.unit.times")}
-          watch={stats.fillers >= 10}
-        />
-        <StatTile
-          label={t("delivery.card.tone")}
-          value={toneTileValue(t, assessment, pending)}
-          sub={assessment?.toneEvidence ? `“${assessment.toneEvidence}”` : undefined}
-          watch={toneNeedsWatch(assessment)}
-        />
-      </div>
-
-      {stats.buckets.length > 0 && (
-        <TalkVolumeStrip buckets={stats.buckets} title={t("delivery.card.paceTimeline")} />
-      )}
-
-      <div className="rounded-lg border bg-muted/20 p-3">
-        <div className="mb-1.5 flex items-center justify-between">
-          <span className="text-xs font-semibold tracking-tight">{t("delivery.card.llmRead")}</span>
-          {status === "running" && assessment && (
-            <Loader2 className="size-3 animate-spin text-muted-foreground" />
-          )}
-        </div>
-        <div className="flex flex-col gap-1.5 text-[11px]">
-          {pending ? (
-            <DeliveryReadoutSkeleton
-              caption={
-                running ? (
-                  <>
-                    <Loader2 className="size-2.5 animate-spin" />
-                    {t("delivery.card.analyzing")}
-                  </>
-                ) : (
-                  <>
-                    <Clock className="size-2.5" />
-                    {t("delivery.card.queued")}
-                  </>
-                )
-              }
-            />
-          ) : (
-            <DeliveryReadout mode={mode} status={status} running={running} assessment={assessment} t={t} />
-          )}
-        </div>
-      </div>
+    <div className="flex flex-col gap-4">
+      <PaceGroup t={t} measuredRate={measuredRate} assessment={assessment} />
+      <HabitsGroup t={t} fillers={stats.fillers} assessment={assessment} />
+      <InteractionGroup t={t} stats={stats} />
+      <ToneGroup t={t} mode={mode} status={status} running={running} assessment={assessment} pending={pending} />
     </div>
   );
 }
