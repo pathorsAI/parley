@@ -42,7 +42,7 @@ export function ApiKeysField() {
     }
   }, []);
   useEffect(() => {
-    void refresh();
+    refresh().catch((error) => log.warn("settings: api keys refresh failed", { error: String(error) }));
   }, [refresh]);
 
   const date = (ms: number) => new Date(ms).toLocaleDateString(language, { year: "numeric", month: "short", day: "numeric" });
