@@ -7,6 +7,7 @@ import { isTauri } from "../lib/tauriEvents";
 import { log } from "../lib/log";
 import { hasProviderKey } from "../lib/ai/settings";
 import { CANCEL_UNDO_MS } from "../lib/voiceTyping/cancel";
+import { MAX_CUSTOM_INSTRUCTIONS_CHARS } from "../lib/voiceTyping/polish";
 import { isModifierId, modifierIdsFor, shortcutCaps } from "../lib/voiceTyping/caps";
 import { loneModifierRelease, MODIFIER_CODES } from "../lib/voiceTyping/recorder";
 import type {
@@ -16,6 +17,7 @@ import type {
 } from "../lib/types";
 import { Button } from "@/components/ui/button";
 import { InfoTip } from "@/components/ui/info-tip";
+import { Textarea } from "@/components/ui/textarea";
 import * as ipc from "../lib/ipc/commands";
 
 /** The polish styles in the order the picker shows them, with their name and
@@ -393,6 +395,16 @@ export const VoiceTypingSettings = () => {
   // nothing happens.
   const polishHasProvider = hasProviderKey(settings, "realtime");
   const polishStyle = settings.voiceTypingPolishStyle;
+  // Typed into a local draft and saved on blur: a settings write broadcasts to
+  // every window, which is too much per keystroke.
+  const savedInstructions = settings.voiceTypingCustomInstructions ?? "";
+  const [instructionsDraft, setInstructionsDraft] = useState(savedInstructions);
+  useEffect(() => setInstructionsDraft(savedInstructions), [savedInstructions]);
+  const saveInstructions = () => {
+    if (instructionsDraft !== savedInstructions) {
+      updateSettings({ voiceTypingCustomInstructions: instructionsDraft });
+    }
+  };
   // "Label: what it does" lines for the hover explanations.
   const sep = language === "zh-TW" ? "：" : ": ";
 
@@ -467,6 +479,30 @@ export const VoiceTypingSettings = () => {
           </p>
         )}
       </div>
+
+      {polishStyle !== "off" && (
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="voice-typing-instructions" className="flex items-center gap-1.5 text-sm font-medium">
+            {t("settings.voiceTyping.customInstructions")}
+            <InfoTip label={t("settings.info")}>{t("settings.voiceTyping.customInstructions.hint")}</InfoTip>
+          </label>
+          <Textarea
+            id="voice-typing-instructions"
+            value={instructionsDraft}
+            maxLength={MAX_CUSTOM_INSTRUCTIONS_CHARS}
+            placeholder={t("settings.voiceTyping.customInstructions.placeholder")}
+            onChange={(e) => setInstructionsDraft(e.target.value)}
+            onBlur={saveInstructions}
+            className="min-h-20 resize-y text-xs"
+          />
+          <p className="self-end text-[10px] tabular-nums text-muted-foreground">
+            {t("settings.voiceTyping.customInstructions.count", {
+              count: instructionsDraft.length,
+              max: MAX_CUSTOM_INSTRUCTIONS_CHARS,
+            })}
+          </p>
+        </div>
+      )}
 
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between gap-2">

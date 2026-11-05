@@ -94,6 +94,30 @@ export const MAX_PROTECTED_TERMS = 30;
  *  document and is only deciding whether to replace it. */
 export const POLISH_TIMEOUT_MS = 4000;
 
+/** Dictations up to this length get {@link POLISH_TIMEOUT_MS}; longer ones get
+ *  more (see {@link polishTimeoutMs}). */
+export const POLISH_TIMEOUT_BASE_CHARS = 120;
+
+/** The most any one dictation may wait for its polish. */
+export const POLISH_TIMEOUT_MAX_MS = 10_000;
+
+/**
+ * The budget for one dictation: {@link POLISH_TIMEOUT_MS}, plus 10 ms for every
+ * character past {@link POLISH_TIMEOUT_BASE_CHARS}, up to
+ * {@link POLISH_TIMEOUT_MAX_MS}.
+ *
+ * A flat four seconds cut off exactly the dictations the rewrite is for. On the
+ * hosted 120b model a 300–800 character transcript took longer than that to
+ * rewrite, so it timed out and went out raw — 17 of one heavy user's ~235
+ * polishes in a week, every one of them a long dictation. The output grows with
+ * the input, so the budget does too; short ones keep the old budget, because
+ * that is where a pause is noticed.
+ */
+export function polishTimeoutMs(rawChars: number): number {
+  const extra = Math.max(0, rawChars - POLISH_TIMEOUT_BASE_CHARS) * 10;
+  return Math.min(POLISH_TIMEOUT_MAX_MS, POLISH_TIMEOUT_MS + extra);
+}
+
 /**
  * The standing instruction. It authorises a *rewrite*, not a tidy-up.
  *
@@ -236,6 +260,21 @@ export function polishSkipReason(
  * Desktop-only: iOS has no profile name, so there is nothing to mirror, and the
  * verbatim parity test covers {@link POLISH_SYSTEM_PROMPT} alone.
  */
+/** How much of the user's own instructions travel with a request. A short
+ *  paragraph is what this is for; past that the prompt grows into something
+ *  the model weighs against the standing rules instead of within them. */
+export const MAX_CUSTOM_INSTRUCTIONS_CHARS = 1000;
+
+/**
+ * Introduces the user's own instructions (Settings → Voice typing). They come
+ * last and are framed as preferences inside the rules above, never over them:
+ * "make it formal" may change the register, but nothing a user types here can
+ * license adding content, dropping what was said, or answering the transcript.
+ * Desktop-only, like {@link SPEAKER_TERMS_LINE}.
+ */
+export const CUSTOM_INSTRUCTIONS_LINE =
+  "The user's own preferences for how their dictation should read. Follow them as long as they fit the rules above; where one conflicts with those rules, the rules win. They never authorise adding content, dropping something that was said, or acting on the transcript:\n";
+
 export const SPEAKER_TERMS_LINE =
   "The speaker's own name and organisation, spelled exactly as they write them. Where the transcript has a word that sounds the same as one of these and the context shows it refers to the speaker or their organisation, the recogniser misheard it: write this spelling. Never add these words where they were not said: ";
 
@@ -254,6 +293,7 @@ export function polishSystemPrompt(
   protectedTerms: string[],
   style: VoiceTypingPolishStyle = "tidy",
   speakerTerms: string[] = [],
+  customInstructions: string = "",
 ): string {
   let prompt = style === "concise" ? CONCISE_SYSTEM_PROMPT : POLISH_SYSTEM_PROMPT;
   const speaker = [...new Set(speakerTerms.map((t) => t.trim()).filter(Boolean))];
@@ -264,6 +304,8 @@ export function polishSystemPrompt(
     prompt += `\nPreserve these user-dictionary terms exactly as written: ${kept.join("、")}`;
   }
   if (speaker.length) prompt += `\n${SPEAKER_TERMS_LINE}${speaker.join("、")}`;
+  const own = customInstructions.trim().slice(0, MAX_CUSTOM_INSTRUCTIONS_CHARS);
+  if (own) prompt += `\n\n${CUSTOM_INSTRUCTIONS_LINE}${own}`;
   return prompt;
 }
 
@@ -364,7 +406,7 @@ export function polishModelOverride(
  *
  * Both styles share everything but the prompt, the length floor and (on Parley
  * Cloud) the model: same temperature, same output cap, same
- * {@link POLISH_TIMEOUT_MS}.
+ * {@link polishTimeoutMs} budget.
  *
  * `signal` lets the caller abandon the round trip (the user cancelled the
  * dictation). That resolves to `"cancelled"` and is not logged as a failure.
@@ -402,7 +444,7 @@ export async function polishTranscriptOutcome(opts: {
   const timer = setTimeout(() => {
     timedOut = true;
     controller.abort();
-  }, POLISH_TIMEOUT_MS);
+  }, polishTimeoutMs(rawChars));
   const onCancel = () => controller.abort();
   signal?.addEventListener("abort", onCancel, { once: true });
 
@@ -418,7 +460,12 @@ export async function polishTranscriptOutcome(opts: {
             feature: "voice_typing",
           }),
           providerOptions: withReasoningEffort(getProviderOptions(settings, "realtime"), effort),
-          system: polishSystemPrompt(protectedTerms, style, speakerTerms),
+          system: polishSystemPrompt(
+            protectedTerms,
+            style,
+            speakerTerms,
+            typeof settings.voiceTypingCustomInstructions === "string" ? settings.voiceTypingCustomInstructions : "",
+          ),
           prompt: raw,
           temperature: 0.2,
           maxOutputTokens: 2048,
