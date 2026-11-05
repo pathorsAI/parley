@@ -18,6 +18,7 @@ import { selectAndSeek } from "../analysis/useAnalysis";
 import { ReplayPlayerBar } from "./ReplayPlayerBar";
 import { ReplayTranscript } from "./ReplayTranscript";
 import { ReplaySpeakerTags } from "./ReplaySpeakerTags";
+import { RetranscribeButton, RetranscribeConfirm, useRetranscribe } from "./RetranscribeButton";
 import { useReplayPlayer, type ReplayPlayer } from "./useReplayPlayer";
 import { useReplayPlayheadMs, useReplaySession, useReplayTrim } from "./spine";
 import { useCommandScope, useCommandShortcut } from "../../lib/commands/bind";
@@ -88,6 +89,7 @@ export function ReplayScreen() {
   const analyzedEvalSig = useStore((s) => s.analyzedEvalSig);
   const meetingKind = useStore((s) => s.meetingKind);
   const findingsDisplay = useStudyArtifactDisplay("findings");
+  const retranscribe = useRetranscribe();
 
   // Persist the dragged column proportions (transcript / findings) to
   // localStorage so they survive reloads. v2 id: the old key stored a 3-column
@@ -205,11 +207,14 @@ export function ReplayScreen() {
           <div className="flex h-full min-h-0 flex-col">
             <div className="flex h-9 shrink-0 items-center justify-between border-b px-4">
               <span className="text-xs font-medium text-foreground">{t("replay.transcript")}</span>
-              <TranscriptCopyMenu
-                segments={segments}
-                speakerNames={speakerNames}
-                disabled={!hasSpokenSegment(segments)}
-              />
+              <div className="flex items-center gap-1">
+                {hasSpokenSegment(segments) && <RetranscribeButton state={retranscribe} compact />}
+                <TranscriptCopyMenu
+                  segments={segments}
+                  speakerNames={speakerNames}
+                  disabled={!hasSpokenSegment(segments)}
+                />
+              </div>
             </div>
             <ReplaySpeakerTags segments={segments} names={speakerNames} label={t("meeting.speakers")} />
             <div className="min-h-0 flex-1">
@@ -225,6 +230,9 @@ export function ReplayScreen() {
                 // got transcribed (#570). "No recording loaded" would be wrong
                 // there — the audio is right above, playable.
                 emptyLabel={t(session.audioSrc ? "replay.noTranscript" : "replay.empty")}
+                // A recording with audio but no transcript is exactly the one to
+                // rescue (#680) — the button belongs where the transcript would be.
+                emptyAction={<RetranscribeButton state={retranscribe} />}
               />
             </div>
           </div>
@@ -236,6 +244,7 @@ export function ReplayScreen() {
           <FindingsPanel mode="replay" onSeek={player.seek} />
         </ResizablePanel>
       </ResizablePanelGroup>
+      <RetranscribeConfirm state={retranscribe} />
     </div>
   );
 }

@@ -215,6 +215,8 @@ export const transcribeFile = (args: {
   vocabulary?: string[] | null;
   diarization: boolean;
   batchUrl?: string | null;
+  /** Skip the cached result and transcribe again (re-transcribe). */
+  fresh?: boolean;
 }) => invoke<TranscriptionResult>("transcribe_file", args);
 export const measureAudioSpeechRate = (args: { path: string }) => invoke<number>("measure_audio_speech_rate", args);
 export const preparePlaybackFallback = (args: { audioPath: string }) =>
