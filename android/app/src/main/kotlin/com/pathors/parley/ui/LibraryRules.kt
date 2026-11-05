@@ -17,7 +17,6 @@ internal data class RecordingRowModel(
     val folderName: String?,
     val deleting: Boolean,
     val busy: Boolean,
-    val canMoveToFolder: Boolean,
     val shareTargets: List<CloudOrg>,
     /** Where the audio is — the row's last meta item says so. */
     val audio: AudioDownloadState = AudioDownloadState.Absent,
@@ -63,7 +62,6 @@ internal class RecordingRowActions(
     val onClick: () -> Unit,
     val onMoveToFolder: () -> Unit,
     val onShare: (CloudOrg) -> Unit,
-    val onMoveToOrg: (CloudOrg) -> Unit,
     val onDelete: () -> Unit,
     val onDownload: () -> Unit = {},
     val onRemoveDownload: () -> Unit = {},
@@ -79,8 +77,7 @@ internal object LibraryRules {
     /**
      * The row for [recording] in [state]'s library.
      *
-     * Personal scope can create a folder, so it always has somewhere to go; an
-     * org scope has no create endpoint here, so it needs folders to offer.
+     * Every row can be moved: both libraries can create a folder to move into.
      * Sharing is a copy *out of* the personal library, so only a personal row
      * has share targets — and never the sample, which is not in the cloud to be
      * copied (see `SampleRecordingStore`).
@@ -94,7 +91,6 @@ internal object LibraryRules {
         folderName = LibraryFolders.folderName(recording, state.folders),
         deleting = recording.id in state.deleting,
         busy = recording.id in state.busy,
-        canMoveToFolder = state.isPersonal || state.folders.isNotEmpty(),
         shareTargets = if (state.isPersonal && !SampleManifest.isSample(recording.id)) {
             state.orgs
         } else {

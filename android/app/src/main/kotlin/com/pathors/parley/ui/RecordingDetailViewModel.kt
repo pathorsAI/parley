@@ -25,7 +25,12 @@ import com.pathors.parley.feedback.RetranscribeTag
 import com.pathors.parley.kit.GettingStartedStep
 import com.pathors.parley.kit.GuidedLap
 import com.pathors.parley.kit.SampleManifest
+import com.pathors.parley.library.FolderDirectory
+import com.pathors.parley.library.FolderScope
 import com.pathors.parley.library.LibraryFolders
+import com.pathors.parley.library.MovePlan
+import com.pathors.parley.library.MoveRules
+import com.pathors.parley.library.SaveDestination
 import com.pathors.parley.onboarding.SampleRecordingStore
 import com.pathors.parley.playback.PlaybackController
 import com.pathors.parley.playback.PlaybackPhase
@@ -45,6 +50,8 @@ import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -444,9 +451,6 @@ class RecordingDetailViewModel(
         if (orgId == null && !isSample) playback.download()
     }
 
-    /** Whether this screen can file the recording: personal recordings only, as on iOS. */
-    val canMoveToFolder: Boolean get() = orgId == null
-
     /**
      * Whether "transcribe again" applies — it re-pushes through the personal
      * endpoints. Never the sample: its transcript is written, not transcribed,
@@ -594,14 +598,31 @@ class RecordingDetailViewModel(
     fun holdTwoX(holding: Boolean) = playback.holdTwoX(holding)
 
     /**
-     * "Move to folder" from the overflow menu: the personal folders the picker
-     * offers, and how the last move went. Its own flow, like [retranscribe], so
-     * a folder list arriving does not rebuild the transcript's state.
+     * "Move to…" from the header's folder chip or the overflow menu: the
+     * places the picker offers, where an org recording is filed, and how the
+     * last move went. Its own flow, like [retranscribe], so a folder list
+     * arriving does not rebuild the transcript's state.
      */
     data class FilingState(
+        /** The personal folders — what a personal recording is filed among, and the filing card's list. */
         val folders: List<CloudFolder> = emptyList(),
+        /** The organizations and their folders, as far as they have loaded. */
+        val directory: FolderDirectory = FolderDirectory(),
+        /**
+         * The folder an org recording is in. A column of the org's list, not
+         * a field of the entry, so it is read from that list.
+         */
+        val orgFolderId: String? = null,
         val moving: Boolean = false,
         val moveFailed: Boolean = false,
+        /**
+         * A move into an organization made its copy but could not delete the
+         * personal original: both exist, and saying "failed" would invite a
+         * third. The organization's name.
+         */
+        val originalKeptIn: String? = null,
+        /** The recording moved into this organization and is no longer here: the screen goes back. */
+        val movedTo: String? = null,
     )
 
     private val _filing = MutableStateFlow(FilingState())
@@ -633,7 +654,7 @@ class RecordingDetailViewModel(
                 // No pass: the meeting screen and the import run one, and
                 // persist it; this page presents what they left on the meta.
                 onFiled = { container.gettingStarted.mark(GettingStartedStep.FILED) },
-                createFolder = if (DemoMode.isActive) {
+                makeFolder = if (DemoMode.isActive) {
                     { name -> demoFolder(name) }
                 } else {
                     { name -> container.cloud.createFolder(name) }
@@ -642,6 +663,13 @@ class RecordingDetailViewModel(
             scope = viewModelScope,
             backgroundScope = container.appScope,
             onWritten = ::showFilingAnswer,
+            // The sample is filed on this phone, and the demo has no account:
+            // neither has an organization to share into.
+            loadDirectory = if (isSample || DemoMode.isActive) {
+                { FolderDirectory() }
+            } else {
+                { FolderDirectory.load(container.cloud) }
+            },
         )
     } else {
         null
@@ -814,14 +842,18 @@ class RecordingDetailViewModel(
     fun load() {
         if (isSample) {
             viewModelScope.launch { loadSample() }
-            if (canMoveToFolder) viewModelScope.launch { loadFolders() }
+            viewModelScope.launch { loadFolders() }
             return
         }
         if (DemoMode.isActive) {
             _state.value = fromMeta(DemoMode.meta(recordingId))
             openPlayer()
             viewModelScope.launch { syncRetranscribe() }
-            if (canMoveToFolder) _filing.update { it.copy(folders = DemoMode.pickerFolders()) }
+            if (orgId == null) {
+                _filing.update { it.copy(folders = DemoMode.pickerFolders()) }
+            } else {
+                viewModelScope.launch { loadOrgPlacement(orgId) }
+            }
             return
         }
         viewModelScope.launch {
@@ -839,7 +871,7 @@ class RecordingDetailViewModel(
             syncRetranscribe()
             decidePrompts()
         }
-        if (canMoveToFolder) viewModelScope.launch { loadFolders() }
+        viewModelScope.launch { if (orgId == null) loadFolders() else loadOrgPlacement(orgId) }
     }
 
     /**
@@ -935,12 +967,147 @@ class RecordingDetailViewModel(
     }
 
     /**
+     * An org recording's folders, its organization's name, and which folder
+     * it is in — read from the org's list, where that lives. Best-effort: the
+     * chip names the organization alone, and the picker still offers its root.
+     */
+    private suspend fun loadOrgPlacement(orgId: String) {
+        if (DemoMode.isActive) {
+            _filing.update {
+                it.copy(
+                    directory = FolderDirectory(
+                        orgs = DemoMode.orgs(),
+                        orgFolders = mapOf(orgId to DemoMode.orgFolders(orgId)),
+                    ),
+                    orgFolderId = DemoMode.orgRecordings(orgId).firstOrNull { row -> row.id == recordingId }?.folderId,
+                )
+            }
+            return
+        }
+        coroutineScope {
+            val orgs = async { bestEffort { container.cloud.myOrgs() }.orEmpty() }
+            val folders = async { bestEffort { container.cloud.orgFolders(orgId) }.orEmpty() }
+            val row = async { bestEffort { container.cloud.orgRecordings(orgId) }?.firstOrNull { it.id == recordingId } }
+            val directory = FolderDirectory(orgs = orgs.await(), orgFolders = mapOf(orgId to folders.await()))
+            val folderId = row.await()?.folderId
+            _filing.update { it.copy(directory = directory, orgFolderId = folderId) }
+        }
+    }
+
+    /**
+     * The organizations a personal recording can move into, refreshed as the
+     * picker opens. The sample stays on this phone, so it has none.
+     */
+    fun refreshDirectory() {
+        if (orgId != null || isSample) return
+        if (DemoMode.isActive) {
+            val orgs = DemoMode.orgs()
+            _filing.update {
+                it.copy(directory = FolderDirectory(orgs = orgs, orgFolders = orgs.associate { org -> org.id to DemoMode.orgFolders(org.id) }))
+            }
+            return
+        }
+        viewModelScope.launch {
+            val directory = FolderDirectory.load(container.cloud)
+            _filing.update { it.copy(directory = directory) }
+        }
+    }
+
+    /** What the picker lists: see [FolderDirectory.scopesFor]. */
+    fun moveScopes(): List<FolderScope> {
+        val filing = _filing.value
+        return when {
+            orgId != null -> filing.directory.scopesFor(orgId)
+            isSample -> listOf(FolderScope(null, filing.folders))
+            else -> filing.directory.copy(personalFolders = filing.folders).scopesFor(null)
+        }
+    }
+
+    /**
      * The folder the recording is in, as the picker should tick it: an id that
      * is not in the live folder list is the desktop's orphan, Unfiled
      * everywhere else in the app.
      */
-    fun currentFolderId(): String? =
+    fun currentFolderId(): String? = if (orgId == null) {
         LibraryFolders.liveFolderId(_state.value.meta?.folderId, _filing.value.folders)
+    } else {
+        LibraryFolders.liveFolderId(_filing.value.orgFolderId, _filing.value.directory.orgFolders[orgId].orEmpty())
+    }
+
+    /** Where the recording is, as a place the picker lists. */
+    fun currentPlace(): SaveDestination = SaveDestination(orgId = orgId, folderId = currentFolderId())
+
+    /** The organization an org recording is in, by name, once known. */
+    fun orgName(): String? = orgId?.let { _filing.value.directory.orgName(it) }
+
+    /**
+     * The picker's confirm. A folder of the same library is a refile; an
+     * organization, from the personal library, is "Move to organization"
+     * into that folder — and the recording leaves this screen. See [MoveRules].
+     */
+    fun moveTo(destination: SaveDestination) {
+        if (_filing.value.moving || _state.value.meta == null) return
+        when (val plan = MoveRules.plan(orgId, currentFolderId(), destination)) {
+            MovePlan.Stay, MovePlan.Unsupported -> Unit
+            is MovePlan.RefilePersonal -> moveToFolder(plan.folderId)
+            is MovePlan.RefileInOrg -> viewModelScope.launch { refileInOrg(plan.orgId, plan.folderId) }
+            is MovePlan.MoveIntoOrg -> if (!isSample) viewModelScope.launch { moveIntoOrg(plan.orgId, plan.folderId) }
+        }
+    }
+
+    private suspend fun refileInOrg(orgId: String, folderId: String?) {
+        if (DemoMode.isActive) {
+            _filing.update { it.copy(orgFolderId = folderId) }
+            return
+        }
+        _filing.update { it.copy(moving = true, moveFailed = false) }
+        val landed = bestEffort { container.cloud.moveOrgRecordingToFolder(orgId, recordingId, folderId) } != null
+        _filing.update {
+            it.copy(moving = false, moveFailed = !landed, orgFolderId = if (landed) folderId else it.orgFolderId)
+        }
+        if (landed && folderId != null) container.gettingStarted.mark(GettingStartedStep.FILED)
+    }
+
+    /** Copy first, delete only once the copy exists — the library's "Move to organization". */
+    private suspend fun moveIntoOrg(orgId: String, folderId: String?) {
+        val name = _filing.value.directory.orgName(orgId).orEmpty()
+        if (DemoMode.isActive) {
+            _filing.update { it.copy(movedTo = name) }
+            return
+        }
+        _filing.update { it.copy(moving = true, moveFailed = false, originalKeptIn = null) }
+        if (bestEffort { container.cloud.shareRecording(recordingId, orgId, folderId) } == null) {
+            _filing.update { it.copy(moving = false, moveFailed = true) }
+            return
+        }
+        container.gettingStarted.mark(GettingStartedStep.FILED)
+        val gone = try {
+            container.cloud.deleteRecording(recordingId)
+            true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            (e as? CloudException)?.isNotFound == true
+        }
+        if (gone) {
+            withContext(Dispatchers.IO) {
+                container.localAudio.remove(recordingId)
+                container.backfiller.forget(recordingId)
+            }
+            container.audioDownloads.refresh()
+        }
+        _filing.update {
+            it.copy(moving = false, movedTo = name.takeIf { gone }, originalKeptIn = name.takeUnless { gone })
+        }
+    }
+
+    private suspend fun <T> bestEffort(block: suspend () -> T): T? = try {
+        block()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Throwable) {
+        null
+    }
 
     /**
      * File the recording, or take it back to the root — the same full re-push
@@ -948,7 +1115,7 @@ class RecordingDetailViewModel(
      * place; the library re-reads on the way back, so its row follows.
      */
     fun moveToFolder(folderId: String?) {
-        if (!canMoveToFolder || _filing.value.moving) return
+        if (orgId != null || _filing.value.moving) return
         val meta = _state.value.meta ?: return
         // Filed on this phone and nowhere else — see `SampleRecordingStore`.
         if (DemoMode.isActive || isSample) {
@@ -983,8 +1150,13 @@ class RecordingDetailViewModel(
 
     /** The name of the (live) folder the recording is in, or null at the root. */
     fun currentFolderName(): String? {
-        val id = currentFolderId() ?: return null
-        return _filing.value.folders.firstOrNull { it.id == id }?.name
+        val place = currentPlace()
+        val id = place.folderId ?: return null
+        return if (orgId == null) {
+            _filing.value.folders.firstOrNull { it.id == id }?.name
+        } else {
+            _filing.value.directory.folderName(place)
+        }
     }
 
     // ── the guided lap ───────────────────────────────────────────────────────
@@ -1068,22 +1240,28 @@ class RecordingDetailViewModel(
         sampleQuestions?.takeIf { it.isNotEmpty() } ?: HandoffText.genericQuestions(context)
 
     /**
-     * "New folder…": create it in the personal library, then move the
-     * recording into it. Throws when the folder could not be created, so the
-     * picker can keep the name on screen with the error.
+     * "New folder…" in the picker: make it in the library the recording is in
+     * — the personal one, or its organization's — for the picker to select.
+     * Throws when it could not be made, so the picker keeps the name on screen
+     * with the error.
      */
-    suspend fun createFolderAndMove(name: String) {
-        check(canMoveToFolder) { "org recordings are not filed from this screen" }
-        val folder = if (DemoMode.isActive) {
-            CloudFolder(id = CloudClient.newCloudId(), name = name)
-        } else {
-            container.cloud.createFolder(name)
+    suspend fun createFolder(name: String): CloudFolder {
+        val folder = when {
+            DemoMode.isActive -> CloudFolder(id = CloudClient.newCloudId(), name = name, orgId = orgId)
+            orgId == null -> container.cloud.createFolder(name)
+            else -> container.cloud.createOrgFolder(orgId, name)
         }
-        _filing.update { it.copy(folders = it.folders + folder) }
-        moveToFolder(folder.id)
+        _filing.update {
+            if (orgId == null) {
+                it.copy(folders = it.folders + folder)
+            } else {
+                it.copy(directory = it.directory.withFolder(orgId, folder))
+            }
+        }
+        return folder
     }
 
-    fun clearMoveError() = _filing.update { it.copy(moveFailed = false) }
+    fun clearMoveError() = _filing.update { it.copy(moveFailed = false, originalKeptIn = null) }
 
     // ── transcribe again ─────────────────────────────────────────────────────
 

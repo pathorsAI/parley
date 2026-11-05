@@ -9,6 +9,7 @@ import com.pathors.parley.cloud.CloudFolder
 import com.pathors.parley.kit.FilingSuggestion
 import com.pathors.parley.kit.GettingStartedStep
 import com.pathors.parley.kit.TranscriptSegment
+import com.pathors.parley.library.FolderDirectory
 import com.pathors.parley.library.SaveDestination
 import com.pathors.parley.meeting.MeetingState
 import com.pathors.parley.screenshot.DemoMode
@@ -33,10 +34,11 @@ class FilingSuggestionViewModel(
     private val model: FilingSuggestionModel,
     destination: Flow<SaveDestination>,
     backgroundScope: CoroutineScope,
+    loadDirectory: suspend () -> FolderDirectory,
 ) : ViewModel() {
 
-    /** What the card does — accept, rename, file, pick, skip — and the guide's hooks. */
-    val card = FilingCardController(model, viewModelScope, backgroundScope)
+    /** What the card does — select, save, skip — and the guide's hooks. */
+    val card = FilingCardController(model, viewModelScope, backgroundScope, loadDirectory = loadDirectory)
 
     val state: StateFlow<FilingUiState> = model.state
 
@@ -73,6 +75,10 @@ class FilingSuggestionViewModel(
                     ),
                     destination = container.saveLocation.destination,
                     backgroundScope = container.appScope,
+                    // The demo has no account to list organizations for.
+                    loadDirectory = {
+                        if (DemoMode.isActive) FolderDirectory() else FolderDirectory.load(container.cloud)
+                    },
                 )
             }
         }

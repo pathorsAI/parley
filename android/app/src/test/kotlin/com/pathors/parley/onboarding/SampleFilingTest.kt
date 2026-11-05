@@ -139,10 +139,10 @@ class SampleFilingTest {
     }
 
     @Test
-    fun `accept renames and files the local entry, and the offer is over`() {
+    fun `save renames and files the local entry, and the offer is over`() {
         val folders = listOf(CloudFolder(id = CUSTOMER_ID, name = CUSTOMER))
         val model = card(folders)
-        runBlocking { FilingCardController(model, this, this).accept(null) }
+        runBlocking { FilingCardController(model, this, this).save(null) }
 
         val stored = entry()
         assertEquals(CUSTOMER_ID, stored.folderId)
@@ -152,20 +152,18 @@ class SampleFilingTest {
     }
 
     @Test
-    fun `a chip files without renaming, and the name stays on offer`() {
+    fun `a chip tap files nothing on its own`() {
         val folders = listOf(CloudFolder(id = CUSTOMER_ID, name = CUSTOMER))
         val model = card(folders)
-        runBlocking { FilingCardController(model, this, this).file(model.state.value.proposedFolders.first()) }
+        runBlocking {
+            val card = FilingCardController(model, this, this)
+            card.toggle(model.state.value.proposedFolders.first())
+        }
 
         val stored = entry()
-        assertEquals(CUSTOMER_ID, stored.folderId)
+        assertNull("not filed", stored.folderId)
         assertNull("not renamed", stored.title)
         assertTrue(stored.isSuggestionPending)
-
-        // The other half answered: now it is over.
-        runBlocking { model.apply(RENAMED, null) }
-        assertEquals(RENAMED, entry().title)
-        assertFalse(entry().isSuggestionPending)
     }
 
     @Test
@@ -195,6 +193,5 @@ class SampleFilingTest {
         const val CUSTOMER = "Hongsheng Technology"
         const val CUSTOMER_ID = "f-hongsheng"
         const val OTHER_ID = "f-other"
-        const val RENAMED = "Hongsheng kickoff"
     }
 }

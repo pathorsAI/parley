@@ -8,6 +8,8 @@ import com.pathors.parley.ui.HomeViewModel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import java.time.LocalDate
+import java.time.ZoneOffset
 import org.junit.Test
 
 /**
@@ -173,5 +175,28 @@ class LibraryFoldersTest {
         assertEquals(listOf("c"), visible(FolderFilter.Unfiled, "meridian"))
         assertEquals(emptyList<String>(), visible(FolderFilter.Folder("renewals"), "meridian"))
         assertEquals(listOf("a", "b", "c", "d"), visible(FolderFilter.All, ""))
+    }
+
+    // ── order ────────────────────────────────────────────────────────────────
+
+    private fun on(date: String): Double =
+        LocalDate.parse(date).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli().toDouble()
+
+    /** The tester's report: inside a folder, Mar 8 sat below Jul 17 of the year before. */
+    @Test
+    fun `every page lists the latest recording first, whatever order the server sent`() {
+        val sent = listOf(
+            recording("jul17", "renewals").copy(createdAt = on("2025-07-17")),
+            recording("mar08", "renewals").copy(createdAt = on("2026-03-08")),
+            recording("jan02", null).copy(createdAt = on("2026-01-02")),
+            recording("nov30", "renewals").copy(createdAt = on("2025-11-30")),
+        )
+        fun visible(filter: FolderFilter, query: String = "") =
+            HomeViewModel.visibleRecordings(sent, folders, filter, query).map { it.id }
+
+        assertEquals(listOf("mar08", "jan02", "nov30", "jul17"), visible(FolderFilter.All))
+        assertEquals(listOf("mar08", "nov30", "jul17"), visible(FolderFilter.Folder("renewals")))
+        assertEquals(listOf("jan02"), visible(FolderFilter.Unfiled))
+        assertEquals("a search keeps the order", listOf("jan02", "jul17"), visible(FolderFilter.All, "j"))
     }
 }

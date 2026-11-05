@@ -86,6 +86,7 @@ import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -94,12 +95,16 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.pathors.parley.R
+import com.pathors.parley.cloud.CloudFolder
 import com.pathors.parley.filing.FilingCardController
 import com.pathors.parley.filing.FilingPhase
 import com.pathors.parley.filing.FilingUiState
 import com.pathors.parley.filing.FolderTarget
 import com.pathors.parley.kit.FilingFolderSuggestion
 import com.pathors.parley.kit.FilingMotion
+import com.pathors.parley.library.FolderDirectory
+import com.pathors.parley.library.FolderScope
+import com.pathors.parley.library.SaveDestination
 import com.pathors.parley.ui.theme.ParleyTextStyles
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
@@ -118,24 +123,28 @@ import kotlinx.coroutines.launch
  * and the actions as blue text. No card, no fill — the chips are the only
  * shapes, because they are the only things here that are choices.
  *
+ * It is also a form with ONE commit, Save. Everything else only changes what
+ * Save will do: a tester filed a meeting into the wrong customer back when a
+ * chip tap was the whole answer, and pressed Return expecting to rename only.
+ *
  * - **The name** is the proposal, and tapping it edits it in place. Done on
- *   the keyboard renames the recording then and there and leaves the folder
- *   half on offer; the line under it turns from "Was: …" to "Renamed ✓".
- * - **The chips** are the folders, best first, at most three. A folder that
- *   does not exist yet is dashed and captioned "New folder", because tapping it
- *   creates it; the rest say "Existing folder". The model's reason is read by
- *   TalkBack after the chip's name. Tapping one files into that folder and
- *   does nothing to the name.
- * - **Choose another…** opens the searchable folder picker with the chips'
- *   existing folders at the top.
- * - **Accept** takes the WHOLE suggestion: the name as the field shows it and
- *   the first chip, in one push. **Skip suggestion** answers the offer with no.
+ *   the keyboard closes the field and keeps what was typed; Save writes it.
+ * - **The chips** are the folders, best first, at most three; the first one
+ *   starts selected. A folder that does not exist yet is dashed and captioned
+ *   "New folder", because Save creates it; the rest say "Existing folder". The
+ *   model's reason is read by TalkBack after the chip's name. Tapping a chip
+ *   selects it (filled, with a tick); tapping the selected one selects none.
+ * - **Choose another…** opens the folder picker — the personal folders with
+ *   the chips' existing ones on top, then each organization's — and its
+ *   confirm selects that place, drawn as one more chip.
+ * - **Save** writes the name as the field shows it and the selected folder in
+ *   one push, and the offer is over. **Skip suggestion** answers it with no.
  *
  * ## Motion
  *
  * The card arrives on a spring (16 dp low, 98 %, transparent → in place). The
  * proposed name types itself in once per session, 22 ms a character. On
- * Accept or a chip, a ghost of the card flies from the name into the chip, the
+ * Save, a ghost of the card flies from the name into the selected chip, the
  * chip pops, a success haptic plays, and only then is the answer written. With
  * the system's "Remove animations" on, all of it is skipped and the write
  * happens at once. Numbers: [FilingMotion].
@@ -155,11 +164,13 @@ fun FilingSuggestionCard(
     val state by card.state.collectAsState()
     val washed by card.cues.washed.collectAsState()
     val choosing by card.cues.choosing.collectAsState()
+    val directory by card.directory.collectAsState()
     val actions = remember(card) { FilingCardActions.of(card) }
     FilingSuggestionCard(
         state = state,
         actions = actions,
         cues = FilingCardCueState(washed = washed, choosing = choosing),
+        directory = directory,
         modifier = modifier,
         gutter = gutter,
     )
@@ -168,29 +179,26 @@ fun FilingSuggestionCard(
 /** What the card can ask for. See [FilingCardController] for what each one writes. */
 @Immutable
 class FilingCardActions(
-    /** Accept: the field's title (null = the proposed one) and the first chip. */
-    val onAccept: (String?) -> Unit,
-    /** Done in the title field. */
-    val onRename: (String) -> Unit,
-    /** A chip. */
-    val onFile: (FilingFolderSuggestion) -> Unit,
-    /** A folder picked in "Choose another…". */
-    val onPick: (FolderTarget) -> Unit,
-    /** "New folder" in "Choose another…"; false keeps the picker up with its error. */
-    val onCreate: suspend (String) -> Boolean,
+    /** Save: the field's title (null = the proposed one) and the selected folder. */
+    val onSave: (String?) -> Unit,
+    /** A chip: select it, or none when it is the selected one. */
+    val onToggle: (FilingFolderSuggestion) -> Unit,
+    /** The picker's confirm: select that place, under that chip label. */
+    val onChoose: (FolderTarget, String) -> Unit,
+    /** "New folder" in "Choose another…"; a throw keeps the picker up with its error. */
+    val onCreate: suspend (String) -> CloudFolder,
     val onSkip: () -> Unit,
     /** Open or close "Choose another…". */
     val onChoosingChange: (Boolean) -> Unit,
 ) {
     companion object {
         fun of(card: FilingCardController) = FilingCardActions(
-            onAccept = card::accept,
-            onRename = card::rename,
-            onFile = card::file,
-            onPick = card::pick,
-            onCreate = { name -> card.create(name) },
+            onSave = card::save,
+            onToggle = card::toggle,
+            onChoose = card::choose,
+            onCreate = { name -> card.createFolder(name) },
             onSkip = card::skip,
-            onChoosingChange = { open -> if (open) card.cues.openPicker() else card.cues.closePicker() },
+            onChoosingChange = { open -> if (open) card.openPicker() else card.closePicker() },
         )
     }
 }
@@ -216,6 +224,8 @@ fun FilingSuggestionCard(
     cues: FilingCardCueState,
     modifier: Modifier = Modifier,
     gutter: Dp = 0.dp,
+    /** The organizations "Choose another…" lists after the personal folders. */
+    directory: FolderDirectory = FolderDirectory(),
 ) {
     if (state.phase == FilingPhase.THINKING) {
         FilingThinking(modifier.padding(horizontal = gutter))
@@ -241,7 +251,7 @@ fun FilingSuggestionCard(
             reduceMotion = reduceMotion,
         )
     }
-    if (cues.choosing && offering) FilingPicker(state, actions)
+    if (cues.choosing && offering) FilingPicker(state, directory, actions)
 }
 
 /** From 16 dp low, 98 % and transparent to where it sits, on the lap's spring. */
@@ -325,20 +335,16 @@ private fun FilingBlock(
                     busy = busy,
                 ),
                 editor = editor,
-                onAccept = { accept(state, editor, flight, actions) },
-                onRename = actions.onRename,
+                onSave = { save(state, editor, flight, actions) },
                 modifier = inset.onGloballyPositioned { flight.title = it },
             )
-            if (state.proposedFolders.isNotEmpty()) {
+            if (state.proposedFolders.isNotEmpty() || state.chosenElsewhere != null) {
                 FolderChips(
-                    folders = state.proposedFolders,
+                    state = state,
                     flight = flight,
                     enabled = !busy,
                     gutter = gutter,
-                    onFile = { folder ->
-                        editor.editing = false
-                        flight.fly(filingChipKey(folder)) { actions.onFile(folder) }
-                    },
+                    onToggle = actions.onToggle,
                     onChooseAnother = { actions.onChoosingChange(true) },
                 )
             }
@@ -355,20 +361,28 @@ private fun FilingBlock(
     }
 }
 
-/** Accept: the name as the field shows it, and the first chip — flown into. */
-private fun accept(state: FilingUiState, editor: TitleEditor, flight: Flight, actions: FilingCardActions) {
+/** Save: the name as the field shows it, and the selected chip — flown into. */
+private fun save(state: FilingUiState, editor: TitleEditor, flight: Flight, actions: FilingCardActions) {
     editor.editing = false
     val typed = editor.draft.trim().ifEmpty { null }
-    val folder = state.proposedFolder
-    if (folder == null) {
-        actions.onAccept(typed)
+    val key = state.selectedFolder?.let(::filingChipKey)
+    if (key == null) {
+        actions.onSave(typed)
     } else {
-        flight.fly(filingChipKey(folder)) { actions.onAccept(typed) }
+        flight.fly(key) { actions.onSave(typed) }
     }
 }
 
-/** Identity for a candidate folder: a folder that does not exist yet is keyed by its name. */
-internal fun filingChipKey(folder: FilingFolderSuggestion): String = folder.folderId ?: "new:${folder.name}"
+/**
+ * Identity for a chip: a folder that does not exist yet is keyed by its name,
+ * and a place picked in the picker by where it is.
+ */
+internal fun filingChipKey(target: FolderTarget): String = when (target) {
+    is FolderTarget.Existing -> target.id
+    is FolderTarget.New -> "new:${target.name}"
+    FolderTarget.Root -> "root"
+    is FolderTarget.Org -> "org:${target.orgId}:${target.folderId.orEmpty()}"
+}
 
 @Composable
 private fun FilingHeader(enabled: Boolean, onSkip: () -> Unit, modifier: Modifier) {
@@ -412,10 +426,10 @@ private class TitleEditor(initial: String) {
     var draft by mutableStateOf(initial)
     var editing by mutableStateOf(false)
 
-    fun commit(fallback: String, onRename: (String) -> Unit) {
+    /** Done: close the field and keep what was typed, for Save. An emptied field goes back to [fallback]. */
+    fun close(fallback: String) {
         editing = false
-        val typed = draft.trim()
-        if (typed.isEmpty()) draft = fallback else onRename(typed)
+        if (draft.isBlank()) draft = fallback
     }
 }
 
@@ -457,7 +471,7 @@ private fun rememberTypedCount(title: String, reduceMotion: Boolean): Int? {
 }
 
 /**
- * The proposed name, editable in place, with Accept beside it. Under it, while
+ * The proposed name, editable in place, with Save beside it. Under it, while
  * the proposal is on offer, what the recording is called now — "Meeting Sep
  * 7, 3:20 PM" is most of the argument for the suggestion; once the name has
  * been answered, "Renamed ✓" instead.
@@ -466,15 +480,14 @@ private fun rememberTypedCount(title: String, reduceMotion: Boolean): Int? {
 private fun FilingTitle(
     title: TitleView,
     editor: TitleEditor,
-    onAccept: () -> Unit,
-    onRename: (String) -> Unit,
+    onSave: () -> Unit,
     modifier: Modifier,
 ) {
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.weight(1f)) {
                 if (editor.editing) {
-                    TitleField(editor, onDone = { editor.commit(title.full, onRename) })
+                    TitleField(editor, onDone = { editor.close(title.full) })
                 } else {
                     TitleText(title, enabled = !title.busy, onEdit = { editor.editing = true })
                 }
@@ -488,8 +501,8 @@ private fun FilingTitle(
                     strokeWidth = 2.dp,
                 )
             } else {
-                TextButton(onClick = onAccept) {
-                    Text(stringResource(R.string.filing_accept), style = ParleyTextStyles.bodyEmphasized)
+                TextButton(onClick = onSave) {
+                    Text(stringResource(R.string.filing_save), style = ParleyTextStyles.bodyEmphasized)
                 }
             }
         }
@@ -535,7 +548,7 @@ private fun TitleText(title: TitleView, enabled: Boolean, onEdit: () -> Unit) {
     }
 }
 
-/** The name in a field. Done is the rename; a title is one line. */
+/** The name in a field. Done closes it — Save is the rename; a title is one line. */
 @Composable
 private fun TitleField(editor: TitleEditor, onDone: () -> Unit) {
     val focus = remember { FocusRequester() }
@@ -594,13 +607,14 @@ private fun TitleCaption(title: TitleView) {
 
 @Composable
 private fun FolderChips(
-    folders: List<FilingFolderSuggestion>,
+    state: FilingUiState,
     flight: Flight,
     enabled: Boolean,
     gutter: Dp,
-    onFile: (FilingFolderSuggestion) -> Unit,
+    onToggle: (FilingFolderSuggestion) -> Unit,
     onChooseAnother: () -> Unit,
 ) {
+    val selected = state.selectedFolder
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -608,18 +622,32 @@ private fun FolderChips(
             .padding(horizontal = gutter),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        folders.forEach { folder ->
-            val key = filingChipKey(folder)
+        state.proposedFolders.forEach { folder ->
+            val target = FolderTarget.of(folder)
+            val key = filingChipKey(target)
             FolderChip(
                 folder = folder,
+                selected = target == selected,
                 popping = flight.popping == key,
                 enabled = enabled,
-                onClick = { onFile(folder) },
+                onClick = { onToggle(folder) },
+                modifier = Modifier.onGloballyPositioned { flight.chips[key] = it },
+            )
+        }
+        state.chosenElsewhere?.let { chosen ->
+            val key = filingChipKey(chosen.target)
+            ChosenChip(
+                label = chosen.label,
+                isOrg = chosen.target is FolderTarget.Org,
+                popping = flight.popping == key,
+                enabled = enabled,
+                // Picked elsewhere, changed elsewhere: tapping it reopens the picker.
+                onClick = onChooseAnother,
                 modifier = Modifier.onGloballyPositioned { flight.chips[key] = it },
             )
         }
         val chooseLabel = stringResource(R.string.filing_choose_another)
-        ChipFrame(dashed = false, enabled = enabled, onClick = onChooseAnother, label = chooseLabel) {
+        ChipFrame(dashed = false, selected = false, enabled = enabled, onClick = onChooseAnother, label = chooseLabel) {
             ChipName(LibraryIcons.Folder, chooseLabel, MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
@@ -627,12 +655,14 @@ private fun FolderChips(
 
 /**
  * An outlined chip: the name in the tint (it is a thing to tap), a caption
- * saying what tapping it does to the folder list, and a dashed outline for the
- * folder that does not exist yet.
+ * saying what Save does to the folder list, and a dashed outline for the
+ * folder that does not exist yet. Selected, it fills with the tint and leads
+ * with a tick — the folder Save will file into.
  */
 @Composable
 private fun FolderChip(
     folder: FilingFolderSuggestion,
+    selected: Boolean,
     popping: Boolean,
     enabled: Boolean,
     onClick: () -> Unit,
@@ -640,29 +670,67 @@ private fun FolderChip(
 ) {
     val isNew = folder.folderId == null
     val caption = stringResource(if (isNew) R.string.filing_new_folder else R.string.filing_existing_folder)
+    val selectedLabel = stringResource(R.string.filing_selected)
+    ChipFrame(
+        dashed = isNew,
+        selected = selected,
+        enabled = enabled,
+        onClick = onClick,
+        // The reason after the name and what the chip does — where iOS reads
+        // it as the hint.
+        label = listOfNotNull(folder.name, caption, folder.reason, selectedLabel.takeIf { selected })
+            .filter { it.isNotBlank() }
+            .joinToString(", "),
+        modifier = modifier.popScale(popping),
+    ) {
+        ChipName(
+            icon = when {
+                selected -> Icons.Default.Check
+                isNew -> LibraryIcons.NewFolder
+                else -> LibraryIcons.Folder
+            },
+            name = folder.name,
+            tint = MaterialTheme.colorScheme.primary,
+        )
+        Text(text = caption, style = ParleyTextStyles.caption2, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/** The place picked in "Choose another…", always selected — it is only drawn while it is the choice. */
+@Composable
+private fun ChosenChip(
+    label: String,
+    isOrg: Boolean,
+    popping: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier,
+) {
+    val caption = stringResource(if (isOrg) R.string.folder_picker_org_badge else R.string.filing_existing_folder)
+    ChipFrame(
+        dashed = false,
+        selected = true,
+        enabled = enabled,
+        onClick = onClick,
+        label = listOf(label, caption, stringResource(R.string.filing_selected)).joinToString(", "),
+        modifier = modifier.popScale(popping),
+    ) {
+        ChipName(icon = Icons.Default.Check, name = label, tint = MaterialTheme.colorScheme.primary)
+        Text(text = caption, style = ParleyTextStyles.caption2, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/** The chip's pop as the flight lands in it. */
+@Composable
+private fun Modifier.popScale(popping: Boolean): Modifier {
     val scale by animateFloatAsState(
         targetValue = if (popping) FilingMotion.POP_SCALE else 1f,
         animationSpec = spring(dampingRatio = POP_DAMPING, stiffness = POP_STIFFNESS),
         label = "filing-chip-pop",
     )
-    ChipFrame(
-        dashed = isNew,
-        enabled = enabled,
-        onClick = onClick,
-        // The reason after the name and what the chip does — where iOS reads
-        // it as the hint.
-        label = listOf(folder.name, caption, folder.reason).filter { it.isNotBlank() }.joinToString(", "),
-        modifier = modifier.graphicsLayer {
-            scaleX = scale
-            scaleY = scale
-        },
-    ) {
-        ChipName(
-            icon = if (isNew) LibraryIcons.NewFolder else LibraryIcons.Folder,
-            name = folder.name,
-            tint = MaterialTheme.colorScheme.primary,
-        )
-        Text(text = caption, style = ParleyTextStyles.caption2, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    return graphicsLayer {
+        scaleX = scale
+        scaleY = scale
     }
 }
 
@@ -684,23 +752,27 @@ private fun ChipName(icon: ImageVector, name: String, tint: Color) {
 @Composable
 private fun ChipFrame(
     dashed: Boolean,
+    selected: Boolean,
     enabled: Boolean,
     onClick: () -> Unit,
     label: String,
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    val outline = MaterialTheme.colorScheme.outlineVariant
+    val outline = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+    val fill = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = FilingMotion.WASH_ALPHA) else Color.Transparent
     val shape = MaterialTheme.shapes.medium
     Column(
         modifier = modifier
             .heightIn(min = 48.dp)
             .clip(shape)
+            .background(fill)
             .chipOutline(outline, dashed)
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .clearAndSetSemantics {
                 contentDescription = label
                 role = Role.Button
+                this.selected = selected
                 onClick {
                     onClick()
                     true
@@ -729,27 +801,66 @@ private fun Modifier.chipOutline(color: Color, dashed: Boolean): Modifier = draw
 // ── choose another ───────────────────────────────────────────────────────────
 
 /**
- * The searchable picker, with the chips' real folders offered first. Choosing
- * or creating there answers the offer exactly as a chip would — without a
- * flight, because the chip it would fly into is behind the sheet.
+ * "Choose another…": the personal folders with the chips' real ones offered
+ * first, then each organization's. Its confirm selects the place for Save;
+ * picking an organization shares a copy there and keeps the recording in the
+ * personal library, which is what the default save location means by one.
  */
 @Composable
-private fun FilingPicker(state: FilingUiState, actions: FilingCardActions) {
+private fun FilingPicker(state: FilingUiState, directory: FolderDirectory, actions: FilingCardActions) {
     val suggestedIds = state.proposedFolders.mapNotNull { it.folderId }
     val suggested = suggestedIds.mapNotNull { id -> state.existingFolders.firstOrNull { it.id == id } }
+    val personal = FolderScope(null, state.existingFolders)
+    val scopes = listOf(personal) + directory.scopesFor(null).drop(1)
+    val labels = FilingPickLabels(state.existingFolders, directory)
     FolderPickerSheet(
-        folders = state.existingFolders,
-        currentFolderId = state.currentFolderId,
+        scopes = scopes,
+        current = SaveDestination(folderId = state.currentFolderId),
+        selected = state.selectedFolder?.let(::destinationOf),
         suggested = suggested,
         // Unfiled is not an answer to "where should this live".
-        onSelect = { folderId -> folderId?.let { actions.onPick(FolderTarget.Existing(it)) } },
-        onCreate = { name -> if (!actions.onCreate(name)) throw FilingCreateFailed() },
+        showsRoot = false,
+        title = stringResource(R.string.folder_picker_save_title),
+        confirmLabel = stringResource(R.string.folder_picker_choose),
+        orgHandoff = OrgHandoff.COPY,
+        onConfirm = { destination ->
+            val target = targetOf(destination)
+            actions.onChoose(target, labels.of(destination))
+        },
+        onCreate = actions.onCreate,
         onDismiss = { actions.onChoosingChange(false) },
     )
 }
 
-/** The picker keeps the name on screen with its own error when this is thrown. */
-private class FilingCreateFailed : IllegalStateException("the filing write did not land")
+/** What a picked place's chip is called: the folder, or "Organization · Folder". */
+private class FilingPickLabels(private val personal: List<CloudFolder>, private val directory: FolderDirectory) {
+    fun of(destination: SaveDestination): String {
+        val orgId = destination.orgId
+        if (orgId == null) return personal.firstOrNull { it.id == destination.folderId }?.name.orEmpty()
+        val org = directory.orgName(orgId).orEmpty()
+        val folder = directory.folderName(destination) ?: return org
+        // Verbatim, as the account sheet writes it: two names and a separator.
+        return "$org · $folder"
+    }
+}
+
+private fun targetOf(destination: SaveDestination): FolderTarget {
+    val orgId = destination.orgId
+    val folderId = destination.folderId
+    return when {
+        orgId != null -> FolderTarget.Org(orgId, folderId)
+        folderId != null -> FolderTarget.Existing(folderId)
+        else -> FolderTarget.Root
+    }
+}
+
+/** The picker's row for a selection, where it has one: a folder not made yet has none. */
+private fun destinationOf(target: FolderTarget): SaveDestination? = when (target) {
+    is FolderTarget.Existing -> SaveDestination(folderId = target.id)
+    FolderTarget.Root -> SaveDestination.PERSONAL_ROOT
+    is FolderTarget.Org -> SaveDestination(orgId = target.orgId, folderId = target.folderId)
+    is FolderTarget.New -> null
+}
 
 // ── the flight ───────────────────────────────────────────────────────────────
 
