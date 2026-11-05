@@ -4,6 +4,7 @@ import { Archive, ChevronRight, Folder, Loader2, Plus, RefreshCw, Search, UsersR
 import { toast } from "sonner";
 import { useI18n } from "../../i18n";
 import { useStore } from "../../lib/store";
+import { useCommandScope, useCommandShortcut } from "../../lib/commands/bind";
 import {
   deleteHistoryEntry,
   loadHistoryEntry,
@@ -83,6 +84,13 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
 
   const [entries, setEntries] = useState<HistoryCardItem[] | null>(null);
   const [query, setQuery] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
+  useCommandScope("library");
+  // ⌘F: the search box, selected so typing replaces the last query.
+  useCommandShortcut("library.find", () => {
+    searchRef.current?.focus();
+    searchRef.current?.select();
+  });
   const [busyId, setBusyId] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   // The recording being opened: its row spins, and clicks while it loads don't
@@ -501,6 +509,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
         <div className="relative ml-auto w-48 min-w-0 shrink">
           <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground/70" />
           <input
+            ref={searchRef}
             value={query}
             onChange={(ev) => setQuery(ev.target.value)}
             onKeyDown={(ev) => {

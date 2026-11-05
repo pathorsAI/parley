@@ -134,6 +134,11 @@ pub fn build<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let nav_jump = command_item(handle, "main", "nav.jumpTo", "Jump to…", "CmdOrCtrl+K")?;
 
     #[cfg(target_os = "macos")]
+    let new_draft = command_item(handle, "main", "file.newDraft", "New Meeting Draft", "CmdOrCtrl+N")?;
+    #[cfg(target_os = "macos")]
+    let new_folder = command_item(handle, "main", "file.newFolder", "New Folder", "Shift+CmdOrCtrl+N")?;
+
+    #[cfg(target_os = "macos")]
     let meeting_start = command_item(handle, "main", "meeting.start", "Start Meeting", "CmdOrCtrl+R")?;
     #[cfg(target_os = "macos")]
     let meeting_pause = command_item(
@@ -267,6 +272,12 @@ pub fn build<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<Menu<R>> {
                 "File",
                 true,
                 &[
+                    #[cfg(target_os = "macos")]
+                    &new_draft,
+                    #[cfg(target_os = "macos")]
+                    &new_folder,
+                    #[cfg(target_os = "macos")]
+                    &PredefinedMenuItem::separator(handle)?,
                     // ⌘W lives here (and in Window) already, which is why the
                     // command table marks `window.close` as owned by the OS.
                     &PredefinedMenuItem::close_window(handle, None)?,

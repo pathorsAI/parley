@@ -7,6 +7,7 @@ import {
   commandsInGroup,
   commandsInScope,
   findConflicts,
+  scopesOverlap,
   type CommandDef,
 } from "./registry";
 import { matchShortcut } from "../shortcuts";
@@ -63,8 +64,43 @@ describe("command registry", () => {
   });
 
   it("partitions the table by scope", () => {
-    const scoped = (["global", "main", "replay"] as const).flatMap((s) => commandsInScope(s));
+    const scoped = (["global", "main", "library", "study", "replay"] as const).flatMap((s) =>
+      commandsInScope(s)
+    );
     expect(scoped.length).toBe(COMMANDS.length);
+  });
+
+  it("lets sibling screens share a chord, and nothing else", () => {
+    // ⌘F is the library's search on one screen and the transcript's find on
+    // the other — the main window never shows both.
+    expect(scopesOverlap("library", "replay")).toBe(false);
+    expect(scopesOverlap("library", "study")).toBe(false);
+    // Everything along one line of nesting is live at once.
+    expect(scopesOverlap("replay", "study")).toBe(true);
+    expect(scopesOverlap("replay", "main")).toBe(true);
+    expect(scopesOverlap("library", "global")).toBe(true);
+  });
+
+  it("only puts the display-only ⌃ on rows the webview never binds", () => {
+    // ShortcutSpec cannot match a standalone Control key, so a bound chord
+    // carrying `ctrl` would fire on the plain ⌘ chord instead.
+    for (const def of COMMANDS) {
+      for (const chord of def.keys) {
+        if (chord.ctrl) expect(def.ownedBy, `${def.id} binds a ⌃ chord`).toBeTruthy();
+      }
+    }
+  });
+
+  it("keeps the everyday Mac chords in the table", () => {
+    // The common-sense set a user tries without reading anything.
+    const printed = (id: Parameters<typeof command>[0]) =>
+      command(id).keys.filter((k) => !k.alias).map((k) => chordKey(k));
+    expect(printed("file.newDraft")).toEqual([chordKey({ mod: true, key: "n" })]);
+    expect(printed("file.newFolder")).toEqual([chordKey({ mod: true, shift: true, key: "n" })]);
+    expect(printed("library.find")).toEqual([chordKey({ mod: true, key: "f" })]);
+    expect(printed("replay.findNext")).toEqual([chordKey({ mod: true, key: "g" })]);
+    expect(printed("app.quit")).toEqual([chordKey({ mod: true, key: "q" })]);
+    expect(printed("settings.open")).toEqual([chordKey({ mod: true, key: "," })]);
   });
 });
 

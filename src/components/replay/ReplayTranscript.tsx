@@ -278,6 +278,14 @@ export function ReplayTranscript({
     },
     { enabled: !preview }
   );
+  // ⌘G / ⇧⌘G: the next / previous match, opening the bar on the last query if
+  // it was closed — as a Mac find bar does.
+  const findStep = (dir: 1 | -1) => {
+    if (!searchOpen) setSearchOpen(true);
+    stepMatch(dir);
+  };
+  useCommandShortcut("replay.findNext", () => findStep(1), { enabled: !preview });
+  useCommandShortcut("replay.findPrev", () => findStep(-1), { enabled: !preview });
   // ⌥⌘F: the same bar with the replace row out — prefilled with the transcript
   // text the user has highlighted, if any.
   useCommandShortcut("replay.replace", () => openReplace(selectionAction?.text), { enabled: canReplace });

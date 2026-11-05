@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Archive,
   ArchiveRestore,
@@ -31,6 +31,7 @@ import { beginMeeting } from "../../lib/meeting/start";
 import { command } from "../../lib/commands/registry";
 import { formatChordLabel } from "../../lib/commands/format";
 import { useStore, type LibrarySelection } from "../../lib/store";
+import { useNewFolderRequest } from "../../lib/shell/sidebar";
 import { useI18n } from "../../i18n";
 import type { LibraryTree } from "./useLibraryTree";
 import { isArchived, type Folder as LocalFolder } from "../../lib/history/folders";
@@ -64,6 +65,8 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
   // R8a: creation lives behind the section header's ＋ — the tree is
   // navigation, not a permanently-open data-entry form.
   const [newFolderOpen, setNewFolderOpen] = useState(false);
+  // ⇧⌘N opens the same field (lib/shell/sidebar.ts carries the request).
+  useNewFolderRequest(useCallback(() => setNewFolderOpen(true), []));
 
   // Folder facts + every node's count in one pass. The grid filters with the
   // SAME index and the SAME rule (lib/library/scope), so "和運租車 · 8" is a

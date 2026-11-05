@@ -4,6 +4,7 @@ import { AskYourAi } from "./AskYourAi";
 import { toast } from "sonner";
 import { transcriptAsText, useStore } from "../../lib/store";
 import { STUDY_TABS, type StudyTab } from "../../lib/store/study";
+import { useCommandShortcut } from "../../lib/commands/bind";
 import { renameLoadedRecording, renameTarget } from "../../lib/replay/rename";
 import { studyPageTextFromState, useHandoff } from "../../lib/onboarding/useHandoff";
 import { useTypewriter } from "../../lib/onboarding/motion";
@@ -255,6 +256,13 @@ function StudyTabs({
     (id) => (id !== "notes" || notesCount > 0) && (id !== "context" || hasContext)
   );
   const counts: Partial<Record<StudyTab, number>> = { actions: actionCount, notes: notesCount };
+  // ⇧⌘[ / ⇧⌘]: the browser's previous / next tab, wrapping at either end.
+  const step = (dir: 1 | -1) => {
+    const at = Math.max(0, tabs.indexOf(tab));
+    setStudyTab(tabs[(at + dir + tabs.length) % tabs.length]);
+  };
+  useCommandShortcut("study.prevTab", () => step(-1));
+  useCommandShortcut("study.nextTab", () => step(1));
 
   return (
     <div role="tablist" aria-label={t("study.tabs")} className="mt-2 flex items-end gap-5">

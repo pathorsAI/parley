@@ -38,7 +38,9 @@ import { useI18n, type TranslationKey } from "../../i18n";
 
 const GROUP_LABEL_KEYS: Record<CommandGroup, TranslationKey> = {
   global: "shortcuts.group.global",
+  file: "shortcuts.group.file",
   nav: "shortcuts.group.nav",
+  library: "shortcuts.group.library",
   meeting: "shortcuts.group.meeting",
   replay: "shortcuts.group.replay",
   voice: "shortcuts.group.voice",
@@ -97,6 +99,8 @@ export function ShortcutSheet() {
     rows: commandsInGroup(group)
       // A scope that is not mounted has no live keys, so it has no rows.
       .filter((def) => scopes.includes(def.scope))
+      // ⌘Q and friends are the Mac's own; Windows has no such chords.
+      .filter((def) => !def.macOnly || mac)
       // Push-to-talk is off: the row would document a key that does nothing.
       .filter((def) => def.dynamicKeys !== "voiceTyping" || voiceEnabled)
       .map((def) => ({ def, caps: capsOf(def, mac, voiceCaps) })),

@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Clock, MessageCircleQuestion, Pencil, RotateCw, X } from "lucide-react";
 import { DEFAULT_GETTING_STARTED, useStore } from "../../lib/store";
+import { useCommandScope } from "../../lib/commands/bind";
 import { missingProviderRequirement, providerGateKey } from "../../lib/ai/settings";
 import { regenerateArtifact, useBriefQueued, type StudyArtifactKey } from "../../lib/analysis/studyPipeline";
 import { normalizeBriefHeadings, splitBrief, type BriefSection as BriefSectionPart } from "../../lib/analysis/briefSections";
@@ -38,6 +39,8 @@ export function StudyScreen({ libraryCount = 0 }: Readonly<{ libraryCount?: numb
   const notes = useStore((s) => meetingNotesOf(s.meetingContext));
   const background = useStore((s) => meetingBackgroundOf(s.meetingContext));
   const lap = useLapState({ gettingStarted, entryId, readOnly, libraryCount });
+  // ⇧⌘[ / ⇧⌘] (bound by the tab strip) are live only on this page.
+  useCommandScope("study");
   // Kept tabs belong to one recording; another one starts them afresh.
   const replayId = useStore((st) => st.replay?.id ?? null);
   // The destination picker, owned here so the guide bar opens the same sheet

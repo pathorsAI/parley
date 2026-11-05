@@ -5,7 +5,7 @@ import { log } from "../log";
 import { openSettings } from "../nav/settings";
 import { navigateTo } from "../nav/navigate";
 import { isMeetingActive, useStore } from "../store";
-import { cockpitHold, toggleSidebar, toggleSidebarPeek } from "../shell/sidebar";
+import { cockpitHold, requestNewFolder, toggleSidebar, toggleSidebarPeek } from "../shell/sidebar";
 import { zoomIn, zoomOut, zoomReset } from "../zoom";
 import { toggleShortcutSheet } from "./sheet";
 import { editRedo, editUndo } from "../edit/undo";
@@ -58,6 +58,26 @@ const HANDLERS: Partial<Record<CommandId, () => void>> = {
   "zoom.reset": () => zoomReset(),
   "edit.undo": () => editUndo(),
   "edit.redo": () => editRedo(),
+
+  // The draft sheet sits at the app root, so it opens over any screen — except
+  // the study page, whose prep fields ARE the open recording's (the titlebar
+  // hides its 新增會議草稿 there for the same reason), so ⌘N goes home first.
+  // Never during a meeting: the draft sheet would edit the running one.
+  "file.newDraft": () => {
+    const s = useStore.getState();
+    if (isMeetingActive(s.meetingStatus)) return;
+    if (s.appMode !== "study") {
+      s.setDraftOpen(true);
+      return;
+    }
+    void navigateTo({ kind: "home" }).then((outcome) => {
+      if (outcome.status === "applied") useStore.getState().setDraftOpen(true);
+    });
+  },
+  "file.newFolder": () => {
+    if (isMeetingActive(useStore.getState().meetingStatus)) return;
+    requestNewFolder();
+  },
 
   // Routed through navigateTo, not straight at the store, so ⌘1/⌘2 land in the
   // back stack (⌘1 then ⌘[ has to work) and inherit the one meeting guard
