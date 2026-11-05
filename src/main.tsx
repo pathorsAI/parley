@@ -29,6 +29,8 @@ const ROUTES = [
   "finding-solution",
   "diagnostics",
   "voice-typing",
+  // Before "meeting": routes match by prefix.
+  "meeting-prompt",
   "meeting",
 ] as const;
 const window_ = ROUTES.find((r) => route.startsWith(r)) ?? "main";
@@ -49,7 +51,8 @@ if (window_ === "settings") installSettingsBroadcast();
 // Not in the voice-typing overlay: the zoom is stored under one key shared by
 // every window on the origin, so zooming the main window used to scale the
 // overlay too — and a zoomed HUD overflows its fixed 460×180 window.
-if (window_ !== "voice-typing") restoreZoom();
+// Nor in the call prompt, a fixed-size pill for the same reason.
+if (window_ !== "voice-typing" && window_ !== "meeting-prompt") restoreZoom();
 
 // The window-wide chords — ⌘, ⇧? and page zoom — from lib/commands/registry.ts.
 // Installed here rather than from a component because the secondary windows
@@ -154,6 +157,9 @@ const DiagnosticsApp = lazy(() =>
 const MeetingWindowApp = lazy(() =>
   import("./meeting-window/MeetingWindowApp").then((module) => ({ default: module.MeetingWindowApp }))
 );
+const MeetingPromptApp = lazy(() =>
+  import("./meeting-prompt/MeetingPromptApp").then((module) => ({ default: module.MeetingPromptApp }))
+);
 const VoiceTypingApp = lazy(() =>
   import("./voice-typing/VoiceTypingApp").then((module) => ({ default: module.VoiceTypingApp }))
 );
@@ -170,6 +176,8 @@ function Root() {
       return <VoiceTypingApp />;
     case "meeting":
       return <MeetingWindowApp />;
+    case "meeting-prompt":
+      return <MeetingPromptApp />;
     default:
       return <App />;
   }
@@ -182,7 +190,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       {/* ⇧? in every window that is big enough to read it. The voice-typing
           overlay is a transient always-on-top strip — a cheat sheet there would
           have nowhere to go. */}
-      {window_ !== "voice-typing" && window_ !== "meeting" && <ShortcutSheet />}
+      {window_ !== "voice-typing" && window_ !== "meeting" && window_ !== "meeting-prompt" && <ShortcutSheet />}
     </Suspense>
   </React.StrictMode>,
 );

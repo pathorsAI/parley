@@ -72,6 +72,14 @@ interface Script {
       detail: string;
     }[];
     actionItems: { text: string; line: number }[];
+    /** The 評分 read, copied into the manifest as written. */
+    delivery: {
+      tone: string;
+      toneEvidence: string;
+      fillers: { level: "ok" | "frequent"; examples: string[]; note: string };
+      pace: "slow" | "comfortable" | "fast";
+      summary: string;
+    };
   };
 }
 
@@ -202,6 +210,7 @@ function renderScript(file: string): void {
       mcpQuestions: script.mcpQuestions,
       suggestion: script.suggestion,
       brief,
+      delivery: script.analysis.delivery,
       findings,
       actionItems,
     };

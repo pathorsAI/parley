@@ -13,6 +13,7 @@ import type { ReplaySession } from "../replay/types";
 import { withTimingRepaired } from "../replay/timing";
 import * as ipc from "../ipc/commands";
 import { readStudyCache } from "./studyCache";
+import { refreshSampleOutputs } from "../onboarding/sampleOutputs";
 import type { HistoryEntry } from "./types";
 import { entryWritesSettled, readEntry } from "./entryStore";
 
@@ -68,7 +69,9 @@ export async function loadHistoryEntry(id: string): Promise<void> {
   // onto this entry — read after it lands, or the open would restore the stale
   // meta and re-run that stage.
   await entryWritesSettled(id);
-  const { meta, audioPath } = await readEntry(id);
+  const { meta: saved, audioPath } = await readEntry(id);
+  // The bundled sample may predate its current prewritten outputs.
+  const meta = refreshSampleOutputs(saved);
   const audioSrc = audioPath ? convertFileSrc(audioPath) : "";
   const session = replaySessionFor(meta, audioPath ?? "", audioSrc);
   useStore.getState().loadHistory({ ...meta, segments: session.segments }, session);
@@ -99,14 +102,34 @@ function foldStudyCache(meta: HistoryEntry, cached: ReturnType<typeof readStudyC
   meta.meetingKind = meta.meetingKind ?? cached.meetingKind ?? null;
 }
 
+/** Org audio already downloaded this run, by recording id, so reopening one
+ *  plays at once instead of fetching the file again. */
+const orgAudio = new Map<string, string>();
+
+async function fetchOrgAudio(id: string, url: string, token: string): Promise<void> {
+  try {
+    const path = await ipc.downloadRemoteAudio({ id, url, token });
+    orgAudio.set(id, path);
+    useStore.getState().attachReplayAudio(id, path, convertFileSrc(path));
+  } catch (e) {
+    log.warn("history: org audio download failed", { id, error: String(e) });
+  }
+}
+
 /**
  * Load an ORG (cloud-shared) recording into replay WITHOUT persisting it to the
  * local history dir — org recordings must never pollute the personal list. The
  * full entry (transcript + analysis) comes over HTTP; the audio is streamed to a
  * temp cache file by Rust (`download_remote_audio`). Loaded read-only so the
  * re-analysis-persist subscription leaves someone else's shared recording alone.
+ * The audio arrives after the page has opened ({@link fetchOrgAudio}). `place`
+ * (its org and org folder) is what the page shows for where it is filed.
  */
-export async function loadOrgEntry(orgId: string, id: string): Promise<void> {
+export async function loadOrgEntry(
+  orgId: string,
+  id: string,
+  place: { orgName: string; folderName: string | null } | null = null,
+): Promise<void> {
   if (refuseWhileRecording()) return;
   const base = `/orgs/${encodeURIComponent(orgId)}/recordings/${encodeURIComponent(id)}`;
   const meta = (await (await cloudFetch(`${base}/meta`)).json()) as HistoryEntry;
@@ -118,20 +141,21 @@ export async function loadOrgEntry(orgId: string, id: string): Promise<void> {
   // "done" and the pipeline doesn't re-spend a generation. The shared entry's
   // own saved GENERATED outputs win — the cache only fills what the org copy
   // lacks.
-  foldStudyCache(meta, readStudyCache(id));
-  let audioPath = "";
-  const t = cloudToken();
-  if (meta.audio && t) {
-    audioPath = await ipc.downloadRemoteAudio({
-      id,
-      url: `${CLOUD_URL}${base}/audio`,
-      token: t,
-    });
-  }
-  const audioSrc = audioPath ? convertFileSrc(audioPath) : "";
-  const session = replaySessionFor(meta, audioPath, audioSrc);
+  // Keyed by the ENTRY's id (meta.id) — the id the pipeline writes the cache
+  // under (replay.id) — not the org's id for its copy, which differs: looking
+  // it up by the org id missed every time, so each open re-ran the analysis
+  // and showed a different summary. The org id is still read as a fallback.
+  foldStudyCache(meta, readStudyCache(meta.id || id) ?? (meta.id && meta.id !== id ? readStudyCache(id) : null));
+  // The page opens on the meta alone; the audio (the whole file, often tens of
+  // MB) follows in the background. Waiting for it first left the click with no
+  // visible effect for many seconds, so people clicked again and again.
+  const cached = orgAudio.get(id) ?? "";
+  const session = replaySessionFor(meta, cached, cached ? convertFileSrc(cached) : "");
   useStore.getState().loadHistory({ ...meta, segments: session.segments }, session, { readOnly: true });
-  log.info("history: org entry loaded", { orgId, id, hasAudio: !!audioPath });
+  useStore.getState().setReplayOrgPlace(place);
+  const t = cloudToken();
+  if (meta.audio && t && !cached) void fetchOrgAudio(id, `${CLOUD_URL}${base}/audio`, t);
+  log.info("history: org entry loaded", { orgId, id, audioCached: !!cached });
   if (isTauri()) {
     try {
       await getCurrentWindow().setFocus();

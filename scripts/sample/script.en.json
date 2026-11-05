@@ -105,7 +105,7 @@
     ]
   },
   "analysis": {
-    "brief": "**First discovery call with Hongsheng Technology, a sales call.** Their support line takes 300+ calls a day in peak season and around 200 otherwise; nobody answers after 8 pm, which is the biggest pain {L2}. Over 60% of calls are repetitive order-status and invoice questions {L4}.\n\n**Progress:** Mr. Lin accepted an evenings-first rollout at about 22k a month {L12} and agreed to a demo next Wednesday at 3 pm with Mr. Wang from IT present {L14}.\n\n**Risks:** last year's vendor was shut down because customers hung up on the machine {L6}; the 30k vs 18k gap is still the boss's hurdle {L10}; the data-residency question is still unanswered {L14}.",
+    "brief": "## Where this landed\nFirst discovery call with Hongsheng Technology. Mr. Lin accepted an evenings-first rollout at about 22k a month {L12} and agreed to a demo next Wednesday at 3 pm, with Mr. Wang from IT present {L14}. The deal moved forward, but price and data residency are still open.\n\n## Their pain and objections\n- Nobody answers after 8 pm, so the morning starts with a pile of voicemails — the biggest pain {L2}\n- Over 60% of calls are repetitive order-status and invoice questions {L4}\n- Last year's voice system was shut down because customers hung up as soon as they heard a machine {L6}\n- 30k a month is well above last year's 18k, and the boss has to approve it {L10}\n- Some customer data can't leave the country, so they need to know where it is stored {L14}\n\n## What we still don't know\n- Does the boss make the final call, and how long does approval take? Ask: \"Who signs off on the 22k plan, and when would we hear back?\"\n- Is there a budget ceiling, and is the 150k setup fee acceptable? Only the monthly fee was discussed {L9}\n- Besides last year's vendor, are they comparing anyone else right now?\n- Is the data-residency limit a regulation or a customer contract term? That decides where the servers go\n\n## Next steps\n- Email the deployment data and the quote before end of day, with the 22k evening plan spelled out {L17}\n- Answer the hosting-location and data-residency question in writing before the demo {L15}\n- Record the demo on their common order-status and invoice questions, and show the hand-off to a human to meet the \"customers hang up on the machine\" concern head-on\n- Confirm the approval process and timeline at the demo",
     "findings": [
       {
         "line": 2,
@@ -167,6 +167,17 @@
         "text": "Prepare the price story: 30k vs 18k comes down to live ERP integration and the human handoff",
         "line": 11
       }
-    ]
+    ],
+    "delivery": {
+      "tone": "warm",
+      "toneEvidence": "That's a fair concern.",
+      "fillers": {
+        "level": "ok",
+        "examples": [],
+        "note": ""
+      },
+      "pace": "comfortable",
+      "summary": "You opened with numbers before confirming the pain, at a steady pace. Asked about price, you gave a figure straight away; when they pushed back on the gap, you acknowledged the concern before explaining the difference, without rushing to discount. The data-residency question wasn't answered on the spot; you offered a written reply instead."
+    }
   }
 }

@@ -21,6 +21,7 @@ import { translate } from "../../i18n/messages";
 import { markGettingStarted } from "../onboarding/gettingStarted";
 import type { ReplaySession } from "../replay/types";
 import { withoutEstimatedTiming } from "../replay/timing";
+import { foldSegmentTexts } from "../replay/findReplace";
 import type {
   DefaultSaveLocation,
   FilingSuggestion,
@@ -45,6 +46,7 @@ import {
 import { pushToCloud } from "./cloudPush";
 import { loadHistoryEntry } from "./open";
 import { PendingSaves } from "../meeting/pendingSaves";
+import { contextWithNotes } from "./meetingNotes";
 
 // Storage access, opening, external writes and the folder repair live in their
 // own modules; these keep their old import path.
@@ -56,6 +58,7 @@ export {
   type EntryMetaPatch,
 } from "./externalWrites";
 export { migrateDuplicateFolders } from "./folderDedupe";
+export { contextWithNotes, notesFromContext } from "./meetingNotes";
 export {
   buildSummary,
   deleteHistoryEntry,
@@ -184,18 +187,6 @@ export interface LiveMeetingSnapshot {
 
 /** Stopped meetings whose recording is still being encoded and saved. */
 export const liveSaves = new PendingSaves<LiveMeetingSnapshot>();
-
-/**
- * The meeting's context as saved: the prepared context, then the notes typed
- * during the meeting under a heading — so the report and every later analysis
- * read them along with the context. Pure; exported for testing.
- */
-export function contextWithNotes(context: string, notes: string, heading: string): string {
-  const n = notes.trim();
-  if (!n) return context;
-  const c = context.trim();
-  return c ? `${c}\n\n${heading}\n${n}` : `${heading}\n${n}`;
-}
 
 /** Snapshot the live meeting the store shows now (null when it has no id). */
 export function snapshotLiveMeeting(): LiveMeetingSnapshot | null {
@@ -505,7 +496,7 @@ export async function saveLiveToHistory(
     // Opens unless the user went on to something of their own meanwhile (a
     // recording, or a new meeting); the main window may be anywhere else.
     if (!isMeetingActive(now.meetingStatus) && now.appMode !== "study" && showsThisMeeting) {
-      now.setStudyTab("report");
+      now.setStudyTab("summary");
       await loadHistoryEntry(entry.id).catch((e) =>
         log.warn("history: auto-open after stop failed", { id: entry.id, error: String(e) }),
       );
@@ -906,6 +897,31 @@ export async function persistReadOnlyStudyOutputs(): Promise<void> {
 }
 
 /**
+ * Write an edited transcript's TEXT onto a saved entry — the replay find bar's
+ * replace. The same per-entry read-modify-write as {@link patchEntryOutputs}:
+ * serialized with every other in-place update, waiting out an upload's initial
+ * save, then the cloud copy is refreshed. Only segment text moves (folded by
+ * id onto what is on disk), so a recording whose on-screen timing is an
+ * estimate keeps its untimed transcript, and nothing else the entry holds —
+ * title, folder, speaker labels, the analysis — is touched. No change, no write.
+ */
+export async function persistTranscriptText(id: string, segments: readonly TranscriptSegment[]): Promise<void> {
+  if (!isTauri()) return;
+  const written = await withEntryWrite(id, async () => {
+    // An upload's initial save may still be compressing — wait so the entry exists.
+    await Promise.resolve(uploadSaveInFlight).catch(() => {});
+    return rewriteEntryNow(id, (meta) => {
+      const next = foldSegmentTexts(meta.segments, segments);
+      return next === meta.segments ? null : { ...meta, segments: next };
+    });
+  });
+  if (!written) return;
+  await emitHistoryUpdated(id).catch(() => {});
+  pushToCloud(id).catch((e) => log.warn("history: cloud push failed", { id, error: String(e) }));
+  log.info("history: transcript text saved", { id });
+}
+
+/**
  * Persist the loaded entry's FILING SUGGESTION — the proposed title + folders,
  * or its absence once the user has answered it (a dismissal or acceptance). The
  * one place that copies the filing fields from the STORE authoritatively; the
@@ -945,12 +961,13 @@ export function clearSuggestedTitle(suggestion: FilingSuggestion | null): Filing
 
 /**
  * Rename an entry (patches the title in meta + summary). EVERY rename — the
- * replay titlebar, the library, MCP's rename_recording, the filing card — comes
+ * replay titlebar, the library, MCP's rename_recording, the page header, the
+ * filing pass's own auto-naming (filingRun.applySuggestedTitle) — comes
  * through here, and every one also retires the pending filing suggestion's
  * title: the user has now named the recording, so a "suggested title" left
  * beside it is a second, competing name. Rust clears it in the same meta.json
  * write (history.rs `apply_rename`); this mirrors that into the store when the
- * renamed entry is the one on screen, so the card drops its title row at once.
+ * renamed entry is the one on screen.
  */
 export async function renameHistoryEntry(id: string, title: string): Promise<void> {
   if (!isTauri()) return;
@@ -960,6 +977,9 @@ export async function renameHistoryEntry(id: string, title: string): Promise<voi
   if (s.loadedHistoryId === id && s.filingSuggestion?.title) {
     s.setFilingSuggestion(clearSuggestedTitle(s.filingSuggestion));
   }
+  // Whoever renamed it, the name is no longer the one Parley picked. The
+  // filing pass's own auto-rename sets the flag again right after this.
+  if (s.titleAutoApplied === id) s.setTitleAutoApplied(null);
   // A rename is a content change → go through the same dirty→push→clear lifecycle
   // as save/re-analysis, so a failed cloud push is retried by the background sweep.
   pushToCloud(id);

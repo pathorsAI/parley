@@ -10,6 +10,7 @@ import {
   Loader2,
   Maximize2,
   MessageCircle,
+  Minimize2,
   Minus,
   NotebookPen,
   Pause,
@@ -142,7 +143,13 @@ function MiniTranscript() {
   }, [rows, lines.length, lastText]);
 
   return (
-    <div ref={boxRef} className="flex min-h-0 flex-1 flex-col justify-end overflow-hidden px-3 py-2">
+    // Selectable, so a line can be copied: not a drag handle like the rest
+    // of the mini window.
+    <div
+      ref={boxRef}
+      data-no-drag
+      className="flex min-h-0 flex-1 cursor-text select-text flex-col justify-end overflow-hidden px-3 py-2"
+    >
       <div ref={viewRef} style={{ height: rows * MINI_LINE }} className="shrink-0 overflow-hidden">
         {lines.length ? (
           lines.map((seg) => (
@@ -179,8 +186,9 @@ function MiniNotes() {
 }
 
 const MINI_TABS: { tab: Tab; icon: typeof Captions }[] = [
-  { tab: "transcript", icon: Captions },
+  // The full window's order, left to right.
   { tab: "notes", icon: NotebookPen },
+  { tab: "transcript", icon: Captions },
   { tab: "coach", icon: Sparkles },
 ];
 
@@ -255,6 +263,7 @@ function MiniWindow({
       className="flex h-full min-h-0 w-full flex-1 select-none flex-col bg-background"
     >
       <div className="flex h-12 shrink-0 items-center gap-2 pr-1.5 pl-2" title={fixed ? undefined : t("floating.dockHint")}>
+        <DragGrip />
         <RecordingClock withLabel={false} />
         {coach ? (
           <form
@@ -372,7 +381,30 @@ function miniHeight(tab: Tab, answerOpen = false): number {
   return MINI_HEIGHT[tab];
 }
 
-/** Title bar: drag handle, the recording clock, the mic, collapse and close. */
+/** Into the Dock (the taskbar on Windows); the recording carries on, and the window comes back from there. */
+async function minimizeWindow() {
+  if (!isTauri()) return;
+  try {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    await getCurrentWindow().minimize();
+  } catch (error) {
+    log.warn("meeting: floating window minimize failed", { error: String(error) });
+  }
+}
+
+/** The six-dot handle the window drags by (as does any bare spot around it):
+ *  an open hand over it, a closed one while dragging. */
+function DragGrip() {
+  return (
+    <GripVertical
+      aria-hidden
+      className="size-3.5 shrink-0 cursor-grab text-muted-foreground/70 active:cursor-grabbing"
+    />
+  );
+}
+
+/** Title bar: drag handle, the recording clock, the mic, then shrink to the
+ *  mini window, minimize into the Dock, and close. */
 function FloatingTitleBar({
   onClose,
   onCollapse,
@@ -384,16 +416,25 @@ function FloatingTitleBar({
       onMouseDown={(e) => dragWindowFrom(e)}
       className="flex h-[50px] shrink-0 items-center gap-2.5 border-b pl-4 pr-3"
     >
-      <GripVertical aria-hidden className="pointer-events-none size-3.5 text-muted-foreground/70" />
+      <DragGrip />
       <RecordingClock />
       <div className="h-full min-w-0 flex-1" />
-      <MicChip />
-      <div className="flex items-center gap-1 pl-2">
+      <MicChip shrink />
+      <div className="flex shrink-0 items-center gap-1 pl-2">
         <button
           type="button"
           aria-label={t("floating.collapse")}
           title={t("floating.collapse")}
           onClick={onCollapse}
+          className="grid size-8 place-items-center rounded-md text-foreground/80 transition-colors hover:bg-muted"
+        >
+          <Minimize2 className="size-3.5" />
+        </button>
+        <button
+          type="button"
+          aria-label={t("floating.minimize")}
+          title={t("floating.minimize")}
+          onClick={() => void minimizeWindow()}
           className="grid size-8 place-items-center rounded-md text-foreground/80 transition-colors hover:bg-muted"
         >
           <Minus className="size-4" />
@@ -727,7 +768,7 @@ export function MeetingFloatingWindow() {
           className={`flex h-8 shrink-0 items-center gap-1.5 rounded-lg pr-3 pl-2.5 text-sm font-medium transition-colors disabled:opacity-50 ${
             paused
               ? "bg-primary text-primary-foreground hover:bg-primary/90"
-              : "bg-warning text-warning-foreground hover:bg-warning/80"
+              : "bg-warning text-warning-foreground hover:bg-warning-hover"
           }`}
         >
           {paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}

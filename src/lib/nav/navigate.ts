@@ -153,7 +153,7 @@ export async function leaveRecordingTo(selection: LibrarySelection): Promise<Nav
   }
   const from = currentLocation();
   store.exitReplay();
-  store.setStudyTab("report");
+  store.setStudyTab("summary");
   return navigateTo({ kind: "library", selection }, { from });
 }
 

@@ -166,6 +166,8 @@ function normalizeActionItem(raw: unknown): ActionItem | null {
     linkedEventId: asNonEmptyString(o.linkedEventId) ?? null,
     atMs: Number.isFinite(o.atMs) ? Number(o.atMs) : null,
     severity: normalizeActionSeverity(o.severity),
+    side: o.side === "us" || o.side === "them" ? o.side : undefined,
+    owner: asTrimmed(o.owner),
   };
 }
 

@@ -48,6 +48,7 @@ describe("endMeeting", () => {
   it("stops the real session and shows finalizing until the save reports back", async () => {
     setup({ key: "sk" });
     await endMeeting();
+    // The stop cue plays after the captures are down, so it is not recorded.
     expect(commands()).toEqual([["stop_meeting", {}]]);
     expect(useStore.getState().meetingStatus).toBe("stopped");
     expect(useStore.getState().isFinalizingMeeting).toBe(true);
@@ -60,6 +61,12 @@ describe("endMeeting", () => {
     await endMeeting();
     expect(useStore.getState().isFinalizingMeeting).toBe(false);
     expect(mocks.log.error).toHaveBeenCalledWith("meeting: stop failed", { error: "Error: gone" });
+  });
+
+  it("plays no cue when the meeting ends", async () => {
+    setup({ key: "sk" });
+    await endMeeting();
+    expect(commands()).toEqual([["stop_meeting", {}]]);
   });
 
   it("stops the mock stream when there is no real pipeline", async () => {

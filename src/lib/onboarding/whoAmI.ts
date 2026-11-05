@@ -1,14 +1,10 @@
 /**
- * The "which one is you?" hint on the speaker roster (live SpeakerBar and the
- * replay speaker tags). The analysis can only tell "my side" from "theirs" when
- * the user's own column carries their name, so the first time speaker inputs
- * appear, one muted line asks for it. It retires on dismiss or on the first
- * rename — renaming is the point it was making.
+ * Who "me" is on the speaker roster (live SpeakerBar and the replay speaker
+ * tags): the analysis can only tell "my side" from "theirs" when the user's own
+ * column carries their name.
  */
-import { useCallback } from "react";
 import { useStore } from "../store";
 import type { Source } from "../types";
-import { markHintSeen, useHint } from "./gettingStarted";
 
 /** The primary mic voice — the only speaker Parley knows is the user. */
 export function isOwnMicSpeaker(sp: { source: Source; speaker: number }): boolean {
@@ -26,17 +22,4 @@ export function rememberOwnName(sp: { source: Source; speaker: number }, name: s
   const { settings, updateSettings } = useStore.getState();
   if (settings.userName?.trim()) return;
   updateSettings({ userName: trimmed });
-}
-
-export function useWhoAmIHint(): {
-  visible: boolean;
-  dismiss: () => void;
-  /** Call from the input's onChange: the first real rename retires the hint. */
-  onRename: (name: string) => void;
-} {
-  const [visible, dismiss] = useHint("speakers.whoAmI");
-  const onRename = useCallback((name: string) => {
-    if (name.trim()) markHintSeen("speakers.whoAmI");
-  }, []);
-  return { visible, dismiss, onRename };
 }

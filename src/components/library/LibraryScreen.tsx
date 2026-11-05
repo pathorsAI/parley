@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { FolderCard, NewFolderCard } from "./FolderCard";
 import { Archive, ChevronRight, Folder, Loader2, Plus, RefreshCw, Search, UsersRound, X } from "lucide-react";
 import { toast } from "sonner";
 import { useI18n } from "../../i18n";
@@ -36,6 +37,8 @@ import { VoiceTypingHistory } from "../../history/VoiceTypingHistory";
 import { DestinationSheet } from "../DestinationSheet";
 import { ConfirmDialog } from "../shell/ConfirmDialog";
 import { RecordingTimeline, RecordingTimelineSkeleton } from "./RecordingTimeline";
+import { EmptyRecords } from "./EmptyRecords";
+import { OrgMeetingDrafts } from "./OrgMeetingDrafts";
 import { useArchiveFolder } from "./useArchiveFolder";
 import { useRenderWindow } from "./useRenderWindow";
 import type { LibraryTree } from "../shell/useLibraryTree";
@@ -82,6 +85,10 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   const [query, setQuery] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  // The recording being opened: its row spins, and clicks while it loads don't
+  // start a second load.
+  const [openingId, setOpeningId] = useState<string | null>(null);
+  const openingRef = useRef<string | null>(null);
   const [sharingId, setSharingId] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   /** The delete waiting on an answer. Both doors onto the action — the card's
@@ -95,6 +102,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
     if (!open) setFileItem(null);
   }, []);
 
+  const openLibrary = useStore((s) => s.openLibrary);
   const isOrg = selection.kind === "org";
   const isVoice = selection.kind === "voice";
   const node = selection.kind === "personal" ? selection.node : null;
@@ -190,7 +198,8 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   const openItem = useCallback(
     async (item: HistoryCardItem) => {
       if (selection.kind === "org") {
-        await loadOrgEntry(selection.id, item.id);
+        const folder = tree.orgFolders[selection.id]?.find((f) => f.id === item.folderId);
+        await loadOrgEntry(selection.id, item.id, { orgName: selection.name, folderName: folder?.name ?? null });
         return;
       }
       if (item.sync === "cloud" || item.sync === "stale") {
@@ -207,7 +216,7 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
       }
       await loadHistoryEntry(item.id);
     },
-    [selection, t]
+    [selection, t, tree.orgFolders]
   );
 
   const remove = useCallback(
@@ -389,18 +398,38 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
     node?.kind === "folder" ? tree.personalFolders.find((f) => f.id === node.folderId) ?? null : null;
   const openArchived = !!openFolder && isArchived(openFolder);
 
+  // An org's own page (no folder picked, no search): 新增資料夾 first, its
+  // folders as cards, then any recordings left at its root.
+  const orgRoot = isOrg && selection.folderId === null && !searching;
+  const orgFolderCards =
+    orgRoot && selection.kind === "org"
+      ? [
+          <NewFolderCard
+            key="new"
+            onCreate={(name) => {
+              tree.createOrgFolder(selection.id, name).catch(() => {});
+            }}
+          />,
+          ...scopeFolders.map((f) => (
+          <FolderCard
+            key={f.id}
+            name={f.name}
+            count={(entries ?? []).filter((e) => e.folderId === f.id).length}
+            onOpen={() => openLibrary({ kind: "org", id: selection.id, name: selection.name, folderId: f.id })}
+          />
+        )),
+        ]
+      : [];
+
   let body;
   if (entries === null) {
     // Rows in the list's own shape, from the top, so the list lands in place
     // instead of replacing a spinner centred in the pane.
     body = <RecordingTimelineSkeleton label={t("history.loading")} />;
+  } else if (visible.length === 0 && orgRoot) {
+    body = <EmptyRecords title={t("library.org.rootEmptyTitle")} hint={t("library.org.rootEmpty")} compact />;
   } else if (visible.length === 0) {
-    body = (
-      <div className="flex h-full flex-col items-center justify-center gap-1 text-center">
-        <p className="text-sm text-muted-foreground">{empty.title}</p>
-        <p className="max-w-80 text-xs text-muted-foreground/70">{empty.hint}</p>
-      </div>
-    );
+    body = <EmptyRecords title={empty.title} hint={empty.hint} />;
   } else {
     // One list shape for every scope — see RecordingTimeline.
     body = (
@@ -413,13 +442,23 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
           orgs={tree.orgs}
           busyId={busyId}
           downloadingId={downloadingId}
+          openingId={openingId}
           sharingId={sharingId}
           folders={moveFolders}
           folderNames={tree.personalFolders}
           onOpen={(entry) => {
-            openItem(entry).catch((error) =>
-              log.error("library: open failed", { id: entry.id, error: String(error) })
-            );
+            if (openingRef.current) return;
+            openingRef.current = entry.id;
+            setOpeningId(entry.id);
+            openItem(entry)
+              .catch((error) => {
+                log.error("library: open failed", { id: entry.id, error: String(error) });
+                toast.error(t("history.openFailed", { error: errText(error) }));
+              })
+              .finally(() => {
+                openingRef.current = null;
+                setOpeningId(null);
+              });
           }}
           onDelete={(entry) => setPendingDelete(entry)}
           onRename={(id, title) => {
@@ -432,6 +471,10 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
     );
   }
 
+  const orgFooter = isOrg && entries !== null && visible.length > 0 && (
+    <p className="px-2 py-3 text-[11px] text-muted-foreground">{t("library.org.footer")}</p>
+  );
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex shrink-0 items-center gap-2 border-b px-4 py-3">
@@ -440,6 +483,11 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
           orgName={selection.kind === "org" ? selection.name : null}
           folderName={folderName}
           rootLabel={isAll ? t("library.all") : t("library.unassigned")}
+          onOrg={
+            selection.kind === "org"
+              ? () => openLibrary({ kind: "org", id: selection.id, name: selection.name, folderId: null })
+              : undefined
+          }
         />
         <span className="text-xs text-muted-foreground">
           {t("history.count", { count: visible.length })}
@@ -515,10 +563,39 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
 
       {/* The date headers are sticky, so the list owns its own top padding —
           rows must slide under the header, not through a gap above it. */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
-        {body}
-        {isOrg && entries !== null && visible.length > 0 && (
-          <p className="px-2 py-3 text-[11px] text-muted-foreground">{t("library.org.footer")}</p>
+      <div className="relative min-h-0 flex-1 overflow-y-auto px-4 pb-4">
+        {/* An org's own page holds three things, kept apart: its folders, the
+            meeting drafts headed for it, and the recordings filed to the org
+            without a folder (a recording can be saved into an org and left at
+            its root). */}
+        {orgRoot && selection.kind === "org" ? (
+          <>
+            <h2 className="px-2 pt-5 pb-3 text-xs font-semibold text-muted-foreground">{t("library.org.folders")}</h2>
+            {/* One row that scrolls sideways, however many folders there are,
+                so the columns below stay in view. */}
+            <div className="-mx-4 flex flex-nowrap gap-5 overflow-x-auto px-6 pt-1 pb-6">{orgFolderCards}</div>
+            {/* Side by side when the pane has room, stacked when it doesn't —
+                measured on the pane, not the window, since the tree and the
+                window's own width both eat into it. */}
+            <div className="@container">
+              <div className="grid grid-cols-1 gap-x-8 @min-[720px]:grid-cols-2">
+                <OrgMeetingDrafts orgId={selection.id} folders={scopeFolders} />
+                <section className="min-w-0">
+                  <h2 className="px-2 pt-6 pb-1 text-xs font-semibold text-muted-foreground">
+                    {t("library.org.rootRecordings")}
+                    {visible.length > 0 && <span className="ml-1.5 font-normal tabular-nums">{visible.length}</span>}
+                  </h2>
+                  <div className="relative">{body}</div>
+                  {orgFooter}
+                </section>
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="relative">{body}</div>
+            {orgFooter}
+          </>
         )}
       </div>
 
@@ -559,17 +636,37 @@ function ScopeTitle({
   orgName,
   folderName,
   rootLabel,
+  onOrg,
 }: Readonly<{
   isOrg: boolean;
   orgName: string | null;
   folderName: string | null;
   rootLabel: string;
+  /** Back to the org's own page (its folder cards), from one of its folders. */
+  onOrg?: () => void;
 }>) {
   if (isOrg) {
-    return (
-      <span className="inline-flex items-center gap-1.5 text-sm font-semibold tracking-tight">
+    const org = (
+      <>
         <UsersRound className="size-4 text-muted-foreground" />
         {orgName}
+      </>
+    );
+    return (
+      <span className="inline-flex items-center gap-1.5 text-sm font-semibold tracking-tight">
+        {/* Inside a folder the org's name is the way up, as in any breadcrumb;
+            on the org's own page it is just the title. */}
+        {folderName && onOrg ? (
+          <button
+            type="button"
+            onClick={onOrg}
+            className="-mx-1 inline-flex cursor-pointer items-center gap-1.5 rounded-md px-1 py-0.5 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          >
+            {org}
+          </button>
+        ) : (
+          org
+        )}
         {folderName && (
           <>
             <ChevronRight className="size-3.5 text-muted-foreground" />

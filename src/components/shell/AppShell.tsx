@@ -8,6 +8,7 @@ import {
 import { LiveScreen } from "../live/LiveScreen";
 import { StudyScreen } from "../study/StudyScreen";
 import { HomeScreen } from "../home/HomeScreen";
+import { SidebarThemeSwitch } from "./SidebarThemeSwitch";
 import { AppSidebar } from "./AppSidebar";
 import { CommandPalette } from "./CommandPalette";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -122,9 +123,24 @@ export function AppShell() {
         {/* Sizes carry explicit units: a bare number is read as a PIXEL size by
             this version, which pinned the tree to a 32px sliver on first run. */}
         <ResizablePanel id="tree" defaultSize="19%" minSize="180px" maxSize="30%">
-          <AppSidebar tree={tree} />
+          {/* The tree scrolls; the theme switch stays pinned under it. The
+              sidebar colour is painted once, here, for the tree and the footer
+              alike, so the two always read as one surface. */}
+          <div className="flex h-full min-h-0 flex-col bg-sidebar">
+            <div className="min-h-0 flex-1">
+              <AppSidebar tree={tree} />
+            </div>
+            <div className="shrink-0 px-3 pt-1 pb-2.5">
+              <SidebarThemeSwitch />
+            </div>
+          </div>
         </ResizablePanel>
-        <ResizableHandle withHandle />
+        {/* Draggable, so it says so under the pointer: the line (and its grip)
+            darken on hover and stay dark while dragging. */}
+        <ResizableHandle
+          withHandle
+          className="transition-colors data-[separator=active]:bg-muted-foreground/50 data-[separator=hover]:bg-muted-foreground/35 data-[separator=active]:[&>div]:bg-muted-foreground/60 data-[separator=hover]:[&>div]:bg-muted-foreground/45 [&>div]:transition-colors"
+        />
         <ResizablePanel id="route" defaultSize="81%" minSize="480px">
           <div className="flex h-full min-h-0 flex-col bg-background">
             <RouteContent mode={appMode} tree={tree} />

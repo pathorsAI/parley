@@ -21,6 +21,11 @@ export const PREVIOUS_SAVE_WAIT_MS = 30_000;
  *  succession) would otherwise race two transcription sessions open. */
 let starting = false;
 
+/** A start is in flight (checks, the previous save, the capture opening). */
+export function isStartingMeeting(): boolean {
+  return starting;
+}
+
 /**
  * Open the capture session and start recording.
  *
@@ -110,6 +115,8 @@ async function start(): Promise<void> {
     });
     return;
   }
+
+  // No start cue: a meeting starts silently (only its end sounds, #607).
 
   s.startMeeting();
 

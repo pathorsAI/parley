@@ -5,13 +5,16 @@ mod cache;
 mod capture;
 mod commands;
 mod diarize;
+mod dock_tile;
 mod hardware;
 mod history;
 mod hotkey;
 mod local_stt;
 mod mcp;
+mod meeting_detect;
 mod menu;
 mod model_download;
+mod notify_sender;
 mod permissions;
 mod playback;
 mod recording_journal;
@@ -105,6 +108,13 @@ pub fn run() {
         // (src/lib/platform.ts) — window chrome, hidden panels, key caps.
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_notification::init())
+        // The floating meeting window minimizes to the Parley logo in the
+        // Dock, not a snapshot of its borderless pill.
+        .on_page_load(|webview, _| {
+            if webview.label() == "meeting" {
+                dock_tile::use_logo_when_minimized(&webview.window());
+            }
+        })
         // Unconditional like single-instance: the crate only builds for desktop.
         .plugin(autostart_plugin.build())
         // Single source of truth for "who owns the mic" (meeting / mic test /
@@ -124,10 +134,14 @@ pub fn run() {
         // The clipboard a dictation borrows for its paste, and the restore
         // that gives it back — see voice_typing::ClipboardState.
         .manage(voice_typing::ClipboardState::default())
+        // The "another app started a call" watcher, started and stopped by the
+        // frontend per its setting — see meeting_detect.rs.
+        .manage(meeting_detect::MeetingDetectState::default())
         // Native menu-bar "Diagnostics" submenu (View Logs + Clear Cache).
         .menu(menu::build)
         .on_menu_event(|app, event| menu::on_event(app, event.id().as_ref()))
         .setup(|app| {
+            notify_sender::claim(&app.config().identifier);
             app.manage(mcp::start(app.handle().clone()));
             // The boot-default push-to-talk combo, live until the frontend
             // applies the saved selection. A failure is logged, not fatal.
@@ -234,6 +248,8 @@ pub fn run() {
             commands::session_files::read_session_commands,
             commands::session_files::append_session_command_result,
             commands::window_frame::animate_window_frame,
+            commands::cue::play_cue,
+            menu::native_edit,
             usage::append_usage_event,
             usage::read_usage_events,
             permissions::check_permissions,
@@ -281,6 +297,7 @@ pub fn run() {
             local_stt::local_stt_hardware,
             mcp::get_mcp_server_info,
             mcp::get_mcp_activity,
+            meeting_detect::set_meeting_detection,
             cache::clear_cache,
             cache::cache_sizes,
             autostart::launch_at_login_status,

@@ -196,7 +196,16 @@ export interface ActionItem {
   atMs: number | null;
   /** Carried from the linked finding, for the chip color. */
   severity?: Severity;
+  /** Whose follow-up it is: "us" = the user's own side, "them" = the other
+   *  party. Absent on items made before sides existed (and on phone-made ones) —
+   *  those render as one flat list. */
+  side?: ActionItemSide;
+  /** Who should do it, by the name the meeting used (a speaker name or a name
+   *  someone said). Absent when the transcript doesn't make it clear. */
+  owner?: string;
 }
+
+export type ActionItemSide = "us" | "them";
 
 /** A named, reusable checklist you can apply to a meeting. */
 export interface TodoTemplate {
@@ -425,6 +434,20 @@ export interface Settings {
   gettingStarted: GettingStartedState;
   /** One-time contextual hints the user has already seen (or closed). */
   hintsSeen: HintId[];
+  /** Ask whether to record when another app starts a call (issue #606): the
+   *  backend watches which apps use the microphone (see
+   *  src-tauri/src/meeting_detect.rs). Default on. */
+  meetingDetectEnabled: boolean;
+  /** Apps the user said not to ask about ("不要再對 Zoom 詢問"). */
+  meetingDetectMutedApps: MutedMeetingApp[];
+}
+
+/** An app the call prompt no longer asks about. */
+export interface MutedMeetingApp {
+  /** The backend's lowercase app id (bundle id, exe or package name). */
+  id: string;
+  /** The name it was muted under, for the Settings chip. */
+  name: string;
 }
 
 /** The four items of the Home "getting started" checklist, in display order. */

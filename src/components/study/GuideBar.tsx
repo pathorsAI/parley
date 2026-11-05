@@ -8,6 +8,7 @@ import { listLocalFolders } from "../../lib/history/folders";
 import { beginMeeting } from "../../lib/meeting/start";
 import { dismissGettingStarted } from "../../lib/onboarding/gettingStarted";
 import { useLapContext, type LapPhase, type LapStep } from "../../lib/onboarding/lap";
+import type { StudyTab } from "../../lib/store/study";
 import { copyHandoffPrompt, useHandoff } from "../../lib/onboarding/useHandoff";
 import { clientLabel, useMcpActivity } from "../../lib/mcp/activity";
 import { claudeCodeCommand, useMcpEndpoint } from "../../lib/mcp/connect";
@@ -17,19 +18,22 @@ import { CopyButton } from "../CopyButton";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-/** Scroll an element of the (possibly just-mounted) page into view once it has
- *  rendered. A few frames of patience, then give up quietly. */
-export function scrollToWhenRendered(elementId: string, framesLeft = 20): void {
+/** Bring an element of the (possibly just-mounted) page into view once it has
+ *  rendered, and focus its first button — so a keyboard user lands on it too.
+ *  A few frames of patience, then give up quietly. */
+export function focusWhenRendered(elementId: string, framesLeft = 20): void {
   requestAnimationFrame(() => {
     const el = document.getElementById(elementId);
-    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-    else if (framesLeft > 0) scrollToWhenRendered(elementId, framesLeft - 1);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      el.querySelector<HTMLElement>("button")?.focus();
+    } else if (framesLeft > 0) focusWhenRendered(elementId, framesLeft - 1);
   });
 }
 
 /**
- * The guided lap's voice on the study page: a slim bar under both the Report
- * and the Replay tab that says what to do next, three steps and a done card.
+ * The guided lap's voice on the study page: a slim bar under every tab that
+ * says what to do next, three steps and a done card.
  * Visibility and the step come from LapContext (see lib/onboarding/lap.ts);
  * this component only renders them and routes the CTAs.
  *
@@ -50,7 +54,7 @@ export function GuideBar({ onOpenPicker }: Readonly<{ onOpenPicker: () => void }
   if (!lap.visible) return null;
 
   const folderName = folderId ? (listLocalFolders().find((f) => f.id === folderId)?.name ?? null) : null;
-  const setTab = (next: "report" | "replay") => useStore.getState().setStudyTab(next);
+  const setTab = (next: StudyTab) => useStore.getState().setStudyTab(next);
 
   return (
     <GuideBarView
@@ -60,17 +64,16 @@ export function GuideBar({ onOpenPicker }: Readonly<{ onOpenPicker: () => void }
       folderName={folderName}
       renamed={name.trim() !== opened.current.name.trim()}
       onShowSuggestion={() => {
-        setTab("report");
-        // The card is gone once dismissed or spent — then the picker is the
-        // way to choose a folder.
-        if (useStore.getState().filingSuggestion) scrollToWhenRendered("filing-suggestion");
-        else onOpenPicker();
+        // The suggested folders sit in the page header, above every tab. Gone
+        // once dismissed or spent (or filed) — then the picker is the way to
+        // choose a folder.
+        if (useStore.getState().filingSuggestion && document.getElementById("filing-suggestion")) {
+          focusWhenRendered("filing-suggestion");
+        } else onOpenPicker();
       }}
       onOpenReplay={() => setTab("replay")}
-      onShowHandoff={() => {
-        setTab("report");
-        scrollToWhenRendered("handoff");
-      }}
+      // Step 3's working parts show on every tab but the replay.
+      onShowHandoff={() => setTab("summary")}
       onDismiss={dismissGettingStarted}
       onClose={lap.close}
       onBegin={() => {
@@ -87,7 +90,7 @@ export function GuideBar({ onOpenPicker }: Readonly<{ onOpenPicker: () => void }
 export interface GuideBarViewProps {
   phase: LapPhase;
   justCompleted: LapStep | null;
-  tab: "report" | "replay";
+  tab: StudyTab;
   /** The open recording's folder, for the step-1 confirmation. */
   folderName: string | null;
   /** The recording's name changed since it was opened. */
@@ -133,16 +136,17 @@ export function GuideBarView(props: Readonly<GuideBarViewProps>) {
       />
     );
   } else if (phase === "handedOff") {
+    // The working parts everywhere but over the transcript, where they would
+    // eat half the screen; there, one CTA leads back to them.
+    const compact = props.tab === "replay";
     body = (
       <Step
         label={t("lap.step3.label")}
         text={t("study.handoff.mcpLead")}
-        cta={<PrimaryCta onClick={props.onShowHandoff}>{t("lap.step3.cta")}</PrimaryCta>}
+        cta={compact ? <PrimaryCta onClick={props.onShowHandoff}>{t("lap.step3.cta")}</PrimaryCta> : null}
         onDismiss={props.onDismiss}
       >
-        {/* The working parts only on the Report, where the hand-off section
-            lives; over the transcript they would eat half the screen. */}
-        {props.tab === "report" && <HandoffStep />}
+        {!compact && <HandoffStep />}
       </Step>
     );
   } else {

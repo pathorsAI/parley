@@ -1,8 +1,9 @@
 /**
  * The loaded study session, seen as something to hand off: the prompt + report
  * builders fed from the store, and the copy action shared by the transcript copy
- * menu and the report's "hand off to your AI" section — so both copy exactly the
- * same text and both tick the getting-started step.
+ * menu, the recording page header's copy menu and the guided lap — so all copy exactly the
+ * same text and all tick the getting-started step. Also the per-tab text the
+ * page header's "copy this page" copies.
  */
 import { useCallback } from "react";
 import { toast } from "sonner";
@@ -13,6 +14,8 @@ import { hasSpokenSegment, transcriptWithTimestamps, useStore } from "../store";
 import type { AppLanguage } from "../types";
 import { markGettingStarted } from "./gettingStarted";
 import {
+  buildActionItemsMarkdown,
+  buildDeliveryMarkdown,
   buildHandoffPrompt,
   buildReportMarkdown,
   formatHandoffDate,
@@ -21,6 +24,8 @@ import {
   speakerDisplayNames,
 } from "./handoff";
 import { handoffQuestions, type HandoffQuestions } from "./handoffQuestions";
+import { meetingBackgroundOf, meetingNotesOf } from "../history/meetingNotes";
+import type { StudyTab } from "../store/study";
 
 type StoreState = ReturnType<typeof useStore.getState>;
 
@@ -72,6 +77,32 @@ export function reportMarkdownFromState(s: StoreState, lang: AppLanguage = s.set
   );
 }
 
+/**
+ * One tab of the recording page as plain text / markdown — what "copy this
+ * page" puts on the clipboard. The replay tab is the transcript (speaker
+ * labels + timestamps). "" when the tab has nothing to copy yet.
+ */
+export function studyPageTextFromState(
+  s: StoreState,
+  tab: StudyTab,
+  lang: AppLanguage = s.settings.language,
+): string {
+  switch (tab) {
+    case "summary":
+      return s.brief?.trim() ?? "";
+    case "actions":
+      return buildActionItemsMarkdown(s.actionItems);
+    case "notes":
+      return meetingNotesOf(s.meetingContext);
+    case "context":
+      return meetingBackgroundOf(s.meetingContext);
+    case "delivery":
+      return buildDeliveryMarkdown(s.deliveryAssessment, lang);
+    case "replay":
+      return transcriptWithTimestamps(s.segments, s.speakerNames);
+  }
+}
+
 /** Copy the hand-off prompt; on success say what to do next and tick the step. */
 export async function copyHandoffPrompt(): Promise<boolean> {
   const s = useStore.getState();
@@ -89,7 +120,8 @@ export async function copyHandoffPrompt(): Promise<boolean> {
 }
 
 export interface HandoffState extends HandoffQuestions {
-  /** Anything to copy: spoken transcript, and not a read-only org copy. */
+  /** Anything to copy: a spoken transcript. A shared org recording copies too —
+   *  its plain transcript always could, and the prompt is that same text. */
   canCopy: boolean;
   copyPrompt: () => Promise<boolean>;
   /** Evaluated at click time so the export always reflects the live report. */
@@ -100,14 +132,13 @@ export function useHandoff(): HandoffState {
   const lang = useStore((s) => s.settings.language);
   const id = useStore((s) => s.replay?.id ?? s.loadedHistoryId ?? "");
   const title = useStore((s) => s.replay?.name ?? "");
-  const readOnly = useStore((s) => s.replayReadOnly);
   const hasSpoken = useStore((s) => hasSpokenSegment(s.segments));
   const { questions, mcpQuestions } = handoffQuestions({ id, title }, lang);
   const reportMarkdown = useCallback(() => reportMarkdownFromState(useStore.getState()), []);
   return {
     questions,
     mcpQuestions,
-    canCopy: hasSpoken && !readOnly,
+    canCopy: hasSpoken,
     copyPrompt: copyHandoffPrompt,
     reportMarkdown,
   };

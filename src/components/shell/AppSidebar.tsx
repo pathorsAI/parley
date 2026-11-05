@@ -88,7 +88,7 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
   // OWN their recordings (buildOwnershipIndex above is fed the whole list), so
   // putting one away can't dump what is inside it into 還沒歸檔.
   const liveFolders = tree.personalFolders.filter((f) => !isArchived(f));
-  // A recording just filed into a folder (the filing card's fly-in): its row
+  // A recording just filed into a folder (a suggested folder's fly-in): its row
   // flashes once so the eye lands on where the recording went.
   const pulsingFolder = usePulsingFolder();
   const archivedFolders = tree.personalFolders.filter(isArchived);
@@ -116,9 +116,13 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
   const startChord = command("meeting.start").keys.find((c) => !c.alias);
 
   const nav = (
-    // `bg-sidebar`, not `bg-background`: on macOS the token is translucent so
-    // the window's native sidebar material shows through.
-    <nav className="flex h-full min-h-0 w-full flex-col overflow-y-auto border-r border-sidebar-border bg-sidebar px-2 py-2 text-sidebar-foreground">
+    // No background of its own: the column around it (AppShell) paints
+    // `bg-sidebar` once — on macOS the token is translucent so the window's
+    // native sidebar material shows through, and a second layer would darken
+    // it. No right border: the shell's resize handle is the 1px line between
+    // the rail and the page, and a border of its own beside it drew that line
+    // twice as thick.
+    <nav className="flex h-full min-h-0 w-full flex-col overflow-y-auto px-2 py-2 text-sidebar-foreground">
       {/* Blue text, not a blue fill: the titlebar already carries the filled
           start button and Home repeats it as its hero, so a third filled
           control here would spend the whole accent budget on one action. */}

@@ -49,7 +49,7 @@ describe("leaveRecordingTo", () => {
     expect(s.librarySelection).toEqual(FOLDER);
     expect(s.replay).toBeNull();
     expect(s.loadedHistoryId).toBeNull();
-    expect(s.studyTab).toBe("report");
+    expect(s.studyTab).toBe("summary");
     // exitReplay passes through "home" inside the same synchronous turn; the
     // point is that nothing async sits between it and the library.
     expect(modes[modes.length - 1]).toBe("library");

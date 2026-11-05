@@ -1,11 +1,13 @@
 import { useMemo, type ReactNode } from "react";
 import { Clock, Loader2 } from "lucide-react";
-import { useStore } from "../../lib/store";
+import { isTrimmed, useStore } from "../../lib/store";
 import { useStudyArtifactDisplay } from "../../lib/analysis/studyPipeline";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useProsody } from "../../lib/analysis/useDelivery";
 import { syllablesPerMin, talkTimeRatio } from "../../lib/analysis/delivery";
-import { countFillerSounds } from "../../lib/analysis/fillerWords";
+import { computeSpeechStats } from "../../lib/analysis/speechStats";
+import { DeliveryReport } from "./DeliveryReport";
+import { paceBand } from "./bands";
 import { useI18n } from "../../i18n";
 import type { TranslationKey } from "../../i18n";
 import type {
@@ -42,18 +44,6 @@ const TONE_KEY: Record<ToneVerdict, TranslationKey> = {
   aggressive: "delivery.tone.aggressive",
   rude: "delivery.tone.rude",
 };
-
-/** Map a live speaking rate (syllables/sec ≈ value × 60 字/分) to a band label +
- *  whether it warrants a watch (warning) accent. Reference points for Mandarin:
- *  ~180 字/分 normal conversation, ~240–300 presentation, 300+ fast. The single
- *  tuning knob is `FAST_HZ`: lower it to make "too fast" trigger sooner.
- *  4.0/s ≈ 240 字/分 (upper-presentation — deliberately on the sensitive side). */
-const FAST_HZ = 4;
-function paceBand(hz: number): { key: TranslationKey; watch: boolean } {
-  if (hz > FAST_HZ) return { key: "delivery.pace.fast", watch: true };
-  if (hz >= 2) return { key: "delivery.pace.comfortable", watch: false };
-  return { key: "delivery.pace.slow", watch: false };
-}
 
 /** Shared label | bar | value grid for stacked {@link MeterRow}s. The label and
  *  value columns size to their longest content (no more hard-coded label width —
@@ -204,125 +194,6 @@ function DeliveryReadout({
   return null;
 }
 
-/** One stat tile of the full-variant replay scorecard. */
-function StatTile({
-  label,
-  value,
-  sub,
-  watch,
-}: Readonly<{ label: string; value: ReactNode; sub?: string; watch?: boolean }>) {
-  return (
-    <div className="rounded-lg border bg-muted/20 px-3 py-2">
-      <div className="text-[11px] font-semibold text-muted-foreground">
-        {label}
-      </div>
-      <div className={`mt-0.5 truncate text-base font-semibold tabular-nums ${watch ? "text-warning-foreground" : ""}`}>
-        {value}
-      </div>
-      {sub && (
-        <div className={`truncate text-[10px] ${watch ? "text-warning-foreground" : "text-muted-foreground"}`}>
-          {sub}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** One slice of the talk-volume strip. `startMs` doubles as its identity — the
- *  buckets tile a recording of at least 3 min into at most 60 slices, so no two
- *  ever start at the same offset. */
-interface TalkBucket {
-  startMs: number;
-  voicedMs: number;
-}
-
-/** Per-bucket voiced ms of the user's own speech across the recording — a cheap,
- *  fully local "where was I talking (a lot)" strip. Empty for short recordings
- *  (< 3 min) and when the session has no source-split "me" segments. */
-function talkVolumeBuckets(segments: TranscriptSegment[]): TalkBucket[] {
-  const spoken = segments.filter((s) => s.isFinal && s.source === "me" && s.text.trim());
-  if (spoken.length === 0) return [];
-  let endMs = 0;
-  for (const s of segments) if (s.isFinal && s.endMs > endMs) endMs = s.endMs;
-  if (endMs < 3 * 60_000) return [];
-  const count = Math.min(60, Math.ceil(endMs / 60_000));
-  const bucketMs = endMs / count;
-  const buckets: TalkBucket[] = Array.from({ length: count }, (_, i) => ({
-    startMs: Math.round(i * bucketMs),
-    voicedMs: 0,
-  }));
-  for (const s of spoken) {
-    const i = Math.min(count - 1, Math.floor(s.startMs / bucketMs));
-    buckets[i].voicedMs += Math.max(0, s.endMs - s.startMs);
-  }
-  return buckets;
-}
-
-function TalkVolumeStrip({ buckets, title }: Readonly<{ buckets: TalkBucket[]; title: string }>) {
-  const max = Math.max(...buckets.map((b) => b.voicedMs), 1);
-  return (
-    <div className="rounded-lg border bg-muted/20 p-3">
-      <div className="mb-2 text-[11px] font-semibold text-muted-foreground">
-        {title}
-      </div>
-      <div className="flex h-10 items-end gap-px">
-        {buckets.map((b) => (
-          <span
-            key={b.startMs}
-            className={`min-w-0 flex-1 rounded-t-sm ${b.voicedMs === max ? "bg-primary" : "bg-primary/50"}`}
-            style={{ height: `${Math.max(4, Math.round((b.voicedMs / max) * 100))}%` }}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/** Talk-share band: ≥65% of the talking reads as steamrolling, ≤35% as quiet. */
-function talkBand(me: number): { key: TranslationKey; watch: boolean } {
-  if (me >= 0.65) return { key: "delivery.talk.high", watch: true };
-  if (me <= 0.35) return { key: "delivery.talk.low", watch: false };
-  return { key: "delivery.talk.balanced", watch: false };
-}
-
-/** Everything the full-variant scorecard derives from the saved transcript. */
-interface LocalDeliveryStats {
-  ratio: ReturnType<typeof talkTimeRatio>;
-  fillers: number;
-  buckets: TalkBucket[];
-}
-
-/** Replay stats straight from the saved transcript — no model call. */
-function computeLocalStats(segments: TranscriptSegment[]): LocalDeliveryStats {
-  const ratio = talkTimeRatio(segments);
-  let fillers = 0;
-  for (const s of segments) {
-    if (s.isFinal && s.source === "me") fillers += countFillerSounds(s.text);
-  }
-  return { ratio, fillers, buckets: talkVolumeBuckets(segments) };
-}
-
-/** The pace tile's sub-label: the measured band when there is one, otherwise
- *  the LLM's coarse read, otherwise nothing. */
-function paceTileSub(
-  t: TFn,
-  measuredRate: number | null,
-  band: ReturnType<typeof paceBand> | null,
-  assessment: DeliveryAssessment | null,
-): string | undefined {
-  if (measuredRate && band) return `${t("delivery.unit.sylPerMin")} · ${t(band.key)}`;
-  if (assessment) return t(`delivery.pace.${assessment.pace}` as TranslationKey);
-  return undefined;
-}
-
-/** The tone tile's value: the verdict once assessed, a placeholder bar the
- *  height of the value line while the pass is queued or running, a dash when
- *  there is nothing to say. */
-function toneTileValue(t: TFn, assessment: DeliveryAssessment | null, pending: boolean): ReactNode {
-  if (assessment) return t(TONE_KEY[assessment.tone]);
-  return pending ? <Skeleton className="my-1 h-4 w-12" /> : "—";
-}
-
 /** The LLM read's placeholder, in the loaded readout's shape: tone row, the
  *  advisory line, fillers row, then a two-line summary. Same text sizes and
  *  gaps, so the box keeps its height when the assessment lands. */
@@ -349,16 +220,94 @@ function DeliveryReadoutSkeleton({ caption }: Readonly<{ caption: ReactNode }>) 
   );
 }
 
-/** Sharp and above warrants a warning tile. */
-function toneNeedsWatch(assessment: DeliveryAssessment | null): boolean {
-  if (!assessment) return false;
-  return assessment.tone === "sharp" || assessment.tone === "aggressive" || assessment.tone === "rude";
+
+/** One metric row: label | value | detail. Rows of a group share columns. */
+function ReportRow({
+  label,
+  value,
+  detail,
+  watch,
+}: Readonly<{ label: string; value: ReactNode; detail?: ReactNode; watch?: boolean }>) {
+  return (
+    <div className="col-span-3 grid grid-cols-subgrid items-center border-b border-border/60 py-2 text-xs last:border-b-0">
+      <span className="whitespace-nowrap text-muted-foreground">{label}</span>
+      <span className={`whitespace-nowrap font-semibold tabular-nums ${watch ? "text-warning-foreground" : ""}`}>
+        {value}
+      </span>
+      <span className="min-w-0 text-[11px] text-muted-foreground">{detail}</span>
+    </div>
+  );
 }
 
-/** The study tense's locally-computed scorecard (`variant="full"`). */
+/** 04 語氣與整體表達: the AI's tone verdict, its quote and its one-line read,
+ *  together — they are one judgement, so they sit in one group. */
+function ToneGroup({
+  t,
+  mode,
+  status,
+  running,
+  assessment,
+  pending,
+}: Readonly<{
+  t: TFn;
+  mode: "live" | "replay";
+  status: DeliveryStatus;
+  running: boolean;
+  assessment: DeliveryAssessment | null;
+  pending: boolean;
+}>) {
+  let body: ReactNode;
+  if (pending) {
+    body = (
+      <div className="col-span-3 flex flex-col gap-1.5 py-2 text-[11px]">
+        <DeliveryReadoutSkeleton
+          caption={
+            running ? (
+              <>
+                <Loader2 className="size-2.5 animate-spin" />
+                {t("delivery.card.analyzing")}
+              </>
+            ) : (
+              <>
+                <Clock className="size-2.5" />
+                {t("delivery.card.queued")}
+              </>
+            )
+          }
+        />
+      </div>
+    );
+  } else if (assessment) {
+    body = (
+      <>
+        <ReportRow
+          label={t("delivery.card.tone")}
+          value={<span className={toneClass(assessment.tone)}>{t(TONE_KEY[assessment.tone])}</span>}
+          detail={assessment.toneEvidence && <span className="italic">“{assessment.toneEvidence}”</span>}
+        />
+        {assessment.summary && (
+          <p className="col-span-3 pt-2 text-xs leading-relaxed text-foreground/85">{assessment.summary}</p>
+        )}
+        <p className="col-span-3 pt-1 text-[10px] text-muted-foreground/70">{t("delivery.card.tone.advisory")}</p>
+      </>
+    );
+  } else {
+    body = (
+      <div className="col-span-3 py-2 text-xs">
+        <DeliveryReadout mode={mode} status={status} running={running} assessment={null} t={t} />
+      </div>
+    );
+  }
+  return (
+    <div className="grid grid-cols-[max-content_max-content_minmax(0,1fr)] items-center gap-x-4">{body}</div>
+  );
+}
+
+/** The study tense's 評分 report (`variant="full"`): the transcript-derived
+ *  charts (DeliveryReport) with the AI's tone read as its last group. */
 function DeliveryScorecard({
   mode,
-  stats,
+  segments,
   measuredRate,
   assessment,
   status,
@@ -366,84 +315,27 @@ function DeliveryScorecard({
   t,
 }: Readonly<{
   mode: "live" | "replay";
-  stats: LocalDeliveryStats;
+  segments: TranscriptSegment[];
   measuredRate: number | null;
   assessment: DeliveryAssessment | null;
   status: DeliveryStatus;
   running: boolean;
   t: TFn;
 }>) {
-  const measuredBand = measuredRate ? paceBand(measuredRate) : null;
-  const ratioBand = stats.ratio ? talkBand(stats.ratio.me) : null;
-  // Queued (waiting on the findings pass) or running, with nothing to show yet:
-  // the LLM-backed slots hold placeholders instead of collapsing to one line.
+  const stats = useMemo(() => computeSpeechStats(segments), [segments]);
+  const ratio = useMemo(() => talkTimeRatio(segments), [segments]);
+  // Queued (waiting on the findings pass) or running, with nothing to show yet.
   const display = useStudyArtifactDisplay("delivery");
-  const queued = display === "queued";
-  const pending = !assessment && (running || queued);
+  const pending = !assessment && (running || display === "queued");
   return (
-    <div className="flex flex-col gap-3">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <StatTile
-          label={t("delivery.card.pace")}
-          value={measuredRate ? `${syllablesPerMin(measuredRate)}` : "—"}
-          sub={paceTileSub(t, measuredRate, measuredBand, assessment)}
-          watch={!!measuredBand?.watch}
-        />
-        {stats.ratio && ratioBand && (
-          <StatTile
-            label={t("delivery.card.talkRatio")}
-            value={`${Math.round(stats.ratio.me * 100)}%`}
-            sub={t(ratioBand.key)}
-            watch={ratioBand.watch}
-          />
-        )}
-        <StatTile
-          label={t("delivery.tile.fillers")}
-          value={`${stats.fillers}`}
-          sub={t("delivery.unit.times")}
-          watch={stats.fillers >= 10}
-        />
-        <StatTile
-          label={t("delivery.card.tone")}
-          value={toneTileValue(t, assessment, pending)}
-          sub={assessment?.toneEvidence ? `“${assessment.toneEvidence}”` : undefined}
-          watch={toneNeedsWatch(assessment)}
-        />
-      </div>
-
-      {stats.buckets.length > 0 && (
-        <TalkVolumeStrip buckets={stats.buckets} title={t("delivery.card.paceTimeline")} />
-      )}
-
-      <div className="rounded-lg border bg-muted/20 p-3">
-        <div className="mb-1.5 flex items-center justify-between">
-          <span className="text-xs font-semibold tracking-tight">{t("delivery.card.llmRead")}</span>
-          {status === "running" && assessment && (
-            <Loader2 className="size-3 animate-spin text-muted-foreground" />
-          )}
-        </div>
-        <div className="flex flex-col gap-1.5 text-[11px]">
-          {pending ? (
-            <DeliveryReadoutSkeleton
-              caption={
-                running ? (
-                  <>
-                    <Loader2 className="size-2.5 animate-spin" />
-                    {t("delivery.card.analyzing")}
-                  </>
-                ) : (
-                  <>
-                    <Clock className="size-2.5" />
-                    {t("delivery.card.queued")}
-                  </>
-                )
-              }
-            />
-          ) : (
-            <DeliveryReadout mode={mode} status={status} running={running} assessment={assessment} t={t} />
-          )}
-        </div>
-      </div>
+    <div className="@container">
+      <DeliveryReport
+        stats={stats}
+        ratio={ratio}
+        measuredRate={measuredRate}
+        assessment={assessment}
+        tone={<ToneGroup t={t} mode={mode} status={status} running={running} assessment={assessment} pending={pending} />}
+      />
     </div>
   );
 }
@@ -610,20 +502,23 @@ export function DeliveryPanel({
 
   const toggles: DeliveryToggles = { tone: toneOn, pace: paceOn, pitch: pitchOn, pauses: pausesOn };
   const full = variant === "full" && mode === "replay";
-  // Local replay stats (full variant only) — computed straight from the saved
-  // transcript, no model call. Ratio is null for diarized "mix" sessions.
-  const localStats = useMemo(() => (full ? computeLocalStats(segments) : null), [full, segments]);
+  const replayTrim = useStore((s) => s.replayTrim);
+  // Trimmed-away speech is left out, matching what the delivery pass reads.
+  const kept = useMemo(
+    () => (full ? segments.filter((s) => !isTrimmed(s, replayTrim)) : segments),
+    [full, segments, replayTrim],
+  );
 
   const hasMeasured = mode === "replay" && !!measuredRate;
   if (!full && !shouldShow(mode, toggles, status, assessment, hasMeasured)) return null;
 
   const running = status === "running" && !assessment;
 
-  if (full && localStats) {
+  if (full) {
     return (
       <DeliveryScorecard
         mode={mode}
-        stats={localStats}
+        segments={kept}
         measuredRate={measuredRate}
         assessment={assessment}
         status={status}

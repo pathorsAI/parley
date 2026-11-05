@@ -50,7 +50,7 @@ import { initHistoryPersistSync, listenForRecordingSaved, recoverCrashedMeetings
 import { endMeeting, recoverOrphanedMeeting } from "./lib/meeting/controls";
 import { initSilenceGuard } from "./lib/meeting/silenceGuard";
 import { initMeetingReminder } from "./lib/meeting/reminder";
-import { MeetingReminderCard } from "./components/MeetingReminderCard";
+import { initMeetingDetect } from "./lib/meeting/detectPrompt";
 import { listenForSystemWake } from "./lib/meeting/sleepWake";
 import { checkForUpdate } from "./lib/update";
 import {
@@ -242,6 +242,9 @@ const App = () => {
     // Opens the floating meeting window while a meeting records and keeps it
     // mirrored; this window keeps recording (main window only).
     const unMeetingWindow = initMeetingWindowHost();
+    // Asks whether to record when another app starts a call (main window
+    // only: this window records).
+    const unMeetingDetect = initMeetingDetect();
     return () => {
       listeners.dispose();
       unTemplates();
@@ -254,6 +257,7 @@ const App = () => {
       unSilenceGuard();
       unMeetingReminder();
       unMeetingWindow();
+      unMeetingDetect();
     };
   }, []);
 
@@ -465,7 +469,6 @@ const App = () => {
       <IngestWizard />
       <TranscriptImportDialog />
       <MeetingDraftSheet />
-      <MeetingReminderCard />
       {/* In the Tauri app the drilldown is its own OS window (see
           useFindingSolutionHost); in plain browser dev we fall back to the
           in-app overlay so the feature still works without multi-window. */}

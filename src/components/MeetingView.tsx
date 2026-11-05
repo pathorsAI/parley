@@ -5,7 +5,6 @@ import { SpeakerBar } from "./SpeakerBar";
 import { AnalysisTimeline } from "./analysis/AnalysisTimeline";
 import { selectAndSeek } from "./analysis/useAnalysis";
 import { runAnalysis } from "../lib/analysis/engine";
-import { findActiveTemplate } from "../lib/evaluations/presets";
 import { useStore, transcriptAsText, formatClock, meetingElapsedMs } from "../lib/store";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
@@ -48,9 +47,6 @@ export function MeetingView() {
   const recording = useStore((s) => s.meetingStatus === "recording");
   const meetingActive = useStore((s) => s.meetingStatus === "recording" || s.meetingStatus === "paused");
   const maxEndMs = useStore((s) => s.segments.reduce((m, x) => Math.max(m, x.endMs), 0));
-  const evalTemplates = useStore((s) => s.settings.evalTemplates);
-  const evaluations = useStore((s) => s.settings.evaluations);
-  const activeTemplate = findActiveTemplate(evalTemplates, evaluations);
 
   // Tick once a second so the axis right-edge advances while recording (a
   // pause freezes the elapsed value, so ticking through it is a no-op).
@@ -101,7 +97,6 @@ export function MeetingView() {
           selectedId={selectedId}
           onSelect={(e) => selectAndSeek(e, setHighlightMs)}
           onReanalyze={() => void runAnalysis({ mode: "live" })}
-          templateName={activeTemplate ? activeTemplate.name : t("timeline.templateCustom")}
         />
       )}
       <SpeakerBar />

@@ -143,7 +143,9 @@ describe("initSilenceGuard", () => {
     expect(mocks.invoke).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(SILENCE_GRACE_MS + 5_000);
-    expect(mocks.invoke.mock.calls).toEqual([["stop_meeting", { keepMs: 60_000 + TRIM_MARGIN_MS }]]);
+    expect(mocks.invoke.mock.calls).toEqual([
+      ["stop_meeting", { keepMs: 60_000 + TRIM_MARGIN_MS }],
+    ]);
     expect(useStore.getState().meetingStatus).toBe("stopped");
     expect(useStore.getState().silencePromptAt).toBeNull();
     expect(mocks.notify).toHaveBeenCalledTimes(1);

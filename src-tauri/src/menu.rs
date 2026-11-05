@@ -94,6 +94,15 @@ pub fn build<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     #[cfg(target_os = "macos")]
     let settings = command_item(handle, "global", "settings.open", "Settings…", "CmdOrCtrl+,")?;
 
+    // Undo / Redo are Parley's own items, not the predefined ones: the
+    // predefined ones go straight to the text system, so ⌘Z could never undo
+    // a transcript replace. The frontend hands a text field's undo back to
+    // the system through `native_edit` (src/lib/edit/undo.ts).
+    #[cfg(target_os = "macos")]
+    let undo = command_item(handle, "global", "edit.undo", "Undo", "CmdOrCtrl+Z")?;
+    #[cfg(target_os = "macos")]
+    let redo = command_item(handle, "global", "edit.redo", "Redo", "Shift+CmdOrCtrl+Z")?;
+
     #[cfg(target_os = "macos")]
     let zoom_in = command_item(handle, "global", "zoom.in", "Zoom In", "CmdOrCtrl+=")?;
     #[cfg(target_os = "macos")]
@@ -270,7 +279,13 @@ pub fn build<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<Menu<R>> {
                 "Edit",
                 true,
                 &[
+                    #[cfg(target_os = "macos")]
+                    &undo,
+                    #[cfg(target_os = "macos")]
+                    &redo,
+                    #[cfg(not(target_os = "macos"))]
                     &PredefinedMenuItem::undo(handle, None)?,
+                    #[cfg(not(target_os = "macos"))]
                     &PredefinedMenuItem::redo(handle, None)?,
                     &PredefinedMenuItem::separator(handle)?,
                     &PredefinedMenuItem::cut(handle, None)?,
@@ -401,6 +416,35 @@ fn route_command<R: Runtime>(app: &AppHandle<R>, rest: &str) {
 
     if let Err(e) = app.emit_to(label.as_str(), CMD_EVENT, command) {
         log::warn!("menu: emit {command} to {label} failed: {e}");
+    }
+}
+
+/// Edit › Undo / Redo for the focused text field: send `undo:` / `redo:` down
+/// the key window's responder chain, as the predefined menu items do. The
+/// frontend calls it when ⌘Z lands in a field (src/lib/edit/undo.ts). A no-op
+/// off macOS, where the webview never takes the chord from a field.
+#[tauri::command]
+pub(crate) fn native_edit<R: Runtime>(app: AppHandle<R>, action: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use objc::runtime::{Object, BOOL};
+        use objc::{class, msg_send, sel, sel_impl};
+        let selector = match action.as_str() {
+            "undo" => sel!(undo:),
+            "redo" => sel!(redo:),
+            other => return Err(format!("unknown edit action {other}")),
+        };
+        app.run_on_main_thread(move || unsafe {
+            let ns_app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
+            let nil: *mut Object = std::ptr::null_mut();
+            let _: BOOL = msg_send![ns_app, sendAction: selector to: nil from: nil];
+        })
+        .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, action);
+        Ok(())
     }
 }
 

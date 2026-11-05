@@ -247,3 +247,12 @@ describe("beginMeeting", () => {
     expect(startCalls()).toHaveLength(1);
   });
 });
+
+describe("beginMeeting's start cue (#607)", () => {
+  it("starts silently: no cue plays", async () => {
+    setup({ transcriptionProvider: "soniox", sonioxApiKey: "sk" });
+    await beginMeeting();
+    expect(startCalls()).toHaveLength(1);
+    expect(mocks.invoke.mock.calls.filter((c) => c[0] === "play_cue")).toEqual([]);
+  });
+});

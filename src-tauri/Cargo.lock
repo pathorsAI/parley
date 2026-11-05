@@ -3432,6 +3432,7 @@ dependencies = [
  "log",
  "nalgebra",
  "ndarray",
+ "notify-rust",
  "objc",
  "ogg",
  "ort",

@@ -7,6 +7,7 @@ import type { HistoryEntry } from "../history/types";
 import { analysisSignature } from "../analysis/lens";
 import { inFlightStagesFor } from "../analysis/runRegistry";
 import { log } from "../log";
+import { foldSegmentTexts } from "../replay/findReplace";
 import { CLEARED_STUDY_SLICE, restoredStudyStatuses } from "./study";
 import type { ReplayTrim, SliceCreator } from "./types";
 
@@ -30,6 +31,10 @@ export interface ReplaySlice {
   /** Update the loaded recording's display name (after a rename persisted via
    *  renameHistoryEntry) so the replay header reflects it immediately. */
   renameReplay: (title: string) => void;
+  /** Give the open recording its audio once it has downloaded — an org
+   *  recording opens before its audio arrives. Ignored once another recording
+   *  is open. */
+  attachReplayAudio: (id: string, audioPath: string, audioSrc: string) => void;
   /** True while a READ-ONLY (org-shared) recording is loaded. Its generated study
    *  outputs can't be written back to the shared entry, so they persist into the
    *  local {@link import("../history/studyCache").writeStudyCache} instead —
@@ -41,6 +46,11 @@ export interface ReplaySlice {
    *  recording is filed without a History-window round trip. */
   replayFolderId: string | null;
   setReplayFolderId: (id: string | null) => void;
+  /** Where a read-only org recording lives — its org and org folder (null =
+   *  the org's root) — so the page shows that instead of "not filed". Null for
+   *  every personal recording. */
+  replayOrgPlace: { orgName: string; folderName: string | null } | null;
+  setReplayOrgPlace: (place: { orgName: string; folderName: string | null } | null) => void;
   /** Scrub position (ms) in replay mode — drives audio + transcript highlight. */
   replayPlayheadMs: number;
   /** Load an uploaded recording and switch into replay mode. */
@@ -76,6 +86,18 @@ export interface ReplaySlice {
    *  items land together, the keep-window clears, and the playhead and
    *  selection reset — one update. */
   applyTrimmedRecording: (trimmed: TrimmedRecording) => void;
+
+  /** Replay id of the recording whose transcript text was edited (find &
+   *  replace) in this session — its summary, action items and findings were
+   *  generated from the old text. Drives the transcript's "outputs are stale"
+   *  notice; cleared when another recording opens or "regenerate all" runs.
+   *  Session-only: never persisted. */
+  transcriptEditedId: string | null;
+  /** Land an edited transcript: the on-screen `segments` and the session's
+   *  own `replay.segments` take the new TEXT together (by segment id, so the
+   *  two copies stay consistent), and the recording is marked edited. */
+  applyTranscriptEdit: (segments: TranscriptSegment[]) => void;
+  clearTranscriptEdited: () => void;
 }
 
 export const createReplaySlice: SliceCreator<ReplaySlice> = (set) => ({
@@ -83,14 +105,19 @@ export const createReplaySlice: SliceCreator<ReplaySlice> = (set) => ({
   loadedHistoryId: null,
   replayReadOnly: false,
   replayFolderId: null,
+  replayOrgPlace: null,
   replayPlayheadMs: 0,
   replaySeekNonce: 0,
   replayTrim: null,
+  transcriptEditedId: null,
 
   setLoadedHistoryId: (loadedHistoryId) => set({ loadedHistoryId }),
   setReplayFolderId: (replayFolderId) => set({ replayFolderId }),
+  setReplayOrgPlace: (replayOrgPlace) => set({ replayOrgPlace }),
   renameReplay: (title) =>
     set((s) => (s.replay ? { replay: { ...s.replay, name: title } } : {})),
+  attachReplayAudio: (id, audioPath, audioSrc) =>
+    set((s) => (s.replay?.id === id ? { replay: { ...s.replay, audioPath, audioSrc } } : {})),
 
   enterReplay: (session) => {
     log.info("store: enter replay", {
@@ -105,10 +132,12 @@ export const createReplaySlice: SliceCreator<ReplaySlice> = (set) => ({
       loadedHistoryId: null,
       replayReadOnly: false,
       replayFolderId: null,
+      replayOrgPlace: null,
       // Start at the beginning of the recording (the full transcript always
       // shows now — no masking); the playhead is just for playback/navigation.
       replayPlayheadMs: 0,
       replayTrim: null,
+      transcriptEditedId: null,
       segments: session.segments,
       speakerNames: session.speakerNames,
       meetingStatus: "stopped",
@@ -138,9 +167,11 @@ export const createReplaySlice: SliceCreator<ReplaySlice> = (set) => ({
       loadedHistoryId: readOnly ? null : entry.id,
       replayReadOnly: readOnly,
       replayFolderId: readOnly ? null : entry.folderId ?? null,
+      replayOrgPlace: null,
       replayPlayheadMs: 0,
       replaySeekNonce: state.replaySeekNonce + 1,
       replayTrim: null,
+      transcriptEditedId: null,
       ingestWizardOpen: false,
       ingestAudioPath: null,
       segments: entry.segments,
@@ -177,8 +208,10 @@ export const createReplaySlice: SliceCreator<ReplaySlice> = (set) => ({
       loadedHistoryId: null,
       replayReadOnly: false,
       replayFolderId: null,
+      replayOrgPlace: null,
       replayPlayheadMs: 0,
       replayTrim: null,
+      transcriptEditedId: null,
       ingestWizardOpen: false,
       ingestAudioPath: null,
       segments: [],
@@ -203,4 +236,12 @@ export const createReplaySlice: SliceCreator<ReplaySlice> = (set) => ({
       replayPlayheadMs: 0,
       selectedFindingId: null,
     }),
+
+  applyTranscriptEdit: (segments) =>
+    set((s) => ({
+      segments,
+      replay: s.replay ? { ...s.replay, segments: foldSegmentTexts(s.replay.segments, segments) } : s.replay,
+      transcriptEditedId: s.replay?.id ?? null,
+    })),
+  clearTranscriptEdited: () => set({ transcriptEditedId: null }),
 });

@@ -184,6 +184,22 @@ const TABLE = [
     keys: [{ ...MOD, key: "0", native: "CmdOrCtrl+0" }],
     labelKey: "cmd.zoom.reset",
   },
+  // Edit › Undo / Redo. In a text field they are its own undo; elsewhere they
+  // step Parley's edits (the transcript's replace). See lib/edit/undo.ts.
+  {
+    id: "edit.undo",
+    group: "global",
+    scope: "global",
+    keys: [{ ...MOD, key: "z", native: "CmdOrCtrl+Z" }],
+    labelKey: "cmd.edit.undo",
+  },
+  {
+    id: "edit.redo",
+    group: "global",
+    scope: "global",
+    keys: [{ ...MOD, shift: true, key: "z", native: "Shift+CmdOrCtrl+Z" }],
+    labelKey: "cmd.edit.redo",
+  },
 
   // ── navigation (main window) ────────────────────────────────────────────
   {
@@ -320,6 +336,16 @@ const TABLE = [
     keys: [{ ...MOD, key: "f" }],
     labelKey: "cmd.replay.find",
     // Must keep working once the find field it opens has focus.
+    whileTyping: true,
+  },
+  {
+    id: "replay.replace",
+    group: "replay",
+    scope: "replay",
+    // ⌥⌘F / Ctrl+Alt+F — the find-and-replace chord of VS Code and Xcode.
+    keys: [{ ...MOD, alt: true, key: "f" }],
+    labelKey: "cmd.replay.replace",
+    // Same as find: it re-targets the bar while one of its fields has focus.
     whileTyping: true,
   },
 

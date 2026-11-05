@@ -8,7 +8,6 @@ import { toast } from "sonner";
 import { useI18n } from "../../i18n";
 import { useStore, hasSpokenSegment } from "../../lib/store";
 import { isTauri } from "../../lib/tauriEvents";
-import { findActiveTemplate } from "../../lib/evaluations/presets";
 import { analysisSignature, hasSides, lensOf } from "../../lib/analysis/lens";
 import { useStudyArtifactDisplay } from "../../lib/analysis/studyPipeline";
 import { TranscriptCopyMenu } from "../TranscriptCopyMenu";
@@ -83,7 +82,6 @@ export function ReplayScreen() {
   const analysisStatus = useStore((s) => s.analysisStatus);
   const analysisError = useStore((s) => s.analysisError);
   const selectedId = useStore((s) => s.selectedFindingId);
-  const evalTemplates = useStore((s) => s.settings.evalTemplates);
   const evaluations = useStore((s) => s.settings.evaluations);
   const analyzedEvalSig = useStore((s) => s.analyzedEvalSig);
   const meetingKind = useStore((s) => s.meetingKind);
@@ -103,7 +101,6 @@ export function ReplayScreen() {
   }
 
   // Which eval template is active, and whether the findings predate an eval change.
-  const activeTemplate = findActiveTemplate(evalTemplates, evaluations);
   const templateStale =
     findings.length > 0 &&
     analysisStatus === "done" &&
@@ -189,7 +186,6 @@ export function ReplayScreen() {
         playheadMs={playheadMs}
         selectedId={selectedId}
         onSelect={(e) => selectAndSeek(e, player.seek)}
-        templateName={activeTemplate ? activeTemplate.name : t("timeline.templateCustom")}
         stale={templateStale}
         pending={findings.length === 0 && (findingsDisplay === "running" || findingsDisplay === "queued")}
         expectSides={hasSides(lensOf(meetingKind))}
@@ -203,8 +199,10 @@ export function ReplayScreen() {
       >
         <ResizablePanel id="transcript" defaultSize={62} minSize={32}>
           <div className="flex h-full min-h-0 flex-col">
-            <div className="flex h-9 shrink-0 items-center justify-between border-b px-4">
-              <span className="text-xs font-medium text-foreground">{t("replay.transcript")}</span>
+            {/* Same height and title weight as the 時間軸分析 header beside it
+                (FindingsPanel), so the two bars read as one line. */}
+            <div className="flex h-10 shrink-0 items-center justify-between border-b px-4">
+              <span className="text-xs font-semibold text-foreground">{t("replay.transcript")}</span>
               <TranscriptCopyMenu
                 segments={segments}
                 speakerNames={speakerNames}

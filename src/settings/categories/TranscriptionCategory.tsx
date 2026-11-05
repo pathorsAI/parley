@@ -16,10 +16,12 @@ import { LocalSttModelPicker } from "../../components/LocalSttModelPicker";
 import { SttCredentialField } from "../../components/SttCredentialField";
 import { useI18n, type TranslationKey } from "../../i18n";
 import { Field, Section } from "../fields";
+import { MeetingDetectField } from "../MeetingDetectField";
 import type { ProviderListing, SettingsPanelProps } from "./types";
 
 /** Settings › Transcription: STT provider + credential, speaker model,
- *  microphone (with a live test) and the delivery-coaching toggles. */
+ *  microphone (with a live test), the call prompt and the delivery-coaching
+ *  toggles. */
 export function TranscriptionCategory({
   settings,
   patch,
@@ -152,6 +154,9 @@ export function TranscriptionCategory({
           </p>
         </div>
       </Field>
+
+      {/* Ask to record when another app starts a call (#606). */}
+      <MeetingDetectField settings={settings} patch={patch} />
 
       {/* Live delivery coaching (issue #22): mic-only pace/pitch/pause/tone. */}
       <div className="flex max-w-md flex-col gap-2 rounded-lg border p-3">

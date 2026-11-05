@@ -66,15 +66,57 @@ function prepFromDraft(d: MeetingDraft) {
   };
 }
 
-/** Drafts in the order 即將開始 lists them: timed ones soonest first, then
- *  the untimed ones, newest first. Pure. */
-export function sortDrafts(drafts: readonly MeetingDraft[]): MeetingDraft[] {
+/** Drafts in the order the draft lists show them: timed ones soonest first,
+ *  then the untimed ones, newest first. Given `now`, a meeting whose time has
+ *  already gone by (see isOver) drops below both, the latest first, so the
+ *  next meeting to start is always on top. Pure. */
+export function sortDrafts(drafts: readonly MeetingDraft[], now?: number): MeetingDraft[] {
+  const rank = (d: MeetingDraft) => {
+    if (d.meetingAt == null) return 1;
+    return now != null && isOver(d, now) ? 2 : 0;
+  };
   return [...drafts].sort((a, b) => {
-    if (a.meetingAt != null && b.meetingAt != null) return a.meetingAt - b.meetingAt;
-    if (a.meetingAt != null) return -1;
-    if (b.meetingAt != null) return 1;
+    const r = rank(a) - rank(b);
+    if (r !== 0) return r;
+    if (a.meetingAt != null && b.meetingAt != null) {
+      return rank(a) === 2 ? b.meetingAt - a.meetingAt : a.meetingAt - b.meetingAt;
+    }
     return b.updatedAt - a.updatedAt;
   });
+}
+
+/** The end of a draft's meeting: its end time, or an hour after it starts. */
+function endOf(d: MeetingDraft & { meetingAt: number }): number {
+  return d.meetingEndAt ?? d.meetingAt + STARTING_SOON_MS;
+}
+
+/** Has this draft's meeting come and gone? Untimed drafts never have. Pure. */
+export function isOver(d: MeetingDraft, now: number): boolean {
+  return d.meetingAt != null && endOf({ ...d, meetingAt: d.meetingAt }) <= now;
+}
+
+/** How far ahead 總覽's 即將開始的會議 looks: a meeting moves up there an
+ *  hour before it starts. */
+export const STARTING_SOON_MS = 60 * 60_000;
+
+/** Is this draft's meeting about to start (within STARTING_SOON_MS) or under
+ *  way? A meeting without an end time counts as running for an hour. Pure. */
+export function isStartingSoon(d: MeetingDraft, now: number): boolean {
+  if (d.meetingAt == null) return false;
+  return d.meetingAt <= now + STARTING_SOON_MS && !isOver(d, now);
+}
+
+/** Drafts destined for this org — its root or any of its folders. Only a
+ *  draft's own org pick counts: one that rides the settings-wide default
+ *  share has no org of its own. Pure. */
+export function draftsForOrg(drafts: readonly MeetingDraft[], orgId: string): MeetingDraft[] {
+  return drafts.filter((d) => typeof d.meetingOrgShare === "object" && d.meetingOrgShare?.orgId === orgId);
+}
+
+/** Where a new draft opened from somewhere specific (an org's page) starts. */
+export interface DraftPreset {
+  orgId: string;
+  folderId: string | null;
 }
 
 export interface PrepSlice {
@@ -122,7 +164,10 @@ export interface PrepSlice {
   /** The meeting-draft sheet is open: the prep below, filled in before
    *  recording ("新增會議草稿"). UI state only; not part of the draft itself. */
   draftOpen: boolean;
-  setDraftOpen: (open: boolean) => void;
+  /** Open or close the sheet. `preset` points a new draft at an org (how an
+   *  org's page opens it); without one the prep's own destination stands, as
+   *  總覽 opens it. Ignored while a saved draft is being edited. */
+  setDraftOpen: (open: boolean, preset?: DraftPreset) => void;
   /** Principled-negotiation setup for THIS deal (per-meeting, not global). Feeds
    *  BATNA / ZOPA / walk-away reasoning in the analysis. */
   meetingBatna: string;
@@ -191,13 +236,21 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
   drafts: [],
   editingDraftId: null,
   draftOpen: false,
-  setDraftOpen: (draftOpen) =>
+  setDraftOpen: (draftOpen, preset) =>
     set((s) => {
       // The sheet edits the prep fields, which belong to the live meeting
       // while one runs: a new draft waits for it to end.
       if (draftOpen && isMeetingActive(s.meetingStatus)) {
         notify.message(translate(s.settings.language, "draft.lockedWhileRecording"));
         return {};
+      }
+      // "copy" is what a per-meeting org pick defaults to elsewhere
+      // (useMeetingDestination, the settings default share).
+      if (draftOpen && preset && s.editingDraftId == null) {
+        return {
+          draftOpen,
+          meetingOrgShare: { orgId: preset.orgId, folderId: preset.folderId, mode: "copy" as const },
+        };
       }
       return { draftOpen };
     }),
