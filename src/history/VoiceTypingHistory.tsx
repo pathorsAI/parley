@@ -4,6 +4,7 @@ import { Copy, Mic, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { useI18n } from "../i18n";
 import { log } from "../lib/log";
 import { useStore } from "../lib/store";
+import { useCommandShortcut } from "../lib/commands/bind";
 import { shortcutCaps } from "../lib/voiceTyping/caps";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,6 +36,12 @@ export function VoiceTypingHistory({ locale }: Readonly<{ locale: string }>) {
   const voiceTypingShortcut = useStore((s) => s.settings.voiceTypingShortcut);
   const [entries, setEntries] = useState<VoiceEntry[] | null>(null);
   const [query, setQuery] = useState("");
+  // ⌘F: this page's search box (the library's own binding stands down here).
+  const searchRef = useRef<HTMLInputElement>(null);
+  useCommandShortcut("library.find", () => {
+    searchRef.current?.focus();
+    searchRef.current?.select();
+  });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   /** The correction an edit just revealed, offered on the row that produced it. */
@@ -370,6 +377,7 @@ export function VoiceTypingHistory({ locale }: Readonly<{ locale: string }>) {
           <div className="relative mb-3 max-w-sm">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input
+              ref={searchRef}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder={t("history.voiceTyping.search")}

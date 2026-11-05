@@ -65,7 +65,7 @@ describe("command registry", () => {
   });
 
   it("partitions the table by scope", () => {
-    const scoped = (["global", "main", "library", "study", "replay"] as const).flatMap((s) =>
+    const scoped = (["global", "main", "library", "study", "replay", "settings", "tabs"] as const).flatMap((s) =>
       commandsInScope(s)
     );
     expect(scoped.length).toBe(COMMANDS.length);
@@ -80,6 +80,7 @@ describe("command registry", () => {
     expect(scopesOverlap("replay", "study")).toBe(true);
     expect(scopesOverlap("replay", "main")).toBe(true);
     expect(scopesOverlap("library", "global")).toBe(true);
+    expect(scopesOverlap("settings", "library")).toBe(false);
   });
 
   it("only shadows enclosing commands it shares a chord with", () => {
@@ -96,14 +97,22 @@ describe("command registry", () => {
     }
   });
 
-  it("gives the study page's tabs ⌘1 and ⌘← there, and leaves ⌘[ to Back", () => {
-    const onStudy = ["global", "main", "study"] as const;
+  it("gives a tab strip ⌘1 and ⌘← while it is up, and leaves ⌘[ to Back", () => {
+    const onStudy = ["global", "main", "study", "tabs"] as const;
     expect(shadowedChordKeys(command("nav.home"), onStudy)).toContain(chordKey({ mod: true, key: "1" }));
     const back = shadowedChordKeys(command("nav.back"), onStudy);
     expect(back).toContain(chordKey({ mod: true, key: "ArrowLeft" }));
     expect(back).not.toContain(chordKey({ mod: true, key: "[" }));
     // Off the study page nothing is taken over.
     expect(shadowedChordKeys(command("nav.home"), ["global", "main", "library"]).size).toBe(0);
+  });
+
+  it("treats a tab strip as live beside any screen", () => {
+    // It can sit on the study page, 語境庫, the meeting window or Settings, so
+    // a chord it claims must collide with every other scope's.
+    for (const s of ["global", "main", "library", "study", "replay", "settings"] as const) {
+      expect(scopesOverlap("tabs", s), s).toBe(true);
+    }
   });
 
   it("only puts the display-only ⌃ on rows the webview never binds", () => {

@@ -30,10 +30,13 @@ import type { TranslationKey } from "../../i18n/messages";
  * `global`  — every window, installed before React mounts.
  * `main`    — the main window's shell (so: not Settings, not the Field Log).
  * `library` — only while the library grid is on screen.
- * `study`   — only while a recording's study page (its tabs) is on screen.
+ * `study`   — only while a recording's study page is on screen.
  * `replay`  — only while the 回放 tab's workbench is on screen.
+ * `settings` — the Settings window.
+ * `tabs`    — while a tab strip is on screen, in any window: the study page,
+ *             語境庫, the meeting window, Settings' categories.
  */
-export type CommandScope = "global" | "main" | "library" | "study" | "replay";
+export type CommandScope = "global" | "main" | "library" | "study" | "replay" | "settings" | "tabs";
 
 /**
  * Each scope's enclosing scope. Library and study are SIBLINGS — the main
@@ -48,6 +51,10 @@ const PARENT_SCOPE: Record<CommandScope, CommandScope | null> = {
   library: "main",
   study: "main",
   replay: "study",
+  settings: "global",
+  // Nominally inside `main`, but see scopesOverlap: a tab strip can sit on any
+  // screen of any window, so it is treated as overlapping every scope.
+  tabs: "main",
 };
 
 /** `inner` is `outer` or sits inside it. */
@@ -58,6 +65,7 @@ function within(inner: CommandScope, outer: CommandScope): boolean {
 
 /** Two scopes can be live at the same moment. */
 export function scopesOverlap(a: CommandScope, b: CommandScope): boolean {
+  if (a === "tabs" || b === "tabs") return true;
   return within(a, b) || within(b, a);
 }
 
@@ -374,42 +382,59 @@ const TABLE = [
     labelKey: "cmd.view.toggleSidebar",
   },
   // Safari's and Chrome's next/previous tab, for the study page's tabs.
+  // The same three keys for EVERY tab strip — the study page's tabs, 語境庫's,
+  // the meeting window's, Settings' categories — so there is one thing to
+  // learn. Whichever strip is on screen claims them (lib/commands/tabs.ts).
   {
-    id: "study.selectTab",
+    id: "tabs.select",
     group: "nav",
-    scope: "study",
-    // ⌘1 is the first tab, ⌘2 the second… — a browser's tab keys. There are
-    // at most six tabs. ⌘1–⌘3 go Home / Library / the recording elsewhere.
-    keys: ["1", "2", "3", "4", "5", "6"].map((key) => ({ ...MOD, key })),
-    labelKey: "cmd.study.selectTab",
+    scope: "tabs",
+    // ⌘1 is the first tab, ⌘2 the second… — a browser's tab keys. Elsewhere
+    // ⌘1–⌘3 go Home / Library / the recording.
+    keys: ["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((key) => ({ ...MOD, key })),
+    labelKey: "cmd.tabs.select",
     shadows: ["nav.home", "nav.library", "nav.study"],
     range: true,
+    // A digit with ⌘ types nothing, so it may switch tabs from inside a field
+    // (the meeting window's notes box, say).
+    whileTyping: true,
   },
   {
-    id: "study.prevTab",
+    id: "tabs.prev",
     group: "nav",
-    scope: "study",
+    scope: "tabs",
     keys: [
       { ...MOD, key: "ArrowLeft" },
       { ...MOD, shift: true, key: "[" },
       // With shift held most layouts report the shifted character instead.
       { ...MOD, shift: true, key: "{", alias: true },
     ],
-    labelKey: "cmd.study.prevTab",
-    // ⌘← is Back elsewhere; here ⌘[ (and the mouse's side button) still are.
+    labelKey: "cmd.tabs.prev",
+    // ⌘← is Back elsewhere; under a tab strip ⌘[ (and the mouse's side
+    // button) still are. Not while typing: in a field ⌘← is line start.
     shadows: ["nav.back"],
   },
   {
-    id: "study.nextTab",
+    id: "tabs.next",
     group: "nav",
-    scope: "study",
+    scope: "tabs",
     keys: [
       { ...MOD, key: "ArrowRight" },
       { ...MOD, shift: true, key: "]" },
       { ...MOD, shift: true, key: "}", alias: true },
     ],
-    labelKey: "cmd.study.nextTab",
+    labelKey: "cmd.tabs.next",
     shadows: ["nav.forward"],
+  },
+
+  // ── settings window ─────────────────────────────────────────────────────
+  {
+    id: "settings.find",
+    group: "nav",
+    scope: "settings",
+    keys: [{ ...MOD, key: "f" }],
+    labelKey: "cmd.settings.find",
+    whileTyping: true,
   },
 
   // ── library ─────────────────────────────────────────────────────────────

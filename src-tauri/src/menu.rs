@@ -396,16 +396,15 @@ fn route_command<R: Runtime>(app: &AppHandle<R>, rest: &str) {
         // whichever one the user is looking at. Broadcasting would be wrong,
         // not merely wasteful: page zoom is per-window, so ⌘= from the menu
         // would resize every open window at once.
-        //
-        // Found by scanning rather than via `get_focused_window()`, which sits
-        // behind Tauri's `unstable` feature — not worth turning that on for one
-        // lookup over a handful of windows.
-        "global" => app
-            .webview_windows()
-            .into_iter()
-            .find(|(_, win)| win.is_focused().unwrap_or(false))
-            .map(|(label, _)| label)
-            .unwrap_or_else(|| MAIN_WINDOW.to_string()),
+        "global" => focused_label(app).unwrap_or_else(|| MAIN_WINDOW.to_string()),
+        // Main-window commands go to the window in FRONT when that is another
+        // Parley window: its tab strip may have taken the chord over (⌘1 picks
+        // Settings' first category, as it picks the study page's first tab).
+        // That window hands anything it doesn't take on to the main window
+        // and brings it forward (runCommand in src/lib/commands/bind.ts).
+        "main" if focused_label(app).is_some_and(|l| l != MAIN_WINDOW) => {
+            focused_label(app).unwrap_or_else(|| MAIN_WINDOW.to_string())
+        }
         // Only the main window's shell can navigate or start a meeting. Bring it
         // forward first: picking "Go → Home" from the Settings window should
         // show you the result, not change something behind your back.
@@ -428,6 +427,18 @@ fn route_command<R: Runtime>(app: &AppHandle<R>, rest: &str) {
     if let Err(e) = app.emit_to(label.as_str(), CMD_EVENT, command) {
         log::warn!("menu: emit {command} to {label} failed: {e}");
     }
+}
+
+/// The label of the Parley window in front, if any.
+///
+/// Found by scanning rather than via `get_focused_window()`, which sits behind
+/// Tauri's `unstable` feature — not worth turning that on for one lookup over
+/// a handful of windows.
+fn focused_label<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
+    app.webview_windows()
+        .into_iter()
+        .find(|(_, win)| win.is_focused().unwrap_or(false))
+        .map(|(label, _)| label)
 }
 
 /// Edit › Undo / Redo for the focused text field: send `undo:` / `redo:` down

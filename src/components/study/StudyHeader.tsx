@@ -4,7 +4,7 @@ import { AskYourAi } from "./AskYourAi";
 import { toast } from "sonner";
 import { transcriptAsText, useStore } from "../../lib/store";
 import { STUDY_TABS, type StudyTab } from "../../lib/store/study";
-import { useCommandShortcut } from "../../lib/commands/bind";
+import { useTabShortcuts } from "../../lib/commands/tabs";
 import { renameLoadedRecording, renameTarget } from "../../lib/replay/rename";
 import { studyPageTextFromState, useHandoff } from "../../lib/onboarding/useHandoff";
 import { useTypewriter } from "../../lib/onboarding/motion";
@@ -256,18 +256,8 @@ function StudyTabs({
     (id) => (id !== "notes" || notesCount > 0) && (id !== "context" || hasContext)
   );
   const counts: Partial<Record<StudyTab, number>> = { actions: actionCount, notes: notesCount };
-  // ⌘← / ⌘→ and ⇧⌘[ / ⇧⌘]: the previous / next tab, wrapping at either end.
-  const step = (dir: 1 | -1) => {
-    const at = Math.max(0, tabs.indexOf(tab));
-    setStudyTab(tabs[(at + dir + tabs.length) % tabs.length]);
-  };
-  // ⌘1–⌘6: the Nth tab, as in a browser. A number past the last tab does nothing.
-  useCommandShortcut("study.selectTab", (e) => {
-    const n = Number(e.key);
-    if (Number.isInteger(n) && n >= 1 && n <= tabs.length) setStudyTab(tabs[n - 1]);
-  });
-  useCommandShortcut("study.prevTab", () => step(-1));
-  useCommandShortcut("study.nextTab", () => step(1));
+  // ⌘1–⌘9, ⌘← / ⌘→: the app-wide tab keys (lib/commands/tabs.ts).
+  useTabShortcuts(tabs, tab, setStudyTab);
 
   return (
     <div role="tablist" aria-label={t("study.tabs")} className="mt-2 flex items-end gap-5">

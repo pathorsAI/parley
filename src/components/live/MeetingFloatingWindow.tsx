@@ -47,6 +47,7 @@ import { useMeetingDestination } from "../useMeetingDestination";
 import { CoachFeed } from "./CoachFeed";
 import { LiveBanners } from "./LiveScreen";
 import { ASK_SUGGESTIONS, useCoachAsk } from "./coachAsk";
+import { useTabShortcuts } from "../../lib/commands/tabs";
 
 type Tab = "notes" | "transcript" | "coach";
 
@@ -184,6 +185,9 @@ function MiniNotes() {
     />
   );
 }
+
+/** Left to right, in both layouts. */
+const TAB_ORDER: readonly Tab[] = ["notes", "transcript", "coach"];
 
 const MINI_TABS: { tab: Tab; icon: typeof Captions }[] = [
   // The full window's order, left to right.
@@ -644,6 +648,8 @@ export function MeetingFloatingWindow() {
   const setHighlightMs = useStore((s) => s.setHighlightMs);
   const coachCount = useStore((s) => s.findings.length) + useCoachAsk((s) => s.cards.length);
   const [tab, setTab] = useState<Tab>("transcript");
+  // ⌘1–⌘3 / ⌘← ⌘→ in both layouts — the mini strip shares this state.
+  useTabShortcuts(TAB_ORDER, tab, setTab);
   const [bgOpen, setBgOpen] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [mini, setMini] = useState(false);

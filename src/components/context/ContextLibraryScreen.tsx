@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { TermsTab } from "./TermsTab";
+import { useTabShortcuts } from "../../lib/commands/tabs";
 
 type ContextTab = "terms" | "speaker";
 
@@ -30,9 +31,13 @@ type ContextTab = "terms" | "speaker";
  * The open tab is plain component state: coming back to the page starts on
  * 常用詞, the one most visits are for.
  */
+/** The tabs in strip order, for ⌘1 / ⌘2 and ⌘← / ⌘→. */
+const CONTEXT_TABS: readonly ContextTab[] = ["terms", "speaker"];
+
 export function ContextLibraryScreen() {
   const { t } = useI18n();
   const [tab, setTab] = useState<ContextTab>("terms");
+  useTabShortcuts(CONTEXT_TABS, tab, setTab);
 
   return (
     <>

@@ -87,10 +87,15 @@ export function LibraryScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   const searchRef = useRef<HTMLInputElement>(null);
   useCommandScope("library");
   // ⌘F: the search box, selected so typing replaces the last query.
-  useCommandShortcut("library.find", () => {
-    searchRef.current?.focus();
-    searchRef.current?.select();
-  });
+  useCommandShortcut(
+    "library.find",
+    () => {
+      searchRef.current?.focus();
+      searchRef.current?.select();
+    },
+    // 語音輸入記錄 has its own search box and binds ⌘F itself.
+    { enabled: selection.kind !== "voice" }
+  );
   const [busyId, setBusyId] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   // The recording being opened: its row spins, and clicks while it loads don't

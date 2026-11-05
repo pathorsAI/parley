@@ -39,7 +39,6 @@ export function StudyScreen({ libraryCount = 0 }: Readonly<{ libraryCount?: numb
   const notes = useStore((s) => meetingNotesOf(s.meetingContext));
   const background = useStore((s) => meetingBackgroundOf(s.meetingContext));
   const lap = useLapState({ gettingStarted, entryId, readOnly, libraryCount });
-  // ⇧⌘[ / ⇧⌘] (bound by the tab strip) are live only on this page.
   useCommandScope("study");
   // Kept tabs belong to one recording; another one starts them afresh.
   const replayId = useStore((st) => st.replay?.id ?? null);

@@ -143,7 +143,15 @@ export function runCommand(id: CommandId): void {
   // The menu bar names the OUTER command (Go › Home for ⌘1) even where an inner
   // one has taken the chord over (the study page's first tab), because AppKit
   // matched the chord before the webview saw it. Hand it to the inner one.
-  if (runShadowing(command(id))) return;
+  const def = command(id);
+  if (runShadowing(def)) return;
+  // The menu bar delivers to the window in FRONT (src-tauri/src/menu.rs), so a
+  // tab strip there can take ⌘1 over. A main-window command it didn't take —
+  // Go › Home from Settings — is passed on to the main window, as before.
+  if (def.scope === "main" && !scopeSnapshot.includes("main")) {
+    void forwardToMainWindow(id);
+    return;
+  }
   const own = HANDLERS[id];
   if (own) {
     own();
@@ -161,6 +169,27 @@ export function runCommand(id: CommandId): void {
   // one rather than making every owner accept `undefined`.
   owned(new KeyboardEvent("keydown"));
 }
+
+/** Run `id` in the main window and bring it forward. */
+async function forwardToMainWindow(id: CommandId): Promise<void> {
+  try {
+    const [{ emitTo }, { WebviewWindow }] = await Promise.all([
+      import("@tauri-apps/api/event"),
+      import("@tauri-apps/api/webviewWindow"),
+    ]);
+    await emitTo("main", MENU_COMMAND_EVENT, id);
+    // Best effort, each on its own: the command has been delivered either way.
+    const main = await WebviewWindow.getByLabel("main");
+    await main?.show().catch(() => {});
+    await main?.unminimize().catch(() => {});
+    await main?.setFocus().catch(() => {});
+  } catch (error) {
+    log.warn("commands: forward to main window failed", { id, error: String(error) });
+  }
+}
+
+/** The event the menu bar sends a command on (see ./menuBridge.ts). */
+export const MENU_COMMAND_EVENT = "menu://command";
 
 /** The handler a command offers, wherever it lives. */
 function handlerOf(id: CommandId): ((e: KeyboardEvent) => void) | undefined {

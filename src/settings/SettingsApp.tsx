@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { useCommandScope, useCommandShortcut } from "../lib/commands/bind";
+import { useTabShortcuts } from "../lib/commands/tabs";
 import { useStore } from "../lib/store";
 import { useI18n } from "../i18n";
 import { CLOUD_ENABLED } from "../lib/flags";
@@ -53,6 +55,19 @@ export function SettingsApp() {
   const cloudEmail = cloudAuth?.user.email ?? "";
 
   const { cat, setCat, navQuery, setNavQuery, navMatches } = useSettingsCategory(cloudAuth, t);
+  // The categories are this window's tabs: ⌘1–⌘9 and ⌘← / ⌘→ walk the list
+  // as it is shown (a search narrows it). ⌘F is the list's search box.
+  useCommandScope("settings");
+  useTabShortcuts(
+    navMatches.map((n) => n.id),
+    cat,
+    setCat
+  );
+  const navSearchRef = useRef<HTMLInputElement>(null);
+  useCommandShortcut("settings.find", () => {
+    navSearchRef.current?.focus();
+    navSearchRef.current?.select();
+  });
   const [pendingInvites, setPendingInvites] = usePendingInvites(cloudAuth);
   const signIn = useGoogleSignIn(t);
   const devices = useInputDevices(cat);
@@ -77,6 +92,7 @@ export function SettingsApp() {
       <nav className="flex w-48 shrink-0 flex-col gap-0.5 overflow-y-auto border-r bg-muted/30 p-2">
         <div className="px-2 pb-2 pt-1 text-sm font-semibold tracking-tight">{t("common.settings")}</div>
         <input
+          ref={navSearchRef}
           value={navQuery}
           onChange={(e) => setNavQuery(e.target.value)}
           placeholder={t("settings.searchPlaceholder")}
