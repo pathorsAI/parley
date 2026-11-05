@@ -95,6 +95,20 @@ class MeetingService : Service() {
                 return START_NOT_STICKY
             }
 
+            ACTION_PAUSE, ACTION_RESUME -> {
+                ensureForeground()
+                val session = _activeSession.value
+                if (session == null) {
+                    stopSelfAndForeground()
+                    return START_NOT_STICKY
+                }
+                // A fresh instance (the action outlived the old one) has to
+                // watch the session too, or the notification never flips.
+                if (observerJob == null) observe(session)
+                if (intent.action == ACTION_PAUSE) session.pause() else session.resume()
+                return START_NOT_STICKY
+            }
+
             ACTION_DEMO_NOTIFICATION -> {
                 // The notification and nothing else — see [startDemoNotification].
                 if (!BuildConfig.DEBUG || !DemoMode.isActive) {
@@ -118,8 +132,7 @@ class MeetingService : Service() {
             // chronometer gets posted twice.
             session == null -> beginRecording()
 
-            session.state.value is MeetingState.Recording ||
-                session.state.value is MeetingState.Connecting -> {
+            session.state.value.isInProgress -> {
                 ensureForeground()
                 observe(session)
             }
@@ -164,12 +177,29 @@ class MeetingService : Service() {
     private fun observe(session: MeetingSession) {
         observerJob?.cancel()
         observerJob = serviceScope.launch {
+            var previous: MeetingState? = null
             session.state.collect { state ->
                 if (state is MeetingState.Failed || state is MeetingState.Finished) {
                     stopSelfAndForeground()
                 }
+                val pauseEdge = state == MeetingState.Paused ||
+                    (state == MeetingState.Recording && previous == MeetingState.Paused)
+                if (pauseEdge && inForeground) repostNotification(session, state)
+                previous = state
             }
         }
+    }
+
+    /**
+     * `notify`, not `startForeground` again: a microphone-typed
+     * `startForeground` from the background is what Android 14 restricts.
+     */
+    private fun repostNotification(session: MeetingSession, state: MeetingState) {
+        val notification = buildNotification(
+            paused = state == MeetingState.Paused,
+            whenMs = System.currentTimeMillis() - session.elapsedMs.value,
+        )
+        getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION_ID, notification)
     }
 
     private fun beginRecording() {
@@ -253,7 +283,7 @@ class MeetingService : Service() {
         // has to outlive this instance, exactly as the ordinary stop does.
         val session = _activeSession.value ?: return
         val state = session.state.value
-        if (state !is MeetingState.Recording && state !is MeetingState.Connecting) return
+        if (!state.isInProgress) return
         applicationContext.parleyContainer.appScope.launch {
             runCatching {
                 session.stopInterrupted(
@@ -265,7 +295,7 @@ class MeetingService : Service() {
         }
     }
 
-    private fun startForegroundNotification(startedAt: Long) {
+    private fun buildNotification(paused: Boolean, whenMs: Long): Notification {
         val open = PendingIntent.getActivity(
             this,
             0,
@@ -273,28 +303,46 @@ class MeetingService : Service() {
                 .setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_IMMUTABLE,
         )
-        val stop = PendingIntent.getService(
-            this,
-            1,
-            Intent(this, MeetingService::class.java).setAction(ACTION_STOP),
-            PendingIntent.FLAG_IMMUTABLE,
-        )
-        val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_recording)
-            .setContentTitle(getString(R.string.notification_title))
-            .setContentText(getString(R.string.notification_text))
             .setContentIntent(open)
-            // The platform renders the elapsed time for us, so nothing has to
-            // wake up once a second just to redraw a clock.
-            .setWhen(startedAt)
-            .setShowWhen(true)
-            .setUsesChronometer(true)
             .setOngoing(true)
             .setSilent(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .addAction(0, getString(R.string.action_stop), stop)
+        if (paused) {
+            builder
+                .setContentTitle(getString(R.string.notification_title_paused))
+                .setContentText(getString(R.string.notification_text_paused))
+                .setUsesChronometer(false)
+                .setShowWhen(false)
+                .addAction(0, getString(R.string.action_resume_recording), serviceAction(ACTION_RESUME, 3))
+        } else {
+            builder
+                .setContentTitle(getString(R.string.notification_title))
+                .setContentText(getString(R.string.notification_text))
+                // The platform renders the elapsed time for us, so nothing has to
+                // wake up once a second just to redraw a clock.
+                .setWhen(whenMs)
+                .setShowWhen(true)
+                .setUsesChronometer(true)
+                .addAction(0, getString(R.string.action_pause_recording), serviceAction(ACTION_PAUSE, 2))
+        }
+        return builder
+            .addAction(0, getString(R.string.action_stop), serviceAction(ACTION_STOP, 1))
             .build()
+    }
+
+    private fun serviceAction(action: String, requestCode: Int): PendingIntent =
+        PendingIntent.getService(
+            this,
+            requestCode,
+            Intent(this, MeetingService::class.java).setAction(action),
+            PendingIntent.FLAG_IMMUTABLE,
+        )
+
+    private fun startForegroundNotification(startedAt: Long) {
+        val notification = buildNotification(paused = false, whenMs = startedAt)
         ServiceCompat.startForeground(
             this,
             NOTIFICATION_ID,
@@ -320,6 +368,8 @@ class MeetingService : Service() {
     companion object {
         private const val ACTION_STOP = "com.pathors.parley.action.STOP_MEETING"
         private const val ACTION_DISCARD = "com.pathors.parley.action.DISCARD_MEETING"
+        private const val ACTION_PAUSE = "com.pathors.parley.action.PAUSE_MEETING"
+        private const val ACTION_RESUME = "com.pathors.parley.action.RESUME_MEETING"
         private const val ACTION_DEMO_NOTIFICATION = "com.pathors.parley.action.DEMO_NOTIFICATION"
         private const val EXTRA_DEMO_ELAPSED_MS = "com.pathors.parley.extra.DEMO_ELAPSED_MS"
         private const val CHANNEL_ID = "meeting-recording"
@@ -386,6 +436,22 @@ class MeetingService : Service() {
             ContextCompat.startForegroundService(
                 context,
                 Intent(context, MeetingService::class.java).setAction(ACTION_STOP),
+            )
+        }
+
+        /** Pause the recording; the microphone is released until [requestResume]. */
+        fun requestPause(context: Context) {
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, MeetingService::class.java).setAction(ACTION_PAUSE),
+            )
+        }
+
+        /** Resume a paused recording on the same file. */
+        fun requestResume(context: Context) {
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, MeetingService::class.java).setAction(ACTION_RESUME),
             )
         }
 

@@ -128,6 +128,7 @@ import com.pathors.parley.library.FolderSwipe
 import com.pathors.parley.library.LibraryFolders
 import com.pathors.parley.meeting.MeetingService
 import com.pathors.parley.meeting.MeetingState
+import com.pathors.parley.meeting.isInProgress
 import com.pathors.parley.kit.GettingStartedState
 import com.pathors.parley.kit.SampleManifest
 import com.pathors.parley.playback.AudioDownloadState
@@ -425,7 +426,7 @@ private fun rememberChecklist(
 private fun rememberMeetingLive(): Boolean {
     val session by MeetingService.activeSession.collectAsState()
     val meetingState = session?.state?.collectAsState()?.value
-    return meetingState is MeetingState.Recording || meetingState is MeetingState.Connecting
+    return meetingState?.isInProgress == true
 }
 
 /**
