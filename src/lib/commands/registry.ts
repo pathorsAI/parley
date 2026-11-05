@@ -143,6 +143,19 @@ interface CommandShape {
    * leaves the row out there rather than print a Ctrl chord that does nothing.
    */
   macOnly?: true;
+  /**
+   * Commands of an ENCLOSING scope whose identical chords this row takes over
+   * while its own scope is live. The study page's tabs are where it started:
+   * ⌘1–⌘6 pick a tab there, as they do in a browser, and ⌘← / ⌘→ step through
+   * them — the same chords that go Home or Back everywhere else. The shadowed
+   * command keeps every chord this row doesn't share (⌘[ still goes back).
+   */
+  shadows?: readonly string[];
+  /**
+   * Print the chords as a span (⌘1 – ⌘6) instead of a list, for a row whose
+   * chords are one numbered series.
+   */
+  range?: true;
 }
 
 const MOD = { mod: true } as const;
@@ -362,25 +375,41 @@ const TABLE = [
   },
   // Safari's and Chrome's next/previous tab, for the study page's tabs.
   {
+    id: "study.selectTab",
+    group: "nav",
+    scope: "study",
+    // ⌘1 is the first tab, ⌘2 the second… — a browser's tab keys. There are
+    // at most six tabs. ⌘1–⌘3 go Home / Library / the recording elsewhere.
+    keys: ["1", "2", "3", "4", "5", "6"].map((key) => ({ ...MOD, key })),
+    labelKey: "cmd.study.selectTab",
+    shadows: ["nav.home", "nav.library", "nav.study"],
+    range: true,
+  },
+  {
     id: "study.prevTab",
     group: "nav",
     scope: "study",
     keys: [
+      { ...MOD, key: "ArrowLeft" },
       { ...MOD, shift: true, key: "[" },
       // With shift held most layouts report the shifted character instead.
       { ...MOD, shift: true, key: "{", alias: true },
     ],
     labelKey: "cmd.study.prevTab",
+    // ⌘← is Back elsewhere; here ⌘[ (and the mouse's side button) still are.
+    shadows: ["nav.back"],
   },
   {
     id: "study.nextTab",
     group: "nav",
     scope: "study",
     keys: [
+      { ...MOD, key: "ArrowRight" },
       { ...MOD, shift: true, key: "]" },
       { ...MOD, shift: true, key: "}", alias: true },
     ],
     labelKey: "cmd.study.nextTab",
+    shadows: ["nav.forward"],
   },
 
   // ── library ─────────────────────────────────────────────────────────────
@@ -567,6 +596,25 @@ function shiftSlot(shift: Chord["shift"]): string {
   return shift ? "1" : "0";
 }
 
+/** One of the two takes the other's chords over on purpose (see
+ *  CommandShape.shadows). */
+function shadowsEither(a: CommandDef, b: CommandDef): boolean {
+  return !!a.shadows?.includes(b.id) || !!b.shadows?.includes(a.id);
+}
+
+/**
+ * The chords of `def` that a command live in one of `scopes` has taken over —
+ * the sheet leaves them out, and the binder lets the inner command have them.
+ */
+export function shadowedChordKeys(def: CommandDef, scopes: readonly CommandScope[]): Set<string> {
+  const keys = new Set<string>();
+  for (const other of COMMANDS) {
+    if (!other.shadows?.includes(def.id) || !scopes.includes(other.scope)) continue;
+    for (const chord of other.keys) keys.add(chordKey(chord));
+  }
+  return keys;
+}
+
 export interface Conflict {
   chord: string;
   ids: CommandId[];
@@ -593,7 +641,9 @@ export function findConflicts(): Conflict[] {
   }
   const conflicts: Conflict[] = [];
   for (const [chord, defs] of byChord) {
-    const clash = defs.filter((a) => defs.some((b) => a !== b && scopesOverlap(a.scope, b.scope)));
+    const clash = defs.filter((a) =>
+      defs.some((b) => a !== b && scopesOverlap(a.scope, b.scope) && !shadowsEither(a, b))
+    );
     if (clash.length > 1) conflicts.push({ chord, ids: clash.map((d) => d.id) });
   }
   return conflicts;

@@ -8,6 +8,7 @@ import {
   commandsInScope,
   findConflicts,
   scopesOverlap,
+  shadowedChordKeys,
   type CommandDef,
 } from "./registry";
 import { matchShortcut } from "../shortcuts";
@@ -79,6 +80,30 @@ describe("command registry", () => {
     expect(scopesOverlap("replay", "study")).toBe(true);
     expect(scopesOverlap("replay", "main")).toBe(true);
     expect(scopesOverlap("library", "global")).toBe(true);
+  });
+
+  it("only shadows enclosing commands it shares a chord with", () => {
+    // A `shadows` entry is a promise that the inner screen takes over THESE
+    // chords; one naming a sibling, a nested command, or a chord it doesn't
+    // have would silently swallow a key or do nothing at all.
+    for (const def of COMMANDS) {
+      for (const id of def.shadows ?? []) {
+        const outer = command(id as Parameters<typeof command>[0]);
+        expect(outer.scope !== def.scope && scopesOverlap(def.scope, outer.scope), `${def.id} → ${id}`).toBe(true);
+        const mine = new Set(def.keys.map(chordKey));
+        expect(outer.keys.some((k) => mine.has(chordKey(k))), `${def.id} shares no chord with ${id}`).toBe(true);
+      }
+    }
+  });
+
+  it("gives the study page's tabs ⌘1 and ⌘← there, and leaves ⌘[ to Back", () => {
+    const onStudy = ["global", "main", "study"] as const;
+    expect(shadowedChordKeys(command("nav.home"), onStudy)).toContain(chordKey({ mod: true, key: "1" }));
+    const back = shadowedChordKeys(command("nav.back"), onStudy);
+    expect(back).toContain(chordKey({ mod: true, key: "ArrowLeft" }));
+    expect(back).not.toContain(chordKey({ mod: true, key: "[" }));
+    // Off the study page nothing is taken over.
+    expect(shadowedChordKeys(command("nav.home"), ["global", "main", "library"]).size).toBe(0);
   });
 
   it("only puts the display-only ⌃ on rows the webview never binds", () => {

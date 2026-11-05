@@ -10,10 +10,14 @@ import { zoomIn, zoomOut, zoomReset } from "../zoom";
 import { toggleShortcutSheet } from "./sheet";
 import { editRedo, editUndo } from "../edit/undo";
 import {
+  COMMANDS,
+  chordKey,
   command,
   commandsInScope,
   findConflicts,
+  shadowedChordKeys,
   type Chord,
+  type CommandDef,
   type CommandId,
   type CommandScope,
 } from "./registry";
@@ -136,6 +140,10 @@ const COMPONENT_HANDLERS = new Map<CommandId, (e: KeyboardEvent) => void>();
  * binding does, in the same order.
  */
 export function runCommand(id: CommandId): void {
+  // The menu bar names the OUTER command (Go › Home for ⌘1) even where an inner
+  // one has taken the chord over (the study page's first tab), because AppKit
+  // matched the chord before the webview saw it. Hand it to the inner one.
+  if (runShadowing(command(id))) return;
   const own = HANDLERS[id];
   if (own) {
     own();
@@ -154,6 +162,53 @@ export function runCommand(id: CommandId): void {
   owned(new KeyboardEvent("keydown"));
 }
 
+/** The handler a command offers, wherever it lives. */
+function handlerOf(id: CommandId): ((e: KeyboardEvent) => void) | undefined {
+  const own = HANDLERS[id];
+  return own ? () => own() : COMPONENT_HANDLERS.get(id);
+}
+
+/**
+ * For a menu click on `def`: if the chord its menu item carries is taken over
+ * by a command live right now, run that command as though its chord had been
+ * pressed — it may read the key (⌘3 is the third tab). True when it did.
+ */
+function runShadowing(def: CommandDef): boolean {
+  const taken = shadowedChordKeys(def, scopeSnapshot);
+  const chord = def.keys.find((k) => k.native && taken.has(chordKey(k)));
+  if (!chord) return false;
+  const key = chordKey(chord);
+  const inner = COMMANDS.find(
+    (c) =>
+      c.shadows?.includes(def.id) && scopeSnapshot.includes(c.scope) && c.keys.some((k) => chordKey(k) === key)
+  );
+  const run = inner && handlerOf(inner.id);
+  if (!run) return false;
+  const mac = isMac();
+  run(
+    new KeyboardEvent("keydown", {
+      key: chord.key,
+      metaKey: !!chord.mod && mac,
+      ctrlKey: !!chord.mod && !mac,
+      shiftKey: chord.shift === true,
+      altKey: !!chord.alt,
+    })
+  );
+  return true;
+}
+
+/**
+ * `run`, unless a command live right now has taken this chord over — then the
+ * keystroke is that command's, and it has its own binding.
+ */
+function unlessShadowed(def: CommandDef, chord: Chord, run: (e: KeyboardEvent) => void) {
+  const key = chordKey(chord);
+  return (e: KeyboardEvent) => {
+    if (shadowedChordKeys(def, scopeSnapshot).has(key)) return;
+    run(e);
+  };
+}
+
 /** Bind every command in `scope` that carries a module-level handler. Returns
  *  the remover for all of them. */
 function bindScope(scope: CommandScope): () => void {
@@ -162,7 +217,7 @@ function bindScope(scope: CommandScope): () => void {
     const run = HANDLERS[def.id];
     if (!run) continue;
     for (const chord of bindableChords(def.id)) {
-      removers.push(bindShortcut(chord, run, { whileTyping: def.whileTyping }));
+      removers.push(bindShortcut(chord, unlessShadowed(def, chord, run), { whileTyping: def.whileTyping }));
     }
   }
   return () => {
@@ -262,7 +317,7 @@ export function useCommandShortcut(
     if (!enabled) return;
     const run = (e: KeyboardEvent) => handlerRef.current(e);
     const removers = chords.map((chord) =>
-      bindShortcut(chord, run, { whileTyping: def.whileTyping })
+      bindShortcut(chord, unlessShadowed(def, chord, run), { whileTyping: def.whileTyping })
     );
     // Published even when `chords` is empty — on macOS that is the normal case
     // for a menu-claimed chord like ⌘K, and it is precisely then that the menu

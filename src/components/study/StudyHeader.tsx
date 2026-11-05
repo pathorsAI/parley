@@ -256,11 +256,16 @@ function StudyTabs({
     (id) => (id !== "notes" || notesCount > 0) && (id !== "context" || hasContext)
   );
   const counts: Partial<Record<StudyTab, number>> = { actions: actionCount, notes: notesCount };
-  // ⇧⌘[ / ⇧⌘]: the browser's previous / next tab, wrapping at either end.
+  // ⌘← / ⌘→ and ⇧⌘[ / ⇧⌘]: the previous / next tab, wrapping at either end.
   const step = (dir: 1 | -1) => {
     const at = Math.max(0, tabs.indexOf(tab));
     setStudyTab(tabs[(at + dir + tabs.length) % tabs.length]);
   };
+  // ⌘1–⌘6: the Nth tab, as in a browser. A number past the last tab does nothing.
+  useCommandShortcut("study.selectTab", (e) => {
+    const n = Number(e.key);
+    if (Number.isInteger(n) && n >= 1 && n <= tabs.length) setStudyTab(tabs[n - 1]);
+  });
   useCommandShortcut("study.prevTab", () => step(-1));
   useCommandShortcut("study.nextTab", () => step(1));
 
