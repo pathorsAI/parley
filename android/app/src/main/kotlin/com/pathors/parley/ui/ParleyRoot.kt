@@ -6,7 +6,9 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
@@ -112,19 +114,28 @@ fun ParleyRoot() {
     val demo by DemoMode.enabled.collectAsState()
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        when {
-            demo -> ParleyNavHost(container)
-            // Still reading the stored token. Named, not a bare spinner: a
-            // returning user must not watch an anonymous loading screen, nor
-            // see the onboarding wall flash by before their session resolves.
-            signedIn == null -> LaunchScreen()
+        // With targetSdk 35+ the window is edge-to-edge whether or not the app
+        // asks: the system bars are transparent (themes.xml) and the content is
+        // laid out under them and under the camera cutout. The screens are
+        // plain Columns and custom bottom bars, not Material components that
+        // inset themselves, so the one place every screen passes through takes
+        // the safe-drawing insets once. The Surface stays full-bleed so its
+        // background is what shows through the bars.
+        Box(Modifier.fillMaxSize().safeDrawingPadding()) {
+            when {
+                demo -> ParleyNavHost(container)
+                // Still reading the stored token. Named, not a bare spinner: a
+                // returning user must not watch an anonymous loading screen, nor
+                // see the onboarding wall flash by before their session resolves.
+                signedIn == null -> LaunchScreen()
 
-            signedIn == false -> OnboardingScreen(container)
-            else -> ParleyNavHost(container)
+                signedIn == false -> OnboardingScreen(container)
+                else -> ParleyNavHost(container)
+            }
+            // Over every screen, signed in or not (a crash report does not need an
+            // account) — but never over a store screenshot.
+            if (!demo) FeedbackHost(container.feedback)
         }
-        // Over every screen, signed in or not (a crash report does not need an
-        // account) — but never over a store screenshot.
-        if (!demo) FeedbackHost(container.feedback)
     }
 }
 
