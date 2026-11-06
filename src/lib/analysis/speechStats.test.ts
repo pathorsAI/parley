@@ -47,33 +47,6 @@ describe("computeSpeechStats", () => {
     expect(computeSpeechStats([seg("me", 0, 5, "謝謝大家看看")]).repetitions).toEqual([]);
   });
 
-  it("counts turns, reply time and backchannels when both sides are captured", () => {
-    const stats = computeSpeechStats([
-      seg("them", 0, 10, "我們先看一下這季的數字"),
-      seg("me", 4, 5, "嗯"),
-      seg("me", 11, 20, "好我覺得第三季可以再調整"),
-      seg("them", 21, 25, "那預算呢"),
-      seg("me", 27, 30, "預算維持"),
-    ]);
-    expect(stats.interaction).not.toBeNull();
-    expect(stats.interaction?.turns).toBe(2);
-    expect(stats.interaction?.medianLatencyMs).toBe(1500);
-    expect(stats.interaction?.backchannelTotal).toBe(1);
-    expect(stats.interaction?.backchannels[0]).toEqual({ word: "嗯", count: 1 });
-    expect(stats.interaction?.longestTurn).toEqual({ atMs: 11_000, ms: 9000 });
-  });
-
-  it("has no interaction facts without both sides", () => {
-    expect(computeSpeechStats([seg("mix", 0, 10, "大家好")]).interaction).toBeNull();
-  });
-
-  it("splits talk time per side over the meeting", () => {
-    const stats = computeSpeechStats([seg("me", 0, 30, "嗨"), seg("them", 70, 100, "你好")]);
-    expect(stats.talk.map((s) => [s.meMs, s.themMs])).toEqual([
-      [30_000, 0],
-      [0, 30_000],
-    ]);
-  });
 });
 
 describe("clock", () => {

@@ -64,17 +64,6 @@ function Chart({ title, note, children }: Readonly<{ title: string; note?: React
   );
 }
 
-/** A small fact: label over value. */
-function Fact({ label, value, sub }: Readonly<{ label: string; value: ReactNode; sub?: ReactNode }>) {
-  return (
-    <div className="min-w-0">
-      <div className="text-[11px] text-muted-foreground">{label}</div>
-      <div className="text-sm font-semibold tabular-nums">{value}</div>
-      {sub && <div className="text-[10.5px] text-muted-foreground">{sub}</div>}
-    </div>
-  );
-}
-
 function Stamp({ ms }: Readonly<{ ms: number }>) {
   return (
     <span className="ml-1 rounded bg-primary/10 px-1 py-px font-mono text-[10px] text-primary">{clock(ms)}</span>
@@ -199,59 +188,13 @@ function WordBars({ items, total }: Readonly<{ items: FillerCount[]; total: numb
   );
 }
 
-/** Who talked when: stacked columns, the user's share on the bottom. */
-function TalkColumns({ stats, t }: Readonly<{ stats: SpeechStats; t: TFn }>) {
-  const max = Math.max(...stats.talk.map((s) => s.meMs + s.themMs), 1);
-  const twoSides = stats.interaction !== null;
-  return (
-    <Chart
-      title={t("delivery.chart.talk")}
-      note={
-        twoSides && (
-          <span className="flex items-center gap-3">
-            <span className="flex items-center gap-1">
-              <i className="inline-block size-2 rounded-sm bg-primary" />
-              {t("delivery.legend.me")}
-            </span>
-            <span className="flex items-center gap-1">
-              <i className="inline-block size-2 rounded-sm bg-muted-foreground/35" />
-              {t("delivery.legend.them")}
-            </span>
-          </span>
-        )
-      }
-    >
-      <div className="flex h-20 items-end gap-px">
-        {stats.talk.map((s) => (
-          <div key={s.atMs} className="flex h-full min-w-0 flex-1 flex-col justify-end" title={`${clock(s.atMs)}`}>
-            <span className="block rounded-t-sm bg-muted-foreground/35" style={{ height: `${(s.themMs / max) * 100}%` }} />
-            <span className="block bg-primary" style={{ height: `${(s.meMs / max) * 100}%` }} />
-          </div>
-        ))}
-      </div>
-      <TimeAxis durationMs={stats.durationMs} />
-    </Chart>
-  );
-}
-
-/** A ring for the talk share. */
-function ShareRing({ me }: Readonly<{ me: number }>) {
-  const r = 26;
-  const c = 2 * Math.PI * r;
-  return (
-    <svg viewBox="0 0 64 64" className="size-16 shrink-0 -rotate-90" aria-hidden="true">
-      <circle cx="32" cy="32" r={r} className="fill-none stroke-muted" strokeWidth="8" />
-      <circle cx="32" cy="32" r={r} className="fill-none stroke-primary" strokeWidth="8" strokeDasharray={`${me * c} ${c}`} />
-    </svg>
-  );
-}
-
 // ── Report ─────────────────────────────────────────────────────────────────────
 
 /**
- * The 評分 report: headline numbers, then the metrics in groups — 語速與停頓,
- * 語言習慣, 對話互動 — each drawn as a chart, and the AI's tone read (passed in
- * as `tone`) last. Everything but the tone comes from the saved transcript; a
+ * The 評分 report: headline numbers, then the metrics in groups — 語速與停頓
+ * and 語言習慣 — each drawn as a chart, and the AI's tone read (passed in as
+ * `tone`) last. There is no conversation-interaction group: turn-taking,
+ * interruptions and talk-over-time repeated what the replay already shows. Everything but the tone comes from the saved transcript; a
  * fact the recording can't answer is left out rather than shown as a dash.
  */
 export function DeliveryReport({
@@ -273,7 +216,6 @@ export function DeliveryReport({
   const band = measuredRate ? paceBand(measuredRate) : null;
   const share = ratio ? talkBand(ratio.me) : null;
   const fillerRate = talkMin >= 0.5 ? (stats.fillerTotal / talkMin).toFixed(1) : null;
-  const ia = stats.interaction;
   const avgPause = stats.pauses.length ? stats.pauses.reduce((a, p) => a + p.ms, 0) / stats.pauses.length : 0;
   const frequent = assessment?.fillers.level === "frequent";
 
@@ -281,8 +223,7 @@ export function DeliveryReport({
     { id: "delivery-profile", label: t("delivery.nav.profile") },
     ...(stats.paceTimeline.length > 1 || stats.pauses.length > 0 ? [{ id: "delivery-pace", label: `01 ${t("delivery.nav.pace")}` }] : []),
     { id: "delivery-habits", label: `02 ${t("delivery.nav.habits")}` },
-    ...(ratio || stats.talk.length > 1 ? [{ id: "delivery-interaction", label: `03 ${t("delivery.nav.interaction")}` }] : []),
-    { id: "delivery-tone", label: `04 ${t("delivery.nav.tone")}` },
+    { id: "delivery-tone", label: `03 ${t("delivery.nav.tone")}` },
   ];
 
   return (
@@ -373,51 +314,8 @@ export function DeliveryReport({
         </div>
       </ReportGroup>
 
-      {/* 03 對話互動 */}
-      {(ratio || stats.talk.length > 1) && (
-        <ReportGroup id="delivery-interaction" n="03" en="Conversational Dynamics" title={t("delivery.group.interaction")} desc={t("delivery.group.interaction.desc")}>
-          <div className="grid grid-cols-1 gap-3 @min-[640px]:grid-cols-2">
-            {ratio && share && (
-              <Chart title={t("delivery.card.talkRatio")}>
-                <div className="flex items-center gap-4">
-                  <ShareRing me={ratio.me} />
-                  <div className="text-xs">
-                    <div className="text-xl font-bold tabular-nums">{Math.round(ratio.me * 100)}%</div>
-                    <div className="text-muted-foreground">
-                      {t(share.key)} · {t("delivery.share", { me: String(Math.round(ratio.me * 100)), them: String(100 - Math.round(ratio.me * 100)) })}
-                    </div>
-                  </div>
-                </div>
-              </Chart>
-            )}
-            {stats.talk.length > 1 && <TalkColumns stats={stats} t={t} />}
-          </div>
-          {ia && (
-            <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border bg-muted/10 p-3 @min-[640px]:grid-cols-3">
-              <Fact label={t("delivery.fact.turns")} value={`${ia.turns} ${t("delivery.unit.times")}`} sub={t("delivery.fact.avgTurn", { s: sec(ia.avgTurnMs) })} />
-              {ia.longestTurn && (
-                <Fact
-                  label={t("delivery.fact.longestTurn")}
-                  value={`${sec(ia.longestTurn.ms)} ${t("delivery.unit.sec")}`}
-                  sub={<Stamp ms={ia.longestTurn.atMs} />}
-                />
-              )}
-              {ia.medianLatencyMs != null && (
-                <Fact label={t("delivery.fact.latency")} value={`${sec(ia.medianLatencyMs)} ${t("delivery.unit.sec")}`} sub={t("delivery.fact.latency.sub")} />
-              )}
-              <Fact label={t("delivery.fact.interruptions")} value={`${ia.interruptions} ${t("delivery.unit.times")}`} />
-              <Fact
-                label={t("delivery.fact.backchannels")}
-                value={`${ia.backchannelTotal} ${t("delivery.unit.times")}`}
-                sub={ia.backchannels.length > 0 && ia.backchannels.map((b) => `${b.word} ${b.count}`).join(" · ")}
-              />
-            </div>
-          )}
-        </ReportGroup>
-      )}
-
-      {/* 04 語氣與整體表達 */}
-      <ReportGroup id="delivery-tone" n="04" en="Tone & Delivery" title={t("delivery.group.tone")} desc={t("delivery.group.tone.desc")}>
+      {/* 03 語氣與整體表達 */}
+      <ReportGroup id="delivery-tone" n="03" en="Tone & Delivery" title={t("delivery.group.tone")} desc={t("delivery.group.tone.desc")}>
         {tone}
       </ReportGroup>
     </div>
