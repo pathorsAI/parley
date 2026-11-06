@@ -36,6 +36,7 @@ import { cancelFilingSuggestion, runFilingSuggestion } from "./filingRun";
 import { persistReadOnlyStudyOutputs, saveUploadToHistory } from "../history/history";
 import { isSampleEntry } from "../onboarding/sample";
 import { log } from "../log";
+import { resolveSelf } from "../speakers/self";
 
 type StoreState = ReturnType<typeof useStore.getState>;
 
@@ -79,6 +80,10 @@ export interface StudyPipelineFacts {
   readOnly: boolean;
   /** Spoken content inside the keep-window — same predicate the runners guard on. */
   hasTranscript: boolean;
+  /** Whether the recording says which speaker is the user (speakers/self.ts).
+   *  The delivery stage judges only the user, so it waits until this holds —
+   *  a mark in the transcript is a watched change that releases it. */
+  selfKnown: boolean;
   analysisStatus: AsyncTaskStatus;
   actionItemsStatus: AsyncTaskStatus;
   briefStatus: AsyncTaskStatus;
@@ -104,6 +109,7 @@ export function factsOf(s: StoreState): StudyPipelineFacts {
     hasRealtimeKey: hasProviderKey(s.settings, "realtime"),
     readOnly: s.replayReadOnly,
     hasTranscript: hasSpokenSegment(s.segments, trim),
+    selfKnown: resolveSelf(s.segments, s.selfSpeaker, s.replay?.micActivity) !== null,
     analysisStatus: s.analysisStatus,
     actionItemsStatus: s.actionItemsStatus,
     briefStatus: s.briefStatus,
@@ -150,7 +156,7 @@ export function evaluateStages(f: StudyPipelineFacts): StudyStageKey[] {
   const analysisDone = f.analysisStatus === "done";
   if (f.analysisStatus === "idle") out.push("findings");
   if (analysisDone && f.actionItemsStatus === "idle") out.push("actions");
-  if (analysisDone && f.deliveryStatus === "idle") out.push("delivery");
+  if (analysisDone && f.selfKnown && f.deliveryStatus === "idle") out.push("delivery");
   // The brief folds the action items in, so it waits for them to SETTLE —
   // done or error — rather than only done (an empty checklist is still a brief).
   if (analysisDone && settled(f.actionItemsStatus) && f.briefStatus === "idle") out.push("brief");
@@ -442,7 +448,8 @@ export function artifactDisplay(f: StudyPipelineFacts, key: StudyArtifactKey): S
     // queuing forever against a pipeline that will never run.
     return displayStatus(status, f.autoAnalyze && f.hasDeepKey && f.hasTranscript);
   }
-  return displayStatus(status, chainQueued(f));
+  // Delivery waits on the user saying who they are, not on the scheduler.
+  return displayStatus(status, chainQueued(f) && (key !== "delivery" || f.selfKnown));
 }
 
 export function deriveStudyPipeline(f: StudyPipelineFacts): StudyPipelineState {

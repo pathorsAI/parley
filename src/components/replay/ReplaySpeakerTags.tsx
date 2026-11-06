@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { AudioLines } from "lucide-react";
+import { AudioLines, UserRound } from "lucide-react";
 import { useStore, speakerKey, defaultSpeakerLabel } from "../../lib/store";
 import { speakerDotClass } from "../../lib/speakerColors";
 import { useI18n } from "../../i18n";
@@ -7,6 +7,9 @@ import { Input } from "@/components/ui/input";
 import { rememberOwnName } from "@/lib/onboarding/whoAmI";
 import { Button } from "@/components/ui/button";
 import { VoiceDiarizeDialog } from "./VoiceDiarizeDialog";
+import { resolveSelf } from "../../lib/speakers/self";
+import { markSelfSpeaker } from "../../lib/speakers/markSelf";
+import { cn } from "@/lib/utils";
 import type { Source, TranscriptSegment } from "../../lib/types";
 
 interface SpeakerEntry {
@@ -35,6 +38,11 @@ export function ReplaySpeakerTags({ segments, names, label }: Readonly<ReplaySpe
   const { t } = useI18n();
   const setSpeakerName = useStore((s) => s.setSpeakerName);
   const [voiceOpen, setVoiceOpen] = useState(false);
+  const marked = useStore((s) => s.selfSpeaker);
+  const micActivity = useStore((s) => s.replay?.micActivity);
+  // The speaker the 評分 report scores: the mark, or the mic's own pick.
+  const self = resolveSelf(segments, marked, micActivity);
+  const autoKey = self?.origin === "mic-activity" ? self.key : null;
   // A just-saved live meeting is still having its speakers corrected from the
   // audio in the background (history.saveLiveToHistory). A manual pass now
   // would race that one onto the same lines, so it waits — with the reason
@@ -74,6 +82,11 @@ export function ReplaySpeakerTags({ segments, names, label }: Readonly<ReplaySpe
             placeholder={defaultSpeakerLabel(sp)}
             className="h-7 w-28 text-xs"
           />
+          <SelfToggle
+            isMarked={marked === sp.key}
+            isAuto={autoKey === sp.key}
+            onToggle={() => markSelfSpeaker(marked === sp.key ? null : sp.key)}
+          />
         </div>
       ))}
       {/* STT diarization is often wrong — cluster by the actual VOICE instead. */}
@@ -96,5 +109,36 @@ export function ReplaySpeakerTags({ segments, names, label }: Readonly<ReplaySpe
       </span>
       {voiceOpen && !correcting && <VoiceDiarizeDialog onClose={() => setVoiceOpen(false)} />}
     </div>
+  );
+}
+
+/** 這是我: mark this speaker as the user, the one the 評分 report scores.
+ *  A speaker the mic picked out reads as chosen too, but quieter — one click
+ *  turns the guess into a mark. */
+function SelfToggle({
+  isMarked,
+  isAuto,
+  onToggle,
+}: Readonly<{ isMarked: boolean; isAuto: boolean; onToggle: () => void }>) {
+  const { t } = useI18n();
+  let title = t("speakers.self.mark");
+  if (isMarked) title = t("speakers.self.marked");
+  else if (isAuto) title = t("speakers.self.auto");
+  return (
+    <button
+      type="button"
+      aria-pressed={isMarked}
+      title={title}
+      onClick={onToggle}
+      className={cn(
+        "flex h-7 items-center gap-1 rounded-md border px-1.5 text-[11px] transition-colors",
+        isMarked && "border-primary/40 bg-primary/10 font-medium text-primary",
+        !isMarked && isAuto && "border-dashed border-primary/40 text-primary",
+        !isMarked && !isAuto && "border-transparent text-muted-foreground hover:border-border hover:text-foreground",
+      )}
+    >
+      <UserRound className="size-3" />
+      {t("speakers.self.mark")}
+    </button>
   );
 }

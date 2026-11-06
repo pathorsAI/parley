@@ -140,6 +140,7 @@ export const createReplaySlice: SliceCreator<ReplaySlice> = (set) => ({
       transcriptEditedId: null,
       segments: session.segments,
       speakerNames: session.speakerNames,
+      selfSpeaker: null,
       meetingStatus: "stopped",
       highlightMs: null,
       // A fresh session gets fresh study outputs — a previous recording's
@@ -176,6 +177,7 @@ export const createReplaySlice: SliceCreator<ReplaySlice> = (set) => ({
       ingestAudioPath: null,
       segments: entry.segments,
       speakerNames: entry.speakerNames,
+      selfSpeaker: entry.selfSpeaker ?? null,
       meetingStatus: "stopped",
       highlightMs: null,
       // Base-clear every study slice, then restore what the entry has (see
@@ -216,6 +218,7 @@ export const createReplaySlice: SliceCreator<ReplaySlice> = (set) => ({
       ingestAudioPath: null,
       segments: [],
       speakerNames: {},
+      selfSpeaker: null,
       meetingStatus: "idle",
       highlightMs: null,
       ...CLEARED_STUDY_SLICE,

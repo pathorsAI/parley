@@ -1,8 +1,9 @@
 //! Speech facts for the post-meeting 評分 report, computed from the saved
 //! transcript alone: segment text and timing, no audio and no model.
 //!
-//! "Me" is the user's own mic. In a diarized "mix" session there is no "me"
-//! track, so the facts fall back to everyone's speech (see computeSpeechStats).
+//! Every fact is about the user's own lines — which ones those are is the
+//! caller's `isSelf` (speakers/self.ts). Nothing here falls back to everyone's
+//! speech: a recording that can't say who the user is gets no report.
 //!
 //! Segment-level timing only: a pause inside one segment is invisible, so pause
 //! counts are a floor, not an exact tally.
@@ -87,16 +88,16 @@ function spokenSegments(segments: TranscriptSegment[]): TranscriptSegment[] {
     .sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
 }
 
-/** Every fact the 評分 report shows that the transcript alone can answer. */
-export function computeSpeechStats(segments: TranscriptSegment[]): SpeechStats {
+type IsSelf = (s: Pick<TranscriptSegment, "source" | "speaker">) => boolean;
+
+/** Every fact the 評分 report shows that the transcript alone can answer,
+ *  over the lines `isSelf` says are the user's. */
+export function computeSpeechStats(segments: TranscriptSegment[], isSelf: IsSelf): SpeechStats {
   const spoken = spokenSegments(segments);
   const durationMs = spoken.reduce((m, s) => Math.max(m, s.endMs), 0);
   const bucketMs = bucketWidth(durationMs);
   const buckets = Math.max(1, Math.ceil(durationMs / bucketMs));
-  const mine = spoken.filter((s) => s.source === "me");
-  // A recording without a "me" track (an upload, a diarized mix) is all the
-  // user's to read: the pace and habit facts then cover everyone in it.
-  const own = mine.length > 0 ? mine : spoken;
+  const own = spoken.filter(isSelf);
 
   const paceUnits = new Array<number>(buckets).fill(0);
   const paceMs = new Array<number>(buckets).fill(0);
@@ -131,7 +132,7 @@ export function computeSpeechStats(segments: TranscriptSegment[]): SpeechStats {
     const b = own[k];
     const gap = b.startMs - a.endMs;
     if (gap < PAUSE_MIN_MS || gap > PAUSE_MAX_MS) continue;
-    const filled = spoken.some((o) => o.source !== a.source && o.startMs < b.startMs && o.endMs > a.endMs);
+    const filled = spoken.some((o) => !isSelf(o) && o.startMs < b.startMs && o.endMs > a.endMs);
     if (!filled) pauses.push({ atMs: a.endMs, ms: gap });
   }
 
@@ -161,4 +162,17 @@ export function clock(ms: number): string {
   const s = total % 60;
   const mm = String(m).padStart(h ? 2 : 1, "0");
   return `${h ? `${h}:` : ""}${mm}:${String(s).padStart(2, "0")}`;
+}
+
+/** The user's share of everyone's talk time, or null when only one side
+ *  spoke (a share of a monologue says nothing). */
+export function talkShare(segments: TranscriptSegment[], isSelf: IsSelf): { me: number; them: number } | null {
+  let me = 0;
+  let them = 0;
+  for (const s of spokenSegments(segments)) {
+    if (isSelf(s)) me += s.endMs - s.startMs;
+    else them += s.endMs - s.startMs;
+  }
+  if (me === 0 || them === 0) return null;
+  return { me: me / (me + them), them: them / (me + them) };
 }

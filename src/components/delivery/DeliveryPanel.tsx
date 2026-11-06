@@ -1,11 +1,14 @@
 import { useMemo, type ReactNode } from "react";
-import { Clock, Loader2 } from "lucide-react";
+import { Clock, Loader2, UserRoundSearch } from "lucide-react";
 import { isTrimmed, useStore } from "../../lib/store";
 import { useStudyArtifactDisplay } from "../../lib/analysis/studyPipeline";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useProsody } from "../../lib/analysis/useDelivery";
-import { syllablesPerMin, talkTimeRatio } from "../../lib/analysis/delivery";
-import { computeSpeechStats } from "../../lib/analysis/speechStats";
+import { syllablesPerMin } from "../../lib/analysis/delivery";
+import { computeSpeechStats, talkShare } from "../../lib/analysis/speechStats";
+import { resolveSelf, type SelfOrigin, type SelfSpeaker } from "../../lib/speakers/self";
+import { speakerLabel } from "../../lib/speakers/labels";
+import { Button } from "@/components/ui/button";
 import { DeliveryReport } from "./DeliveryReport";
 import { paceBand } from "./bands";
 import { useI18n } from "../../i18n";
@@ -303,11 +306,55 @@ function ToneGroup({
   );
 }
 
+const ORIGIN_KEY: Record<SelfOrigin, TranslationKey> = {
+  marked: "delivery.self.origin.marked",
+  "mic-track": "delivery.self.origin.micTrack",
+  "mic-activity": "delivery.self.origin.micActivity",
+};
+
+const openTranscript = () => useStore.getState().setStudyTab("replay");
+
+/** The 評分 page when nothing says which speaker is the user: a diarized
+ *  recording the mic timeline couldn't settle (a room where the mic hears
+ *  everyone, an upload). Scoring everyone instead would put other people's
+ *  pace and fillers under the user's name, so it asks instead. */
+function SelfUnknown({ t }: Readonly<{ t: TFn }>) {
+  return (
+    <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed p-5">
+      <UserRoundSearch className="size-5 text-muted-foreground" />
+      <div>
+        <h3 className="text-sm font-semibold">{t("delivery.self.unknown.title")}</h3>
+        <p className="mt-1 max-w-prose text-xs leading-relaxed text-muted-foreground">{t("delivery.self.unknown.body")}</p>
+      </div>
+      <Button size="sm" onClick={openTranscript}>
+        {t("delivery.self.unknown.cta")}
+      </Button>
+    </div>
+  );
+}
+
+/** Whose lines the report is about, how Parley knows, and where to change it. */
+function SelfBasis({ t, name, origin }: Readonly<{ t: TFn; name: string; origin: SelfOrigin }>) {
+  return (
+    <p className="mb-4 flex flex-wrap items-baseline gap-x-2 text-[11px] text-muted-foreground">
+      <span>
+        {t("delivery.self.basis", { name })} · {t(ORIGIN_KEY[origin])}
+      </span>
+      <button type="button" onClick={openTranscript} className="underline underline-offset-2 hover:text-foreground">
+        {t("delivery.self.change")}
+      </button>
+    </p>
+  );
+}
+
 /** The study tense's 評分 report (`variant="full"`): the transcript-derived
- *  charts (DeliveryReport) with the AI's tone read as its last group. */
+ *  charts (DeliveryReport) with the AI's tone read as its last group, over the
+ *  user's own lines only. */
 function DeliveryScorecard({
   mode,
   segments,
+  self,
+  selfName,
   measuredRate,
   assessment,
   status,
@@ -316,23 +363,28 @@ function DeliveryScorecard({
 }: Readonly<{
   mode: "live" | "replay";
   segments: TranscriptSegment[];
+  self: SelfSpeaker;
+  selfName: string;
   measuredRate: number | null;
   assessment: DeliveryAssessment | null;
   status: DeliveryStatus;
   running: boolean;
   t: TFn;
 }>) {
-  const stats = useMemo(() => computeSpeechStats(segments), [segments]);
-  const ratio = useMemo(() => talkTimeRatio(segments), [segments]);
+  const stats = useMemo(() => computeSpeechStats(segments, self.isSelf), [segments, self]);
+  const ratio = useMemo(() => talkShare(segments, self.isSelf), [segments, self]);
   // Queued (waiting on the findings pass) or running, with nothing to show yet.
   const display = useStudyArtifactDisplay("delivery");
   const pending = !assessment && (running || display === "queued");
   return (
     <div className="@container">
+      <SelfBasis t={t} name={selfName} origin={self.origin} />
       <DeliveryReport
         stats={stats}
         ratio={ratio}
-        measuredRate={measuredRate}
+        // The mic's measured pace is the user's only while the mic was theirs
+        // alone; a hand-marked speaker is usually a room the mic heard whole.
+        measuredRate={self.origin === "marked" ? null : measuredRate}
         assessment={assessment}
         tone={<ToneGroup t={t} mode={mode} status={status} running={running} assessment={assessment} pending={pending} />}
       />
@@ -499,6 +551,10 @@ export function DeliveryPanel({
   const prosody = useProsody();
   const measuredRate = useStore((s) => s.replay?.speechRateHz ?? null);
   const segments = useStore((s) => s.segments);
+  const speakerNames = useStore((s) => s.speakerNames);
+  const selfSpeaker = useStore((s) => s.selfSpeaker);
+  const micActivity = useStore((s) => s.replay?.micActivity);
+  const self = resolveSelf(segments, selfSpeaker, micActivity);
 
   const toggles: DeliveryToggles = { tone: toneOn, pace: paceOn, pitch: pitchOn, pauses: pausesOn };
   const full = variant === "full" && mode === "replay";
@@ -515,10 +571,14 @@ export function DeliveryPanel({
   const running = status === "running" && !assessment;
 
   if (full) {
+    if (!self) return <SelfUnknown t={t} />;
+    const selfLine = segments.find((s) => self.isSelf(s) && s.text.trim());
     return (
       <DeliveryScorecard
         mode={mode}
         segments={kept}
+        self={self}
+        selfName={selfLine ? speakerLabel(selfLine, speakerNames) : ""}
         measuredRate={measuredRate}
         assessment={assessment}
         status={status}

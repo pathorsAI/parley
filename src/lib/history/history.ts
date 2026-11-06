@@ -17,6 +17,7 @@ import { markDirty } from "../cloud/syncState";
 import { syncEnabled } from "../cloud/client";
 import type { OrgHandoffMode } from "../library/destination";
 import { qualifiesForRediarization, rediarizeSegments } from "../speakers/postDiarize";
+import type { MicSpan } from "../speakers/self";
 import { translate } from "../../i18n/messages";
 import { markGettingStarted } from "../onboarding/gettingStarted";
 import type { ReplaySession } from "../replay/types";
@@ -85,6 +86,7 @@ export function snapshotAnalysis() {
     // untimed transcript it came with (see replay/timing).
     segments: s.replay?.timingEstimated ? withoutEstimatedTiming(s.segments) : s.segments,
     speakerNames: s.speakerNames,
+    selfSpeaker: s.selfSpeaker,
     findings: s.findings,
     actionItems: s.actionItems,
     // "Pipeline completed" marker — lets loadHistory restore even an EMPTY result
@@ -146,6 +148,7 @@ function emptyAnalysis(): AnalysisSnapshot {
   return {
     segments: [],
     speakerNames: {},
+    selfSpeaker: null,
     findings: [],
     actionItems: [],
     analyzed: false,
@@ -177,6 +180,8 @@ export interface LiveMeetingSnapshot {
   analysis: AnalysisSnapshot;
   transcriptionDropped: boolean;
   micSessionRateHz: number | null;
+  /** When the user's own mic heard speech (store.micActivity). */
+  micActivity: readonly MicSpan[];
   save: MeetingSaveTarget;
   /** The name typed in the floating window; absent = the dated default. */
   title?: string;
@@ -202,6 +207,7 @@ export function snapshotLiveMeeting(): LiveMeetingSnapshot | null {
     })(),
     transcriptionDropped: s.transcriptionDropped,
     micSessionRateHz: s.micSessionRateHz,
+    micActivity: s.micActivity,
     save: resolveMeetingSave(),
     title: s.meetingTitle.trim() || undefined,
     orphan: false,
@@ -217,6 +223,7 @@ export function orphanSnapshot(id: string, startedAtMs: number | undefined): Liv
     analysis: emptyAnalysis(),
     transcriptionDropped: true,
     micSessionRateHz: null,
+    micActivity: [],
     save: {
       folderId: def.scope === "personal" ? (def.folderId ?? null) : null,
       autoShare: null,
@@ -244,6 +251,7 @@ export function liveSnapshotFor(id: string | undefined, startedAtMs: number | un
       analysis: snapshotAnalysis(),
       transcriptionDropped: s.transcriptionDropped,
       micSessionRateHz: s.micSessionRateHz,
+      micActivity: s.micActivity,
     };
   }
   if (showsIt) return snapshotLiveMeeting() ?? orphanSnapshot(id, startedAtMs);
@@ -452,6 +460,11 @@ export async function saveLiveToHistory(
     folderId: save.folderId,
     ...analysis,
     speechRateHz,
+    // Only a diarized meeting needs it: a two-stream one already knows which
+    // lines are the mic's.
+    ...(analysis.segments.some((seg) => seg.source === "mix") && snap.micActivity.length > 0
+      ? { micActivity: snap.micActivity.map(([a, b]): [number, number] => [a, b]) }
+      : {}),
   };
   try {
     await persist(entry, audioTempPath, /* compress */ false);
@@ -945,6 +958,22 @@ export async function persistFilingSuggestion(): Promise<void> {
   }));
   pushToCloud(id);
   log.info("history: filing suggestion saved", { id, pending: !!updated.filingSuggestion });
+}
+
+/**
+ * Persist which speaker the user marked as themselves (這是我) on the loaded
+ * entry — the 評分 report reads it on every open. No-op for a read-only org
+ * recording and for an upload not saved yet (its first save carries the mark
+ * via snapshotAnalysis).
+ */
+export async function persistSelfSpeaker(): Promise<void> {
+  const s = useStore.getState();
+  const id = s.loadedHistoryId;
+  if (!isTauri() || s.replayReadOnly || !id) return;
+  await Promise.resolve(uploadSaveInFlight).catch(() => {});
+  await rewriteEntry(id, (meta) => ({ ...meta, selfSpeaker: s.selfSpeaker }));
+  pushToCloud(id);
+  log.info("history: self speaker saved", { id, marked: !!s.selfSpeaker });
 }
 
 // ── List / read / delete ─────────────────────────────────────────────────────

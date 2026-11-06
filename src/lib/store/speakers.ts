@@ -9,6 +9,10 @@ export interface SpeakersSlice {
   speakerNames: Record<string, string>;
   /** Assign/clear a custom name for a speaker key. */
   setSpeakerName: (key: string, name: string) => void;
+  /** The speaker the user marked as themselves (這是我), or null. Per meeting.
+   *  What the 評分 report scores — see speakers/self.ts for the fallbacks. */
+  selfSpeaker: string | null;
+  setSelfSpeaker: (key: string | null) => void;
   /** Voice diarization landed: the re-numbered transcript and the names that
    *  belong to the new numbering, together. */
   applyDiarizedSpeakers: (segments: TranscriptSegment[], speakerNames: Record<string, string>) => void;
@@ -16,6 +20,9 @@ export interface SpeakersSlice {
 
 export const createSpeakersSlice: SliceCreator<SpeakersSlice> = (set) => ({
   speakerNames: {},
+  selfSpeaker: null,
+
+  setSelfSpeaker: (key) => set({ selfSpeaker: key }),
 
   setSpeakerName: (key, name) =>
     set((state) => {
@@ -36,5 +43,6 @@ export const createSpeakersSlice: SliceCreator<SpeakersSlice> = (set) => ({
       return { speakerNames: next };
     }),
 
-  applyDiarizedSpeakers: (segments, speakerNames) => set({ segments, speakerNames }),
+  // New numbering: a 這是我 mark on the old one may now name someone else.
+  applyDiarizedSpeakers: (segments, speakerNames) => set({ segments, speakerNames, selfSpeaker: null }),
 });

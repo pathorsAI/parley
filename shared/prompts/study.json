@@ -138,6 +138,7 @@
     },
     "prosodyTemplate": "Your delivery signals: ~{{rate}} syllables/sec, pitch variation {{pitch}} semitones.\n\n",
     "measuredRateTemplate": "Acoustically measured speaking rate for this session: ~{{rate}} syllables/sec (≈ {{perMinute}} syllables/min). Use this for the pace read rather than guessing from the text.\n\n",
+    "selfTemplate": "In this transcript the user is the speaker labeled \"{{label}}\". Judge only that speaker's lines; every other speaker is someone else.\n\n",
     "watchlistTemplate": "Filler watchlist (judge OVER-use of these as verbal crutches only — ignore meaningful uses, and ignore non-lexical um/uh sounds): {{words}}\n\n",
     "transcriptLabel": {
       "live": "Recent transcript",

@@ -190,6 +190,7 @@ describe("mergeAnalysisSnapshot (the completed-pipeline overwrite)", () => {
     return {
       segments: [],
       speakerNames: {},
+      selfSpeaker: null,
       findings: [finding],
       actionItems: [],
       analyzed: true,

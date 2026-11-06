@@ -75,13 +75,16 @@ export async function analyzeDelivery(opts: {
   /** Whole-recording acoustic speech rate (syllables/sec) for the POST pass, where
    *  there's no live prosody stream — keeps the LLM's pace/summary honest. */
   measuredRateHz?: number | null;
+  /** The transcript's label for the user's own speaker (speakers/self.ts), so
+   *  the model doesn't have to guess it from the profile. */
+  selfLabel?: string | null;
   /** "live" trims to recent speech + cheaper prompt; "post" uses the whole call. */
   mode?: "live" | "post";
   /** Cancels the pass (the run was superseded). The call also has its own
    *  deadline — see generateObjectResilient. */
   signal?: AbortSignal;
 }): Promise<DeliveryAssessment | null> {
-  const { settings, segments, names, prosody, measuredRateHz, mode = "live", signal } = opts;
+  const { settings, segments, names, prosody, measuredRateHz, selfLabel, mode = "live", signal } = opts;
   const finals = segments.filter((s) => s.isFinal && s.text.trim());
   if (finals.length === 0) return null;
 
@@ -108,7 +111,8 @@ export async function analyzeDelivery(opts: {
     });
   }
   const watchlist = fillPrompt(D.watchlistTemplate, { words: fillerWatchlist(settings.language).join(", ") });
-  const ctx = profileContext(settings) + meetingContextBlock(mc) + delivery + watchlist;
+  const self = selfLabel ? fillPrompt(D.selfTemplate, { label: selfLabel }) : "";
+  const ctx = profileContext(settings) + meetingContextBlock(mc) + self + delivery + watchlist;
   const label = D.transcriptLabel[mode];
 
   const { object, usage } = await generateObjectResilient({

@@ -2,6 +2,8 @@
 // auto-analysis interval.
 
 import type { DeliveryNudge, ProsodyMetrics } from "../types";
+import { addMicSample, type MicSpan } from "../speakers/self";
+import { meetingElapsedMs } from "./meeting";
 import type { SliceCreator } from "./types";
 
 export interface CoachingSlice {
@@ -19,6 +21,10 @@ export interface CoachingSlice {
    *  a mic-only measured pace — never the counterpart's (issue #22). Reset on
    *  meeting start. */
   micSessionRateHz: number | null;
+  /** When the user's own mic heard speech, in recorded-ms (the transcript's
+   *  clock). Saved with a diarized meeting so the 評分 report can tell which
+   *  Speaker N is the user (speakers/self.ts). Reset on meeting start. */
+  micActivity: readonly MicSpan[];
   /** The transient coaching nudge currently shown (null = none). */
   deliveryNudge: DeliveryNudge | null;
   /** Show a nudge (replaces any current one); the UI auto-dismisses it. */
@@ -31,6 +37,7 @@ export const createCoachingSlice: SliceCreator<CoachingSlice> = (set) => ({
   autoAnalyzeSec: 45,
   prosody: null,
   micSessionRateHz: null,
+  micActivity: [],
   deliveryNudge: null,
 
   setAutoAnalyze: (on) => set({ autoAnalyze: on }),
@@ -51,6 +58,11 @@ export const createCoachingSlice: SliceCreator<CoachingSlice> = (set) => ({
         // Kept outside `prosody` so it survives the stop-time reset: the history
         // save reads it as the mic-only measured pace (issue #22).
         micSessionRateHz: m.sessionRateHz > 0 ? m.sessionRateHz : state.micSessionRateHz,
+        // Paused: nothing is recorded, so nothing is on the transcript's clock.
+        micActivity:
+          state.meetingPausedAt == null
+            ? addMicSample(state.micActivity, meetingElapsedMs(state), m.speaking)
+            : state.micActivity,
       };
     }),
   pushDeliveryNudge: (n) => set({ deliveryNudge: n }),
