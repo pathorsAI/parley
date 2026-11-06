@@ -13,7 +13,8 @@ const SCALE = SHOWN_W / DRAWN.w;
 
 /**
  * One folder as a card, for an org's page: a grey back panel, two sheets of
- * paper tucked in, the folder's front with its tab, and the name and how many
+ * paper tucked in (only when it holds a recording — an empty folder is drawn
+ * empty), the folder's front with its tab, and the name and how many
  * recordings it holds. Under the pointer the back turns blue, the papers rise,
  * the front takes its blue wash and the name its blue — the design's hover
  * state, eased.
@@ -32,7 +33,7 @@ export function FolderCard({
       className="group relative shrink-0 cursor-pointer rounded-[10px] text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
       style={{ width: SHOWN_W, height: DRAWN.h * SCALE }}
     >
-      <FolderDrawing hover>
+      <FolderDrawing hover empty={count === 0}>
         <p className="truncate text-[12px] text-[#333] transition-colors duration-500 ease-[var(--ob-ease)] group-hover:text-[#3b82f6] dark:text-[#e5e7eb] dark:group-hover:text-[#60a5fa]">
           {name}
         </p>
@@ -60,7 +61,7 @@ function DraftFolderCard({ onDone }: Readonly<{ onDone: (name: string | null) =>
   };
   return (
     <div className="relative shrink-0" style={{ width: SHOWN_W, height: DRAWN.h * SCALE }}>
-      <FolderDrawing>
+      <FolderDrawing empty>
         <input
           // eslint-disable-next-line jsx-a11y/no-autofocus -- the card exists only because the user just asked to name a folder
           autoFocus
@@ -83,8 +84,12 @@ function DraftFolderCard({ onDone }: Readonly<{ onDone: (name: string | null) =>
 
 /** The folder drawing in its own 151×136 coordinates, scaled to the shown
  *  size; `children` fill the name slot. `hover` turns on the design's hover
- *  state under a `group` ancestor. */
-function FolderDrawing({ hover = false, children }: Readonly<{ hover?: boolean; children: ReactNode }>) {
+ *  state under a `group` ancestor; `empty` leaves the papers out. */
+function FolderDrawing({
+  hover = false,
+  empty = false,
+  children,
+}: Readonly<{ hover?: boolean; empty?: boolean; children: ReactNode }>) {
   const h = (cls: string) => (hover ? cls : "");
   return (
     <div
@@ -94,12 +99,16 @@ function FolderDrawing({ hover = false, children }: Readonly<{ hover?: boolean; 
       {/* Back panel. */}
       <div className={`absolute top-0 left-0 h-[106px] w-[151px] rounded-[8px] bg-[#e1e1e1] transition-colors duration-500 ease-[var(--ob-ease)] dark:bg-[#1c2533] ${h("group-hover:bg-[#d4e5ef] dark:group-hover:bg-[#1d3350]")}`} />
       {/* The two papers, rising a little on hover. */}
-      <div className={`absolute top-[10.9px] left-[9.89px] flex h-[116.122px] w-[111.626px] items-center justify-center folder-paper ${h("group-hover:translate-x-[3.11px] group-hover:-translate-y-[10.9px]")}`}>
-        <div className="h-[104.765px] w-[99.601px] rotate-7 rounded-[4px] bg-white/80 shadow-[0px_4px_7px_0px_rgba(0,0,0,0.1)] dark:bg-[#2b3646]/80" />
-      </div>
-      <div className={`absolute top-[31.16px] left-[29.14px] flex h-[95.204px] w-[106px] items-center justify-center folder-paper folder-paper-late ${h("group-hover:translate-x-[3.11px] group-hover:-translate-y-[10.89px]")}`}>
-        <div className="h-[84.074px] w-[96.473px] rotate-7 rounded-[4px] bg-white shadow-[0px_4px_7px_0px_rgba(0,0,0,0.1)] dark:bg-[#334052]" />
-      </div>
+      {!empty && (
+        <>
+          <div className={`absolute top-[10.9px] left-[9.89px] flex h-[116.122px] w-[111.626px] items-center justify-center folder-paper ${h("group-hover:translate-x-[3.11px] group-hover:-translate-y-[10.9px]")}`}>
+            <div className="h-[104.765px] w-[99.601px] rotate-7 rounded-[4px] bg-white/80 shadow-[0px_4px_7px_0px_rgba(0,0,0,0.1)] dark:bg-[#2b3646]/80" />
+          </div>
+          <div className={`absolute top-[31.16px] left-[29.14px] flex h-[95.204px] w-[106px] items-center justify-center folder-paper folder-paper-late ${h("group-hover:translate-x-[3.11px] group-hover:-translate-y-[10.89px]")}`}>
+            <div className="h-[84.074px] w-[96.473px] rotate-7 rounded-[4px] bg-white shadow-[0px_4px_7px_0px_rgba(0,0,0,0.1)] dark:bg-[#334052]" />
+          </div>
+        </>
+      )}
       {/* The folder's front, its grey and blue washes crossfading. */}
       {/* Light and dark drawings of the front (the dark ones fade to navy). */}
       {(["", "-dark"] as const).map((v) => (
