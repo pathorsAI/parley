@@ -26,6 +26,7 @@ struct RecordingDetailView: View {
     @EnvironmentObject private var downloads: AudioDownloadModel
     /// "Start your first real meeting" at the end of the guided lap.
     @EnvironmentObject private var router: TabRouter
+    @Environment(\.dismiss) private var dismissScreen
     let summary: CloudRecordingSummary
     /// nil = personal scope; set = org scope.
     let orgId: String?
@@ -159,15 +160,16 @@ struct RecordingDetailView: View {
     @State private var sharingToAI = false
     /// Whether `intent` has been acted on, so a reload does not re-open it.
     @State private var intentHandled = false
-    /// The personal folders, for "Move to folder". Personal scope only, like
-    /// the rest of the overflow menu.
+    /// The folders of the recording's own scope: personal ones for a
+    /// personal recording, its organization's for an org one.
     @State private var folders: [CloudFolder] = []
     /// Where the recording is filed now. Seeded from the library row and moved
     /// by this screen; the row's own `summary` is a `let`.
     @State private var currentFolderId: String?
     /// The folder picker is up. See `FolderPickerSheet`.
     @State private var choosingFolder = false
-    @State private var moveError: String?
+    /// The recording moved out of this library; pop once the picker is gone.
+    @State private var leaveAfterMove = false
 
     /// The pending filing suggestion, if the recording carries one — shown above
     /// the face switcher. See `FilingSuggestionCard`.
@@ -274,12 +276,10 @@ struct RecordingDetailView: View {
         // A sheet, not the action sheet it used to be: a folder is a customer,
         // and forty customers as a scrolling wall of buttons with no search
         // was the complaint. See `FolderPickerSheet`.
-        .sheet(isPresented: $choosingFolder) {
-            FolderPickerSheet(
-                folders: folders,
-                currentFolderId: liveFolderId,
-                onSelect: { folderId in Task { await moveToFolder(folderId) } },
-                onCreate: { name in try await createFolderAndMove(name) })
+        .sheet(isPresented: $choosingFolder, onDismiss: {
+            if leaveAfterMove { dismissScreen() }
+        }) {
+            folderPicker
         }
         .task {
             wireFiling()
@@ -673,6 +673,7 @@ struct RecordingDetailView: View {
                 PlaybackBar(
                     controller: playback, summary: summary, orgId: orgId,
                     markers: meta.findings.map { Double($0.atMs) / 1000 })
+                folderChip
                 // Above the switch: the suggestion is about the whole
                 // recording, not about either face.
                 if orgId == nil {
@@ -781,7 +782,7 @@ struct RecordingDetailView: View {
     /// What an accepted suggestion changes on this screen, and what it
     /// retires.
     private func wireFiling() {
-        filing.onApplied = { title, folderId, created in
+        filing.onApplied = { title, filed, created in
             if let created, !folders.contains(where: { $0.id == created.id }) {
                 folders.append(created)
             }
@@ -790,12 +791,15 @@ struct RecordingDetailView: View {
                 meta?.title = title
                 onTitleChange?(title)
             }
-            if let folderId {
+            if let filed {
+                let folderId = filed.folderId
                 currentFolderId = folderId
                 meta?.folderId = folderId
                 onFolderChange?(folderId)
-                let name = folders.first { $0.id == folderId }?.name ?? created?.name ?? ""
-                lastFiling = (name, title != nil)
+                if let folderId {
+                    let name = folders.first { $0.id == folderId }?.name ?? created?.name ?? ""
+                    lastFiling = (name, title != nil)
+                }
             }
         }
         filing.onRetired = {
@@ -924,12 +928,6 @@ struct RecordingDetailView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 22) {
                     reTranscribeStatus
-                    if let moveError {
-                        Text(verbatim: moveError)
-                            .font(.parley.footnote)
-                            .foregroundStyle(Theme.destructive)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
                     if segments.isEmpty {
                         emptyTranscript(meta)
                     }
@@ -1570,46 +1568,149 @@ struct RecordingDetailView: View {
     // MARK: filing
 
     private func loadFolders() async {
-        guard orgId == nil, app.signedIn else { return }
+        guard app.signedIn else { return }
         #if DEBUG
             if ScreenshotDemo.servesFixtures {
-                folders = ScreenshotDemo.folders
+                folders = orgId == nil ? ScreenshotDemo.folders : ScreenshotDemo.orgFolders
                 return
             }
         #endif
-        folders = ((try? await app.cloud.listFolders()) ?? []).filter { $0.orgId == nil }
+        if let orgId {
+            folders = (try? await app.cloud.orgFolders(orgId: orgId)) ?? []
+        } else {
+            folders = ((try? await app.cloud.listFolders()) ?? []).filter { $0.orgId == nil }
+        }
     }
 
-    /// File the recording, or take it back to the top level.
+    /// The organization this recording belongs to, by name.
+    private var orgName: String? {
+        orgId.map { id in app.orgs.first { $0.id == id }?.name ?? String(localized: "Organization") }
+    }
+
+    /// Where the recording is, one tap from moving it: the folder (or Unfiled)
+    /// under the player, with the organization's name in front for an org
+    /// recording. The overflow menu's "Move to folder…" is two taps and hidden
+    /// behind a glyph; re-filing is the thing people come back to a recording
+    /// to do.
     ///
-    /// A real recording is a meta re-push, the same full upsert the Library's
-    /// context menu does. The sample is filed locally and never pushed — see
-    /// `SampleRecordingStore`.
-    private func moveToFolder(_ folderId: String?) async {
-        guard orgId == nil, folderId != currentFolderId else { return }
-        moveError = nil
+    /// An org recording with no folders to move between gets the label without
+    /// the button: its endpoint can only move it within its organization.
+    private var folderChip: some View {
+        let name = currentFolderName ?? String(localized: "Unfiled")
+        let label = orgName.map { "\($0) · \(currentFolderName ?? String(localized: "Not in a folder"))" } ?? name
+        let movable = orgId == nil || !folders.isEmpty
+        return VStack(alignment: .leading, spacing: 2) {
+            Button {
+                choosingFolder = true
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: orgId == nil ? "folder" : "person.2")
+                        .accessibilityHidden(true)
+                    Text(verbatim: label)
+                        .lineLimit(1)
+                    if movable {
+                        Image(systemName: "chevron.down")
+                            .font(.parley.caption2.weight(.semibold))
+                            .accessibilityHidden(true)
+                    }
+                }
+                .font(.parley.footnote)
+                .foregroundStyle(movable ? Theme.primary : Color(.secondaryLabel))
+                .frame(minHeight: 32)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!movable)
+            .accessibilityLabel(Text("Folder: \(label)"))
+            .accessibilityHint(movable ? Text("Move to another folder") : Text(verbatim: ""))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 20)
+    }
+
+    /// The same picker the Library uses. A personal recording can also move to
+    /// an organization's folder; an org recording only moves within its own
+    /// organization, the one place its endpoint reaches.
+    private var folderPicker: some View {
+        let group: FolderGroup =
+            orgId.map { FolderGroup(orgId: $0, name: orgName ?? "", folders: folders) }
+            ?? .personal(folders)
+        let orgGroups: (() async -> [FolderGroup])? =
+            orgId == nil && !isSample && !app.orgs.isEmpty
+            ? { await FolderGroup.organizations(app: app) } : nil
+        return FolderPickerSheet(
+            groups: [group],
+            loadMoreGroups: orgGroups,
+            current: .current(orgId: orgId, folderId: liveFolderId),
+            canCreate: orgId == nil,
+            onConfirm: { destination, label in try await file(to: destination, label: label) })
+    }
+
+    /// The picker's confirm. Throws back to the sheet, which stays up with the
+    /// error.
+    private func file(to destination: FolderDestination, label: String) async throws {
+        if case .newFolder(let name) = destination {
+            // The folder is created in the cloud: it is a real folder, the
+            // user named it.
+            let folder = try await app.cloud.createFolder(name: name)
+            folders.append(folder)
+            try await moveToFolder(folder.id)
+        } else if destination.orgId == orgId {
+            try await moveToFolder(destination.folderId)
+        } else if let target = destination.orgId {
+            // A personal recording into an organization is a move: share it
+            // into the folder, then delete the personal original, in that
+            // order, so a failure part-way leaves the original intact. The
+            // recording is then no longer in the library this screen was
+            // opened from, so the screen goes back to it.
+            do {
+                try await app.cloud.shareRecording(
+                    id: summary.id, orgId: target, folderId: destination.folderId)
+            } catch let e as CloudError where e.status == 403 {
+                throw FilingError(
+                    message: String(localized: "You don't have permission to share to “\(label)”"))
+            }
+            GettingStartedStore.shared.mark(.filed)
+            do {
+                try await app.cloud.deleteRecording(id: summary.id)
+            } catch {
+                throw FilingError(
+                    message: String(
+                        localized: "Copied to “\(label)”, but the original couldn't be removed from Personal: \(error.localizedDescription)"))
+            }
+            TranscriptHealthCache.forget(summary.id)
+            app.noteLibraryChanged()
+            leaveAfterMove = true
+        }
+    }
+
+    /// File the recording, or take it back to the top level of its scope.
+    ///
+    /// A personal recording is a meta re-push, the same full upsert the
+    /// Library's context menu does; an org recording is the org PATCH. The
+    /// sample is filed locally and never pushed — see `SampleRecordingStore`.
+    private func moveToFolder(_ folderId: String?) async throws {
+        guard folderId != currentFolderId else { return }
         if isSample {
             SampleRecordingStore.shared.setFolder(folderId)
+        } else if let orgId {
+            try await app.cloud.moveOrgRecordingToFolder(
+                orgId: orgId, id: summary.id, folderId: folderId)
         } else {
-            do {
-                // `summary` is the row this screen was opened with, and the
-                // recording may have been renamed since (the filing card on
-                // this very screen, or the Mac). Pushing it would put the old
-                // title back in the library while the meta kept the new one,
-                // so the summary is rebuilt from the meta just read.
-                var fresh = try await app.cloud.recordingMeta(id: summary.id)
-                fresh.folderId = folderId
-                try await app.cloud.pushRecording(
-                    id: summary.id,
-                    summary: CloudRecordingSummary(projecting: fresh, fallback: summary),
-                    meta: fresh)
-                if !fresh.title.isEmpty, fresh.title != displayTitle {
-                    displayTitle = fresh.title
-                    onTitleChange?(fresh.title)
-                }
-            } catch {
-                moveError = String(localized: "Move failed: \(error.localizedDescription)")
-                return
+            // `summary` is the row this screen was opened with, and the
+            // recording may have been renamed since (the filing card on
+            // this very screen, or the Mac). Pushing it would put the old
+            // title back in the library while the meta kept the new one,
+            // so the summary is rebuilt from the meta just read.
+            var fresh = try await app.cloud.recordingMeta(id: summary.id)
+            fresh.folderId = folderId
+            try await app.cloud.pushRecording(
+                id: summary.id,
+                summary: CloudRecordingSummary(projecting: fresh, fallback: summary),
+                meta: fresh)
+            if !fresh.title.isEmpty, fresh.title != displayTitle {
+                displayTitle = fresh.title
+                onTitleChange?(fresh.title)
             }
         }
         currentFolderId = folderId
@@ -1628,17 +1729,6 @@ struct RecordingDetailView: View {
         guard let currentFolderId, folders.contains(where: { $0.id == currentFolderId })
         else { return nil }
         return currentFolderId
-    }
-
-    /// "New folder…": the folder is created in the cloud — it is a real folder,
-    /// the user named it — and the recording moves into it. A failed create
-    /// throws back to the picker, which keeps the name on screen with the
-    /// error; a failed move after it lands inline here, like any other move.
-    private func createFolderAndMove(_ name: String) async throws {
-        moveError = nil
-        let folder = try await app.cloud.createFolder(name: name)
-        folders.append(folder)
-        await moveToFolder(folder.id)
     }
 
     // MARK: feedback

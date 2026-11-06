@@ -60,7 +60,7 @@ struct GuideBar: View {
             step(
                 Text("1 / 3 · See what Parley did for you"),
                 body: Text(
-                    "Every recording gets a name and a suggested folder when it's done. You can change the title or pick your own folder — tap Accept or any folder to try it."
+                    "Every recording gets a name and a suggested folder when it's done. You can change the title or pick your own folder, then tap Save."
                 )
             ) {
                 primary(hasSuggestion ? Text("Show me") : Text("Choose a folder"), showSuggestion)

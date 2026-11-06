@@ -414,23 +414,6 @@
         }
       }
     },
-    "Accept" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Accept"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "採用"
-          }
-        }
-      }
-    },
     "Account" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -629,23 +612,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "全部"
-          }
-        }
-      }
-    },
-    "All folders" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "All folders"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "所有資料夾"
           }
         }
       }
@@ -885,6 +851,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "取消"
+          }
+        }
+      }
+    },
+    "Choose" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選擇"
           }
         }
       }
@@ -1162,6 +1145,23 @@
         }
       }
     },
+    "Copied to “%@”, but the original couldn't be removed from Personal: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copied to “%@”, but the original couldn't be removed from Personal: %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已複製到「%@」，但個人裡的原始錄音沒能移除：%@"
+          }
+        }
+      }
+    },
     "Copy" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1196,6 +1196,23 @@
         }
       }
     },
+    "Copy to organization" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copy to organization"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "副本到組織"
+          }
+        }
+      }
+    },
     "Copy transcript" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1226,23 +1243,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "複製（附分析提示）"
-          }
-        }
-      }
-    },
-    "Couldn't create the folder: %@" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Couldn't create the folder: %@"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "無法建立資料夾：%@"
           }
         }
       }
@@ -2046,19 +2046,19 @@
         }
       }
     },
-    "Every recording gets a name and a suggested folder when it's done. You can change the title or pick your own folder — tap Accept or any folder to try it." : {
+    "Every recording gets a name and a suggested folder when it's done. You can change the title or pick your own folder, then tap Save." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Every recording gets a name and a suggested folder when it's done. You can change the title or pick your own folder — tap Accept or any folder to try it."
+            "value" : "Every recording gets a name and a suggested folder when it's done. You can change the title or pick your own folder, then tap Save."
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "錄完的會議會自動取名、建議放哪個資料夾。標題可以改，資料夾也能自己選。按「採用」或任一個資料夾試試。"
+            "value" : "錄完的會議會自動取名、建議放哪個資料夾。標題可以改，資料夾也能自己選，選好再按「儲存」。"
           }
         }
       }
@@ -2302,6 +2302,23 @@
         }
       }
     },
+    "Folder: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Folder: %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "資料夾：%@"
+          }
+        }
+      }
+    },
     "Generate a summary with AI" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2383,6 +2400,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "聽成"
+          }
+        }
+      }
+    },
+    "Here now" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Here now"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "目前位置"
           }
         }
       }
@@ -2569,6 +2603,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在「鍵盤 → 加入新的鍵盤」選 Parley Voice。"
+          }
+        }
+      }
+    },
+    "Into “%@”." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Into “%@”."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "放進「%@」。"
           }
         }
       }
@@ -3352,6 +3403,23 @@
         }
       }
     },
+    "Move to another folder" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move to another folder"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移到其他資料夾"
+          }
+        }
+      }
+    },
     "Move to folder" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3399,6 +3467,57 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "搬移到組織"
+          }
+        }
+      }
+    },
+    "Move to…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move to…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移到…"
+          }
+        }
+      }
+    },
+    "Moved to “%@”" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moved to “%@”"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已移到「%@」"
+          }
+        }
+      }
+    },
+    "Moves to “%@”. It leaves Personal once the organization has it." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moves to “%@”. It leaves Personal once the organization has it."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "會移到「%@」。組織收到後，就會從個人移除。"
           }
         }
       }
@@ -3603,6 +3722,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "還沒有摘要。"
+          }
+        }
+      }
+    },
+    "Not in a folder" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not in a folder"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不在資料夾中"
           }
         }
       }
@@ -3857,23 +3993,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "一個客戶一個資料夾，和 Mac 同步"
-          }
-        }
-      }
-    },
-    "One customer, one folder." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "One customer, one folder."
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "一個客戶一個資料夾。"
           }
         }
       }
@@ -6003,6 +6122,23 @@
         }
       }
     },
+    "Shares a copy to “%@”. The original stays in Personal." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Shares a copy to “%@”. The original stays in Personal."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "會分享一份副本到「%@」，原本的錄音留在個人。"
+          }
+        }
+      }
+    },
     "Should be" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6799,6 +6935,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "跟隨系統"
+          }
+        }
+      }
+    },
+    "Tap a folder to select it." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tap a folder to select it."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "點一下資料夾來選取。"
           }
         }
       }
