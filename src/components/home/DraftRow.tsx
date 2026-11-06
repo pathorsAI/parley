@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { CalendarClock, Folder } from "lucide-react";
 import { toast } from "sonner";
 import { isMeetingActive, useStore } from "../../lib/store";
-import type { MeetingDraft } from "../../lib/store/prep";
+import { isOver, type MeetingDraft } from "../../lib/store/prep";
 import { beginMeeting } from "../../lib/meeting/start";
 import { startOfDay, untilStart } from "../../lib/meeting/timeSlots";
 import { useI18n } from "../../i18n";
@@ -54,12 +54,21 @@ export function DraftRow({
   const { t, language } = useI18n();
   const locale = language === "en" ? "en-US" : "zh-TW";
   const until = d.meetingAt == null ? null : untilStart(d.meetingAt, now);
+  // A draft is still a draft once its time comes: nothing has been recorded,
+  // so the row never claims the meeting "started". Inside its slot it says the
+  // start time has gone by (and 開始 is still the thing to press); once the
+  // slot is over too, the draft has simply lapsed.
   let soon: string | null = null;
+  let late = false;
   if (until) {
-    soon =
-      until.unit === "started"
-        ? t("home.upcoming.started")
-        : t(`home.upcoming.in.${until.unit}`, { n: String(until.value) });
+    if (until.unit !== "started") {
+      soon = t(`home.upcoming.in.${until.unit}`, { n: String(until.value) });
+    } else if (isOver(d, now)) {
+      soon = t("home.upcoming.expired");
+    } else {
+      soon = t("home.upcoming.pastStart");
+      late = true;
+    }
   }
   return (
     <li className="flex min-h-11 items-center gap-2.5 border-b px-2 py-1.5">
@@ -81,7 +90,11 @@ export function DraftRow({
           {folder}
         </span>
       )}
-      {soon && <span className="shrink-0 text-[11px] text-muted-foreground">{soon}</span>}
+      {soon && (
+        <span className={`shrink-0 text-[11px] ${late ? "font-medium text-primary" : "text-muted-foreground"}`}>
+          {soon}
+        </span>
+      )}
       <span className="flex-1" />
       <button
         type="button"
