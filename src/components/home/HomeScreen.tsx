@@ -1,8 +1,7 @@
-import { ArrowRight, CalendarDays, ClipboardList, FileAudio, Keyboard, Mic, X } from "lucide-react";
+import { ArrowRight, ClipboardList, FileAudio, Keyboard, X } from "lucide-react";
 import { toast } from "sonner";
 import { DEFAULT_GETTING_STARTED, useStore } from "../../lib/store";
 import { loadHistoryEntry } from "../../lib/history/history";
-import { beginMeeting } from "../../lib/meeting/start";
 import { useI18n } from "../../i18n";
 import { log } from "../../lib/log";
 import { Button } from "@/components/ui/button";
@@ -29,8 +28,9 @@ const RECENT_COUNT = 4;
  * empty columns — a screen for a meeting that wasn't happening — while all
  * browsing weight fell on the 240px tree. Home flips that: the cockpit exists
  * only while a meeting runs; idle surfaces what the user actually acts on next
- * (record now or draft first / recent recordings). Importing lives on the
- * library header and on drag-in, which the helper line under the buttons names.
+ * (the meetings coming up / recent recordings). Recording and drafting start
+ * from the tree, the menu and ⌘N rather than from buttons beside the greeting;
+ * importing lives on the library header and on drag-in.
  */
 export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
   const { t, language } = useI18n();
@@ -74,35 +74,10 @@ export function HomeScreen({ tree }: Readonly<{ tree: LibraryTree }>) {
       <HomeBackdrop />
       <div className="relative mx-auto flex max-w-5xl flex-col gap-8 px-6 pt-10 pb-10">
         {/* ── Start ─────────────────────────────────────────────────────── */}
-        {/* Title left, the two ways in on its right; wraps under it when narrow. */}
-        <section className="animate-fade-up flex flex-wrap items-center gap-x-4 gap-y-3">
-          <h1 className="mr-auto min-w-0 text-2xl font-bold tracking-tight">
+        <section className="animate-fade-up">
+          <h1 className="min-w-0 text-2xl font-bold tracking-tight">
             {userName ? t("home.greetingNamed", { name: userName }) : t("home.greeting")}
           </h1>
-          <div className="flex shrink-0 items-center gap-2">
-            <Button
-              className="h-9"
-              onClick={() =>
-                beginMeeting().catch((e) => {
-                  log.error("home: start failed", { error: String(e) });
-                  toast.error(String(e instanceof Error ? e.message : e));
-                })
-              }
-            >
-              <Mic className="size-4" />
-              {t("home.recordNow")}
-            </Button>
-            {/* The other way in: a meeting that wants background gets a draft
-                first. The sheet itself lives at the app root (App.tsx). */}
-            <Button
-              variant="outline"
-              className="h-9"
-              onClick={() => useStore.getState().setDraftOpen(true)}
-            >
-              <CalendarDays className="size-4" />
-              {t("home.newDraft")}
-            </Button>
-          </div>
         </section>
 
         {/* ── The meetings starting within the hour ───────────────────────── */}
