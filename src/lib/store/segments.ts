@@ -3,6 +3,7 @@
 
 import type { TranscriptSegment } from "../types";
 import { countFillerSounds } from "../analysis/fillerWords";
+import { echoIdsFor } from "../transcription/echo";
 import type { ParleyState, SliceCreator } from "./types";
 
 export interface SegmentsSlice {
@@ -47,6 +48,32 @@ function fillerPatchFor(
   };
 }
 
+/**
+ * Remove the "me" segments in `ids` (mic echoes of the other side) and, unless
+ * `incoming` is itself one of them, upsert it. Their filler sounds come back
+ * out of the live tally: they were never the user's.
+ */
+function dropEchoes(
+  state: Pick<ParleyState, "segments" | "filledPauseCount" | "filledPauseCounted">,
+  ids: string[],
+  incoming: TranscriptSegment,
+): Partial<ParleyState> {
+  const drop = new Set(ids);
+  const kept = state.segments.filter((s) => !drop.has(s.id));
+  if (!drop.has(incoming.id)) {
+    const idx = kept.findIndex((s) => s.id === incoming.id);
+    if (idx === -1) kept.push(incoming);
+    else kept[idx] = incoming;
+  }
+  let count = state.filledPauseCount;
+  const counted = { ...state.filledPauseCounted };
+  for (const id of drop) {
+    count -= counted[id] ?? 0;
+    delete counted[id];
+  }
+  return { segments: kept, filledPauseCount: Math.max(0, count), filledPauseCounted: counted };
+}
+
 export const createSegmentsSlice: SliceCreator<SegmentsSlice> = (set) => ({
   segments: [],
   filledPauseCount: 0,
@@ -58,6 +85,11 @@ export const createSegmentsSlice: SliceCreator<SegmentsSlice> = (set) => ({
       // stray live event (e.g. a leaked listener) while viewing a saved session.
       // (Live finalize after stop is appMode "live"/"stopped", so it's unaffected.)
       if (state.appMode === "study") return {};
+
+      // Separate tracks: the other side's voice leaking from the speakers into
+      // the mic must not count as the user's speech (transcription/echo.ts).
+      const echoes = echoIdsFor(state.segments, segment);
+      if (echoes.length) return dropEchoes(state, echoes, segment);
 
       const fillerPatch = fillerPatchFor(state, segment);
 

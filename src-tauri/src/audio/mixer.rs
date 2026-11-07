@@ -119,8 +119,12 @@ pub async fn mix_streams(
     mut rx_a: UnboundedReceiver<Vec<i16>>,
     mut rx_b: UnboundedReceiver<Vec<i16>>,
     tx_out: UnboundedSender<Vec<i16>>,
+    level_events: bool,
 ) {
-    let mut meter = LevelMeter::new(app, "me", LEVEL_EVENT);
+    // Off when the mix only feeds the recording: the two transcription
+    // sessions then meter their own sides, and a second "me" meter here
+    // would fight them.
+    let mut meter = LevelMeter::new(app, "me", LEVEL_EVENT).enabled(level_events);
     let mut a = Side::new();
     let mut b = Side::new();
     // Wakes the loop so a stall is detected even when the stalled side never
