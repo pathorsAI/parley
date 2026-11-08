@@ -5,6 +5,7 @@ mod cache;
 mod capture;
 mod commands;
 mod diarize;
+mod voiceprint;
 mod dock_tile;
 mod hardware;
 mod history;
@@ -290,6 +291,10 @@ pub fn run() {
             playback::prepare_playback_fallback,
             diarize::download_diarize_model,
             diarize::diarize_model_status,
+            voiceprint::voiceprint_status,
+            voiceprint::voiceprint_clear,
+            voiceprint::voiceprint_enroll,
+            voiceprint::voiceprint_match,
             local_stt::local_stt_models,
             local_stt::local_stt_download,
             local_stt::local_stt_cancel,

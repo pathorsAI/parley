@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { CalendarClock, Folder } from "lucide-react";
 import { toast } from "sonner";
-import { isMeetingActive, useStore } from "../../lib/store";
+import { isLiveMeetingActive, useStore } from "../../lib/store";
 import { isOver, type MeetingDraft } from "../../lib/store/prep";
 import { beginMeeting } from "../../lib/meeting/start";
 import { startOfDay, untilStart } from "../../lib/meeting/timeSlots";
@@ -22,7 +22,7 @@ function startDraft(id: string) {
   // Refused while a meeting records; beginMeeting then says so and brings
   // that meeting's window up.
   if (!useStore.getState().takeDraft(id)) {
-    if (isMeetingActive(useStore.getState().meetingStatus)) void beginMeeting();
+    if (isLiveMeetingActive()) void beginMeeting();
     return;
   }
   beginMeeting().catch((e) => {

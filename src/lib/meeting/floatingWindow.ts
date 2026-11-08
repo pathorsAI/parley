@@ -25,13 +25,14 @@ export const MINI_LINE = 22;
  *  + 8px padding above and below). */
 export const MINI_MIN_HEIGHT = { coach: 48, transcript: 48 + 1 + 16 + MINI_LINE, notes: 48 + 1 + 16 + MINI_LINE } as const;
 /** Docking, like a magnet: a mini window brought this close to the screen's
- *  top edge — anywhere along it — snaps to the nearer of its two spots: the
- *  middle, under the notch by the camera, or the top-right corner. */
+ *  top edge — anywhere along it — snaps to the nearest of its three spots:
+ *  the top-left corner, the middle (under the notch by the camera), or the
+ *  top-right corner. */
 const DOCK_REACH = 72;
 /** How long the window rests before the magnet pulls (or lets go). */
 const DOCK_SETTLE_MS = 120;
-/** A docked window's gap under the menu bar, and the corner spot's gap from
- *  the screen's right edge. */
+/** A docked window's gap under the menu bar, and the corner spots' gap from
+ *  the screen's left and right edges. */
 const DOCK_GAP = 8;
 /** How long the window glides to a new frame: docking, shrinking, growing,
  *  and its height following the mini window's tab. */
@@ -43,6 +44,13 @@ const MAIN_DEFAULT = { width: 1200, height: 800 } as const;
 /** Gap kept between the floating window and the screen's edges. */
 const EDGE = 24;
 
+/** The widest the full meeting window opens or grows: a third of the screen,
+ *  so it sits beside a call instead of over it — but never so narrow that it
+ *  flips into the compact view. */
+export function maxFullWidth(screenWidth: number): number {
+  return Math.max(COMPACT_BELOW.width, Math.floor(screenWidth / 3));
+}
+
 /**
  * Where the floating window goes on a screen of `screen` logical px whose
  * top-left is at `origin`: the frame's size, shrunk to fit, against the right
@@ -52,7 +60,10 @@ export function floatingFrame(
   screen: { width: number; height: number },
   origin: { x: number; y: number } = { x: 0, y: 0 },
 ): { x: number; y: number; width: number; height: number } {
-  const width = Math.max(FLOATING_MIN.width, Math.min(FLOATING_SIZE.width, screen.width - EDGE * 2));
+  const width = Math.min(
+    maxFullWidth(screen.width),
+    Math.max(FLOATING_MIN.width, Math.min(FLOATING_SIZE.width, screen.width - EDGE * 2)),
+  );
   const height = Math.max(FLOATING_MIN.height, Math.min(FLOATING_SIZE.height, screen.height - EDGE * 3));
   return {
     x: origin.x + Math.max(0, screen.width - width - EDGE),
@@ -75,9 +86,34 @@ export function useMainWindowRepair(): void {
 
 type Frame = { x: number; y: number; width: number; height: number };
 type Area = { x: number; y: number; width: number };
+type FullArea = Area & { height: number };
 
-/** Where a mini window can dock: under the notch, or the top-right corner. */
-export type DockSpot = "notch" | "corner";
+/** Gap a grown window keeps from the screen's edges. */
+const FIT_GAP = 8;
+
+/**
+ * Pure: `frame` made to fit inside `area` (a screen's work area): no larger
+ * than the area less a small gap on each side (and no wider than a third of
+ * it, maxFullWidth), and moved back on screen —
+ * the way a window grown near an edge (a mini window docked in the corner,
+ * say) opens up without running off it.
+ */
+export function fitToArea(frame: Frame, area: FullArea): Frame {
+  const width = Math.min(frame.width, area.width - FIT_GAP * 2, maxFullWidth(area.width));
+  const height = Math.min(frame.height, area.height - FIT_GAP * 2);
+  const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
+  return {
+    x: Math.round(clamp(frame.x, area.x + FIT_GAP, area.x + area.width - width - FIT_GAP)),
+    y: Math.round(clamp(frame.y, area.y + FIT_GAP, area.y + area.height - height - FIT_GAP)),
+    width: Math.round(width),
+    height: Math.round(height),
+  };
+}
+
+/** Where a mini window can dock: the top-left corner, under the notch, or
+ *  the top-right corner ("corner"). */
+export type DockSpot = "left" | "notch" | "corner";
+const DOCK_SPOTS: readonly DockSpot[] = ["left", "notch", "corner"];
 
 /** The floating window's frame before it shrank to the mini window. */
 let beforeMini: Frame | null = null;
@@ -90,33 +126,52 @@ let glidingUntil = 0;
 /**
  * Pure: the spot a window whose frame is `win` (logical px) docks to on
  * `area` — the screen its middle is on — or null when it is not close enough
- * to the top edge. Along that edge it goes to the nearer spot.
+ * to the top edge. Along that edge it goes to the nearest spot.
  */
 export function dockTarget(win: { x: number; y: number; width: number }, area: Area): DockSpot | null {
   const center = win.x + win.width / 2;
   const onScreen = center >= area.x && center < area.x + area.width;
   if (!onScreen || win.y - area.y > DOCK_REACH) return null;
-  const notch = dockPosition("notch", area, win.width).x + win.width / 2;
-  const corner = dockPosition("corner", area, win.width).x + win.width / 2;
-  return Math.abs(center - corner) < Math.abs(center - notch) ? "corner" : "notch";
+  const gap = (spot: DockSpot) => Math.abs(center - (dockPosition(spot, area, win.width).x + win.width / 2));
+  return DOCK_SPOTS.reduce((best, spot) => (gap(spot) < gap(best) ? spot : best));
 }
 
 /** Pure: the top-left corner of a window `width` wide docked at `spot`. */
 export function dockPosition(spot: DockSpot, area: Area, width: number): { x: number; y: number } {
-  const x = spot === "notch" ? area.x + (area.width - width) / 2 : area.x + area.width - width - DOCK_GAP;
+  const x =
+    spot === "left"
+      ? area.x + DOCK_GAP
+      : spot === "notch"
+        ? area.x + (area.width - width) / 2
+        : area.x + area.width - width - DOCK_GAP;
   return { x: Math.round(x), y: Math.round(area.y + DOCK_GAP) };
 }
 
 /** The work area (below the menu bar) of the screen the window is on, in
  *  logical px. */
-async function screenArea(): Promise<Area | null> {
+async function screenArea(): Promise<FullArea | null> {
   const { currentMonitor } = await import("@tauri-apps/api/window");
   const monitor = await currentMonitor();
   if (!monitor) return null;
   const f = monitor.scaleFactor;
   const a = monitor.workArea;
-  return { x: a.position.x / f, y: a.position.y / f, width: a.size.width / f };
+  return { x: a.position.x / f, y: a.position.y / f, width: a.size.width / f, height: a.size.height / f };
 }
+
+/**
+ * Grow the full meeting window to `size` with its top-left at `at`, fitted to
+ * the screen it is on. Resolves once the glide has ended.
+ */
+export async function growMeetingWindow(at: { x: number; y: number }, size: { width: number; height: number }): Promise<void> {
+  const area = await screenArea();
+  const want = { x: at.x, y: at.y, width: size.width, height: size.height };
+  await glide(area ? fitToArea(want, area) : want);
+  await new Promise((resolve) => setTimeout(resolve, GLIDE_MS));
+}
+
+/** The full window's size the last time it shrank to the mini window, so
+ *  growing back from a dragged-small window opens to it too. */
+let lastFullSize: { width: number; height: number } | null = null;
 
 /** The window's current frame, in logical px. */
 async function currentFrame(): Promise<Frame> {
@@ -154,6 +209,9 @@ export async function setMeetingMini(
     const now = await currentFrame();
     if (on) {
       beforeMini = now;
+      if (now.width >= DRAG_MIN.width && now.height >= DRAG_MIN.height) {
+        lastFullSize = { width: now.width, height: now.height };
+      }
       await win.setMinSize(new LogicalSize(MINI_WIDTH, minHeight));
       const area = docked ? await screenArea() : null;
       const at = docked && area ? dockPosition(docked, area, MINI_WIDTH) : now;
@@ -166,16 +224,62 @@ export async function setMeetingMini(
       await win.setMinSize(new LogicalSize(DRAG_MIN.width, DRAG_MIN.height));
       // Out of the dock, the full window goes back where it was.
       const at = docked && back ? back : now;
-      await glide({
-        x: at.x,
-        y: at.y,
-        width: back?.width ?? FLOATING_SIZE.width,
-        height: back?.height ?? FLOATING_SIZE.height,
-      });
-      await new Promise((resolve) => setTimeout(resolve, GLIDE_MS));
+      // Its last size (or the frame's), never past the screen's edges.
+      await growMeetingWindow(at, back ?? lastFullSize ?? FLOATING_SIZE);
     }
   } catch (error) {
     log.warn("meeting: mini window toggle failed", { on, error: String(error) });
+  }
+}
+
+/** Fit the window, as it stands, back inside its screen (the same rule as
+ *  growing); nothing moves when it already fits. */
+async function refitMeetingWindow(): Promise<void> {
+  const area = await screenArea();
+  if (!area) return;
+  const now = await currentFrame();
+  const fitted = fitToArea(now, area);
+  const same = (["x", "y", "width", "height"] as const).every((k) => Math.abs(fitted[k] - now[k]) < 1);
+  if (!same) await glide(fitted);
+}
+
+/**
+ * Into the Dock (the taskbar on Windows); the recording carries on. When it
+ * comes back out it opens the way growing does: never past the screen's
+ * edges, nor wider than a third of it.
+ */
+export async function minimizeMeetingWindow(): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    const win = getCurrentWindow();
+    let unlisten: (() => void) | null = null;
+    unlisten = await win.onFocusChanged(({ payload: focused }) => {
+      if (!focused) return;
+      void win.isMinimized().then((minimized) => {
+        if (minimized) return;
+        unlisten?.();
+        unlisten = null;
+        void refitMeetingWindow().catch((error: unknown) =>
+          log.warn("meeting: floating window refit failed", { error: String(error) }),
+        );
+      });
+    });
+    await win.minimize();
+  } catch (error) {
+    log.warn("meeting: floating window minimize failed", { error: String(error) });
+  }
+}
+
+/** Out of a full window dragged small: back to its last full size (or the
+ *  frame's), fitted to the screen. */
+export async function growFromCompactWindow(): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    const now = await currentFrame();
+    await growMeetingWindow(now, lastFullSize ?? FLOATING_SIZE);
+  } catch (error) {
+    log.warn("meeting: floating window grow failed", { error: String(error) });
   }
 }
 

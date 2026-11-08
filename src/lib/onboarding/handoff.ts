@@ -90,10 +90,15 @@ export function meetingKindLabel(kind: MeetingKind | null | undefined, lang: App
   return kind ? translate(lang, `meetingKind.${kind}`) : "";
 }
 
+/** How a speaker is written; defaults to the English labels. Hand-offs pass
+ *  the on-screen, localized labeller so the copy reads like the page. */
+type Labeller = (s: TranscriptSegment) => string;
+
 /** Distinct speaker display names in first-appearance order (spoken lines only). */
 export function speakerDisplayNames(
   segments: TranscriptSegment[],
-  names: Record<string, string>
+  names: Record<string, string>,
+  label: Labeller = (s) => speakerLabel(s, names),
 ): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -102,7 +107,7 @@ export function speakerDisplayNames(
     const key = speakerKey(s);
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push(speakerLabel(s, names));
+    out.push(label(s));
   }
   return out;
 }
@@ -116,14 +121,15 @@ export function resolveMeName(
   segments: TranscriptSegment[],
   names: Record<string, string>,
   userName: string,
-  fallback: string
+  fallback: string,
+  label: Labeller = (s) => speakerLabel(s, names),
 ): string {
   const own = userName.trim();
-  if (own && speakerDisplayNames(segments, names).includes(own)) return own;
+  if (own && speakerDisplayNames(segments, names, label).includes(own)) return own;
   const mic = segments.find(
     (s) => s.source === "me" && (s.speaker || 1) <= 1 && s.isFinal && s.text.trim()
   );
-  if (mic) return speakerLabel(mic, names);
+  if (mic) return label(mic);
   return own || fallback;
 }
 
@@ -178,11 +184,6 @@ export function buildReportMarkdown(entry: HandoffReportEntry, lang: AppLanguage
 
   lines.push("---", "", `_${t("study.report.footer")}_`, "");
   return lines.join("\n");
-}
-
-/** The action items as a markdown checklist ("" when there are none). */
-export function buildActionItemsMarkdown(items: readonly ActionItem[]): string {
-  return items.map(actionItemMarkdownLine).join("\n");
 }
 
 const TONE_KEY = {

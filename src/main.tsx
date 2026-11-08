@@ -38,7 +38,7 @@ log.info("ui: boot", { window: window_ });
 
 // Notices from lib flows (history saves, refiles…) render as toasts here.
 setNotifier({
-  message: (text) => toast.message(text),
+  message: (text, action) => toast.message(text, action ? { action } : undefined),
   success: (text) => toast.success(text),
   error: (text) => toast.error(text),
 });

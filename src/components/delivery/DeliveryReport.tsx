@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { ReportNav } from "../study/ReportNav";
 import { useI18n } from "../../i18n";
+import { useRelabel } from "../../lib/speakers/useRelabel";
 import type { DeliveryAssessment } from "../../lib/types";
 import { syllablesPerMin } from "../../lib/analysis/delivery";
 import { clock, type SpeechStats } from "../../lib/analysis/speechStats";
@@ -198,12 +199,15 @@ function WordBars({ items, total }: Readonly<{ items: FillerCount[]; total: numb
  * fact the recording can't answer is left out rather than shown as a dash.
  */
 export function DeliveryReport({
+  title,
   stats,
   ratio,
   measuredRate,
   assessment,
   tone,
 }: Readonly<{
+  /** The headline over the numbers; defaults to 這場你的說話特徵, null = none. */
+  title?: string | null;
   stats: SpeechStats;
   ratio: { me: number; them: number } | null;
   measuredRate: number | null;
@@ -211,6 +215,7 @@ export function DeliveryReport({
   tone: ReactNode;
 }>) {
   const { t } = useI18n();
+  const relabel = useRelabel();
   const talkMin = stats.myTalkMs / 60_000;
   const pace = measuredRate ? syllablesPerMin(measuredRate) : stats.textPace;
   const band = measuredRate ? paceBand(measuredRate) : null;
@@ -231,7 +236,7 @@ export function DeliveryReport({
     <div className="order-1 flex min-w-0 flex-col gap-6 @min-[680px]:order-none">
       {/* 這場你的說話特徵: the headline numbers. */}
       <section id="delivery-profile" data-report-section className="scroll-mt-4">
-      <h2 className="mb-3 text-base font-semibold">{t("delivery.profile")}</h2>
+      {title !== null && <h2 className="mb-3 text-base font-semibold">{title ?? t("delivery.profile")}</h2>}
       <div className="grid grid-cols-2 gap-x-6 gap-y-4 @min-[520px]:grid-cols-4">
         {pace != null && (
           <Kpi
@@ -280,7 +285,7 @@ export function DeliveryReport({
               assessment && (
                 <span className={frequent ? "text-warning-foreground" : ""}>
                   {t("delivery.chart.fillers.ai", { level: t(frequent ? "delivery.filler.frequent" : "delivery.filler.ok") })}
-                  {assessment.fillers.note ? ` · ${assessment.fillers.note}` : ""}
+                  {assessment.fillers.note ? ` · ${relabel(assessment.fillers.note)}` : ""}
                 </span>
               )
             }

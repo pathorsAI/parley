@@ -7,7 +7,7 @@
 // back, the same split as the floating meeting window (meetingWindow.ts).
 import { isTauri } from "../platform";
 import { log } from "../log";
-import { isMeetingActive, useStore } from "../store";
+import { isLiveMeetingActive, isMeetingActive, useLiveStore, useStore } from "../store";
 import type { ParleyState } from "../store/types";
 import * as ipc from "../ipc/commands";
 import {
@@ -115,10 +115,11 @@ export function initMeetingDetect(): () => void {
 
   const onDetected = (app: MicAppPayload) => {
     const s = useStore.getState();
+    const live = useLiveStore.getState();
     const ask = shouldPrompt({
       enabled: s.settings.meetingDetectEnabled,
-      meetingStatus: s.meetingStatus,
-      finalizing: s.isFinalizingMeeting,
+      meetingStatus: live.meetingStatus,
+      finalizing: live.isFinalizingMeeting,
       starting: isStartingMeeting(),
       muted: s.settings.meetingDetectMutedApps,
       app,
@@ -152,7 +153,9 @@ export function initMeetingDetect(): () => void {
       syncWatcher(next);
       if (!next.settings.meetingDetectEnabled) close();
     }
-    // Recording started some other way: the question is answered.
+  });
+  // Recording started some other way: the question is answered.
+  const unsubscribeLive = useLiveStore.subscribe((next, prev) => {
     if (isMeetingActive(next.meetingStatus) && !isMeetingActive(prev.meetingStatus)) close();
   });
   syncWatcher(useStore.getState());
@@ -177,6 +180,7 @@ export function initMeetingDetect(): () => void {
   ];
   return () => {
     unsubscribe();
+    unsubscribeLive();
     for (const u of unlisteners) void u.then((fn) => fn()).catch(() => {});
   };
 }
@@ -193,7 +197,7 @@ async function startFromPrompt(draftId: string | null): Promise<void> {
   } catch (error) {
     log.error("meeting-prompt: start failed", { error: String(error) });
   }
-  if (isMeetingActive(useStore.getState().meetingStatus)) return;
+  if (isLiveMeetingActive()) return;
   try {
     const { getCurrentWindow } = await import("@tauri-apps/api/window");
     const win = getCurrentWindow();

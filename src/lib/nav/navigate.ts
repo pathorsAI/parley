@@ -1,6 +1,5 @@
 import { loadHistoryEntry } from "../history/history";
-import { refuseWhileRecording } from "../history/open";
-import { isMeetingActive, useStore, type LibrarySelection } from "../store";
+import { useStore, type LibrarySelection } from "../store";
 import { log } from "../log";
 import { listenIfTauri, type UnlistenFn } from "../ipc/events";
 import { createNavHistory, type NavStatus } from "./history";
@@ -72,21 +71,17 @@ export const navHistory = createNavHistory({
  *
  * The two kinds are guarded differently, on purpose:
  *
- * `home` / `library` — `store.openHome` and `store.openLibrary` already refuse
- * silently while a meeting is running, so the verdict is read back off the
- * store AFTER the call instead of the rule being re-decided here. Restating the
- * guard would leave two copies to keep in sync, and a stack that records places
- * the app refused to go is worse than no stack at all.
+ * `home` / `library` — the verdict is read back off the store AFTER the call
+ * (`store.openHome` / `store.openLibrary`) instead of being re-decided here, so
+ * a stack never records a place the app did not go.
  *
- * `entry` — the store's `loadHistory` has NO meeting guard: it would replace a
- * running meeting's transcript with the recording. Navigation holds that line
- * itself, before the load.
+ * `entry` — loads the recording. A running meeting is no reason to refuse: it
+ * lives in its own store (useLiveStore), which loading never touches.
  */
 async function applyLocation(location: Location): Promise<NavOutcome> {
   const store = useStore.getState();
 
   if (location.kind === "entry") {
-    if (refuseWhileRecording()) return { status: "refused" };
     try {
       // Switches the app to the study route itself.
       await loadHistoryEntry(location.id);
@@ -147,10 +142,8 @@ export async function navigateTo(
  */
 export async function leaveRecordingTo(selection: LibrarySelection): Promise<NavOutcome> {
   const store = useStore.getState();
-  // exitReplay resets meetingStatus to idle — never let it run over a live call.
-  if (store.appMode !== "study" || isMeetingActive(store.meetingStatus)) {
-    return { status: "refused" };
-  }
+  // Leaving a recording never touches a running meeting (its own store).
+  if (store.appMode !== "study") return { status: "refused" };
   const from = currentLocation();
   store.exitReplay();
   store.setStudyTab("summary");

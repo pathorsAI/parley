@@ -3,6 +3,7 @@ import { ChevronDown, Copy, Pencil, Sparkles } from "lucide-react";
 import { AskYourAi } from "./AskYourAi";
 import { toast } from "sonner";
 import { transcriptAsText, useStore } from "../../lib/store";
+import { displayLabelerOf } from "../../lib/speakers/useRelabel";
 import { STUDY_TABS, type StudyTab } from "../../lib/store/study";
 import { useTabShortcuts } from "../../lib/commands/tabs";
 import { renameLoadedRecording, renameTarget } from "../../lib/replay/rename";
@@ -228,7 +229,7 @@ function StudyCopyMenu({ tab }: Readonly<{ tab: StudyTab }>) {
         <DropdownMenuItem
           onSelect={() => {
             const s = useStore.getState();
-            void copy(transcriptAsText(s.segments, s.speakerNames));
+            void copy(transcriptAsText(s.segments, s.speakerNames, displayLabelerOf(s)));
           }}
         >
           {t("study.copy.transcript")}

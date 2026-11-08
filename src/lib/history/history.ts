@@ -7,7 +7,8 @@
 // in the main window, so opening one is a plain `loadHistoryEntry` call rather
 // than a `history://open` message from a second window.
 
-import { useStore, hasSpokenSegment, holdsLiveSession, isMeetingActive } from "../store";
+import { useLiveStore, useStore, hasSpokenSegment, isMeetingActive } from "../store";
+import type { ParleyState } from "../store/types";
 import { notify } from "../notify";
 import { writeStudyCache } from "./studyCache";
 import { isTauri } from "../tauriEvents";
@@ -77,15 +78,16 @@ const RECORDING_DISCARDED_EVENT = "meeting://recording-discarded";
 
 // ── Build helpers ───────────────────────────────────────────────────────────
 
-/** Snapshot the analysis-related slice of the store into a partial entry.
- *  Exported for testing. */
-export function snapshotAnalysis() {
-  const s = useStore.getState();
+/** Snapshot the analysis-related slice of a store into a partial entry: the
+ *  loaded recording (useStore, the default) or the live meeting (pass
+ *  useLiveStore's state). Exported for testing. */
+export function snapshotAnalysis(s: ParleyState = useStore.getState()) {
   return {
     // An estimated timeline is a display aid, not data: the entry keeps the
     // untimed transcript it came with (see replay/timing).
     segments: s.replay?.timingEstimated ? withoutEstimatedTiming(s.segments) : s.segments,
     speakerNames: s.speakerNames,
+    speakerAliases: s.speakerAliases,
     selfSpeaker: s.selfSpeaker,
     findings: s.findings,
     actionItems: s.actionItems,
@@ -148,6 +150,7 @@ function emptyAnalysis(): AnalysisSnapshot {
   return {
     segments: [],
     speakerNames: {},
+    speakerAliases: {},
     selfSpeaker: null,
     findings: [],
     actionItems: [],
@@ -193,25 +196,29 @@ export interface LiveMeetingSnapshot {
 /** Stopped meetings whose recording is still being encoded and saved. */
 export const liveSaves = new PendingSaves<LiveMeetingSnapshot>();
 
-/** Snapshot the live meeting the store shows now (null when it has no id). */
+/** Snapshot the live meeting (the live store) now (null when it has no id). */
 export function snapshotLiveMeeting(): LiveMeetingSnapshot | null {
-  const s = useStore.getState();
+  const s = useLiveStore.getState();
   if (!s.liveMeetingId) return null;
   return {
     id: s.liveMeetingId,
     createdAt: s.meetingStartedAt ?? Date.now(),
-    analysis: (() => {
-      const a = snapshotAnalysis();
-      const heading = translate(s.settings.language, "floating.notesHeading");
-      return { ...a, meetingContext: contextWithNotes(a.meetingContext, s.meetingNotes, heading) };
-    })(),
+    analysis: liveAnalysis(s),
     transcriptionDropped: s.transcriptionDropped,
     micSessionRateHz: s.micSessionRateHz,
     micActivity: s.micActivity,
-    save: resolveMeetingSave(),
+    save: resolveMeetingSave(s),
     title: s.meetingTitle.trim() || undefined,
     orphan: false,
   };
+}
+
+/** The live meeting's analysis slice, its in-meeting notes folded into the
+ *  context the way the report shows them. */
+function liveAnalysis(s: ParleyState): AnalysisSnapshot {
+  const a = snapshotAnalysis(s);
+  const heading = translate(useStore.getState().settings.language, "floating.notesHeading");
+  return { ...a, meetingContext: contextWithNotes(a.meetingContext, s.meetingNotes, heading) };
 }
 
 /** A meeting this window never saw: only the backend's id and start time. */
@@ -241,14 +248,14 @@ export function orphanSnapshot(id: string, startedAtMs: number | undefined): Liv
  * once another meeting has started, the Stop-time snapshot stands.
  */
 export function liveSnapshotFor(id: string | undefined, startedAtMs: number | undefined): LiveMeetingSnapshot {
-  const s = useStore.getState();
+  const s = useLiveStore.getState();
   const showsIt = !!id && s.liveMeetingId === id && !isMeetingActive(s.meetingStatus);
   const captured = id ? liveSaves.snapshotOf(id) : null;
   if (captured) {
     if (!showsIt) return captured;
     return {
       ...captured,
-      analysis: snapshotAnalysis(),
+      analysis: liveAnalysis(s),
       transcriptionDropped: s.transcriptionDropped,
       micSessionRateHz: s.micSessionRateHz,
       micActivity: s.micActivity,
@@ -350,9 +357,10 @@ function wantedOrgShare(
   return null;
 }
 
-export function resolveMeetingSave(): MeetingSaveTarget {
-  const s = useStore.getState();
-  const def = s.settings.defaultSaveLocation;
+/** `s` holds the prep to file by: the live meeting's (useLiveStore) for a
+ *  meeting's save, the main window's (useStore, the default) for an upload. */
+export function resolveMeetingSave(s: ParleyState = useStore.getState()): MeetingSaveTarget {
+  const def = useStore.getState().settings.defaultSaveLocation;
   const defaultFolder = def.scope === "personal" ? (def.folderId ?? null) : null;
   const picked = s.meetingFolderId;
   const base: MeetingSaveTarget = {
@@ -494,9 +502,11 @@ export async function saveLiveToHistory(
 
   // 會後 60 秒: a meeting's natural ending is its debrief — slide straight into
   // the study tense (landing on the report) the moment the recording is on
-  // disk, unless the user already started another meeting or opened something
-  // else meanwhile. The speaker correction and the org copy below can take
-  // minutes on a long meeting; nothing about them needs the user to wait.
+  // disk, when the main window is free for it (see shouldAutoOpenReport).
+  // Otherwise the user is in the middle of something of their own there, and
+  // a toast offers the report instead of yanking them away. The speaker
+  // correction and the org copy below can take minutes on a long meeting;
+  // nothing about them needs the user to wait.
   //
   // The correction gate goes up BEFORE the report opens, so the study pipeline
   // never sees an un-gated tick for this entry and never dispatches a deep pass
@@ -504,18 +514,19 @@ export async function saveLiveToHistory(
   const correcting = qualifiesForRediarization(entry.segments);
   if (correcting) useStore.getState().setPostSaveDiarizingId(entry.id);
   try {
-    const now = useStore.getState();
-    const showsThisMeeting = now.liveMeetingId === entry.id || snap.orphan;
-    // Opens unless the user went on to something of their own meanwhile (a
-    // recording, or a new meeting); the main window may be anywhere else.
-    if (!isMeetingActive(now.meetingStatus) && now.appMode !== "study" && showsThisMeeting) {
-      now.setStudyTab("summary");
+    const live = useLiveStore.getState();
+    // Still the meeting the live store holds (not a newer one started since).
+    const stillThisMeeting = (live.liveMeetingId === entry.id || snap.orphan) && !isMeetingActive(live.meetingStatus);
+    if (stillThisMeeting && shouldAutoOpenReport(useStore.getState())) {
+      useStore.getState().setStudyTab("summary");
       await loadHistoryEntry(entry.id).catch((e) =>
         log.warn("history: auto-open after stop failed", { id: entry.id, error: String(e) }),
       );
+    } else {
+      offerSavedReport(entry.id);
     }
   } finally {
-    // The report is up (or was skipped, or failed to open): the save the user
+    // The report is up (or was offered, or failed to open): the save the user
     // was waiting on is done, whatever the background passes do next.
     clearFinalizing();
   }
@@ -525,6 +536,33 @@ export async function saveLiveToHistory(
   void correctSpeakersThenShare(entry, save).catch((e) =>
     log.error("history: post-save background work failed", { id: entry.id, error: String(e) }),
   );
+}
+
+/**
+ * May a just-saved meeting's report open by itself in the main window? Only
+ * when that window is idle — Home or the library, no recording loaded, no
+ * dialog of the user's own (a draft, an import) up. Anywhere else the user is
+ * busy with something during or since the meeting, and the report waits for
+ * them behind a toast ({@link offerSavedReport}). Pure + exported for testing.
+ */
+export function shouldAutoOpenReport(
+  s: Pick<ParleyState, "appMode" | "replay" | "draftOpen" | "ingestWizardOpen" | "transcriptImportPaths">,
+): boolean {
+  if (s.appMode !== "home" && s.appMode !== "library") return false;
+  return s.replay == null && !s.draftOpen && !s.ingestWizardOpen && s.transcriptImportPaths == null;
+}
+
+/** "Meeting saved — Open": the report, one click away, without moving the
+ *  main window off what it is showing. */
+function offerSavedReport(id: string): void {
+  const lang = useStore.getState().settings.language;
+  notify.message(translate(lang, "meeting.saved.toast"), {
+    label: translate(lang, "meeting.saved.open"),
+    onClick: () => {
+      useStore.getState().setStudyTab("summary");
+      loadHistoryEntry(id).catch((e) => log.warn("history: opening the saved meeting failed", { id, error: String(e) }));
+    },
+  });
 }
 
 /** Nothing was transcribed and the link never dropped — almost certainly an
@@ -540,7 +578,7 @@ async function skipEmptyLiveSave(audioTempPath: string, id: string): Promise<voi
     }),
   );
   finishJournal(id);
-  if (useStore.getState().liveMeetingId === id) leaveStoppedCockpit("meeting.notSaved.noTranscript");
+  if (useLiveStore.getState().liveMeetingId === id) leaveStoppedCockpit("meeting.notSaved.noTranscript");
 }
 
 /** Mic-only measured pace (issue #22): prefer the whole-session articulation
@@ -554,7 +592,7 @@ async function liveSpeechRate(snap: LiveMeetingSnapshot, audioTempPath: string):
 }
 
 function clearFinalizing(): void {
-  useStore.getState().setFinalizingMeeting(false);
+  useLiveStore.getState().setFinalizingMeeting(false);
 }
 
 /** After a live save's first write: voice re-diarization (best-effort), then
@@ -637,18 +675,21 @@ async function applyPostSaveDiarization(entry: HistoryEntry): Promise<void> {
   // The finished meeting is usually on screen as its report by now — retag
   // those lines too. Live segment ids REPEAT across sessions ("mix-0",
   // "mix-1", …), so an id match alone could hit a different meeting's lines.
-  // Only touch the store when it provably still shows THIS meeting: this very
-  // entry (auto-opened, or re-opened from history), or the just-ended live
-  // session if the auto-open was skipped (the entry carries its meeting's id).
+  // Only touch a store that provably still holds THIS meeting: the main
+  // window when this very entry is loaded (auto-opened, or opened from the
+  // toast or history), and the live store while it still holds the stopped
+  // meeting (the entry carries its meeting's id) — never a newer one.
   const st = useStore.getState();
-  const showsThisMeeting =
-    st.loadedHistoryId === entry.id ||
-    (holdsLiveSession(st) && st.liveMeetingId === entry.id);
-  if (showsThisMeeting) {
+  if (st.loadedHistoryId === entry.id) {
     const segments = applyCorrectedSpeakers(st.segments, result.segments);
     // `speakerNames` deliberately untouched — see applyCorrectedSpeakers.
     if (segments !== st.segments) st.setSegments(segments);
     notify.message(translate(st.settings.language, "speakers.postRefined"));
+  }
+  const live = useLiveStore.getState();
+  if (live.liveMeetingId === entry.id && !isMeetingActive(live.meetingStatus)) {
+    const segments = applyCorrectedSpeakers(live.segments, result.segments);
+    if (segments !== live.segments) live.setSegments(segments);
   }
   log.info("history: post-save re-diarization applied", { id: entry.id, changed: result.changed });
 }
@@ -976,6 +1017,78 @@ export async function persistSelfSpeaker(): Promise<void> {
   log.info("history: self speaker saved", { id, marked: !!s.selfSpeaker });
 }
 
+/** A rename waiting to be written onto its entry. */
+interface PendingNames {
+  id: string;
+  names: Record<string, string>;
+  aliases: Record<string, string[]>;
+  timer: ReturnType<typeof setTimeout>;
+  release: () => void;
+}
+let pendingNames: PendingNames | null = null;
+const NAMES_PERSIST_DEBOUNCE_MS = 500;
+
+/** Let a pending rename write go now (it is already queued on its entry). */
+function releasePendingNames(): void {
+  const p = pendingNames;
+  pendingNames = null;
+  if (!p) return;
+  clearTimeout(p.timer);
+  p.release();
+}
+
+/**
+ * Save speaker renames onto entry `id` — debounced, since names change on every
+ * keystroke. The names are captured per call for THAT entry, so a write that
+ * lands after the user has opened another recording still writes entry A's
+ * names onto A, never onto B; a rename for a different entry releases the
+ * earlier one at once.
+ *
+ * The write is queued on the entry's write chain immediately and holds there
+ * until the debounce ends, so it is a read-modify-write of the CURRENT meta
+ * (only the two name fields change — like {@link persistSelfSpeaker}), every
+ * other write to the entry serializes around it, and reopening the entry
+ * (which waits for `entryWritesSettled`) reads the names it saves.
+ */
+export function scheduleSpeakerNamesPersist(
+  id: string,
+  names: Record<string, string>,
+  aliases: Record<string, string[]>,
+): void {
+  if (!isTauri()) return;
+  if (pendingNames && pendingNames.id !== id) releasePendingNames();
+  if (pendingNames) {
+    pendingNames.names = names;
+    pendingNames.aliases = aliases;
+    clearTimeout(pendingNames.timer);
+    pendingNames.timer = setTimeout(releasePendingNames, NAMES_PERSIST_DEBOUNCE_MS);
+    return;
+  }
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const p: PendingNames = {
+    id,
+    names,
+    aliases,
+    release,
+    timer: setTimeout(releasePendingNames, NAMES_PERSIST_DEBOUNCE_MS),
+  };
+  pendingNames = p;
+  withEntryWrite(id, async () => {
+    await gate;
+    // An upload's initial save may still be compressing — wait so the entry exists.
+    await Promise.resolve(uploadSaveInFlight).catch(() => {});
+    return rewriteEntryNow(id, (meta) => ({ ...meta, speakerNames: p.names, speakerAliases: p.aliases }));
+  })
+    .then(() => {
+      pushToCloud(id);
+      log.info("history: speaker names saved", { id, named: Object.keys(p.names).length });
+    })
+    .catch((error) => log.warn("history: speaker names save failed", { id, error: String(error) }));
+}
+
 // ── List / read / delete ─────────────────────────────────────────────────────
 
 /**
@@ -1058,8 +1171,9 @@ export async function setEntryFolder(id: string, folderId: string | null): Promi
  * another meeting, or opened something else while the stop settled.
  */
 export function leaveStoppedCockpit(reasonKey: "meeting.notSaved.tooShort" | "meeting.notSaved.noTranscript"): void {
+  // A newer meeting already running: nothing to say about the old one here.
+  if (isMeetingActive(useLiveStore.getState().meetingStatus)) return;
   const s = useStore.getState();
-  if (isMeetingActive(s.meetingStatus)) return;
   // Only the retired live route is a dead end to leave; elsewhere the user
   // stays put and just hears why there is no report.
   if (s.appMode === "live") s.openHome();
@@ -1076,7 +1190,7 @@ export async function listenForRecordingSaved(): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
   // Snapshot every meeting the moment it stops — before the encode, before
   // anything else can start — so its save never reads another meeting's state.
-  const unsubscribeStops = useStore.subscribe((next, prev) => {
+  const unsubscribeStops = useLiveStore.subscribe((next, prev) => {
     if (!isMeetingActive(prev.meetingStatus) || !prev.liveMeetingId) return;
     if (next.meetingStatus === "stopped") {
       const snap = snapshotLiveMeeting();
@@ -1107,7 +1221,7 @@ export async function listenForRecordingSaved(): Promise<UnlistenFn> {
     if (meetingId) liveSaves.settle(meetingId);
     clearFinalizing();
     // Only say so while the cockpit still shows that meeting.
-    if (!meetingId || useStore.getState().liveMeetingId === meetingId) {
+    if (!meetingId || useLiveStore.getState().liveMeetingId === meetingId) {
       leaveStoppedCockpit("meeting.notSaved.tooShort");
     }
   });

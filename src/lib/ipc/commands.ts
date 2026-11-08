@@ -240,6 +240,30 @@ export const diarizeAudio = (args: { audioPath: string; segments: SegSpan[]; num
 export const diarizeModelStatus = () => invoke<DiarizeModelStatus>("diarize_model_status");
 export const downloadDiarizeModel = () => invoke<void>("download_diarize_model");
 
+// ── The user's voiceprint (voiceprint.rs) ───────────────────────────────────
+
+/** A stretch of an audio file, in ms on the file's own clock. */
+export interface AudioSpan {
+  startMs: number;
+  endMs: number;
+}
+export interface VoiceprintStatus {
+  speechMs: number;
+  updatedAt: number;
+  source: "mic-check" | "marked";
+}
+export interface VoiceprintMatch {
+  key: string;
+  similarity: number;
+  speechMs: number;
+}
+export const voiceprintStatus = () => invoke<VoiceprintStatus | null>("voiceprint_status");
+export const voiceprintClear = () => invoke<void>("voiceprint_clear");
+export const voiceprintEnroll = (args: { audioPath: string; spans: AudioSpan[] }) =>
+  invoke<VoiceprintStatus>("voiceprint_enroll", args);
+export const voiceprintMatch = (args: { audioPath: string; speakers: { key: string; spans: AudioSpan[] }[] }) =>
+  invoke<VoiceprintMatch[]>("voiceprint_match", args);
+
 // ── History store (history.rs) ──────────────────────────────────────────────
 
 export const listHistory = () => invoke<string[]>("list_history");

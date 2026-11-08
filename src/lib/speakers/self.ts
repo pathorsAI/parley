@@ -1,7 +1,7 @@
 // Which speaker in a recording is the user — the person the 評分 report scores.
 //
-// Three ways to know, tried in order:
-//  1. "marked": the user ticked 這是我 on one speaker in the transcript.
+// Four ways to know, tried in order:
+//  1. "marked": the user picked 這是我 on one speaker (the 評分 page).
 //  2. "mic-track": the meeting was transcribed as two streams, so every "me"
 //     line came from this computer's own mic.
 //  3. "mic-activity": a diarized ("mix") meeting, where the transcript only
@@ -10,6 +10,10 @@
 //     heard speech. The speaker whose lines line up with that timeline — and
 //     clearly better than anyone else's — is the user. In a room where the mic
 //     hears everyone, no speaker stands out and this gives no answer.
+//  4. "voice": the user's voiceprint (enrolled at onboarding, refined by every
+//     mark) matched one speaker clearly — see speakers/voiceprint.ts. Tried
+//     before 3 in practice: it works in a room too, where the mic timeline
+//     can't tell anyone apart.
 // None of them → the user is unknown and the report asks to be told.
 
 import type { TranscriptSegment } from "../types";
@@ -19,7 +23,7 @@ import { speakerKey } from "./labels";
  *  heard speech (speaker bleed from the other side already rejected). */
 export type MicSpan = readonly [startMs: number, endMs: number];
 
-export type SelfOrigin = "marked" | "mic-track" | "mic-activity";
+export type SelfOrigin = "marked" | "mic-track" | "voice" | "mic-activity";
 
 export interface SelfSpeaker {
   /** How the user was found — the report says so, and only a mic-based answer
@@ -116,6 +120,7 @@ let memo: {
   segments: readonly TranscriptSegment[];
   marked: string | null;
   spans: readonly MicSpan[] | undefined;
+  voice: string | null;
   result: SelfSpeaker | null;
 } | null = null;
 
@@ -124,10 +129,13 @@ export function resolveSelf(
   segments: readonly TranscriptSegment[],
   marked: string | null,
   spans: readonly MicSpan[] | undefined,
+  voice: string | null = null,
 ): SelfSpeaker | null {
-  if (memo && memo.segments === segments && memo.marked === marked && memo.spans === spans) return memo.result;
-  const result = resolve(segments, marked, spans);
-  memo = { segments, marked, spans, result };
+  if (memo && memo.segments === segments && memo.marked === marked && memo.spans === spans && memo.voice === voice) {
+    return memo.result;
+  }
+  const result = resolve(segments, marked, spans, voice);
+  memo = { segments, marked, spans, voice, result };
   return result;
 }
 
@@ -135,13 +143,48 @@ function resolve(
   segments: readonly TranscriptSegment[],
   marked: string | null,
   spans: readonly MicSpan[] | undefined,
+  voice: string | null,
 ): SelfSpeaker | null {
   // A mark on a speaker the transcript no longer has (re-diarized since) says nothing.
   if (marked && hasLine(segments, byKey(marked))) return { origin: "marked", key: marked, isSelf: byKey(marked) };
   if (hasLine(segments, (s) => s.source === "me")) {
     return { origin: "mic-track", key: null, isSelf: (s) => s.source === "me" };
   }
+  if (voice && hasLine(segments, byKey(voice))) return { origin: "voice", key: voice, isSelf: byKey(voice) };
   const detected = detectSelfFromMic(segments, spans);
   if (detected) return { origin: "mic-activity", key: detected, isSelf: byKey(detected) };
   return null;
 }
+
+/** One speaker of the recording, as the 評分 page's switch lists them. */
+export interface RosterEntry {
+  key: string;
+  source: TranscriptSegment["source"];
+  speaker: number;
+  /** Ms of final, spoken lines. */
+  talkMs: number;
+  /** This speaker is the user (by `resolveSelf`'s answer). */
+  isSelf: boolean;
+}
+
+/**
+ * Every speaker with a spoken line, the user first, then by how much each
+ * talked. Pure.
+ */
+export function speakerRoster(segments: readonly TranscriptSegment[], self: SelfSpeaker | null): RosterEntry[] {
+  const byKeyMap = new Map<string, RosterEntry>();
+  for (const s of segments) {
+    if (!s.isFinal || !s.text.trim()) continue;
+    const key = speakerKey(s);
+    let e = byKeyMap.get(key);
+    if (!e) {
+      e = { key, source: s.source, speaker: s.speaker, talkMs: 0, isSelf: !!self?.isSelf(s) };
+      byKeyMap.set(key, e);
+    }
+    e.talkMs += Math.max(0, s.endMs - s.startMs);
+  }
+  return [...byKeyMap.values()].sort((a, b) => Number(b.isSelf) - Number(a.isSelf) || b.talkMs - a.talkMs);
+}
+
+/** Match one speaker's lines by key. */
+export const isSpeaker = byKey;

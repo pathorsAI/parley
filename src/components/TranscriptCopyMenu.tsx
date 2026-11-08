@@ -8,6 +8,7 @@ import {
 } from "../lib/store";
 import type { TranscriptSegment } from "../lib/types";
 import { useHint } from "../lib/onboarding/gettingStarted";
+import { displaySpeakerLabel } from "../lib/speakers/labels";
 import { useHandoff } from "../lib/onboarding/useHandoff";
 import { useI18n } from "../i18n";
 import { cn } from "@/lib/utils";
@@ -32,6 +33,8 @@ export function TranscriptCopyMenu({
   disabled?: boolean;
 }>) {
   const { t } = useI18n();
+  // Copied text reads like the screen: localized default labels.
+  const label = (seg: TranscriptSegment) => displaySpeakerLabel(seg, speakerNames, t);
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handoff = useHandoff();
@@ -99,7 +102,7 @@ export function TranscriptCopyMenu({
           <Item
             label={t("transcript.copyWithSpeaker")}
             hint={t("transcript.copyWithSpeakerHint")}
-            onSelect={() => copy(transcriptAsText(segments, speakerNames))}
+            onSelect={() => copy(transcriptAsText(segments, speakerNames, label))}
           />
           <Item
             label={t("transcript.copyPlain")}
@@ -110,7 +113,7 @@ export function TranscriptCopyMenu({
           <Item
             label={t("transcript.copyWithTime")}
             hint={t("transcript.copyWithTimeHint")}
-            onSelect={() => copy(transcriptWithTimestamps(segments, speakerNames))}
+            onSelect={() => copy(transcriptWithTimestamps(segments, speakerNames, label))}
           />
         </DropdownMenu.Content>
       </DropdownMenu.Portal>

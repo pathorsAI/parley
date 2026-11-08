@@ -29,6 +29,10 @@ export interface HistoryEntry {
   segments: TranscriptSegment[];
   /** Speaker-key → display-name map (`{}` if none). */
   speakerNames: Record<string, string>;
+  /** Speaker-key → names that speaker had before it was renamed, so AI text
+   *  written under an old name still reads under the current one (see
+   *  speakers/relabel.ts). Optional: absent = none. */
+  speakerAliases?: Record<string, string[]>;
   /** The speaker the user marked as themselves (這是我) — the one the 評分
    *  report scores. Optional: absent = not marked (speakers/self.ts falls back
    *  to the mic). */

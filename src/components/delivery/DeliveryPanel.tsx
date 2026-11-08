@@ -1,15 +1,18 @@
-import { useMemo, type ReactNode } from "react";
-import { Clock, Loader2, UserRoundSearch } from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Clock, Loader2, Sparkles } from "lucide-react";
 import { isTrimmed, useStore } from "../../lib/store";
 import { useStudyArtifactDisplay } from "../../lib/analysis/studyPipeline";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useProsody } from "../../lib/analysis/useDelivery";
 import { syllablesPerMin } from "../../lib/analysis/delivery";
 import { computeSpeechStats, talkShare } from "../../lib/analysis/speechStats";
-import { resolveSelf, type SelfOrigin, type SelfSpeaker } from "../../lib/speakers/self";
-import { speakerLabel } from "../../lib/speakers/labels";
+import { isSpeaker, resolveSelf, speakerRoster, type SelfSpeaker } from "../../lib/speakers/self";
+import { displaySpeakerLabel, speakerLabel } from "../../lib/speakers/labels";
+import { useRelabel } from "../../lib/speakers/useRelabel";
 import { Button } from "@/components/ui/button";
 import { DeliveryReport } from "./DeliveryReport";
+import { SpeakerSwitch } from "./SpeakerSwitch";
+import { canReadSpeakerTone, readSpeakerTone, speakerToneKey, useSpeakerTone } from "../../lib/analysis/speakerTone";
 import { paceBand } from "./bands";
 import { useI18n } from "../../i18n";
 import type { TranslationKey } from "../../i18n";
@@ -145,6 +148,7 @@ function DeliveryReadout({
   assessment: DeliveryAssessment | null;
   t: TFn;
 }>) {
+  const relabel = useRelabel();
   if (running) {
     return (
       <div className="flex items-center gap-2 text-muted-foreground">
@@ -164,7 +168,7 @@ function DeliveryReadout({
           <span className={`font-medium ${toneClass(assessment.tone)}`}>{t(TONE_KEY[assessment.tone])}</span>
         </div>
         {assessment.toneEvidence && (
-          <p className="-mt-1 truncate text-[10px] italic text-muted-foreground">“{assessment.toneEvidence}”</p>
+          <p className="-mt-1 truncate text-[10px] italic text-muted-foreground">“{relabel(assessment.toneEvidence)}”</p>
         )}
         <p className="-mt-0.5 text-[10px] text-muted-foreground/70">{t("delivery.card.tone.advisory")}</p>
 
@@ -180,7 +184,7 @@ function DeliveryReadout({
           </span>
         </div>
 
-        {assessment.summary && <p className="mt-0.5 text-[11px] leading-snug text-foreground/80">{assessment.summary}</p>}
+        {assessment.summary && <p className="mt-0.5 text-[11px] leading-snug text-foreground/80">{relabel(assessment.summary)}</p>}
       </>
     );
   }
@@ -259,6 +263,7 @@ function ToneGroup({
   assessment: DeliveryAssessment | null;
   pending: boolean;
 }>) {
+  const relabel = useRelabel();
   let body: ReactNode;
   if (pending) {
     body = (
@@ -286,10 +291,10 @@ function ToneGroup({
         <ReportRow
           label={t("delivery.card.tone")}
           value={<span className={toneClass(assessment.tone)}>{t(TONE_KEY[assessment.tone])}</span>}
-          detail={assessment.toneEvidence && <span className="italic">“{assessment.toneEvidence}”</span>}
+          detail={assessment.toneEvidence && <span className="italic">“{relabel(assessment.toneEvidence)}”</span>}
         />
         {assessment.summary && (
-          <p className="col-span-3 pt-2 text-xs leading-relaxed text-foreground/85">{assessment.summary}</p>
+          <p className="col-span-3 pt-2 text-xs leading-relaxed text-foreground/85">{relabel(assessment.summary)}</p>
         )}
         <p className="col-span-3 pt-1 text-[10px] text-muted-foreground/70">{t("delivery.card.tone.advisory")}</p>
       </>
@@ -306,55 +311,62 @@ function ToneGroup({
   );
 }
 
-const ORIGIN_KEY: Record<SelfOrigin, TranslationKey> = {
-  marked: "delivery.self.origin.marked",
-  "mic-track": "delivery.self.origin.micTrack",
-  "mic-activity": "delivery.self.origin.micActivity",
-};
-
-const openTranscript = () => useStore.getState().setStudyTab("replay");
-
-/** The 評分 page when nothing says which speaker is the user: a diarized
- *  recording the mic timeline couldn't settle (a room where the mic hears
- *  everyone, an upload). Scoring everyone instead would put other people's
- *  pace and fillers under the user's name, so it asks instead. */
-function SelfUnknown({ t }: Readonly<{ t: TFn }>) {
-  return (
-    <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed p-5">
-      <UserRoundSearch className="size-5 text-muted-foreground" />
-      <div>
-        <h3 className="text-sm font-semibold">{t("delivery.self.unknown.title")}</h3>
-        <p className="mt-1 max-w-prose text-xs leading-relaxed text-muted-foreground">{t("delivery.self.unknown.body")}</p>
+/** 03 語氣 for a speaker who isn't the user: read only when asked (each read
+ *  is a paid call), then kept for as long as the app is open. */
+function OtherToneGroup({
+  t,
+  speaker,
+  label,
+  displayLabel,
+}: Readonly<{
+  t: TFn;
+  speaker: string;
+  /** The speaker as the model sees the transcript label it ("Speaker 2"). */
+  label: string;
+  /** The speaker as the screen shows it. */
+  displayLabel: string;
+}>) {
+  const recordingId = useStore((s) => s.loadedHistoryId);
+  const read = useSpeakerTone((s) => s.reads[speakerToneKey(recordingId, speaker)]);
+  const canRead = canReadSpeakerTone();
+  // Read as soon as the speaker is shown, once per recording + speaker; a
+  // failed read waits for 再試一次 rather than retrying on every render.
+  useEffect(() => {
+    if (!read && canRead) void readSpeakerTone(speaker, label);
+  }, [read, canRead, speaker, label]);
+  if (read?.status === "done" && read.assessment) {
+    return <ToneGroup t={t} mode="replay" status="done" running={false} assessment={read.assessment} pending={false} />;
+  }
+  if (read?.status === "error") {
+    return (
+      <div className="flex flex-col items-start gap-2 py-2 text-xs text-muted-foreground">
+        <p>{read.error}</p>
+        <Button size="sm" variant="outline" onClick={() => void readSpeakerTone(speaker, label)}>
+          <Sparkles className="size-3.5" />
+          {t("delivery.speaker.tone.retry")}
+        </Button>
       </div>
-      <Button size="sm" onClick={openTranscript}>
-        {t("delivery.self.unknown.cta")}
-      </Button>
-    </div>
-  );
+    );
+  }
+  if (read?.status === "done" || !canRead) {
+    return (
+      <p className="py-2 text-xs text-muted-foreground">
+        {t(canRead ? "delivery.speaker.tone.empty" : "delivery.speaker.tone.noKey", { name: displayLabel })}
+      </p>
+    );
+  }
+  // Running, or about to start on this render's effect.
+  return <ToneGroup t={t} mode="replay" status="running" running assessment={null} pending />;
 }
 
-/** Whose lines the report is about, how Parley knows, and where to change it. */
-function SelfBasis({ t, name, origin }: Readonly<{ t: TFn; name: string; origin: SelfOrigin }>) {
-  return (
-    <p className="mb-4 flex flex-wrap items-baseline gap-x-2 text-[11px] text-muted-foreground">
-      <span>
-        {t("delivery.self.basis", { name })} · {t(ORIGIN_KEY[origin])}
-      </span>
-      <button type="button" onClick={openTranscript} className="underline underline-offset-2 hover:text-foreground">
-        {t("delivery.self.change")}
-      </button>
-    </p>
-  );
-}
-
-/** The study tense's 評分 report (`variant="full"`): the transcript-derived
- *  charts (DeliveryReport) with the AI's tone read as its last group, over the
- *  user's own lines only. */
+/** The study tense's 評分 report (`variant="full"`): a switch over the
+ *  recording's speakers, then the transcript-derived charts (DeliveryReport)
+ *  for the one picked, with the AI's tone read as its last group. It opens on
+ *  the user when Parley knows who that is, else on whoever talked most. */
 function DeliveryScorecard({
   mode,
   segments,
   self,
-  selfName,
   measuredRate,
   assessment,
   status,
@@ -363,30 +375,57 @@ function DeliveryScorecard({
 }: Readonly<{
   mode: "live" | "replay";
   segments: TranscriptSegment[];
-  self: SelfSpeaker;
-  selfName: string;
+  self: SelfSpeaker | null;
   measuredRate: number | null;
   assessment: DeliveryAssessment | null;
   status: DeliveryStatus;
   running: boolean;
   t: TFn;
 }>) {
-  const stats = useMemo(() => computeSpeechStats(segments, self.isSelf), [segments, self]);
-  const ratio = useMemo(() => talkShare(segments, self.isSelf), [segments, self]);
+  const names = useStore((s) => s.speakerNames);
+  const marked = useStore((s) => s.selfSpeaker);
+  const roster = useMemo(() => speakerRoster(segments, self), [segments, self]);
+  const [picked, setPicked] = useState<string | null>(null);
+  // A pick on a speaker that is gone (re-diarized) falls back to the default.
+  const viewed = roster.find((r) => r.key === picked) ?? roster[0];
+  const match = useMemo(() => isSpeaker(viewed?.key ?? ""), [viewed?.key]);
+  const stats = useMemo(() => computeSpeechStats(segments, match), [segments, match]);
+  const ratio = useMemo(() => talkShare(segments, match), [segments, match]);
   // Queued (waiting on the findings pass) or running, with nothing to show yet.
   const display = useStudyArtifactDisplay("delivery");
+  if (!viewed) return null;
+  // The model reads the transcript with English labels; the screen localizes.
+  const label = speakerLabel(viewed, names);
+  const displayLabel = displaySpeakerLabel(viewed, names, t);
+  // The pipeline's tone read is the user's; anyone else is read when shown.
+  const ownRead = viewed.isSelf && !!self;
   const pending = !assessment && (running || display === "queued");
   return (
     <div className="@container">
-      <SelfBasis t={t} name={selfName} origin={self.origin} />
+      <SpeakerSwitch
+        roster={roster}
+        viewed={viewed}
+        onView={setPicked}
+        names={names}
+        origin={self?.origin ?? null}
+        marked={marked}
+      />
       <DeliveryReport
+        // The speaker switch above already says whose numbers these are.
+        title={null}
         stats={stats}
         ratio={ratio}
         // The mic's measured pace is the user's only while the mic was theirs
         // alone; a hand-marked speaker is usually a room the mic heard whole.
-        measuredRate={self.origin === "marked" ? null : measuredRate}
-        assessment={assessment}
-        tone={<ToneGroup t={t} mode={mode} status={status} running={running} assessment={assessment} pending={pending} />}
+        measuredRate={ownRead && self.origin !== "marked" ? measuredRate : null}
+        assessment={ownRead ? assessment : null}
+        tone={
+          ownRead ? (
+            <ToneGroup t={t} mode={mode} status={status} running={running} assessment={assessment} pending={pending} />
+          ) : (
+            <OtherToneGroup key={viewed.key} t={t} speaker={viewed.key} label={label} displayLabel={displayLabel} />
+          )
+        }
       />
     </div>
   );
@@ -551,10 +590,11 @@ export function DeliveryPanel({
   const prosody = useProsody();
   const measuredRate = useStore((s) => s.replay?.speechRateHz ?? null);
   const segments = useStore((s) => s.segments);
-  const speakerNames = useStore((s) => s.speakerNames);
+  const recordingId = useStore((s) => s.loadedHistoryId);
   const selfSpeaker = useStore((s) => s.selfSpeaker);
   const micActivity = useStore((s) => s.replay?.micActivity);
-  const self = resolveSelf(segments, selfSpeaker, micActivity);
+  const voiceSelf = useStore((s) => s.voiceSelfKey);
+  const self = resolveSelf(segments, selfSpeaker, micActivity, voiceSelf);
 
   const toggles: DeliveryToggles = { tone: toneOn, pace: paceOn, pitch: pitchOn, pauses: pausesOn };
   const full = variant === "full" && mode === "replay";
@@ -571,14 +611,13 @@ export function DeliveryPanel({
   const running = status === "running" && !assessment;
 
   if (full) {
-    if (!self) return <SelfUnknown t={t} />;
-    const selfLine = segments.find((s) => self.isSelf(s) && s.text.trim());
     return (
       <DeliveryScorecard
+        // A new recording opens on its own default speaker.
+        key={recordingId ?? "unsaved"}
         mode={mode}
         segments={kept}
         self={self}
-        selfName={selfLine ? speakerLabel(selfLine, speakerNames) : ""}
         measuredRate={measuredRate}
         assessment={assessment}
         status={status}

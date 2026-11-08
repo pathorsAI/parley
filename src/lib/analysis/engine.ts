@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { useStore, isTrimmed, hasSpokenSegment, meetingBriefText } from "../store";
+import { useLiveStore, useStore, isTrimmed, hasSpokenSegment, meetingBriefText } from "../store";
 import { hasProviderKey } from "../ai/settings";
 import { analyzeTimeline } from "../ai/timeline";
 import { detectMeetingKind } from "../ai/meetingKind";
@@ -88,22 +88,13 @@ export async function listenForCacheClear(): Promise<() => void> {
 type AnalysisMode = "live" | "replay";
 type StoreState = ReturnType<typeof useStore.getState>;
 
-/** LIVE vs REPLAY for this run: an explicit request wins, else the app mode. */
-function resolveMode(state: StoreState, requested?: AnalysisMode): AnalysisMode {
-  if (requested) return requested;
-  return state.appMode === "study" ? "replay" : "live";
-}
-
 /** REPLAY honors the trim keep-window — trimmed segments are excluded. */
-function segmentsForMode(state: StoreState, mode: AnalysisMode): TranscriptSegment[] {
-  if (mode === "replay") return state.segments.filter((s) => !isTrimmed(s, state.replayTrim));
-  return state.segments;
+function replaySegments(state: StoreState): TranscriptSegment[] {
+  return state.segments.filter((s) => !isTrimmed(s, state.replayTrim));
 }
 
-/** Replay analyses ride the deep lane; live ones the realtime lane. */
-function workloadForMode(mode: AnalysisMode): LlmWorkload {
-  return mode === "replay" ? "deep" : "realtime";
-}
+/** Replay analyses ride the deep lane (live ones, runLiveAnalysis, the realtime lane). */
+const REPLAY_WORKLOAD: LlmWorkload = "deep";
 
 /** Land a finished findings pass (fresh or from the content cache) in the
  *  store: the findings, the kind they were read through, and the eval set they
@@ -164,9 +155,9 @@ async function resolveMeetingKind(args: {
 
 /**
  * Run the unified analysis over the current transcript and write time-anchored
- * findings into the shared store slice. Used by LIVE's "Analyze" button (mode
- * "live", over the transcript so far) and REPLAY's once-on-load (mode "replay",
- * whole recording). Skips silently if there's no LLM key, no transcript, or a
+ * findings into the store. REPLAY's once-on-load (the loaded recording, in
+ * useStore); mode "live" hands off to {@link runLiveAnalysis} (the running
+ * meeting, in useLiveStore). Skips silently if there's no LLM key, no transcript, or a
  * run is in flight. Each run REPLACES the findings list — `setFindings` clears
  * the selection and any cached solutions (the model mints fresh ids per pass).
  * A run that outlives its recording being on screen stops writing into the
@@ -183,14 +174,17 @@ export function cancelAnalysis(): boolean {
 }
 
 export async function runAnalysis(opts?: {
+  /** "live" analyzes the RUNNING meeting (useLiveStore — see runLiveAnalysis);
+   *  anything else, the recording the main window has loaded (useStore). */
   mode?: AnalysisMode;
   force?: boolean;
 }): Promise<void> {
+  if (opts?.mode === "live") return runLiveAnalysis();
   const state = useStore.getState();
   const { settings, speakerNames } = state;
-  const mode = resolveMode(state, opts?.mode);
-  const segments = segmentsForMode(state, mode);
-  const workload = workloadForMode(mode);
+  const mode: AnalysisMode = "replay";
+  const segments = replaySegments(state);
+  const workload = REPLAY_WORKLOAD;
 
   // Reentrancy guard: the status IS the lock (set synchronously below, so two
   // back-to-back calls can't interleave — JS is single-threaded between awaits).
@@ -235,10 +229,7 @@ export async function runAnalysis(opts?: {
     // (LIVE re-runs over a growing transcript, so it isn't cached.) `force` (the
     // user explicitly picking "re-analyze" from the player menu) skips the cache
     // READ so the model runs fresh — the fresh result still overwrites the cache.
-    const cacheKey =
-      mode === "replay"
-        ? analysisCacheKey(settings, segments, evals, meetingContext, speakerNames, kind)
-        : null;
+    const cacheKey = analysisCacheKey(settings, segments, evals, meetingContext, speakerNames, kind);
     // Remember which eval set these findings reflect, so the UI can flag them as
     // stale when the template / evals change before the next re-analysis.
     const evalSig = analysisSignature(kind, evals);
@@ -296,6 +287,65 @@ export async function runAnalysis(opts?: {
   }
 }
 
+/** Bumped by every live pass: a pass whose number is no longer the latest, or
+ *  whose meeting is no longer the live store's, writes nothing. */
+let liveRunSeq = 0;
+
+/**
+ * The live meeting's analysis ("Analyze" in the meeting window, and the
+ * auto-analyze interval): the transcript so far, on the realtime lane, into
+ * the LIVE store. It has its own lock (the live store's `analysisStatus`) and
+ * its own run tracking, so it never waits on, cancels or writes over a replay
+ * pass the main window runs at the same time — and vice versa. No meeting-kind
+ * detection (a live meeting's frame should not flip mid-conversation), so the
+ * watcher set a recording's kind picks (applyKindTemplate) is never touched
+ * from here. Not cached: the transcript keeps growing.
+ */
+export async function runLiveAnalysis(): Promise<void> {
+  const live = useLiveStore.getState();
+  const { settings } = useStore.getState();
+  const workload: LlmWorkload = "realtime";
+  if (live.analysisStatus === "running") return;
+  if (!hasProviderKey(settings, workload)) return;
+  const segments = live.segments;
+  if (!hasSpokenSegment(segments)) return;
+
+  const meetingId = live.liveMeetingId;
+  const token = ++liveRunSeq;
+  const alive = () => token === liveRunSeq && useLiveStore.getState().liveMeetingId === meetingId;
+  const meetingContext = meetingBriefText(live);
+  const evals = settings.evaluations;
+  const kind = live.meetingKind;
+  live.setAnalysisError(null);
+  live.setAnalysisStatus("running");
+  try {
+    const events = await analyzeTimeline({
+      settings,
+      segments,
+      evals,
+      meetingContext,
+      names: live.speakerNames,
+      mode: "live",
+      lens: lensOf(kind),
+      onPartial: (partial) => {
+        if (alive()) useLiveStore.getState().setFindings(partial);
+      },
+    });
+    if (!alive()) return;
+    const st = useLiveStore.getState();
+    st.setFindings(events);
+    st.setAnalysisStatus("done");
+    st.setAnalyzedEvalSig(analysisSignature(kind, evals));
+  } catch (err) {
+    log.error("analysis: live findings failed", { error: String(err) });
+    const message = await studyErrorMessage(err, settings.llmProviders[workload]);
+    if (!alive()) return;
+    const st = useLiveStore.getState();
+    st.setAnalysisError(message);
+    st.setAnalysisStatus("error");
+  }
+}
+
 /**
  * LIVE background engine: while recording, optionally auto-run the analysis on an
  * interval, and auto-check the TODO agenda checklist. Mount once at the root.
@@ -316,9 +366,9 @@ function applyDeliveryAssessment(
   res: DeliveryAssessment,
   toneFlagged: ReadonlySet<ToneVerdict>
 ): void {
-  const store = useStore.getState();
+  const store = useLiveStore.getState();
   store.setDeliveryAssessment(res);
-  const lang = store.settings.language;
+  const lang = useStore.getState().settings.language;
   if (toneFlagged.has(res.tone)) {
     store.pushDeliveryNudge({
       kind: "tone",
@@ -337,7 +387,8 @@ function applyDeliveryAssessment(
 }
 
 export function useAnalysisEngine() {
-  const meetingStatus = useStore((s) => s.meetingStatus);
+  // The running meeting lives in the live store; settings in useStore.
+  const meetingStatus = useLiveStore((s) => s.meetingStatus);
   const lastRun = useRef<{ analysis: number; todos: number; tone: number }>({
     analysis: 0,
     todos: 0,
@@ -357,20 +408,14 @@ export function useAnalysisEngine() {
     lastRun.current = { analysis: 0, todos: 0, tone: 0 };
 
     const tick = () => {
-      const {
-        autoAnalyze,
-        autoAnalyzeSec,
-        todos,
-        settings,
-        segments,
-        speakerNames,
-        markTodosDone,
-      } = useStore.getState();
+      const { autoAnalyze, autoAnalyzeSec, todos, segments, speakerNames, markTodosDone } =
+        useLiveStore.getState();
+      const { settings } = useStore.getState();
       const now = Date.now();
 
       if (autoAnalyze && now >= lastRun.current.analysis + autoAnalyzeSec * 1000) {
         lastRun.current.analysis = now;
-        void runAnalysis({ mode: "live" });
+        void runLiveAnalysis();
       }
 
       // Auto-check the TODO agenda every ~45s while recording. The manual "AI"
@@ -407,7 +452,7 @@ export function useAnalysisEngine() {
         lastRun.current.tone = now;
         lastToneEndMs.current = maxEndMs;
         toneBusy.current = true;
-        const prosody = useStore.getState().prosody;
+        const prosody = useLiveStore.getState().prosody;
         import("../ai/delivery")
           .then(async ({ analyzeDelivery, TONE_FLAGGED }) => {
             const res = await analyzeDelivery({

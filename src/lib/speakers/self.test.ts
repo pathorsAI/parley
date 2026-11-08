@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TranscriptSegment } from "../types";
-import { addMicSample, detectSelfFromMic, resolveSelf, type MicSpan } from "./self";
+import { addMicSample, detectSelfFromMic, resolveSelf, speakerRoster, type MicSpan } from "./self";
 
 let n = 0;
 function line(source: TranscriptSegment["source"], speaker: number, startS: number, endS: number): TranscriptSegment {
@@ -89,5 +89,26 @@ describe("resolveSelf", () => {
 
   it("is unknown for a diarized meeting nothing points into", () => {
     expect(resolveSelf(call, null, undefined)).toBeNull();
+  });
+});
+
+describe("speakerRoster", () => {
+  const segs = [line("mix", 1, 0, 10), line("mix", 2, 10, 40), line("mix", 3, 40, 45), line("mix", 1, 45, 50)];
+
+  it("lists whoever talked most first when the user is unknown", () => {
+    expect(speakerRoster(segs, null).map((r) => [r.key, r.talkMs, r.isSelf])).toEqual([
+      ["mix-2", 30_000, false],
+      ["mix-1", 15_000, false],
+      ["mix-3", 5_000, false],
+    ]);
+  });
+
+  it("puts the user first, badged, however little they said", () => {
+    const self = resolveSelf(segs, "mix-3", undefined);
+    expect(speakerRoster(segs, self).map((r) => [r.key, r.isSelf])).toEqual([
+      ["mix-3", true],
+      ["mix-2", false],
+      ["mix-1", false],
+    ]);
   });
 });

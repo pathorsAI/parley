@@ -39,7 +39,7 @@ export async function runDeliveryAnalysis(): Promise<void> {
   if (state.deliveryStatus === "running") return;
   // The pipeline holds this stage until the user is known (factsOf.selfKnown);
   // the report has nothing to show it on until then.
-  const self = resolveSelf(state.segments, state.selfSpeaker, state.replay?.micActivity);
+  const self = resolveSelf(state.segments, state.selfSpeaker, state.replay?.micActivity, state.voiceSelfKey);
   if (!self) return;
   const selfLine = segments.find((s) => self.isSelf(s) && s.text.trim());
 

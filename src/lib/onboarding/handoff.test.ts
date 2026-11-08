@@ -3,7 +3,6 @@ import { useStore } from "../store";
 import { seg, replaySession } from "../test/fixtures";
 import type { ActionItem, TimelineEvent } from "../types";
 import {
-  buildActionItemsMarkdown,
   buildDeliveryMarkdown,
   buildHandoffPrompt,
   buildReportMarkdown,
@@ -194,11 +193,6 @@ describe("per-tab page text (copy this page)", () => {
     { id: "a2", text: "Book the demo", done: true, linkedEventId: null, atMs: null },
   ];
 
-  it("writes the action items as a checklist", () => {
-    expect(buildActionItemsMarkdown(actions)).toBe("- [ ] Send the quote [2:05]\n- [x] Book the demo");
-    expect(buildActionItemsMarkdown([])).toBe("");
-  });
-
   it("writes the delivery read with its labels", () => {
     const md = buildDeliveryMarkdown(
       {
@@ -231,7 +225,8 @@ describe("per-tab page text (copy this page)", () => {
     });
     const s = useStore.getState();
     expect(studyPageTextFromState(s, "summary")).toBe("- shipped");
-    expect(studyPageTextFromState(s, "actions")).toContain("- [ ] Send the quote");
+    // Just the actions: numbered, no done marks, no timestamps.
+    expect(studyPageTextFromState(s, "actions")).toBe("1. Send the quote\n2. Book the demo");
     expect(studyPageTextFromState(s, "notes")).toBe("call back Friday");
     expect(studyPageTextFromState(s, "delivery")).toBe("");
     expect(studyPageTextFromState(s, "replay")).toContain("hi");

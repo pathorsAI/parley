@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import type { TimelineEvent } from "../../lib/types";
 import { useI18n } from "../../i18n";
 import { useEvalNames } from "./useAnalysis";
+import { useRelabel } from "../../lib/speakers/useRelabel";
 
 const SEVERITIES = ["info", "warn", "critical"] as const;
 
@@ -78,6 +79,7 @@ function FindingHoverCard({
   evalNames: Map<string, string>;
 }>) {
   const { t } = useI18n();
+  const relabel = useRelabel();
   const ref = useRef<HTMLDivElement>(null);
   // Start off-screen: the first paint measures, the layout effect places it —
   // so the card never flashes at the wrong spot.
@@ -120,13 +122,13 @@ function FindingHoverCard({
           </span>
         )}
       </div>
-      <div className="mt-0.5 line-clamp-2 font-medium text-popover-foreground">{event.title}</div>
+      <div className="mt-0.5 line-clamp-2 font-medium text-popover-foreground">{relabel(event.title)}</div>
       {/* Clamped: the card is a glance, not the finding. The full detail and
        *  resolution are one click away in the findings list beside it. */}
-      <div className="mt-0.5 line-clamp-3 text-muted-foreground">{event.detail}</div>
+      <div className="mt-0.5 line-clamp-3 text-muted-foreground">{relabel(event.detail)}</div>
       {event.resolved && event.resolution && (
         <div className="mt-0.5 line-clamp-2 text-success-foreground">
-          {t("timeline.resolvedHow")}: {event.resolution}
+          {t("timeline.resolvedHow")}: {relabel(event.resolution)}
         </div>
       )}
     </div>,

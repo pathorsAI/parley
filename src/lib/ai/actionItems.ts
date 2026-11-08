@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { withOwnerKeys } from "../speakers/owners";
 import { JSON_MODE_INSTRUCTION } from "./provider";
 import { streamObjectResilient } from "./generate";
 import { transcriptWithTimestamps } from "../store";
@@ -146,5 +147,5 @@ export async function generateActionItems(opts: {
   });
   void recordLlmUsage(settings, "deep", "action-items", usage);
 
-  return placeItems(object.actions);
+  return withOwnerKeys(placeItems(object.actions), segments, names ?? {});
 }

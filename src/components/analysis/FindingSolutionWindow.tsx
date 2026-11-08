@@ -1,6 +1,7 @@
 import { X } from "lucide-react";
 import { useStore, formatClock } from "../../lib/store";
 import { useI18n } from "../../i18n";
+import { useRelabel } from "../../lib/speakers/useRelabel";
 import { FindingSolutionCard } from "./FindingSolutionCard";
 
 /**
@@ -15,6 +16,7 @@ import { FindingSolutionCard } from "./FindingSolutionCard";
  */
 export function FindingSolutionWindow() {
   const { t } = useI18n();
+  const relabel = useRelabel();
   const finding = useStore((s) => s.findings.find((f) => f.id === s.solutionFindingId) ?? null);
   const setSolutionFinding = useStore((s) => s.setSolutionFinding);
 
@@ -33,9 +35,9 @@ export function FindingSolutionWindow() {
             </span>
             <span
               className="truncate text-sm font-semibold text-foreground"
-              title={finding.title}
+              title={relabel(finding.title)}
             >
-              {finding.title}
+              {relabel(finding.title)}
             </span>
           </div>
         </div>
@@ -51,7 +53,7 @@ export function FindingSolutionWindow() {
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-3.5 pb-3.5">
         <p className="mt-2.5 border-l-2 border-border pl-2 text-[11px] leading-snug text-muted-foreground">
-          {finding.detail}
+          {relabel(finding.detail)}
         </p>
         <FindingSolutionCard key={finding.id} finding={finding} />
       </div>

@@ -22,13 +22,14 @@ import {
 import { useStore } from "../../lib/store";
 import {
   COMPACT_BELOW,
-  FLOATING_SIZE,
   MINI_HEIGHT,
   MINI_LINE,
   MINI_MIN_HEIGHT,
   dragWindowFrom,
   holdMiniMinHeight,
   setMeetingMini,
+  growFromCompactWindow,
+  minimizeMeetingWindow,
   setMiniHeight,
   useMiniDocking,
 } from "../../lib/meeting/floatingWindow";
@@ -40,7 +41,8 @@ import { log } from "../../lib/log";
 import { useI18n } from "../../i18n";
 import { CancelMeetingDialog } from "../TitleBar";
 import { MicChip } from "../MicChip";
-import { speakerLabel, TranscriptPanel } from "../TranscriptPanel";
+import { TranscriptPanel } from "../TranscriptPanel";
+import { displaySpeakerLabel } from "../../lib/speakers/labels";
 import { DestinationField } from "../DestinationSheet";
 import { MeetingContextField } from "../MeetingContextField";
 import { useMeetingDestination } from "../useMeetingDestination";
@@ -81,7 +83,8 @@ function useCompact(): boolean {
   return compact;
 }
 
-/** The recording clock: red dot + elapsed, orange with 已暫停 while paused. */
+/** The recording clock: a red dot + elapsed on grey; paused, the dot goes
+ *  grey and still, with 已暫停. Red is the only colour a running meeting wears. */
 function RecordingClock({ withLabel = true }: Readonly<{ withLabel?: boolean }>) {
   const { t } = useI18n();
   const status = useStore((s) => s.meetingStatus);
@@ -91,12 +94,12 @@ function RecordingClock({ withLabel = true }: Readonly<{ withLabel?: boolean }>)
   return (
     <span
       className={`pointer-events-none inline-flex shrink-0 items-center gap-2 rounded-full px-3 py-1 ${
-        paused ? "bg-warning text-warning-foreground" : "bg-recording/10 text-recording"
+        paused ? "bg-muted text-muted-foreground" : "bg-muted text-foreground"
       }`}
     >
       <span
         aria-hidden
-        className={`size-2 rounded-full ${paused ? "bg-warning-foreground" : "animate-pulse bg-recording"}`}
+        className={`size-2 rounded-full ${paused ? "bg-muted-foreground/60" : "animate-pulse bg-recording"}`}
       />
       <span className="font-display text-sm font-semibold tabular-nums">{elapsed}</span>
       {paused && withLabel && <span className="text-xs font-medium">{t("titlebar.paused")}</span>}
@@ -157,7 +160,7 @@ function MiniTranscript() {
             <p key={seg.id} className="text-sm leading-[22px] text-foreground">
               {/* align-top: the smaller name must not grow the 22px line box. */}
               <span className="mr-1.5 align-top text-xs leading-[22px] font-semibold text-primary">
-                {speakerLabel(seg, names, t)}
+                {displaySpeakerLabel(seg, names, t)}
               </span>
               {seg.text}
             </p>
@@ -385,16 +388,6 @@ function miniHeight(tab: Tab, answerOpen = false): number {
   return MINI_HEIGHT[tab];
 }
 
-/** Into the Dock (the taskbar on Windows); the recording carries on, and the window comes back from there. */
-async function minimizeWindow() {
-  if (!isTauri()) return;
-  try {
-    const { getCurrentWindow } = await import("@tauri-apps/api/window");
-    await getCurrentWindow().minimize();
-  } catch (error) {
-    log.warn("meeting: floating window minimize failed", { error: String(error) });
-  }
-}
 
 /** The six-dot handle the window drags by (as does any bare spot around it):
  *  an open hand over it, a closed one while dragging. */
@@ -407,8 +400,8 @@ function DragGrip() {
   );
 }
 
-/** Title bar: drag handle, the recording clock, the mic, then shrink to the
- *  mini window, minimize into the Dock, and close. */
+/** Title bar: drag handle, the recording clock, the mic, then — smallest to
+ *  largest — minimize into the Dock, shrink to the mini window, and close. */
 function FloatingTitleBar({
   onClose,
   onCollapse,
@@ -427,21 +420,21 @@ function FloatingTitleBar({
       <div className="flex shrink-0 items-center gap-1 pl-2">
         <button
           type="button"
+          aria-label={t("floating.minimize")}
+          title={t("floating.minimize")}
+          onClick={() => void minimizeMeetingWindow()}
+          className="grid size-8 place-items-center rounded-md text-foreground/80 transition-colors hover:bg-muted"
+        >
+          <Minus className="size-4" />
+        </button>
+        <button
+          type="button"
           aria-label={t("floating.collapse")}
           title={t("floating.collapse")}
           onClick={onCollapse}
           className="grid size-8 place-items-center rounded-md text-foreground/80 transition-colors hover:bg-muted"
         >
           <Minimize2 className="size-3.5" />
-        </button>
-        <button
-          type="button"
-          aria-label={t("floating.minimize")}
-          title={t("floating.minimize")}
-          onClick={() => void minimizeWindow()}
-          className="grid size-8 place-items-center rounded-md text-foreground/80 transition-colors hover:bg-muted"
-        >
-          <Minus className="size-4" />
         </button>
         <button
           type="button"
@@ -686,14 +679,8 @@ export function MeetingFloatingWindow() {
   }
 
   /** Out of the full window dragged small: back to the frame's size. */
-  async function growFromCompact() {
-    if (!isTauri()) return;
-    try {
-      const { getCurrentWindow, LogicalSize } = await import("@tauri-apps/api/window");
-      await getCurrentWindow().setSize(new LogicalSize(FLOATING_SIZE.width, FLOATING_SIZE.height));
-    } catch (error) {
-      log.warn("meeting: floating window grow failed", { error: String(error) });
-    }
+  function growFromCompact() {
+    return growFromCompactWindow();
   }
 
   if (mini) return <MiniWindow tab={tab} onTab={setTab} onExpand={() => void toggleMini(false)} />;
@@ -765,8 +752,9 @@ export function MeetingFloatingWindow() {
       </div>
 
       <footer className="flex shrink-0 items-center gap-2 border-t px-4 py-3">
-        {/* 暫停 wears the paused pill's orange; once paused, 繼續 is the blue
-            way back into the recording. */}
+        {/* Quiet by default — grey buttons, black and white. The only colour
+            is meaning: 繼續 in the primary blue (the one thing to do while
+            paused) and 結束's red square (the recording's colour). */}
         <button
           type="button"
           onClick={togglePause}
@@ -774,7 +762,7 @@ export function MeetingFloatingWindow() {
           className={`flex h-8 shrink-0 items-center gap-1.5 rounded-lg pr-3 pl-2.5 text-sm font-medium transition-colors disabled:opacity-50 ${
             paused
               ? "bg-primary text-primary-foreground hover:bg-primary/90"
-              : "bg-warning text-warning-foreground hover:bg-warning-hover"
+              : "bg-muted text-muted-foreground hover:bg-accent hover:text-foreground"
           }`}
         >
           {paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
@@ -785,9 +773,13 @@ export function MeetingFloatingWindow() {
           type="button"
           onClick={() => once("end")}
           disabled={!meetingActive || finalizing}
-          className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg pr-3 pl-2.5 text-sm font-medium text-recording bg-recording/10 transition-colors hover:bg-recording/15 disabled:opacity-60"
+          className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg pr-3 pl-2.5 text-sm font-medium bg-muted text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-60"
         >
-          {finalizing ? <Loader2 className="size-3.5 animate-spin" /> : <Square className="size-3.5" />}
+          {finalizing ? (
+            <Loader2 className="size-3.5 animate-spin" />
+          ) : (
+            <Square className="size-3 fill-recording text-recording" />
+          )}
           {t("titlebar.end")}
         </button>
       </footer>

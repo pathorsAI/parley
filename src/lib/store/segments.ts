@@ -54,11 +54,9 @@ export const createSegmentsSlice: SliceCreator<SegmentsSlice> = (set) => ({
 
   upsertSegment: (segment) =>
     set((state) => {
-      // Live transcript events must never mutate a loaded REPLAY recording — drop a
-      // stray live event (e.g. a leaked listener) while viewing a saved session.
-      // (Live finalize after stop is appMode "live"/"stopped", so it's unaffected.)
-      if (state.appMode === "study") return {};
-
+      // Live transcript events land in the LIVE store (useLiveStore), whatever
+      // the main window is showing — a loaded recording lives in useStore and
+      // is never reached from here.
       const fillerPatch = fillerPatchFor(state, segment);
 
       const idx = state.segments.findIndex((s) => s.id === segment.id);

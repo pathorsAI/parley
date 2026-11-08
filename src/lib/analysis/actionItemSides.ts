@@ -1,6 +1,6 @@
 // Post-meeting action items split by WHICH SIDE does them — "us" (the user's
-// own side) and "them" (the other party) — and the plain-text list each side's
-// copy button puts on the clipboard, ready to paste into a team chat or LINE.
+// own side) and "them" (the other party) — and the plain text the page's copy
+// puts on the clipboard, ready to paste into a team chat or LINE.
 // Pure: the panel owns the store reads and the i18n.
 
 import type { ActionItem, ActionItemSide } from "../types";
@@ -57,4 +57,19 @@ export function actionItemsCopyText(
     return `${i + 1}. ${a.text.trim()}${owner ? ownerSuffix(owner) : ""}`;
   });
   return [header, ...lines].join("\n");
+}
+
+/**
+ * The whole 後續行動 page as clipboard text: each side's list under its header,
+ * a blank line between sides, or one numbered list when no item has a side.
+ * Only the actions and their owners — no timestamps, no done marks.
+ */
+export function actionItemsPageText(
+  items: readonly ActionItem[],
+  header: (side: ActionItemSide) => string,
+  ownerSuffix: (owner: string) => string,
+): string {
+  const groups = groupActionItemsBySide(items);
+  if (!groups) return actionItemsCopyText("", items, ownerSuffix).replace(/^\n/, "");
+  return groups.map((g) => actionItemsCopyText(header(g.side), g.items, ownerSuffix)).join("\n\n");
 }

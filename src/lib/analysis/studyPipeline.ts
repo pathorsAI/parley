@@ -109,7 +109,7 @@ export function factsOf(s: StoreState): StudyPipelineFacts {
     hasRealtimeKey: hasProviderKey(s.settings, "realtime"),
     readOnly: s.replayReadOnly,
     hasTranscript: hasSpokenSegment(s.segments, trim),
-    selfKnown: resolveSelf(s.segments, s.selfSpeaker, s.replay?.micActivity) !== null,
+    selfKnown: resolveSelf(s.segments, s.selfSpeaker, s.replay?.micActivity, s.voiceSelfKey) !== null,
     analysisStatus: s.analysisStatus,
     actionItemsStatus: s.actionItemsStatus,
     briefStatus: s.briefStatus,

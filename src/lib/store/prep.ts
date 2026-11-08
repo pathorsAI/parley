@@ -4,9 +4,7 @@
 import type { TodoItem } from "../types";
 import type { MeetingShare } from "../history/history";
 import { log } from "../log";
-import { notify } from "../notify";
-import { translate } from "../../i18n/messages";
-import { isMeetingActive } from "./meeting";
+import { liveMeetingRunning, noteDraftTaken } from "./liveProbe";
 import { retitleForTime } from "../meeting/draftTitle";
 import type { SliceCreator } from "./types";
 
@@ -147,13 +145,16 @@ export interface PrepSlice {
   /** The saved draft the prep fields are being edited for (null = a new one). */
   editingDraftId: string | null;
   /** Save the prep as a draft (a new one, or the one being edited) and clear
-   *  the prep for the next. Returns the saved draft (null during a meeting). */
+   *  the prep for the next. Returns the saved draft. The prep here is the main
+   *  window's (useStore): a running meeting took its own copy when it started
+   *  (meeting/liveSession.ts), so drafts are editable during a meeting. */
   saveDraft: () => MeetingDraft | null;
   /** Load a saved draft into the prep to edit it, and open the sheet. */
   editDraft: (id: string) => void;
   /** Leave the draft being edited unchanged and clear the prep. */
   discardDraftEdit: () => void;
-  /** Load a saved draft into the prep to record it, taking it off the list. */
+  /** Load a saved draft into the prep to record it, taking it off the list.
+   *  Refused (false) while a meeting runs: one meeting at a time. */
   takeDraft: (id: string) => boolean;
   deleteDraft: (id: string) => void;
   /** File a draft made elsewhere (an MCP client) straight into the list,
@@ -208,10 +209,11 @@ export interface PrepSlice {
  * previous call's setup silently followed you into the next meeting" can't come
  * back: one explicit reset clears the slice wholesale.
  *
- * Deliberately NOT reset on stop: the save pipeline reads `meetingFolderId` off
- * the store asynchronously (see history.saveLiveToHistory).
+ * A meeting that starts MOVES these into the live store (meeting/liveSession.ts)
+ * — the main window's prep is then free for the next draft — and its save reads
+ * them from there.
  */
-const CLEARED_PREP_SLICE = {
+export const CLEARED_PREP_SLICE = {
   meetingFolderId: null,
   meetingOrgShare: null,
   meetingContext: "",
@@ -238,12 +240,6 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
   draftOpen: false,
   setDraftOpen: (draftOpen, preset) =>
     set((s) => {
-      // The sheet edits the prep fields, which belong to the live meeting
-      // while one runs: a new draft waits for it to end.
-      if (draftOpen && isMeetingActive(s.meetingStatus)) {
-        notify.message(translate(s.settings.language, "draft.lockedWhileRecording"));
-        return {};
-      }
       // "copy" is what a per-meeting org pick defaults to elsewhere
       // (useMeetingDestination, the settings default share).
       if (draftOpen && preset && s.editingDraftId == null) {
@@ -274,8 +270,6 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
   saveDraft: () => {
     let saved: MeetingDraft | null = null;
     set((s) => {
-      // The prep belongs to the live meeting while one runs.
-      if (isMeetingActive(s.meetingStatus)) return {};
       const id = s.editingDraftId ?? crypto.randomUUID();
       const prev = s.drafts.find((d) => d.id === id);
       const draft: MeetingDraft = {
@@ -313,23 +307,21 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
     set((s) => {
       const d = s.drafts.find((x) => x.id === id);
       if (!d) return {};
-      if (isMeetingActive(s.meetingStatus)) {
-        notify.message(translate(s.settings.language, "draft.lockedWhileRecording"));
-        return {};
-      }
       return { ...prepFromDraft(d), editingDraftId: id, draftOpen: true };
     }),
   discardDraftEdit: () =>
     set((s) => {
-      if (s.editingDraftId == null || isMeetingActive(s.meetingStatus)) return {};
+      if (s.editingDraftId == null) return {};
       return { ...CLEARED_PREP_SLICE, reminderLeadMin: DEFAULT_REMINDER_LEAD_MIN, editingDraftId: null };
     }),
   takeDraft: (id) => {
     let taken = false;
     set((s) => {
       const d = s.drafts.find((x) => x.id === id);
-      if (!d || isMeetingActive(s.meetingStatus)) return {};
+      // Taking a draft is recording it — one meeting at a time.
+      if (!d || liveMeetingRunning()) return {};
       taken = true;
+      noteDraftTaken();
       log.info("store: draft taken to record", { id });
       return {
         ...prepFromDraft(d),
@@ -373,8 +365,7 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
   setMeetingOrgShare: (meetingOrgShare) => set({ meetingOrgShare }),
   setMeetingFolder: (meetingFolderId) => set({ meetingFolderId }),
   resetPrep: () =>
-    set((s) => {
-      if (isMeetingActive(s.meetingStatus)) return {};
+    set(() => {
       log.info("store: prep reset");
       return { ...CLEARED_PREP_SLICE, reminderLeadMin: DEFAULT_REMINDER_LEAD_MIN, editingDraftId: null };
     }),

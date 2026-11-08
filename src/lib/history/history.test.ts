@@ -17,7 +17,7 @@ import {
   snapshotAnalysis,
   type AnalysisSnapshot,
 } from "./history";
-import { speakerKey, useStore } from "../store";
+import { speakerKey, useLiveStore, useStore } from "../store";
 import { setNotifier } from "../notify";
 
 const toast = { message: vi.fn(), success: vi.fn(), error: vi.fn() };
@@ -190,6 +190,7 @@ describe("mergeAnalysisSnapshot (the completed-pipeline overwrite)", () => {
     return {
       segments: [],
       speakerNames: {},
+      speakerAliases: {},
       selfSpeaker: null,
       findings: [finding],
       actionItems: [],
@@ -306,7 +307,8 @@ describe("shouldKeepLiveRecording (the live save's keep/discard gate)", () => {
 describe("leaveStoppedCockpit (a meeting that ended without a report)", () => {
   it("leaves the stopped cockpit for Home and says why", () => {
     vi.mocked(toast.message).mockClear();
-    useStore.setState({ appMode: "live", meetingStatus: "stopped" });
+    useStore.setState({ appMode: "live" });
+    useLiveStore.setState({ meetingStatus: "stopped" });
     leaveStoppedCockpit("meeting.notSaved.tooShort");
     expect(useStore.getState().appMode).toBe("home");
     expect(toast.message).toHaveBeenCalledTimes(1);
@@ -316,13 +318,16 @@ describe("leaveStoppedCockpit (a meeting that ended without a report)", () => {
     vi.mocked(toast.message).mockClear();
     // The meeting ran in its own window: the main window stays put, and the
     // user still hears why there is no report.
-    useStore.setState({ appMode: "library", meetingStatus: "stopped" });
+    useStore.setState({ appMode: "library" });
+    useLiveStore.setState({ meetingStatus: "stopped" });
     leaveStoppedCockpit("meeting.notSaved.noTranscript");
     expect(useStore.getState().appMode).toBe("library");
     expect(toast.message).toHaveBeenCalledTimes(1);
     vi.mocked(toast.message).mockClear();
 
-    useStore.setState({ appMode: "live", meetingStatus: "recording" });
+    // A newer meeting is already recording (the live store): say nothing.
+    useStore.setState({ appMode: "live" });
+    useLiveStore.setState({ meetingStatus: "recording" });
     leaveStoppedCockpit("meeting.notSaved.noTranscript");
     expect(useStore.getState().appMode).toBe("live");
     expect(toast.message).not.toHaveBeenCalled();

@@ -4,7 +4,7 @@ import { isMac } from "../platform";
 import { log } from "../log";
 import { openSettings } from "../nav/settings";
 import { navigateTo } from "../nav/navigate";
-import { isMeetingActive, useStore } from "../store";
+import { isLiveMeetingActive, useStore } from "../store";
 import { cockpitHold, requestNewFolder, toggleSidebar, toggleSidebarPeek } from "../shell/sidebar";
 import { zoomIn, zoomOut, zoomReset } from "../zoom";
 import { toggleShortcutSheet } from "./sheet";
@@ -66,10 +66,9 @@ const HANDLERS: Partial<Record<CommandId, () => void>> = {
   // The draft sheet sits at the app root, so it opens over any screen — except
   // the study page, whose prep fields ARE the open recording's (the titlebar
   // hides its 新增會議草稿 there for the same reason), so ⌘N goes home first.
-  // Never during a meeting: the draft sheet would edit the running one.
+  // A running meeting is no obstacle: it took its own copy of the prep.
   "file.newDraft": () => {
     const s = useStore.getState();
-    if (isMeetingActive(s.meetingStatus)) return;
     if (s.appMode !== "study") {
       s.setDraftOpen(true);
       return;
@@ -78,14 +77,10 @@ const HANDLERS: Partial<Record<CommandId, () => void>> = {
       if (outcome.status === "applied") useStore.getState().setDraftOpen(true);
     });
   },
-  "file.newFolder": () => {
-    if (isMeetingActive(useStore.getState().meetingStatus)) return;
-    requestNewFolder();
-  },
+  "file.newFolder": () => requestNewFolder(),
 
   // Routed through navigateTo, not straight at the store, so ⌘1/⌘2 land in the
-  // back stack (⌘1 then ⌘[ has to work) and inherit the one meeting guard
-  // instead of re-deciding it here.
+  // back stack (⌘1 then ⌘[ has to work).
   "nav.home": () => {
     void navigateTo({ kind: "home" });
   },
@@ -98,7 +93,7 @@ const HANDLERS: Partial<Record<CommandId, () => void>> = {
   // where we already are, and the entry is in the stack from when it opened.
   "nav.study": () => {
     const s = useStore.getState();
-    if (!s.replay || isMeetingActive(s.meetingStatus)) return;
+    if (!s.replay) return;
     s.showReplay();
   },
   // During the cockpit hold (meeting stopped, its cockpit still up) the tree is
@@ -109,7 +104,7 @@ const HANDLERS: Partial<Record<CommandId, () => void>> = {
   "view.toggleSidebar": () => {
     const s = useStore.getState();
     const hold = cockpitHold({
-      meetingActive: isMeetingActive(s.meetingStatus),
+      meetingActive: isLiveMeetingActive(),
       liveRoute: s.appMode === "live",
     });
     if (hold) toggleSidebarPeek();

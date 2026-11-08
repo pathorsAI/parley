@@ -19,7 +19,7 @@ import {
   UsersRound,
   X,
 } from "lucide-react";
-import { useStore, type AppMode } from "../lib/store";
+import { useLiveStore, useStore, type AppMode } from "../lib/store";
 import { usePersonalFolders, useOrgFolders } from "../lib/library/useFolders";
 import { useWindowFocused, useWindowMaximized, controlWindow, type WindowAction } from "../lib/shell/windowState";
 import { useMeetingElapsed } from "../lib/meeting/elapsed";
@@ -520,11 +520,12 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const { t } = useI18n();
   const focused = useWindowFocused();
   const maximized = useWindowMaximized();
-  const status = useStore((s) => s.meetingStatus);
-  const isFinalizingMeeting = useStore((s) => s.isFinalizingMeeting);
+  // The running meeting (the live store); the rest is this window's own.
+  const status = useLiveStore((s) => s.meetingStatus);
+  const isFinalizingMeeting = useLiveStore((s) => s.isFinalizingMeeting);
   const layout = useStore((s) => s.settings.layout);
   const updateSettings = useStore((s) => s.updateSettings);
-  const meetingStartedAt = useStore((s) => s.meetingStartedAt);
+  const meetingStartedAt = useLiveStore((s) => s.meetingStartedAt);
   const appMode = useStore((s) => s.appMode);
   const openLibrary = useStore((s) => s.openLibrary);
   const resetPrep = useStore((s) => s.resetPrep);
@@ -656,24 +657,24 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
         {studyMode && <RecordingBreadcrumb t={t} />}
         {meetingHere && (
           <>
-            {/* ONE recording pill: dot + elapsed. Red while recording; the
-                warning family while paused, so a paused meeting doesn't read
-                as a running one. */}
+            {/* ONE recording pill: dot + elapsed on grey. The red dot is the
+                only colour; paused, it goes grey and still, so a paused
+                meeting doesn't read as a running one. */}
             <span
               className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 ${
-                paused ? "bg-warning text-warning-foreground" : "bg-recording/10 text-recording"
+                paused ? "bg-muted text-muted-foreground" : "bg-muted text-foreground"
               }`}
             >
               <span
                 aria-hidden
                 className={`size-2 rounded-full ${
-                  paused ? "bg-warning-foreground" : "animate-pulse bg-recording"
+                  paused ? "bg-muted-foreground/60" : "animate-pulse bg-recording"
                 }`}
               />
               <span className="font-display text-[13px] font-semibold tabular-nums">{elapsed}</span>
             </span>
             {paused ? (
-              <span className="text-xs font-medium text-warning-foreground">
+              <span className="text-xs font-medium text-muted-foreground">
                 {t("titlebar.paused")}
               </span>
             ) : (
