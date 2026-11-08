@@ -1,7 +1,17 @@
 import { useEffect } from "react";
 import { isTauri } from "../platform";
 import { log } from "../log";
-import * as ipc from "../ipc/commands";
+import {
+  GLIDE_MS,
+  clampToArea,
+  currentFrame,
+  glide,
+  glideRemainingMs,
+  screenArea,
+  type Frame,
+  type ScreenArea,
+} from "../window/frame";
+import { isOnControl, pressTitleBar } from "../window/press";
 
 /** The floating meeting window's size (the Figma frame), in logical px. */
 export const FLOATING_SIZE = { width: 760, height: 858 } as const;
@@ -34,13 +44,10 @@ const DOCK_SETTLE_MS = 120;
 /** A docked window's gap under the menu bar, and the corner spots' gap from
  *  the screen's left and right edges. */
 const DOCK_GAP = 8;
-/** How long the window glides to a new frame: docking, shrinking, growing,
- *  and its height following the mini window's tab. */
-const GLIDE_MS = 240;
 /** The main window's own minimum (tauri.conf.json), restored afterwards. */
 const MAIN_MIN = { width: 900, height: 600 } as const;
 /** The main window's default size (tauri.conf.json). */
-const MAIN_DEFAULT = { width: 1200, height: 800 } as const;
+export const MAIN_DEFAULT = { width: 1200, height: 800 } as const;
 /** Gap kept between the floating window and the screen's edges. */
 const EDGE = 24;
 
@@ -84,9 +91,8 @@ export function useMainWindowRepair(): void {
   }, []);
 }
 
-type Frame = { x: number; y: number; width: number; height: number };
 type Area = { x: number; y: number; width: number };
-type FullArea = Area & { height: number };
+type FullArea = ScreenArea;
 
 /** Gap a grown window keeps from the screen's edges. */
 const FIT_GAP = 8;
@@ -99,15 +105,14 @@ const FIT_GAP = 8;
  * say) opens up without running off it.
  */
 export function fitToArea(frame: Frame, area: FullArea): Frame {
-  const width = Math.min(frame.width, area.width - FIT_GAP * 2, maxFullWidth(area.width));
-  const height = Math.min(frame.height, area.height - FIT_GAP * 2);
-  const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
-  return {
-    x: Math.round(clamp(frame.x, area.x + FIT_GAP, area.x + area.width - width - FIT_GAP)),
-    y: Math.round(clamp(frame.y, area.y + FIT_GAP, area.y + area.height - height - FIT_GAP)),
-    width: Math.round(width),
-    height: Math.round(height),
-  };
+  return clampToArea(frame, area, FIT_GAP, maxFullWidth(area.width));
+}
+
+/** Pure: the mini window's `frame` kept inside `area` — the same gap as a
+ *  grown window, without the full window's width cap — so shrinking near an
+ *  edge, or the mini window growing for its tab, never runs off screen. */
+export function fitMiniToArea(frame: Frame, area: ScreenArea): Frame {
+  return clampToArea(frame, area, FIT_GAP);
 }
 
 /** Where a mini window can dock: the top-left corner, under the notch, or
@@ -120,8 +125,6 @@ let beforeMini: Frame | null = null;
 /** Where the mini window sits docked, if it does. Remembered across
  *  expanding: the next shrink goes straight back there. */
 let docked: DockSpot | null = null;
-/** Until when the window is gliding: its own moves are not a drag to dock. */
-let glidingUntil = 0;
 
 /**
  * Pure: the spot a window whose frame is `win` (logical px) docks to on
@@ -147,17 +150,6 @@ export function dockPosition(spot: DockSpot, area: Area, width: number): { x: nu
   return { x: Math.round(x), y: Math.round(area.y + DOCK_GAP) };
 }
 
-/** The work area (below the menu bar) of the screen the window is on, in
- *  logical px. */
-async function screenArea(): Promise<FullArea | null> {
-  const { currentMonitor } = await import("@tauri-apps/api/window");
-  const monitor = await currentMonitor();
-  if (!monitor) return null;
-  const f = monitor.scaleFactor;
-  const a = monitor.workArea;
-  return { x: a.position.x / f, y: a.position.y / f, width: a.size.width / f, height: a.size.height / f };
-}
-
 /**
  * Grow the full meeting window to `size` with its top-left at `at`, fitted to
  * the screen it is on. Resolves once the glide has ended.
@@ -172,23 +164,6 @@ export async function growMeetingWindow(at: { x: number; y: number }, size: { wi
 /** The full window's size the last time it shrank to the mini window, so
  *  growing back from a dragged-small window opens to it too. */
 let lastFullSize: { width: number; height: number } | null = null;
-
-/** The window's current frame, in logical px. */
-async function currentFrame(): Promise<Frame> {
-  const { getCurrentWindow } = await import("@tauri-apps/api/window");
-  const win = getCurrentWindow();
-  const scale = await win.scaleFactor();
-  const pos = await win.outerPosition();
-  const size = await win.innerSize();
-  return { x: pos.x / scale, y: pos.y / scale, width: size.width / scale, height: size.height / scale };
-}
-
-/** Glide the window to `frame` (natively on macOS; set at once elsewhere).
- *  Resolves when the glide has started, not when it ends. */
-async function glide(frame: Frame): Promise<void> {
-  glidingUntil = Date.now() + GLIDE_MS + 60;
-  await ipc.animateWindowFrame({ ...frame, durationMs: GLIDE_MS });
-}
 
 /**
  * Shrink the floating window to the mini window `height` tall, or open it
@@ -213,9 +188,10 @@ export async function setMeetingMini(
         lastFullSize = { width: now.width, height: now.height };
       }
       await win.setMinSize(new LogicalSize(MINI_WIDTH, minHeight));
-      const area = docked ? await screenArea() : null;
+      const area = await screenArea();
       const at = docked && area ? dockPosition(docked, area, MINI_WIDTH) : now;
-      await glide({ x: at.x, y: at.y, width: MINI_WIDTH, height });
+      const mini = { x: at.x, y: at.y, width: MINI_WIDTH, height };
+      await glide(area ? fitMiniToArea(mini, area) : mini);
     } else {
       // Never "restore" to something the mini window itself left behind.
       const usable = beforeMini && beforeMini.width >= DRAG_MIN.width && beforeMini.height >= DRAG_MIN.height;
@@ -291,7 +267,9 @@ export async function setMiniHeight(height: number, minHeight: number = MINI_MIN
     const { getCurrentWindow, LogicalSize } = await import("@tauri-apps/api/window");
     await getCurrentWindow().setMinSize(new LogicalSize(MINI_WIDTH, minHeight));
     const now = await currentFrame();
-    await glide({ x: now.x, y: now.y, width: MINI_WIDTH, height });
+    const area = await screenArea();
+    const mini = { x: now.x, y: now.y, width: MINI_WIDTH, height };
+    await glide(area ? fitMiniToArea(mini, area) : mini);
   } catch (error) {
     log.warn("meeting: mini window resize failed", { height, error: String(error) });
   }
@@ -329,7 +307,7 @@ export function useMiniDocking(active: boolean): void {
 
     async function settle() {
       // Its own glide moves the window too; look again once it has landed.
-      const wait = glidingUntil - Date.now();
+      const wait = glideRemainingMs();
       if (wait > 0) return later(wait);
       try {
         const [frame, area] = await Promise.all([currentFrame(), screenArea()]);
@@ -362,18 +340,19 @@ export function useMiniDocking(active: boolean): void {
 /**
  * Drag the window from a press anywhere on `el` that is not a control (or
  * marked `data-no-drag`, like the selectable transcript). Not a
- * `data-tauri-drag-region`: a double-click there zooms the window to fill the
- * screen, which turned the capsule into a screen-sized oval.
+ * `data-tauri-drag-region`: a double-click there runs Tauri's toggleMaximize,
+ * which turned the mini capsule into a screen-sized oval — and does nothing
+ * useful on a window macOS tiled to fill the screen.
+ *
+ * `onDoubleClick` (the full layout's title bar: toggleZoom) runs on a double
+ * click instead; without it — the mini window — a double click only drags.
  */
-export function dragWindowFrom(e: { button: number; target: EventTarget; detail: number }): void {
-  if (e.button !== 0 || !isTauri()) return;
-  const target = e.target as HTMLElement;
-  // Anything you type or select in keeps the mouse: a contenteditable (the
-  // rich-text notes) is a <div>, so it needs naming on its own.
-  if (target.closest('button, input, textarea, a, [role=option], [contenteditable="true"], [data-no-drag]')) return;
-  void import("@tauri-apps/api/window")
-    .then(({ getCurrentWindow }) => getCurrentWindow().startDragging())
-    .catch((error) => log.warn("meeting: mini window drag failed", { error: String(error) }));
+export function dragWindowFrom(
+  e: { button: number; target: EventTarget; detail: number; clientX: number; clientY: number },
+  options: { onDoubleClick?: () => void } = {},
+): void {
+  if (isOnControl(e.target)) return;
+  pressTitleBar(e, options.onDoubleClick);
 }
 
 const fitsMain = (r: { width: number; height: number }) =>

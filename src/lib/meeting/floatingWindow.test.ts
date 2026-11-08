@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FLOATING_SIZE, MINI_WIDTH, dockPosition, dockTarget, fitToArea, floatingFrame } from "./floatingWindow";
+import { FLOATING_SIZE, MINI_WIDTH, dockPosition, dockTarget, fitMiniToArea, fitToArea, floatingFrame } from "./floatingWindow";
 
 describe("floatingFrame", () => {
   it("keeps the frame's size on a very wide screen, against the right edge", () => {
@@ -92,5 +92,20 @@ describe("fitToArea", () => {
   });
   it("shrinks a frame taller than the screen to fit", () => {
     expect(fitToArea({ x: 992, y: 10, width: 460, height: 900 }, area)).toEqual({ x: 972, y: 33, width: 460, height: 859 });
+  });
+});
+
+describe("fitMiniToArea", () => {
+  const area = { x: 0, y: 25, width: 1440, height: 875 };
+  it("pulls a mini window shrunk past the right and bottom edges back on screen", () => {
+    expect(fitMiniToArea({ x: 1300, y: 850, width: MINI_WIDTH, height: 240 }, area)).toEqual({
+      x: 1440 - MINI_WIDTH - 8,
+      y: 25 + 875 - 240 - 8,
+      width: MINI_WIDTH,
+      height: 240,
+    });
+  });
+  it("leaves one docked in the top-left corner where it is", () => {
+    expect(fitMiniToArea({ x: 8, y: 33, width: MINI_WIDTH, height: 48 }, area)).toEqual({ x: 8, y: 33, width: MINI_WIDTH, height: 48 });
   });
 });

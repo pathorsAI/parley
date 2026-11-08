@@ -20,6 +20,7 @@ import {
   X,
 } from "lucide-react";
 import { useStore } from "../../lib/store";
+import { useStickToBottom } from "../../lib/useStickToBottom";
 import {
   COMPACT_BELOW,
   MINI_HEIGHT,
@@ -33,6 +34,7 @@ import {
   setMiniHeight,
   useMiniDocking,
 } from "../../lib/meeting/floatingWindow";
+import { meetingZoomFallback, toggleZoom, useTrackRestoreFrame } from "../../lib/window/zoom";
 import { useMeetingElapsed } from "../../lib/meeting/elapsed";
 import { meetingCommand } from "../../lib/meeting/meetingWindow";
 import { useCommandShortcut } from "../../lib/commands/bind";
@@ -49,7 +51,7 @@ import { useMeetingDestination } from "../useMeetingDestination";
 import { CoachFeed } from "./CoachFeed";
 import { NotesEditor } from "./NotesEditor";
 import { LiveBanners } from "./LiveScreen";
-import { ASK_SUGGESTIONS, useCoachAsk } from "./coachAsk";
+import { ASK_SUGGESTIONS, useCoachAsk, type AskCard } from "./coachAsk";
 import { useTabShortcuts } from "../../lib/commands/tabs";
 
 type Tab = "notes" | "transcript" | "coach";
@@ -293,17 +295,6 @@ function MiniWindow({
         ) : (
           <div className="h-full min-w-0 flex-1" />
         )}
-        {coach && last && !open && (
-          <button
-            type="button"
-            aria-label={t("floating.showAnswer")}
-            title={t("floating.showAnswer")}
-            onClick={() => setOpen(true)}
-            className="grid size-7 shrink-0 place-items-center rounded-md text-foreground/80 transition-colors hover:bg-muted"
-          >
-            <MessageCircle className="size-3.5" />
-          </button>
-        )}
         <div role="tablist" aria-label={t("floating.tabsLabel")} className="flex shrink-0 items-center rounded-lg bg-muted/50 p-0.5">
           {MINI_TABS.map(({ tab: k, icon: Icon }) => (
             <button
@@ -353,21 +344,35 @@ function MiniWindow({
           >
             <X className="size-3.5" />
           </button>
-          <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2.5 pr-8">
-            <p className="mb-1 flex items-start gap-1.5 text-xs font-medium text-muted-foreground">
-              <MessageCircle className="mt-0.5 size-3 shrink-0" />
-              <span className="min-w-0">{last.question}</span>
-            </p>
-            {last.answer ? (
-              <div className="prose prose-sm dark:prose-invert max-w-none text-sm">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{last.answer}</ReactMarkdown>
-              </div>
-            ) : (
-              <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
-            )}
-          </div>
+          <MiniAskThread cards={cards} />
         </div>
       )}
+    </div>
+  );
+}
+
+/** The mini window's question thread: every question so far, oldest first,
+ *  the newest asked under the last — following the tail while the answer
+ *  streams in, unless the reader has scrolled up to an earlier one. */
+function MiniAskThread({ cards }: Readonly<{ cards: AskCard[] }>) {
+  const { viewportRef } = useStickToBottom([cards]);
+  return (
+    <div ref={viewportRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-2.5 pr-8">
+      {cards.map((c, i) => (
+        <div key={c.id} className={i > 0 ? "mt-3 border-t pt-3" : undefined}>
+          <p className="mb-2.5 flex items-start gap-1.5 text-sm leading-5 font-medium text-muted-foreground">
+            <MessageCircle className="mt-[3px] size-3.5 shrink-0" />
+            <span className="min-w-0">{c.question}</span>
+          </p>
+          {c.answer ? (
+            <div className="prose prose-sm dark:prose-invert max-w-none text-sm">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{c.answer}</ReactMarkdown>
+            </div>
+          ) : (
+            <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -390,6 +395,18 @@ function DragGrip() {
   );
 }
 
+/** Double-clicking the full layout's title bar fills the screen, or goes back
+ *  to the frame the window had before (lib/window/zoom.ts). */
+function zoomMeetingWindow() {
+  void toggleZoom(meetingZoomFallback);
+}
+
+/** Frames worth zooming back to: the full layout's, never the mini window's
+ *  or one dragged small enough to turn compact. */
+function isFullLayoutFrame(frame: { width: number; height: number }): boolean {
+  return frame.width >= COMPACT_BELOW.width && frame.height >= COMPACT_BELOW.height;
+}
+
 /** Title bar: drag handle, the recording clock, the mic, then — smallest to
  *  largest — minimize into the Dock, shrink to the mini window, and close. */
 function FloatingTitleBar({
@@ -400,7 +417,7 @@ function FloatingTitleBar({
 
   return (
     <header
-      onMouseDown={(e) => dragWindowFrom(e)}
+      onMouseDown={(e) => dragWindowFrom(e, { onDoubleClick: zoomMeetingWindow })}
       className="flex h-[50px] shrink-0 items-center gap-2.5 border-b pl-4 pr-3"
     >
       <DragGrip />
@@ -627,6 +644,8 @@ export function MeetingFloatingWindow() {
   const [mini, setMini] = useState(false);
   const compact = useCompact();
   const busyRef = useRef(false);
+  // What a double click on the title bar zooms back to.
+  useTrackRestoreFrame(true, isFullLayoutFrame);
   const meetingActive = status === "recording" || status === "paused";
   const paused = status === "paused";
 
@@ -732,15 +751,15 @@ export function MeetingFloatingWindow() {
 
       <footer className="flex shrink-0 items-center gap-2 border-t px-4 py-3">
         {/* Quiet by default — grey buttons, black and white. The only colour
-            is meaning: 繼續 in the primary blue (the one thing to do while
-            paused) and 結束's red square (the recording's colour). */}
+            is meaning: 繼續 tinted in the primary blue (the one thing to do
+            while paused, light so it sits with its grey neighbours) and 結束's red square (the recording's colour). */}
         <button
           type="button"
           onClick={togglePause}
           disabled={!meetingActive}
           className={`flex h-8 shrink-0 items-center gap-1.5 rounded-lg pr-3 pl-2.5 text-sm font-medium transition-colors disabled:opacity-50 ${
             paused
-              ? "bg-primary text-primary-foreground hover:bg-primary/90"
+              ? "bg-primary/10 text-primary hover:bg-primary/15"
               : "bg-muted text-muted-foreground hover:bg-accent hover:text-foreground"
           }`}
         >
