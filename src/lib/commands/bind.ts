@@ -9,6 +9,7 @@ import { cockpitHold, requestNewFolder, toggleSidebar, toggleSidebarPeek } from 
 import { zoomIn, zoomOut, zoomReset } from "../zoom";
 import { toggleShortcutSheet } from "./sheet";
 import { editRedo, editUndo } from "../edit/undo";
+import { sendChordToRichText } from "../edit/richText";
 import {
   COMMANDS,
   chordKey,
@@ -135,6 +136,10 @@ const COMPONENT_HANDLERS = new Map<CommandId, (e: KeyboardEvent) => void>();
  * binding does, in the same order.
  */
 export function runCommand(id: CommandId): void {
+  // ⌘B with the caret in the meeting notes means bold, not the sidebar: the
+  // menu bar took the chord before the editor saw it (lib/edit/richText.ts).
+  // Typed, the chord never fires the binding itself — it is not whileTyping.
+  if (id === "view.toggleSidebar" && sendChordToRichText({ key: "b" })) return;
   // The menu bar names the OUTER command (Go › Home for ⌘1) even where an inner
   // one has taken the chord over (the study page's first tab), because AppKit
   // matched the chord before the webview saw it. Hand it to the inner one.

@@ -368,7 +368,9 @@ export function useMiniDocking(active: boolean): void {
 export function dragWindowFrom(e: { button: number; target: EventTarget; detail: number }): void {
   if (e.button !== 0 || !isTauri()) return;
   const target = e.target as HTMLElement;
-  if (target.closest("button, input, textarea, a, [role=option], [data-no-drag]")) return;
+  // Anything you type or select in keeps the mouse: a contenteditable (the
+  // rich-text notes) is a <div>, so it needs naming on its own.
+  if (target.closest('button, input, textarea, a, [role=option], [contenteditable="true"], [data-no-drag]')) return;
   void import("@tauri-apps/api/window")
     .then(({ getCurrentWindow }) => getCurrentWindow().startDragging())
     .catch((error) => log.warn("meeting: mini window drag failed", { error: String(error) }));

@@ -47,6 +47,7 @@ import { DestinationField } from "../DestinationSheet";
 import { MeetingContextField } from "../MeetingContextField";
 import { useMeetingDestination } from "../useMeetingDestination";
 import { CoachFeed } from "./CoachFeed";
+import { NotesEditor } from "./NotesEditor";
 import { LiveBanners } from "./LiveScreen";
 import { ASK_SUGGESTIONS, useCoachAsk } from "./coachAsk";
 import { useTabShortcuts } from "../../lib/commands/tabs";
@@ -175,18 +176,7 @@ function MiniTranscript() {
 
 /** The mini window's notes: the same notes as the 筆記 tab, in a small box. */
 function MiniNotes() {
-  const { t } = useI18n();
-  const notes = useStore((s) => s.meetingNotes);
-  const setNotes = useStore((s) => s.setMeetingNotes);
-  return (
-    <textarea
-      value={notes}
-      onChange={(e) => setNotes(e.target.value)}
-      placeholder={t("floating.notesPlaceholder")}
-      aria-label={t("floating.tabs.notes")}
-      className="block min-h-0 w-full flex-1 resize-none bg-transparent px-3 py-2 select-text text-sm leading-[22px] text-foreground outline-none placeholder:text-muted-foreground"
-    />
-  );
+  return <NotesEditor compact />;
 }
 
 /** Left to right, in both layouts. */
@@ -487,21 +477,10 @@ function MeetingHeading() {
   );
 }
 
-/** 筆記: a plain text box — write whatever, however. Saved with the recording
- *  as part of its context. */
+/** 筆記: a rich-text pad (Markdown underneath) — lists, to-dos, headings as
+ *  you type. Saved with the recording as part of its context. */
 function NotesPad() {
-  const { t } = useI18n();
-  const notes = useStore((s) => s.meetingNotes);
-  const setNotes = useStore((s) => s.setMeetingNotes);
-  return (
-    <textarea
-      value={notes}
-      onChange={(e) => setNotes(e.target.value)}
-      placeholder={t("floating.notesPlaceholder")}
-      aria-label={t("floating.tabs.notes")}
-      className="block size-full resize-none bg-transparent p-5 text-sm leading-[22px] text-foreground outline-none placeholder:text-muted-foreground"
-    />
-  );
+  return <NotesEditor />;
 }
 
 /** One tab of the segmented strip: the selected one rises into the panel. */
