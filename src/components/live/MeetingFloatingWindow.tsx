@@ -360,7 +360,7 @@ function MiniAskThread({ cards }: Readonly<{ cards: AskCard[] }>) {
     <div ref={viewportRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-2.5 pr-8">
       {cards.map((c, i) => (
         <div key={c.id} className={i > 0 ? "mt-3 border-t pt-3" : undefined}>
-          <p className="mb-2.5 flex items-start gap-1.5 text-sm leading-5 font-medium text-muted-foreground">
+          <p className="mb-2.5 flex items-start gap-1.5 text-sm leading-5 font-normal text-muted-foreground">
             <MessageCircle className="mt-[3px] size-3.5 shrink-0" />
             <span className="min-w-0">{c.question}</span>
           </p>

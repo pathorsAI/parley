@@ -10,6 +10,7 @@ import { isSpeaker, resolveSelf, speakerRoster, type SelfSpeaker } from "../../l
 import { displaySpeakerLabel, speakerLabel } from "../../lib/speakers/labels";
 import { useRelabel } from "../../lib/speakers/useRelabel";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { DeliveryReport } from "./DeliveryReport";
 import { SpeakerSwitch } from "./SpeakerSwitch";
 import { canReadSpeakerTone, readSpeakerTone, speakerToneKey, useSpeakerTone } from "../../lib/analysis/speakerTone";
@@ -80,7 +81,7 @@ function MeterRow({
   muted: boolean;
   value: string;
 }>) {
-  let bar = "bg-primary";
+  let bar = "bg-foreground/70";
   if (muted) {
     bar = "bg-muted-foreground/30";
   } else if (watch) {
@@ -307,7 +308,18 @@ function ToneGroup({
     );
   }
   return (
-    <div className="grid grid-cols-[max-content_max-content_minmax(0,1fr)] items-center gap-x-4">{body}</div>
+    <ToneCard>
+      <div className="grid grid-cols-[max-content_max-content_minmax(0,1fr)] items-center gap-x-4">{body}</div>
+    </ToneCard>
+  );
+}
+
+/** The 評分 report's tone group sits in the same compact card as its charts. */
+function ToneCard({ children }: Readonly<{ children: ReactNode }>) {
+  return (
+    <Card size="sm" className="py-1 shadow-none">
+      <CardContent>{children}</CardContent>
+    </Card>
   );
 }
 
@@ -339,20 +351,24 @@ function OtherToneGroup({
   }
   if (read?.status === "error") {
     return (
-      <div className="flex flex-col items-start gap-2 py-2 text-xs text-muted-foreground">
-        <p>{read.error}</p>
-        <Button size="sm" variant="outline" onClick={() => void readSpeakerTone(speaker, label)}>
-          <Sparkles className="size-3.5" />
-          {t("delivery.speaker.tone.retry")}
-        </Button>
-      </div>
+      <ToneCard>
+        <div className="flex flex-col items-start gap-2 py-2 text-xs text-muted-foreground">
+          <p>{read.error}</p>
+          <Button size="sm" variant="outline" onClick={() => void readSpeakerTone(speaker, label)}>
+            <Sparkles className="size-3.5" />
+            {t("delivery.speaker.tone.retry")}
+          </Button>
+        </div>
+      </ToneCard>
     );
   }
   if (read?.status === "done" || !canRead) {
     return (
-      <p className="py-2 text-xs text-muted-foreground">
-        {t(canRead ? "delivery.speaker.tone.empty" : "delivery.speaker.tone.noKey", { name: displayLabel })}
-      </p>
+      <ToneCard>
+        <p className="py-2 text-xs text-muted-foreground">
+          {t(canRead ? "delivery.speaker.tone.empty" : "delivery.speaker.tone.noKey", { name: displayLabel })}
+        </p>
+      </ToneCard>
     );
   }
   // Running, or about to start on this render's effect.
