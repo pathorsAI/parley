@@ -34,10 +34,12 @@ export function speakerKey(s: SpeakerRef): string {
 }
 
 /** The context every label of one transcript shares. */
-export function labelContextOf(segments: readonly TranscriptSegment[]): LabelContext {
+export function labelContextOf(
+  segments: readonly (SpeakerRef & { text?: string })[],
+): LabelContext {
   const mic = new Set<number>();
   for (const s of segments) {
-    if (s.source === "me" && s.speaker > 0 && s.text.trim()) mic.add(s.speaker);
+    if (s.source === "me" && s.speaker > 0 && (s.text === undefined || s.text.trim())) mic.add(s.speaker);
   }
   return { micSpeakers: mic.size };
 }
@@ -70,6 +72,18 @@ export function defaultSpeakerLabel(s: SpeakerRef, ctx?: LabelContext): string {
   }
 }
 
+/**
+ * Every English label `s` may have been given, newest first: with this
+ * transcript's context, without it, and the pre-side naming ("You",
+ * "Speaker 2" for a second mic voice) that analyses saved before the rename
+ * still quote. For matching model-written text back to a speaker.
+ */
+export function knownDefaultLabels(s: SpeakerRef, ctx?: LabelContext): string[] {
+  const out = [defaultSpeakerLabel(s, ctx), defaultSpeakerLabel(s)];
+  if (s.source === "me") out.push(s.speaker > 1 ? `Speaker ${s.speaker}` : "You");
+  return [...new Set(out)];
+}
+
 /** Display label, preferring a user-assigned name from `names` when present. */
 export function speakerLabel(s: SpeakerRef, names?: Record<string, string>, ctx?: LabelContext): string {
   return names?.[speakerKey(s)] ?? defaultSpeakerLabel(s, ctx);
@@ -95,20 +109,30 @@ export function labelMessage(
   }
 }
 
-type Translate = (key: ReturnType<typeof labelMessage>["key"], params?: { number: number }) => string;
+/** The i18n keys a localized speaker label is built from. */
+export type SpeakerLabelKey = ReturnType<typeof labelMessage>["key"];
 
-/** {@link defaultSpeakerLabel} in the UI language (pass the i18n `t`). */
-export function localizedDefaultLabel(s: SpeakerRef, t: Translate, ctx?: LabelContext): string {
+/** A translator for those keys — `useI18n().t`, or `translate` bound to a language. */
+export type SpeakerLabelT = (key: SpeakerLabelKey, vars?: Record<string, string | number>) => string;
+
+/**
+ * The default label on SCREEN (我 / 我 N / 遠端 N / 對方 / 說話者 N, or the
+ * English forms): the same rules as {@link defaultSpeakerLabel}, in the app
+ * language. Text sent to a model keeps the English form. `ctx` from
+ * {@link labelContextOf} numbers the first mic voice once there are several.
+ */
+export function localizedDefaultSpeakerLabel(s: SpeakerRef, t: SpeakerLabelT, ctx?: LabelContext): string {
   const m = labelMessage(s, ctx);
   return t(m.key, m.params);
 }
 
-/** {@link speakerLabel} in the UI language: the custom name, else the default. */
-export function localizedSpeakerLabel(
+/** Who said `s`, as every on-screen label and user-copied text shows it: the
+ *  name the user gave that speaker, else the localized default. */
+export function displaySpeakerLabel(
   s: SpeakerRef,
-  t: Translate,
-  names?: Record<string, string>,
+  names: Record<string, string> | undefined,
+  t: SpeakerLabelT,
   ctx?: LabelContext,
 ): string {
-  return names?.[speakerKey(s)] ?? localizedDefaultLabel(s, t, ctx);
+  return names?.[speakerKey(s)] || localizedDefaultSpeakerLabel(s, t, ctx);
 }

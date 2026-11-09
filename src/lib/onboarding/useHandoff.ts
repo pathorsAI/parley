@@ -14,7 +14,6 @@ import { hasSpokenSegment, transcriptWithTimestamps, useStore } from "../store";
 import type { AppLanguage } from "../types";
 import { markGettingStarted } from "./gettingStarted";
 import {
-  buildActionItemsMarkdown,
   buildDeliveryMarkdown,
   buildHandoffPrompt,
   buildReportMarkdown,
@@ -26,6 +25,9 @@ import {
 import { handoffQuestions, type HandoffQuestions } from "./handoffQuestions";
 import { meetingBackgroundOf, meetingNotesOf } from "../history/meetingNotes";
 import type { StudyTab } from "../store/study";
+import { actionItemsPageText } from "../analysis/actionItemSides";
+import { ownerDisplayName } from "../speakers/owners";
+import { displayLabelerOf, relabelFromState } from "../speakers/useRelabel";
 
 type StoreState = ReturnType<typeof useStore.getState>;
 
@@ -41,15 +43,22 @@ function subject(s: StoreState): { id: string; title: string; createdAt: number 
 /** The paste-ready prompt + transcript for the loaded session. */
 export function handoffPromptFromState(s: StoreState, lang: AppLanguage = s.settings.language): string {
   const subj = subject(s);
+  const label = displayLabelerOf(s, lang);
   return buildHandoffPrompt(
     {
       title: subj.title,
       dateLabel: formatHandoffDate(subj.createdAt, lang),
       kindLabel: meetingKindLabel(s.meetingKind, lang),
       context: s.meetingContext,
-      speakerNames: speakerDisplayNames(s.segments, s.speakerNames),
-      meName: resolveMeName(s.segments, s.speakerNames, s.settings.userName ?? "", translate(lang, "speaker.you")),
-      transcript: transcriptWithTimestamps(s.segments, s.speakerNames),
+      speakerNames: speakerDisplayNames(s.segments, s.speakerNames, label),
+      meName: resolveMeName(
+        s.segments,
+        s.speakerNames,
+        s.settings.userName ?? "",
+        translate(lang, "speaker.you"),
+        label,
+      ),
+      transcript: transcriptWithTimestamps(s.segments, s.speakerNames, label),
       questions: handoffQuestions(subj, lang).questions,
     },
     lang
@@ -62,6 +71,8 @@ export function reportMarkdownFromState(s: StoreState, lang: AppLanguage = s.set
   const folderName = s.replayFolderId
     ? (listLocalFolders().find((f) => f.id === s.replayFolderId)?.name ?? null)
     : null;
+  // AI-written items cite speakers by the names they had when written.
+  const relabel = relabelFromState(s, lang);
   return buildReportMarkdown(
     {
       title: subj.title,
@@ -69,11 +80,34 @@ export function reportMarkdownFromState(s: StoreState, lang: AppLanguage = s.set
       meetingKind: s.meetingKind,
       meetingContext: s.meetingContext,
       folderName,
-      brief: s.brief,
-      actionItems: s.actionItems,
-      findings: s.findings,
+      brief: s.brief ? relabel(s.brief) : s.brief,
+      actionItems: s.actionItems.map((a) => ({ ...a, text: relabel(a.text) })),
+      findings: s.findings.map((f) => ({ ...f, title: relabel(f.title), detail: relabel(f.detail) })),
     },
     lang
+  );
+}
+
+/** The 後續行動 tab as the page shows it: grouped by side under the same names
+ *  (your company / the folder), owners by the speakers' current names. */
+function actionItemsTextFromState(s: StoreState, lang: AppLanguage): string {
+  const label = displayLabelerOf(s, lang);
+  const relabel = relabelFromState(s, lang);
+  const items = s.actionItems.map((a) => {
+    const owner = ownerDisplayName(a, s.segments, s.speakerNames, label);
+    return { ...a, text: relabel(a.text), owner: owner === a.owner && owner ? relabel(owner) : owner };
+  });
+  const folderName = s.replayFolderId
+    ? (listLocalFolders().find((f) => f.id === s.replayFolderId)?.name.trim() ?? "")
+    : "";
+  const sideNames = { us: s.settings.userCompany.trim(), them: folderName };
+  return actionItemsPageText(
+    items,
+    (side) =>
+      translate(lang, "actionItems.copy.header", {
+        name: sideNames[side] || translate(lang, side === "us" ? "actionItems.side.us" : "actionItems.side.them"),
+      }),
+    (owner) => translate(lang, "actionItems.copy.owner", { owner }),
   );
 }
 
@@ -89,17 +123,17 @@ export function studyPageTextFromState(
 ): string {
   switch (tab) {
     case "summary":
-      return s.brief?.trim() ?? "";
+      return s.brief ? relabelFromState(s, lang)(s.brief).trim() : "";
     case "actions":
-      return buildActionItemsMarkdown(s.actionItems);
+      return actionItemsTextFromState(s, lang);
     case "notes":
       return meetingNotesOf(s.meetingContext);
     case "context":
       return meetingBackgroundOf(s.meetingContext);
     case "delivery":
-      return buildDeliveryMarkdown(s.deliveryAssessment, lang);
+      return relabelFromState(s, lang)(buildDeliveryMarkdown(s.deliveryAssessment, lang));
     case "replay":
-      return transcriptWithTimestamps(s.segments, s.speakerNames);
+      return transcriptWithTimestamps(s.segments, s.speakerNames, displayLabelerOf(s, lang));
   }
 }
 

@@ -169,8 +169,8 @@ export function CoachFeed({
           )}
           {askCards.map((c) => (
             <div key={c.id} className="rounded-lg bg-muted/50 px-3 py-2 text-sm">
-              <p className="mb-1 flex items-start gap-1.5 text-xs font-medium text-muted-foreground">
-                <MessageCircle className="mt-0.5 size-3.5 shrink-0" />
+              <p className="mb-2.5 flex items-start gap-1.5 text-sm leading-5 font-normal text-muted-foreground">
+                <MessageCircle className="mt-[3px] size-3.5 shrink-0" />
                 <span className="min-w-0">{c.question}</span>
               </p>
               {c.answer ? (

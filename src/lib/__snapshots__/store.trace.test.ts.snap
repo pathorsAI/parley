@@ -231,7 +231,13 @@ exports[`store action trace > every action changes exactly what it did before, a
     "step": "openLibrary during meeting",
   },
   {
-    "changed": {},
+    "changed": {
+      "meetingBatna": "",
+      "meetingContext": "",
+      "meetingFolderId": null,
+      "meetingOrgShare": null,
+      "todos": [],
+    },
     "persistWrites": 1,
     "persisted": "unchanged",
     "speakerNameWrites": [],
@@ -954,13 +960,7 @@ exports[`store action trace > every action changes exactly what it did before, a
     "step": "setProsody null",
   },
   {
-    "changed": {
-      "meetingBatna": "",
-      "meetingContext": "",
-      "meetingFolderId": null,
-      "meetingOrgShare": null,
-      "todos": [],
-    },
+    "changed": {},
     "persistWrites": 1,
     "persisted": "unchanged",
     "speakerNameWrites": [],
@@ -1054,14 +1054,54 @@ exports[`store action trace > every action changes exactly what it did before, a
     "step": "enterReplay",
   },
   {
-    "changed": {},
+    "changed": {
+      "filledPauseCount": 2,
+      "filledPauseCounted": {
+        "m1": 1,
+        "z": 1,
+      },
+      "segments": [
+        {
+          "endMs": 1000,
+          "id": "r1",
+          "isFinal": true,
+          "source": "them",
+          "speaker": 1,
+          "startMs": 0,
+          "text": "hello",
+        },
+        {
+          "endMs": 3000,
+          "id": "r2",
+          "isFinal": true,
+          "source": "me",
+          "speaker": 0,
+          "startMs": 2000,
+          "text": "um yes",
+        },
+        {
+          "endMs": 1000,
+          "id": "z",
+          "isFinal": true,
+          "source": "me",
+          "speaker": 1,
+          "startMs": 0,
+          "text": "um",
+        },
+      ],
+    },
     "persistWrites": 1,
     "persisted": "unchanged",
     "speakerNameWrites": [],
-    "step": "upsertSegment in study ignored",
+    "step": "upsertSegment in study (no route filter: live events go to the live store)",
   },
   {
     "changed": {
+      "speakerAliases": {
+        "them-1": [
+          "Alice",
+        ],
+      },
       "speakerNames": {
         "them-1": "Dana",
       },
@@ -1081,6 +1121,12 @@ exports[`store action trace > every action changes exactly what it did before, a
   },
   {
     "changed": {
+      "speakerAliases": {
+        "them-1": [
+          "Alice",
+          "Dana",
+        ],
+      },
       "speakerNames": {},
     },
     "persistWrites": 1,
@@ -1506,7 +1552,28 @@ checklist|流程遺漏|Given the meeting context provided, identify important to
       "replayFolderId": "fold-1",
       "replayPlayheadMs": 0,
       "replaySeekNonce": 2,
+      "segments": [
+        {
+          "endMs": 1000,
+          "id": "r1",
+          "isFinal": true,
+          "source": "them",
+          "speaker": 1,
+          "startMs": 0,
+          "text": "hello",
+        },
+        {
+          "endMs": 3000,
+          "id": "r2",
+          "isFinal": true,
+          "source": "me",
+          "speaker": 0,
+          "startMs": 2000,
+          "text": "um yes",
+        },
+      ],
       "solutionFindingId": null,
+      "speakerAliases": {},
       "speakerNames": {
         "them-1": "Bob",
       },
@@ -1541,7 +1608,6 @@ checklist|流程遺漏|Given the meeting context provided, identify important to
       "filingStatus": "idle",
       "findings": [],
       "meetingKind": null,
-      "meetingStatus": "idle",
       "replay": null,
       "replayReadOnly": false,
       "segments": [],

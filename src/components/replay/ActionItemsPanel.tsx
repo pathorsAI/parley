@@ -1,18 +1,17 @@
-import { Clock, Copy, Loader2 } from "lucide-react";
-import { toast } from "sonner";
+import { useMemo } from "react";
+import { Clock, Loader2 } from "lucide-react";
 import { useStore, formatClock } from "../../lib/store";
 import { useStudyArtifactDisplay } from "../../lib/analysis/studyPipeline";
 import { missingProviderRequirement, providerGateKey } from "../../lib/ai/settings";
 import { listLocalFolders } from "../../lib/history/folders";
 import {
-  actionItemsCopyText,
   distinctOwners,
   groupActionItemsBySide,
   type ActionItemGroup,
 } from "../../lib/analysis/actionItemSides";
-import { log } from "../../lib/log";
+import { ownerDisplayName } from "../../lib/speakers/owners";
+import { useRelabel, useSpeakerLabel } from "../../lib/speakers/useRelabel";
 import { useI18n } from "../../i18n";
-import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -32,9 +31,9 @@ const SEVERITY_DOT: Record<Severity, string> = {
  * to a linked moment.
  *
  * Items that say whose they are (`side`) render in two groups — our side first,
- * then the other party — each with a one-click copy of its numbered list, so
- * "here's what we do" goes to the team and "here's what you do" to the
- * customer. Items with no side (older recordings) keep the one flat list.
+ * then the other party. The page header's 複製後續行動 copies both lists as
+ * text (useHandoff's studyPageTextFromState). Items with no side (older
+ * recordings) keep the one flat list.
  */
 export function ActionItemsPanel({
   onSeek,
@@ -46,7 +45,24 @@ export function ActionItemsPanel({
   embedded?: boolean;
 }>) {
   const { t } = useI18n();
-  const items = useStore((s) => s.actionItems);
+  const stored = useStore((s) => s.actionItems);
+  const segments = useStore((s) => s.segments);
+  const speakerNames = useStore((s) => s.speakerNames);
+  const label = useSpeakerLabel();
+  const relabel = useRelabel();
+  // Owners read by the speakers' current names, so renaming a speaker in the
+  // transcript renames every follow-up it owns (rows, group header, copy). The
+  // item text cites speakers too — by the names they had when it was written.
+  const items = useMemo(
+    () =>
+      stored.map((a) => {
+        const resolved = ownerDisplayName(a, segments, speakerNames, label);
+        const owner = resolved === a.owner && resolved ? relabel(resolved) : resolved;
+        const text = relabel(a.text);
+        return owner === a.owner && text === a.text ? a : { ...a, owner, text };
+      }),
+    [stored, segments, speakerNames, label, relabel],
+  );
   const status = useStore((s) => s.actionItemsStatus);
   const error = useStore((s) => s.actionItemsError);
   // null = configured. Otherwise the i18n key naming what's still missing.
@@ -155,7 +171,7 @@ function ActionItemRow({ item: a, onSeek }: Readonly<{ item: ActionItem; onSeek:
   );
 }
 
-/** One side's items under a header: dot, side name, owners, count, copy. */
+/** One side's items under a header: dot, side name, owners, count. */
 function ActionItemGroupSection({
   group,
   sideName,
@@ -174,19 +190,6 @@ function ActionItemGroupSection({
     : plainName;
   const owners = distinctOwners(group.items);
 
-  const copy = async () => {
-    const text = actionItemsCopyText(t("actionItems.copy.header", { name: plainName }), group.items, (owner) =>
-      t("actionItems.copy.owner", { owner })
-    );
-    try {
-      await navigator.clipboard.writeText(text);
-      toast.success(t("actionItems.copy.done"));
-    } catch (e) {
-      log.warn("action items copy failed", { error: String(e) });
-      toast.error(t("common.copyFailed"));
-    }
-  };
-
   return (
     <section className="mb-3 last:mb-0">
       <div className="flex items-center gap-2 border-b border-border px-1 pb-1.5 pt-1">
@@ -200,15 +203,6 @@ function ActionItemGroupSection({
         <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
           {t("actionItems.side.count", { n: group.items.length })}
         </span>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="ml-auto h-6 shrink-0 gap-1 px-2 text-[11px]"
-          onClick={() => void copy()}
-        >
-          <Copy className="size-3" />
-          {t(us ? "actionItems.copy.us" : "actionItems.copy.them")}
-        </Button>
       </div>
       {group.items.map((a) => (
         <ActionItemRow key={a.id} item={a} onSeek={onSeek} />

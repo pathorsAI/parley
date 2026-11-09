@@ -19,7 +19,7 @@ import {
   UsersRound,
   X,
 } from "lucide-react";
-import { useStore, type AppMode } from "../lib/store";
+import { useLiveStore, useStore, type AppMode } from "../lib/store";
 import { usePersonalFolders, useOrgFolders } from "../lib/library/useFolders";
 import { useWindowFocused, useWindowMaximized, controlWindow, type WindowAction } from "../lib/shell/windowState";
 import { useMeetingElapsed } from "../lib/meeting/elapsed";
@@ -28,6 +28,8 @@ import { leaveRecordingTo } from "../lib/nav/navigate";
 import type { Settings as AppSettings } from "../lib/types";
 import { isMac, isTauri } from "../lib/platform";
 import { focusMeetingWindow } from "../lib/meeting/meetingWindow";
+import { pressTitleBar } from "../lib/window/press";
+import { mainZoomFallback, toggleZoom, useTrackRestoreFrame } from "../lib/window/zoom";
 import { beginMeeting } from "../lib/meeting/start";
 import { cancelActiveMeeting, endMeeting, toggleMeetingPause } from "../lib/meeting/controls";
 import { useCommandShortcut } from "../lib/commands/bind";
@@ -47,6 +49,33 @@ import { StudyGenerationChip } from "./study/StudyGenerationChip";
 
 
 type TFn = ReturnType<typeof useI18n>["t"];
+
+/**
+ * The bare stretches of the title bar that drag the window. Only a press
+ * directly ON one of them counts (not on what sits inside it), the way a bare
+ * `data-tauri-drag-region` behaves.
+ *
+ * Windows / Linux keep Tauri's drag region: its double click maximizes
+ * natively, and WindowsControls follows that state. macOS does not: there that
+ * double click would also run toggleMaximize, which does nothing useful on a
+ * window macOS tiled to fill the screen — so the header drags and zooms itself
+ * (onMacTitleBarPress).
+ */
+function dragSurface(mac: boolean): Record<string, string> {
+  return mac ? { "data-drag-surface": "" } : { "data-tauri-drag-region": "" };
+}
+
+/** macOS: a press on a bare stretch of the title bar drags the window; a
+ *  double click fills the screen or goes back (toggleZoom). Not in fullscreen,
+ *  where there is no window to move. */
+function onMacTitleBarPress(e: React.MouseEvent<HTMLElement>, fullscreen: boolean) {
+  if (fullscreen) return;
+  const target = e.target;
+  if (!(target instanceof HTMLElement) || !target.hasAttribute("data-drag-surface")) return;
+  // No text cursor, no word selected by the double click.
+  e.preventDefault();
+  pressTitleBar(e, () => void toggleZoom(mainZoomFallback));
+}
 type Layout = AppSettings["layout"];
 
 
@@ -298,13 +327,15 @@ function RecorderCluster({
     <>
       <Button
         size="sm"
-        variant={paused ? "default" : "outline"}
+        variant="outline"
         onClick={onTogglePause}
         // Held while a start/end/cancel invoke is in flight: pausing mid-start
         // could land set_meeting_paused BEFORE start_meeting resets the flag,
         // splitting UI and backend pause state.
         disabled={busy}
-        className="h-8"
+        // Paused, 繼續 is tinted — light blue, not solid — so it sits with
+        // the grey 暫停 / 結束 buttons beside it.
+        className={paused ? "h-8 border-transparent bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary" : "h-8"}
       >
         {paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
         {paused ? t("titlebar.resume") : t("titlebar.pause")}
@@ -520,11 +551,12 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const { t } = useI18n();
   const focused = useWindowFocused();
   const maximized = useWindowMaximized();
-  const status = useStore((s) => s.meetingStatus);
-  const isFinalizingMeeting = useStore((s) => s.isFinalizingMeeting);
+  // The running meeting (the live store); the rest is this window's own.
+  const status = useLiveStore((s) => s.meetingStatus);
+  const isFinalizingMeeting = useLiveStore((s) => s.isFinalizingMeeting);
   const layout = useStore((s) => s.settings.layout);
   const updateSettings = useStore((s) => s.updateSettings);
-  const meetingStartedAt = useStore((s) => s.meetingStartedAt);
+  const meetingStartedAt = useLiveStore((s) => s.meetingStartedAt);
   const appMode = useStore((s) => s.appMode);
   const openLibrary = useStore((s) => s.openLibrary);
   const resetPrep = useStore((s) => s.resetPrep);
@@ -623,12 +655,16 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   // Reserve the leading gutter for macOS traffic lights and the trailing one
   // for Windows caption buttons; fullscreen shows no controls on either OS.
   const mac = isMac();
+  // macOS: double-clicking the title bar zooms like Chrome (lib/window/zoom.ts),
+  // which needs the frame to go back to.
+  useTrackRestoreFrame(mac);
   const padLeft = !fullscreen && mac ? "pl-[104px]" : "pl-4";
   const padRight = !fullscreen && !mac ? "pr-[140px]" : "pr-3";
 
   return (
     <header
-      data-tauri-drag-region
+      {...dragSurface(mac)}
+      onMouseDown={mac ? (e) => onMacTitleBarPress(e, fullscreen) : undefined}
       className={`relative grid h-[52px] shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(max-content,1fr)] items-center gap-3 border-b bg-background ${padLeft} ${padRight}`}
     >
       {/* macOS traffic lights: native sizing/colours, glyphs reveal on hover of
@@ -644,7 +680,7 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           Parley) — while recording, the session vitals (rec + elapsed + mic
           level). Where the meeting saves is decided by the folder picker, so a
           second folder chip here would be a silently-losing source of truth. */}
-      <div data-tauri-drag-region className="flex min-w-0 items-center gap-2">
+      <div {...dragSurface(mac)} className="flex min-w-0 items-center gap-2">
         {/* The recording pill (below) is the one badge worth a fixed slot: a
             recording in progress is state you must not miss. The study tense needs no counterpart — the
             page tabs in the center already say which tense you are in,
@@ -656,24 +692,24 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
         {studyMode && <RecordingBreadcrumb t={t} />}
         {meetingHere && (
           <>
-            {/* ONE recording pill: dot + elapsed. Red while recording; the
-                warning family while paused, so a paused meeting doesn't read
-                as a running one. */}
+            {/* ONE recording pill: dot + elapsed on grey. The red dot is the
+                only colour; paused, it goes grey and still, so a paused
+                meeting doesn't read as a running one. */}
             <span
               className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 ${
-                paused ? "bg-warning text-warning-foreground" : "bg-recording/10 text-recording"
+                paused ? "bg-muted text-muted-foreground" : "bg-muted text-foreground"
               }`}
             >
               <span
                 aria-hidden
                 className={`size-2 rounded-full ${
-                  paused ? "bg-warning-foreground" : "animate-pulse bg-recording"
+                  paused ? "bg-muted-foreground/60" : "animate-pulse bg-recording"
                 }`}
               />
               <span className="font-display text-[13px] font-semibold tabular-nums">{elapsed}</span>
             </span>
             {paused ? (
-              <span className="text-xs font-medium text-warning-foreground">
+              <span className="text-xs font-medium text-muted-foreground">
                 {t("titlebar.paused")}
               </span>
             ) : (

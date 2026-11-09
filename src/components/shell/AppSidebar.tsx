@@ -709,6 +709,21 @@ function NewNameInput({
   useEffect(() => {
     ref.current?.focus();
   }, []);
+  // One answer per field. Enter (or the check) commits and the parent closes
+  // the field — and the input's blur then fires on the way out, which would
+  // commit the same name again: one press, two (or more) new folders.
+  const doneRef = useRef(false);
+  const commit = () => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    if (value.trim()) onCommit(value);
+    else onCancel();
+  };
+  const cancel = () => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    onCancel();
+  };
   return (
     <div
       className="flex shrink-0 items-center gap-1 rounded-md py-1 pr-1"
@@ -725,20 +740,20 @@ function NewNameInput({
         onKeyDown={(e) => {
           if (e.key === "Enter") {
             e.preventDefault();
-            if (value.trim()) onCommit(value);
+            if (value.trim()) commit();
           } else if (e.key === "Escape") {
             e.preventDefault();
-            onCancel();
+            cancel();
           }
         }}
-        onBlur={() => (value.trim() ? onCommit(value) : onCancel())}
+        onBlur={commit}
         className="min-w-0 flex-1 rounded border bg-background px-1.5 py-0.5 text-sm outline-none focus:border-primary"
       />
       <button
         type="button"
         aria-label={t("history.folder.create")}
         onMouseDown={(e) => e.preventDefault()}
-        onClick={() => (value.trim() ? onCommit(value) : onCancel())}
+        onClick={commit}
         className="grid size-5 shrink-0 place-items-center rounded text-muted-foreground hover:text-foreground"
       >
         <Check className="size-3.5" />

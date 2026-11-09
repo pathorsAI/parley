@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { AudioLines } from "lucide-react";
 import { useStore, speakerKey } from "../../lib/store";
-import { labelContextOf, localizedDefaultLabel } from "../../lib/speakers/labels";
+import { localizedDefaultSpeakerLabel, labelContextOf } from "../../lib/speakers/labels";
 import { speakerDotClass } from "../../lib/speakerColors";
 import { useI18n } from "../../i18n";
 import { Input } from "@/components/ui/input";
@@ -34,6 +34,7 @@ interface ReplaySpeakerTagsProps {
  */
 export function ReplaySpeakerTags({ segments, names, label }: Readonly<ReplaySpeakerTagsProps>) {
   const { t } = useI18n();
+  const labelCtx = useMemo(() => labelContextOf(segments), [segments]);
   const setSpeakerName = useStore((s) => s.setSpeakerName);
   const [voiceOpen, setVoiceOpen] = useState(false);
   // A just-saved live meeting is still having its speakers corrected from the
@@ -72,7 +73,7 @@ export function ReplaySpeakerTags({ segments, names, label }: Readonly<ReplaySpe
               setSpeakerName(sp.key, e.target.value);
             }}
             onBlur={(e) => rememberOwnName(sp, e.target.value)}
-            placeholder={localizedDefaultLabel(sp, t, labelContextOf(segments))}
+            placeholder={localizedDefaultSpeakerLabel(sp, t, labelCtx)}
             className="h-7 w-28 text-xs"
           />
         </div>

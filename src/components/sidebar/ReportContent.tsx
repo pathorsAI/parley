@@ -3,13 +3,27 @@ import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
 import { useStore } from "../../lib/store";
 
-/** Turn `[m:ss]` timestamps into markdown links with a `#t=<seconds>` href so
- *  the renderer can make them clickable. */
-function linkifyTimestamps(md: string): string {
-  return md.replace(/\[(\d{1,2}):(\d{2})\]/g, (_, m: string, s: string) => {
-    const seconds = Number(m) * 60 + Number(s);
-    return `[${m}:${s}](#t=${seconds})`;
-  });
+/** A cited moment: `[m:ss]` as the prompts ask for, plus the shapes models
+ *  drift into — `[h:mm:ss]`, a range (`[6:52–7:10]`, linked at its start),
+ *  full-width brackets (`【6:52】`) and brackets the model escaped (`\[6:52\]`).
+ *  Not when already a link (`[6:52](…)`). */
+const STAMP = String.raw`\\?[[【]\s*(?:(\d{1,2}):)?(\d{1,3}):(\d{2})(?:\s*[-‐‑‒–—―−~～]\s*[\d:]+)?\s*\\?[\]】](?!\()`;
+const TIMESTAMP = new RegExp(STAMP, "g");
+/** The same citations sitting alone in parentheses, `（[3:18]、[30:36]）`. */
+const STAMP_NC = STAMP.replace("(?:(\\d{1,2}):)?(\\d{1,3}):(\\d{2})", "(?:\\d{1,2}:)?\\d{1,3}:\\d{2}");
+const WRAPPED = new RegExp(String.raw`\s*[（(]\s*((?:${STAMP_NC})(?:\s*[、,，;；]?\s*(?:${STAMP_NC}))*)\s*[）)]`, "g");
+
+/** Turn cited timestamps into markdown links with a `#t=<seconds>` href so
+ *  the renderer can make them clickable. The link text is the start time.
+ *  The model sometimes wraps them in parentheses and sometimes doesn't; they
+ *  all read the same way — bare, like 後續行動's — so the wrapping goes. */
+export function linkifyTimestamps(md: string): string {
+  return md
+    .replace(WRAPPED, (_, inner: string) => ` ${inner.replace(/\s*[、,，;；]\s*/g, " ")}`)
+    .replace(TIMESTAMP, (_, h: string | undefined, m: string, s: string) => {
+      const seconds = Number(h ?? 0) * 3600 + Number(m) * 60 + Number(s);
+      return `[${h ? `${h}:${m.padStart(2, "0")}` : m}:${s}](#t=${seconds})`;
+    });
 }
 
 /**
@@ -26,7 +40,8 @@ function makeMarkdownComponents(jump: (ms: number) => void, onJump?: () => void)
         return (
           <button
             type="button"
-            className="rounded bg-primary/10 px-1 text-[0.85em] tabular-nums text-primary no-underline hover:bg-primary/15"
+            // Same look as 後續行動's timestamps: the time as a link.
+            className="mx-0.5 cursor-pointer text-[0.9em] tabular-nums text-primary no-underline hover:underline"
             onClick={() => {
               jump(seconds * 1000);
               onJump?.();

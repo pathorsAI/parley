@@ -19,7 +19,7 @@ vi.mock("../dictionary", () => ({ recognitionTerms: () => [] }));
 vi.mock("../log", () => ({ log: mocks.log, attachConsoleOnce: vi.fn() }));
 vi.mock("../notify", () => ({ notify: { message: mocks.notify, success: vi.fn(), error: vi.fn() } }));
 
-import { useStore } from "../store";
+import { useLiveStore, useStore } from "../store";
 import type { TranscriptSegment } from "../types";
 import {
   broughtSpeech,
@@ -119,6 +119,9 @@ describe("initSilenceGuard", () => {
     useStore.setState({
       settings: { ...base, transcriptionProvider: "soniox", sonioxApiKey: "sk" },
       cloudAuth: null,
+    });
+    // The meeting it guards is the live store's.
+    useLiveStore.setState({
       meetingStatus: "idle",
       isFinalizingMeeting: false,
       silencePromptAt: null,
@@ -126,7 +129,7 @@ describe("initSilenceGuard", () => {
       segments: [],
     });
     stop = initSilenceGuard();
-    useStore.setState({ meetingStatus: "recording" });
+    useLiveStore.setState({ meetingStatus: "recording" });
   });
 
   afterEach(() => {
@@ -136,9 +139,9 @@ describe("initSilenceGuard", () => {
   });
 
   it("asks, then ends the meeting and keeps the recording up to just after the last words", async () => {
-    useStore.setState({ segments: [seg("a", "see you", 60_000)] });
+    useLiveStore.setState({ segments: [seg("a", "see you", 60_000)] });
     await vi.advanceTimersByTimeAsync(SILENCE_PROMPT_MS + 5_000);
-    expect(useStore.getState().silencePromptAt).not.toBeNull();
+    expect(useLiveStore.getState().silencePromptAt).not.toBeNull();
     expect(mocks.requestUserAttention).toHaveBeenCalledTimes(1);
     expect(mocks.invoke).not.toHaveBeenCalled();
 
@@ -146,65 +149,65 @@ describe("initSilenceGuard", () => {
     expect(mocks.invoke.mock.calls).toEqual([
       ["stop_meeting", { keepMs: 60_000 + TRIM_MARGIN_MS }],
     ]);
-    expect(useStore.getState().meetingStatus).toBe("stopped");
-    expect(useStore.getState().silencePromptAt).toBeNull();
+    expect(useLiveStore.getState().meetingStatus).toBe("stopped");
+    expect(useLiveStore.getState().silencePromptAt).toBeNull();
     expect(mocks.notify).toHaveBeenCalledTimes(1);
   });
 
   it("never asks while people keep talking", async () => {
     for (let i = 0; i < 6; i++) {
       await vi.advanceTimersByTimeAsync(SILENCE_PROMPT_MS / 3);
-      useStore.setState({ segments: [...useStore.getState().segments, seg(`s${i}`, "still here", i * 1_000)] });
+      useLiveStore.setState({ segments: [...useLiveStore.getState().segments, seg(`s${i}`, "still here", i * 1_000)] });
     }
-    expect(useStore.getState().silencePromptAt).toBeNull();
+    expect(useLiveStore.getState().silencePromptAt).toBeNull();
     expect(mocks.invoke).not.toHaveBeenCalled();
   });
 
   it("withdraws the question when someone speaks, and Keep recording restarts the clock", async () => {
     await vi.advanceTimersByTimeAsync(SILENCE_PROMPT_MS + 5_000);
-    expect(useStore.getState().silencePromptAt).not.toBeNull();
-    useStore.setState({ segments: [seg("a", "oh, one more thing", 1_000)] });
+    expect(useLiveStore.getState().silencePromptAt).not.toBeNull();
+    useLiveStore.setState({ segments: [seg("a", "oh, one more thing", 1_000)] });
     await vi.advanceTimersByTimeAsync(5_000);
-    expect(useStore.getState().silencePromptAt).toBeNull();
+    expect(useLiveStore.getState().silencePromptAt).toBeNull();
 
     await vi.advanceTimersByTimeAsync(SILENCE_PROMPT_MS);
-    expect(useStore.getState().silencePromptAt).not.toBeNull();
+    expect(useLiveStore.getState().silencePromptAt).not.toBeNull();
     keepRecording();
-    expect(useStore.getState().silencePromptAt).toBeNull();
+    expect(useLiveStore.getState().silencePromptAt).toBeNull();
     await vi.advanceTimersByTimeAsync(SILENCE_PROMPT_MS - 10_000);
-    expect(useStore.getState().silencePromptAt).toBeNull();
+    expect(useLiveStore.getState().silencePromptAt).toBeNull();
     expect(mocks.invoke).not.toHaveBeenCalled();
   });
 
   it("does not count a pause as silence", async () => {
-    useStore.setState({ meetingStatus: "paused" });
+    useLiveStore.setState({ meetingStatus: "paused" });
     await vi.advanceTimersByTimeAsync(SILENCE_PROMPT_MS * 2);
-    useStore.setState({ meetingStatus: "recording" });
+    useLiveStore.setState({ meetingStatus: "recording" });
     await vi.advanceTimersByTimeAsync(SILENCE_PROMPT_MS - 10_000);
-    expect(useStore.getState().silencePromptAt).toBeNull();
+    expect(useLiveStore.getState().silencePromptAt).toBeNull();
     expect(mocks.invoke).not.toHaveBeenCalled();
   });
 
   // The overnight merge: every reconnect report used to restart the clock, so
   // a meeting whose link kept dropping was never asked about at all.
   it("does not let a reconnecting link restart the clock", async () => {
-    useStore.setState({ transcriptionLink: "reconnecting" });
+    useLiveStore.setState({ transcriptionLink: "reconnecting" });
     await vi.advanceTimersByTimeAsync(SILENCE_PROMPT_MS * 2);
     // Held while the link is down: nothing transcribed proves nothing.
-    expect(useStore.getState().silencePromptAt).toBeNull();
-    useStore.setState({ transcriptionLink: "live" });
+    expect(useLiveStore.getState().silencePromptAt).toBeNull();
+    useLiveStore.setState({ transcriptionLink: "live" });
     await vi.advanceTimersByTimeAsync(5_000);
     // Back live with no words for 30 minutes: ask now.
-    expect(useStore.getState().silencePromptAt).not.toBeNull();
+    expect(useLiveStore.getState().silencePromptAt).not.toBeNull();
   });
 
   it("ends a meeting whose link never comes back, keeping the whole recording", async () => {
-    useStore.setState({ segments: [seg("a", "see you", 60_000)], transcriptionLink: "reconnecting" });
+    useLiveStore.setState({ segments: [seg("a", "see you", 60_000)], transcriptionLink: "reconnecting" });
     await vi.advanceTimersByTimeAsync(RECONNECTING_PROMPT_MS + 5_000);
-    expect(useStore.getState().silencePromptAt).not.toBeNull();
+    expect(useLiveStore.getState().silencePromptAt).not.toBeNull();
     await vi.advanceTimersByTimeAsync(SILENCE_GRACE_MS + 5_000);
     // No trim: words after the last transcribed ones may be in the audio.
     expect(mocks.invoke.mock.calls).toEqual([["stop_meeting", {}]]);
-    expect(useStore.getState().meetingStatus).toBe("stopped");
+    expect(useLiveStore.getState().meetingStatus).toBe("stopped");
   });
 });

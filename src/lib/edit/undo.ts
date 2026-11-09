@@ -4,6 +4,7 @@ import { useStore } from "../store";
 import { translate } from "../../i18n";
 import { isTauri } from "../platform";
 import { log } from "../log";
+import { sendChordToRichText } from "./richText";
 import {
   editChangeVars,
   redoTranscriptEdit,
@@ -56,11 +57,15 @@ function announce(key: "replay.undone" | "replay.redone", change: TranscriptEdit
 export function editUndo(): void {
   const change = appFirst() ? undoTranscriptEdit() : null;
   if (change) return announce("replay.undone", change);
+  // A rich-text editor keeps its own history; the system's undo would undo
+  // DOM edits behind its back.
+  if (sendChordToRichText({ key: "z" })) return;
   nativeEdit("undo");
 }
 
 export function editRedo(): void {
   const change = appFirst() ? redoTranscriptEdit() : null;
   if (change) return announce("replay.redone", change);
+  if (sendChordToRichText({ key: "z", shift: true })) return;
   nativeEdit("redo");
 }

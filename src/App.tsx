@@ -18,7 +18,7 @@ import { FindingSolutionWindow } from "./components/analysis/FindingSolutionWind
 import { useFindingSolutionHost } from "./components/analysis/useFindingSolutionHost";
 import { DeliveryNudgeHost } from "./components/delivery/DeliveryNudgeHost";
 import { useDeliveryCoach } from "./lib/analysis/useDelivery";
-import { useStore, isMeetingActive } from "./lib/store";
+import { useStore, isLiveMeetingActive } from "./lib/store";
 import {
   isTauri,
   listenForMeetingError,
@@ -336,7 +336,7 @@ const App = () => {
     // running over a meeting that had already been saved, and the next End
     // found nothing to save.
     const stopIfRecording = (): Promise<void> => {
-      if (!isMeetingActive(useStore.getState().meetingStatus)) return Promise.resolve();
+      if (!isLiveMeetingActive()) return Promise.resolve();
       log.info("meeting: ending on window close");
       return endMeeting();
     };
@@ -410,8 +410,9 @@ const App = () => {
     import("@tauri-apps/api/webview")
       .then(({ getCurrentWebview }) =>
         getCurrentWebview().onDragDropEvent((e) => {
+          // Imports load into the main window's store, never the running
+          // meeting's (useLiveStore), so a drop is welcome mid-meeting too.
           if (e.payload.type !== "drop") return;
-          if (isMeetingActive(useStore.getState().meetingStatus)) return;
           const { paths } = e.payload;
           log.info("import: files dropped", { count: paths.length });
           importDroppedFiles(paths);

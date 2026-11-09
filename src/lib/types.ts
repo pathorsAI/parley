@@ -203,6 +203,9 @@ export interface ActionItem {
   /** Who should do it, by the name the meeting used (a speaker name or a name
    *  someone said). Absent when the transcript doesn't make it clear. */
   owner?: string;
+  /** The speaker key `owner` is, when the owner is one of the speakers — so a
+   *  later rename of that speaker renames the owner (speakers/owners.ts). */
+  ownerKey?: string;
 }
 
 export type ActionItemSide = "us" | "them";

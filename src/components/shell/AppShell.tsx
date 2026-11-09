@@ -23,7 +23,7 @@ import {
   useSidebarCollapsed,
   useSidebarPeek,
 } from "../../lib/shell/sidebar";
-import { useStore, isMeetingActive, type AppMode } from "../../lib/store";
+import { useLiveStore, useStore, isMeetingActive, type AppMode } from "../../lib/store";
 
 const LibraryScreen = lazy(() =>
   import("../library/LibraryScreen").then((m) => ({ default: m.LibraryScreen }))
@@ -50,7 +50,7 @@ const ContextLibraryScreen = lazy(() =>
  */
 export function AppShell() {
   const appMode = useStore((s) => s.appMode);
-  const meetingActive = useStore((s) => isMeetingActive(s.meetingStatus));
+  const meetingActive = useLiveStore((s) => isMeetingActive(s.meetingStatus));
   const collapsed = useSidebarCollapsed();
   const peek = useSidebarPeek();
   const tree = useLibraryTree();

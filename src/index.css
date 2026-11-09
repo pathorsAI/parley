@@ -74,11 +74,12 @@
   --danger: oklch(0.96 0.03 25);
   --danger-foreground: oklch(0.5 0.19 25);
   --danger-border: oklch(0.88 0.07 25);
-  --chart-1: oklch(0.6231 0.188 259.8145);
-  --chart-2: oklch(0.68 0.16 35);
-  --chart-3: oklch(0.87 0.07 230);
-  --chart-4: oklch(0.83 0.12 85);
-  --chart-5: oklch(0.76 0.13 55);
+  /* Chart marks are a hueless grey scale: 1 = emphasis, 2 = normal, 3 = faint. */
+  --chart-1: oklch(0.72 0 0);
+  --chart-2: oklch(0.85 0 0);
+  --chart-3: oklch(0.92 0 0);
+  --chart-4: oklch(0.78 0 0);
+  --chart-5: oklch(0.65 0 0);
   --radius: 0.625rem;
   --sidebar: #f5f7f9;
   --sidebar-foreground: oklch(0.205 0.02 257);
@@ -129,11 +130,11 @@
   --danger: oklch(0.3 0.07 25);
   --danger-foreground: oklch(0.83 0.11 25);
   --danger-border: oklch(0.44 0.12 25);
-  --chart-1: oklch(0.6231 0.188 259.8145);
-  --chart-2: oklch(0.7 0.15 35);
-  --chart-3: oklch(0.8 0.09 230);
-  --chart-4: oklch(0.83 0.12 85);
-  --chart-5: oklch(0.76 0.13 55);
+  --chart-1: oklch(0.62 0 0);
+  --chart-2: oklch(0.45 0 0);
+  --chart-3: oklch(0.32 0 0);
+  --chart-4: oklch(0.54 0 0);
+  --chart-5: oklch(0.7 0 0);
   /* Solid, a step lighter than the page (#0c1620) and just under the cards,
      so the rail reads as its own surface. */
   --sidebar: oklch(0.22 0.026 250);
@@ -506,4 +507,148 @@ button:not(:disabled),
 [role="option"]:not([aria-disabled="true"]),
 [role="menuitem"]:not([aria-disabled="true"]) {
   cursor: pointer;
+}
+
+/* The in-meeting notes editor (components/live/NotesEditor.tsx): Tiptap's
+   ProseMirror content, sized for a small pad. Tailwind's preflight strips list
+   markers and heading sizes, so they are put back here, modestly. The line
+   height (22px) and the padding come from the element's own utilities. */
+@layer components {
+  .notes-editor {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    caret-color: var(--primary);
+  }
+  .notes-editor > * + *,
+  .notes-editor li > * + * {
+    margin-top: 0.25rem;
+  }
+  .notes-editor h1 {
+    font-size: 1.0625rem;
+    line-height: 1.6rem;
+    font-weight: 600;
+  }
+  .notes-editor h2 {
+    font-size: 0.9375rem;
+    line-height: 1.4rem;
+    font-weight: 600;
+  }
+  .notes-editor h3 {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--muted-foreground);
+  }
+  .notes-editor > :is(h1, h2, h3):not(:first-child) {
+    margin-top: 0.625rem;
+  }
+  .notes-editor ul,
+  .notes-editor ol {
+    padding-left: 1.25rem;
+  }
+  .notes-editor ul {
+    list-style: disc;
+  }
+  .notes-editor ul ul {
+    list-style: circle;
+  }
+  .notes-editor ul ul ul {
+    list-style: square;
+  }
+  .notes-editor ol {
+    list-style: decimal;
+  }
+  .notes-editor li::marker {
+    color: var(--muted-foreground);
+  }
+  .notes-editor li + li {
+    margin-top: 0.125rem;
+  }
+  /* Task lists: the checkbox sits in its own column, centred on the first
+     line; nested items line up under the text. */
+  .notes-editor ul[data-type="taskList"] {
+    list-style: none;
+    padding-left: 0;
+  }
+  .notes-editor ul[data-type="taskList"] > li {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+  .notes-editor ul[data-type="taskList"] > li > label {
+    display: flex;
+    flex: none;
+    align-items: center;
+    height: 22px;
+    user-select: none;
+  }
+  .notes-editor ul[data-type="taskList"] > li > div {
+    flex: 1;
+    min-width: 0;
+  }
+  .notes-editor ul[data-type="taskList"] input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    margin: 0;
+    accent-color: var(--primary);
+    cursor: pointer;
+  }
+  .notes-editor ul[data-type="taskList"] > li[data-checked="true"] > div {
+    color: var(--muted-foreground);
+    text-decoration: line-through;
+  }
+  .notes-editor blockquote {
+    border-left: 2px solid var(--border);
+    padding-left: 0.75rem;
+    color: var(--muted-foreground);
+  }
+  .notes-editor code {
+    border-radius: 4px;
+    background: color-mix(in oklch, var(--foreground) 7%, transparent);
+    padding: 0.0625rem 0.3rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.8125rem;
+  }
+  .notes-editor pre {
+    border-radius: 6px;
+    background: color-mix(in oklch, var(--foreground) 7%, transparent);
+    padding: 0.5rem 0.75rem;
+    overflow-x: auto;
+  }
+  .notes-editor pre code {
+    background: none;
+    padding: 0;
+  }
+  .notes-editor hr {
+    margin: 0.75rem 0;
+    border-color: var(--border);
+  }
+  .notes-editor strong {
+    font-weight: 600;
+  }
+  /* The placeholder (Tiptap's Placeholder extension marks the empty first
+     paragraph). */
+  .notes-editor p.is-editor-empty:first-child::before {
+    content: attr(data-placeholder);
+    float: left;
+    height: 0;
+    color: var(--muted-foreground);
+    pointer-events: none;
+  }
+}
+
+/* The checkboxes of a task list in rendered notes (study page). */
+.notes-rendered ul.contains-task-list {
+  list-style: none;
+  padding-left: 0;
+}
+.notes-rendered ul.contains-task-list ul.contains-task-list {
+  padding-left: 1.5rem;
+}
+.notes-rendered li.task-list-item {
+  padding-left: 0;
+}
+.notes-rendered li.task-list-item input[type="checkbox"] {
+  margin: 0 0.5rem 0 0;
+  vertical-align: -2px;
+  accent-color: var(--primary);
 }

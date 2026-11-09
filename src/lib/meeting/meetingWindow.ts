@@ -1,6 +1,6 @@
 import { isTauri } from "../platform";
 import { log } from "../log";
-import { isMeetingActive, useStore } from "../store";
+import { isMeetingActive, useLiveStore, useStore } from "../store";
 import type { ParleyState } from "../store/types";
 import { emitEvent, listenEvent, type UnlistenFn } from "../ipc/events";
 import { floatingFrame, FLOATING_SIZE } from "./floatingWindow";
@@ -9,16 +9,18 @@ import { endSilentMeeting, keepRecording } from "./silenceGuard";
 
 // The meeting window: a separate OS window that floats over the call while
 // the main window stays the whole app. The MAIN window still records — it owns
-// the capture, the transcript and the save — and is the source of truth; the
-// meeting window mirrors the live state over these events and sends edits and
-// commands back. Same shape as the finding-solution window (findingSolutionSync).
+// the capture, the transcript and the save — and is the source of truth: its
+// LIVE store (useLiveStore), never the useStore its own screens show. The
+// meeting window mirrors that live state into its own useStore over these
+// events (same field names) and sends edits and commands back, which land in
+// the live store. Same shape as the finding-solution window (findingSolutionSync).
 export const MEETING_WINDOW_LABEL = "meeting";
 const STATE = "meeting-window://state"; // main → window: the mirrored keys
 const HELLO = "meeting-window://hello"; // window → main: "I'm up, push me state"
 const PATCH = "meeting-window://patch"; // window → main: fields edited there
 const COMMAND = "meeting-window://command"; // window → main: run a meeting action
 
-/** Store keys the meeting window mirrors from the main window. */
+/** Store keys the meeting window mirrors from the main window's live store. */
 const MIRRORED = [
   "meetingStatus",
   "meetingStartedAt",
@@ -28,6 +30,7 @@ const MIRRORED = [
   "liveMeetingId",
   "segments",
   "speakerNames",
+  "speakerAliases",
   "findings",
   "analysisStatus",
   "systemAudioWarning",
@@ -60,6 +63,10 @@ const EDITABLE = [
   "autoAnalyze",
   "autoAnalyzeSec",
   "systemAudioWarning",
+  // A speaker renamed in the meeting window must not be undone by the next
+  // mirror of the main window's names.
+  "speakerNames",
+  "speakerAliases",
 ] as const satisfies readonly (typeof MIRRORED)[number][];
 
 type Mirrored = Pick<ParleyState, (typeof MIRRORED)[number]>;
@@ -185,7 +192,7 @@ export function initMeetingWindowHost(): () => void {
   const broadcast = () => {
     clearTimeout(timer);
     timer = undefined;
-    void emitEvent(STATE, pick(useStore.getState(), MIRRORED)).catch((error) =>
+    void emitEvent(STATE, pick(useLiveStore.getState(), MIRRORED)).catch((error) =>
       log.warn("meeting-window: state broadcast failed", { error: String(error) }),
     );
   };
@@ -195,7 +202,7 @@ export function initMeetingWindowHost(): () => void {
     timer ??= setTimeout(broadcast, 120);
   };
 
-  const unsubscribe = useStore.subscribe((next, prev) => {
+  const unsubscribe = useLiveStore.subscribe((next, prev) => {
     if (live(next) !== live(prev)) {
       void (live(next) ? openMeetingWindow() : closeMeetingWindow()).catch((error) =>
         log.warn("meeting-window: open/close failed", { error: String(error) }),
@@ -204,14 +211,14 @@ export function initMeetingWindowHost(): () => void {
     if (MIRRORED.some((k) => next[k] !== prev[k])) scheduleBroadcast();
   });
   // A reload mid-meeting: the window may need opening (or closing) now.
-  void (live(useStore.getState()) ? openMeetingWindow() : closeMeetingWindow()).catch(() => {});
+  void (live(useLiveStore.getState()) ? openMeetingWindow() : closeMeetingWindow()).catch(() => {});
 
   const unlisteners: Promise<UnlistenFn>[] = [
     listenEvent(HELLO, () => broadcast()),
     listenEvent<Partial<Mirrored>>(PATCH, (e) => {
       const patch: Partial<Mirrored> = {};
       for (const k of EDITABLE) if (k in e.payload) (patch as Record<string, unknown>)[k] = e.payload[k];
-      useStore.setState(patch);
+      useLiveStore.setState(patch);
     }),
     listenEvent<{ cmd: MeetingCommand }>(COMMAND, (e) => runCommand(e.payload.cmd)),
   ];

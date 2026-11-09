@@ -13,7 +13,7 @@ vi.mock("../dictionary", () => ({ recognitionTerms: () => [] }));
 vi.mock("../log", () => ({ log: mocks.log, attachConsoleOnce: vi.fn() }));
 vi.mock("../notify", () => ({ notify: { message: mocks.notify, success: vi.fn(), error: vi.fn() } }));
 
-import { useStore } from "../store";
+import { useLiveStore, useStore } from "../store";
 import { endsMeetingOnWake, handleSystemWake, WAKE_END_AFTER_MS } from "./sleepWake";
 
 const base = useStore.getState().settings;
@@ -26,9 +26,8 @@ beforeEach(() => {
   useStore.setState({
     settings: { ...base, language: "en", transcriptionProvider: "soniox", sonioxApiKey: "sk" },
     cloudAuth: null,
-    meetingStatus: "recording",
-    isFinalizingMeeting: false,
   });
+  useLiveStore.setState({ meetingStatus: "recording", isFinalizingMeeting: false });
 });
 
 afterEach(() => {
@@ -49,7 +48,7 @@ describe("handleSystemWake", () => {
   it("ends and saves the meeting after a night asleep, untrimmed, and says so", async () => {
     await handleSystemWake(10 * 3_600_000);
     expect(mocks.invoke.mock.calls).toEqual([["stop_meeting", {}]]);
-    expect(useStore.getState().meetingStatus).toBe("stopped");
+    expect(useLiveStore.getState().meetingStatus).toBe("stopped");
     expect(mocks.notify).toHaveBeenCalledTimes(1);
     expect(String(mocks.notify.mock.calls[0][0])).toContain("600 minutes");
   });
@@ -57,6 +56,6 @@ describe("handleSystemWake", () => {
   it("leaves a meeting alone after a short nap", async () => {
     await handleSystemWake(5 * 60_000);
     expect(mocks.invoke).not.toHaveBeenCalled();
-    expect(useStore.getState().meetingStatus).toBe("recording");
+    expect(useLiveStore.getState().meetingStatus).toBe("recording");
   });
 });

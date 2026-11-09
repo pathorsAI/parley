@@ -4,7 +4,7 @@
 import type { MeetingStatus } from "../types";
 import { log } from "../log";
 import { CLEARED_STUDY_SLICE } from "./study";
-import type { AppMode, ParleyState, SliceCreator, TranscriptionLink } from "./types";
+import type { ParleyState, SliceCreator, TranscriptionLink } from "./types";
 
 export interface MeetingSlice {
   meetingStatus: MeetingStatus;
@@ -173,30 +173,6 @@ function foldTranscriptionLink(
   };
 }
 
-/**
- * The store holds the live meeting's session rather than an opened recording:
- * a meeting is recording, or has stopped and its report has not opened yet.
- * Not "the live screen is up" — the meeting has its own window now, and the
- * main window can be anywhere meanwhile (the retired live route still counts).
- */
-export function holdsLiveSession(
-  s: Pick<ParleyState, "appMode" | "meetingStatus" | "liveMeetingId" | "loadedHistoryId">,
-): boolean {
-  if (s.appMode === "live") return true;
-  return (
-    s.appMode !== "study" && s.liveMeetingId != null && s.loadedHistoryId == null && s.meetingStatus !== "idle"
-  );
-}
-
-/**
- * Where the main window stands while a meeting runs in its own window: where
- * the user was, except a loaded recording (its transcript is the one the live
- * meeting takes over) and the retired live cockpit, which both land on Home.
- */
-export function mainModeDuringMeeting(mode: AppMode): AppMode {
-  return mode === "study" || mode === "live" ? "home" : mode;
-}
-
 export const createMeetingSlice: SliceCreator<MeetingSlice> = (set) => ({
   meetingStatus: "idle",
   isFinalizingMeeting: false,
@@ -227,23 +203,24 @@ export const createMeetingSlice: SliceCreator<MeetingSlice> = (set) => ({
 
   startMeeting: () => {
     log.info("store: meeting started");
-    set((s) => ({
-      // The meeting has its own floating window; this one stays wherever the
-      // user was — except a loaded recording, whose transcript the meeting is
-      // about to replace.
-      appMode: mainModeDuringMeeting(s.appMode),
+    set(() => ({
+      // Runs on the LIVE store (useLiveStore): everything below is the
+      // meeting's own. The main window's route and loaded recording live in
+      // useStore and are not touched — the meeting has its own window.
       meetingStatus: "recording",
       meetingStartedAt: Date.now(),
       liveMeetingId: crypto.randomUUID(),
       meetingPausedAt: null,
       meetingPausedTotalMs: 0,
-      loadedHistoryId: null,
-      replayFolderId: null,
       segments: [],
       speakerNames: {},
+      speakerAliases: {},
+      selfSpeaker: null,
+      voiceSelfKey: null,
       ...CLEARED_STUDY_SLICE,
       prosody: null,
       micSessionRateHz: null,
+      micActivity: [],
       filledPauseCount: 0,
       filledPauseCounted: {},
       deliveryNudge: null,
@@ -279,11 +256,10 @@ export const createMeetingSlice: SliceCreator<MeetingSlice> = (set) => ({
 
   cancelMeeting: () => {
     log.info("store: meeting cancelled");
-    set((s) => ({
+    set(() => ({
       // The prep stays INTACT: cancelling is "wrong mic / wrong moment, let
       // me fix it and start again", not "throw my setup away" (clearing is
-      // resetPrep, an explicit act). The main window stays where it is.
-      appMode: mainModeDuringMeeting(s.appMode),
+      // resetPrep, an explicit act). The main window is not touched.
       meetingStatus: "idle",
       meetingStartedAt: null,
       liveMeetingId: null,
@@ -291,9 +267,13 @@ export const createMeetingSlice: SliceCreator<MeetingSlice> = (set) => ({
       meetingPausedTotalMs: 0,
       segments: [],
       speakerNames: {},
+      speakerAliases: {},
+      selfSpeaker: null,
+      voiceSelfKey: null,
       ...CLEARED_STUDY_SLICE,
       prosody: null,
       micSessionRateHz: null,
+      micActivity: [],
       filledPauseCount: 0,
       filledPauseCounted: {},
       deliveryNudge: null,

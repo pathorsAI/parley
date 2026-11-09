@@ -1,4 +1,4 @@
-import { useStore, isMeetingActive } from "../store";
+import { useStore, isLiveMeetingActive } from "../store";
 import type { MeetingDraft } from "../store/prep";
 import { translate } from "../../i18n";
 import { isTauri } from "../platform";
@@ -67,7 +67,7 @@ function fire(draft: MeetingDraft): void {
   if (draft.meetingAt == null) return;
   s.markDraftReminded(draft.id, draft.meetingAt);
   // Already recording: the reminder has nothing left to say.
-  if (isMeetingActive(s.meetingStatus)) return;
+  if (isLiveMeetingActive()) return;
   const minutes = Math.max(0, Math.round((draft.meetingAt - Date.now()) / 60_000));
   log.info("reminder: firing", { draft: draft.id, meetingAt: draft.meetingAt, minutes });
   void alertUser(

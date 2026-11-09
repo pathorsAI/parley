@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { actionItemsCopyText, distinctOwners, groupActionItemsBySide } from "./actionItemSides";
+import { actionItemsCopyText, actionItemsPageText, distinctOwners, groupActionItemsBySide } from "./actionItemSides";
 import type { ActionItem } from "../types";
 
 const item = (id: string, over: Partial<ActionItem> = {}): ActionItem => ({
@@ -67,5 +67,27 @@ describe("actionItemsCopyText", () => {
     expect(
       actionItemsCopyText("Us next steps:", [item("a", { text: "Send it", owner: "Amy" })], (o) => ` (${o})`)
     ).toBe("Us next steps:\n1. Send it (Amy)");
+  });
+});
+
+describe("actionItemsPageText", () => {
+  const header = (side: "us" | "them") => (side === "us" ? "We do:" : "They do:");
+  const owner = (o: string) => ` (${o})`;
+
+  it("lists each side under its header, with owners and no timestamps or done marks", () => {
+    const items = [
+      item("a", { side: "us", owner: "Kevin", atMs: 125_000, done: true }),
+      item("b", { side: "them", atMs: 60_000 }),
+      item("c", { side: "us" }),
+    ];
+    expect(actionItemsPageText(items, header, owner)).toBe("We do:\n1. do a (Kevin)\n2. do c\n\nThey do:\n1. do b");
+  });
+
+  it("is one numbered list when no item has a side", () => {
+    expect(actionItemsPageText([item("a", { atMs: 5_000 }), item("b")], header, owner)).toBe("1. do a\n2. do b");
+  });
+
+  it("is empty with no items", () => {
+    expect(actionItemsPageText([], header, owner)).toBe("");
   });
 });

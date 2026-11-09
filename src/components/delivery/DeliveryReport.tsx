@@ -1,31 +1,57 @@
 import type { ReactNode } from "react";
 import { ReportNav } from "../study/ReportNav";
 import { useI18n } from "../../i18n";
+import { useRelabel } from "../../lib/speakers/useRelabel";
 import type { DeliveryAssessment } from "../../lib/types";
 import { syllablesPerMin } from "../../lib/analysis/delivery";
 import { clock, type SpeechStats } from "../../lib/analysis/speechStats";
 import type { FillerCount } from "../../lib/analysis/fillerWords";
 import { paceBand, talkBand } from "./bands";
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  LabelList,
+  ReferenceDot,
+  ReferenceLine,
+  XAxis,
+  YAxis,
+} from "recharts";
+import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "../ui/chart";
+import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
+import { Chart, Stamp } from "./chartCard";
+import { cn } from "@/lib/utils";
 
 type TFn = ReturnType<typeof useI18n>["t"];
 
 const sec = (ms: number) => (ms / 1000).toFixed(1);
+
+/** Chart marks are grey only (see --chart-* in index.css): emphasis, then normal. */
+const MARK_STRONG = "var(--chart-1)";
+const MARK = "var(--chart-2)";
+const AXIS_TICK = { fontSize: 10, fill: "var(--muted-foreground)" };
+const ANIMATION_MS = 300;
 
 // ── Building blocks ────────────────────────────────────────────────────────────
 
 /** One headline number at the top of the report. */
 function Kpi({ label, value, unit, sub, watch }: Readonly<{ label: string; value: string; unit?: string; sub?: string; watch?: boolean }>) {
   return (
-    <div className="min-w-0">
-      <div className={`text-3xl leading-tight font-bold tabular-nums ${watch ? "text-warning-text" : ""}`}>
-        {value}
-        {unit && <small className="ml-1 text-sm font-medium text-muted-foreground">{unit}</small>}
-      </div>
-      <div className="mt-0.5 truncate text-xs text-muted-foreground">
-        {label}
-        {sub && <span className="ml-1.5 text-muted-foreground/70">· {sub}</span>}
-      </div>
-    </div>
+    <Card size="sm" className="min-w-0 gap-1 shadow-none">
+      <CardHeader>
+        <CardTitle className="truncate text-xs font-normal text-muted-foreground">{label}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className={cn("text-2xl leading-tight font-semibold tabular-nums", watch && "text-warning-text")}>
+          {value}
+          {unit && <small className="ml-1 text-xs font-medium text-muted-foreground">{unit}</small>}
+        </div>
+        {sub && <div className="mt-0.5 truncate text-[11px] text-muted-foreground">{sub}</div>}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -34,79 +60,42 @@ function ReportGroup({
   id,
   n,
   title,
-  en,
   desc,
   children,
-}: Readonly<{ id: string; n: string; title: string; en: string; desc: string; children: ReactNode }>) {
+}: Readonly<{ id: string; n: string; title: string; desc: string; children: ReactNode }>) {
   return (
     <section id={id} data-report-section className="flex scroll-mt-4 flex-col gap-3 border-t pt-6">
-      <div>
-        <div className="flex flex-wrap items-baseline gap-x-2">
-          <span className="font-mono text-xs font-semibold text-primary">{n}</span>
+      {/* Title on the left, what the section covers on the right. */}
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5">
+        <div className="flex items-baseline gap-x-2">
+          <span className="font-mono text-xs font-semibold text-muted-foreground">{n}</span>
           <h3 className="text-base font-semibold">{title}</h3>
-          <span className="text-xs text-muted-foreground">{en}</span>
         </div>
-        <p className="mt-0.5 text-[11px] text-muted-foreground">{desc}</p>
+        <p className="text-[11px] text-muted-foreground">{desc}</p>
       </div>
       {children}
     </section>
   );
 }
 
-/** A chart with a title and a one-line reading of it. */
-function Chart({ title, note, children }: Readonly<{ title: string; note?: ReactNode; children: ReactNode }>) {
-  return (
-    <figure className="m-0 min-w-0 rounded-lg border bg-muted/10 p-3">
-      <figcaption className="mb-2 text-[11px] font-semibold text-muted-foreground">{title}</figcaption>
-      {children}
-      {note && <p className="mt-2 text-[11px] text-muted-foreground">{note}</p>}
-    </figure>
-  );
-}
-
-/** A small fact: label over value. */
-function Fact({ label, value, sub }: Readonly<{ label: string; value: ReactNode; sub?: ReactNode }>) {
-  return (
-    <div className="min-w-0">
-      <div className="text-[11px] text-muted-foreground">{label}</div>
-      <div className="text-sm font-semibold tabular-nums">{value}</div>
-      {sub && <div className="text-[10.5px] text-muted-foreground">{sub}</div>}
-    </div>
-  );
-}
-
-function Stamp({ ms }: Readonly<{ ms: number }>) {
-  return (
-    <span className="ml-1 rounded bg-primary/10 px-1 py-px font-mono text-[10px] text-primary">{clock(ms)}</span>
-  );
-}
-
-/** Time ticks under a timeline chart: start, middle, end. */
-function TimeAxis({ durationMs }: Readonly<{ durationMs: number }>) {
-  return (
-    <div className="mt-1 flex justify-between font-mono text-[9.5px] text-muted-foreground/80">
-      <span>0:00</span>
-      <span>{clock(durationMs / 2)}</span>
-      <span>{clock(durationMs)}</span>
-    </div>
-  );
-}
-
 // ── Charts ─────────────────────────────────────────────────────────────────────
 
-/** Pace over the meeting: a line per bucket, the average dashed across. */
+/** Pace over the meeting: a thin line per bucket, the average dashed across. */
 function PaceLine({ stats, t }: Readonly<{ stats: SpeechStats; t: TFn }>) {
   const pts = stats.paceTimeline;
-  const W = 300;
-  const H = 90;
   const values = pts.map((p) => p.perMin);
-  const avg = stats.textPace ?? values.reduce((a, b) => a + b, 0) / values.length;
-  const lo = Math.max(0, Math.min(...values, avg) * 0.85);
-  const hi = Math.max(...values, avg) * 1.1 || 1;
-  const x = (atMs: number) => ((atMs + stats.bucketMs / 2) / Math.max(stats.durationMs, 1)) * W;
-  const y = (v: number) => H - ((v - lo) / (hi - lo)) * H;
-  const fastest = pts.reduce((m, p) => (p.perMin > m.perMin ? p : m), pts[0]);
-  const slowest = pts.reduce((m, p) => (p.perMin < m.perMin ? p : m), pts[0]);
+  const avg = Math.round(stats.textPace ?? values.reduce((a, b) => a + b, 0) / values.length);
+  // Plot each bucket at its centre so the line spans the meeting rather than starting late.
+  const data = pts.map((p) => ({ x: p.atMs + stats.bucketMs / 2, atMs: p.atMs, perMin: p.perMin }));
+  const fastest = data.reduce((m, p) => (p.perMin > m.perMin ? p : m), data[0]);
+  const slowest = data.reduce((m, p) => (p.perMin < m.perMin ? p : m), data[0]);
+  // A padded, rounded value range with three ticks: bottom, middle, top.
+  const lo = Math.max(0, Math.floor((Math.min(...values, avg) * 0.85) / 10) * 10);
+  const hi = Math.max(lo + 10, Math.ceil((Math.max(...values, avg) * 1.08) / 10) * 10);
+  const yTicks = [lo, Math.round((lo + hi) / 2), hi];
+  const duration = Math.max(stats.durationMs, 1);
+  const unit = t("delivery.unit.sylPerMin");
+  const config = { perMin: { label: unit, color: MARK_STRONG } } satisfies ChartConfig;
   return (
     <Chart
       title={t("delivery.chart.pace")}
@@ -115,44 +104,86 @@ function PaceLine({ stats, t }: Readonly<{ stats: SpeechStats; t: TFn }>) {
           <>
             {t("delivery.chart.pace.fastest", { v: String(fastest.perMin) })}
             <Stamp ms={fastest.atMs} />
-            {" · "}
+            <span className="mx-1.5">·</span>
             {t("delivery.chart.pace.slowest", { v: String(slowest.perMin) })}
             <Stamp ms={slowest.atMs} />
           </>
         )
       }
     >
-      <div className="flex gap-2">
-        <div className="flex flex-col justify-between py-0.5 font-mono text-[9.5px] text-muted-foreground/80">
-          <span>{Math.round(hi)}</span>
-          <span>{Math.round(lo)}</span>
-        </div>
-        <div className="min-w-0 flex-1">
-          <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="block h-24 w-full overflow-visible" aria-hidden="true">
-            <line x1="0" x2={W} y1={y(avg)} y2={y(avg)} className="stroke-muted-foreground/40" strokeDasharray="4 4" vectorEffect="non-scaling-stroke" />
-            <polygon
-              points={`${x(pts[0].atMs)},${H} ${pts.map((p) => `${x(p.atMs)},${y(p.perMin)}`).join(" ")} ${x(pts[pts.length - 1].atMs)},${H}`}
-              className="fill-primary/10"
-            />
-            <polyline
-              points={pts.map((p) => `${x(p.atMs)},${y(p.perMin)}`).join(" ")}
-              className="fill-none stroke-primary"
-              strokeWidth="2"
-              strokeLinejoin="round"
-              vectorEffect="non-scaling-stroke"
-            />
-          </svg>
-          <TimeAxis durationMs={stats.durationMs} />
-        </div>
-      </div>
+      <ChartContainer config={config} className="aspect-auto h-[144px] w-full tabular-nums">
+        <AreaChart data={data} margin={{ top: 10, right: 14, bottom: 4, left: 0 }}>
+          <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 3" strokeOpacity={0.6} />
+          <XAxis
+            dataKey="x"
+            type="number"
+            domain={[0, duration]}
+            ticks={[0, duration / 2, duration]}
+            tickFormatter={(ms: number) => clock(ms)}
+            axisLine={false}
+            tickLine={false}
+            tickMargin={6}
+            tick={AXIS_TICK}
+            height={24}
+          />
+          <YAxis
+            domain={[lo, hi]}
+            ticks={yTicks}
+            axisLine={false}
+            tickLine={false}
+            tickMargin={4}
+            tick={AXIS_TICK}
+            width={28}
+          />
+          <ChartTooltip
+            cursor={{ stroke: "var(--border)", strokeWidth: 1 }}
+            content={
+              <ChartTooltipContent
+                hideIndicator
+                className="min-w-0"
+                labelFormatter={(_, payload) => clock(Number(payload?.[0]?.payload?.atMs ?? 0))}
+                formatter={(value) => (
+                  <span className="font-mono tabular-nums">
+                    {String(value)}
+                    <span className="ml-1 font-sans text-muted-foreground">{unit}</span>
+                  </span>
+                )}
+              />
+            }
+          />
+          <ReferenceLine
+            y={avg}
+            stroke="var(--muted-foreground)"
+            strokeOpacity={0.5}
+            strokeDasharray="4 4"
+            label={{ value: t("delivery.chart.pace.avg", { v: String(avg) }), position: "insideTopRight", fontSize: 10, fill: "var(--muted-foreground)" }}
+          />
+          <Area
+            dataKey="perMin"
+            type="monotone"
+            stroke="var(--color-perMin)"
+            strokeWidth={1.5}
+            fill={MARK}
+            fillOpacity={0.25}
+            dot={false}
+            activeDot={{ r: 3, strokeWidth: 0, fill: "var(--color-perMin)" }}
+            animationDuration={ANIMATION_MS}
+          />
+          <ReferenceDot x={fastest.x} y={fastest.perMin} r={3} fill={MARK_STRONG} stroke="var(--background)" strokeWidth={1.5} />
+          <ReferenceDot x={slowest.x} y={slowest.perMin} r={3} fill={MARK} stroke="var(--background)" strokeWidth={1.5} />
+        </AreaChart>
+      </ChartContainer>
     </Chart>
   );
 }
 
-/** Where the pauses fell: one mark per pause, taller for longer ones. */
+/** Where the pauses fell: one thin bar per pause at its time, taller for longer ones. */
 function PauseStrip({ stats, t }: Readonly<{ stats: SpeechStats; t: TFn }>) {
   const longest = stats.pauses.reduce((m, p) => (p.ms > m.ms ? p : m), stats.pauses[0]);
-  const max = longest.ms;
+  const duration = Math.max(stats.durationMs, 1);
+  const data = stats.pauses.map((p) => ({ atMs: p.atMs, seconds: Number(sec(p.ms)), longest: p === longest }));
+  const top = Math.max(1, Math.ceil(longest.ms / 1000));
+  const config = { seconds: { label: t("delivery.kpi.pauses"), color: MARK } } satisfies ChartConfig;
   return (
     <Chart
       title={t("delivery.chart.pauses")}
@@ -163,104 +194,112 @@ function PauseStrip({ stats, t }: Readonly<{ stats: SpeechStats; t: TFn }>) {
         </>
       }
     >
-      <div className="relative h-10 border-b border-border">
-        {stats.pauses.map((p) => (
-          <span
-            key={p.atMs}
-            className={`absolute bottom-0 w-[3px] -translate-x-1/2 rounded-t-sm ${p === longest ? "bg-primary" : "bg-primary/45"}`}
-            style={{ left: `${(p.atMs / Math.max(stats.durationMs, 1)) * 100}%`, height: `${Math.max(15, (p.ms / max) * 100)}%` }}
-            title={`${clock(p.atMs)} · ${sec(p.ms)}s`}
+      <ChartContainer config={config} className="aspect-auto h-[144px] w-full tabular-nums">
+        <BarChart data={data} margin={{ top: 10, right: 14, bottom: 4, left: 0 }}>
+          <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 3" strokeOpacity={0.6} />
+          <XAxis
+            dataKey="atMs"
+            type="number"
+            domain={[0, duration]}
+            ticks={[0, duration / 2, duration]}
+            tickFormatter={(ms: number) => clock(ms)}
+            axisLine={false}
+            tickLine={false}
+            tickMargin={6}
+            tick={AXIS_TICK}
+            height={24}
           />
-        ))}
-      </div>
-      <TimeAxis durationMs={stats.durationMs} />
+          <YAxis
+            domain={[0, top]}
+            ticks={[0, top]}
+            tickFormatter={(s: number) => `${s}s`}
+            axisLine={false}
+            tickLine={false}
+            tickMargin={4}
+            tick={AXIS_TICK}
+            width={28}
+          />
+          <ChartTooltip
+            cursor={false}
+            content={
+              <ChartTooltipContent
+                hideIndicator
+                className="min-w-0"
+                labelFormatter={(_, payload) => clock(Number(payload?.[0]?.payload?.atMs ?? 0))}
+                formatter={(value) => (
+                  <span className="font-mono tabular-nums">{t("delivery.chart.pauses.length", { s: String(value) })}</span>
+                )}
+              />
+            }
+          />
+          <Bar dataKey="seconds" barSize={3} radius={[2, 2, 0, 0]} minPointSize={2} animationDuration={ANIMATION_MS}>
+            {data.map((d) => (
+              <Cell key={d.atMs} fill={d.longest ? MARK_STRONG : MARK} />
+            ))}
+          </Bar>
+        </BarChart>
+      </ChartContainer>
     </Chart>
   );
 }
 
-/** Ranked horizontal bars: which words, how often. */
+const WORD_ROW_PX = 24;
+
+/** Ranked horizontal bars: which words, how often; the top one is drawn darker. */
 function WordBars({ items, total }: Readonly<{ items: FillerCount[]; total: number }>) {
-  const max = Math.max(...items.map((i) => i.count), 1);
+  const data = items.map((f) => ({
+    word: f.word,
+    count: f.count,
+    label: `${f.count} · ${Math.round((f.count / Math.max(total, 1)) * 100)}%`,
+  }));
+  const config = { count: { label: "", color: MARK } } satisfies ChartConfig;
   return (
-    <div className="grid grid-cols-[max-content_minmax(0,1fr)_max-content] items-center gap-x-2 gap-y-1.5 text-xs">
-      {items.map((f, i) => (
-        <div key={f.word} className="col-span-3 grid grid-cols-subgrid items-center">
-          <span className="max-w-24 truncate text-foreground/85">{f.word}</span>
-          <span className="h-2.5 overflow-hidden rounded-sm bg-muted">
-            <span className={`block h-full rounded-sm ${i === 0 ? "bg-primary" : "bg-primary/55"}`} style={{ width: `${(f.count / max) * 100}%` }} />
-          </span>
-          <span className="text-right tabular-nums text-muted-foreground">
-            {f.count}
-            <small className="ml-1 text-[10px]">{Math.round((f.count / Math.max(total, 1)) * 100)}%</small>
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/** Who talked when: stacked columns, the user's share on the bottom. */
-function TalkColumns({ stats, t }: Readonly<{ stats: SpeechStats; t: TFn }>) {
-  const max = Math.max(...stats.talk.map((s) => s.meMs + s.themMs), 1);
-  const twoSides = stats.interaction !== null;
-  return (
-    <Chart
-      title={t("delivery.chart.talk")}
-      note={
-        twoSides && (
-          <span className="flex items-center gap-3">
-            <span className="flex items-center gap-1">
-              <i className="inline-block size-2 rounded-sm bg-primary" />
-              {t("delivery.legend.me")}
-            </span>
-            <span className="flex items-center gap-1">
-              <i className="inline-block size-2 rounded-sm bg-muted-foreground/35" />
-              {t("delivery.legend.them")}
-            </span>
-          </span>
-        )
-      }
+    <ChartContainer
+      config={config}
+      className="aspect-auto w-full tabular-nums"
+      style={{ height: data.length * WORD_ROW_PX + 4 }}
     >
-      <div className="flex h-20 items-end gap-px">
-        {stats.talk.map((s) => (
-          <div key={s.atMs} className="flex h-full min-w-0 flex-1 flex-col justify-end" title={`${clock(s.atMs)}`}>
-            <span className="block rounded-t-sm bg-muted-foreground/35" style={{ height: `${(s.themMs / max) * 100}%` }} />
-            <span className="block bg-primary" style={{ height: `${(s.meMs / max) * 100}%` }} />
-          </div>
-        ))}
-      </div>
-      <TimeAxis durationMs={stats.durationMs} />
-    </Chart>
-  );
-}
-
-/** A ring for the talk share. */
-function ShareRing({ me }: Readonly<{ me: number }>) {
-  const r = 26;
-  const c = 2 * Math.PI * r;
-  return (
-    <svg viewBox="0 0 64 64" className="size-16 shrink-0 -rotate-90" aria-hidden="true">
-      <circle cx="32" cy="32" r={r} className="fill-none stroke-muted" strokeWidth="8" />
-      <circle cx="32" cy="32" r={r} className="fill-none stroke-primary" strokeWidth="8" strokeDasharray={`${me * c} ${c}`} />
-    </svg>
+      <BarChart data={data} layout="vertical" margin={{ top: 2, right: 56, bottom: 2, left: 0 }} barCategoryGap={6}>
+        <XAxis type="number" dataKey="count" domain={[0, "dataMax"]} hide />
+        <YAxis
+          type="category"
+          dataKey="word"
+          axisLine={false}
+          tickLine={false}
+          tickMargin={6}
+          tick={{ fontSize: 11, fill: "var(--foreground)", fillOpacity: 0.85 }}
+          width="auto"
+        />
+        <Bar dataKey="count" radius={3} animationDuration={ANIMATION_MS}>
+          {data.map((d, i) => (
+            <Cell key={d.word} fill={i === 0 ? MARK_STRONG : MARK} />
+          ))}
+          <LabelList dataKey="label" position="right" offset={6} fontSize={10} fill="var(--muted-foreground)" />
+        </Bar>
+      </BarChart>
+    </ChartContainer>
   );
 }
 
 // ── Report ─────────────────────────────────────────────────────────────────────
 
 /**
- * The 評分 report: headline numbers, then the metrics in groups — 語速與停頓,
- * 語言習慣, 對話互動 — each drawn as a chart, and the AI's tone read (passed in
- * as `tone`) last. Everything but the tone comes from the saved transcript; a
+ * The 評分 report: headline numbers, then the metrics in groups — 語速與停頓
+ * and 語言習慣 — each drawn as a chart, and the AI's tone read (passed in as
+ * `tone`) last. There is no conversation-interaction group: turn-taking,
+ * interruptions and talk-over-time repeated what the replay already shows. Everything but the tone comes from the saved transcript; a
  * fact the recording can't answer is left out rather than shown as a dash.
  */
 export function DeliveryReport({
+  title,
   stats,
   ratio,
   measuredRate,
   assessment,
   tone,
 }: Readonly<{
+  /** The headline over the numbers; defaults to 這場你的說話特徵, null = none. */
+  title?: string | null;
   stats: SpeechStats;
   ratio: { me: number; them: number } | null;
   measuredRate: number | null;
@@ -268,12 +307,12 @@ export function DeliveryReport({
   tone: ReactNode;
 }>) {
   const { t } = useI18n();
+  const relabel = useRelabel();
   const talkMin = stats.myTalkMs / 60_000;
   const pace = measuredRate ? syllablesPerMin(measuredRate) : stats.textPace;
   const band = measuredRate ? paceBand(measuredRate) : null;
   const share = ratio ? talkBand(ratio.me) : null;
   const fillerRate = talkMin >= 0.5 ? (stats.fillerTotal / talkMin).toFixed(1) : null;
-  const ia = stats.interaction;
   const avgPause = stats.pauses.length ? stats.pauses.reduce((a, p) => a + p.ms, 0) / stats.pauses.length : 0;
   const frequent = assessment?.fillers.level === "frequent";
 
@@ -281,8 +320,7 @@ export function DeliveryReport({
     { id: "delivery-profile", label: t("delivery.nav.profile") },
     ...(stats.paceTimeline.length > 1 || stats.pauses.length > 0 ? [{ id: "delivery-pace", label: `01 ${t("delivery.nav.pace")}` }] : []),
     { id: "delivery-habits", label: `02 ${t("delivery.nav.habits")}` },
-    ...(ratio || stats.talk.length > 1 ? [{ id: "delivery-interaction", label: `03 ${t("delivery.nav.interaction")}` }] : []),
-    { id: "delivery-tone", label: `04 ${t("delivery.nav.tone")}` },
+    { id: "delivery-tone", label: `03 ${t("delivery.nav.tone")}` },
   ];
 
   return (
@@ -290,8 +328,8 @@ export function DeliveryReport({
     <div className="order-1 flex min-w-0 flex-col gap-6 @min-[680px]:order-none">
       {/* 這場你的說話特徵: the headline numbers. */}
       <section id="delivery-profile" data-report-section className="scroll-mt-4">
-      <h2 className="mb-3 text-base font-semibold">{t("delivery.profile")}</h2>
-      <div className="grid grid-cols-2 gap-x-6 gap-y-4 @min-[520px]:grid-cols-4">
+      {title !== null && <h2 className="mb-3 text-base font-semibold">{title ?? t("delivery.profile")}</h2>}
+      <div className="grid grid-cols-2 gap-3 @min-[520px]:grid-cols-4">
         {pace != null && (
           <Kpi
             label={t("delivery.kpi.pace")}
@@ -322,7 +360,7 @@ export function DeliveryReport({
 
       {/* 01 語速與停頓 */}
       {(stats.paceTimeline.length > 1 || stats.pauses.length > 0) && (
-        <ReportGroup id="delivery-pace" n="01" en="Speech Fluency" title={t("delivery.group.pace")} desc={t("delivery.group.pace.desc")}>
+        <ReportGroup id="delivery-pace" n="01" title={t("delivery.group.pace")} desc={t("delivery.group.pace.desc")}>
           <div className="grid grid-cols-1 gap-3 @min-[640px]:grid-cols-2">
             {stats.paceTimeline.length > 1 && <PaceLine stats={stats} t={t} />}
             {stats.pauses.length > 0 && <PauseStrip stats={stats} t={t} />}
@@ -331,7 +369,7 @@ export function DeliveryReport({
       )}
 
       {/* 02 語言習慣 */}
-      <ReportGroup id="delivery-habits" n="02" en="Disfluency Patterns" title={t("delivery.group.habits")} desc={t("delivery.group.habits.desc")}>
+      <ReportGroup id="delivery-habits" n="02" title={t("delivery.group.habits")} desc={t("delivery.group.habits.desc")}>
         <div className="grid grid-cols-1 gap-3 @min-[640px]:grid-cols-2">
           <Chart
             title={t("delivery.chart.fillers")}
@@ -339,7 +377,7 @@ export function DeliveryReport({
               assessment && (
                 <span className={frequent ? "text-warning-foreground" : ""}>
                   {t("delivery.chart.fillers.ai", { level: t(frequent ? "delivery.filler.frequent" : "delivery.filler.ok") })}
-                  {assessment.fillers.note ? ` · ${assessment.fillers.note}` : ""}
+                  {assessment.fillers.note ? ` · ${relabel(assessment.fillers.note)}` : ""}
                 </span>
               )
             }
@@ -353,13 +391,13 @@ export function DeliveryReport({
           <Chart title={t("delivery.chart.repeats")}>
             {stats.repetitions.length > 0 ? (
               <>
-                <div className="text-xl font-bold tabular-nums">
+                <div className="text-2xl leading-tight font-semibold tabular-nums">
                   {stats.repetitions.length}
-                  <small className="ml-0.5 text-xs font-medium text-muted-foreground">{t("delivery.unit.times")}</small>
+                  <small className="ml-1 text-xs font-medium text-muted-foreground">{t("delivery.unit.times")}</small>
                 </div>
-                <ul className="mt-2 flex flex-col gap-1 text-xs">
+                <ul className="mt-2 flex flex-col divide-y divide-border/60 text-xs">
                   {stats.repetitions.slice(0, 4).map((r) => (
-                    <li key={`${r.atMs}-${r.text}`} className="flex items-center justify-between gap-2">
+                    <li key={`${r.atMs}-${r.text}`} className="flex items-center justify-between gap-2 py-1.5 first:pt-0 last:pb-0">
                       <span className="truncate text-foreground/85">「{r.text}」</span>
                       <Stamp ms={r.atMs} />
                     </li>
@@ -373,51 +411,8 @@ export function DeliveryReport({
         </div>
       </ReportGroup>
 
-      {/* 03 對話互動 */}
-      {(ratio || stats.talk.length > 1) && (
-        <ReportGroup id="delivery-interaction" n="03" en="Conversational Dynamics" title={t("delivery.group.interaction")} desc={t("delivery.group.interaction.desc")}>
-          <div className="grid grid-cols-1 gap-3 @min-[640px]:grid-cols-2">
-            {ratio && share && (
-              <Chart title={t("delivery.card.talkRatio")}>
-                <div className="flex items-center gap-4">
-                  <ShareRing me={ratio.me} />
-                  <div className="text-xs">
-                    <div className="text-xl font-bold tabular-nums">{Math.round(ratio.me * 100)}%</div>
-                    <div className="text-muted-foreground">
-                      {t(share.key)} · {t("delivery.share", { me: String(Math.round(ratio.me * 100)), them: String(100 - Math.round(ratio.me * 100)) })}
-                    </div>
-                  </div>
-                </div>
-              </Chart>
-            )}
-            {stats.talk.length > 1 && <TalkColumns stats={stats} t={t} />}
-          </div>
-          {ia && (
-            <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border bg-muted/10 p-3 @min-[640px]:grid-cols-3">
-              <Fact label={t("delivery.fact.turns")} value={`${ia.turns} ${t("delivery.unit.times")}`} sub={t("delivery.fact.avgTurn", { s: sec(ia.avgTurnMs) })} />
-              {ia.longestTurn && (
-                <Fact
-                  label={t("delivery.fact.longestTurn")}
-                  value={`${sec(ia.longestTurn.ms)} ${t("delivery.unit.sec")}`}
-                  sub={<Stamp ms={ia.longestTurn.atMs} />}
-                />
-              )}
-              {ia.medianLatencyMs != null && (
-                <Fact label={t("delivery.fact.latency")} value={`${sec(ia.medianLatencyMs)} ${t("delivery.unit.sec")}`} sub={t("delivery.fact.latency.sub")} />
-              )}
-              <Fact label={t("delivery.fact.interruptions")} value={`${ia.interruptions} ${t("delivery.unit.times")}`} />
-              <Fact
-                label={t("delivery.fact.backchannels")}
-                value={`${ia.backchannelTotal} ${t("delivery.unit.times")}`}
-                sub={ia.backchannels.length > 0 && ia.backchannels.map((b) => `${b.word} ${b.count}`).join(" · ")}
-              />
-            </div>
-          )}
-        </ReportGroup>
-      )}
-
-      {/* 04 語氣與整體表達 */}
-      <ReportGroup id="delivery-tone" n="04" en="Tone & Delivery" title={t("delivery.group.tone")} desc={t("delivery.group.tone.desc")}>
+      {/* 03 語氣與整體表達 */}
+      <ReportGroup id="delivery-tone" n="03" title={t("delivery.group.tone")} desc={t("delivery.group.tone.desc")}>
         {tone}
       </ReportGroup>
     </div>

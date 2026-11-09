@@ -9,7 +9,7 @@ vi.mock("./log", () => ({
 
 import { useStore } from "./store";
 
-// The store is a singleton: restore the pristine initial state before each case.
+// The live meeting runs in the live store, a singleton: restore the pristine initial state before each case.
 const INITIAL = useStore.getState();
 
 beforeEach(() => {

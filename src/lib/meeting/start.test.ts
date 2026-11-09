@@ -30,7 +30,8 @@ vi.mock("../nav/settings", () => ({ openSettings: mocks.openSettings }));
 vi.mock("../dictionary", () => ({ recognitionTerms: () => ["Parley"] }));
 vi.mock("../log", () => ({ log: mocks.log, attachConsoleOnce: vi.fn() }));
 
-import { useStore } from "../store";
+import { useLiveStore, useStore } from "../store";
+import { replaySession, seg } from "../test/fixtures";
 import type { Settings } from "../types";
 import { beginMeeting } from "./start";
 import { liveSaves } from "../history/history";
@@ -46,8 +47,9 @@ function setup(over: Partial<Settings>, opts: { signedIn?: boolean; tauri?: bool
   useStore.setState({
     settings: { ...base, language: "en", inputDevice: "Mic A", ...over },
     cloudAuth: opts.signedIn ? session : null,
-    meetingStatus: "idle",
   });
+  // The meeting runs in the live store.
+  useLiveStore.setState({ meetingStatus: "idle" });
   if (opts.tauri === false) delete (globalThis as Record<string, unknown>).__TAURI_INTERNALS__;
   else (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = {};
 }
@@ -55,7 +57,7 @@ function setup(over: Partial<Settings>, opts: { signedIn?: boolean; tauri?: bool
 /** Every meeting status the store went through during `fn`. */
 async function statusesDuring(fn: () => Promise<void>): Promise<string[]> {
   const seen: string[] = [];
-  const un = useStore.subscribe((s, prev) => {
+  const un = useLiveStore.subscribe((s, prev) => {
     if (s.meetingStatus !== prev.meetingStatus) seen.push(s.meetingStatus);
   });
   try {
@@ -97,10 +99,10 @@ describe("beginMeeting", () => {
         model: null,
         vocabulary: ["Parley"],
         // The store's id for this meeting, echoed back on its recording events.
-        meetingId: useStore.getState().liveMeetingId,
+        meetingId: useLiveStore.getState().liveMeetingId,
       },
     ]);
-    expect(useStore.getState().liveMeetingId).toEqual(expect.any(String));
+    expect(useLiveStore.getState().liveMeetingId).toEqual(expect.any(String));
     expect(mocks.toastError).not.toHaveBeenCalled();
   });
 
@@ -206,14 +208,67 @@ describe("beginMeeting", () => {
   // cockpit while the backend kept extending the old recording.
   it("never starts silently over a meeting that is recording", async () => {
     setup({ transcriptionProvider: "soniox", sonioxApiKey: "sk" });
-    useStore.setState({ meetingStatus: "recording", liveMeetingId: "running", segments: [] });
+    useLiveStore.setState({ meetingStatus: "recording", liveMeetingId: "running", segments: [] });
     expect(await statusesDuring(beginMeeting)).toEqual([]);
     expect(startCalls()).toEqual([]);
     expect(mocks.toastMessage).toHaveBeenCalledWith(
       translate("en", "meeting.start.alreadyRecording"),
       expect.objectContaining({ action: expect.objectContaining({ label: translate("en", "meeting.start.endAndStartNew") }) }),
     );
-    expect(useStore.getState().liveMeetingId).toBe("running");
+    expect(useLiveStore.getState().liveMeetingId).toBe("running");
+  });
+
+  it("a second start also refuses while the meeting is paused, from any screen", async () => {
+    setup({ transcriptionProvider: "soniox", sonioxApiKey: "sk" });
+    useLiveStore.setState({ meetingStatus: "paused", liveMeetingId: "running" });
+    useStore.setState({ appMode: "library" });
+    expect(await statusesDuring(beginMeeting)).toEqual([]);
+    expect(startCalls()).toEqual([]);
+    expect(useLiveStore.getState().liveMeetingId).toBe("running");
+  });
+
+  it("leaves the main window's loaded recording and route alone", async () => {
+    setup({ transcriptionProvider: "soniox", sonioxApiKey: "sk" });
+    const replay = replaySession([seg({ id: "r1", text: "old meeting" })]);
+    useStore.getState().loadHistory(
+      {
+        id: "rec-1",
+        title: "Old",
+        source: "upload",
+        createdAt: 1,
+        durationMs: 1000,
+        audio: null,
+        folderId: "fld",
+        segments: replay.segments,
+        speakerNames: { "them-1": "Bob" },
+        findings: [],
+        actionItems: [],
+        meetingContext: "old context",
+        meetingBatna: "",
+        meetingTarget: "",
+        meetingFloor: "",
+      } as never,
+      replay,
+    );
+    useStore.getState().addTodo("agenda for the new call");
+
+    await beginMeeting();
+
+    const main = useStore.getState();
+    expect(main.appMode).toBe("study");
+    expect(main.loadedHistoryId).toBe("rec-1");
+    expect(main.replay).toBe(replay);
+    expect(main.segments.map((x) => x.id)).toEqual(["r1"]);
+    expect(main.speakerNames).toEqual({ "them-1": "Bob" });
+    // The recording's own context stays with it.
+    expect(main.meetingContext).toBe("old context");
+    expect(main.meetingFolderId).toBe("fld");
+    const live = useLiveStore.getState();
+    expect(live.meetingStatus).toBe("recording");
+    expect(live.segments).toEqual([]);
+    // The meeting took the prep with it.
+    expect(live.todos.map((t) => t.text)).toEqual(["agenda for the new call"]);
+    expect(main.todos).toEqual([]);
   });
 
   it("stops and saves a recording this window lost before starting the next", async () => {
@@ -232,8 +287,8 @@ describe("beginMeeting", () => {
     const cmds = mocks.invoke.mock.calls.map((c) => c[0]);
     expect(cmds.indexOf("stop_meeting")).toBeLessThan(cmds.indexOf("start_meeting"));
     expect(mocks.toastLoading).toHaveBeenCalledWith(translate("en", "meeting.start.savingPrevious"));
-    expect(startCalls()[0]).toMatchObject({ meetingId: useStore.getState().liveMeetingId });
-    expect(useStore.getState().liveMeetingId).not.toBe("lost");
+    expect(startCalls()[0]).toMatchObject({ meetingId: useLiveStore.getState().liveMeetingId });
+    expect(useLiveStore.getState().liveMeetingId).not.toBe("lost");
   });
 
   it("ignores a second start while the first is still in flight", async () => {

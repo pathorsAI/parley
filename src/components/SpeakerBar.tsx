@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useStore, speakerKey } from "../lib/store";
-import { labelContextOf, localizedDefaultLabel } from "../lib/speakers/labels";
+import { localizedDefaultSpeakerLabel, labelContextOf } from "../lib/speakers/labels";
 import { speakerDotClass } from "../lib/speakerColors";
 import { useI18n } from "../i18n";
 import { Input } from "@/components/ui/input";
@@ -23,13 +23,9 @@ interface SpeakerEntry {
 export function SpeakerBar() {
   const { t } = useI18n();
   const segments = useStore((s) => s.segments);
+  const labelCtx = useMemo(() => labelContextOf(segments), [segments]);
   const names = useStore((s) => s.speakerNames);
   const setSpeakerName = useStore((s) => s.setSpeakerName);
-
-  const ctx = useMemo(() => labelContextOf(segments), [segments]);
-  function defaultLabel(sp: Pick<SpeakerEntry, "source" | "speaker">) {
-    return localizedDefaultLabel(sp, t, ctx);
-  }
 
   // Distinct speakers in first-appearance order.
   const speakers = useMemo<SpeakerEntry[]>(() => {
@@ -60,7 +56,7 @@ export function SpeakerBar() {
                   setSpeakerName(sp.key, e.target.value);
                 }}
                 onBlur={(e) => rememberOwnName(sp, e.target.value)}
-                placeholder={defaultLabel(sp)}
+                placeholder={localizedDefaultSpeakerLabel(sp, t, labelCtx)}
                 className="h-7 w-28 text-xs"
               />
             </div>

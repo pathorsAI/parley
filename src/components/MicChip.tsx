@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, Mic } from "lucide-react";
 import { toast } from "sonner";
 import { isMeetingActive, useStore } from "../lib/store";
+import { useLiveMeeting } from "../lib/meeting/liveSession";
 import * as ipc from "../lib/ipc/commands";
 import type { Permissions } from "../lib/ipc/commands";
 import { AUDIO_LEVEL_EVENT, listenEvent, type AudioLevelPayload } from "../lib/ipc/events";
@@ -139,8 +140,10 @@ export function MicChip({ shrink = false }: Readonly<{ shrink?: boolean }> = {})
   const { t } = useI18n();
   const inputDevice = useStore((s) => s.settings.inputDevice);
   const updateSettings = useStore((s) => s.updateSettings);
-  const meetingActive = useStore((s) => isMeetingActive(s.meetingStatus));
-  const paused = useStore((s) => s.meetingStatus === "paused");
+  // Renders in both windows: the running meeting is read wherever this
+  // window holds it (the main window's live store, the meeting window's mirror).
+  const meetingActive = useLiveMeeting((s) => isMeetingActive(s.meetingStatus));
+  const paused = useLiveMeeting((s) => s.meetingStatus === "paused");
   const [devices, setDevices] = useState<string[]>([]);
   const [perms, setPerms] = useState<Permissions | null>(null);
   const [testing, setTesting] = useState(false);

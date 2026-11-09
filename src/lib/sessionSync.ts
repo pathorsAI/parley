@@ -1,7 +1,29 @@
-import { useStore, transcriptAsText } from "./store";
+import { useLiveStore, useStore, transcriptAsText } from "./store";
+import type { ParleyState } from "./store/types";
+import type { MeetingStatus } from "./types";
 import { isTauri } from "./tauriEvents";
 import * as ipc from "./ipc/commands";
-import { subscribeDebounced } from "./store/subscribe";
+import { createDebouncer } from "./debounce";
+
+/**
+ * The ONE session the MCP mirror describes, and the one MCP commands
+ * (add_todo, *_finding, …) act on. The app can hold two at once: a recording
+ * the main window has loaded (useStore) and a running meeting (useLiveStore).
+ * MCP has a single "current session", so:
+ *
+ *  - a recording loaded in the main window wins — it is what the user is
+ *    looking at there (and what the replay-oriented tools refer to);
+ *  - otherwise the live meeting, while there is one (recording, paused, or
+ *    stopped and not yet replaced by its report);
+ *  - otherwise the main window (nothing loaded, nothing live).
+ */
+export function mcpSession(): { kind: "recording" | "live" | "none"; state: ParleyState } {
+  const main = useStore.getState();
+  if (main.replay) return { kind: "recording", state: main };
+  const live = useLiveStore.getState();
+  if (live.liveMeetingId != null && live.meetingStatus !== "idle") return { kind: "live", state: live };
+  return { kind: "none", state: main };
+}
 
 /**
  * Mirror the live meeting state to `<appConfigDir>/session.json`, which the
@@ -16,13 +38,21 @@ import { subscribeDebounced } from "./store/subscribe";
  * the focusSummary the tools return).
  */
 function snapshot() {
-  const s = useStore.getState();
+  const main = useStore.getState();
+  const { kind, state: s } = mcpSession();
+  // A loaded recording reads as a finished session ("stopped"), the way the
+  // MCP side has always been told; the live meeting as its own status.
+  let meetingStatus: MeetingStatus = "idle";
+  if (kind === "live") meetingStatus = s.meetingStatus;
+  else if (kind === "recording") meetingStatus = "stopped";
   return {
-    meetingStatus: s.meetingStatus,
+    meetingStatus,
     updatedAt: Date.now(),
     context: {
-      appMode: s.appMode,
-      studyTab: s.appMode === "study" ? s.studyTab : null,
+      // The live meeting has its own window: say so, whatever route the main
+      // window is on.
+      appMode: kind === "live" ? "live" : main.appMode,
+      studyTab: kind === "recording" && main.appMode === "study" ? main.studyTab : null,
       replay: s.replay
         ? {
             id: s.replay.id,
@@ -73,7 +103,16 @@ async function writeSession(): Promise<void> {
 /** Start mirroring session state to disk. Returns a teardown function. */
 export function initSessionSync(): () => void {
   if (!isTauri()) return () => {};
-  // Any change at all; debounced because transcript updates often. Seeded once
-  // on startup.
-  return subscribeDebounced((s) => s, 600, writeSession, { fireImmediately: true });
+  // Any change at all, in either store; debounced because transcript updates
+  // often. Seeded once on startup.
+  const debouncer = createDebouncer(600);
+  const schedule = () => debouncer.schedule(() => writeSession());
+  const unMain = useStore.subscribe(schedule);
+  const unLive = useLiveStore.subscribe(schedule);
+  schedule();
+  return () => {
+    unMain();
+    unLive();
+    debouncer.cancel();
+  };
 }

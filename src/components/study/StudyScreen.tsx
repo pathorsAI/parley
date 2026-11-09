@@ -2,10 +2,13 @@ import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Clock, MessageCircleQuestion, Pencil, RotateCw, X } from "lucide-react";
 import { DEFAULT_GETTING_STARTED, useStore } from "../../lib/store";
 import { useCommandScope } from "../../lib/commands/bind";
+import { useVoiceSelf } from "../../lib/speakers/voiceprint";
+import { useRelabel } from "../../lib/speakers/useRelabel";
 import { missingProviderRequirement, providerGateKey } from "../../lib/ai/settings";
 import { regenerateArtifact, useBriefQueued, type StudyArtifactKey } from "../../lib/analysis/studyPipeline";
 import { normalizeBriefHeadings, splitBrief, type BriefSection as BriefSectionPart } from "../../lib/analysis/briefSections";
 import { meetingBackgroundOf, meetingNotesOf } from "../../lib/history/meetingNotes";
+import { notesForDisplay, notesLineCount } from "../../lib/meeting/notesMarkdown";
 import { MeetingContextSheet } from "../MeetingContextButton";
 import type { StudyTab } from "../../lib/store/study";
 import { useI18n } from "../../i18n";
@@ -40,6 +43,8 @@ export function StudyScreen({ libraryCount = 0 }: Readonly<{ libraryCount?: numb
   const background = useStore((s) => meetingBackgroundOf(s.meetingContext));
   const lap = useLapState({ gettingStarted, entryId, readOnly, libraryCount });
   useCommandScope("study");
+  // Which speaker is the user, by their voiceprint (the 評分 page reads it).
+  useVoiceSelf();
   // Kept tabs belong to one recording; another one starts them afresh.
   const replayId = useStore((st) => st.replay?.id ?? null);
   // The destination picker, owned here so the guide bar opens the same sheet
@@ -59,7 +64,7 @@ export function StudyScreen({ libraryCount = 0 }: Readonly<{ libraryCount?: numb
       <div data-study-root className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden">
         <StudyHeader
           tab={tab}
-          notesCount={noteCount(notes)}
+          notesCount={notesLineCount(notes)}
           hasContext={!!background}
           pickerOpen={pickerOpen}
           onPickerOpenChange={setPickerOpen}
@@ -81,10 +86,6 @@ export function StudyScreen({ libraryCount = 0 }: Readonly<{ libraryCount?: numb
   );
 }
 
-/** How many notes: one per non-empty line, the way they were typed. */
-function noteCount(notes: string): number {
-  return notes ? notes.split("\n").filter((line) => line.trim()).length : 0;
-}
 
 /** Jump to a moment on the recording: park the playhead, then switch to the
  *  replay tab — its player aligns to the store playhead on mount. */
@@ -228,15 +229,19 @@ function SavedFooter({ artifact }: Readonly<{ artifact: Extract<StudyArtifactKey
   );
 }
 
-/** 筆記: what the user typed in the floating window during the meeting, as
- *  typed. Read-only here — it is saved inside the meeting context, which the
- *  filing row's 會議背景 sheet edits. */
+/** 筆記: what the user typed in the floating window during the meeting,
+ *  rendered from its Markdown (lists, to-dos, headings). Read-only here — it is
+ *  saved inside the meeting context, which the filing row's 會議背景 sheet
+ *  edits — so the to-do boxes show their state but don't toggle. */
 function NotesSection({ notes }: Readonly<{ notes: string }>) {
   const { t } = useI18n();
+  const seek = useSeekToReplay();
   return (
     <div>
       <p className="mb-2 text-[11px] text-muted-foreground/70">{t("study.notes.caption")}</p>
-      <p className="whitespace-pre-wrap text-sm leading-relaxed">{notes}</p>
+      <div className="notes-rendered">
+        <ReportContent markdown={notesForDisplay(notes)} onTimestamp={seek} plain />
+      </div>
     </div>
   );
 }
@@ -336,11 +341,13 @@ function useSectionLabel(): (s: BriefSectionPart) => string {
 function BriefTabs({ brief, onSeek }: Readonly<{ brief: string; onSeek: (ms: number) => void }>) {
   const { t } = useI18n();
   const label = useSectionLabel();
-  const { lead, sections } = useMemo(() => splitBrief(brief), [brief]);
+  // Speakers renamed after the brief was written read under their current names.
+  const relabel = useRelabel();
+  const { lead, sections } = useMemo(() => splitBrief(relabel(brief)), [brief, relabel]);
 
   if (sections.length < 2) {
     const whole = [lead, ...sections.map((s) => s.body)].filter(Boolean).join("\n\n");
-    return <ReportContent markdown={whole || normalizeBriefHeadings(brief)} onTimestamp={onSeek} plain />;
+    return <ReportContent markdown={whole || normalizeBriefHeadings(relabel(brief))} onTimestamp={onSeek} plain />;
   }
   const num = (i: number) => String(i + 1).padStart(2, "0");
   const nav = [
@@ -382,7 +389,8 @@ function BriefTabs({ brief, onSeek }: Readonly<{ brief: string; onSeek: (ms: num
 function BriefNextSection({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>) {
   const label = useSectionLabel();
   const brief = useStore((s) => s.brief);
-  const next = useMemo(() => (brief ? splitBrief(brief).next : []), [brief]);
+  const relabel = useRelabel();
+  const next = useMemo(() => (brief ? splitBrief(relabel(brief)).next : []), [brief, relabel]);
   if (next.length === 0) return null;
   return (
     <div className="mt-8 flex flex-col gap-6">

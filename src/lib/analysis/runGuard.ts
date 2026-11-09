@@ -1,4 +1,4 @@
-import { holdsLiveSession, useStore } from "../store";
+import { useStore } from "../store";
 import { log } from "../log";
 import { runRegistry, type StudyStage } from "./runRegistry";
 import type { StageOutputPatch } from "../history/history";
@@ -78,9 +78,9 @@ function cancelledError(): Error {
 let watching = false;
 type StoreState = ReturnType<typeof useStore.getState>;
 function recordSession(s: StoreState): void {
-  // A live meeting leaves the previous replay session in place but clears
-  // loadedHistoryId — that is not this session's entry changing.
-  if (!s.replay || holdsLiveSession(s)) return;
+  // The live meeting runs in its own store (useLiveStore) and never touches
+  // this one's replay session, so every change here is the session's own.
+  if (!s.replay) return;
   runRegistry.recordSession(s.replay.id, {
     entryId: s.loadedHistoryId,
     readOnly: s.replayReadOnly,
@@ -93,8 +93,6 @@ function watchSessions(): void {
   useStore.subscribe((s, p) => {
     if (
       s.replay !== p.replay ||
-      s.appMode !== p.appMode ||
-      s.meetingStatus !== p.meetingStatus ||
       s.loadedHistoryId !== p.loadedHistoryId ||
       s.replayReadOnly !== p.replayReadOnly
     ) {
@@ -109,12 +107,11 @@ function keyOf(session: string | null): string {
 }
 
 /** The recording whose study state the store holds. Library/home navigation
- *  keeps the replay loaded (and returns to it intact), so it still counts; a
- *  live meeting does not — startMeeting wipes the study slice for the meeting
- *  while leaving `replay` set, and a replay pass must not write into that. */
+ *  keeps the replay loaded (and returns to it intact), so it still counts. A
+ *  live meeting is not a session here: it has its own store and its own
+ *  analysis runner (engine.runLiveAnalysis), which never goes through a guard. */
 function currentSession(): string | null {
-  const s = useStore.getState();
-  return holdsLiveSession(s) ? null : s.replay?.id ?? null;
+  return useStore.getState().replay?.id ?? null;
 }
 
 export function makeRunGuard(stage: StudyStage): RunGuard {

@@ -7,11 +7,14 @@ import { selectAndSeek } from "./analysis/useAnalysis";
 import { runAnalysis } from "../lib/analysis/engine";
 import { useStore, transcriptAsText, formatClock, meetingElapsedMs } from "../lib/store";
 import { useI18n } from "../i18n";
+import { displayLabelerOf, relabelFromState } from "../lib/speakers/useRelabel";
 import { Button } from "@/components/ui/button";
 
 /** Build a markdown record of the meeting: context, transcript, analysis findings. */
 function buildMarkdown(): string {
-  const { segments, findings, speakerNames, meetingContext } = useStore.getState();
+  const state = useStore.getState();
+  const { segments, findings, speakerNames, meetingContext } = state;
+  const relabel = relabelFromState(state);
   const now = new Date();
   const lines = [`# Parley meeting — ${now.toLocaleString()}`, ""];
   if (meetingContext.trim()) {
@@ -21,11 +24,11 @@ function buildMarkdown(): string {
     lines.push("## Findings", "");
     for (const f of findings) {
       const tag = [f.side ?? f.category, f.severity].filter(Boolean).join(", ");
-      lines.push(`- [${formatClock(f.atMs)}] **${f.title}** (${tag}): ${f.detail}`);
+      lines.push(`- [${formatClock(f.atMs)}] **${relabel(f.title)}** (${tag}): ${relabel(f.detail)}`);
     }
     lines.push("");
   }
-  lines.push("## Transcript", "", transcriptAsText(segments, speakerNames) || "(empty)", "");
+  lines.push("## Transcript", "", transcriptAsText(segments, speakerNames, displayLabelerOf(state)) || "(empty)", "");
   return lines.join("\n");
 }
 

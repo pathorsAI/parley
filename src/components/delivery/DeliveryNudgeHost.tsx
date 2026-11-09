@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { Activity, Gauge, MessageSquareDashed, Mic, TriangleAlert, Volume2 } from "lucide-react";
-import { useStore } from "../../lib/store";
+import { useLiveStore } from "../../lib/store";
 import type { DeliveryNudgeKind } from "../../lib/types";
 
 /** How long a nudge stays on screen before auto-dismissing. */
@@ -24,8 +24,9 @@ const ICON: Record<DeliveryNudgeKind, typeof Gauge> = {
  * the coach ({@link useDeliveryCoach}) and the LLM tone check both write to.
  */
 export function DeliveryNudgeHost() {
-  const nudge = useStore((s) => s.deliveryNudge);
-  const clear = useStore((s) => s.clearDeliveryNudge);
+  // The running meeting's nudge (the live store).
+  const nudge = useLiveStore((s) => s.deliveryNudge);
+  const clear = useLiveStore((s) => s.clearDeliveryNudge);
 
   useEffect(() => {
     if (!nudge) return;

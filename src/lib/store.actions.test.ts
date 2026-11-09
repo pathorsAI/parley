@@ -7,7 +7,8 @@ vi.mock("./log", () => ({
   attachConsoleOnce: vi.fn(),
 }));
 
-import { useStore, meetingElapsedMs, restoredStudyStatuses } from "./store";
+import { useLiveStore, useStore, meetingElapsedMs, restoredStudyStatuses } from "./store";
+import { beginLiveSession, cancelLiveSession } from "./meeting/liveSession";
 import { runRegistry } from "./analysis/runRegistry";
 import { seg, replaySession } from "./test/fixtures";
 import type { TimelineEvent } from "./types";
@@ -16,8 +17,10 @@ import type { HistoryEntry } from "./history/types";
 // Snapshot the pristine initial state once, then restore before every test so
 // each case drives the store from a known baseline (the store is a singleton).
 const INITIAL = useStore.getState();
+const INITIAL_LIVE = useLiveStore.getState();
 function resetStore() {
   useStore.setState(INITIAL, true);
+  useLiveStore.setState(INITIAL_LIVE, true);
 }
 
 function makeFinding(id: string): TimelineEvent {
@@ -59,7 +62,9 @@ describe("enterReplay / exitReplay", () => {
     expect(s.replay).toBe(session);
     expect(s.segments).toEqual(session.segments);
     expect(s.speakerNames).toEqual({ "them-1": "Alice" });
-    expect(s.meetingStatus).toBe("stopped");
+    // A recording is not a meeting: the meeting status (the live store's
+    // business) is left alone.
+    expect(s.meetingStatus).toBe("idle");
     expect(s.replayPlayheadMs).toBe(0);
     expect(s.replayTrim).toBeNull();
     // analysis slices fully reset
@@ -134,7 +139,7 @@ describe("loadHistory", () => {
     expect(s.replay).toBe(session);
     expect(s.segments).toEqual(session.segments);
     expect(s.speakerNames).toEqual({ "them-1": "Bob" });
-    expect(s.meetingStatus).toBe("stopped");
+    expect(s.meetingStatus).toBe("idle");
     // Analysis restored verbatim and marked done so the study pipeline won't re-run.
     expect(s.findings).toHaveLength(2);
     expect(s.analysisStatus).toBe("done");
@@ -567,46 +572,78 @@ describe("prep slice", () => {
     expect(s.todos).toEqual([]);
   });
 
-  it("resetPrep refuses mid-meeting", () => {
+  it("resetPrep works mid-meeting and leaves the running meeting's prep alone", () => {
     seedPreviousMeeting();
-    useStore.setState({ meetingStatus: "recording" });
+    beginLiveSession();
+    seedPreviousMeeting();
 
     useStore.getState().resetPrep();
 
-    expect(useStore.getState().meetingFolderId).toBe("fld-1");
+    expect(useStore.getState().meetingFolderId).toBeNull();
+    expect(useLiveStore.getState().meetingFolderId).toBe("fld-1");
+    expect(useLiveStore.getState().meetingContext).toBe("last call's background");
   });
 
-  it("keeps the prep intact when the meeting is CANCELLED, back home", () => {
+  it("a starting meeting takes the prep; the main window's prep is free again", () => {
     seedPreviousMeeting();
-    useStore.getState().startMeeting();
+    useStore.setState({ appMode: "library" });
 
-    useStore.getState().cancelMeeting();
+    beginLiveSession();
 
+    const live = useLiveStore.getState();
+    expect(live.meetingStatus).toBe("recording");
+    expect(live.meetingFolderId).toBe("fld-1");
+    expect(live.todos).toHaveLength(1);
+    const main = useStore.getState();
+    expect(main.meetingFolderId).toBeNull();
+    expect(main.todos).toEqual([]);
+    // The main window stays where it was.
+    expect(main.appMode).toBe("library");
+  });
+
+  it("keeps the prep intact when the meeting is CANCELLED: it goes back to the main window", () => {
+    seedPreviousMeeting();
+    useStore.setState({ appMode: "library" });
+    beginLiveSession();
+
+    cancelLiveSession();
+
+    expect(useLiveStore.getState().meetingStatus).toBe("idle");
     const s = useStore.getState();
-    expect(s.meetingStatus).toBe("idle");
-    expect(s.appMode).toBe("home");
+    expect(s.appMode).toBe("library");
     // Cancelling is "let me fix this and start again" — the setup survives.
     expect(s.meetingFolderId).toBe("fld-1");
     expect(s.meetingContext).toBe("last call's background");
   });
 
+  it("a cancelled meeting does not overwrite a draft started meanwhile", () => {
+    seedPreviousMeeting();
+    beginLiveSession();
+    useStore.getState().setMeetingContext("the next draft");
+
+    cancelLiveSession();
+
+    expect(useStore.getState().meetingContext).toBe("the next draft");
+  });
+
   it("keeps the folder through stopMeeting so the save can still file it", () => {
     seedPreviousMeeting();
-    useStore.getState().startMeeting();
+    beginLiveSession();
 
-    useStore.getState().stopMeeting();
+    useLiveStore.getState().stopMeeting();
 
-    expect(useStore.getState().meetingFolderId).toBe("fld-1");
+    expect(useLiveStore.getState().meetingFolderId).toBe("fld-1");
   });
 });
 
+// The meeting lifecycle runs on the LIVE store (the main window never holds a meeting).
 describe("meeting lifecycle", () => {
   it("startMeeting resets the transcript + analysis and marks recording", () => {
-    useStore.setState({ segments: [seg({ id: "old" })], findings: [makeFinding("f")] });
+    useLiveStore.setState({ segments: [seg({ id: "old" })], findings: [makeFinding("f")] });
 
-    useStore.getState().startMeeting();
+    useLiveStore.getState().startMeeting();
 
-    const s = useStore.getState();
+    const s = useLiveStore.getState();
     expect(s.meetingStatus).toBe("recording");
     expect(typeof s.meetingStartedAt).toBe("number");
     expect(s.segments).toEqual([]);
@@ -615,69 +652,69 @@ describe("meeting lifecycle", () => {
   });
 
   it("stopMeeting only flips the status", () => {
-    useStore.getState().startMeeting();
-    useStore.getState().stopMeeting();
-    expect(useStore.getState().meetingStatus).toBe("stopped");
+    useLiveStore.getState().startMeeting();
+    useLiveStore.getState().stopMeeting();
+    expect(useLiveStore.getState().meetingStatus).toBe("stopped");
   });
 
   it("pause/resume freeze elapsed time and accumulate the paused span", () => {
     vi.useFakeTimers();
     try {
       vi.setSystemTime(1_000_000);
-      useStore.getState().startMeeting();
+      useLiveStore.getState().startMeeting();
 
       vi.setSystemTime(1_060_000); // 60s in
-      useStore.getState().pauseMeeting();
-      let s = useStore.getState();
+      useLiveStore.getState().pauseMeeting();
+      let s = useLiveStore.getState();
       expect(s.meetingStatus).toBe("paused");
       expect(meetingElapsedMs(s, Date.now())).toBe(60_000);
 
       vi.setSystemTime(1_360_000); // paused 5 min — elapsed must not move
-      expect(meetingElapsedMs(useStore.getState(), Date.now())).toBe(60_000);
+      expect(meetingElapsedMs(useLiveStore.getState(), Date.now())).toBe(60_000);
 
-      useStore.getState().resumeMeeting();
-      s = useStore.getState();
+      useLiveStore.getState().resumeMeeting();
+      s = useLiveStore.getState();
       expect(s.meetingStatus).toBe("recording");
       expect(s.meetingPausedAt).toBeNull();
       expect(s.meetingPausedTotalMs).toBe(300_000);
 
       vi.setSystemTime(1_370_000); // +10s recording after resume
-      expect(meetingElapsedMs(useStore.getState(), Date.now())).toBe(70_000);
+      expect(meetingElapsedMs(useLiveStore.getState(), Date.now())).toBe(70_000);
     } finally {
       vi.useRealTimers();
     }
   });
 
   it("pauseMeeting is a no-op unless recording; resumeMeeting unless paused", () => {
-    useStore.getState().pauseMeeting();
-    expect(useStore.getState().meetingStatus).toBe("idle");
-    useStore.getState().startMeeting();
-    useStore.getState().resumeMeeting();
-    expect(useStore.getState().meetingStatus).toBe("recording");
+    useLiveStore.getState().pauseMeeting();
+    expect(useLiveStore.getState().meetingStatus).toBe("idle");
+    useLiveStore.getState().startMeeting();
+    useLiveStore.getState().resumeMeeting();
+    expect(useLiveStore.getState().meetingStatus).toBe("recording");
   });
 
   it("startMeeting resets pause bookkeeping from a previous meeting", () => {
-    useStore.setState({ meetingPausedAt: 123, meetingPausedTotalMs: 456 });
-    useStore.getState().startMeeting();
-    const s = useStore.getState();
+    useLiveStore.setState({ meetingPausedAt: 123, meetingPausedTotalMs: 456 });
+    useLiveStore.getState().startMeeting();
+    const s = useLiveStore.getState();
     expect(s.meetingPausedAt).toBeNull();
     expect(s.meetingPausedTotalMs).toBe(0);
   });
 
   it("cancelMeeting discards the session back to idle", () => {
-    useStore.getState().startMeeting();
-    useStore.setState({
+    useLiveStore.getState().startMeeting();
+    useLiveStore.setState({
       segments: [seg({ id: "s1", text: "hello" })],
       findings: [makeFinding("f")],
       speakerNames: { "them-1": "Alice" },
       brief: "brief md",
       briefStatus: "done",
     });
-    useStore.getState().pauseMeeting();
+    useLiveStore.getState().pauseMeeting();
 
-    useStore.getState().cancelMeeting();
+    useLiveStore.getState().cancelMeeting();
 
-    const s = useStore.getState();
+    const s = useLiveStore.getState();
     expect(s.meetingStatus).toBe("idle");
     expect(s.meetingStartedAt).toBeNull();
     expect(s.meetingPausedAt).toBeNull();
@@ -690,11 +727,11 @@ describe("meeting lifecycle", () => {
   });
 
   it("cancelMeeting keeps the pre-meeting setup (todos + context)", () => {
-    useStore.getState().addTodo("agenda item");
-    useStore.getState().setMeetingContext("with ACME");
-    useStore.getState().startMeeting();
-    useStore.getState().cancelMeeting();
-    const s = useStore.getState();
+    useLiveStore.getState().addTodo("agenda item");
+    useLiveStore.getState().setMeetingContext("with ACME");
+    useLiveStore.getState().startMeeting();
+    useLiveStore.getState().cancelMeeting();
+    const s = useLiveStore.getState();
     expect(s.todos).toHaveLength(1);
     expect(s.meetingContext).toBe("with ACME");
   });
