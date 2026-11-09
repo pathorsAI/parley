@@ -41,6 +41,7 @@ import { useI18n } from "../../i18n";
 import { CancelMeetingDialog } from "../TitleBar";
 import { MicChip } from "../MicChip";
 import { speakerLabel, TranscriptPanel } from "../TranscriptPanel";
+import { labelContextOf } from "../../lib/speakers/labels";
 import { DestinationField } from "../DestinationSheet";
 import { MeetingContextField } from "../MeetingContextField";
 import { useMeetingDestination } from "../useMeetingDestination";
@@ -125,6 +126,7 @@ function MiniTranscript() {
         .slice(-20),
     [segments],
   );
+  const labelCtx = useMemo(() => labelContextOf(segments), [segments]);
   const lastText = lines.length ? lines[lines.length - 1].text : "";
 
   useEffect(() => {
@@ -157,7 +159,7 @@ function MiniTranscript() {
             <p key={seg.id} className="text-sm leading-[22px] text-foreground">
               {/* align-top: the smaller name must not grow the 22px line box. */}
               <span className="mr-1.5 align-top text-xs leading-[22px] font-semibold text-primary">
-                {speakerLabel(seg, names, t)}
+                {speakerLabel(seg, names, t, labelCtx)}
               </span>
               {seg.text}
             </p>

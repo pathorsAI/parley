@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { AudioLines } from "lucide-react";
-import { useStore, speakerKey, defaultSpeakerLabel } from "../../lib/store";
+import { useStore, speakerKey } from "../../lib/store";
+import { labelContextOf, localizedDefaultLabel } from "../../lib/speakers/labels";
 import { speakerDotClass } from "../../lib/speakerColors";
 import { useI18n } from "../../i18n";
 import { Input } from "@/components/ui/input";
@@ -71,7 +72,7 @@ export function ReplaySpeakerTags({ segments, names, label }: Readonly<ReplaySpe
               setSpeakerName(sp.key, e.target.value);
             }}
             onBlur={(e) => rememberOwnName(sp, e.target.value)}
-            placeholder={defaultSpeakerLabel(sp)}
+            placeholder={localizedDefaultLabel(sp, t, labelContextOf(segments))}
             className="h-7 w-28 text-xs"
           />
         </div>

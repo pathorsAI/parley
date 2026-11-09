@@ -68,28 +68,74 @@ export function remapToPriorSpeakers(
   return map;
 }
 
-/** The diarized-mix lines the re-diarization works on. */
-function mixLines(segments: TranscriptSegment[]): TranscriptSegment[] {
-  return segments.filter((s) => s.source === "mix" && s.isFinal && s.text.trim());
+/**
+ * The groups of lines the re-diarization clusters, one per capture side:
+ *
+ * - "mix": a diarized-live meeting recorded as one mixed session. Every voice
+ *   is in the file, so the whole transcript is one group.
+ * - "me" / "them": a separate-tracks meeting. The recording is the mix of both
+ *   sides, but the transcript already knows which side each line came from, so
+ *   each side is re-clustered on its own: mic voices become me 1, me 2…, far
+ *   voices remote 1, remote 2…, and a voice can never move across sides.
+ *
+ * A "me"/"them" side only qualifies when the provider diarized it (some line
+ * has a speaker number). Older meetings from providers without diarization ran
+ * two undiarized sessions and recorded the mic alone, so their "them" lines are
+ * not in the file and must not be clustered against it.
+ */
+function lineGroups(segments: TranscriptSegment[]): TranscriptSegment[][] {
+  const spoken = segments.filter((s) => s.isFinal && s.text.trim());
+  const groups: TranscriptSegment[][] = [];
+  for (const source of ["mix", "me", "them"] as const) {
+    const lines = spoken.filter((s) => s.source === source);
+    if (lines.length < 2) continue;
+    if (source !== "mix" && !lines.some((s) => s.speaker > 0)) continue;
+    groups.push(lines.sort((a, b) => a.startMs - b.startMs));
+  }
+  return groups;
 }
 
 /**
- * Whether {@link rediarizeSegments} can do anything for these segments: a
- * diarized-live (mix) meeting with at least two spoken lines. Lets the caller
+ * Whether {@link rediarizeSegments} can do anything for these segments: some
+ * side (see {@link lineGroups}) with at least two spoken lines. Lets the caller
  * skip raising the "correcting speakers" gate for a pass that would return
- * null without touching the audio (every mic-only meeting, say).
+ * null without touching the audio.
  */
 export function qualifiesForRediarization(segments: TranscriptSegment[]): boolean {
-  return mixLines(segments).length >= 2;
+  return lineGroups(segments).length > 0;
+}
+
+/** Re-cluster one side's lines; returns line id → corrected speaker number. */
+async function rediarizeGroup(lines: TranscriptSegment[], audioPath: string): Promise<Map<string, number>> {
+  const spans = lines.map((s) => ({
+    id: s.id,
+    startMs: Math.max(0, Math.round(s.startMs)),
+    endMs: Math.max(0, Math.round(s.endMs)),
+  }));
+  const assigned = await ipc.diarizeAudio({ audioPath, segments: spans, numSpeakers: null });
+  const priors: PriorSeg[] = lines.map((s) => ({
+    id: s.id,
+    speaker: s.speaker,
+    weightMs: Math.max(1, s.endMs - s.startMs),
+  }));
+  const clusterMap = remapToPriorSpeakers(priors, assigned);
+  const idToSpeaker = new Map<string, number>();
+  for (const a of assigned) {
+    const sp = clusterMap.get(a.speaker);
+    if (sp !== undefined) idToSpeaker.set(a.id, sp);
+  }
+  log.info("postDiarize: clustered", {
+    source: lines[0]?.source,
+    segs: lines.length,
+    speakers: new Set(idToSpeaker.values()).size,
+  });
+  return idToSpeaker;
 }
 
 /**
- * Re-derive speakers for a finished live meeting's segments from its recording.
- *
- * Only the diarized-live case qualifies: those meetings record the mic+system
- * MIX, so the file actually contains every voice. Mic-only meetings ("me"/"them"
- * segments) keep their channel-derived labels — the counterpart's audio isn't in
- * the recording, so re-clustering it would be meaningless.
+ * Re-derive speakers for a finished live meeting's segments from its recording,
+ * one side at a time (see {@link lineGroups}). Speaker numbers stay within their
+ * side, so "me 2" and "remote 2" are different people.
  *
  * The speaker count is auto-detected from the audio rather than seeded with the
  * provider's count, because late-meeting over-splitting (a spurious extra
@@ -103,31 +149,12 @@ export async function rediarizeSegments(
   segments: TranscriptSegment[],
   audioPath: string,
 ): Promise<{ segments: TranscriptSegment[]; changed: number } | null> {
-  const mix = mixLines(segments).sort((a, b) => a.startMs - b.startMs);
-  // One line can't drift; nothing to re-cluster.
-  if (mix.length < 2) return null;
+  const groups = lineGroups(segments);
+  if (groups.length === 0) return null;
 
-  const spans = mix.map((s) => ({
-    id: s.id,
-    startMs: Math.max(0, Math.round(s.startMs)),
-    endMs: Math.max(0, Math.round(s.endMs)),
-  }));
-  const assigned = await ipc.diarizeAudio({
-    audioPath,
-    segments: spans,
-    numSpeakers: null,
-  });
-
-  const priors: PriorSeg[] = mix.map((s) => ({
-    id: s.id,
-    speaker: s.speaker,
-    weightMs: Math.max(1, s.endMs - s.startMs),
-  }));
-  const clusterMap = remapToPriorSpeakers(priors, assigned);
   const idToSpeaker = new Map<string, number>();
-  for (const a of assigned) {
-    const sp = clusterMap.get(a.speaker);
-    if (sp !== undefined) idToSpeaker.set(a.id, sp);
+  for (const lines of groups) {
+    for (const [id, sp] of await rediarizeGroup(lines, audioPath)) idToSpeaker.set(id, sp);
   }
 
   let changed = 0;
@@ -136,11 +163,6 @@ export async function rediarizeSegments(
     if (sp === undefined || sp === s.speaker) return s;
     changed++;
     return { ...s, speaker: sp };
-  });
-  log.info("postDiarize: clustered", {
-    segs: mix.length,
-    changed,
-    speakers: new Set(idToSpeaker.values()).size,
   });
   return changed > 0 ? { segments: patched, changed } : null;
 }

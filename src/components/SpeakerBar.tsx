@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useStore, speakerKey } from "../lib/store";
+import { labelContextOf, localizedDefaultLabel } from "../lib/speakers/labels";
 import { speakerDotClass } from "../lib/speakerColors";
 import { useI18n } from "../i18n";
 import { Input } from "@/components/ui/input";
@@ -25,12 +26,9 @@ export function SpeakerBar() {
   const names = useStore((s) => s.speakerNames);
   const setSpeakerName = useStore((s) => s.setSpeakerName);
 
+  const ctx = useMemo(() => labelContextOf(segments), [segments]);
   function defaultLabel(sp: Pick<SpeakerEntry, "source" | "speaker">) {
-    if (sp.source === "mix") return t("speaker.speaker", { number: sp.speaker || 1 });
-    if (sp.source === "me") {
-      return (sp.speaker || 1) <= 1 ? t("speaker.you") : t("speaker.speaker", { number: sp.speaker });
-    }
-    return sp.speaker > 0 ? t("speaker.remote", { number: sp.speaker }) : t("speaker.them");
+    return localizedDefaultLabel(sp, t, ctx);
   }
 
   // Distinct speakers in first-appearance order.

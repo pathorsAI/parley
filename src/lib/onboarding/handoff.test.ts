@@ -82,13 +82,13 @@ describe("speaker names", () => {
   ];
 
   it("lists distinct spoken speakers in order, with custom names", () => {
-    expect(speakerDisplayNames(segments, { "them-1": "林經理" })).toEqual(["You", "林經理"]);
+    expect(speakerDisplayNames(segments, { "them-1": "林經理" })).toEqual(["Me", "林經理"]);
   });
 
   it("resolves me: own name on a speaker > mic speaker > settings name > fallback", () => {
     expect(resolveMeName(segments, { "me-0": "Jack" }, "Jack", "你")).toBe("Jack");
     expect(resolveMeName(segments, { "me-0": "傑克" }, "Jack", "你")).toBe("傑克");
-    expect(resolveMeName(segments, {}, "", "你")).toBe("You");
+    expect(resolveMeName(segments, {}, "", "你")).toBe("Me");
     const mixed = [seg({ source: "mix", speaker: 1, text: "hi" })];
     expect(resolveMeName(mixed, {}, "Jack", "你")).toBe("Jack");
     expect(resolveMeName(mixed, {}, "", "你")).toBe("你");

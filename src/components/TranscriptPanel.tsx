@@ -1,24 +1,22 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown } from "lucide-react";
 import { useStore, speakerKey } from "../lib/store";
+import { labelContextOf, localizedSpeakerLabel, type LabelContext } from "../lib/speakers/labels";
 import { useStickToBottom } from "../lib/useStickToBottom";
 import { useI18n } from "../i18n";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 type Segment = ReturnType<typeof useStore.getState>["segments"][number];
 
-/** Who said `seg`: the name the user gave that speaker, else 你 / 遠端 n. */
+/** Who said `seg`: the name the user gave that speaker, else 我 / 我 n / 遠端 n
+ *  (see lib/speakers/labels.ts). `ctx` from `labelContextOf(segments)`. */
 export function speakerLabel(
   seg: Segment,
   names: ReturnType<typeof useStore.getState>["speakerNames"],
   t: ReturnType<typeof useI18n>["t"],
+  ctx?: LabelContext,
 ): string {
-  const customName = names[speakerKey(seg)];
-  if (customName) return customName;
-  if (seg.source === "me") {
-    return (seg.speaker || 1) <= 1 ? t("speaker.you") : t("speaker.speaker", { number: seg.speaker });
-  }
-  return seg.speaker > 0 ? t("speaker.remote", { number: seg.speaker }) : t("speaker.them");
+  return localizedSpeakerLabel(seg, t, names, ctx);
 }
 
 /** `floating`: the floating meeting window's denser type (14px lines). */
@@ -75,7 +73,8 @@ export function TranscriptPanel({ variant = "default" }: Readonly<{ variant?: "d
     return () => clearTimeout(timer);
   }, [highlightMs, runs, setHighlightMs, programmaticScroll]);
 
-  const label = (seg: Segment) => speakerLabel(seg, names, t);
+  const labelCtx = useMemo(() => labelContextOf(segments), [segments]);
+  const label = (seg: Segment) => speakerLabel(seg, names, t, labelCtx);
 
   if (runs.length === 0) {
     return (

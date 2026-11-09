@@ -4,9 +4,10 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useI18n } from "../../i18n";
+import { labelContextOf, localizedDefaultLabel, localizedSpeakerLabel } from "../../lib/speakers/labels";
 import { formatChordLabel, modChordCap } from "../../lib/commands/format";
 import { command } from "../../lib/commands/registry";
-import { speakerLabel, speakerKey, defaultSpeakerLabel, formatClock, isTrimmed, useStore, type ReplayTrim } from "../../lib/store";
+import { speakerKey, formatClock, isTrimmed, useStore, type ReplayTrim } from "../../lib/store";
 import { cn } from "@/lib/utils";
 import { useCommandShortcut } from "../../lib/commands/bind";
 import { markGettingStarted } from "../../lib/onboarding/gettingStarted";
@@ -70,6 +71,7 @@ export function ReplayTranscript({
   preview = false,
 }: Readonly<ReplayTranscriptProps>) {
   const { t } = useI18n();
+  const labelCtx = useMemo(() => labelContextOf(segments), [segments]);
   const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const setSpeakerName = useStore((s) => s.setSpeakerName);
   // Bumped on every explicit seek (scrubber, timeline finding, action item) so we
@@ -549,7 +551,7 @@ export function ReplayTranscript({
             // audio) — but not when there's no playback (review step: playheadMs=0).
             const active = seg.id === activeId && (!preview || playheadMs > 0);
             const isCurrentMatch = searching && seg.id === currentMatchId;
-            const showBadge = i === 0 || speakerLabel(seg, speakerNames) !== speakerLabel(rows[i - 1], speakerNames);
+            const showBadge = i === 0 || localizedSpeakerLabel(seg, t, speakerNames, labelCtx) !== localizedSpeakerLabel(rows[i - 1], t, speakerNames, labelCtx);
             const key = speakerKey(seg);
             return (
               <div
@@ -579,7 +581,7 @@ export function ReplayTranscript({
                     (editingKey === key ? (
                       <SpeakerNameInput
                         defaultValue={speakerNames[key] ?? ""}
-                        placeholder={defaultSpeakerLabel(seg)}
+                        placeholder={localizedDefaultLabel(seg, t, labelCtx)}
                         onCommit={(name) => {
                           setSpeakerName(key, name);
                           setEditingKey(null);
@@ -589,7 +591,7 @@ export function ReplayTranscript({
                     ) : (
                       <button
                         type="button"
-                        title={speakerLabel(seg, speakerNames)}
+                        title={localizedSpeakerLabel(seg, t, speakerNames, labelCtx)}
                         onClick={(e) => {
                           // Don't let the rename click also seek the row.
                           e.stopPropagation();
@@ -597,7 +599,7 @@ export function ReplayTranscript({
                         }}
                         className="cursor-text text-left text-xs font-semibold text-muted-foreground hover:text-foreground"
                       >
-                        {speakerLabel(seg, speakerNames)}
+                        {localizedSpeakerLabel(seg, t, speakerNames, labelCtx)}
                       </button>
                     ))}
                   {/* A paragraph, not a button: WebKit will not drag-select text inside a
