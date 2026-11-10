@@ -90,7 +90,7 @@ struct LiveView: View {
                     .padding(.vertical, 8)
                 }
                 FilingSuggestionCard(model: filing)
-                if dictation.window.isOpen() && !recorder.isRecording {
+                if dictation.window.isOpen() && !recorder.isInMeeting {
                     micWindowBar
                 }
                 Divider()
@@ -237,14 +237,14 @@ struct LiveView: View {
             // reader who has scrolled up is reading an older line, and the
             // top staying still is what keeps *that* one under their eyes.
             .onChange(of: panelHeight) {
-                if recorder.isRecording, followsLive, let last = recorder.segments.last {
+                if recorder.isInMeeting, followsLive, let last = recorder.segments.last {
                     proxy.scrollTo(last.id, anchor: .bottom)
                 }
             }
             // A new meeting is a new transcript; whatever the reader was
             // re-reading in the last one is gone.
-            .onChange(of: recorder.isRecording) {
-                if recorder.isRecording {
+            .onChange(of: recorder.isInMeeting) {
+                if recorder.isInMeeting {
                     followsLive = true
                     segmentsWhenLeft = 0
                 }
@@ -337,7 +337,7 @@ struct LiveView: View {
     /// actually running; there is no "not recording" to announce.
     @ViewBuilder
     private var recordingStatus: some View {
-        if recorder.isRecording {
+        if recorder.isInMeeting {
             recordingStatusRow
         }
     }
@@ -345,17 +345,46 @@ struct LiveView: View {
     /// The row itself, unconditionally — `metricsProbe` measures it before
     /// any meeting has started, so the panel knows its full height the moment
     /// one does.
+    ///
+    /// Paused, the same row says so instead, and says what it means: the
+    /// microphone is still open (the orange dot stays), so the sentence has to
+    /// be the one that says nothing is being kept.
     private var recordingStatusRow: some View {
         HStack(spacing: 7) {
-            Circle()
-                .fill(Theme.recording)
-                .frame(width: 8, height: 8)
-            Text("Recording · live transcript")
-                .font(.parley.footnote)
-                .foregroundStyle(Color(.secondaryLabel))
+            stateDot
+            Group {
+                if recorder.isPaused {
+                    Text("Paused · nothing is being recorded")
+                } else {
+                    Text("Recording · live transcript")
+                }
+            }
+            .font(.parley.footnote)
+            .foregroundStyle(Color(.secondaryLabel))
         }
         .accessibilityElement(children: .combine)
     }
+
+    /// The red dot while recording; a pause glyph, in ink rather than red,
+    /// while paused, because red is the colour of "this is being recorded".
+    @ViewBuilder
+    private var stateDot: some View {
+        if recorder.isPaused {
+            Image(systemName: "pause.fill")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(Color(.secondaryLabel))
+                .frame(width: 8, height: 8)
+        } else {
+            Circle()
+                .fill(Theme.recording)
+                .frame(width: 8, height: 8)
+        }
+    }
+
+    /// Chunks are reaching the file. Not while starting's microphone is still
+    /// opening, which the waveform has always shown as live anyway, and not
+    /// while paused, when they are dropped.
+    private var isHearing: Bool { recorder.isInMeeting && !recorder.isPaused }
 
     /// The transcription is paused or over. That is the one fact on this
     /// panel that must survive any amount of shrinking: a person who has
@@ -491,7 +520,7 @@ struct LiveView: View {
     /// The probe behind both keeps the panel's full height current either way.
     private var controls: some View {
         Group {
-            if recorder.isRecording {
+            if recorder.isInMeeting {
                 resizablePanel
             } else {
                 column(at: nil)
@@ -500,7 +529,7 @@ struct LiveView: View {
         .background(alignment: .top) { metricsProbe }
         // A meeting that ends mid-drag must not leave the next one starting
         // at wherever the finger happened to be.
-        .onChange(of: recorder.isRecording) {
+        .onChange(of: recorder.isInMeeting) {
             dragHeight = nil
             dragStart = nil
         }
@@ -528,7 +557,7 @@ struct LiveView: View {
                 }
             }
             if shown.contains(.waveform) {
-                WaveformView(level: recorder.micLevel, sample: recorder.micSample, isActive: recorder.isRecording)
+                WaveformView(level: recorder.micLevel, sample: recorder.micSample, isActive: isHearing)
             }
             if let status = recorder.status, shown.contains(.statusLine) {
                 statusLine(status)
@@ -537,14 +566,25 @@ struct LiveView: View {
             // this is the full column and never the compact row — and only
             // while the refusal stands: asking again cannot help once someone
             // has said no, because iOS never shows the prompt twice.
-            if recorder.micDenied && !recorder.isRecording {
+            if recorder.micDenied && !recorder.isInMeeting {
                 openSettingsControl
             }
-            recordControl(diameter: stop)
-            if recorder.isRecording && shown.contains(.discard) {
+            if recorder.isInMeeting {
+                // Pause sits beside Stop rather than under it, so the column
+                // is no taller and `LiveControlsLayout` needs no new piece. The
+                // clear twin on the other side keeps Stop centred.
+                HStack(spacing: 24) {
+                    Color.clear.frame(width: 44, height: 44)
+                    recordControl(diameter: stop)
+                    pauseControl
+                }
+            } else {
+                recordControl(diameter: stop)
+            }
+            if recorder.isInMeeting && shown.contains(.discard) {
                 discardControl
             }
-            if !recorder.isRecording && !app.hasAccount {
+            if !recorder.isInMeeting && !app.hasAccount {
                 Text("Your session expired. Sign in with the button above and recording works again.")
                     .font(.parley.caption)
                     .foregroundStyle(Color(.secondaryLabel))
@@ -687,20 +727,17 @@ struct LiveView: View {
     /// fixed; the full column, which grows with the text, is a drag away.
     private var compactRow: some View {
         HStack(spacing: 10) {
-            Circle()
-                .fill(Theme.recording)
-                .frame(width: 8, height: 8)
+            stateDot
                 .accessibilityHidden(true)
-            if let startedAt = recorder.startedAt {
-                Text(startedAt, style: .timer)
-                    .font(.parley.displayNumber(size: 22))
-                    .foregroundStyle(Color(.label))
+            if recorder.clock != nil {
+                clockText(font: .parley.displayNumber(size: 22))
                     .lineLimit(1)
                     .fixedSize()
             }
             healthBadge
-            WaveformView(level: recorder.micLevel, sample: recorder.micSample, isActive: recorder.isRecording)
+            WaveformView(level: recorder.micLevel, sample: recorder.micSample, isActive: isHearing)
                 .padding(.horizontal, 4)
+            pauseControl
             recordControl(diameter: 44)
         }
         .padding(.horizontal, 20)
@@ -764,16 +801,52 @@ struct LiveView: View {
     @ViewBuilder
     private func timer(scale: Double) -> some View {
         let font = Font.parley.displayNumber(size: 34 * scale)
-        if let startedAt = recorder.startedAt, recorder.isRecording {
-            Text(startedAt, style: .timer)
-                .font(font)
-                .foregroundStyle(Color(.label))
+        if recorder.clock != nil, recorder.isInMeeting {
+            clockText(font: font)
         } else {
             Text(verbatim: "0:00")
                 .font(font)
                 .foregroundStyle(Color(.tertiaryLabel))
                 .accessibilityHidden(true)
         }
+    }
+
+    /// Running, the system ticks the digits from the clock's anchor. Paused,
+    /// they stand still, in secondary ink so a glance tells the two apart, and
+    /// written the way the running timer writes them so they do not change
+    /// shape on the tap.
+    @ViewBuilder
+    private func clockText(font: Font) -> some View {
+        if let anchor = recorder.clock?.timerAnchor {
+            Text(anchor, style: .timer)
+                .font(font)
+                .foregroundStyle(Color(.label))
+        } else if let clock = recorder.clock {
+            Text(verbatim: RecordingClock.timerText(clock.elapsed(at: Date())))
+                .font(font)
+                .foregroundStyle(Color(.secondaryLabel))
+        }
+    }
+
+    /// Pause and resume, in the discard control's ink-and-hairline rather than
+    /// a colour: it is secondary to Stop, and red or blue here would compete
+    /// with the disc beside it. Inert while the microphone is still opening,
+    /// since there is nothing to pause yet.
+    private var pauseControl: some View {
+        Button {
+            if recorder.isPaused { recorder.resume() } else { recorder.pause() }
+        } label: {
+            Image(systemName: recorder.isPaused ? "play.fill" : "pause.fill")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Color(.label))
+                .frame(width: 44, height: 44)
+                .contentShape(Circle())
+                .overlay(Circle().stroke(Color(.separator), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .disabled(recorder.phase != .recording && !recorder.isPaused)
+        .opacity(recorder.phase == .starting ? 0.4 : 1)
+        .accessibilityLabel(recorder.isPaused ? Text("Resume recording") : Text("Pause recording"))
     }
 
     /// The way out for a recording that should not have started. Stop is
@@ -845,7 +918,7 @@ struct LiveView: View {
         Button(action: toggle) {
             ZStack {
                 Circle()
-                    .fill(recorder.isRecording ? Theme.recording : Theme.primary)
+                    .fill(recorder.isInMeeting ? Theme.recording : Theme.primary)
                     .frame(width: diameter, height: diameter)
                 inner(scale: diameter / 64)
             }
@@ -865,7 +938,7 @@ struct LiveView: View {
             ProgressView()
                 .controlSize(.regular)
                 .tint(.white)
-        } else if recorder.isRecording {
+        } else if recorder.isInMeeting {
             RoundedRectangle(cornerRadius: 4 * scale)
                 .fill(.white)
                 .frame(width: 18 * scale, height: 18 * scale)
@@ -885,7 +958,7 @@ struct LiveView: View {
 
     private var accessibilityLabel: Text {
         if recorder.isBusy { return Text("Wrapping up…") }
-        if recorder.isRecording { return Text("Stop recording") }
+        if recorder.isInMeeting { return Text("Stop recording") }
         return app.hasAccount ? Text("Start recording") : Text("Sign in again to record")
     }
 
@@ -897,13 +970,13 @@ struct LiveView: View {
     /// for — the gate in `RootView` is already showing them one.
     private func takeQuickRecord() {
         guard QuickRecordInbox.shared.take() else { return }
-        guard !recorder.isBusy, !recorder.isRecording, app.hasAccount else { return }
+        guard !recorder.isBusy, !recorder.isInMeeting, app.hasAccount else { return }
         Task { await recorder.start(token: KeychainStore.get(AppState.tokenKey)) }
     }
 
     private func toggle() {
         guard !recorder.isBusy else { return }
-        if recorder.isRecording {
+        if recorder.isInMeeting {
             Task { await recorder.stop(app: app) }
         } else if app.hasAccount {
             // No "has everyone agreed?" alert first: getting the room's

@@ -4432,6 +4432,40 @@
         }
       }
     },
+    "Pause recording" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pause recording"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暫停錄音"
+          }
+        }
+      }
+    },
+    "Paused · nothing is being recorded" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paused · nothing is being recorded"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已暫停 · 目前沒有在錄音"
+          }
+        }
+      }
+    },
     "Personal" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5423,6 +5457,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "調整控制區高度"
+          }
+        }
+      }
+    },
+    "Resume recording" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resume recording"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "繼續錄音"
           }
         }
       }
