@@ -59,7 +59,7 @@ class CaptureWatchdogTest {
     @Test
     fun nothingHavingArrivedYetIsNotAStall() {
         assertFalse(watchdog.isStalled(nowMillis = 1_000_000, lastChunkAtMillis = 0L))
-        assertFalse(watchdog.shouldProbe(1_000_000, 0L, recovering = false, givenUp = false))
+        assertFalse(watchdog.shouldProbe(1_000_000, 0L, recovering = false, givenUp = false, paused = false))
     }
 
     /**
@@ -72,7 +72,7 @@ class CaptureWatchdogTest {
     fun aClockThatWentBackwardsIsNotAStall() {
         assertFalse(watchdog.isStalled(nowMillis = 5_000, lastChunkAtMillis = 10_000))
         assertFalse(watchdog.isStalled(nowMillis = 10_000, lastChunkAtMillis = 10_000))
-        assertFalse(watchdog.shouldProbe(5_000, 10_000, recovering = false, givenUp = false))
+        assertFalse(watchdog.shouldProbe(5_000, 10_000, recovering = false, givenUp = false, paused = false))
     }
 
     // ----------------------------------------------------------------- the gate
@@ -80,7 +80,7 @@ class CaptureWatchdogTest {
     /** A genuine stall with nothing suppressing it is what the watchdog is for. */
     @Test
     fun aGenuineStallWithNeitherFlagSetDoesProbe() {
-        assertTrue(watchdog.shouldProbe(20_000, 10_000, recovering = false, givenUp = false))
+        assertTrue(watchdog.shouldProbe(20_000, 10_000, recovering = false, givenUp = false, paused = false))
     }
 
     /**
@@ -97,7 +97,7 @@ class CaptureWatchdogTest {
             "the stall itself is real",
             watchdog.isStalled(nowMillis = 20_000, lastChunkAtMillis = 10_000),
         )
-        assertFalse(watchdog.shouldProbe(20_000, 10_000, recovering = true, givenUp = false))
+        assertFalse(watchdog.shouldProbe(20_000, 10_000, recovering = true, givenUp = false, paused = false))
     }
 
     /**
@@ -108,19 +108,25 @@ class CaptureWatchdogTest {
      */
     @Test
     fun havingGivenUpSuppressesAnOtherwiseGenuineStall() {
-        assertFalse(watchdog.shouldProbe(20_000, 10_000, recovering = false, givenUp = true))
+        assertFalse(watchdog.shouldProbe(20_000, 10_000, recovering = false, givenUp = true, paused = false))
     }
 
     /** Each flag suppresses on its own, and the two together do too. */
     @Test
     fun bothFlagsTogetherAlsoSuppress() {
-        assertFalse(watchdog.shouldProbe(20_000, 10_000, recovering = true, givenUp = true))
+        assertFalse(watchdog.shouldProbe(20_000, 10_000, recovering = true, givenUp = true, paused = false))
+    }
+
+    /** A paused capture has released its record; its last chunk is old on purpose. */
+    @Test
+    fun aPausedCaptureWithAStaleLastChunkIsNotProbed() {
+        assertFalse(watchdog.shouldProbe(20_000, 10_000, recovering = false, givenUp = false, paused = true))
     }
 
     /** The flags suppress; they do not manufacture a stall that is not there. */
     @Test
     fun clearingTheFlagsDoesNotMakeAHealthyCaptureProbe() {
-        assertFalse(watchdog.shouldProbe(10_500, 10_000, recovering = false, givenUp = false))
+        assertFalse(watchdog.shouldProbe(10_500, 10_000, recovering = false, givenUp = false, paused = false))
     }
 
     // --------------------------------------------------------------- the tuning

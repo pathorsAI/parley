@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
@@ -78,18 +79,25 @@ internal data class PanelNotice(val text: String, val tone: NoticeTone) {
     val needsAttention: Boolean get() = tone.needsAttention
 }
 
+/** Where the live meeting is, as far as the panel draws it. */
+internal enum class LivePhase { STARTING, RECORDING, PAUSED }
+
 /**
- * What the panel reports about the meeting: whether it is [recording] yet, the
- * status line, the clock, the input [level] (0…1) and the health [notices].
+ * What the panel reports about the meeting: its [phase], the status line, the
+ * clock, the input [level] (0…1) and the health [notices].
  */
 @Immutable
 internal data class LiveReadout(
-    val recording: Boolean,
+    val phase: LivePhase,
     val statusText: String,
     val elapsedMs: Long,
     val level: Float,
     val notices: List<PanelNotice>,
-)
+) {
+    /** The capture has begun, recording or paused; the panel geometry only cares about that. */
+    val recording: Boolean get() = phase != LivePhase.STARTING
+    val paused: Boolean get() = phase == LivePhase.PAUSED
+}
 
 /**
  * The live meeting's controls, under the transcript: status, timer, waveform,
@@ -109,6 +117,7 @@ internal data class LiveReadout(
 internal fun LiveControlsPanel(
     readout: LiveReadout,
     onStop: () -> Unit,
+    onTogglePause: () -> Unit,
     onDiscard: () -> Unit,
     actions: @Composable RowScope.() -> Unit,
 ) {
@@ -148,6 +157,7 @@ internal fun LiveControlsPanel(
                     shape = shape,
                     readout = readout,
                     onStop = onStop,
+                    onTogglePause = onTogglePause,
                     onDiscard = onDiscard,
                     actions = actions,
                 )
@@ -158,6 +168,7 @@ internal fun LiveControlsPanel(
                     fraction = current,
                     readout = readout,
                     onStop = onStop,
+                    onTogglePause = onTogglePause,
                     onSettle = panel::settle,
                 )
             }
@@ -267,6 +278,7 @@ private fun BoxScope.FullColumn(
     shape: LivePanelShape,
     readout: LiveReadout,
     onStop: () -> Unit,
+    onTogglePause: () -> Unit,
     onDiscard: () -> Unit,
     actions: @Composable RowScope.() -> Unit,
 ) {
@@ -282,18 +294,32 @@ private fun BoxScope.FullColumn(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         if (shape.showsStatusRow) {
-            StatusRow(recording = readout.recording, text = readout.statusText, actions = actions)
+            StatusRow(
+                recording = readout.recording && !readout.paused,
+                text = readout.statusText,
+                actions = actions,
+            )
         }
-        TimerLine(shape = shape, elapsedMs = readout.elapsedMs, notices = readout.notices)
+        TimerLine(
+            shape = shape,
+            elapsedMs = readout.elapsedMs,
+            notices = readout.notices,
+            dimmed = readout.paused,
+        )
         if (shape.showsWaveform) {
             Spacer(Modifier.height(8.dp))
-            LiveWaveform(level = readout.level, active = readout.recording)
+            LiveWaveform(level = readout.level, active = readout.recording && !readout.paused)
         }
         if (shape.showsStatusLine) {
             NoticeLines(readout.notices)
         }
         Spacer(Modifier.height(12.dp))
-        RoundStopButton(diameter = shape.stopDp.dp, onStop = onStop)
+        FullStopRow(
+            stopDiameter = shape.stopDp.dp,
+            readout = readout,
+            onStop = onStop,
+            onTogglePause = onTogglePause,
+        )
         if (shape.showsDiscard) {
             DiscardControl(onDiscard = onDiscard)
         } else {
@@ -302,11 +328,46 @@ private fun BoxScope.FullColumn(
     }
 }
 
+/**
+ * The full panel's Stop, with Pause beside it while the microphone can be
+ * paused — that is, once the recording has actually started.
+ */
+@Composable
+private fun FullStopRow(
+    stopDiameter: Dp,
+    readout: LiveReadout,
+    onStop: () -> Unit,
+    onTogglePause: () -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        // Pause on one side, an equal spacer on the other, so Stop stays centred.
+        val pauseDiameter = stopDiameter * 0.72f
+        if (readout.recording) {
+            RoundPauseButton(
+                diameter = pauseDiameter,
+                paused = readout.paused,
+                onToggle = onTogglePause,
+            )
+            Spacer(Modifier.width(24.dp))
+        }
+        RoundStopButton(diameter = stopDiameter, onStop = onStop)
+        if (readout.recording) {
+            Spacer(Modifier.width(24.dp))
+            Spacer(Modifier.size(pauseDiameter))
+        }
+    }
+}
+
 /** The clock, with the warning mark beside it once the status lines are gone. */
 @Composable
-private fun TimerLine(shape: LivePanelShape, elapsedMs: Long, notices: List<PanelNotice>) {
+private fun TimerLine(
+    shape: LivePanelShape,
+    elapsedMs: Long,
+    notices: List<PanelNotice>,
+    dimmed: Boolean,
+) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        PanelTimer(elapsedMs = elapsedMs, sizeSp = shape.timerSp)
+        PanelTimer(elapsedMs = elapsedMs, sizeSp = shape.timerSp, dimmed = dimmed)
         if (!shape.showsStatusLine) HealthMark(notices, Modifier.padding(start = 8.dp))
     }
 }
@@ -389,10 +450,16 @@ private fun BoxScope.RecordingOverlays(
     fraction: Float,
     readout: LiveReadout,
     onStop: () -> Unit,
+    onTogglePause: () -> Unit,
     onSettle: (Float) -> Unit,
 ) {
     if (rowAlpha > 0f) {
-        CompactRow(alpha = rowAlpha, readout = readout, onStop = onStop)
+        CompactRow(
+            alpha = rowAlpha,
+            readout = readout,
+            onStop = onStop,
+            onTogglePause = onTogglePause,
+        )
     }
     Grabber(
         fraction = fraction,
@@ -428,7 +495,12 @@ private fun StatusRow(recording: Boolean, text: String, actions: @Composable Row
 
 /** Collapsed: red dot, timer, the health mark, the waveform in whatever width is left, stop. */
 @Composable
-private fun BoxScope.CompactRow(alpha: Float, readout: LiveReadout, onStop: () -> Unit) {
+private fun BoxScope.CompactRow(
+    alpha: Float,
+    readout: LiveReadout,
+    onStop: () -> Unit,
+    onTogglePause: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .align(Alignment.BottomCenter)
@@ -438,17 +510,29 @@ private fun BoxScope.CompactRow(alpha: Float, readout: LiveReadout, onStop: () -
             .padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        RecordingDot()
-        Spacer(Modifier.width(8.dp))
-        PanelTimer(elapsedMs = readout.elapsedMs, sizeSp = LivePanel.TIMER_ROW_SP)
+        if (!readout.paused) {
+            RecordingDot()
+            Spacer(Modifier.width(8.dp))
+        }
+        PanelTimer(
+            elapsedMs = readout.elapsedMs,
+            sizeSp = LivePanel.TIMER_ROW_SP,
+            dimmed = readout.paused,
+        )
         HealthMark(readout.notices, Modifier.padding(start = 6.dp))
         Spacer(Modifier.width(12.dp))
         LiveWaveform(
             level = readout.level,
-            active = true,
+            active = !readout.paused,
             modifier = Modifier.weight(1f),
         )
         Spacer(Modifier.width(12.dp))
+        RoundPauseButton(
+            diameter = LivePanel.STOP_ROW_DP.dp * 0.8f,
+            paused = readout.paused,
+            onToggle = onTogglePause,
+        )
+        Spacer(Modifier.width(8.dp))
         RoundStopButton(diameter = LivePanel.STOP_ROW_DP.dp, onStop = onStop)
     }
 }
@@ -469,7 +553,7 @@ private fun RecordingDot() {
  * double that it would push the stop button out of the panel.
  */
 @Composable
-private fun PanelTimer(elapsedMs: Long, sizeSp: Float) {
+private fun PanelTimer(elapsedMs: Long, sizeSp: Float, dimmed: Boolean = false) {
     val fontScale = LocalDensity.current.fontScale
     val capped: TextUnit = (sizeSp * minOf(fontScale, MAX_TIMER_FONT_SCALE) / fontScale).sp
     Text(
@@ -480,6 +564,7 @@ private fun PanelTimer(elapsedMs: Long, sizeSp: Float) {
             fontFeatureSettings = "tnum",
         ),
         fontWeight = FontWeight.Medium,
+        color = if (dimmed) MaterialTheme.colorScheme.onSurfaceVariant else Color.Unspecified,
     )
 }
 
@@ -561,6 +646,43 @@ private fun RoundStopButton(diameter: Dp, onStop: () -> Unit) {
 }
 
 private const val STOP_GLYPH_RATIO = 0.3f
+
+/** Pause (two bars) while recording; Resume (a red dot) while paused. */
+@Composable
+private fun RoundPauseButton(diameter: Dp, paused: Boolean, onToggle: () -> Unit) {
+    val label = stringResource(
+        if (paused) R.string.action_resume_recording else R.string.action_pause_recording,
+    )
+    Box(
+        modifier = Modifier
+            .size(diameter)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clickable(role = Role.Button, onClick = onToggle)
+            .semantics { contentDescription = label },
+        contentAlignment = Alignment.Center,
+    ) {
+        if (paused) {
+            Box(
+                Modifier
+                    .size(diameter * 0.32f)
+                    .clip(CircleShape)
+                    .background(ParleyTheme.colors.recording)
+            )
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(diameter * 0.1f)) {
+                repeat(2) {
+                    Box(
+                        Modifier
+                            .size(width = diameter * 0.1f, height = diameter * 0.34f)
+                            .clip(RoundedCornerShape(diameter * 0.05f))
+                            .background(MaterialTheme.colorScheme.onSurface)
+                    )
+                }
+            }
+        }
+    }
+}
 
 /**
  * The drag handle. The whole panel drags; this is the part that says so, the

@@ -6,6 +6,7 @@ import com.pathors.parley.audio.MicRecoveryState
 import com.pathors.parley.kit.CaptureRecovery
 import com.pathors.parley.kit.TranscriptSegment
 import com.pathors.parley.meeting.MeetingState
+import com.pathors.parley.meeting.isInProgress
 import com.pathors.parley.meeting.TranscriptionIssue
 
 /**
@@ -56,9 +57,8 @@ internal fun micLine(recovery: MicRecoveryState, silenced: Boolean, back: Boolea
         }
     }
 
-/** True while the microphone is (or is about to be) capturing. */
-internal fun isLive(state: MeetingState): Boolean =
-    state is MeetingState.Recording || state is MeetingState.Connecting
+/** True while the meeting is in progress: connecting, recording or paused. */
+internal fun isLive(state: MeetingState): Boolean = state.isInProgress
 
 /** True once the meeting has an outcome: nothing is recording, finishing or uploading. */
 internal fun isSettled(state: MeetingState): Boolean =

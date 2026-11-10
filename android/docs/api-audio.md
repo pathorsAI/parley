@@ -53,6 +53,8 @@ class MicCapture(context: Context, chunkBytes: Int = Pcm.CHUNK_BYTES) {
     val captureSampleRate: Int        // what the device actually opened
     val captureSource: Int            // MediaRecorder.AudioSource actually used
     fun start(): Flow<ByteArray>      // 16 kHz mono s16le, 3200 bytes per emission
+    fun pause()                       // release the AudioRecord; the flow stays open
+    fun resume()                      // reopen it; a failed reopen goes to recovery
     fun stop()
 }
 ```

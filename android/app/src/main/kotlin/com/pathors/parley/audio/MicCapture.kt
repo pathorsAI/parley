@@ -150,6 +150,10 @@ sealed interface MicRecoveryState {
  *   while still connecting" safe. Clearing the flag when collection begins
  *   would let that race resurrect a read loop whose owner has already finished
  *   its encoder, and the next chunk would take the process down with it.
+ * * **Pausing.** [pause] releases the `AudioRecord` without completing the
+ *   flow, and [resume] opens a fresh one. The partial chunk survives the pause,
+ *   as it survives a rebuild. A reopen that fails is handled as a microphone
+ *   lost mid-recording: it goes to the recovery ladder.
  * * **Audio source.** [MediaRecorder.AudioSource.VOICE_RECOGNITION] — the
  *   speech-to-text source, which on most devices bypasses the AGC/noise
  *   suppression tuned for phone calls. Falls back to
@@ -259,6 +263,18 @@ class MicCapture @JvmOverloads constructor(
     @Volatile
     private var stopRequested: Boolean = false
 
+    @Volatile
+    private var pauseRequested: Boolean = false
+
+    /**
+     * True from the moment the reader released the record for a pause until a
+     * reopened record is published or recovery takes over. The watchdog reads
+     * this rather than [pauseRequested], so the gap between [resume] and the
+     * reopened record's first chunk cannot read as a stall.
+     */
+    @Volatile
+    private var parked: Boolean = false
+
     /** Sample rate actually opened on the device (16 000 unless it refused). */
     @Volatile
     var captureSampleRate: Int = Pcm.SAMPLE_RATE
@@ -347,6 +363,21 @@ class MicCapture @JvmOverloads constructor(
         signal()
     }
 
+    /**
+     * Release the microphone but keep the flow open; [resume] reopens it.
+     * Idempotent, safe from any thread, and a no-op after [stop].
+     */
+    fun pause() {
+        pauseRequested = true
+        signal()
+    }
+
+    /** Reopen the microphone after [pause]. Idempotent, any thread, a no-op after [stop]. */
+    fun resume() {
+        pauseRequested = false
+        signal()
+    }
+
     // ------------------------------------------------------- external events
 
     /**
@@ -398,6 +429,17 @@ class MicCapture @JvmOverloads constructor(
 
         /** Something took the microphone. [action] is what the policy decided. */
         data class Recover(val action: CaptureRecovery.Action) : ReadExit
+
+        /** [pause]. Release the record and wait for [resume]. */
+        data object Paused : ReadExit
+    }
+
+    /** What the reader thread does next. */
+    private sealed interface Step {
+        data class Read(val opened: OpenedRecord) : Step
+        data class Recover(val action: CaptureRecovery.Action) : Step
+        data object Parked : Step
+        data object Over : Step
     }
 
     /**
@@ -440,15 +482,17 @@ class MicCapture @JvmOverloads constructor(
         }
 
         try {
-            var current: OpenedRecord? = opened
-            while (current != null) {
-                val exit = readLoop(current, sender)
-                release(current)
-                current = null
-                if (exit is ReadExit.Recover) {
-                    recoveryCount.incrementAndGet()
-                    current = recover(exit.action, sender)
-                    if (current != null) publish(current)
+            var step: Step = Step.Read(opened)
+            while (step != Step.Over) {
+                step = when (val current = step) {
+                    is Step.Read -> readThenRelease(current.opened, sender)
+                    is Step.Recover -> recover(current.action, sender)
+                    Step.Parked -> awaitResume(sender)
+                    Step.Over -> Step.Over
+                }
+                if (step is Step.Read) {
+                    publish(step.opened)
+                    parked = false
                 }
             }
             fatal?.let {
@@ -461,6 +505,7 @@ class MicCapture @JvmOverloads constructor(
             scope.close(t)
         } finally {
             stopRequested = true
+            parked = false
             signal()
             runCatching { watchdogThread.join(THREAD_JOIN_MILLIS) }
             _level.value = 0f
@@ -483,6 +528,58 @@ class MicCapture @JvmOverloads constructor(
         runCatching { opened.record.release() }
     }
 
+    private fun readThenRelease(opened: OpenedRecord, sender: ChunkSender): Step {
+        val exit = readLoop(opened, sender)
+        release(opened)
+        return when (exit) {
+            ReadExit.Finished -> Step.Over
+            ReadExit.Paused -> Step.Parked
+            is ReadExit.Recover -> {
+                recoveryCount.incrementAndGet()
+                Step.Recover(exit.action)
+            }
+        }
+    }
+
+    /**
+     * Hold the microphone released until [resume], [stop] or the collector
+     * going away, then reopen it.
+     *
+     * A reopen that fails is a microphone lost mid-recording, so it goes to
+     * the ladder; another app grabbing the input during the pause is the
+     * likeliest reason.
+     */
+    private fun awaitResume(sender: ChunkSender): Step {
+        parked = true
+        _level.value = 0f
+        _micRecovery.value = MicRecoveryState.Holding
+        while (!stopRequested && sender.open && pauseRequested) {
+            synchronized(wake) {
+                if (!stopRequested && pauseRequested) wake.wait(PARK_POLL_MILLIS)
+            }
+        }
+        if (stopRequested || !sender.open) return Step.Over
+        // Events from while paused (foreground trips, route changes) describe a
+        // record that no longer exists; the reopen below picks the preferred
+        // route anyway.
+        posted.clear()
+        return try {
+            val opened = openAndStart()
+            // Resets a ladder the pause interrupted.
+            recovery.apply(CaptureRecovery.Event.RebuildSucceeded(opened.sampleRate))
+            Step.Read(opened)
+        } catch (e: MicCaptureException.PermissionDenied) {
+            Log.w(TAG, "RECORD_AUDIO revoked while paused")
+            fatal = e
+            Step.Over
+        } catch (e: MicCaptureException) {
+            Log.w(TAG, "microphone did not reopen after pause: ${e.message}")
+            recoveryCount.incrementAndGet()
+            parked = false
+            Step.Recover(recovery.apply(CaptureRecovery.Event.CaptureStopped))
+        }
+    }
+
     /**
      * Climb the recovery ladder until the microphone is ours again, [stop]
      * arrives, or the collector goes away.
@@ -490,14 +587,16 @@ class MicCapture @JvmOverloads constructor(
      * A [CaptureRecovery.Action.GiveUp] does **not** end this: it publishes the
      * loss and then parks, waiting for one of the events that changes the
      * answer. That is what "giving up stays armed" means in practice, and it is
-     * why this returns null only when the capture is genuinely over.
+     * why this returns [Step.Over] only when the capture is genuinely over.
+     * A [pause] cuts the climb short: [Step.Parked].
      *
-     * @return the reopened microphone, or null when there is nothing left to do.
+     * @return the reopened microphone, [Step.Parked], or [Step.Over] when there
+     *   is nothing left to do.
      */
-    private fun recover(first: CaptureRecovery.Action, sender: ChunkSender): OpenedRecord? {
+    private fun recover(first: CaptureRecovery.Action, sender: ChunkSender): Step {
         var action = first
         _level.value = 0f
-        while (!stopRequested && sender.open) {
+        while (!stopRequested && sender.open && !pauseRequested) {
             when (val current = action) {
                 // The policy had nothing to say about whatever got us here —
                 // in practice a second interruption for one already being
@@ -511,8 +610,9 @@ class MicCapture @JvmOverloads constructor(
 
                 is CaptureRecovery.Action.Rebuild ->
                     when (val outcome = attemptRebuild(current, sender)) {
-                        is RebuildOutcome.Reopened -> return outcome.opened
-                        RebuildOutcome.Over -> return null
+                        is RebuildOutcome.Reopened -> return Step.Read(outcome.opened)
+                        RebuildOutcome.Over -> return Step.Over
+                        RebuildOutcome.Paused -> return Step.Parked
                         is RebuildOutcome.Next -> action = outcome.action
                     }
 
@@ -522,12 +622,15 @@ class MicCapture @JvmOverloads constructor(
                     // Still armed. The recording stays open and the file keeps
                     // whatever it already has; the next foreground trip or
                     // audio-server restart runs one more chain.
-                    action = awaitEvent() ?: return null
+                    action = awaitEvent() ?: return parkedOrOver()
                 }
             }
         }
-        return null
+        return parkedOrOver()
     }
+
+    private fun parkedOrOver(): Step =
+        if (pauseRequested && !stopRequested) Step.Parked else Step.Over
 
     /** What one rung of the recovery ladder produced. */
     private sealed interface RebuildOutcome {
@@ -542,6 +645,9 @@ class MicCapture @JvmOverloads constructor(
 
         /** Keep climbing — [action] is what the policy decided next. */
         data class Next(val action: CaptureRecovery.Action) : RebuildOutcome
+
+        /** [pause] arrived during the backoff. */
+        data object Paused : RebuildOutcome
     }
 
     /**
@@ -560,6 +666,7 @@ class MicCapture @JvmOverloads constructor(
         val interrupting = sleep(rebuild.afterMillis)
         if (interrupting != null) return RebuildOutcome.Next(interrupting)
         if (stopRequested || !sender.open) return RebuildOutcome.Over
+        if (pauseRequested) return RebuildOutcome.Paused
         return try {
             val reopened = openAndStart()
             recovery.apply(CaptureRecovery.Event.RebuildSucceeded(reopened.sampleRate))
@@ -586,15 +693,15 @@ class MicCapture @JvmOverloads constructor(
     }
 
     /**
-     * Wait until a posted event produces an action, or [stop] arrives.
+     * Wait until a posted event produces an action, or [stop] or [pause] arrives.
      *
-     * @return the action, or null when the capture is over.
+     * @return the action, or null when the capture is over or paused.
      */
     private fun awaitEvent(): CaptureRecovery.Action? {
-        while (!stopRequested) {
+        while (!stopRequested && !pauseRequested) {
             drainPosted()?.let { return it }
             synchronized(wake) {
-                if (!stopRequested && posted.isEmpty()) wake.wait(PARK_POLL_MILLIS)
+                if (!stopRequested && !pauseRequested && posted.isEmpty()) wake.wait(PARK_POLL_MILLIS)
             }
         }
         return null
@@ -604,16 +711,16 @@ class MicCapture @JvmOverloads constructor(
      * Sleep for a backoff step, waking early for a posted event.
      *
      * @return the action a posted event produced, or null when the sleep ran to
-     *   its end (or was cut short by [stop], which the caller re-checks).
+     *   its end (or was cut short by [stop] or [pause], which the caller re-checks).
      */
     private fun sleep(millis: Long): CaptureRecovery.Action? {
         val deadline = SystemClock.elapsedRealtime() + millis
-        while (!stopRequested) {
+        while (!stopRequested && !pauseRequested) {
             drainPosted()?.let { return it }
             val remaining = deadline - SystemClock.elapsedRealtime()
             if (remaining <= 0) return null
             synchronized(wake) {
-                if (!stopRequested && posted.isEmpty()) wake.wait(remaining)
+                if (!stopRequested && !pauseRequested && posted.isEmpty()) wake.wait(remaining)
             }
         }
         return null
@@ -809,6 +916,7 @@ class MicCapture @JvmOverloads constructor(
         val floats = FloatArray(readBytes / Pcm.BYTES_PER_SAMPLE)
 
         while (!stopRequested && sender.open) {
+            if (pauseRequested) return exitWith(resampler, sender, ReadExit.Paused)
             // Checked every read rather than only on failure: a route change or
             // a silenced client has to be acted on while reads are still
             // succeeding, which is the whole point of those two signals.
@@ -926,6 +1034,7 @@ class MicCapture @JvmOverloads constructor(
                 lastChunkAtMillis = lastChunkAtMs,
                 recovering = recovery.isRecovering,
                 givenUp = recovery.hasGivenUp,
+                paused = parked,
             )
             if (!stale) continue
             Log.w(TAG, "no microphone chunks for ${watchdog.stalledAfterMillis} ms; rebuilding")
