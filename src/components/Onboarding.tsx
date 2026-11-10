@@ -100,6 +100,12 @@ const GATE_HINT: Record<AccountGateBlock, TranslationKey> = {
   localDownloading: "localStt.gate.downloading",
 };
 
+/** The Skip button's tooltip: why it is blocked while the gate holds, else
+ *  plain "Skip". Skip is blocked exactly when there is a gate block. */
+function skipHintKey(block: AccountGateBlock | null): TranslationKey {
+  return block ? GATE_HINT[block] : "onboarding.skip";
+}
+
 export function Onboarding() {
   const { t } = useI18n();
   const settings = useStore((s) => s.settings);
@@ -267,7 +273,7 @@ export function Onboarding() {
   const showFooter = footer.show;
   const skipFooter = footer.skip;
   const nextLabel = skipFooter ? t("onboarding.start") : t("onboarding.next");
-  const skipTitle = skipBlocked && gateBlock ? t(GATE_HINT[gateBlock]) : t("onboarding.skip");
+  const skipTitle = t(skipHintKey(gateBlock));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6">
