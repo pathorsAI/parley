@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronLeft, ChevronRight, Cpu, Globe, Loader2, LogIn, Mic, UserRoundCheck, UsersRound, Volume2 } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Cloud, Cpu, Globe, Laptop, Loader2, LogIn, Mic, UserRoundCheck, Volume2 } from "lucide-react";
 import { useStore } from "../lib/store";
 import { isMac, isWindows } from "../lib/platform";
 import { isTauri } from "../lib/tauriEvents";
@@ -16,6 +16,8 @@ import {
   usesLocalModel,
 } from "../lib/transcription/providers";
 import { accountGateBlock, transcriptionReady, type AccountGateBlock } from "../lib/onboarding/accountGate";
+import { footerFor, gateStep, isStranded, resumeStep, savedStep, visibleSteps, type StepId } from "../lib/onboarding/steps";
+import { cloudRoutePatch, isHostedLlm, localRoutePatch, onHostedProviders } from "../lib/onboarding/setupMode";
 import { useLocalSttModels, type LocalSttModelsState } from "../lib/transcription/useLocalSttModels";
 import { LocalSttModelPicker } from "./LocalSttModelPicker";
 import { SttCredentialField } from "./SttCredentialField";
@@ -59,15 +61,9 @@ import * as ipc from "../lib/ipc/commands";
 // systemAudio: unknown | granted | denied | unsupported (macOS < 14.2).
 type Perms = ipc.Permissions;
 
-type StepId = "intro" | "account" | "org" | "model" | "perms" | "mic" | "context" | "done";
-
-// One job per step: say what Parley is, sign in, settle the organization, make
-// transcription actually work, get the OS permissions, check the mic, tell the
-// AI who the user is, then hand off to a first real run. Teaching the rest of
-// the app lives in the Home checklist, not here.
-//
-// Not every step shows for everyone: the OSS build has no account (so no
-// sign-in and no organizations), and the organization step needs a session.
+// The steps, which of them show on each route (Cloud: no model step; Local: no
+// org step; OSS: Local without the account step) and where a saved wizard
+// resumes live in lib/onboarding/steps.ts, pure and unit-tested.
 // `onboardingStepId` persists the step by id, so a resumed wizard lands on the
 // same step even when the visible list has changed.
 //
@@ -75,7 +71,6 @@ type StepId = "intro" | "account" | "org" | "model" | "perms" | "mic" | "context
 // has no runtime prompt, but the step is still the only place that shows
 // whether the mic is actually allowed (the backend reads the consent store) and
 // sends the user to the exact pane that flips it (ms-settings:privacy-microphone).
-const ALL_STEPS: StepId[] = ["intro", "account", "org", "model", "perms", "mic", "context", "done"];
 
 /** Each step's title, shown in the header (the welcome screen has its own). */
 function stepTitle(step: StepId): TranslationKey {
@@ -98,28 +93,6 @@ function stepTitle(step: StepId): TranslationKey {
       return "onboarding.done.title";
   }
 }
-const MODEL_STEP = ALL_STEPS.indexOf("model");
-/** The steps of the four-step wizard that `onboardingStep` indexed. */
-const LEGACY_STEPS: StepId[] = ["intro", "account", "perms", "done"];
-
-function isStepId(v: string): v is StepId {
-  return (ALL_STEPS as string[]).includes(v);
-}
-
-/** Where a saved wizard resumes: the saved id, else the legacy index's step. */
-function savedStep(saved: Pick<Settings, "onboardingStep" | "onboardingStepId">): StepId {
-  if (isStepId(saved.onboardingStepId)) return saved.onboardingStepId;
-  return LEGACY_STEPS[saved.onboardingStep] ?? "intro";
-}
-
-function visibleSteps(signedIn: boolean): StepId[] {
-  return ALL_STEPS.filter((s) => {
-    if (s === "account") return CLOUD_ENABLED;
-    if (s === "org") return CLOUD_ENABLED && signedIn;
-    return true;
-  });
-}
-
 /** Helper text under the blocked Next button, per reason (see accountGate.ts). */
 const GATE_HINT: Record<AccountGateBlock, TranslationKey> = {
   credential: "onboarding.model.gate",
@@ -127,31 +100,38 @@ const GATE_HINT: Record<AccountGateBlock, TranslationKey> = {
   localDownloading: "localStt.gate.downloading",
 };
 
+/** The Skip button's tooltip: why it is blocked while the gate holds, else
+ *  plain "Skip". Skip is blocked exactly when there is a gate block. */
+function skipHintKey(block: AccountGateBlock | null): TranslationKey {
+  return block ? GATE_HINT[block] : "onboarding.skip";
+}
+
 export function Onboarding() {
   const { t } = useI18n();
   const settings = useStore((s) => s.settings);
   const patch = useStore((s) => s.updateSettings);
   const cloudAuth = useStore((s) => s.cloudAuth);
   const signedIn = !!cloudAuth;
-  const steps = visibleSteps(signedIn);
+  // The route (Cloud / Local) decides which steps show; it is picked on the
+  // account step, and a fresh install starts local until then.
+  const mode = settings.setupMode;
+  const steps = visibleSteps(mode, signedIn, CLOUD_ENABLED);
+  // Where the transcription gate sits on this route: Cloud's is signing in on
+  // the account step, Local's the provider pickers on the model step.
+  const gate = gateStep(mode, CLOUD_ENABLED);
 
   const [current, setCurrent] = useState<StepId>(() => {
     const { settings: saved, cloudAuth: auth } = useStore.getState();
-    const shown = visibleSteps(!!auth);
-    // The first visible step at or after the saved one (a step that's hidden
-    // now, e.g. "org" after signing out, resumes at the one after it).
-    let resumed = ALL_STEPS.slice(ALL_STEPS.indexOf(savedStep(saved))).find((s) => shown.includes(s)) ?? "intro";
-    // A step past the model gate (a session that has since signed out) must
-    // not resume beyond it. The local model catalog isn't loaded yet here, so
-    // a "local" setup resumes at the model step (fail closed) and the user
-    // confirms the downloaded model.
-    if (
-      ALL_STEPS.indexOf(resumed) > MODEL_STEP &&
-      !transcriptionReady(saved, !!auth, { models: null, downloads: {} })
-    ) {
-      resumed = "model";
-    }
-    return resumed;
+    // Never past the gate while transcription can't run (a cloud session that
+    // has since signed out lands on the account step). The local model catalog
+    // isn't loaded yet here, so an on-device setup reads as not ready and
+    // resumes on the model step (fail closed) to confirm the downloaded model.
+    return resumeStep(savedStep(saved), {
+      mode: saved.setupMode,
+      signedIn: !!auth,
+      cloudEnabled: CLOUD_ENABLED,
+      ready: transcriptionReady(saved, !!auth, { models: null, downloads: {} }),
+    });
   });
   const index = Math.max(0, steps.indexOf(current));
   const [perms, setPerms] = useState<Perms | null>(null);
@@ -161,18 +141,12 @@ export function Onboarding() {
   // The model step's Next checks the keys with their vendors first.
   const [checkingKeys, setCheckingKeys] = useState(false);
   const [keyProblems, setKeyProblems] = useState<KeyProblems>({});
-  // The model step's choice, kept here so it survives Back/Next: signed in,
-  // Parley's hosted models are the default unless the user picks their own.
-  const [ownModels, setOwnModels] = useState(false);
   // The dictionary terms this wizard found (names from the self-introduction
   // and the AI memory, the user's name and company, ones typed on the context
   // step), listed there so they can be taken back out.
   const [addedTerms, setAddedTerms] = useState<AddedTerm[]>([]);
   // What the last microphone check added, so testing again replaces it.
   const micRun = useRef<MicRun | null>(null);
-  // The providers in place before the model step switched them to Parley's,
-  // so "Use my own models" puts them back.
-  const beforeHosted = useRef<Pick<Settings, "transcriptionProvider" | "llmProviders"> | null>(null);
 
   // Persist the step so granting a permission (which often needs an app restart)
   // resumes here instead of bouncing back to step 1.
@@ -180,28 +154,36 @@ export function Onboarding() {
     patch({ onboardingStepId: current });
   }, [current, patch]);
 
-  // Signing out mid-wizard hides the org step; don't strand the user on it.
+  // Don't strand the user on a step that no longer shows, or past the account
+  // step on Cloud once signed out: both land on this route's gate (isStranded).
+  const strandedOn = isStranded(current, { steps, gate, signedIn });
   useEffect(() => {
-    if (!visibleSteps(signedIn).includes(current)) setCurrent("model");
-  }, [signedIn, current]);
+    if (strandedOn) setCurrent(gate);
+  }, [strandedOn, gate]);
 
   // On-device catalog + download state, live only while "local" is selected;
   // owned here (not in ModelStep) because it feeds the gate below.
   const local = useLocalSttModels(usesLocalModel(settings.transcriptionProvider));
   const gateBlock = accountGateBlock(settings, !!cloudAuth, local);
   const ready = gateBlock === null;
-  // Neither Next on the model step nor the welcome screen's Skip may get past the gate:
-  // skipping used to land users in a mock recorder that played a fake
-  // transcript and saved nothing, so the first meeting silently failed.
-  const nextBlocked = current === "model" && !ready;
+  // Neither Next on the gate step nor the welcome screen's Skip may get past
+  // the gate: skipping used to land users in a mock recorder that played a
+  // fake transcript and saved nothing, so the first meeting silently failed.
+  const nextBlocked = current === gate && !ready;
   const skipBlocked = !ready;
 
   function goTo(step: StepId) {
     setCurrent(step);
   }
 
+  // Read the route fresh from the store: picking Cloud or Local on the account
+  // step patches it in the same click that moves on, before this render's
+  // `steps` has caught up.
   function next() {
-    goTo(steps[Math.min(steps.length - 1, index + 1)]);
+    const { settings: now, cloudAuth: auth } = useStore.getState();
+    const shown = visibleSteps(now.setupMode, !!auth, CLOUD_ENABLED);
+    const at = Math.max(0, shown.indexOf(current));
+    goTo(shown[Math.min(shown.length - 1, at + 1)]);
   }
 
   // Leaving the model step: a key the vendor refuses keeps the user here, with
@@ -285,16 +267,13 @@ export function Onboarding() {
   // The first and last screens share the hero look: blue bars, no title bar,
   // only the language in the corner.
   const hero = intro || current === "done";
-  // Signed out, the sign-in step is a choice between two cards, each with its
-  // own button, and Back sits under them, so it has no footer; nor does the
-  // organization step while it offers its two cards. Signed in, the sign-in
-  // step confirms the account; from there the rest of setup is optional, so
-  // its footer is the welcome screen's: Skip, or Start the rest.
-  const account = current === "account";
-  const showFooter = current !== "done" && !(account && !cloudAuth) && !(current === "org" && orgChoosing);
-  const skipFooter = intro || (account && !!cloudAuth);
+  // Which footer this step gets (footerFor explains the cases).
+  const cloudConfirmed = mode === "cloud" && signedIn;
+  const footer = footerFor(current, { cloudConfirmed, orgChoosing });
+  const showFooter = footer.show;
+  const skipFooter = footer.skip;
   const nextLabel = skipFooter ? t("onboarding.start") : t("onboarding.next");
-  const skipTitle = skipBlocked && gateBlock ? t(GATE_HINT[gateBlock]) : t("onboarding.skip");
+  const skipTitle = t(skipHintKey(gateBlock));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6">
@@ -361,13 +340,7 @@ export function Onboarding() {
           )}
 
           {current === "model" && (
-            <ModelStep
-              local={local}
-              own={ownModels}
-              setOwn={setOwnModels}
-              beforeHosted={beforeHosted}
-              keyProblems={keyProblems}
-            />
+            <ModelStep local={local} keyProblems={keyProblems} />
           )}
 
           {current === "perms" && (
@@ -589,18 +562,27 @@ function LanguageMenu({ onHero = false }: Readonly<{ onHero?: boolean }>) {
 }
 
 /**
- * Sign in (official build only). It unlocks Parley's hosted STT + LLM, and on
- * success both providers default to "parley" and the wizard moves on to the
- * organization step. Not signing in is the footer's Next, relabelled.
+ * The route choice (official build only): Cloud or Local.
+ *
+ * - Cloud signs in here. On success it sets the route and Parley's hosted
+ *   transcription + AI, and the step turns into the signed-in confirmation;
+ *   the cloud route has no model step, so that is the whole setup of models.
+ * - Local sets the route (moving anything hosted off Parley, see
+ *   localRoutePatch) and moves on to the model step.
+ *
+ * Already signed in (a session kept from before, or Back from the Local
+ * route), the Cloud card needs no new sign-in: it just takes the route.
  */
 function AccountStep({ onBack, onContinue }: Readonly<{ onBack: () => void; onContinue: () => void }>) {
   const { t } = useI18n();
   const patch = useStore((s) => s.updateSettings);
   const cloudAuth = useStore((s) => s.cloudAuth);
+  const mode = useStore((s) => s.settings.setupMode);
+  const onHosted = useStore((s) => onHostedProviders(s.settings));
   const [signingIn, setSigningIn] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The browser sign-in can finish long after the click, by which time the
-  // user may have carried on without it and picked their own models.
+  // user may have carried on without it and picked the Local route.
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -609,18 +591,25 @@ function AccountStep({ onBack, onContinue }: Readonly<{ onBack: () => void; onCo
     };
   }, []);
 
+  const confirmed = mode === "cloud" && !!cloudAuth;
+  // On the cloud route and signed in, the hosted pair is the only setup: fill
+  // it in if anything else crept in (e.g. a saved state that derived "cloud"
+  // but was edited since), so the gate this step holds is met.
+  useEffect(() => {
+    if (confirmed && !onHosted) patch(cloudRoutePatch());
+  }, [confirmed, onHosted, patch]);
+
   async function doSignIn() {
     setSigningIn(true);
     setError(null);
     try {
       const { signInWithGoogle } = await import("../lib/cloud/client");
       await signInWithGoogle();
-      // Still here → default to Parley's free hosted STT + LLM so the model
-      // step is already done (it can still be switched there); the step then
-      // shows the signed-in confirmation. Gone → the session counts, but
-      // their choices and position stand.
+      // Still here → the cloud route on Parley's hosted STT + LLM; the step
+      // then shows the signed-in confirmation. Gone → the session counts, but
+      // the route they picked meanwhile stands.
       if (!mounted.current) return;
-      patch({ llmProviders: { realtime: "parley", deep: "parley" }, transcriptionProvider: "parley" });
+      patch(cloudRoutePatch());
     } catch (e) {
       if (mounted.current) setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -628,33 +617,61 @@ function AccountStep({ onBack, onContinue }: Readonly<{ onBack: () => void; onCo
     }
   }
 
-  if (cloudAuth) {
+  function pickCloud() {
+    if (cloudAuth) {
+      patch(cloudRoutePatch());
+      return;
+    }
+    doSignIn().catch((error) => log.error("onboarding: sign-in failed", { error: String(error) }));
+  }
+
+  function pickLocal() {
+    patch(localRoutePatch(useStore.getState().settings));
+    onContinue();
+  }
+
+  if (confirmed) {
     return (
-      <ConfirmCard
-        pills={[{ key: "email", icon: <UserRoundCheck className="size-3.5" />, label: cloudAuth.user.email }]}
-        title={t("onboarding.account.member.unlocked")}
-        body={t("onboarding.account.member.allowance")}
-      />
+      <div className="flex flex-col gap-4">
+        <ConfirmCard
+          pills={[{ key: "email", icon: <UserRoundCheck className="size-3.5" />, label: cloudAuth.user.email }]}
+          title={t("onboarding.account.cloud.unlocked")}
+          body={t("onboarding.account.cloud.allowance")}
+        />
+        {/* The way back to the other route: the cards are gone once signed in. */}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-8 self-start px-2.5 text-xs"
+          onClick={() => patch(localRoutePatch(useStore.getState().settings))}
+        >
+          {t("onboarding.account.switchLocal")}
+        </Button>
+      </div>
     );
   }
+
+  let cloudCta = t("onboarding.account.cloud.cta");
+  if (signingIn) cloudCta = t("settings.account.signingIn");
+  else if (cloudAuth) cloudCta = t("onboarding.account.cloud.use");
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-6">
       <ChoiceCard
         primary
         fill
-        icon={<UserRoundCheck className="size-3.5" />}
-        label={t("onboarding.account.member.tag")}
+        icon={<Cloud className="size-3.5" />}
+        label={t("onboarding.account.cloud.tag")}
         art={{ src: "/onboarding/signin-member-lines.svg", className: "top-0 left-[-444px] h-[200px] w-[967px]" }}
         action={
           <div className="flex flex-col items-end">
             <Button
               size="sm"
               className="h-8 gap-2 px-2.5 text-xs"
-              disabled={signingIn || !isTauri()}
-              onClick={() => doSignIn().catch((error) => log.error("onboarding: sign-in failed", { error: String(error) }))}
+              disabled={signingIn || (!cloudAuth && !isTauri())}
+              onClick={pickCloud}
             >
-              {signingIn ? t("settings.account.signingIn") : t("onboarding.account.member.cta")}
+              {cloudCta}
               {signingIn ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
             </Button>
             {error && (
@@ -667,29 +684,29 @@ function AccountStep({ onBack, onContinue }: Readonly<{ onBack: () => void; onCo
           </div>
         }
       >
-        <p className="text-sm leading-relaxed">{t("onboarding.account.body")}</p>
+        <p className="text-sm leading-relaxed">{t("onboarding.account.cloud.body")}</p>
       </ChoiceCard>
 
       <OrDivider label={t("onboarding.account.or")} />
 
       <ChoiceCard
         fill
-        icon={<UsersRound className="size-3.5" />}
-        label={t("onboarding.account.guest.tag")}
+        icon={<Laptop className="size-3.5" />}
+        label={t("onboarding.account.local.tag")}
         art={{ src: "/onboarding/signin-guest-lines.svg", className: "top-[38px] left-0 h-[116.52px] w-[774.18px]" }}
         action={
           <Button
             variant="ghost"
             size="sm"
             className="h-8 gap-2 bg-background px-2.5 text-xs hover:bg-background/80"
-            onClick={onContinue}
+            onClick={pickLocal}
           >
-            {t("onboarding.account.guest.cta")}
+            {t("onboarding.account.local.cta")}
             <ChevronRight className="size-3.5" />
           </Button>
         }
       >
-        <p className="text-sm leading-relaxed">{t("onboarding.account.guest.body")}</p>
+        <p className="text-sm leading-relaxed">{t("onboarding.account.local.body")}</p>
       </ChoiceCard>
 
       <Button variant="ghost" size="sm" className="h-8 gap-1 self-start px-2.5 text-xs" onClick={onBack}>
@@ -725,24 +742,17 @@ function StepProgress({ reached, total }: Readonly<{ reached: number; total: num
 }
 
 /**
- * Make transcription work. Signed in, it is a choice between Parley's hosted
- * models (already selected by sign-in) and the user's own; otherwise (not
- * signed in, or the OSS build) the provider pickers are the whole step. The STT
- * provider is required — it is what the gate checks; the LLM is optional
- * (recording works without it, analysis doesn't).
+ * Make transcription work, on the local route (and in the OSS build, which is
+ * always local): the bring-your-own panel, already open. Parley's hosted
+ * models are not offered here — they are the cloud route, picked on the
+ * account step. The STT provider is required — it is what the gate checks; the
+ * LLM is optional (recording works without it, analysis doesn't).
  */
 function ModelStep({
   local,
-  own,
-  setOwn,
-  beforeHosted,
   keyProblems,
 }: Readonly<{
   local: LocalSttModelsState;
-  /** The user picked "Bring your own models" in this wizard. */
-  own: boolean;
-  setOwn: (own: boolean) => void;
-  beforeHosted: React.MutableRefObject<Pick<Settings, "transcriptionProvider" | "llmProviders"> | null>;
   /** What Next's key check found wrong, shown under the field it is about. */
   keyProblems: KeyProblems;
 }>) {
@@ -750,87 +760,34 @@ function ModelStep({
   const settings = useStore((s) => s.settings);
   const patch = useStore((s) => s.updateSettings);
   const cloudAuth = useStore((s) => s.cloudAuth);
-  const signedIn = CLOUD_ENABLED && !!cloudAuth;
   const listing = { cloudEnabled: CLOUD_ENABLED, signedIn: !!cloudAuth };
-  const showProviders = !signedIn || own;
 
   const llm = PROVIDER_BY_ID[settings.llmProviders.deep];
   const stt = STT_BY_ID[settings.transcriptionProvider];
 
-  function applyHosted() {
-    const current = useStore.getState().settings;
-    const onHosted =
-      usesCloudSession(current.transcriptionProvider) &&
-      current.llmProviders.realtime === "parley" &&
-      current.llmProviders.deep === "parley";
-    if (onHosted) return;
-    beforeHosted.current ??= {
-      transcriptionProvider: current.transcriptionProvider,
-      llmProviders: current.llmProviders,
-    };
-    patch({ llmProviders: { realtime: "parley", deep: "parley" }, transcriptionProvider: "parley" });
-  }
-
-  // Signed in → Parley's hosted models are filled in, however the session came
-  // about (signed in on the previous step, a session kept from before, or a
-  // sign-in that finished after the user had moved on), unless the user has
-  // picked their own models in this wizard.
+  // Nothing may silently stay hosted on the local route: someone who signed
+  // in, then picked Local, or resumed here with Parley's providers still set,
+  // is moved to their own. (A no-op when nothing is hosted.)
+  const hosted =
+    usesCloudSession(settings.transcriptionProvider) ||
+    isHostedLlm(settings.llmProviders.realtime) ||
+    isHostedLlm(settings.llmProviders.deep);
   useEffect(() => {
-    if (signedIn && !own) applyHosted();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [signedIn]);
-
-  function pickHosted() {
-    setOwn(false);
-    applyHosted();
-  }
-
-  function pickOwn() {
-    setOwn(true);
-    // Put back what was there before Parley's models were filled in; failing
-    // that, leave the hosted STT for the first bring-your-own provider. The
-    // hosted LLM may stay — it's a separate, optional choice below.
-    const saved = beforeHosted.current;
-    beforeHosted.current = null;
-    if (saved && !usesCloudSession(saved.transcriptionProvider)) {
-      patch(saved);
-    } else if (usesCloudSession(useStore.getState().settings.transcriptionProvider)) {
-      const first = STT_PROVIDERS.find((p) => !usesCloudSession(p.id) && isProviderListed(p, listing));
-      if (first) patch({ transcriptionProvider: first.id });
-    }
-  }
+    if (hosted) patch(localRoutePatch(useStore.getState().settings));
+  }, [hosted, patch]);
 
   const problem = (p: KeyProblems[keyof KeyProblems]) =>
     p && <p className="text-[11px] text-danger-foreground">{t(p.key, p.vars)}</p>;
 
   return (
-    // Signed in it is a choice between the two cards; otherwise only the
-    // bring-your-own card shows, already open.
-    <div
-      role={signedIn ? "radiogroup" : undefined}
-      aria-label={signedIn ? t("onboarding.model.title") : undefined}
-      className="flex flex-col gap-6"
-    >
-      {signedIn && (
-        <SelectCard
-          primary
-          selected={!own}
-          onSelect={pickHosted}
-          icon={<img src="/onboarding/parley-mark.svg" alt="" className="h-3.5 w-auto" />}
-          label={t("onboarding.model.hosted")}
-          note={t("onboarding.model.hostedNote")}
-          art={{ src: "/onboarding/signin-member-lines.svg", className: "top-[-67px] left-[-444px] h-[200px] w-[967px]" }}
-        />
-      )}
+    <div className="flex flex-col gap-6">
       <SelectCard
-        selected={showProviders}
-        onSelect={signedIn ? pickOwn : undefined}
+        selected
         icon={<Cpu className="size-3.5" />}
         label={t("onboarding.model.own")}
         note={t("onboarding.model.ownNote")}
         art={{ src: "/onboarding/org-solo-lines.svg", className: "top-[38px] left-0 h-[116.52px] w-[774.18px]" }}
       >
-      {showProviders && (
         <>
           {/* Transcription — required: it is what the gate checks. */}
           <FieldPanel>
@@ -843,8 +800,7 @@ function ModelStep({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {/* "Own models" means not Parley's hosted STT — that is the
-                    other choice above. */}
+                {/* Never Parley's hosted STT: that is the cloud route. */}
                 {STT_PROVIDERS.filter((p) => isProviderListed(p, listing) && !usesCloudSession(p.id)).map((p) => (
                   <SelectItem key={p.id} value={p.id}>
                     <span className="flex items-center gap-2">
@@ -897,10 +853,9 @@ function ModelStep({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {/* The hosted "parley" provider needs a signed-in cloud session:
-                    offer it only in the official build once signed in (mirrors
-                    the Settings gate). */}
-                {PROVIDERS.filter((p) => isProviderListed(p, listing)).map((p) => (
+                {/* Never Parley's hosted "parley" LLM: that is the cloud
+                    route, even when this install happens to be signed in. */}
+                {PROVIDERS.filter((p) => isProviderListed(p, listing) && !p.requiresAccount).map((p) => (
                   <SelectItem key={p.id} value={p.id}>
                     <span className="flex items-center gap-2">
                       <img src={p.icon} alt="" className="size-4 rounded-sm" />
@@ -956,7 +911,6 @@ function ModelStep({
             <p className="text-[11px] text-muted-foreground">{t("onboarding.account.llmLater")}</p>
           </FieldPanel>
         </>
-      )}
       </SelectCard>
     </div>
   );

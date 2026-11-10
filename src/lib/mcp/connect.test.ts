@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { DEFAULT_MCP_ENDPOINT, claudeCodeCommand, mcpClientConfigJson } from "./connect";
+import { CLOUD_MCP_URL, DEFAULT_MCP_ENDPOINT, claudeCodeCommand, mcpClientConfigJson, mcpTarget } from "./connect";
 import { hasSuccessfulCall } from "./activity";
 
 describe("MCP connect strings", () => {
@@ -13,6 +13,24 @@ describe("MCP connect strings", () => {
   it("builds the client config JSON", () => {
     expect(JSON.parse(mcpClientConfigJson("http://127.0.0.1:4555/mcp"))).toEqual({
       mcpServers: { parley: { type: "http", url: "http://127.0.0.1:4555/mcp" } },
+    });
+  });
+});
+
+describe("MCP target", () => {
+  it("follows the setup route, and is always local without the cloud edition", () => {
+    expect(mcpTarget("cloud", true)).toBe("cloud");
+    expect(mcpTarget("local", true)).toBe("local");
+    expect(mcpTarget("cloud", false)).toBe("local");
+  });
+
+  it("builds the cloud strings from the remote URL", () => {
+    expect(CLOUD_MCP_URL).toBe("https://api.parley.tw/mcp");
+    expect(claudeCodeCommand(CLOUD_MCP_URL)).toBe(
+      "claude mcp add --transport http parley https://api.parley.tw/mcp"
+    );
+    expect(JSON.parse(mcpClientConfigJson(CLOUD_MCP_URL))).toEqual({
+      mcpServers: { parley: { type: "http", url: CLOUD_MCP_URL } },
     });
   });
 });

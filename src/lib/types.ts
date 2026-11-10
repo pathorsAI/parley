@@ -311,6 +311,9 @@ export interface ProviderModels {
   deep: string;
 }
 
+/** Onboarding's two routes; see {@link Settings.setupMode}. */
+export type SetupMode = "cloud" | "local";
+
 export interface Settings {
   language: AppLanguage;
   theme: AppTheme;
@@ -326,6 +329,14 @@ export interface Settings {
    *  you left off instead of step 1. An id, not an index, because which steps
    *  show depends on the build and on being signed in. */
   onboardingStepId: string;
+  /** Which way this install runs, chosen on onboarding's first real step.
+   *  "cloud": signed in, transcription and AI are Parley's hosted models, and
+   *  the MCP connection Parley hands out is the remote one (api.parley.tw).
+   *  "local": the user's own keys or an on-device model, Parley's hosted
+   *  models are not offered, and MCP means the server built into this app.
+   *  Always "local" in the OSS build (no cloud to choose). Saved states from
+   *  before it existed derive it once on rehydrate (see resolveSetupMode). */
+  setupMode: SetupMode;
   /** Your name — helps the AI recognize when you're speaking or addressed. */
   userName: string;
   /** Your role / title — tailors the assistance to your seat at the table. */

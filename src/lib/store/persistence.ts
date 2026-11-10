@@ -28,6 +28,8 @@ import {
 import type { ParleyState } from "./types";
 import type { MeetingDraft } from "./prep";
 import { sanitizeMutedApps } from "../meeting/detect";
+import { CLOUD_ENABLED } from "../flags";
+import { resolveSetupMode } from "../onboarding/setupMode";
 
 /**
  * #131: map legacy single-provider settings (provider + {ask,eval} model roles)
@@ -266,6 +268,11 @@ export function mergePersistedState(persisted: unknown, current: ParleyState): P
         voiceTypingPolish: legacyPolish,
       }),
       llmProviders,
+      // Cloud or Local: a saved choice stands; a state from before the setting
+      // existed derives it once from its transcription provider (hosted →
+      // cloud), and the OSS build is always local. `onboarded` is untouched,
+      // so nobody is sent back through the wizard for it.
+      setupMode: resolveSetupMode(p, CLOUD_ENABLED),
       // Per-provider models, legacy {ask,eval} roles already remapped;
       // providers missing from persisted state keep their defaults.
       models,
