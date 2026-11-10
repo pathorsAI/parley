@@ -92,6 +92,12 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.37
+
+Pause a meeting and pick it back up: a Pause button sits next to Stop, and nothing is recorded or transcribed until you resume. It is still one recording with one transcript.
+
+Filing is simpler: tap a folder to select it, then Save. Your organizations' folders are in the same picker.
+
 ## What's New — 1.36
 
 The Record screen is quieter: nothing sits above the live transcript but the copy button.
