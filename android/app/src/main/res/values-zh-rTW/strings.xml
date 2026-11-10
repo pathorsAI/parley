@@ -390,7 +390,7 @@
     <string name="getting_started_transcribing">轉錄中…</string>
     <!-- The guided lap's guide bar on the recording page (GuideBar, iOS #450) -->
     <string name="guide_file_title" tools:ignore="TypographyFractions">1 / 3 · 先看 Parley 幫你做了什麼</string>
-    <string name="guide_file_body">錄完的會議會自動取名、建議放哪個資料夾。標題可以改，資料夾也能自己選。按「採用」或任一個資料夾試試。</string>
+    <string name="guide_file_body">錄完的會議會自動取名、建議放哪個資料夾。標題可以改，資料夾也能自己選，選好再按「儲存」。</string>
     <string name="guide_show_me">看建議</string>
     <string name="guide_choose_folder">選資料夾</string>
     <string name="guide_filed">已歸檔。之後每一場錄完都會這樣。</string>
@@ -424,9 +424,8 @@
     <string name="library_folder_meta">資料夾</string>
     <string name="home_error_forbidden_org">你已沒有權限查看這個組織的錄音。</string>
     <!-- Library row actions -->
-    <string name="library_move_to_folder">移到資料夾…</string>
+    <string name="library_move_to_folder">移到…</string>
     <string name="library_share_to_org">分享到組織（複製）</string>
-    <string name="library_move_to_org">搬移到組織</string>
     <string name="library_menu_back">返回</string>
     <string name="library_working">更新中…</string>
     <!-- Audio on this phone, from the library row -->
@@ -447,18 +446,26 @@
     <string name="home_delete_error_forbidden_org">只有上傳者或管理員可以刪除這筆錄音。</string>
     <string name="home_delete_confirm_body_org">這會從「%2$s」永久刪除「%1$s」，組織裡的每個人都將看不到。此動作無法復原。</string>
     <!-- Folder picker (FolderPickerSheet) -->
-    <string name="folder_picker_title">移到資料夾</string>
-    <string name="folder_picker_subtitle">一個客戶一個資料夾。</string>
+    <string name="folder_picker_title">移到</string>
+    <string name="folder_picker_subtitle">點一下資料夾來選取。</string>
     <string name="folder_picker_search">搜尋資料夾</string>
     <string name="folder_picker_new">新增資料夾…</string>
     <string name="folder_picker_create_named">新增「%1$s」</string>
     <string name="folder_picker_name_hint">資料夾名稱</string>
     <string name="folder_picker_create">建立</string>
     <string name="folder_picker_no_match">沒有符合的資料夾。</string>
-    <string name="folder_picker_current">目前的資料夾</string>
+    <string name="folder_picker_current">目前位置</string>
     <string name="folder_picker_create_failed">無法建立資料夾。請檢查網路連線後再試一次。</string>
     <string name="folder_picker_suggested">建議</string>
-    <string name="folder_picker_all">所有資料夾</string>
+    <string name="folder_picker_move">移動</string>
+    <string name="folder_picker_save_title">存到資料夾</string>
+    <string name="folder_picker_choose">選擇</string>
+    <string name="folder_picker_org_root">不在資料夾中</string>
+    <string name="folder_picker_org_badge">組織</string>
+    <string name="folder_picker_org_move_note">會複製一份到組織，這筆錄音會從你的個人錄音庫移走。</string>
+    <string name="folder_picker_org_copy_note">會分享一份副本到「%1$s」，原本的錄音留在個人。</string>
+    <string name="filing_selected">已選取</string>
+    <string name="detail_folder_chip">資料夾：%1$s。移到其他資料夾。</string>
     <!-- Default save location (AccountSheet) -->
     <string name="account_save_location_title">預設儲存位置</string>
     <string name="account_save_location_personal_folder">個人 · %1$s</string>
@@ -471,7 +478,7 @@
     <string name="filing_thinking">正在想名稱和資料夾…</string>
     <string name="filing_was">原本：%1$s</string>
     <string name="filing_renamed">已改名</string>
-    <string name="filing_accept">採用</string>
+    <string name="filing_save">儲存</string>
     <string name="filing_edit_title">編輯標題</string>
     <string name="filing_title">標題</string>
     <string name="filing_new_folder">新資料夾</string>

@@ -532,6 +532,17 @@ class CloudClient(
         ).folders
 
     /**
+     * `POST /orgs/{orgId}/folders` with `{ name }` — a shared folder, which any
+     * member may create (the desktop's `createOrgFolder`). Unlike a personal
+     * folder the server mints the id, so the row comes back in a `{ folder }`
+     * envelope and a retry after a lost response makes a second folder.
+     */
+    suspend fun createOrgFolder(orgId: String, name: String): CloudFolder {
+        val text = postJson(url("orgs", orgId, "folders"), buildJsonObject { put("name", JsonPrimitive(name)) })
+        return CloudJson.decodeFromString(FolderEnvelope.serializer(), text).folder
+    }
+
+    /**
      * `DELETE /orgs/{orgId}/recordings/{id}`. The server allows it to the
      * uploader and to an owner or admin; everyone else gets a 403.
      */

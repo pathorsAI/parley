@@ -1,7 +1,11 @@
 package com.pathors.parley.ui
 
 import com.pathors.parley.cloud.CloudFolder
+import com.pathors.parley.cloud.CloudOrg
+import com.pathors.parley.library.FolderScope
+import com.pathors.parley.library.SaveDestination
 import com.pathors.parley.ui.FolderPickerRules.CreateAction
+import com.pathors.parley.ui.FolderPickerRules.Item
 import com.pathors.parley.ui.FolderPickerRules.SubmitAction
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -15,8 +19,8 @@ import org.junit.Test
 class FolderPickerRulesTest {
 
     private val folders = listOf(
-        CloudFolder(id = "f1", name = "Northwind"),
-        CloudFolder(id = "f2", name = "Acme Corp"),
+        CloudFolder(id = "f1", name = NORTHWIND),
+        CloudFolder(id = "f2", name = ACME),
     )
 
     @Test
@@ -25,8 +29,8 @@ class FolderPickerRulesTest {
     }
 
     @Test
-    fun `return with exactly one match picks it`() {
-        assertEquals(SubmitAction.PICK_ONLY_MATCH, FolderPickerRules.submitAction("north", 1, canCreate = false))
+    fun `return with exactly one match selects it`() {
+        assertEquals(SubmitAction.SELECT_ONLY_MATCH, FolderPickerRules.submitAction("north", 1, canCreate = false))
     }
 
     @Test
@@ -41,9 +45,9 @@ class FolderPickerRulesTest {
     }
 
     @Test
-    fun `create with an existing name picks that folder instead`() {
+    fun `create with an existing name selects that folder instead`() {
         assertEquals(
-            CreateAction.PickExisting("f1"),
+            CreateAction.SelectExisting("f1"),
             FolderPickerRules.createAction("  northwind ", folders, canCreate = true, busy = false),
         )
     }
@@ -71,12 +75,88 @@ class FolderPickerRulesTest {
     }
 
     @Test
-    fun `no match shows only when there is no other row at all`() {
-        assertTrue(FolderPickerRules.showsNoMatch(0, showsUnfiled = false, canCreate = false))
-        assertFalse(FolderPickerRules.showsNoMatch(0, showsUnfiled = true, canCreate = false))
-        assertFalse(FolderPickerRules.showsNoMatch(0, showsUnfiled = false, canCreate = true))
-        assertFalse(FolderPickerRules.showsNoMatch(1, showsUnfiled = false, canCreate = false))
+    fun `no match shows only when there is no row and no create row`() {
+        val one = listOf(Item.Place(SaveDestination.PERSONAL_ROOT, "Unfiled", isRoot = true))
+        assertTrue(FolderPickerRules.showsNoMatch(emptyList(), canCreate = false))
+        assertFalse(FolderPickerRules.showsNoMatch(one, canCreate = false))
+        assertFalse(FolderPickerRules.showsNoMatch(emptyList(), canCreate = true))
+    }
+
+    // ── sections ─────────────────────────────────────────────────────────────
+
+    private val team = CloudOrg(id = "o1", name = "Pathors")
+    private val teamFolders = listOf(CloudFolder(id = "t1", name = PIPELINE, orgId = "o1"))
+    private val scopes = listOf(FolderScope(null, folders), FolderScope(team, teamFolders))
+    private fun root(scope: FolderScope) = if (scope.org == null) "Unfiled" else "No folder"
+
+    private fun items(query: String = "", suggested: List<CloudFolder> = emptyList(), showsRoot: Boolean = true) =
+        FolderPickerRules.items(scopes, query, suggested, ::root, showsRoot)
+
+    @Test
+    fun `personal and organization folders are listed under their own headers`() {
+        assertEquals(
+            listOf(
+                Item.ScopeHeader(null),
+                Item.Place(SaveDestination.PERSONAL_ROOT, "Unfiled", isRoot = true),
+                Item.Place(SaveDestination(folderId = "f1"), NORTHWIND),
+                Item.Place(SaveDestination(folderId = "f2"), ACME),
+                Item.ScopeHeader(team),
+                Item.Place(SaveDestination(orgId = "o1"), "No folder", isRoot = true),
+                Item.Place(SaveDestination(orgId = "o1", folderId = "t1"), PIPELINE),
+            ),
+            items(),
+        )
+    }
+
+    @Test
+    fun `a search keeps a header only over a scope with a match`() {
+        assertEquals(
+            listOf(
+                Item.ScopeHeader(null),
+                Item.Place(SaveDestination(folderId = "f2"), ACME),
+                Item.ScopeHeader(team),
+                Item.Place(SaveDestination(orgId = "o1", folderId = "t1"), PIPELINE),
+            ),
+            items("acme"),
+        )
+        assertEquals(
+            listOf(Item.ScopeHeader(null), Item.Place(SaveDestination(folderId = "f1"), NORTHWIND)),
+            items("north"),
+        )
+        assertEquals(
+            "Return counts the org folder as a match like any other",
+            listOf(SaveDestination(folderId = "f2"), SaveDestination(orgId = "o1", folderId = "t1")),
+            FolderPickerRules.folderMatches(items("acme")),
+        )
+    }
+
+    @Test
+    fun `suggested folders lead, and roots are left out where they are no answer`() {
+        assertEquals(
+            listOf(
+                Item.SuggestedHeader,
+                Item.Place(SaveDestination(folderId = "f2"), ACME, suggested = true),
+                Item.ScopeHeader(null),
+                Item.Place(SaveDestination(folderId = "f1"), NORTHWIND),
+                Item.Place(SaveDestination(folderId = "f2"), ACME),
+                Item.ScopeHeader(team),
+                Item.Place(SaveDestination(orgId = "o1", folderId = "t1"), PIPELINE),
+            ),
+            items(suggested = listOf(folders[1], CloudFolder(id = "gone", name = "Deleted")), showsRoot = false),
+        )
+    }
+
+    @Test
+    fun `confirm needs a selection that is somewhere else`() {
+        val here = SaveDestination(folderId = "f1")
+        assertFalse(FolderPickerRules.canConfirm(null, here))
+        assertFalse(FolderPickerRules.canConfirm(here, here))
+        assertTrue(FolderPickerRules.canConfirm(SaveDestination(orgId = "o1", folderId = "t1"), here))
+        assertTrue("nowhere yet, anywhere is a move", FolderPickerRules.canConfirm(here, null))
     }
 }
 
 private const val GLOBEX = "Globex"
+private const val ACME = "Acme Corp"
+private const val NORTHWIND = "Northwind"
+private const val PIPELINE = "Acme pipeline"

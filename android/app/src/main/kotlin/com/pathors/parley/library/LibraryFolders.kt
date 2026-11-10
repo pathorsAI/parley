@@ -28,7 +28,12 @@ sealed interface FolderFilter {
  *   that has not synced it yet) renders at the root: under Unfiled, with no
  *   folder name on its card. Showing it nowhere would lose it; showing it under
  *   a folder that does not exist is impossible.
- * - **Filtering narrows, it does not re-rank.** The server's order survives.
+ * - **Newest first, by when it was recorded.** Every list — All, Unfiled, a
+ *   folder, a search — is ordered by [RecordingSummary.createdAt], latest at
+ *   the top. The server's own order is not relied on: an org library, an
+ *   import dated by its file, or a row moved in place by a refile all arrive
+ *   in an order nobody chose, and a March call under a July one reads as lost.
+ *   Filtering then narrows that order; it never re-ranks it.
  */
 object LibraryFolders {
 
@@ -54,6 +59,10 @@ object LibraryFolders {
         } else {
             listOf(FolderFilter.All, FolderFilter.Unfiled) + folders.map { FolderFilter.Folder(it.id) }
         }
+
+    /** [recordings], latest recording first. Recordings made at the same moment keep their order. */
+    fun newestFirst(recordings: List<RecordingSummary>): List<RecordingSummary> =
+        recordings.sortedByDescending { it.createdAt }
 
     /** [recordings] narrowed to one page of the chip row. */
     fun filter(

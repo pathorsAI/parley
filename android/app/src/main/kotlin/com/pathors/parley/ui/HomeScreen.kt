@@ -113,6 +113,7 @@ import com.pathors.parley.cloud.RecordingSource
 import com.pathors.parley.cloud.RecordingSummary
 import com.pathors.parley.library.FolderFilter
 import com.pathors.parley.library.LibraryFolders
+import com.pathors.parley.library.SaveDestination
 import com.pathors.parley.meeting.MeetingService
 import com.pathors.parley.meeting.MeetingState
 import com.pathors.parley.meeting.isInProgress
@@ -215,9 +216,11 @@ fun HomeScreen(
                     val guided = LapRules.isLapRecording(recording.id, state.scopeOrgId, state.recordings)
                     onOpenRecording(recording.id, state.scopeOrgId, guided)
                 },
-                onMoveToFolder = { moving = recording },
+                onMoveToFolder = {
+                    moving = recording
+                    viewModel.refreshDirectory()
+                },
                 onShare = { org -> viewModel.shareToOrg(recording, org, thenDelete = false) },
-                onMoveToOrg = { org -> viewModel.shareToOrg(recording, org, thenDelete = true) },
                 // The sample goes without a question: nothing is lost, and the
                 // checklist can load it again.
                 onDelete = {
@@ -643,7 +646,10 @@ private fun LibraryList(
  */
 private val RowGapPadding = 10.dp
 
-/** The folder picker over the library, moving [target]. */
+/**
+ * "Move to…" over the library, moving [target]: this library's folders, and
+ * from the personal library every organization's too.
+ */
 @Composable
 private fun MoveToFolderSheet(
     viewModel: HomeViewModel,
@@ -651,18 +657,22 @@ private fun MoveToFolderSheet(
     target: RecordingSummary,
     onDismiss: () -> Unit,
 ) {
+    val account by viewModel.account.collectAsState()
     FolderPickerSheet(
-        folders = state.folders,
-        // The orphan rule the list renders by, so the tick agrees with the
-        // page the row was on.
-        currentFolderId = LibraryFolders.liveFolderId(target.folderId, state.folders),
-        onSelect = { folderId -> viewModel.moveToFolder(target, folderId) },
-        onCreate = if (state.isPersonal) {
-            { name -> viewModel.createFolderAndMove(target, name) }
-        } else {
-            null
-        },
-        onDismiss = onDismiss,
+        scopes = HomeViewModel.moveScopes(state, account.directory, target),
+        // The orphan rule the list renders by, so "Current folder" agrees
+        // with the page the row was on.
+        current = SaveDestination(
+            orgId = state.scopeOrgId,
+            folderId = LibraryFolders.liveFolderId(target.folderId, state.folders),
+        ),
+        callbacks = FolderPickerCallbacks(
+            onConfirm = { destination -> viewModel.moveTo(target, destination) },
+            // The sample is filed on this phone; a folder made for it would be
+            // a cloud folder nothing else is in.
+            onCreate = if (SampleManifest.isSample(target.id)) null else viewModel::createFolder,
+            onDismiss = onDismiss,
+        ),
     )
 }
 
@@ -1365,7 +1375,7 @@ private fun DeletePendingDialog(title: String, onConfirm: () -> Unit, onDismiss:
  * an irreversible one behind something a thumb does by accident while scrolling.
  *
  * iOS puts the organizations in submenus. A Material `DropdownMenu` has none, so
- * the two organization entries open a second page of the same menu — the org
+ * "Share to organization" opens a second page of the same menu — the org
  * names under a Back row — rather than a second popup stacked on the first.
  *
  * While a delete, move or share is in flight the row goes half-opaque and
@@ -1490,7 +1500,6 @@ private fun RowMenu(
                         null -> Unit
                     }
                 },
-                canMoveToFolder = model.canMoveToFolder,
                 canShare = model.canShare,
                 onMoveToFolder = {
                     onPage(null)
@@ -1503,12 +1512,12 @@ private fun RowMenu(
                 },
             )
 
-            RowMenuPage.SHARE, RowMenuPage.MOVE -> RowMenuOrgs(
+            RowMenuPage.SHARE -> RowMenuOrgs(
                 orgs = model.shareTargets,
                 onBack = { onPage(RowMenuPage.ROOT) },
                 onPick = { org ->
                     onPage(null)
-                    if (page == RowMenuPage.SHARE) actions.onShare(org) else actions.onMoveToOrg(org)
+                    actions.onShare(org)
                 },
             )
         }
@@ -1516,7 +1525,7 @@ private fun RowMenu(
 }
 
 /** Which page of a row's menu is open. */
-private enum class RowMenuPage { ROOT, SHARE, MOVE }
+private enum class RowMenuPage { ROOT, SHARE }
 
 /**
  * The root page. Download / Remove download leads, as in iOS's context menu:
@@ -1527,12 +1536,17 @@ private enum class RowMenuPage { ROOT, SHARE, MOVE }
 private fun RowMenuRoot(
     download: DownloadAction?,
     onDownload: () -> Unit,
-    canMoveToFolder: Boolean,
     canShare: Boolean,
     onMoveToFolder: () -> Unit,
     onOpen: (RowMenuPage) -> Unit,
     onDelete: () -> Unit,
 ) {
+    // First: it is what a long press on a row is most often for.
+    DropdownMenuItem(
+        text = { Text(stringResource(R.string.library_move_to_folder)) },
+        leadingIcon = { Icon(LibraryIcons.Folder, contentDescription = null) },
+        onClick = onMoveToFolder,
+    )
     when (download) {
         DownloadAction.DOWNLOAD -> DropdownMenuItem(
             text = { Text(stringResource(R.string.library_download)) },
@@ -1548,13 +1562,6 @@ private fun RowMenuRoot(
 
         null -> Unit
     }
-    if (canMoveToFolder) {
-        DropdownMenuItem(
-            text = { Text(stringResource(R.string.library_move_to_folder)) },
-            leadingIcon = { Icon(LibraryIcons.Folder, contentDescription = null) },
-            onClick = onMoveToFolder,
-        )
-    }
     if (canShare) {
         DropdownMenuItem(
             text = { Text(stringResource(R.string.library_share_to_org)) },
@@ -1563,14 +1570,6 @@ private fun RowMenuRoot(
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null)
             },
             onClick = { onOpen(RowMenuPage.SHARE) },
-        )
-        DropdownMenuItem(
-            text = { Text(stringResource(R.string.library_move_to_org)) },
-            leadingIcon = { Icon(LibraryIcons.Group, contentDescription = null) },
-            trailingIcon = {
-                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null)
-            },
-            onClick = { onOpen(RowMenuPage.MOVE) },
         )
     }
     DropdownMenuItem(

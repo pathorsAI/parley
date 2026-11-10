@@ -42,6 +42,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
@@ -95,6 +96,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -189,14 +191,7 @@ fun RecordingDetailScreen(
     // onto the transcript although the study is about to run. Until then the
     // page shown is provisional and follows what the meta already holds.
     var chosenFace by rememberSaveable { mutableStateOf<DetailFace?>(null) }
-    val face = chosenFace ?: state.meta?.let {
-        initialFace(
-            // A recording the study is about to analyse opens on the report,
-            // where the chip and the sections say what is coming.
-            hasAnalysis = state.hasAnalysis || study?.progress?.active == true,
-            forceTranscript = DemoMode.navigation.value?.screen == DemoMode.Screen.TRANSCRIPT,
-        )
-    }
+    val face = chosenFace ?: provisionalFace(state, study)
     LaunchedEffect(face, studyKnown) {
         if (chosenFace == null && face != null && studyKnown) chosenFace = face
         // Search belongs to the transcript; leaving it closes the field, which
@@ -208,23 +203,25 @@ fun RecordingDetailScreen(
     // here: the tentative tail a live session leaves behind never reaches this
     // screen, so it must not reach the clipboard either.
     val readable = state.meta?.segments?.filter { it.isFinal }.orEmpty()
-    val menu = rememberDetailMenu(viewModel, state.meta, readable) { choosingFolder = true }
+    val openPicker = {
+        viewModel.refreshDirectory()
+        choosingFolder = true
+    }
+    val menu = rememberDetailMenu(viewModel, state.meta, readable, openPicker)
     DemoShareMenuRequest(metaLoaded = state.meta != null, onOpen = { menu.open = true })
 
-    // What the checklist opened this screen for, acted on once the transcript
-    // is up (iOS `handleIntent`). Saveable, so a rotation does not do it twice.
-    var intentHandled by rememberSaveable { mutableStateOf(openFor == OpenFor.READ) }
-    LaunchedEffect(state.meta != null) {
-        if (intentHandled || state.meta == null) return@LaunchedEffect
-        intentHandled = true
-        // A beat for the push to settle, as iOS waits: a sheet thrown up
-        // mid-transition reads as the screen glitching rather than as an answer.
-        delay(INTENT_DELAY_MS)
-        when {
-            openFor == OpenFor.SHARE && readable.isNotEmpty() -> menu.shareToAI()
-            openFor == OpenFor.FILE && menu.onMoveToFolder != null -> choosingFolder = true
-        }
-    }
+    // Moved into an organization: the recording is not in this library any
+    // more, so the page it was read from is where to go back to.
+    val leave = rememberUpdatedState(onBack)
+    LaunchedEffect(filing.movedTo) { if (filing.movedTo != null) leave.value() }
+
+    OpenIntentEffect(
+        openFor = openFor,
+        metaLoaded = state.meta != null,
+        canShare = readable.isNotEmpty(),
+        menu = menu,
+        openPicker = openPicker,
+    )
 
     // The guide bar's "Open the transcript": a request the pages carry out,
     // counted so the same request twice is still two.
@@ -236,13 +233,24 @@ fun RecordingDetailScreen(
                 viewModel = viewModel,
                 guided = LocalLapRecording.current,
                 menu = menu,
-                onChooseFolder = { choosingFolder = true },
+                onChooseFolder = openPicker,
                 onOpenTranscript = { lapJump++ },
                 onStartMeeting = onStartMeeting,
             )
         },
         topBar = {
-            DetailTopBar(meta = state.meta, onBack = onBack) {
+            DetailTopBar(
+                meta = state.meta,
+                place = state.meta?.let {
+                    placeLabel(
+                        orgName = viewModel.orgName(),
+                        folderName = viewModel.currentFolderName(),
+                        unfiled = stringResource(R.string.library_folder_unfiled),
+                    )
+                },
+                onPlaceClick = if (filing.moving) null else openPicker,
+                onBack = onBack,
+            ) {
                 DetailToolbarActions(
                     menu = menu,
                     // Absent on the report: what it searches is the
@@ -278,6 +286,51 @@ fun RecordingDetailScreen(
         choosingFolder = choosingFolder,
         onDismissPicker = { choosingFolder = false },
     )
+}
+
+/**
+ * The page to show before the reader has one: none until the recording has
+ * loaded, then whatever [initialFace] makes of what the meta already holds.
+ * Provisional — [RecordingDetailScreen] fixes it once the study for this visit
+ * is known.
+ */
+private fun provisionalFace(state: RecordingDetailViewModel.UiState, study: RecordingStudy?): DetailFace? =
+    state.meta?.let {
+        initialFace(
+            // A recording the study is about to analyse opens on the report,
+            // where the chip and the sections say what is coming.
+            hasAnalysis = state.hasAnalysis || study?.progress?.active == true,
+            forceTranscript = DemoMode.navigation.value?.screen == DemoMode.Screen.TRANSCRIPT,
+        )
+    }
+
+/**
+ * What the checklist opened this screen for, acted on once the transcript is
+ * up (iOS `handleIntent`): the Share-to-AI hand-off, or the folder picker.
+ * Saveable, so a rotation does not do it twice.
+ *
+ * @param canShare whether there is a transcript to hand off yet.
+ */
+@Composable
+private fun OpenIntentEffect(
+    openFor: OpenFor,
+    metaLoaded: Boolean,
+    canShare: Boolean,
+    menu: DetailMenu,
+    openPicker: () -> Unit,
+) {
+    var intentHandled by rememberSaveable { mutableStateOf(openFor == OpenFor.READ) }
+    LaunchedEffect(metaLoaded) {
+        if (intentHandled || !metaLoaded) return@LaunchedEffect
+        intentHandled = true
+        // A beat for the push to settle, as iOS waits: a sheet thrown up
+        // mid-transition reads as the screen glitching rather than as an answer.
+        delay(INTENT_DELAY_MS)
+        when {
+            openFor == OpenFor.SHARE && canShare -> menu.shareToAI()
+            openFor == OpenFor.FILE && menu.onMoveToFolder != null -> openPicker()
+        }
+    }
 }
 
 /** The transcript as "copy" and "share" hand it on: speaker-labelled final segments. */
@@ -377,26 +430,43 @@ private fun DemoFolderPickerRequest(metaLoaded: Boolean, onOpen: () -> Unit) {
     }
 }
 
+/**
+ * Where the recording is filed, as the header's chip says it: the folder, or
+ * Unfiled; prefixed with the organization for an org recording.
+ */
+internal fun placeLabel(orgName: String?, folderName: String?, unfiled: String): String = when {
+    orgName != null && folderName != null -> "$orgName · $folderName"
+    orgName != null -> orgName
+    else -> folderName ?: unfiled
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DetailTopBar(
     meta: RecordingMeta?,
+    /** Where the recording is filed — the chip under the title. Null hides it. */
+    place: String?,
+    /** The chip's tap: "Move to…". Null while a move is in flight. */
+    onPlaceClick: (() -> Unit)?,
     onBack: () -> Unit,
     actions: @Composable RowScope.() -> Unit,
 ) {
     TopAppBar(
         title = {
-            Text(
-                // "Untitled recording" once there is a recording to be
-                // untitled; the neutral "Recording" while it loads or failed.
-                text = when {
-                    meta == null -> stringResource(R.string.detail_title)
-                    meta.title.isEmpty() -> stringResource(R.string.recording_untitled)
-                    else -> meta.title
-                },
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Column {
+                Text(
+                    // "Untitled recording" once there is a recording to be
+                    // untitled; the neutral "Recording" while it loads or failed.
+                    text = when {
+                        meta == null -> stringResource(R.string.detail_title)
+                        meta.title.isEmpty() -> stringResource(R.string.recording_untitled)
+                        else -> meta.title
+                    },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (place != null) PlaceChip(place, onPlaceClick)
+            }
         },
         navigationIcon = {
             IconButton(onClick = onBack) {
@@ -408,6 +478,47 @@ private fun DetailTopBar(
         },
         actions = actions,
     )
+}
+
+/**
+ * The folder under the title, as a small tappable chip — the one-tap door to
+ * "Move to…", where the overflow menu was the only one. Quiet on purpose: the
+ * title is the heading, and this is the line under it that says where it lives.
+ */
+@Composable
+private fun PlaceChip(place: String, onClick: (() -> Unit)?) {
+    val description = stringResource(R.string.detail_folder_chip, place)
+    Row(
+        modifier = Modifier
+            .padding(top = 2.dp)
+            .clip(MaterialTheme.shapes.small)
+            .clickable(enabled = onClick != null, role = Role.Button) { onClick?.invoke() }
+            .semantics(mergeDescendants = true) { contentDescription = description }
+            .padding(horizontal = 4.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = LibraryIcons.Folder,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(14.dp),
+        )
+        Spacer(Modifier.width(4.dp))
+        Text(
+            text = place,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        Icon(
+            imageVector = Icons.Default.ArrowDropDown,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(16.dp),
+        )
+    }
 }
 
 /**
@@ -425,7 +536,7 @@ private class DetailMenu(
     val retranscribe: RetranscribeState,
     /** Null for an org recording or the sample: re-transcribing writes through the personal endpoints. */
     val onRetranscribe: (() -> Unit)?,
-    /** Null for an org recording, as on iOS; see [RecordingDetailViewModel.canMoveToFolder]. */
+    /** Null until the recording has loaded. */
     val onMoveToFolder: (() -> Unit)?,
     private val onCopiedWithPrompt: () -> Unit,
 ) {
@@ -478,7 +589,7 @@ private fun rememberDetailMenu(
             transcriptEmpty = readable.isEmpty(),
             retranscribe = retranscribe,
             onRetranscribe = if (viewModel.canRetranscribe) viewModel::askToRetranscribe else null,
-            onMoveToFolder = if (viewModel.canMoveToFolder && meta != null) onMoveToFolder else null,
+            onMoveToFolder = if (meta != null) onMoveToFolder else null,
             onCopiedWithPrompt = viewModel::noteCopiedWithPrompt,
         )
     }
@@ -732,11 +843,28 @@ private fun DetailDialogs(
 
     if (choosingFolder) {
         FolderPickerSheet(
-            folders = filing.folders,
-            currentFolderId = viewModel.currentFolderId(),
-            onSelect = viewModel::moveToFolder,
-            onCreate = viewModel::createFolderAndMove,
-            onDismiss = onDismissPicker,
+            scopes = viewModel.moveScopes(),
+            current = viewModel.currentPlace(),
+            callbacks = FolderPickerCallbacks(
+                onConfirm = viewModel::moveTo,
+                // The sample is filed on this phone; a folder made for it would
+                // be a cloud folder nothing else is in.
+                onCreate = if (viewModel.isSample) null else viewModel::createFolder,
+                onDismiss = onDismissPicker,
+            ),
+        )
+    }
+
+    filing.originalKeptIn?.let { org ->
+        AlertDialog(
+            onDismissRequest = viewModel::clearMoveError,
+            title = { Text(stringResource(R.string.library_action_error_title)) },
+            text = { Text(stringResource(R.string.library_share_original_kept, org)) },
+            confirmButton = {
+                TextButton(onClick = viewModel::clearMoveError) {
+                    Text(stringResource(R.string.action_close))
+                }
+            },
         )
     }
 

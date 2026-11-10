@@ -64,6 +64,12 @@ class FilingSuggestionModelTest {
     @Volatile
     private var pushFails = false
 
+    @Volatile
+    private var shareFails = false
+
+    /** The share request bodies, as sent. */
+    private val shares = CopyOnWriteArrayList<JsonObject>()
+
     private val pushes = CopyOnWriteArrayList<JsonObject>()
     private val paths = CopyOnWriteArrayList<String>()
 
@@ -105,6 +111,12 @@ class FilingSuggestionModelTest {
                         ok(chatResponse(answer))
                     }
                     path == "/recordings/$RECORDING" -> push(request)
+                    path == "/recordings/$RECORDING/share" -> if (shareFails) {
+                        MockResponse().setResponseCode(500)
+                    } else {
+                        shares += CloudJson.parseToJsonElement(request.body.readUtf8()).jsonObject
+                        ok("""{"id":"org-copy"}""")
+                    }
                     else -> MockResponse().setResponseCode(404)
                 }
             }
@@ -357,7 +369,7 @@ class FilingSuggestionModelTest {
         assertTrue(runBlocking { model.acceptSuggested() })
         assertFalse("nothing left to accept", runBlocking { model.acceptSuggested() })
 
-        assertEquals(1, count("POST /folders"))
+        assertEquals(1, count(CREATE_FOLDER))
         assertEquals("the offer's own write, then the answer", 2, pushes.size)
         val created = state.existingFolders.single { it.name == "Globex" }
         assertEquals(created.id, lastMeta().folderId)
@@ -525,7 +537,7 @@ class FilingSuggestionModelTest {
         model.present(pending(), FilingTarget.Sample(sample))
         assertTrue(runBlocking { model.apply(null, FolderTarget.New("Globex")) })
 
-        assertEquals(1, count("POST /folders"))
+        assertEquals(1, count(CREATE_FOLDER))
         assertEquals(1, sample.folders.size)
     }
 
@@ -542,27 +554,98 @@ class FilingSuggestionModelTest {
     // ── the card's actions ───────────────────────────────────────────────────
 
     @Test
-    fun `accept takes the name as the field shows it and the first chip`() {
+    fun `save takes the name as the field shows it and the first chip`() {
         model.present(pending(), FilingTarget.Cloud(RECORDING))
         runBlocking {
-            FilingCardController(model, this, this).accept(" $TYPED ")
+            FilingCardController(model, this, this).save(" $TYPED ")
         }
         assertEquals(1, pushes.size)
         assertEquals(TYPED, lastMeta().title)
         assertEquals(ACME_ID, lastMeta().folderId)
+        assertFalse("answered, so the meeting screen can go", state.holdsScreen)
+    }
+
+    /** The tester's report: one tap on a chip filed the meeting before they had chosen. */
+    @Test
+    fun `a chip tap only selects, and nothing is written until save`() {
+        model.present(pending(), FilingTarget.Cloud(RECORDING))
+        val chip = SUGGESTION.folders.first()
+        runBlocking {
+            val card = FilingCardController(model, this, this)
+            assertEquals("the best folder starts selected", FolderTarget.Existing(ACME_ID), state.selectedFolder)
+            card.toggle(chip)
+            assertNull("tapping the selected chip selects none", state.selectedFolder)
+            card.toggle(chip)
+            assertEquals(FolderTarget.Existing(ACME_ID), state.selectedFolder)
+        }
+        assertTrue("nothing reached the cloud", pushes.isEmpty())
+        assertTrue("still on offer", state.holdsScreen)
     }
 
     @Test
-    fun `a chip files without renaming, and tells the screen`() {
+    fun `save with no folder selected renames and answers the folder half too`() {
         model.present(pending(), FilingTarget.Cloud(RECORDING))
-        var written = 0
         runBlocking {
-            FilingCardController(model, this, this, onWritten = { written++ }).file(SUGGESTION.folders.first())
+            val card = FilingCardController(model, this, this)
+            card.toggle(SUGGESTION.folders.first())
+            card.save(null)
         }
-        assertEquals(CLOCK_TITLE, lastMeta().title)
-        assertEquals(ACME_ID, lastMeta().folderId)
-        assertEquals(1, written)
-        assertEquals("the name is still on offer", RENEWAL, state.proposedTitle)
+        assertEquals(RENEWAL, lastMeta().title)
+        assertNull(lastMeta().folderId)
+        assertTrue(lastMeta().filingSuggested)
+        assertFalse(state.hasSomethingToOffer)
+    }
+
+    @Test
+    fun `a place chosen in the picker is what save files into`() {
+        model.present(pending(), FilingTarget.Cloud(RECORDING))
+        runBlocking {
+            val card = FilingCardController(model, this, this)
+            card.choose(FolderTarget.Existing(OTHER_ID), "Northwind")
+            assertEquals(FolderPick.Chosen(FolderTarget.Existing(OTHER_ID), "Northwind"), state.chosenElsewhere)
+            card.save(null)
+        }
+        assertEquals(OTHER_ID, lastMeta().folderId)
+    }
+
+    @Test
+    fun `an organization folder renames the recording, then shares a copy into it`() {
+        model.present(pending(), FilingTarget.Cloud(RECORDING))
+        var filed = 0
+        runBlocking {
+            val card = FilingCardController(model, this, this, onWritten = { filed++ })
+            card.choose(FolderTarget.Org("org-1", "f-shared"), "Pathors · Sales")
+            card.save(null)
+        }
+        assertEquals(listOf("POST /recordings/$RECORDING", "POST /recordings/$RECORDING/share"), paths.filter { it.startsWith("POST") })
+        assertEquals(RENEWAL, lastMeta().title)
+        assertNull("the personal recording stays where it was", lastMeta().folderId)
+        assertEquals("org-1", shares.single().getValue("orgId").jsonPrimitive.content)
+        assertEquals("f-shared", shares.single().getValue(FOLDER_ID).jsonPrimitive.content)
+        assertEquals(1, filed)
+        assertFalse(state.hasSomethingToOffer)
+    }
+
+    @Test
+    fun `a failed share keeps the offer open to try again`() {
+        model.present(pending(), FilingTarget.Cloud(RECORDING))
+        shareFails = true
+        runBlocking {
+            val card = FilingCardController(model, this, this)
+            card.choose(FolderTarget.Org("org-1"), "Pathors")
+            card.save(null)
+        }
+        assertTrue(state.writeFailed)
+        assertTrue(state.hasSomethingToOffer)
+    }
+
+    @Test
+    fun `a folder made in the picker is listed, and filed into only on save`() {
+        model.present(pending(), FilingTarget.Cloud(RECORDING))
+        val made = runBlocking { FilingCardController(model, this, this).createFolder("Globex") }
+        assertEquals(1, count(CREATE_FOLDER))
+        assertTrue(state.existingFolders.any { it.id == made.id })
+        assertTrue("created, not filed", pushes.isEmpty())
     }
 
     @Test
@@ -621,6 +704,8 @@ class FilingSuggestionModelTest {
         const val ACME_ID = "f-acme"
         const val FOLDER_ID = "folderId"
         const val CHAT = "POST /v1/chat/completions"
+        const val CREATE_FOLDER = "POST /folders"
+        const val OTHER_ID = "f-other"
         const val FOLDERS_JSON = """{"folders":[{"id":"f-acme","name":"Acme Corp"},{"id":"f-shared","name":"Sales","orgId":"org-1"}]}"""
         const val SUGGESTION_JSON =
             """{"title":"Acme renewal terms","folders":[{"name":"Acme Corp","isNew":false,"reason":"customer"}]}"""
