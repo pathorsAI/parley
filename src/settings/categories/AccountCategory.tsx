@@ -8,9 +8,10 @@ import type { Settings } from "../../lib/types";
 import { useI18n } from "../../i18n";
 import { DestinationField } from "../../components/DestinationSheet";
 import { Field, Section } from "../fields";
+import { ApiKeysField } from "../ApiKeysField";
 import type { SettingsPanelProps } from "./types";
 
-/** Settings › Account: sign-in, cloud sync, and the default org share. */
+/** Settings › Account: sign-in, cloud sync, the default org share, and API keys. */
 export function AccountCategory({
   settings,
   patch,
@@ -97,6 +98,7 @@ export function AccountCategory({
           </div>
         </Field>
       )}
+      {cloudAuth && <ApiKeysField />}
     </Section>
   );
 }

@@ -10,6 +10,7 @@ import {
   Loader2,
   Maximize2,
   MessageCircle,
+  Minimize2,
   Minus,
   NotebookPen,
   Pause,
@@ -19,18 +20,21 @@ import {
   X,
 } from "lucide-react";
 import { useStore } from "../../lib/store";
+import { useStickToBottom } from "../../lib/useStickToBottom";
 import {
   COMPACT_BELOW,
-  FLOATING_SIZE,
   MINI_HEIGHT,
   MINI_LINE,
   MINI_MIN_HEIGHT,
   dragWindowFrom,
   holdMiniMinHeight,
   setMeetingMini,
+  growFromCompactWindow,
+  minimizeMeetingWindow,
   setMiniHeight,
   useMiniDocking,
 } from "../../lib/meeting/floatingWindow";
+import { meetingZoomFallback, toggleZoom, useTrackRestoreFrame } from "../../lib/window/zoom";
 import { useMeetingElapsed } from "../../lib/meeting/elapsed";
 import { meetingCommand } from "../../lib/meeting/meetingWindow";
 import { useCommandShortcut } from "../../lib/commands/bind";
@@ -39,13 +43,16 @@ import { log } from "../../lib/log";
 import { useI18n } from "../../i18n";
 import { CancelMeetingDialog } from "../TitleBar";
 import { MicChip } from "../MicChip";
-import { speakerLabel, TranscriptPanel } from "../TranscriptPanel";
+import { TranscriptPanel } from "../TranscriptPanel";
+import { displaySpeakerLabel } from "../../lib/speakers/labels";
 import { DestinationField } from "../DestinationSheet";
 import { MeetingContextField } from "../MeetingContextField";
 import { useMeetingDestination } from "../useMeetingDestination";
 import { CoachFeed } from "./CoachFeed";
+import { NotesEditor } from "./NotesEditor";
 import { LiveBanners } from "./LiveScreen";
-import { ASK_SUGGESTIONS, useCoachAsk } from "./coachAsk";
+import { ASK_SUGGESTIONS, useCoachAsk, type AskCard } from "./coachAsk";
+import { useTabShortcuts } from "../../lib/commands/tabs";
 
 type Tab = "notes" | "transcript" | "coach";
 
@@ -79,7 +86,8 @@ function useCompact(): boolean {
   return compact;
 }
 
-/** The recording clock: red dot + elapsed, orange with 已暫停 while paused. */
+/** The recording clock: a red dot + elapsed on grey; paused, the dot goes
+ *  grey and still, with 已暫停. Red is the only colour a running meeting wears. */
 function RecordingClock({ withLabel = true }: Readonly<{ withLabel?: boolean }>) {
   const { t } = useI18n();
   const status = useStore((s) => s.meetingStatus);
@@ -89,12 +97,12 @@ function RecordingClock({ withLabel = true }: Readonly<{ withLabel?: boolean }>)
   return (
     <span
       className={`pointer-events-none inline-flex shrink-0 items-center gap-2 rounded-full px-3 py-1 ${
-        paused ? "bg-warning text-warning-foreground" : "bg-recording/10 text-recording"
+        paused ? "bg-muted text-muted-foreground" : "bg-muted text-foreground"
       }`}
     >
       <span
         aria-hidden
-        className={`size-2 rounded-full ${paused ? "bg-warning-foreground" : "animate-pulse bg-recording"}`}
+        className={`size-2 rounded-full ${paused ? "bg-muted-foreground/60" : "animate-pulse bg-recording"}`}
       />
       <span className="font-display text-sm font-semibold tabular-nums">{elapsed}</span>
       {paused && withLabel && <span className="text-xs font-medium">{t("titlebar.paused")}</span>}
@@ -142,14 +150,20 @@ function MiniTranscript() {
   }, [rows, lines.length, lastText]);
 
   return (
-    <div ref={boxRef} className="flex min-h-0 flex-1 flex-col justify-end overflow-hidden px-3 py-2">
+    // Selectable, so a line can be copied: not a drag handle like the rest
+    // of the mini window.
+    <div
+      ref={boxRef}
+      data-no-drag
+      className="flex min-h-0 flex-1 cursor-text select-text flex-col justify-end overflow-hidden px-3 py-2"
+    >
       <div ref={viewRef} style={{ height: rows * MINI_LINE }} className="shrink-0 overflow-hidden">
         {lines.length ? (
           lines.map((seg) => (
             <p key={seg.id} className="text-sm leading-[22px] text-foreground">
               {/* align-top: the smaller name must not grow the 22px line box. */}
               <span className="mr-1.5 align-top text-xs leading-[22px] font-semibold text-primary">
-                {speakerLabel(seg, names, t)}
+                {displaySpeakerLabel(seg, names, t)}
               </span>
               {seg.text}
             </p>
@@ -164,23 +178,16 @@ function MiniTranscript() {
 
 /** The mini window's notes: the same notes as the 筆記 tab, in a small box. */
 function MiniNotes() {
-  const { t } = useI18n();
-  const notes = useStore((s) => s.meetingNotes);
-  const setNotes = useStore((s) => s.setMeetingNotes);
-  return (
-    <textarea
-      value={notes}
-      onChange={(e) => setNotes(e.target.value)}
-      placeholder={t("floating.notesPlaceholder")}
-      aria-label={t("floating.tabs.notes")}
-      className="block min-h-0 w-full flex-1 resize-none bg-transparent px-3 py-2 select-text text-sm leading-[22px] text-foreground outline-none placeholder:text-muted-foreground"
-    />
-  );
+  return <NotesEditor compact />;
 }
 
+/** Left to right, in both layouts. */
+const TAB_ORDER: readonly Tab[] = ["notes", "transcript", "coach"];
+
 const MINI_TABS: { tab: Tab; icon: typeof Captions }[] = [
-  { tab: "transcript", icon: Captions },
+  // The full window's order, left to right.
   { tab: "notes", icon: NotebookPen },
+  { tab: "transcript", icon: Captions },
   { tab: "coach", icon: Sparkles },
 ];
 
@@ -255,6 +262,7 @@ function MiniWindow({
       className="flex h-full min-h-0 w-full flex-1 select-none flex-col bg-background"
     >
       <div className="flex h-12 shrink-0 items-center gap-2 pr-1.5 pl-2" title={fixed ? undefined : t("floating.dockHint")}>
+        <DragGrip />
         <RecordingClock withLabel={false} />
         {coach ? (
           <form
@@ -286,17 +294,6 @@ function MiniWindow({
           </form>
         ) : (
           <div className="h-full min-w-0 flex-1" />
-        )}
-        {coach && last && !open && (
-          <button
-            type="button"
-            aria-label={t("floating.showAnswer")}
-            title={t("floating.showAnswer")}
-            onClick={() => setOpen(true)}
-            className="grid size-7 shrink-0 place-items-center rounded-md text-foreground/80 transition-colors hover:bg-muted"
-          >
-            <MessageCircle className="size-3.5" />
-          </button>
         )}
         <div role="tablist" aria-label={t("floating.tabsLabel")} className="flex shrink-0 items-center rounded-lg bg-muted/50 p-0.5">
           {MINI_TABS.map(({ tab: k, icon: Icon }) => (
@@ -347,21 +344,35 @@ function MiniWindow({
           >
             <X className="size-3.5" />
           </button>
-          <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2.5 pr-8">
-            <p className="mb-1 flex items-start gap-1.5 text-xs font-medium text-muted-foreground">
-              <MessageCircle className="mt-0.5 size-3 shrink-0" />
-              <span className="min-w-0">{last.question}</span>
-            </p>
-            {last.answer ? (
-              <div className="prose prose-sm dark:prose-invert max-w-none text-sm">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{last.answer}</ReactMarkdown>
-              </div>
-            ) : (
-              <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
-            )}
-          </div>
+          <MiniAskThread cards={cards} />
         </div>
       )}
+    </div>
+  );
+}
+
+/** The mini window's question thread: every question so far, oldest first,
+ *  the newest asked under the last — following the tail while the answer
+ *  streams in, unless the reader has scrolled up to an earlier one. */
+function MiniAskThread({ cards }: Readonly<{ cards: AskCard[] }>) {
+  const { viewportRef } = useStickToBottom([cards]);
+  return (
+    <div ref={viewportRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-2.5 pr-8">
+      {cards.map((c, i) => (
+        <div key={c.id} className={i > 0 ? "mt-3 border-t pt-3" : undefined}>
+          <p className="mb-2.5 flex items-start gap-1.5 text-sm leading-5 font-normal text-muted-foreground">
+            <MessageCircle className="mt-[3px] size-3.5 shrink-0" />
+            <span className="min-w-0">{c.question}</span>
+          </p>
+          {c.answer ? (
+            <div className="prose prose-sm dark:prose-invert max-w-none text-sm">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{c.answer}</ReactMarkdown>
+            </div>
+          ) : (
+            <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -372,7 +383,32 @@ function miniHeight(tab: Tab, answerOpen = false): number {
   return MINI_HEIGHT[tab];
 }
 
-/** Title bar: drag handle, the recording clock, the mic, collapse and close. */
+
+/** The six-dot handle the window drags by (as does any bare spot around it):
+ *  an open hand over it, a closed one while dragging. */
+function DragGrip() {
+  return (
+    <GripVertical
+      aria-hidden
+      className="size-3.5 shrink-0 cursor-grab text-muted-foreground/70 active:cursor-grabbing"
+    />
+  );
+}
+
+/** Double-clicking the full layout's title bar fills the screen, or goes back
+ *  to the frame the window had before (lib/window/zoom.ts). */
+function zoomMeetingWindow() {
+  void toggleZoom(meetingZoomFallback);
+}
+
+/** Frames worth zooming back to: the full layout's, never the mini window's
+ *  or one dragged small enough to turn compact. */
+function isFullLayoutFrame(frame: { width: number; height: number }): boolean {
+  return frame.width >= COMPACT_BELOW.width && frame.height >= COMPACT_BELOW.height;
+}
+
+/** Title bar: drag handle, the recording clock, the mic, then — smallest to
+ *  largest — minimize into the Dock, shrink to the mini window, and close. */
 function FloatingTitleBar({
   onClose,
   onCollapse,
@@ -381,14 +417,23 @@ function FloatingTitleBar({
 
   return (
     <header
-      onMouseDown={(e) => dragWindowFrom(e)}
+      onMouseDown={(e) => dragWindowFrom(e, { onDoubleClick: zoomMeetingWindow })}
       className="flex h-[50px] shrink-0 items-center gap-2.5 border-b pl-4 pr-3"
     >
-      <GripVertical aria-hidden className="pointer-events-none size-3.5 text-muted-foreground/70" />
+      <DragGrip />
       <RecordingClock />
       <div className="h-full min-w-0 flex-1" />
-      <MicChip />
-      <div className="flex items-center gap-1 pl-2">
+      <MicChip shrink />
+      <div className="flex shrink-0 items-center gap-1 pl-2">
+        <button
+          type="button"
+          aria-label={t("floating.minimize")}
+          title={t("floating.minimize")}
+          onClick={() => void minimizeMeetingWindow()}
+          className="grid size-8 place-items-center rounded-md text-foreground/80 transition-colors hover:bg-muted"
+        >
+          <Minus className="size-4" />
+        </button>
         <button
           type="button"
           aria-label={t("floating.collapse")}
@@ -396,7 +441,7 @@ function FloatingTitleBar({
           onClick={onCollapse}
           className="grid size-8 place-items-center rounded-md text-foreground/80 transition-colors hover:bg-muted"
         >
-          <Minus className="size-4" />
+          <Minimize2 className="size-3.5" />
         </button>
         <button
           type="button"
@@ -449,21 +494,10 @@ function MeetingHeading() {
   );
 }
 
-/** 筆記: a plain text box — write whatever, however. Saved with the recording
- *  as part of its context. */
+/** 筆記: a rich-text pad (Markdown underneath) — lists, to-dos, headings as
+ *  you type. Saved with the recording as part of its context. */
 function NotesPad() {
-  const { t } = useI18n();
-  const notes = useStore((s) => s.meetingNotes);
-  const setNotes = useStore((s) => s.setMeetingNotes);
-  return (
-    <textarea
-      value={notes}
-      onChange={(e) => setNotes(e.target.value)}
-      placeholder={t("floating.notesPlaceholder")}
-      aria-label={t("floating.tabs.notes")}
-      className="block size-full resize-none bg-transparent p-5 text-sm leading-[22px] text-foreground outline-none placeholder:text-muted-foreground"
-    />
-  );
+  return <NotesEditor />;
 }
 
 /** One tab of the segmented strip: the selected one rises into the panel. */
@@ -603,11 +637,15 @@ export function MeetingFloatingWindow() {
   const setHighlightMs = useStore((s) => s.setHighlightMs);
   const coachCount = useStore((s) => s.findings.length) + useCoachAsk((s) => s.cards.length);
   const [tab, setTab] = useState<Tab>("transcript");
+  // ⌘1–⌘3 / ⌘← ⌘→ in both layouts — the mini strip shares this state.
+  useTabShortcuts(TAB_ORDER, tab, setTab);
   const [bgOpen, setBgOpen] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [mini, setMini] = useState(false);
   const compact = useCompact();
   const busyRef = useRef(false);
+  // What a double click on the title bar zooms back to.
+  useTrackRestoreFrame(true, isFullLayoutFrame);
   const meetingActive = status === "recording" || status === "paused";
   const paused = status === "paused";
 
@@ -639,14 +677,8 @@ export function MeetingFloatingWindow() {
   }
 
   /** Out of the full window dragged small: back to the frame's size. */
-  async function growFromCompact() {
-    if (!isTauri()) return;
-    try {
-      const { getCurrentWindow, LogicalSize } = await import("@tauri-apps/api/window");
-      await getCurrentWindow().setSize(new LogicalSize(FLOATING_SIZE.width, FLOATING_SIZE.height));
-    } catch (error) {
-      log.warn("meeting: floating window grow failed", { error: String(error) });
-    }
+  function growFromCompact() {
+    return growFromCompactWindow();
   }
 
   if (mini) return <MiniWindow tab={tab} onTab={setTab} onExpand={() => void toggleMini(false)} />;
@@ -718,16 +750,17 @@ export function MeetingFloatingWindow() {
       </div>
 
       <footer className="flex shrink-0 items-center gap-2 border-t px-4 py-3">
-        {/* 暫停 wears the paused pill's orange; once paused, 繼續 is the blue
-            way back into the recording. */}
+        {/* Quiet by default — grey buttons, black and white. The only colour
+            is meaning: 繼續 tinted in the primary blue (the one thing to do
+            while paused, light so it sits with its grey neighbours) and 結束's red square (the recording's colour). */}
         <button
           type="button"
           onClick={togglePause}
           disabled={!meetingActive}
           className={`flex h-8 shrink-0 items-center gap-1.5 rounded-lg pr-3 pl-2.5 text-sm font-medium transition-colors disabled:opacity-50 ${
             paused
-              ? "bg-primary text-primary-foreground hover:bg-primary/90"
-              : "bg-warning text-warning-foreground hover:bg-warning/80"
+              ? "bg-primary/10 text-primary hover:bg-primary/15"
+              : "bg-muted text-muted-foreground hover:bg-accent hover:text-foreground"
           }`}
         >
           {paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
@@ -738,9 +771,13 @@ export function MeetingFloatingWindow() {
           type="button"
           onClick={() => once("end")}
           disabled={!meetingActive || finalizing}
-          className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg pr-3 pl-2.5 text-sm font-medium text-recording bg-recording/10 transition-colors hover:bg-recording/15 disabled:opacity-60"
+          className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg pr-3 pl-2.5 text-sm font-medium bg-muted text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-60"
         >
-          {finalizing ? <Loader2 className="size-3.5 animate-spin" /> : <Square className="size-3.5" />}
+          {finalizing ? (
+            <Loader2 className="size-3.5 animate-spin" />
+          ) : (
+            <Square className="size-3 fill-recording text-recording" />
+          )}
           {t("titlebar.end")}
         </button>
       </footer>

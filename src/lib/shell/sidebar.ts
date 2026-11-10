@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 
 /**
  * Whether the main window's left tree is collapsed (⌘B).
@@ -33,6 +33,42 @@ export function toggleSidebar(): void {
     /* private mode / no storage — the toggle still works for this session */
   }
   for (const l of listeners) l();
+}
+
+export function isSidebarCollapsed(): boolean {
+  return collapsed;
+}
+
+// ── ⇧⌘N: a new folder ────────────────────────────────────────────────────────
+//
+// The name field lives in the tree, and a collapsed tree isn't mounted, so the
+// request is a flag the tree takes when it is (or as soon as it gets) on screen.
+
+let newFolderPending = false;
+const newFolderListeners = new Set<() => void>();
+
+/** Ask the tree to open its new-folder field, showing the tree if needed. */
+export function requestNewFolder(): void {
+  if (collapsed) toggleSidebar();
+  newFolderPending = true;
+  for (const l of newFolderListeners) l();
+}
+
+/** The tree's half: `open` runs once per request, including one made while
+ *  the tree was not mounted. */
+export function useNewFolderRequest(open: () => void): void {
+  useEffect(() => {
+    const take = () => {
+      if (!newFolderPending) return;
+      newFolderPending = false;
+      open();
+    };
+    newFolderListeners.add(take);
+    take();
+    return () => {
+      newFolderListeners.delete(take);
+    };
+  }, [open]);
 }
 
 export function useSidebarCollapsed(): boolean {

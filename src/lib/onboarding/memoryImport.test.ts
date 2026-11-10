@@ -9,7 +9,6 @@ import {
   templateLines,
   BACKGROUND_TEMPLATE,
   memoryFilesToText,
-  readingSteps,
   redactSecrets,
   removeBackgroundLines,
   properNouns,
@@ -120,30 +119,6 @@ describe("removeBackgroundLines", () => {
     const { text, lines } = appendBackground(before, ["Works at Acme", "Uses Parley for client calls"]);
     expect(lines).toEqual(["Uses Parley for client calls"]);
     expect(removeBackgroundLines(text, lines)).toBe(before);
-  });
-});
-
-describe("readingSteps", () => {
-  const file = (kind: "global" | "auto" | "project", name: string) => ({ label: "x", kind, name, text: "t" });
-
-  it("names each file, and counts auto memory on one line where it starts", () => {
-    expect(
-      readingSteps([
-        file("global", "~/.claude/CLAUDE.md"),
-        file("auto", "MEMORY.md"),
-        file("auto", "user-role.md"),
-        file("auto", "team.md"),
-        file("project", "parley/CLAUDE.md"),
-      ]),
-    ).toEqual([
-      { kind: "file", name: "~/.claude/CLAUDE.md" },
-      { kind: "auto", count: 3 },
-      { kind: "file", name: "parley/CLAUDE.md" },
-    ]);
-  });
-
-  it("is empty when nothing was read", () => {
-    expect(readingSteps([])).toEqual([]);
   });
 });
 

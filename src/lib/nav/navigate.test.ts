@@ -13,11 +13,12 @@ const { loadHistoryEntry } = vi.hoisted(() => ({
 }));
 vi.mock("../history/history", () => ({ loadHistoryEntry }));
 
-import { useStore, type LibrarySelection } from "../store";
-import { replaySession } from "../test/fixtures";
-import { leaveRecordingTo, navHistory } from "./navigate";
+import { useLiveStore, useStore, type LibrarySelection } from "../store";
+import { replaySession, seg } from "../test/fixtures";
+import { leaveRecordingTo, navHistory, navigateTo } from "./navigate";
 
 const INITIAL = useStore.getState();
+const INITIAL_LIVE = useLiveStore.getState();
 const FOLDER: LibrarySelection = { kind: "personal", node: { kind: "folder", folderId: "f-acme" } };
 
 function openRecording(id: string | null) {
@@ -31,6 +32,7 @@ function openRecording(id: string | null) {
 
 beforeEach(() => {
   useStore.setState(INITIAL, true);
+  useLiveStore.setState(INITIAL_LIVE, true);
   navHistory.reset();
   loadHistoryEntry.mockClear();
 });
@@ -49,7 +51,7 @@ describe("leaveRecordingTo", () => {
     expect(s.librarySelection).toEqual(FOLDER);
     expect(s.replay).toBeNull();
     expect(s.loadedHistoryId).toBeNull();
-    expect(s.studyTab).toBe("report");
+    expect(s.studyTab).toBe("summary");
     // exitReplay passes through "home" inside the same synchronous turn; the
     // point is that nothing async sits between it and the library.
     expect(modes[modes.length - 1]).toBe("library");
@@ -75,11 +77,20 @@ describe("leaveRecordingTo", () => {
     ]);
   });
 
-  it("refuses while a meeting is running — exitReplay would reset it to idle", async () => {
+  it("works during a meeting and never touches it — the meeting has its own store", async () => {
     openRecording("rec-1");
-    useStore.setState({ meetingStatus: "recording" });
-    expect((await leaveRecordingTo(FOLDER)).status).toBe("refused");
-    expect(useStore.getState().meetingStatus).toBe("recording");
-    expect(useStore.getState().replay).not.toBeNull();
+    useLiveStore.setState({ meetingStatus: "recording", liveMeetingId: "m1", segments: [seg({ id: "live" })] });
+    expect((await leaveRecordingTo(FOLDER)).status).toBe("applied");
+    expect(useStore.getState().replay).toBeNull();
+    const live = useLiveStore.getState();
+    expect(live.meetingStatus).toBe("recording");
+    expect(live.segments.map((x) => x.id)).toEqual(["live"]);
+  });
+
+  it("opens a saved recording during a meeting", async () => {
+    useLiveStore.setState({ meetingStatus: "recording", liveMeetingId: "m1" });
+    expect((await navigateTo({ kind: "entry", id: "rec-2" })).status).toBe("applied");
+    expect(loadHistoryEntry).toHaveBeenCalledWith("rec-2");
+    expect(useLiveStore.getState().meetingStatus).toBe("recording");
   });
 });

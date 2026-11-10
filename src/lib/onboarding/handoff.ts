@@ -4,14 +4,23 @@
  * `buildHandoffPrompt` wraps a transcript in a short analysis brief — who is in
  * the room, which side is "me", three ready-made questions — so pasting it into
  * ChatGPT or Claude gets a useful answer on the first try instead of a summary
- * nobody asked for. `buildReportMarkdown` exports the finished report page.
+ * nobody asked for. `buildReportMarkdown` exports the whole report; the
+ * per-tab builders (`buildActionItemsMarkdown`, `buildDeliveryMarkdown`) are
+ * what the recording page copies for "copy this page".
  *
  * Pure functions: every label comes from the i18n dictionaries via `translate`,
  * so the output follows the app language and stays testable without React.
  */
 import { translate } from "../../i18n/messages";
 import { formatClock, speakerKey, speakerLabel } from "../store";
-import type { ActionItem, AppLanguage, MeetingKind, TimelineEvent, TranscriptSegment } from "../types";
+import type {
+  ActionItem,
+  AppLanguage,
+  DeliveryAssessment,
+  MeetingKind,
+  TimelineEvent,
+  TranscriptSegment,
+} from "../types";
 
 export interface HandoffPromptInput {
   title: string;
@@ -81,10 +90,15 @@ export function meetingKindLabel(kind: MeetingKind | null | undefined, lang: App
   return kind ? translate(lang, `meetingKind.${kind}`) : "";
 }
 
+/** How a speaker is written; defaults to the English labels. Hand-offs pass
+ *  the on-screen, localized labeller so the copy reads like the page. */
+type Labeller = (s: TranscriptSegment) => string;
+
 /** Distinct speaker display names in first-appearance order (spoken lines only). */
 export function speakerDisplayNames(
   segments: TranscriptSegment[],
-  names: Record<string, string>
+  names: Record<string, string>,
+  label: Labeller = (s) => speakerLabel(s, names),
 ): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -93,7 +107,7 @@ export function speakerDisplayNames(
     const key = speakerKey(s);
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push(speakerLabel(s, names));
+    out.push(label(s));
   }
   return out;
 }
@@ -107,14 +121,15 @@ export function resolveMeName(
   segments: TranscriptSegment[],
   names: Record<string, string>,
   userName: string,
-  fallback: string
+  fallback: string,
+  label: Labeller = (s) => speakerLabel(s, names),
 ): string {
   const own = userName.trim();
-  if (own && speakerDisplayNames(segments, names).includes(own)) return own;
+  if (own && speakerDisplayNames(segments, names, label).includes(own)) return own;
   const mic = segments.find(
     (s) => s.source === "me" && (s.speaker || 1) <= 1 && s.isFinal && s.text.trim()
   );
-  if (mic) return speakerLabel(mic, names);
+  if (mic) return label(mic);
   return own || fallback;
 }
 
@@ -168,5 +183,30 @@ export function buildReportMarkdown(entry: HandoffReportEntry, lang: AppLanguage
   }
 
   lines.push("---", "", `_${t("study.report.footer")}_`, "");
+  return lines.join("\n");
+}
+
+const TONE_KEY = {
+  neutral: "delivery.tone.neutral",
+  warm: "delivery.tone.warm",
+  firm: "delivery.tone.firm",
+  sharp: "delivery.tone.sharp",
+  aggressive: "delivery.tone.aggressive",
+  rude: "delivery.tone.rude",
+} as const satisfies Record<DeliveryAssessment["tone"], Parameters<typeof translate>[1]>;
+
+/** The delivery read as markdown: the one-liner, then tone, fillers and pace
+ *  ("" when there is no assessment yet). */
+export function buildDeliveryMarkdown(a: DeliveryAssessment | null | undefined, lang: AppLanguage): string {
+  if (!a) return "";
+  const t = (key: Parameters<typeof translate>[1]) => translate(lang, key);
+  const lines: string[] = [];
+  if (a.summary.trim()) lines.push(a.summary.trim(), "");
+  const evidence = a.toneEvidence.trim() ? ` — “${a.toneEvidence.trim()}”` : "";
+  lines.push(`- ${t("delivery.card.tone")}: ${t(TONE_KEY[a.tone])}${evidence}`);
+  const examples = a.fillers.examples.length ? ` (${a.fillers.examples.join(", ")})` : "";
+  const note = a.fillers.note.trim() ? ` — ${a.fillers.note.trim()}` : "";
+  lines.push(`- ${t("delivery.card.fillers")}: ${t(`delivery.filler.${a.fillers.level}`)}${examples}${note}`);
+  if (a.pace) lines.push(`- ${t("delivery.card.pace")}: ${t(`delivery.pace.${a.pace}`)}`);
   return lines.join("\n");
 }

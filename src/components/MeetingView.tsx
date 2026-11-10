@@ -5,14 +5,16 @@ import { SpeakerBar } from "./SpeakerBar";
 import { AnalysisTimeline } from "./analysis/AnalysisTimeline";
 import { selectAndSeek } from "./analysis/useAnalysis";
 import { runAnalysis } from "../lib/analysis/engine";
-import { findActiveTemplate } from "../lib/evaluations/presets";
 import { useStore, transcriptAsText, formatClock, meetingElapsedMs } from "../lib/store";
 import { useI18n } from "../i18n";
+import { displayLabelerOf, relabelFromState } from "../lib/speakers/useRelabel";
 import { Button } from "@/components/ui/button";
 
 /** Build a markdown record of the meeting: context, transcript, analysis findings. */
 function buildMarkdown(): string {
-  const { segments, findings, speakerNames, meetingContext } = useStore.getState();
+  const state = useStore.getState();
+  const { segments, findings, speakerNames, meetingContext } = state;
+  const relabel = relabelFromState(state);
   const now = new Date();
   const lines = [`# Parley meeting — ${now.toLocaleString()}`, ""];
   if (meetingContext.trim()) {
@@ -22,11 +24,11 @@ function buildMarkdown(): string {
     lines.push("## Findings", "");
     for (const f of findings) {
       const tag = [f.side ?? f.category, f.severity].filter(Boolean).join(", ");
-      lines.push(`- [${formatClock(f.atMs)}] **${f.title}** (${tag}): ${f.detail}`);
+      lines.push(`- [${formatClock(f.atMs)}] **${relabel(f.title)}** (${tag}): ${relabel(f.detail)}`);
     }
     lines.push("");
   }
-  lines.push("## Transcript", "", transcriptAsText(segments, speakerNames) || "(empty)", "");
+  lines.push("## Transcript", "", transcriptAsText(segments, speakerNames, displayLabelerOf(state)) || "(empty)", "");
   return lines.join("\n");
 }
 
@@ -48,9 +50,6 @@ export function MeetingView() {
   const recording = useStore((s) => s.meetingStatus === "recording");
   const meetingActive = useStore((s) => s.meetingStatus === "recording" || s.meetingStatus === "paused");
   const maxEndMs = useStore((s) => s.segments.reduce((m, x) => Math.max(m, x.endMs), 0));
-  const evalTemplates = useStore((s) => s.settings.evalTemplates);
-  const evaluations = useStore((s) => s.settings.evaluations);
-  const activeTemplate = findActiveTemplate(evalTemplates, evaluations);
 
   // Tick once a second so the axis right-edge advances while recording (a
   // pause freezes the elapsed value, so ticking through it is a no-op).
@@ -101,7 +100,6 @@ export function MeetingView() {
           selectedId={selectedId}
           onSelect={(e) => selectAndSeek(e, setHighlightMs)}
           onReanalyze={() => void runAnalysis({ mode: "live" })}
-          templateName={activeTemplate ? activeTemplate.name : t("timeline.templateCustom")}
         />
       )}
       <SpeakerBar />

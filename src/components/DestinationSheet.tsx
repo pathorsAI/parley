@@ -256,6 +256,8 @@ export function DestinationSheet({
   const [keepCopy, setKeepCopy] = useState(false);
   const [query, setQuery] = useState("");
   const [creating, setCreating] = useState(false);
+  /** The staged new folder's name is being edited (double-click on it). */
+  const [renaming, setRenaming] = useState(false);
   const [busy, setBusy] = useState(false);
   /** Switched to a workspace the recording is not in and not yet picked a
    *  folder there — the button asks for one instead of guessing the root. */
@@ -269,6 +271,7 @@ export function DestinationSheet({
     setKeepCopy(initialMode === "copy");
     setQuery("");
     setCreating(false);
+    setRenaming(false);
     setBusy(false);
     setUnpicked(false);
   }, [open, initialMode]);
@@ -287,6 +290,7 @@ export function DestinationSheet({
 
   function pickWorkspace(ws: string) {
     setNewFolder(null);
+    setRenaming(false);
     setQuery("");
     setCreating(false);
     // Coming back to the workspace the recording is in lands on its folder.
@@ -299,6 +303,7 @@ export function DestinationSheet({
 
   function pickFolder(folderId: string | null) {
     setNewFolder(null);
+    setRenaming(false);
     setUnpicked(false);
     setPicked(inWorkspace(workspace, folderId));
   }
@@ -316,6 +321,7 @@ export function DestinationSheet({
       setUnpicked(false);
     }
     setCreating(false);
+    setRenaming(false);
     setQuery("");
   }
 
@@ -356,9 +362,10 @@ export function DestinationSheet({
         closeLabel={t("common.close")}
         // Esc while naming a new folder closes the field, not the sheet.
         onEscapeKeyDown={(e) => {
-          if (!creating) return;
+          if (!creating && !renaming) return;
           e.preventDefault();
           setCreating(false);
+          setRenaming(false);
         }}
         footer={
           <SheetActions
@@ -390,6 +397,8 @@ export function DestinationSheet({
               newFolder={newFolder}
               creating={creating}
               onStartCreate={() => setCreating(true)}
+              renaming={renaming}
+              onRenamingChange={setRenaming}
               onPick={pickFolder}
               onStage={stageNewFolder}
             />
@@ -412,6 +421,8 @@ function FolderPane({
   newFolder,
   creating,
   onStartCreate,
+  renaming,
+  onRenamingChange,
   onPick,
   onStage,
 }: Readonly<{
@@ -428,6 +439,8 @@ function FolderPane({
   newFolder: string | null;
   creating: boolean;
   onStartCreate: () => void;
+  renaming: boolean;
+  onRenamingChange: (renaming: boolean) => void;
   onPick: (folderId: string | null) => void;
   onStage: (name: string) => void;
 }>) {
@@ -474,17 +487,26 @@ function FolderPane({
                 />
               ))}
               {newFolder && (
-                <FolderRow icon={<Plus className="size-3.5" />} label={newFolder} selected isCurrent={false} />
+                <StagedFolderRow
+                  name={newFolder}
+                  renaming={renaming}
+                  onRenamingChange={onRenamingChange}
+                  onRename={onStage}
+                />
               )}
               {query && shown.length === 0 && !offerCreate && (
                 <p className="px-2 py-3 text-center text-xs text-muted-foreground">{t("dest.noMatch")}</p>
               )}
-              <NewFolderRow
-                creating={creating}
-                query={offerCreate ? query.trim() : ""}
-                onStart={onStartCreate}
-                onSubmit={onStage}
-              />
+              {/* One new folder at a time: once one is staged it is renamed
+                  in place, so a second 新增資料夾 would only replace it. */}
+              {!newFolder && (
+                <NewFolderRow
+                  creating={creating}
+                  query={offerCreate ? query.trim() : ""}
+                  onStart={onStartCreate}
+                  onSubmit={onStage}
+                />
+              )}
             </div>
           ) : (
             <div className="flex items-center justify-center py-6 text-muted-foreground">
@@ -648,6 +670,79 @@ function FolderRow({
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {isCurrent && <span className="shrink-0 text-[10px] text-muted-foreground">{t("dest.here")}</span>}
       {selected && <Check className="size-3.5 shrink-0 text-primary" />}
+    </button>
+  );
+}
+
+/**
+ * The new folder the user staged, picked. Double-click its name to rename it
+ * (Enter or clicking away keeps the new name, Esc the old one); the folder is
+ * only created when the sheet's button is pressed.
+ */
+function StagedFolderRow({
+  name,
+  renaming,
+  onRenamingChange,
+  onRename,
+}: Readonly<{
+  name: string;
+  renaming: boolean;
+  onRenamingChange: (renaming: boolean) => void;
+  onRename: (name: string) => void;
+}>) {
+  const { t } = useI18n();
+  const [draft, setDraft] = useState(name);
+  const inputRef = useRef<HTMLInputElement>(null);
+  // Enter closes the field, and its blur then fires on the way out: answer once.
+  const doneRef = useRef(false);
+  useEffect(() => {
+    if (!renaming) return;
+    doneRef.current = false;
+    setDraft(name);
+    requestAnimationFrame(() => inputRef.current?.select());
+  }, [renaming, name]);
+
+  const finish = (keep: boolean) => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    const clean = draft.trim();
+    if (keep && clean && clean !== name) onRename(clean);
+    else onRenamingChange(false);
+  };
+
+  if (renaming) {
+    return (
+      <div className="flex h-8 items-center gap-2 rounded-md border border-input bg-muted px-2">
+        <Plus className="size-3.5 shrink-0 text-muted-foreground" />
+        <input
+          ref={inputRef}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              finish(true);
+            }
+          }}
+          onBlur={() => finish(true)}
+          placeholder={t("dest.folderName")}
+          aria-label={t("dest.folderName")}
+          className="h-full min-w-0 flex-1 bg-transparent text-sm font-medium outline-none placeholder:text-muted-foreground"
+        />
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      aria-pressed
+      title={t("dest.renameHint")}
+      onDoubleClick={() => onRenamingChange(true)}
+      className="flex h-8 w-full cursor-pointer items-center gap-2 rounded-md bg-muted px-2 text-left text-sm font-medium transition-colors"
+    >
+      <Plus className="size-3.5 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1 truncate">{name}</span>
+      <Check className="size-3.5 shrink-0 text-primary" />
     </button>
   );
 }

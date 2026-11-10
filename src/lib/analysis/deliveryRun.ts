@@ -4,6 +4,8 @@ import { analyzeDelivery } from "../ai/delivery";
 import { landStage, makeRunGuard } from "./runGuard";
 import { log } from "../log";
 import { studyErrorMessage } from "./errorMessage";
+import { resolveSelf } from "../speakers/self";
+import { speakerLabel } from "../speakers/labels";
 
 /**
  * Run the whole-recording delivery assessment (tone + over-frequent fillers + an
@@ -35,6 +37,11 @@ export async function runDeliveryAnalysis(): Promise<void> {
   if (!hasProviderKey(settings, "deep")) return;
   if (!hasSpokenSegment(segments)) return;
   if (state.deliveryStatus === "running") return;
+  // The pipeline holds this stage until the user is known (factsOf.selfKnown);
+  // the report has nothing to show it on until then.
+  const self = resolveSelf(state.segments, state.selfSpeaker, state.replay?.micActivity, state.voiceSelfKey);
+  if (!self) return;
+  const selfLine = segments.find((s) => self.isSelf(s) && s.text.trim());
 
   const run = guard.begin();
   state.setDeliveryError(null);
@@ -44,7 +51,9 @@ export async function runDeliveryAnalysis(): Promise<void> {
       settings,
       segments,
       names: speakerNames,
-      measuredRateHz: state.replay?.speechRateHz ?? null,
+      selfLabel: selfLine ? speakerLabel(selfLine, speakerNames) : null,
+      // The mic's measured pace is the user's only when the mic was theirs alone.
+      measuredRateHz: self.origin === "marked" ? null : state.replay?.speechRateHz ?? null,
       mode: "post",
       signal: run.signal,
     });

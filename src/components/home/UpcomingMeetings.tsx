@@ -1,122 +1,97 @@
-import { useEffect, useState } from "react";
-import { CalendarClock, Folder, Plus } from "lucide-react";
-import { toast } from "sonner";
-import { isMeetingActive, useStore } from "../../lib/store";
-import { sortDrafts, type MeetingDraft } from "../../lib/store/prep";
-import { beginMeeting } from "../../lib/meeting/start";
-import { startOfDay, untilStart } from "../../lib/meeting/timeSlots";
+import { Plus } from "lucide-react";
+import { useStore } from "../../lib/store";
+import { isStartingSoon, sortDrafts, type MeetingDraft } from "../../lib/store/prep";
 import { useI18n } from "../../i18n";
-import { log } from "../../lib/log";
+import { DraftRow, useNow } from "./DraftRow";
 
-/** The row's lead column: 16:00 today, 10/31 another day, 未定 without a time. */
-function leadLabel(d: MeetingDraft, now: number, locale: string, t: ReturnType<typeof useI18n>["t"]): string {
-  if (d.meetingAt == null) return t("home.upcoming.unscheduled");
-  if (startOfDay(d.meetingAt) === startOfDay(now)) {
-    return new Date(d.meetingAt).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit", hour12: false });
-  }
-  return new Date(d.meetingAt).toLocaleDateString(locale, { month: "numeric", day: "numeric" });
+type FolderName = (id: string | null) => string | undefined;
+
+/** The saved drafts split the way 總覽 shows them: the meetings starting
+ *  within the hour (or under way), and every other draft. Both soonest first. */
+function useDraftSplit(): { now: number; soon: MeetingDraft[]; rest: MeetingDraft[] } {
+  const drafts = useStore((s) => s.drafts);
+  const now = useNow();
+  const sorted = sortDrafts(drafts, now);
+  return {
+    now,
+    soon: sorted.filter((d) => isStartingSoon(d, now)),
+    rest: sorted.filter((d) => !isStartingSoon(d, now)),
+  };
 }
 
-/** Record a saved draft: it becomes the prep, then the meeting starts. */
-function startDraft(id: string) {
-  // Refused while a meeting records; beginMeeting then says so and brings
-  // that meeting's window up.
-  if (!useStore.getState().takeDraft(id)) {
-    if (isMeetingActive(useStore.getState().meetingStatus)) void beginMeeting();
-    return;
+function DraftList({
+  rows,
+  now,
+  folderName,
+  empty,
+}: Readonly<{ rows: MeetingDraft[]; now: number; folderName: FolderName; empty: string }>) {
+  if (rows.length === 0) {
+    return (
+      <p className="rounded-lg border border-dashed bg-white/20 dark:bg-black/10 px-4 py-5 text-center text-xs text-muted-foreground">
+        {empty}
+      </p>
+    );
   }
-  beginMeeting().catch((e) => {
-    log.error("home: start from draft failed", { error: String(e) });
-    toast.error(String(e instanceof Error ? e.message : e));
-  });
+  return (
+    <ul className="flex flex-col">
+      {rows.map((d) => (
+        <DraftRow key={d.id} draft={d} now={now} folder={folderName(d.meetingFolderId)} />
+      ))}
+    </ul>
+  );
+}
+
+function Heading({ title, count, action }: Readonly<{ title: string; count: number; action?: React.ReactNode }>) {
+  return (
+    <div className="flex min-h-6 items-center gap-2">
+      <h2 className="text-xs font-semibold text-muted-foreground">{title}</h2>
+      {count > 0 && <span className="text-[11px] tabular-nums text-muted-foreground">{count}</span>}
+      {action}
+    </div>
+  );
 }
 
 /**
- * 總覽's 即將開始: every saved meeting draft, soonest first — when, what,
- * which folder, how soon — each one click from editing or recording. Always
- * shown, so the place to find a prepared meeting is never a guess.
+ * 總覽's top block, 即將開始的會議: the drafted meetings that start within the
+ * next hour, or have started and not yet ended — the ones to act on now. A
+ * meeting moves here from 會議草稿 an hour before its time.
  */
-export function UpcomingMeetings({
-  folderName,
-  style,
-}: Readonly<{ folderName: (id: string | null) => string | undefined; style?: React.CSSProperties }>) {
-  const { t, language } = useI18n();
-  const drafts = useStore((s) => s.drafts);
-  const [now, setNow] = useState(() => Date.now());
-  const locale = language === "en" ? "en-US" : "zh-TW";
-
-  // "in 25 min" keeps itself current.
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(id);
-  }, []);
-
-  const rows = sortDrafts(drafts);
-
+export function StartingSoon({ folderName, style }: Readonly<{ folderName: FolderName; style?: React.CSSProperties }>) {
+  const { t } = useI18n();
+  const { now, soon } = useDraftSplit();
   return (
     <section className="animate-fade-up flex flex-col gap-1.5" style={style}>
-      <div className="flex items-center gap-2">
-        <h2 className="text-xs font-semibold text-muted-foreground">{t("home.upcoming.title")}</h2>
-        {rows.length > 0 && <span className="text-[11px] tabular-nums text-muted-foreground">{rows.length}</span>}
-        <button
-          type="button"
-          onClick={() => useStore.getState().setDraftOpen(true)}
-          className="ml-auto inline-flex cursor-pointer items-center gap-1 rounded px-1 text-xs text-primary transition-colors hover:text-primary/80"
-        >
-          <Plus className="size-3" />
-          {t("home.newDraft")}
-        </button>
-      </div>
+      <Heading title={t("home.soon.title")} count={soon.length} />
+      <DraftList rows={soon} now={now} folderName={folderName} empty={t("home.soon.empty")} />
+    </section>
+  );
+}
 
-      {rows.length === 0 ? (
-        <p className="rounded-lg border border-dashed px-4 py-5 text-center text-xs text-muted-foreground">
-          {t("home.upcoming.empty")}
-        </p>
-      ) : (
-        <ul className="flex flex-col">
-          {rows.map((d) => {
-            const until = d.meetingAt == null ? null : untilStart(d.meetingAt, now);
-            const soon =
-              until == null
-                ? null
-                : until.unit === "started"
-                  ? t("home.upcoming.started")
-                  : t(`home.upcoming.in.${until.unit}`, { n: String(until.value) });
-            const folder = folderName(d.meetingFolderId);
-            return (
-              <li key={d.id} className="flex min-h-11 items-center gap-2.5 border-b px-2 py-1.5">
-                <span className="w-11 shrink-0 text-[11px] tabular-nums text-muted-foreground">
-                  {leadLabel(d, now, locale, t)}
-                </span>
-                <CalendarClock className="size-3.5 shrink-0 text-muted-foreground/70" />
-                <button
-                  type="button"
-                  title={t("home.upcoming.edit")}
-                  onClick={() => useStore.getState().editDraft(d.id)}
-                  className="min-w-0 cursor-pointer truncate text-left text-sm font-medium text-foreground hover:underline"
-                >
-                  {d.title || t("floating.untitled")}
-                </button>
-                {folder && (
-                  <span className="inline-flex h-5 shrink-0 items-center gap-1 rounded-full border px-2 text-[10px] text-muted-foreground">
-                    <Folder className="size-2.5" />
-                    {folder}
-                  </span>
-                )}
-                {soon && <span className="shrink-0 text-[11px] text-muted-foreground">{soon}</span>}
-                <span className="flex-1" />
-                <button
-                  type="button"
-                  onClick={() => startDraft(d.id)}
-                  className="h-7 shrink-0 cursor-pointer rounded-lg border bg-background px-2.5 text-xs font-medium transition-colors hover:bg-muted"
-                >
-                  {t("home.upcoming.start")}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+/**
+ * 總覽's 會議草稿: every other saved draft — later today, another day, or with
+ * no time yet — soonest first, each one click from editing or recording.
+ * Always shown, so the place to find a prepared meeting is never a guess.
+ */
+export function MeetingDrafts({ folderName, style }: Readonly<{ folderName: FolderName; style?: React.CSSProperties }>) {
+  const { t } = useI18n();
+  const { now, rest } = useDraftSplit();
+  return (
+    <section className="animate-fade-up flex min-w-0 flex-col gap-1.5" style={style}>
+      <Heading
+        title={t("library.org.drafts")}
+        count={rest.length}
+        action={
+          <button
+            type="button"
+            onClick={() => useStore.getState().setDraftOpen(true)}
+            className="ml-auto inline-flex cursor-pointer items-center gap-1 rounded px-1 text-xs text-primary transition-colors hover:text-primary/80"
+          >
+            <Plus className="size-3" />
+            {t("home.newDraft")}
+          </button>
+        }
+      />
+      <DraftList rows={rest} now={now} folderName={folderName} empty={t("home.upcoming.empty")} />
     </section>
   );
 }

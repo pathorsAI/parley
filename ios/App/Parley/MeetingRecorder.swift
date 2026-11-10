@@ -1,5 +1,6 @@
 import Foundation
 import ParleyKit
+import os
 import SwiftUI
 
 /// One live meeting, from the tap on Start to the recording landing in the
@@ -47,6 +48,9 @@ final class MeetingRecorder: ObservableObject {
         /// the user is concerned, and already un-startable.
         case starting
         case recording
+        /// The person paused. The microphone stays open and the socket stays
+        /// up, but nothing reaches the file or the relay: see `pause()`.
+        case paused
         /// Draining the relay's last utterance.
         case finishing
         case uploading
@@ -72,7 +76,7 @@ final class MeetingRecorder: ObservableObject {
 
     private static func holdsMic(_ phase: Phase) -> Bool {
         switch phase {
-        case .starting, .recording, .finishing: return true
+        case .starting, .recording, .paused, .finishing: return true
         case .idle, .uploading: return false
         }
     }
@@ -86,15 +90,16 @@ final class MeetingRecorder: ObservableObject {
     #if DEBUG
         private var demoLevelTimer: Timer?
     #endif
-    /// When this meeting started, for the live screen's timer. Set on the tap
-    /// rather than when the microphone finally opens — the timer and the record
-    /// control have to agree about when the recording began, and the control
-    /// flips on the tap (see the type doc). Nil between meetings.
+    /// How long this meeting has been recording, for the live screen's timer.
+    /// Started on the tap rather than when the microphone finally opens — the
+    /// timer and the record control have to agree about when the recording
+    /// began, and the control flips on the tap (see the type doc). Nil between
+    /// meetings.
     ///
-    /// A `Date` rather than a ticking count: the view hands it to
+    /// Dates rather than a ticking count: the view hands `timerAnchor` to
     /// `Text(_:style:.timer)` and the system redraws the digits, so nothing here
-    /// publishes once a second.
-    @Published private(set) var startedAt: Date?
+    /// publishes once a second. It changes on pause and resume only.
+    @Published private(set) var clock: RecordingClock?
     /// One line under the transcript. `nil` when there is nothing to say.
     @Published private(set) var status: String?
     /// The microphone could not be recovered. The view watches this and ends
@@ -172,9 +177,12 @@ final class MeetingRecorder: ObservableObject {
         case stopped
     }
 
-    /// What the record button reflects. True from the tap, not from the moment
-    /// the socket came up.
-    var isRecording: Bool { phase == .starting || phase == .recording }
+    /// A meeting is open: starting, recording, or paused. What the record
+    /// button reflects, true from the tap rather than from the moment the
+    /// socket came up. Paused counts, because a paused meeting is still one
+    /// Stop has to end and Start must not open a second of.
+    var isInMeeting: Bool { phase == .starting || phase == .recording || phase == .paused }
+    var isPaused: Bool { phase == .paused }
     /// The meeting is winding down; the button is a spinner, not a control.
     var isBusy: Bool { phase == .finishing || phase == .uploading }
 
@@ -187,6 +195,10 @@ final class MeetingRecorder: ObservableObject {
     /// audio spoken while there is no socket, so a blip costs a pause in the
     /// live transcript rather than the sentence that was said during it.
     private let audio = RelayAudioBridge()
+    /// Whether microphone chunks go anywhere. Read on the audio thread for
+    /// every chunk, so a lock rather than main-actor state. False while
+    /// paused: the chunk is dropped before the file or the relay sees it.
+    private let feeding = OSAllocatedUnfairLock(initialState: true)
 
     /// Bumped for every relay connection this recording makes. Events carry the
     /// leg they came from so a socket that dies slowly cannot write into a
@@ -222,7 +234,7 @@ final class MeetingRecorder: ObservableObject {
         // waits on it (see `Haptics`).
         Haptics.prepareForRecording()
         status = String(localized: "Starting…")
-        startedAt = Date()
+        clock = RecordingClock(startedAt: Date())
         segments = []
         // Whatever the last meeting left on screen belongs to the last meeting.
         settled = nil
@@ -234,10 +246,11 @@ final class MeetingRecorder: ObservableObject {
         reconnectAttempts = 0
         transcription = .idle
         audio.reset()
+        feeding.withLock { $0 = true }
 
         guard await AudioCapture.requestPermission() else {
             phase = .idle
-            startedAt = nil
+            clock = nil
             micDenied = true
             // What to do, not only what went wrong: the button under it is
             // the way to Settings, and the sentence says why it is there.
@@ -259,7 +272,8 @@ final class MeetingRecorder: ObservableObject {
         if let client { audio.attach(client) }
 
         let cap = AudioCapture(
-            onChunk: { [weak self, audio] samples, level in
+            onChunk: { [weak self, audio, feeding] samples, level in
+                guard feeding.withLock({ $0 }) else { return }
                 recorder?.append(samples)
                 audio.send(samples)
                 Task { @MainActor in
@@ -279,7 +293,7 @@ final class MeetingRecorder: ObservableObject {
             audio.discard()
             client?.cancel()
             phase = .idle
-            startedAt = nil
+            clock = nil
             status = String(localized: "Audio error: \(error.localizedDescription)")
             return
         }
@@ -317,11 +331,57 @@ final class MeetingRecorder: ObservableObject {
         status = nil
     }
 
+    /// Stop recording without ending the meeting. Resuming continues the same
+    /// audio file and the same transcript.
+    ///
+    /// ## The microphone stays open
+    ///
+    /// Only the chunks stop going anywhere: `feeding` drops each one before the
+    /// file or the relay sees it, so nothing said while paused is kept, sent,
+    /// or transcribed. Closing the capture instead would turn the orange dot
+    /// off, and cost the recording. A meeting is often paused with the phone
+    /// locked, and an app holding the `audio` background mode is only kept
+    /// running while its audio session is actually doing something. A stopped
+    /// engine gets the app suspended, the socket dies with it, and iOS does not
+    /// let a backgrounded app start a microphone again, so Resume from the
+    /// next unlock would have nothing to resume and a suspended process is one
+    /// jetsam away from losing the meeting's last stretch.
+    ///
+    /// ## Timestamps are recorded time
+    ///
+    /// The file and the relay are fed the same chunks, so a pause removes the
+    /// same stretch from both. The relay's clock and the bridge's sample count
+    /// (which places any reconnect leg) both run on audio received, so a
+    /// segment's `startMs` is a position in the saved file and playback stays
+    /// in sync. The wall-clock time of the pause is in no timestamp.
+    ///
+    /// ## The socket stays up
+    ///
+    /// The client sends its keepalive every two seconds whether or not audio
+    /// flows, and liveness is WebSocket ping and pong (`RelayLiveness`), so a
+    /// silent leg is a healthy one. If the relay drops anyway the usual
+    /// reconnect runs, paused or not: the next leg starts at the same recorded
+    /// position, because no samples arrived in between.
+    func pause() {
+        guard phase == .recording else { return }
+        feeding.withLock { $0 = false }
+        phase = .paused
+        clock?.pause(at: Date())
+        micLevel = 0
+    }
+
+    func resume() {
+        guard phase == .paused else { return }
+        clock?.resume(at: Date())
+        phase = .recording
+        feeding.withLock { $0 = true }
+    }
+
     /// End the meeting: stop the microphone, let the relay flush its last
     /// utterance, then save and upload. A second call while that runs is a
     /// no-op.
     func stop(app: AppState) async {
-        guard isRecording else { return }
+        guard isInMeeting else { return }
         finishRequested = true
         phase = .finishing
         // Here rather than after the awaits below: closing the microphone,
@@ -363,7 +423,7 @@ final class MeetingRecorder: ObservableObject {
     /// should never have started, which otherwise had no way out but `stop()`
     /// and a zombie recording in the library.
     func discard() async {
-        guard isRecording else { return }
+        guard isInMeeting else { return }
         finishRequested = true
         phase = .finishing
         // A third outcome gets the third beat, exactly as dictation's ✕ does —
@@ -388,7 +448,7 @@ final class MeetingRecorder: ObservableObject {
 
         segments = []
         settled = nil
-        startedAt = nil
+        clock = nil
         status = nil
         phase = .idle
     }
@@ -416,14 +476,14 @@ final class MeetingRecorder: ObservableObject {
     private func connect(_ client: ParleyStreamClient, leg: Int) async {
         do {
             try await client.start()
-            guard self.leg == leg, phase == .recording else { return }
+            guard self.leg == leg, phase == .recording || phase == .paused else { return }
             reconnectAttempts = 0
             transcription = .live
             status = String(localized: "Transcribing live")
         } catch {
             guard self.leg == leg else { return }
             if (error as? ParleyStreamClient.Rejected)?.isQuotaExceeded == true,
-                phase == .recording
+                phase == .recording || phase == .paused
             {
                 // Refused at the handshake for quota: the next one would be
                 // refused the same way.
@@ -450,7 +510,7 @@ final class MeetingRecorder: ObservableObject {
         case .segment(let seg):
             upsert(seg)
         case .closed(let reason):
-            guard !finishRequested, isRecording else { return }
+            guard !finishRequested, isInMeeting else { return }
             let code = Self.closeCode(reason)
             AppLog.recording.error(
                 "relay leg \(eventLeg, privacy: .public) closed: \(code, privacy: .public)")
@@ -461,7 +521,7 @@ final class MeetingRecorder: ObservableObject {
             // to put in front of someone. While recording the reconnect path
             // owns the copy; once the meeting is winding down the stop path
             // does, and neither wants this overwriting it.
-            guard !finishRequested, isRecording else { return }
+            guard !finishRequested, isInMeeting else { return }
             let code = "stt_relay_error_\(relayCode ?? "unknown")"
             AppLog.recording.error(
                 "relay leg \(eventLeg, privacy: .public) error: \(code, privacy: .public)")
@@ -488,7 +548,7 @@ final class MeetingRecorder: ObservableObject {
     /// transcript appears live rather than after the upload, and the bridge
     /// keeps the words spoken in between for the leg that comes next.
     private func scheduleReconnect() {
-        guard reconnectTask == nil, isRecording, !finishRequested else { return }
+        guard reconnectTask == nil, isInMeeting, !finishRequested else { return }
 
         let previous = relay
         relay = nil
@@ -535,7 +595,7 @@ final class MeetingRecorder: ObservableObject {
 
     private func performReconnect(token: String, leg targetLeg: Int) async {
         reconnectTask = nil
-        guard leg == targetLeg, isRecording, !finishRequested else { return }
+        guard leg == targetLeg, isInMeeting, !finishRequested else { return }
         // The bridge decides the offset, because the bridge is what knows where
         // in the recording the audio it is holding was actually spoken. A leg
         // offset to "now" would file a gap's worth of speech after the words
@@ -564,7 +624,7 @@ final class MeetingRecorder: ObservableObject {
     // MARK: microphone status
 
     private func handle(_ captureStatus: AudioCapture.Status) {
-        guard isRecording else { return }
+        guard isInMeeting else { return }
         switch captureStatus {
         case .running:
             // Only a rebuild reports `.running` — the first open does not go
@@ -730,7 +790,7 @@ final class MeetingRecorder: ObservableObject {
             self.status = status
             phase = .idle
             transcription = .idle
-            startedAt = nil
+            clock = nil
         }
 
         /// ScreenshotDemo: put the screen in the state worth capturing — a
@@ -743,7 +803,7 @@ final class MeetingRecorder: ObservableObject {
             // 18:42 on the clock, matching the featured recording's duration, so
             // the captured frame shows a meeting well under way rather than one
             // that started the instant the screenshot was taken.
-            startedAt = Date(timeIntervalSinceNow: -1_122)
+            clock = RecordingClock(startedAt: Date(timeIntervalSinceNow: -1_122))
             // A simulator has no microphone, so the waveform would sit on its
             // silence line. Feed it a fixed speech-shaped level pattern at the
             // real chunk rate instead: bursts and pauses, the same every run, so

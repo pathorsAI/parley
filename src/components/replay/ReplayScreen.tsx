@@ -8,7 +8,6 @@ import { toast } from "sonner";
 import { useI18n } from "../../i18n";
 import { useStore, hasSpokenSegment } from "../../lib/store";
 import { isTauri } from "../../lib/tauriEvents";
-import { findActiveTemplate } from "../../lib/evaluations/presets";
 import { analysisSignature, hasSides, lensOf } from "../../lib/analysis/lens";
 import { useStudyArtifactDisplay } from "../../lib/analysis/studyPipeline";
 import { TranscriptCopyMenu } from "../TranscriptCopyMenu";
@@ -18,6 +17,7 @@ import { selectAndSeek } from "../analysis/useAnalysis";
 import { ReplayPlayerBar } from "./ReplayPlayerBar";
 import { ReplayTranscript } from "./ReplayTranscript";
 import { ReplaySpeakerTags } from "./ReplaySpeakerTags";
+import { RetranscribeButton, RetranscribeConfirm, useRetranscribe } from "./RetranscribeButton";
 import { useReplayPlayer, type ReplayPlayer } from "./useReplayPlayer";
 import { useReplayPlayheadMs, useReplaySession, useReplayTrim } from "./spine";
 import { useCommandScope, useCommandShortcut } from "../../lib/commands/bind";
@@ -83,11 +83,11 @@ export function ReplayScreen() {
   const analysisStatus = useStore((s) => s.analysisStatus);
   const analysisError = useStore((s) => s.analysisError);
   const selectedId = useStore((s) => s.selectedFindingId);
-  const evalTemplates = useStore((s) => s.settings.evalTemplates);
   const evaluations = useStore((s) => s.settings.evaluations);
   const analyzedEvalSig = useStore((s) => s.analyzedEvalSig);
   const meetingKind = useStore((s) => s.meetingKind);
   const findingsDisplay = useStudyArtifactDisplay("findings");
+  const retranscribe = useRetranscribe();
 
   // Persist the dragged column proportions (transcript / findings) to
   // localStorage so they survive reloads. v2 id: the old key stored a 3-column
@@ -103,7 +103,6 @@ export function ReplayScreen() {
   }
 
   // Which eval template is active, and whether the findings predate an eval change.
-  const activeTemplate = findActiveTemplate(evalTemplates, evaluations);
   const templateStale =
     findings.length > 0 &&
     analysisStatus === "done" &&
@@ -189,7 +188,6 @@ export function ReplayScreen() {
         playheadMs={playheadMs}
         selectedId={selectedId}
         onSelect={(e) => selectAndSeek(e, player.seek)}
-        templateName={activeTemplate ? activeTemplate.name : t("timeline.templateCustom")}
         stale={templateStale}
         pending={findings.length === 0 && (findingsDisplay === "running" || findingsDisplay === "queued")}
         expectSides={hasSides(lensOf(meetingKind))}
@@ -203,13 +201,18 @@ export function ReplayScreen() {
       >
         <ResizablePanel id="transcript" defaultSize={62} minSize={32}>
           <div className="flex h-full min-h-0 flex-col">
-            <div className="flex h-9 shrink-0 items-center justify-between border-b px-4">
-              <span className="text-xs font-medium text-foreground">{t("replay.transcript")}</span>
-              <TranscriptCopyMenu
-                segments={segments}
-                speakerNames={speakerNames}
-                disabled={!hasSpokenSegment(segments)}
-              />
+            {/* Same height and title weight as the 時間軸分析 header beside it
+                (FindingsPanel), so the two bars read as one line. */}
+            <div className="flex h-10 shrink-0 items-center justify-between border-b px-4">
+              <span className="text-xs font-semibold text-foreground">{t("replay.transcript")}</span>
+              <div className="flex items-center gap-1">
+                {hasSpokenSegment(segments) && <RetranscribeButton state={retranscribe} compact />}
+                <TranscriptCopyMenu
+                  segments={segments}
+                  speakerNames={speakerNames}
+                  disabled={!hasSpokenSegment(segments)}
+                />
+              </div>
             </div>
             <ReplaySpeakerTags segments={segments} names={speakerNames} label={t("meeting.speakers")} />
             <div className="min-h-0 flex-1">
@@ -225,6 +228,9 @@ export function ReplayScreen() {
                 // got transcribed (#570). "No recording loaded" would be wrong
                 // there — the audio is right above, playable.
                 emptyLabel={t(session.audioSrc ? "replay.noTranscript" : "replay.empty")}
+                // A recording with audio but no transcript is exactly the one to
+                // rescue (#680) — the button belongs where the transcript would be.
+                emptyAction={<RetranscribeButton state={retranscribe} />}
               />
             </div>
           </div>
@@ -236,6 +242,7 @@ export function ReplayScreen() {
           <FindingsPanel mode="replay" onSeek={player.seek} />
         </ResizablePanel>
       </ResizablePanelGroup>
+      <RetranscribeConfirm state={retranscribe} />
     </div>
   );
 }

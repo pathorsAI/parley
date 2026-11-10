@@ -11,7 +11,8 @@ vi.mock("../history/history", () => ({
   persistStageOutputs: (...args: unknown[]) => persistStageOutputs(...args),
 }));
 
-import { useStore } from "../store";
+import { useLiveStore, useStore } from "../store";
+import { beginLiveSession } from "../meeting/liveSession";
 import { landStage, makeRunGuard } from "./runGuard";
 import { runRegistry } from "./runRegistry";
 import { replaySession, seg } from "../test/fixtures";
@@ -97,14 +98,17 @@ describe("makeRunGuard", () => {
     run.end();
   });
 
-  it("starting a live meeting counts as leaving — a replay pass persists instead of writing into it", () => {
+  it("starting a live meeting does not leave the recording — the meeting has its own store", () => {
     const guard = makeRunGuard("findings");
     show("A");
     const run = guard.begin();
-    useStore.getState().startMeeting(); // keeps `replay`, clears loadedHistoryId
-    expect(run.alive()).toBe(false);
+    beginLiveSession();
+    expect(useLiveStore.getState().meetingStatus).toBe("recording");
+    // The recording is still on screen, so the pass keeps writing into it.
+    expect(run.alive()).toBe(true);
     expect(run.target()).toEqual({ entryId: "A", readOnlyId: null });
     run.end();
+    useLiveStore.getState().cancelMeeting();
   });
 
   it("a read-only org recording targets the study cache", () => {

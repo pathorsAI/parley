@@ -94,6 +94,7 @@ export const DEFAULT_SETTINGS: Settings = {
   voiceTypingShortcut: DEFAULT_VOICE_TYPING_SHORTCUT,
   voiceTypingMode: "hold",
   voiceTypingPolishStyle: "tidy",
+  voiceTypingCustomInstructions: "",
   // The dictation stays on the clipboard. See Settings.voiceTypingRestoreClipboard.
   voiceTypingRestoreClipboard: false,
   evaluations: defaultEvalDefs(tDefault),
@@ -108,4 +109,7 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultSaveLocation: { scope: "personal", folderId: null },
   gettingStarted: { ...DEFAULT_GETTING_STARTED },
   hintsSeen: [],
+  // Asking when a call starts is the point of #606 — on unless turned off.
+  meetingDetectEnabled: true,
+  meetingDetectMutedApps: [],
 };

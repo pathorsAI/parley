@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { useStore } from "../store";
+import { useLiveStore, useStore } from "../store";
 import { useI18n } from "../../i18n";
 import type { TranslationKey } from "../../i18n";
 import { DeliveryCoach } from "./delivery";
@@ -7,7 +7,7 @@ import type { DeliveryNudgeKind, ProsodyMetrics } from "../types";
 
 /** Selector for the gauges: latest prosody metrics (null until the first event). */
 export function useProsody(): ProsodyMetrics | null {
-  return useStore((s) => s.prosody);
+  return useLiveStore((s) => s.prosody);
 }
 
 /** i18n key for each mic-derived nudge kind. "tone" and "filler" are supplied by
@@ -30,8 +30,9 @@ const NUDGE_KEY: Record<Exclude<DeliveryNudgeKind, "tone" | "filler">, Translati
  * its baselines); it's driven off the `prosody` slice, which updates ~6–7×/s.
  */
 export function useDeliveryCoach(): void {
-  const meetingStatus = useStore((s) => s.meetingStatus);
-  const startedAt = useStore((s) => s.meetingStartedAt);
+  // The running meeting's signals live in the live store; the toggles are settings.
+  const meetingStatus = useLiveStore((s) => s.meetingStatus);
+  const startedAt = useLiveStore((s) => s.meetingStartedAt);
   // Depend on primitive flags, NOT the `delivery` object: its identity changes on
   // every settings mutation (updateSettings spreads, applySettings replaces the
   // whole object on cross-window sync), which would otherwise rebuild the coach —
@@ -40,7 +41,7 @@ export function useDeliveryCoach(): void {
   const pitch = useStore((s) => s.settings.delivery.pitch);
   const pauses = useStore((s) => s.settings.delivery.pauses);
   const tone = useStore((s) => s.settings.delivery.tone);
-  const prosody = useStore((s) => s.prosody);
+  const prosody = useLiveStore((s) => s.prosody);
   const { t } = useI18n();
 
   const coachRef = useRef<DeliveryCoach | null>(null);
@@ -59,7 +60,7 @@ export function useDeliveryCoach(): void {
   // Drop any stored assessment when the tone/filler toggle flips, so re-enabling
   // shows the waiting state until a fresh pass populates it (never a stale read).
   useEffect(() => {
-    useStore.getState().setDeliveryAssessment(null);
+    useLiveStore.getState().setDeliveryAssessment(null);
   }, [tone]);
 
   // Feed each new prosody sample to the coach; surface any resulting nudge.
@@ -71,7 +72,7 @@ export function useDeliveryCoach(): void {
     const trigger = coach.observe(prosody, nowMs);
     // The coach only emits mic-derived kinds; tone/filler are LLM-pushed elsewhere.
     if (!trigger || trigger.kind === "tone" || trigger.kind === "filler") return;
-    useStore.getState().pushDeliveryNudge({
+    useLiveStore.getState().pushDeliveryNudge({
       kind: trigger.kind,
       severity: trigger.severity,
       message: messageRef.current(trigger.kind),

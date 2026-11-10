@@ -160,6 +160,11 @@ export const animateWindowFrame = (args: {
   height: number;
   durationMs: number;
 }) => invoke<void>("animate_window_frame", args);
+/** Play the short system sound a meeting recording starts or stops with
+ *  (commands/cue.rs); returns at once, the sound plays on. */
+export const playCue = (args: { cue: "start" | "stop" }) => invoke<void>("play_cue", args);
+/** Hand Edit › Undo / Redo back to the focused text field (macOS; see lib/edit/undo.ts). */
+export const nativeEdit = (args: { action: "undo" | "redo" }) => invoke<void>("native_edit", args);
 /** The meeting the backend is recording right now, or null. */
 export interface BackendMeeting {
   meetingId: string;
@@ -215,6 +220,8 @@ export const transcribeFile = (args: {
   vocabulary?: string[] | null;
   diarization: boolean;
   batchUrl?: string | null;
+  /** Skip the cached result and transcribe again (re-transcribe). */
+  fresh?: boolean;
 }) => invoke<TranscriptionResult>("transcribe_file", args);
 export const measureAudioSpeechRate = (args: { path: string }) => invoke<number>("measure_audio_speech_rate", args);
 export const preparePlaybackFallback = (args: { audioPath: string }) =>
@@ -234,6 +241,30 @@ export const diarizeAudio = (args: { audioPath: string; segments: SegSpan[]; num
   invoke<SegSpeaker[]>("diarize_audio", args);
 export const diarizeModelStatus = () => invoke<DiarizeModelStatus>("diarize_model_status");
 export const downloadDiarizeModel = () => invoke<void>("download_diarize_model");
+
+// ── The user's voiceprint (voiceprint.rs) ───────────────────────────────────
+
+/** A stretch of an audio file, in ms on the file's own clock. */
+export interface AudioSpan {
+  startMs: number;
+  endMs: number;
+}
+export interface VoiceprintStatus {
+  speechMs: number;
+  updatedAt: number;
+  source: "mic-check" | "marked";
+}
+export interface VoiceprintMatch {
+  key: string;
+  similarity: number;
+  speechMs: number;
+}
+export const voiceprintStatus = () => invoke<VoiceprintStatus | null>("voiceprint_status");
+export const voiceprintClear = () => invoke<void>("voiceprint_clear");
+export const voiceprintEnroll = (args: { audioPath: string; spans: AudioSpan[] }) =>
+  invoke<VoiceprintStatus>("voiceprint_enroll", args);
+export const voiceprintMatch = (args: { audioPath: string; speakers: { key: string; spans: AudioSpan[] }[] }) =>
+  invoke<VoiceprintMatch[]>("voiceprint_match", args);
 
 // ── History store (history.rs) ──────────────────────────────────────────────
 
@@ -349,3 +380,10 @@ export const launchAtLoginStatus = () => invoke<boolean>("launch_at_login_status
 export const setLaunchAtLogin = (args: { enabled: boolean }) => invoke<boolean>("set_launch_at_login", args);
 export const markShowOnNextLaunch = () => invoke<void>("mark_show_on_next_launch");
 export const clearShowOnNextLaunch = () => invoke<void>("clear_show_on_next_launch");
+
+// ── Call detection (meeting_detect.rs) ──────────────────────────────────────
+
+/** Start (or stop) the watcher that reports another app starting a call, with
+ *  the app ids the user muted. Safe to call repeatedly. */
+export const setMeetingDetection = (args: { enabled: boolean; mutedApps: string[] }) =>
+  invoke<void>("set_meeting_detection", args);

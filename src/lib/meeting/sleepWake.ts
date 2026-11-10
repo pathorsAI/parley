@@ -8,7 +8,7 @@
 // past WAKE_END_AFTER_MS the meeting is over — it is ended and saved as it
 // stood when the machine went to sleep, and the user is told.
 
-import { isMeetingActive, useStore } from "../store";
+import { isMeetingActive, useLiveStore, useStore } from "../store";
 import { listenIfTauri, SYSTEM_WAKE_EVENT, type UnlistenFn } from "../ipc/events";
 import { log } from "../log";
 import { notify } from "../notify";
@@ -25,7 +25,7 @@ export function endsMeetingOnWake(sleptMs: number, status: Parameters<typeof isM
 
 /** React to one wake report. */
 export async function handleSystemWake(sleptMs: number): Promise<void> {
-  const s = useStore.getState();
+  const s = useLiveStore.getState();
   if (!endsMeetingOnWake(sleptMs, s.meetingStatus)) {
     if (isMeetingActive(s.meetingStatus)) log.info("meeting: the computer slept briefly mid-meeting", { sleptMs });
     return;
@@ -39,7 +39,7 @@ export async function handleSystemWake(sleptMs: number): Promise<void> {
   // minutes before it may hold words a dropped link never transcribed.
   await endMeeting();
   notify.message(
-    translate(s.settings.language, "meeting.wake.autoEnded", { minutes: Math.round(sleptMs / 60_000) }),
+    translate(useStore.getState().settings.language, "meeting.wake.autoEnded", { minutes: Math.round(sleptMs / 60_000) }),
   );
 }
 

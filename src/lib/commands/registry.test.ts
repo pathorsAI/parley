@@ -7,6 +7,8 @@ import {
   commandsInGroup,
   commandsInScope,
   findConflicts,
+  scopesOverlap,
+  shadowedChordKeys,
   type CommandDef,
 } from "./registry";
 import { matchShortcut } from "../shortcuts";
@@ -63,8 +65,76 @@ describe("command registry", () => {
   });
 
   it("partitions the table by scope", () => {
-    const scoped = (["global", "main", "replay"] as const).flatMap((s) => commandsInScope(s));
+    const scoped = (["global", "main", "library", "study", "replay", "settings", "tabs"] as const).flatMap((s) =>
+      commandsInScope(s)
+    );
     expect(scoped.length).toBe(COMMANDS.length);
+  });
+
+  it("lets sibling screens share a chord, and nothing else", () => {
+    // ⌘F is the library's search on one screen and the transcript's find on
+    // the other — the main window never shows both.
+    expect(scopesOverlap("library", "replay")).toBe(false);
+    expect(scopesOverlap("library", "study")).toBe(false);
+    // Everything along one line of nesting is live at once.
+    expect(scopesOverlap("replay", "study")).toBe(true);
+    expect(scopesOverlap("replay", "main")).toBe(true);
+    expect(scopesOverlap("library", "global")).toBe(true);
+    expect(scopesOverlap("settings", "library")).toBe(false);
+  });
+
+  it("only shadows enclosing commands it shares a chord with", () => {
+    // A `shadows` entry is a promise that the inner screen takes over THESE
+    // chords; one naming a sibling, a nested command, or a chord it doesn't
+    // have would silently swallow a key or do nothing at all.
+    for (const def of COMMANDS) {
+      for (const id of def.shadows ?? []) {
+        const outer = command(id as Parameters<typeof command>[0]);
+        expect(outer.scope !== def.scope && scopesOverlap(def.scope, outer.scope), `${def.id} → ${id}`).toBe(true);
+        const mine = new Set(def.keys.map(chordKey));
+        expect(outer.keys.some((k) => mine.has(chordKey(k))), `${def.id} shares no chord with ${id}`).toBe(true);
+      }
+    }
+  });
+
+  it("gives a tab strip ⌘1 and ⌘← while it is up, and leaves ⌘[ to Back", () => {
+    const onStudy = ["global", "main", "study", "tabs"] as const;
+    expect(shadowedChordKeys(command("nav.home"), onStudy)).toContain(chordKey({ mod: true, key: "1" }));
+    const back = shadowedChordKeys(command("nav.back"), onStudy);
+    expect(back).toContain(chordKey({ mod: true, key: "ArrowLeft" }));
+    expect(back).not.toContain(chordKey({ mod: true, key: "[" }));
+    // Off the study page nothing is taken over.
+    expect(shadowedChordKeys(command("nav.home"), ["global", "main", "library"]).size).toBe(0);
+  });
+
+  it("treats a tab strip as live beside any screen", () => {
+    // It can sit on the study page, 語境庫, the meeting window or Settings, so
+    // a chord it claims must collide with every other scope's.
+    for (const s of ["global", "main", "library", "study", "replay", "settings"] as const) {
+      expect(scopesOverlap("tabs", s), s).toBe(true);
+    }
+  });
+
+  it("only puts the display-only ⌃ on rows the webview never binds", () => {
+    // ShortcutSpec cannot match a standalone Control key, so a bound chord
+    // carrying `ctrl` would fire on the plain ⌘ chord instead.
+    for (const def of COMMANDS) {
+      for (const chord of def.keys) {
+        if (chord.ctrl) expect(def.ownedBy, `${def.id} binds a ⌃ chord`).toBeTruthy();
+      }
+    }
+  });
+
+  it("keeps the everyday Mac chords in the table", () => {
+    // The common-sense set a user tries without reading anything.
+    const printed = (id: Parameters<typeof command>[0]) =>
+      command(id).keys.filter((k) => !k.alias).map((k) => chordKey(k));
+    expect(printed("file.newDraft")).toEqual([chordKey({ mod: true, key: "n" })]);
+    expect(printed("file.newFolder")).toEqual([chordKey({ mod: true, shift: true, key: "n" })]);
+    expect(printed("library.find")).toEqual([chordKey({ mod: true, key: "f" })]);
+    expect(printed("replay.findNext")).toEqual([chordKey({ mod: true, key: "g" })]);
+    expect(printed("app.quit")).toEqual([chordKey({ mod: true, key: "q" })]);
+    expect(printed("settings.open")).toEqual([chordKey({ mod: true, key: "," })]);
   });
 });
 

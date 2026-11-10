@@ -23,6 +23,16 @@ export type StudyStatusField =
   | "briefStatus"
   | "filingStatus";
 
+/** The study page's tabs, in tablist order. */
+export const STUDY_TABS = ["summary", "actions", "notes", "context", "delivery", "replay"] as const;
+export type StudyTab = (typeof STUDY_TABS)[number];
+
+/** A study tab from anything that may still carry the old two-page names: the
+ *  merged report ("report") became the summary tab. Unknown values → summary. */
+export function normalizeStudyTab(tab: string | null | undefined): StudyTab {
+  return (STUDY_TABS as readonly string[]).includes(tab ?? "") ? (tab as StudyTab) : "summary";
+}
+
 export interface StudySlice {
   // ── Unified analysis (shared by LIVE + REPLAY) ──────────────────────────────
   /**
@@ -61,11 +71,17 @@ export interface StudySlice {
   postSaveDiarizingId: string | null;
   setPostSaveDiarizingId: (id: string | null) => void;
   setFindings: (events: TimelineEvent[]) => void;
-  /** Which study-tense page is open while a recording is loaded: the merged
-   *  meeting report (read the outcome) or the replay workbench (check the
-   *  evidence). */
-  studyTab: "report" | "replay";
-  setStudyTab: (tab: StudySlice["studyTab"]) => void;
+  /** Which study-tense tab is open while a recording is loaded (the page
+   *  header's tablist): the summary, the action items, the in-meeting notes,
+   *  the delivery assessment, or the replay workbench (check the evidence). */
+  studyTab: StudyTab;
+  setStudyTab: (tab: StudyTab) => void;
+  /** The entry whose title the filing pass applied on its own THIS session and
+   *  nobody has renamed since — it drives the page header's "auto-named" tag.
+   *  Session-only: never persisted, so a reopened recording just shows its
+   *  name. Cleared by any rename of that entry (renameHistoryEntry). */
+  titleAutoApplied: string | null;
+  setTitleAutoApplied: (entryId: string | null) => void;
   /** The study brief (重點 debrief markdown) for the loaded recording. Lives in
    *  the store (not component state) so tab switches don't lose it, and is
    *  persisted onto the loaded entry so reopening never regenerates it. */
@@ -249,7 +265,8 @@ export const createStudySlice: SliceCreator<StudySlice> = (set) => ({
   ...CLEARED_STUDY_SLICE,
   studyManualForId: null,
   postSaveDiarizingId: null,
-  studyTab: "report",
+  studyTab: "summary",
+  titleAutoApplied: null,
 
   setAnalyzedEvalSig: (analyzedEvalSig) => set({ analyzedEvalSig }),
   setStudyManualForId: (studyManualForId) => set({ studyManualForId }),
@@ -264,7 +281,8 @@ export const createStudySlice: SliceCreator<StudySlice> = (set) => ({
     }),
   setPostSaveDiarizingId: (postSaveDiarizingId) => set({ postSaveDiarizingId }),
 
-  setStudyTab: (tab) => set({ studyTab: tab }),
+  setStudyTab: (tab) => set({ studyTab: normalizeStudyTab(tab) }),
+  setTitleAutoApplied: (titleAutoApplied) => set({ titleAutoApplied }),
   setBrief: (brief) => set({ brief }),
   setBriefError: (briefError) => set({ briefError }),
   setMeetingKind: (meetingKind) => set({ meetingKind }),

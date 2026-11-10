@@ -3416,7 +3416,7 @@ dependencies = [
 
 [[package]]
 name = "parley"
-version = "0.35.3"
+version = "0.35.5"
 dependencies = [
  "anyhow",
  "audiopus",
@@ -3432,6 +3432,7 @@ dependencies = [
  "log",
  "nalgebra",
  "ndarray",
+ "notify-rust",
  "objc",
  "ogg",
  "ort",

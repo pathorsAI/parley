@@ -14,7 +14,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
-import { MeetingKindPicker } from "../MeetingKindPicker";
 
 /**
  * The right-hand analysis pane, shared by both modes. Renders the findings list
@@ -78,7 +77,6 @@ export function FindingsPanel({
         {findings.length > 0 && (
           <span className="text-[11px] tabular-nums text-muted-foreground">{findings.length}</span>
         )}
-        <MeetingKindPicker className="ml-auto h-7 w-[150px]" />
       </div>
 
       <div className="flex flex-wrap items-center gap-2 px-3 py-2">

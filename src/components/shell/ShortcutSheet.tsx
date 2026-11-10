@@ -6,9 +6,12 @@ import { formatChord } from "../../lib/commands/format";
 import { closeShortcutSheet, useShortcutSheetOpen } from "../../lib/commands/sheet";
 import {
   COMMAND_GROUPS,
+  chordKey,
   commandsInGroup,
+  shadowedChordKeys,
   type CommandDef,
   type CommandGroup,
+  type CommandScope,
 } from "../../lib/commands/registry";
 import { shortcutCaps } from "../../lib/voiceTyping/caps";
 import { isMac } from "../../lib/platform";
@@ -38,7 +41,9 @@ import { useI18n, type TranslationKey } from "../../i18n";
 
 const GROUP_LABEL_KEYS: Record<CommandGroup, TranslationKey> = {
   global: "shortcuts.group.global",
+  file: "shortcuts.group.file",
   nav: "shortcuts.group.nav",
+  library: "shortcuts.group.library",
   meeting: "shortcuts.group.meeting",
   replay: "shortcuts.group.replay",
   voice: "shortcuts.group.voice",
@@ -65,7 +70,12 @@ type RowCaps = readonly (readonly string[])[];
  * hotkey). Printing from the binder's list would hide ⌘, ⌘1 and ⌘W from the
  * sheet on macOS — the exact keys people look one up to find.
  */
-function capsOf(def: CommandDef, mac: boolean, voiceCaps: string): RowCaps {
+function capsOf(
+  def: CommandDef,
+  mac: boolean,
+  voiceCaps: string,
+  scopes: readonly CommandScope[]
+): RowCaps {
   // The push-to-talk chord is a user setting, so the table carries the row with
   // empty `keys` and the value is resolved here. It stays ONE cap rather than
   // being split on spaces: the modifier labels are translated strings that
@@ -75,7 +85,13 @@ function capsOf(def: CommandDef, mac: boolean, voiceCaps: string): RowCaps {
   // Chord.alias), so printing both would ask the reader to spot a difference
   // that isn't there. Two entries survive only where the keys really differ —
   // nav.back's ⌘[ and ⌘←.
-  return def.keys.filter((chord) => !chord.alias).map((chord) => formatChord(chord, mac));
+  // A chord an inner screen has taken over (⌘1 on the study page picks a tab)
+  // is not this row's here; it is printed on that screen's own row.
+  const taken = shadowedChordKeys(def, scopes);
+  const chords = def.keys.filter((chord) => !chord.alias && !taken.has(chordKey(chord)));
+  // A numbered series prints as its two ends: ⌘1 – ⌘6.
+  const shown = def.range && chords.length > 1 ? [chords[0], chords[chords.length - 1]] : chords;
+  return shown.map((chord) => formatChord(chord, mac));
 }
 
 export function ShortcutSheet() {
@@ -97,9 +113,13 @@ export function ShortcutSheet() {
     rows: commandsInGroup(group)
       // A scope that is not mounted has no live keys, so it has no rows.
       .filter((def) => scopes.includes(def.scope))
+      // ⌘Q and friends are the Mac's own; Windows has no such chords.
+      .filter((def) => !def.macOnly || mac)
       // Push-to-talk is off: the row would document a key that does nothing.
       .filter((def) => def.dynamicKeys !== "voiceTyping" || voiceEnabled)
-      .map((def) => ({ def, caps: capsOf(def, mac, voiceCaps) })),
+      .map((def) => ({ def, caps: capsOf(def, mac, voiceCaps, scopes) }))
+      // Every chord taken over by the screen on top: nothing left to press.
+      .filter((row) => row.caps.length > 0),
     // An empty group prints no heading rather than an empty heading.
   })).filter((g) => g.rows.length > 0);
 
@@ -151,6 +171,7 @@ export function ShortcutSheet() {
                         label={t(def.labelKey)}
                         tag={def.ownedBy ? t(OWNED_BY_LABEL_KEYS[def.ownedBy]) : ""}
                         caps={caps}
+                        range={!!def.range}
                       />
                     ))}
                   </section>
@@ -168,7 +189,8 @@ function ShortcutRow({
   label,
   tag,
   caps,
-}: Readonly<{ label: string; tag: string; caps: RowCaps }>) {
+  range,
+}: Readonly<{ label: string; tag: string; caps: RowCaps; range: boolean }>) {
   return (
     <div className="flex items-center justify-between gap-3 py-1">
       <span className="min-w-0 truncate text-[13px] text-foreground">
@@ -180,7 +202,7 @@ function ShortcutRow({
       <span className="flex shrink-0 items-center gap-1">
         {caps.map((chord, i) => (
           <Fragment key={chord.join("+")}>
-            {i > 0 && <span className="px-0.5 text-[10px] text-muted-foreground/60">/</span>}
+            {i > 0 && <span className="px-0.5 text-[10px] text-muted-foreground/60">{range ? "–" : "/"}</span>}
             {chord.map((cap, j) => (
               <Kbd key={`${j}-${cap}`}>{cap}</Kbd>
             ))}

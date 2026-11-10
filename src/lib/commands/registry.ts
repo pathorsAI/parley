@@ -29,16 +29,54 @@ import type { TranslationKey } from "../../i18n/messages";
  *
  * `global`  — every window, installed before React mounts.
  * `main`    — the main window's shell (so: not Settings, not the Field Log).
- * `replay`  — only while a recording's replay workbench is on screen.
+ * `library` — only while the library grid is on screen.
+ * `study`   — only while a recording's study page is on screen.
+ * `replay`  — only while the 回放 tab's workbench is on screen.
+ * `settings` — the Settings window.
+ * `tabs`    — while a tab strip is on screen, in any window: the study page,
+ *             語境庫, the meeting window, Settings' categories.
  */
-export type CommandScope = "global" | "main" | "replay";
+export type CommandScope = "global" | "main" | "library" | "study" | "replay" | "settings" | "tabs";
+
+/**
+ * Each scope's enclosing scope. Library and study are SIBLINGS — the main
+ * window shows one or the other, never both — so they may reuse a chord: ⌘F
+ * is the library's search box on one and the transcript's find bar on the
+ * other. Anything else nests, and a chord claimed twice along one line of
+ * nesting is a conflict.
+ */
+const PARENT_SCOPE: Record<CommandScope, CommandScope | null> = {
+  global: null,
+  main: "global",
+  library: "main",
+  study: "main",
+  replay: "study",
+  settings: "global",
+  // Nominally inside `main`, but see scopesOverlap: a tab strip can sit on any
+  // screen of any window, so it is treated as overlapping every scope.
+  tabs: "main",
+};
+
+/** `inner` is `outer` or sits inside it. */
+function within(inner: CommandScope, outer: CommandScope): boolean {
+  for (let s: CommandScope | null = inner; s; s = PARENT_SCOPE[s]) if (s === outer) return true;
+  return false;
+}
+
+/** Two scopes can be live at the same moment. */
+export function scopesOverlap(a: CommandScope, b: CommandScope): boolean {
+  if (a === "tabs" || b === "tabs") return true;
+  return within(a, b) || within(b, a);
+}
 
 /** How the cheat sheet groups rows. Presentation, not behaviour. */
-export type CommandGroup = "global" | "nav" | "meeting" | "replay" | "voice";
+export type CommandGroup = "global" | "file" | "nav" | "library" | "meeting" | "replay" | "voice";
 
 export const COMMAND_GROUPS: readonly CommandGroup[] = [
   "global",
+  "file",
   "nav",
+  "library",
   "meeting",
   "replay",
   "voice",
@@ -74,6 +112,13 @@ export interface Chord extends ShortcutSpec {
    * and there isn't one.
    */
   alias?: true;
+  /**
+   * The macOS Control key (⌃), for DISPLAY only — ⌃⌘F, the system's full-screen
+   * chord. {@link ShortcutSpec} has no standalone control modifier to match on,
+   * so a chord carrying this is only ever valid on an `ownedBy` row, which the
+   * webview never binds (a test holds that line).
+   */
+  ctrl?: true;
 }
 
 interface CommandShape {
@@ -100,6 +145,25 @@ interface CommandShape {
    * resolves it at render time; the table still owns the ROW.
    */
   dynamicKeys?: "voiceTyping";
+  /**
+   * Only exists on macOS: the chord is the system's (⌘Q, ⌘H, ⌘M, ⌃⌘F), and
+   * Windows spells those actions differently or not at all, so the sheet
+   * leaves the row out there rather than print a Ctrl chord that does nothing.
+   */
+  macOnly?: true;
+  /**
+   * Commands of an ENCLOSING scope whose identical chords this row takes over
+   * while its own scope is live. The study page's tabs are where it started:
+   * ⌘1–⌘6 pick a tab there, as they do in a browser, and ⌘← / ⌘→ step through
+   * them — the same chords that go Home or Back everywhere else. The shadowed
+   * command keeps every chord this row doesn't share (⌘[ still goes back).
+   */
+  shadows?: readonly string[];
+  /**
+   * Print the chords as a span (⌘1 – ⌘6) instead of a list, for a row whose
+   * chords are one numbered series.
+   */
+  range?: true;
 }
 
 const MOD = { mod: true } as const;
@@ -155,6 +219,45 @@ const TABLE = [
     labelKey: "cmd.window.close",
     ownedBy: "os",
   },
+  // The rest of what every Mac app answers to. AppKit's menu items own them
+  // (src-tauri/src/menu.rs keeps the predefined ones), so they are listed, not
+  // bound — a cheat sheet without ⌘Q looks like an app without it.
+  {
+    id: "window.minimize",
+    group: "global",
+    scope: "global",
+    keys: [{ ...MOD, key: "m" }],
+    labelKey: "cmd.window.minimize",
+    ownedBy: "os",
+    macOnly: true,
+  },
+  {
+    id: "window.fullscreen",
+    group: "global",
+    scope: "global",
+    keys: [{ ...MOD, ctrl: true, key: "f" }],
+    labelKey: "cmd.window.fullscreen",
+    ownedBy: "os",
+    macOnly: true,
+  },
+  {
+    id: "app.hide",
+    group: "global",
+    scope: "global",
+    keys: [{ ...MOD, key: "h" }],
+    labelKey: "cmd.app.hide",
+    ownedBy: "os",
+    macOnly: true,
+  },
+  {
+    id: "app.quit",
+    group: "global",
+    scope: "global",
+    keys: [{ ...MOD, key: "q" }],
+    labelKey: "cmd.app.quit",
+    ownedBy: "os",
+    macOnly: true,
+  },
   {
     id: "zoom.in",
     group: "global",
@@ -183,6 +286,42 @@ const TABLE = [
     scope: "global",
     keys: [{ ...MOD, key: "0", native: "CmdOrCtrl+0" }],
     labelKey: "cmd.zoom.reset",
+  },
+  // Edit › Undo / Redo. In a text field they are its own undo; elsewhere they
+  // step Parley's edits (the transcript's replace). See lib/edit/undo.ts.
+  {
+    id: "edit.undo",
+    group: "global",
+    scope: "global",
+    keys: [{ ...MOD, key: "z", native: "CmdOrCtrl+Z" }],
+    labelKey: "cmd.edit.undo",
+  },
+  {
+    id: "edit.redo",
+    group: "global",
+    scope: "global",
+    keys: [{ ...MOD, shift: true, key: "z", native: "Shift+CmdOrCtrl+Z" }],
+    labelKey: "cmd.edit.redo",
+  },
+
+  // ── file (main window) ──────────────────────────────────────────────────
+  {
+    id: "file.newDraft",
+    group: "file",
+    scope: "main",
+    // ⌘N is "new document" everywhere; in Parley the new thing is a meeting
+    // draft — the 新增會議草稿 button. Not "start recording": that is ⌘R, and
+    // a reflexive ⌘N must never switch a microphone on.
+    keys: [{ ...MOD, key: "n", native: "CmdOrCtrl+N" }],
+    labelKey: "cmd.file.newDraft",
+  },
+  {
+    id: "file.newFolder",
+    group: "file",
+    scope: "main",
+    // ⇧⌘N, Finder's New Folder.
+    keys: [{ ...MOD, shift: true, key: "n", native: "Shift+CmdOrCtrl+N" }],
+    labelKey: "cmd.file.newFolder",
   },
 
   // ── navigation (main window) ────────────────────────────────────────────
@@ -241,6 +380,72 @@ const TABLE = [
     scope: "main",
     keys: [{ ...MOD, key: "b", native: "CmdOrCtrl+B" }],
     labelKey: "cmd.view.toggleSidebar",
+  },
+  // Safari's and Chrome's next/previous tab, for the study page's tabs.
+  // The same three keys for EVERY tab strip — the study page's tabs, 語境庫's,
+  // the meeting window's, Settings' categories — so there is one thing to
+  // learn. Whichever strip is on screen claims them (lib/commands/tabs.ts).
+  {
+    id: "tabs.select",
+    group: "nav",
+    scope: "tabs",
+    // ⌘1 is the first tab, ⌘2 the second… — a browser's tab keys. Elsewhere
+    // ⌘1–⌘3 go Home / Library / the recording.
+    keys: ["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((key) => ({ ...MOD, key })),
+    labelKey: "cmd.tabs.select",
+    shadows: ["nav.home", "nav.library", "nav.study"],
+    range: true,
+    // A digit with ⌘ types nothing, so it may switch tabs from inside a field
+    // (the meeting window's notes box, say).
+    whileTyping: true,
+  },
+  {
+    id: "tabs.prev",
+    group: "nav",
+    scope: "tabs",
+    keys: [
+      { ...MOD, key: "ArrowLeft" },
+      { ...MOD, shift: true, key: "[" },
+      // With shift held most layouts report the shifted character instead.
+      { ...MOD, shift: true, key: "{", alias: true },
+    ],
+    labelKey: "cmd.tabs.prev",
+    // ⌘← is Back elsewhere; under a tab strip ⌘[ (and the mouse's side
+    // button) still are. Not while typing: in a field ⌘← is line start.
+    shadows: ["nav.back"],
+  },
+  {
+    id: "tabs.next",
+    group: "nav",
+    scope: "tabs",
+    keys: [
+      { ...MOD, key: "ArrowRight" },
+      { ...MOD, shift: true, key: "]" },
+      { ...MOD, shift: true, key: "}", alias: true },
+    ],
+    labelKey: "cmd.tabs.next",
+    shadows: ["nav.forward"],
+  },
+
+  // ── settings window ─────────────────────────────────────────────────────
+  {
+    id: "settings.find",
+    group: "nav",
+    scope: "settings",
+    keys: [{ ...MOD, key: "f" }],
+    labelKey: "cmd.settings.find",
+    whileTyping: true,
+  },
+
+  // ── library ─────────────────────────────────────────────────────────────
+  {
+    id: "library.find",
+    group: "library",
+    scope: "library",
+    keys: [{ ...MOD, key: "f" }],
+    labelKey: "cmd.library.find",
+    // Re-selects the query when the search box already has focus.
+    whileTyping: true,
   },
 
   // ── meeting (main window) ───────────────────────────────────────────────
@@ -322,6 +527,34 @@ const TABLE = [
     // Must keep working once the find field it opens has focus.
     whileTyping: true,
   },
+  {
+    id: "replay.replace",
+    group: "replay",
+    scope: "replay",
+    // ⌥⌘F / Ctrl+Alt+F — the find-and-replace chord of VS Code and Xcode.
+    keys: [{ ...MOD, alt: true, key: "f" }],
+    labelKey: "cmd.replay.replace",
+    // Same as find: it re-targets the bar while one of its fields has focus.
+    whileTyping: true,
+  },
+  // ⌘G / ⇧⌘G — find next / previous, as in every Mac app with a find bar.
+  // Enter / ⇧Enter do the same inside the field; these work from anywhere.
+  {
+    id: "replay.findNext",
+    group: "replay",
+    scope: "replay",
+    keys: [{ ...MOD, key: "g" }],
+    labelKey: "cmd.replay.findNext",
+    whileTyping: true,
+  },
+  {
+    id: "replay.findPrev",
+    group: "replay",
+    scope: "replay",
+    keys: [{ ...MOD, shift: true, key: "g" }],
+    labelKey: "cmd.replay.findPrev",
+    whileTyping: true,
+  },
 
   // ── voice typing ────────────────────────────────────────────────────────
   {
@@ -388,35 +621,55 @@ function shiftSlot(shift: Chord["shift"]): string {
   return shift ? "1" : "0";
 }
 
+/** One of the two takes the other's chords over on purpose (see
+ *  CommandShape.shadows). */
+function shadowsEither(a: CommandDef, b: CommandDef): boolean {
+  return !!a.shadows?.includes(b.id) || !!b.shadows?.includes(a.id);
+}
+
+/**
+ * The chords of `def` that a command live in one of `scopes` has taken over —
+ * the sheet leaves them out, and the binder lets the inner command have them.
+ */
+export function shadowedChordKeys(def: CommandDef, scopes: readonly CommandScope[]): Set<string> {
+  const keys = new Set<string>();
+  for (const other of COMMANDS) {
+    if (!other.shadows?.includes(def.id) || !scopes.includes(other.scope)) continue;
+    for (const chord of other.keys) keys.add(chordKey(chord));
+  }
+  return keys;
+}
+
 export interface Conflict {
   chord: string;
   ids: CommandId[];
 }
 
 /**
- * Two bindable commands claiming the same chord.
- *
- * There is no scope arithmetic here because today every scope NESTS: `replay`
- * lives inside `main`, and `main` inside the window that `global` covers. So a
- * chord claimed twice is a conflict wherever the two sit. The day a scope gains
- * a sibling (a `library` beside `replay`, say), this is where the comparison
- * has to learn about it — and the test below is where it will fail first.
+ * Two bindable commands claiming the same chord in scopes that can be live at
+ * once (see {@link PARENT_SCOPE}): ⌘F in `library` and in `replay` is fine,
+ * because the main window never shows both.
  *
  * Commands the webview never binds are excluded: ⌘W is listed for the sheet's
  * benefit and claimed by Tauri's default menu, so it collides with nothing.
  */
 export function findConflicts(): Conflict[] {
-  const byChord = new Map<string, CommandId[]>();
+  const byChord = new Map<string, CommandDef[]>();
   for (const c of COMMANDS) {
     if (c.ownedBy) continue;
     for (const chord of c.keys) {
       const k = chordKey(chord);
-      const ids = byChord.get(k) ?? [];
-      if (!ids.includes(c.id)) ids.push(c.id);
-      byChord.set(k, ids);
+      const defs = byChord.get(k) ?? [];
+      if (!defs.includes(c)) defs.push(c);
+      byChord.set(k, defs);
     }
   }
-  return [...byChord]
-    .filter(([, ids]) => ids.length > 1)
-    .map(([chord, ids]) => ({ chord, ids }));
+  const conflicts: Conflict[] = [];
+  for (const [chord, defs] of byChord) {
+    const clash = defs.filter((a) =>
+      defs.some((b) => a !== b && scopesOverlap(a.scope, b.scope) && !shadowsEither(a, b))
+    );
+    if (clash.length > 1) conflicts.push({ chord, ids: clash.map((d) => d.id) });
+  }
+  return conflicts;
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, CircleAlert, Info, Loader2, Plus, RotateCcw, Sparkles, X } from "lucide-react";
+import { Check, CircleAlert, Info, Loader2, Plus, RotateCcw, X } from "lucide-react";
+import type { CSSProperties, ReactNode } from "react";
 import { useI18n } from "../../i18n";
 import { useStore } from "../../lib/store";
 import { isTauri } from "../../lib/tauriEvents";
@@ -12,9 +13,7 @@ import {
   backgroundLines,
   draftBackground,
   memoryFilesToText,
-  readingSteps,
   removeBackgroundLines,
-  type ReadingStep,
 } from "../../lib/onboarding/memoryImport";
 import { prefersReducedMotion } from "../../lib/onboarding/motion";
 import { cn } from "@/lib/utils";
@@ -50,9 +49,9 @@ import { Textarea } from "@/components/ui/textarea";
  * - the terms transcription should spell right (the shared dictionary): the
  *   user's name and company, the company, people and product names from the
  *   self-introduction and Claude Code's memory, and any the user types — removable;
- * - how they work: Claude Code's memory files on this machine, read when the
- *   step opens and added under the background in a fixed template, with
- *   a log of what was read.
+ * - how they work: the memory files on this machine, read when the step
+ *   opens and added under the background in a fixed template, with a
+ *   one-line status beside the background's heading.
  */
 export function ContextStep({
   terms,
@@ -91,6 +90,12 @@ export function ContextStep({
         written={written}
         terms={terms}
         onTermLearned={(term) => setTerms((prev) => mergeTerms(prev, [term]))}
+        aside={
+          <AiMemory
+            onTermsAdded={(added) => setTerms((prev) => mergeTerms(prev, added))}
+            onBackgroundWritten={() => setWritten((n) => n + 1)}
+          />
+        }
       />
 
       {/* Dictionary terms */}
@@ -140,11 +145,6 @@ export function ContextStep({
           </Button>
         </form>
       </div>
-
-      <AiMemory
-        onTermsAdded={(added) => setTerms((prev) => mergeTerms(prev, added))}
-        onBackgroundWritten={() => setWritten((n) => n + 1)}
-      />
     </div>
   );
 }
@@ -166,7 +166,14 @@ function BackgroundEditor({
   written,
   terms,
   onTermLearned,
-}: Readonly<{ written: number; terms: readonly AddedTerm[]; onTermLearned: (term: AddedTerm) => void }>) {
+  aside,
+}: Readonly<{
+  written: number;
+  terms: readonly AddedTerm[];
+  onTermLearned: (term: AddedTerm) => void;
+  /** Shown at the right end of the heading: how filling it in is going. */
+  aside?: ReactNode;
+}>) {
   const { t } = useI18n();
   const background = useStore((s) => s.settings.userBackground);
   const patch = useStore((s) => s.updateSettings);
@@ -219,9 +226,12 @@ function BackgroundEditor({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-1.5">
-      <label htmlFor="onboarding-background" className="text-sm text-[#333] dark:text-foreground">
-        {t("onboarding.context.background")}
-      </label>
+      <div className="flex min-w-0 items-center justify-between gap-3">
+        <label htmlFor="onboarding-background" className="shrink-0 text-sm text-[#333] dark:text-foreground">
+          {t("onboarding.context.background")}
+        </label>
+        {aside}
+      </div>
       <Textarea
         key={written}
         id="onboarding-background"
@@ -282,19 +292,27 @@ type MemoryOutcome =
   | { kind: "needLlm" }
   | { kind: "failed"; error: string };
 
-/** Each line of the reading log shows this long before the next one. */
-const LOG_STEP_MS = 420;
+/** Each reading step shows at least this long before the next one. */
+const STEP_MS = 1500;
+
+/** The three steps the status line walks through while it fills in. */
+const READ_STEPS = [
+  "onboarding.context.memory.step.read",
+  "onboarding.context.memory.step.sort",
+  "onboarding.context.memory.step.write",
+] as const;
 
 /**
- * "How you work": Claude Code's memory files on this machine, used to fill in
- * the speaker background above, as template lines under what the user said
- * in the mic check. A reading log plays as it happens — each
- * file read, then the writing — and stays as the record of what was read; the
- * result is the background itself. Done once (settings.aiMemoryNotes keeps
- * what was written): a revisit replays the read without rewriting the user's
+ * Filling in the speaker background from how the user works: the memory
+ * files on this machine, written as template lines under what the user said
+ * in the mic check. Shown as one status line beside the background's heading
+ * that steps through reading, sorting and writing — each step replacing the
+ * last — and ends on how it came out. It names no tool or file: it reads as
+ * "your notes on this computer". Done once (settings.aiMemoryNotes keeps what
+ * was written): a revisit replays the steps without rewriting the user's
  * edits, and Refresh writes it again from the background as it stands. With
- * no memory on this machine the section isn't there at all. Without an AI
- * provider nothing is written, and the last line says so.
+ * no memory on this machine there is no status at all. Without an AI provider
+ * nothing is written, and the last step says so.
  */
 function AiMemory({
   onTermsAdded,
@@ -306,21 +324,18 @@ function AiMemory({
   // One read of the memory; `write` is true when the background is to be
   // written even if it was before (Refresh).
   const [run, setRun] = useState(() => ({ n: 0, write: false }));
-  const [steps, setSteps] = useState<ReadingStep[] | null>(null);
   const [outcome, setOutcome] = useState<MemoryOutcome | "hidden" | null>(() => (isTauri() ? null : "hidden"));
-  // Log lines on screen: the files, then the writing line.
-  const [shown, setShown] = useState(0);
+  // The step on screen; READ_STEPS.length means the outcome.
+  const [step, setStep] = useState(0);
 
   useEffect(() => {
     if (!isTauri()) return;
     let alive = true;
-    setSteps(null);
     setOutcome(null);
-    setShown(0);
+    setStep(0);
     (async (): Promise<MemoryOutcome | "hidden"> => {
       const files = await ipc.readClaudeMemory();
       if (files.length === 0) return "hidden";
-      if (alive) setSteps(readingSteps(files));
       const settings = useStore.getState().settings;
       if (settings.aiMemoryNotes.trim() && !run.write) return { kind: "kept" };
       if (!isProviderReady(settings, "realtime")) return { kind: "needLlm" };
@@ -352,7 +367,7 @@ function AiMemory({
     })()
       .then((next) => alive && setOutcome(next))
       .catch((e) => {
-        log.warn("onboarding: reading Claude Code memory failed", { error: String(e) });
+        log.warn("onboarding: reading the memory files failed", { error: String(e) });
         if (alive) setOutcome("hidden");
       });
     return () => {
@@ -361,101 +376,100 @@ function AiMemory({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run]);
 
-  // Reveal the log a line at a time: the files, then the writing line.
-  const total = steps ? steps.length + 1 : 0;
+  // Step through reading and sorting on a timer; the writing step holds
+  // until the outcome is in.
   useEffect(() => {
-    if (!steps) return;
-    if (reduced) {
-      setShown(total);
-      return;
-    }
-    if (shown >= total) return;
-    const id = setTimeout(() => setShown((n) => n + 1), shown === 0 ? 0 : LOG_STEP_MS);
+    if (outcome === "hidden") return;
+    if (reduced && outcome) return setStep(READ_STEPS.length);
+    const last = READ_STEPS.length - 1;
+    if (step > last || (step === last && !outcome)) return;
+    const id = setTimeout(() => setStep((n) => n + 1), STEP_MS);
     return () => clearTimeout(id);
-  }, [steps, shown, total, reduced]);
+  }, [step, outcome, reduced]);
 
   if (outcome === "hidden") return null;
 
-  const finished = outcome !== null && steps !== null && shown >= total;
-  let last = t("onboarding.context.memory.writing");
-  if (outcome?.kind === "written") last = t("onboarding.context.memory.written");
-  else if (outcome?.kind === "kept") last = t("onboarding.context.memory.kept");
-  else if (outcome?.kind === "nothing") last = t("onboarding.context.memory.nothing");
-  else if (outcome?.kind === "needLlm") last = t("onboarding.context.memory.needLlm");
-  else if (outcome?.kind === "failed") last = t("onboarding.context.memory.failed", { error: outcome.error });
-  let lastIcon: LogIcon = "spin";
-  if (outcome?.kind === "failed") lastIcon = "error";
-  else if (outcome?.kind === "needLlm") lastIcon = "info";
-  else if (outcome) lastIcon = "done";
+  const done = outcome !== null && step >= READ_STEPS.length;
+  let icon: LogIcon = "spin";
+  let text = t(READ_STEPS[Math.min(step, READ_STEPS.length - 1)]);
+  let title = text;
+  if (done) {
+    if (outcome.kind === "failed") icon = "error";
+    else if (outcome.kind === "needLlm") icon = "info";
+    // Just written: the one outcome that celebrates.
+    else if (outcome.kind === "written") icon = "success";
+    else icon = "done";
+    text = t(outcome.kind === "needLlm" ? "onboarding.context.memory.needLlmShort" : `onboarding.context.memory.${outcome.kind}`);
+    if (outcome.kind === "failed") title = t("onboarding.context.memory.failedLong", { error: outcome.error });
+    else if (outcome.kind === "needLlm") title = t("onboarding.context.memory.needLlm");
+    else title = text;
+  }
 
   return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-center justify-between gap-2">
-        <span className="flex items-center gap-1.5">
-          <Sparkles className="size-3.5 text-primary" />
-          <span className="text-sm text-[#333] dark:text-foreground">{t("onboarding.context.memory.title")} · </span>
-          <span className="text-xs text-muted-foreground">{t("onboarding.context.memory.source")}</span>
-        </span>
-        {finished && outcome.kind !== "needLlm" && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 gap-1 px-2 text-xs text-primary"
-            onClick={() => setRun((r) => ({ n: r.n + 1, write: true }))}
-          >
-            <RotateCcw className="size-3" />
-            {outcome.kind === "failed" ? t("onboarding.context.memory.retry") : t("onboarding.context.memory.refresh")}
-          </Button>
-        )}
-      </div>
-      {/* What was read: a log that plays while it happens and stays after. */}
-      <ul
-        aria-live="polite"
-        className="flex max-h-[148px] flex-col gap-0.5 overflow-y-auto rounded-[8px] bg-[#f5f7f9] p-3 text-[13px] leading-[21.125px] text-muted-foreground dark:bg-muted"
-      >
-        {steps === null ? (
-          <LogLine icon="spin" text={t("onboarding.context.memory.looking")} />
-        ) : (
-          <>
-            {steps.slice(0, shown).map((step, i) => (
-              <LogLine
-                key={i}
-                // A file line ticks when the next line comes in.
-                icon={i < shown - 1 ? "done" : "spin"}
-                text={
-                  step.kind === "auto"
-                    ? t("onboarding.context.memory.readAuto", { count: step.count })
-                    : t("onboarding.context.memory.readFile", { name: step.name })
-                }
-              />
-            ))}
-            {shown > steps.length && <LogLine icon={lastIcon} text={last} />}
-          </>
-        )}
-      </ul>
+    <div aria-live="polite" className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+      {/* Keyed by step, so each one comes in as the last goes. */}
+      <StatusLine key={done ? "done" : step} icon={icon} text={text} title={title} />
+      {done && outcome.kind !== "needLlm" && (
+        <button
+          type="button"
+          aria-label={outcome.kind === "failed" ? t("onboarding.context.memory.retry") : t("onboarding.context.memory.refresh")}
+          title={outcome.kind === "failed" ? t("onboarding.context.memory.retry") : t("onboarding.context.memory.refresh")}
+          onClick={() => setRun((r) => ({ n: r.n + 1, write: true }))}
+          className="grid size-5 shrink-0 place-items-center rounded text-primary transition-colors hover:bg-primary/10"
+        >
+          <RotateCcw className="size-3" />
+        </button>
+      )}
     </div>
   );
 }
 
-type LogIcon = "spin" | "done" | "info" | "error";
+type LogIcon = "spin" | "done" | "success" | "info" | "error";
 
-function LogLine({ icon, text }: Readonly<{ icon: LogIcon; text: string }>) {
+function StatusLine({ icon, text, title }: Readonly<{ icon: LogIcon; text: string; title: string }>) {
   return (
-    <li className="ob-rise flex items-center gap-2">
-      {icon === "spin" && <Loader2 className="size-3.5 shrink-0 animate-spin" />}
-      {icon === "done" && <Check className="size-3.5 shrink-0 text-primary" />}
-      {icon === "info" && <Info className="size-3.5 shrink-0" />}
-      {icon === "error" && <CircleAlert className="size-3.5 shrink-0 text-destructive" />}
+    <span className="ob-rise flex min-w-0 items-center gap-1.5">
+      {icon === "spin" && <Loader2 className="size-3 shrink-0 animate-spin" />}
+      {icon === "done" && <Check className="size-3 shrink-0 text-primary" />}
+      {icon === "success" && <SuccessMark />}
+      {icon === "info" && <Info className="size-3 shrink-0" />}
+      {icon === "error" && <CircleAlert className="size-3 shrink-0 text-destructive" />}
       <span
         className={cn(
-          "min-w-0 flex-1 truncate",
-          icon === "done" && "text-[#333] dark:text-foreground",
+          "min-w-0 truncate",
           icon === "error" && "text-destructive",
+          icon === "success" && "text-[#333] dark:text-foreground",
         )}
-        title={text}
+        title={title}
       >
         {text}
       </span>
-    </li>
+    </span>
+  );
+}
+
+/**
+ * The background was just written: a filled dot pops in, its check draws
+ * itself, and a ring spreads out once. Under reduced motion it is just there.
+ */
+function SuccessMark() {
+  return (
+    <span className="relative grid size-3.5 shrink-0 place-items-center">
+      <span
+        aria-hidden
+        className="ob-ripple left-1/2"
+        style={{ "--ob-ripple-size": "26px", animationDelay: "120ms", animationFillMode: "both" } as CSSProperties}
+      />
+      <span className="ob-pop grid size-3.5 place-items-center rounded-full bg-primary text-primary-foreground">
+        <svg viewBox="0 0 24 24" className="size-2.5" fill="none" stroke="currentColor" strokeWidth={3.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path
+            d="M5 12.5l4.5 4.5L19 7.5"
+            pathLength={1}
+            className="ob-draw"
+            style={{ "--ob-draw-ms": "320ms", "--ob-draw-delay": "220ms" } as CSSProperties}
+          />
+        </svg>
+      </span>
+    </span>
   );
 }
