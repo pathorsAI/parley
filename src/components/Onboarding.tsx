@@ -16,7 +16,7 @@ import {
   usesLocalModel,
 } from "../lib/transcription/providers";
 import { accountGateBlock, transcriptionReady, type AccountGateBlock } from "../lib/onboarding/accountGate";
-import { ALL_STEPS, gateStep, resumeStep, savedStep, visibleSteps, type StepId } from "../lib/onboarding/steps";
+import { footerFor, gateStep, isStranded, resumeStep, savedStep, visibleSteps, type StepId } from "../lib/onboarding/steps";
 import { cloudRoutePatch, isHostedLlm, localRoutePatch, onHostedProviders } from "../lib/onboarding/setupMode";
 import { useLocalSttModels, type LocalSttModelsState } from "../lib/transcription/useLocalSttModels";
 import { LocalSttModelPicker } from "./LocalSttModelPicker";
@@ -148,13 +148,9 @@ export function Onboarding() {
     patch({ onboardingStepId: current });
   }, [current, patch]);
 
-  // Don't strand the user on a step that no longer shows (signing out
-  // mid-wizard hides the org step), and on the cloud route signing out past
-  // the account step sends them back to it: without a session nothing after it
-  // can transcribe. Both land on this route's gate step.
-  const pastAccountSignedOut =
-    gate === "account" && !signedIn && ALL_STEPS.indexOf(current) > ALL_STEPS.indexOf("account");
-  const strandedOn = !steps.includes(current) || pastAccountSignedOut;
+  // Don't strand the user on a step that no longer shows, or past the account
+  // step on Cloud once signed out: both land on this route's gate (isStranded).
+  const strandedOn = isStranded(current, { steps, gate, signedIn });
   useEffect(() => {
     if (strandedOn) setCurrent(gate);
   }, [strandedOn, gate]);
@@ -265,16 +261,11 @@ export function Onboarding() {
   // The first and last screens share the hero look: blue bars, no title bar,
   // only the language in the corner.
   const hero = intro || current === "done";
-  // Until the cloud route is signed in, the account step is a choice between
-  // the Cloud and Local cards, each with its own button, and Back sits under
-  // them, so it has no footer; nor does the organization step while it offers
-  // its two cards. On Cloud and signed in, the account step confirms the
-  // account; from there the rest of setup is optional, so its footer is the
-  // welcome screen's: Skip, or Start the rest.
-  const account = current === "account";
-  const cloudConfirmed = mode === "cloud" && !!cloudAuth;
-  const showFooter = current !== "done" && !(account && !cloudConfirmed) && !(current === "org" && orgChoosing);
-  const skipFooter = intro || (account && cloudConfirmed);
+  // Which footer this step gets (footerFor explains the cases).
+  const cloudConfirmed = mode === "cloud" && signedIn;
+  const footer = footerFor(current, { cloudConfirmed, orgChoosing });
+  const showFooter = footer.show;
+  const skipFooter = footer.skip;
   const nextLabel = skipFooter ? t("onboarding.start") : t("onboarding.next");
   const skipTitle = skipBlocked && gateBlock ? t(GATE_HINT[gateBlock]) : t("onboarding.skip");
 

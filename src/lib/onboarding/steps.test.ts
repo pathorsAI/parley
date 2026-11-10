@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { gateStep, resumeStep, savedStep, visibleSteps } from "./steps";
+import { footerFor, gateStep, isStranded, resumeStep, savedStep, visibleSteps } from "./steps";
 
 describe("visibleSteps", () => {
   it("cloud: no model step, and the org step once signed in", () => {
@@ -67,5 +67,35 @@ describe("resumeStep", () => {
     expect(savedStep({ onboardingStep: 2, onboardingStepId: "" })).toBe("perms");
     expect(savedStep({ onboardingStep: 0, onboardingStepId: "mic" })).toBe("mic");
     expect(savedStep({ onboardingStep: 9, onboardingStepId: "nope" })).toBe("intro");
+  });
+});
+
+describe("isStranded", () => {
+  const cloudSteps = visibleSteps("cloud", true, true);
+  it("leaves a step that no longer shows", () => {
+    expect(isStranded("org", { steps: visibleSteps("cloud", false, true), gate: "account", signedIn: false })).toBe(true);
+  });
+  it("sends a signed-out cloud user past the account step back to it", () => {
+    expect(isStranded("perms", { steps: cloudSteps, gate: "account", signedIn: false })).toBe(true);
+    expect(isStranded("account", { steps: cloudSteps, gate: "account", signedIn: false })).toBe(false);
+  });
+  it("stays put while signed in, and on Local whatever the session", () => {
+    expect(isStranded("perms", { steps: cloudSteps, gate: "account", signedIn: true })).toBe(false);
+    expect(isStranded("perms", { steps: visibleSteps("local", false, true), gate: "model", signedIn: false })).toBe(false);
+  });
+});
+
+describe("footerFor", () => {
+  it("hides the footer on the route choice, the org choice and the last screen", () => {
+    expect(footerFor("account", { cloudConfirmed: false, orgChoosing: false }).show).toBe(false);
+    expect(footerFor("org", { cloudConfirmed: true, orgChoosing: true }).show).toBe(false);
+    expect(footerFor("done", { cloudConfirmed: true, orgChoosing: false }).show).toBe(false);
+  });
+  it("gives the welcome screen and a confirmed cloud account the Skip / Start footer", () => {
+    expect(footerFor("intro", { cloudConfirmed: false, orgChoosing: false })).toEqual({ show: true, skip: true });
+    expect(footerFor("account", { cloudConfirmed: true, orgChoosing: false })).toEqual({ show: true, skip: true });
+  });
+  it("gives every other step a plain Next footer", () => {
+    expect(footerFor("model", { cloudConfirmed: false, orgChoosing: false })).toEqual({ show: true, skip: false });
   });
 });

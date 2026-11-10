@@ -75,3 +75,36 @@ export function resumeStep(
   if (!ctx.ready && ALL_STEPS.indexOf(resumed) > ALL_STEPS.indexOf(gate)) return gate;
   return resumed;
 }
+
+/**
+ * Whether the wizard is standing on a step it must leave for the route's gate:
+ * one that no longer shows (signing out mid-wizard hides the org step), or, on
+ * the cloud route, any step past the account step once the session is gone —
+ * without it nothing after the account step can transcribe. Pure.
+ */
+export function isStranded(
+  current: StepId,
+  ctx: Readonly<{ steps: readonly StepId[]; gate: StepId; signedIn: boolean }>,
+): boolean {
+  if (!ctx.steps.includes(current)) return true;
+  return ctx.gate === "account" && !ctx.signedIn && ALL_STEPS.indexOf(current) > ALL_STEPS.indexOf("account");
+}
+
+/**
+ * Which footer a step gets. Until the cloud route is signed in, the account
+ * step is a choice between the Cloud and Local cards, each with its own button
+ * and Back under them, so it has no footer; nor does the organization step
+ * while it offers its two cards, nor the last screen. On Cloud and signed in,
+ * the account step confirms the account; from there the rest of setup is
+ * optional, so its footer is the welcome screen's: Skip, or Start the rest.
+ * Pure.
+ */
+export function footerFor(
+  current: StepId,
+  ctx: Readonly<{ cloudConfirmed: boolean; orgChoosing: boolean }>,
+): { show: boolean; skip: boolean } {
+  const account = current === "account";
+  const hidden =
+    current === "done" || (account && !ctx.cloudConfirmed) || (current === "org" && ctx.orgChoosing);
+  return { show: !hidden, skip: current === "intro" || (account && ctx.cloudConfirmed) };
+}
