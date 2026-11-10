@@ -2,15 +2,11 @@ package com.pathors.parley.ui
 
 import androidx.annotation.StringRes
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,6 +28,8 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
@@ -44,7 +42,6 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
@@ -66,7 +63,6 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
@@ -80,29 +76,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.AwaitPointerEventScope
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.PointerInputChange
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
-import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.Measurable
 import androidx.compose.ui.layout.MeasureResult
 import androidx.compose.ui.layout.MeasureScope
 import androidx.compose.ui.layout.Placeable
 import androidx.compose.ui.layout.layoutId
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -113,9 +100,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pathors.parley.R
 import com.pathors.parley.cloud.CloudFolder
@@ -124,7 +112,6 @@ import com.pathors.parley.cloud.OrgRole
 import com.pathors.parley.cloud.RecordingSource
 import com.pathors.parley.cloud.RecordingSummary
 import com.pathors.parley.library.FolderFilter
-import com.pathors.parley.library.FolderSwipe
 import com.pathors.parley.library.LibraryFolders
 import com.pathors.parley.meeting.MeetingService
 import com.pathors.parley.meeting.MeetingState
@@ -136,7 +123,6 @@ import com.pathors.parley.ui.theme.ParleyTheme
 import com.pathors.parley.upload.PendingUpload
 import java.io.File
 import kotlinx.coroutines.launch
-import kotlin.math.abs
 
 /**
  * The library: everything this account has in the cloud, with whatever is still
@@ -181,9 +167,6 @@ fun HomeScreen(
     val library = remember(state.recordings, sample, state.isPersonal) {
         HomeViewModel.withSample(state.recordings, sample, state.isPersonal)
     }
-    val visible = remember(library, state.folders, state.folderFilter, search.query) {
-        HomeViewModel.visibleRecordings(library, state.folders, state.folderFilter, search.query)
-    }
     val checklist = rememberChecklist(viewModel, state, sample, search.query) { id ->
         onOpenRecording(id, null, true)
     }
@@ -196,9 +179,13 @@ fun HomeScreen(
 
     val meetingLive = rememberMeetingLive()
 
-    // Reload on every visit: a meeting or an import that finished while this
-    // screen was off-stage has a new row waiting in the cloud.
-    LaunchedEffect(Unit) { viewModel.refresh() }
+    // Reload whenever this screen comes back to the front: a meeting or an
+    // import that finished while it was off-stage has a new row waiting in the
+    // cloud, and so does a recording the desktop synced while the phone was in
+    // a pocket. The back-stack entry's lifecycle resumes on each of those, and
+    // on first entry, so this replaces both a per-visit load and a refresh
+    // button in the top bar. Pull to refresh stays for the impatient.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refresh() }
 
     DemoAccountRequest { open ->
         showAccount = open
@@ -263,7 +250,6 @@ fun HomeScreen(
                     viewModel.selectScope(orgId)
                 },
                 onToggleSearch = search::toggle,
-                onRefresh = { viewModel.refresh() },
                 onAccount = {
                     showAccount = true
                     viewModel.loadAccount()
@@ -276,7 +262,7 @@ fun HomeScreen(
     ) { padding ->
         LibraryBody(
             state = state,
-            visible = visible,
+            library = library,
             search = search,
             meetingLive = meetingLive,
             callbacks = callbacks,
@@ -295,6 +281,7 @@ fun HomeScreen(
                 showAccount = false
                 search.close()
                 viewModel.showChecklistAgain()
+                viewModel.selectFolder(FolderFilter.All)
                 coroutineScope.launch { listState.animateScrollToItem(0) }
             },
         )
@@ -448,7 +435,6 @@ private fun HomeTopBar(
     state: HomeViewModel.UiState,
     onSelectScope: (String?) -> Unit,
     onToggleSearch: () -> Unit,
-    onRefresh: () -> Unit,
     onAccount: () -> Unit,
 ) {
     TopAppBar(
@@ -456,9 +442,6 @@ private fun HomeTopBar(
         actions = {
             IconButton(onClick = onToggleSearch) {
                 Icon(Icons.Default.Search, stringResource(R.string.home_search))
-            }
-            IconButton(onClick = onRefresh) {
-                Icon(Icons.Default.Refresh, stringResource(R.string.action_refresh))
             }
             IconButton(onClick = onAccount) {
                 Icon(Icons.Default.Person, stringResource(R.string.home_account))
@@ -503,18 +486,37 @@ private fun HomeBottomBar(isPersonal: Boolean, onRecord: () -> Unit, onImport: (
     }
 }
 
-/** The search field, the folder chips and the pull-to-refresh list under them. */
+/**
+ * The search field, the folder chips and, under them, one pull-to-refresh pager
+ * with a page per chip: the finger drags the pages, a fling carries them, and
+ * the pager snaps. The pager and `state.folderFilter` are kept in step both
+ * ways, each effect bailing when the other already agrees, so a chip tap moves
+ * the pager and a settled swipe moves the chip without either echoing back.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun LibraryBody(
     state: HomeViewModel.UiState,
-    visible: List<RecordingSummary>,
+    library: List<RecordingSummary>,
     search: LibrarySearch,
     meetingLive: Boolean,
     callbacks: LibraryCallbacks,
     lap: LibraryLap,
     modifier: Modifier = Modifier,
 ) {
+    val pages = remember(state.folders) { LibraryFolders.pages(state.folders) }
+    val pagerState = rememberPagerState(
+        initialPage = pages.indexOf(state.folderFilter).coerceAtLeast(0),
+    ) { pages.size }
+    LaunchedEffect(state.folderFilter, pages) {
+        val index = pages.indexOf(state.folderFilter)
+        if (index < 0 || index == pagerState.targetPage) return@LaunchedEffect
+        pagerState.animateScrollToPage(index)
+    }
+    val latestFilter by rememberUpdatedState(state.folderFilter)
+    LaunchedEffect(pagerState.settledPage) {
+        pages.getOrNull(pagerState.settledPage)?.let { if (it != latestFilter) callbacks.onSelectFolder(it) }
+    }
     Column(modifier) {
         if (search.open) {
             SearchField(
@@ -539,16 +541,38 @@ private fun LibraryBody(
             state = rememberPullToRefreshState(),
             modifier = Modifier.fillMaxSize(),
         ) {
-            LibraryList(
-                state = state,
-                visible = visible,
-                query = search.query,
-                meetingLive = meetingLive,
-                callbacks = callbacks,
-                lap = lap,
-            )
+            HorizontalPager(
+                state = pagerState,
+                beyondViewportPageCount = 1,
+                key = { pageKey(pages[it]) },
+                modifier = Modifier.fillMaxSize(),
+            ) { page ->
+                val filter = pages[page]
+                val visible = remember(library, state.folders, page, search.query) {
+                    HomeViewModel.visibleRecordings(library, state.folders, filter, search.query)
+                }
+                // All is always page 0 and always present, so it alone can own
+                // the list state "show the getting-started list again" scrolls.
+                val listState = if (page == 0) lap.listState else rememberLazyListState()
+                LibraryList(
+                    state = state,
+                    visible = visible,
+                    query = search.query,
+                    meetingLive = meetingLive,
+                    callbacks = callbacks,
+                    lap = lap,
+                    listState = listState,
+                )
+            }
         }
     }
+}
+
+/** One stable key per library page, shared by the chip row and the pager. */
+private fun pageKey(page: FolderFilter): String = when (page) {
+    FolderFilter.All -> "all"
+    FolderFilter.Unfiled -> "unfiled"
+    is FolderFilter.Folder -> "folder-" + page.id
 }
 
 @Composable
@@ -559,28 +583,11 @@ private fun LibraryList(
     meetingLive: Boolean,
     callbacks: LibraryCallbacks,
     lap: LibraryLap,
+    listState: LazyListState,
 ) {
-    val cards = remember { CardBounds() }
-    val minDistance = with(LocalDensity.current) { FolderSwipeDistance.toPx() }
-    val entranceOffset = with(LocalDensity.current) { PageEntranceOffset.toPx() }
-    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
-    val latest by rememberUpdatedState(state)
-    val onSelectFolder by rememberUpdatedState(callbacks.onSelectFolder)
-    val entrance = rememberPageEntrance(state.folders, state.folderFilter)
     LazyColumn(
-        state = lap.listState,
-        modifier = Modifier
-            .fillMaxSize()
-            .folderSwipe(cards, minDistance, rtl) { step ->
-                LibraryFolders.adjacent(latest.folders, latest.folderFilter, step)?.let(onSelectFolder)
-            }
-            // After the swipe in the chain: the finger is read outside the
-            // slide and the cards' bounds are measured through it, so a swipe
-            // that starts mid-slide still lands where the cards are drawn.
-            .graphicsLayer {
-                translationX = entrance.value * entranceOffset * (if (rtl) -1 else 1)
-                alpha = 1f - 0.4f * abs(entrance.value)
-            },
+        state = listState,
+        modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(
             start = 16.dp,
             end = 16.dp,
@@ -619,19 +626,10 @@ private fun LibraryList(
         // items sharing a key is an IllegalArgumentException out of
         // LazyColumn, not a glitch.
         items(visible, key = { "recording-" + it.id }) { recording ->
-            DisposableEffect(cards, recording.id) {
-                onDispose { cards.remove(recording.id) }
-            }
             RecordingRow(
                 model = LibraryRules.recordingRow(state, recording, callbacks.audioOf(recording.id)),
                 actions = callbacks.rowActions(recording),
-                // The gap first, then the bounds: the whitespace between two
-                // rows belongs to no row, so a swipe that starts in it turns
-                // the folder page instead of being left to a row (iOS keeps
-                // `RecordingRow.spacing` outside every cell for the same reason).
-                modifier = Modifier
-                    .padding(vertical = RowGapPadding)
-                    .onGloballyPositioned { cards.put(recording.id, it) },
+                modifier = Modifier.padding(vertical = RowGapPadding),
             )
         }
     }
@@ -643,128 +641,6 @@ private fun LibraryList(
  * Whitespace is the only separator: no card, no fill, no hairline.
  */
 private val RowGapPadding = 10.dp
-
-/** How far across a finger has to travel before it is a swipe to the next page. */
-private val FolderSwipeDistance = 60.dp
-
-/** How far in from the side a new page slides. */
-private val PageEntranceOffset = 32.dp
-
-/**
- * Where the recording rows are, so a swipe that starts on one is left to it —
- * see [FolderSwipe]. Coordinates rather than rectangles, turned into bounds at
- * the moment a finger goes down, because the list scrolls under them between
- * one layout and the next. Rows leave as they leave the composition.
- */
-private class CardBounds {
-    var list: LayoutCoordinates? = null
-    private val cards = mutableMapOf<String, LayoutCoordinates>()
-
-    fun put(id: String, coordinates: LayoutCoordinates) {
-        cards[id] = coordinates
-    }
-
-    fun remove(id: String) {
-        cards.remove(id)
-    }
-
-    /** The cards' bounds in the list's coordinates, as they are now. */
-    fun rects(): List<Rect> {
-        val list = list?.takeIf { it.isAttached } ?: return emptyList()
-        return cards.values
-            .filter { it.isAttached }
-            .map { list.localBoundingBoxOf(it, clipBounds = false) }
-    }
-}
-
-/**
- * Swiping sideways across the library turns to the neighbouring folder page,
- * as on iOS; [onStep] gets -1 or +1 once the finger lifts on one that counts
- * ([FolderSwipe.step] decides).
- *
- * It watches first and takes over late. Until the finger is past the touch
- * slop nothing is consumed, so the list's scroll, the pull to refresh and the
- * cards' taps and long presses see every event as they did before. Past it,
- * a sideways drag is claimed ([FolderSwipe.claim]) and every event from there
- * to the lift is consumed ahead of the children — otherwise a swipe across a
- * card comes up as a tap and opens it. That holds for a swipe that started on
- * a card too: it claims the gesture but never turns the page. A drag that is
- * down rather than across is the list's and is never touched. Two fingers are
- * a pinch or an accident, never a page turn.
- */
-private fun Modifier.folderSwipe(
-    cards: CardBounds,
-    minDistance: Float,
-    rtl: Boolean,
-    onStep: (Int) -> Unit,
-): Modifier = onGloballyPositioned { cards.list = it }
-    .pointerInput(cards, minDistance, rtl) {
-        awaitEachGesture {
-            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-            val onCards = cards.rects()
-            val end = followToLift(down, viewConfiguration.touchSlop)
-            if (end.multiTouch) return@awaitEachGesture
-            val step = FolderSwipe.step(down.position, end.translation, onCards, minDistance, rtl)
-            if (step != 0) onStep(step)
-        }
-    }
-
-/** How a gesture ended: how far the first finger got, and whether another joined it. */
-private class GestureEnd(val translation: Offset, val multiTouch: Boolean)
-
-/**
- * Follows the finger that went [down] until it lifts (or is lost), consuming
- * every event from the moment the gesture is claimed as a swipe — see
- * [folderSwipe] for why, and [FolderSwipe.claimAfter] for when.
- */
-private suspend fun AwaitPointerEventScope.followToLift(
-    down: PointerInputChange,
-    touchSlop: Float,
-): GestureEnd {
-    var last = down.position
-    var multiTouch = false
-    var claim = FolderSwipe.Claim.UNDECIDED
-    while (true) {
-        val event = awaitPointerEvent(PointerEventPass.Initial)
-        multiTouch = multiTouch || event.changes.size > 1
-        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-        last = change.position
-        claim = FolderSwipe.claimAfter(claim, last - down.position, touchSlop, multiTouch)
-        if (claim == FolderSwipe.Claim.SWIPE) change.consume()
-        if (!change.pressed) break
-    }
-    return GestureEnd(last - down.position, multiTouch)
-}
-
-/**
- * A short slide in from the side the new page is on, whichever way it was
- * chosen — a chip or a swipe — so a folder change reads as moving along the
- * row. A nudge on the one list rather than two lists crossing: the list keeps
- * its single scroll state, which "show the getting-started list again" and
- * rotation both rely on.
- *
- * Nothing slides when the page is not a step along the row the user can see:
- * a scope switch or a deleted folder resetting to All is a new library, not a
- * neighbouring page. The value runs from ±1 (off to that side) to 0.
- */
-@Composable
-private fun rememberPageEntrance(
-    folders: List<CloudFolder>,
-    selected: FolderFilter,
-): Animatable<Float, AnimationVector1D> {
-    val entrance = remember { Animatable(0f) }
-    val previous = remember { arrayOf(selected) }
-    LaunchedEffect(selected) {
-        val pages = LibraryFolders.pages(folders)
-        val from = pages.indexOf(previous[0])
-        val to = pages.indexOf(selected)
-        previous[0] = selected
-        if (from < 0 || to < 0 || from == to) return@LaunchedEffect
-        entrance.snapTo(if (to > from) 1f else -1f)
-        entrance.animateTo(0f, tween(durationMillis = 220))
-    }
-    return entrance
-}
 
 /** The folder picker over the library, moving [target]. */
 @Composable
@@ -921,9 +797,8 @@ internal fun orgRoleLabel(role: String?): Int = when (role) {
 
 /**
  * All, Unfiled, then the scope's folders in the server's order — one page of
- * the library each ([LibraryFolders.pages], which a swipe across the list walks
- * too), horizontally scrollable because a folder is a customer and there are
- * dozens.
+ * the library's pager each ([LibraryFolders.pages]), horizontally scrollable
+ * because a folder is a customer and there are dozens.
  *
  * iOS's underlined labels rather than Material filter chips. A filled chip was
  * a fill behind content, and it made the folder row the loudest thing above the
@@ -931,7 +806,7 @@ internal fun orgRoleLabel(role: String?): Int = when (role) {
  * all (see `docs/design/ios-visual-language.md`). Each chip is still a
  * selectable tab to TalkBack. The row scrolls itself so the selected chip is on
  * screen, which matters when the selection changes from somewhere other than a
- * tap on it (a swipe across the list, or a scope switch resetting to All).
+ * tap on it (a swipe of the pager, or a scope switch resetting to All).
  */
 @Composable
 private fun FolderChips(
@@ -960,13 +835,7 @@ private fun FolderChips(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        items(pages, key = { page ->
-            when (page) {
-                FolderFilter.All -> "all"
-                FolderFilter.Unfiled -> "unfiled"
-                is FolderFilter.Folder -> "folder-" + page.id
-            }
-        }) { page ->
+        items(pages, key = ::pageKey) { page ->
             val label = when (page) {
                 FolderFilter.All -> all
                 FolderFilter.Unfiled -> unfiled

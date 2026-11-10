@@ -13,10 +13,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
@@ -124,7 +122,6 @@ fun FeedbackHost(feedback: FeedbackCenter) {
                 onAnswer = feedback::answerCrashOffer,
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .statusBarsPadding()
                     .padding(horizontal = 12.dp, vertical = 8.dp),
             )
         }
@@ -132,14 +129,12 @@ fun FeedbackHost(feedback: FeedbackCenter) {
             hostState = topSnackbar,
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .statusBarsPadding()
                 .padding(top = 8.dp),
         )
         SnackbarHost(
             hostState = snackbar,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .navigationBarsPadding()
                 // Clear of the library's record bar, which is where most
                 // screenshots — and so most offers — are taken over.
                 .padding(bottom = NOTICE_LIFT),
