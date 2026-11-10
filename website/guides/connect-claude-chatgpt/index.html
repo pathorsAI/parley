@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>把 Parley 連接到 Claude 或 ChatGPT</title>
+    <meta name="description" content="用 Parley 雲端的 MCP 連接器，讓 Claude 讀取你同步的會議錄音、逐字稿與分析：設定步驟、授權畫面、四個工具、範例問法與如何中斷連接。" />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="https://parley.tw/guides/connect-claude-chatgpt/" />
+    <meta property="og:site_name" content="Parley" />
+    <meta property="og:title" content="Connect Parley to Claude or ChatGPT" />
+    <meta property="og:description" content="Add https://api.parley.tw/mcp as a connector and let your AI assistant read your synced meetings — read-only, after you approve it." />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://parley.tw/guides/connect-claude-chatgpt/" />
+    <meta property="og:image" content="https://parley.tw/assets/og-en.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Connect Parley to Claude or ChatGPT" />
+    <meta name="twitter:description" content="Set up the Parley Cloud MCP connector: sign in, approve, and ask about your meetings." />
+    <meta name="twitter:image" content="https://parley.tw/assets/og-en.png" />
+    <link rel="icon" type="image/svg+xml" href="../../assets/logo.svg" />
+    <link rel="preload" href="../../assets/fonts/dm-sans-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="../../styles.css" />
+    <link rel="stylesheet" href="../guides.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "HowTo",
+            "name": "Connect Parley to Claude or ChatGPT",
+            "description": "Add the Parley Cloud MCP connector to an AI assistant so it can read your synced recordings, transcripts, and saved analysis.",
+            "inLanguage": ["zh-Hant-TW", "en"],
+            "datePublished": "2026-11-04",
+            "dateModified": "2026-11-04",
+            "mainEntityOfPage": "https://parley.tw/guides/connect-claude-chatgpt/",
+            "author": { "@type": "Organization", "name": "Pathors AI", "url": "https://pathors.com" },
+            "publisher": { "@type": "Organization", "name": "Parley", "url": "https://parley.tw/" },
+            "image": "https://parley.tw/assets/og-en.png",
+            "step": [
+              { "@type": "HowToStep", "name": "Add a custom connector", "text": "In Claude, open Settings → Connectors → Add custom connector and enter https://api.parley.tw/mcp." },
+              { "@type": "HowToStep", "name": "Sign in to Parley", "text": "Sign in with the same Parley Cloud account your devices sync to." },
+              { "@type": "HowToStep", "name": "Approve access", "text": "Check the assistant's name on the consent page and click Allow." },
+              { "@type": "HowToStep", "name": "Ask about your meetings", "text": "Ask a scoped question; the assistant calls Parley's read-only tools to answer." }
+            ]
+          },
+          {
+            "@type": "BreadcrumbList",
+            "itemListElement": [
+              { "@type": "ListItem", "position": 1, "name": "Parley", "item": "https://parley.tw/" },
+              { "@type": "ListItem", "position": 2, "name": "Connect Parley to Claude or ChatGPT", "item": "https://parley.tw/guides/connect-claude-chatgpt/" }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <header class="nav guide-nav">
+      <div class="wrap nav__in guide-nav__in">
+        <a class="wm" href="../../" aria-label="Parley">Parley</a>
+        <nav class="guide-nav__links" aria-label="Guide navigation">
+          <a href="../../" lang="zh-Hant-TW" data-lang="zh">首頁</a>
+          <a href="../../en/" lang="en" data-lang="en">Home</a>
+          <a href="#en" lang="en" hreflang="en" data-lang-switch>English</a>
+          <a class="b1 b1--sm" href="../../#download" lang="zh-Hant-TW" data-lang="zh">下載</a>
+          <a class="b1 b1--sm" href="../../en/#download" lang="en" data-lang="en">Download</a>
+        </nav>
+      </div>
+    </header>
+    <main class="guide-main">
+      <article id="zh" lang="zh-Hant-TW" data-lang="zh" data-title="把 Parley 連接到 Claude 或 ChatGPT" data-description="用 Parley 雲端的 MCP 連接器，讓 Claude 讀取你同步的會議錄音、逐字稿與分析：設定步驟、授權畫面、四個工具、範例問法與如何中斷連接。">
+        <nav class="breadcrumbs" aria-label="導覽路徑"><a href="../../">Parley</a><span>/</span><span>指南</span><span>/</span><span>連接 Claude 或 ChatGPT</span></nav>
+        <header class="guide-hero">
+          <span class="guide-kicker">雲端 MCP 連接器</span>
+          <h1>把 Parley 連接到 Claude 或 ChatGPT</h1>
+          <p class="guide-hero__dek">加一個網址、登入、按下允許，你的 AI 助理就能直接翻你的會議：找出誰承諾了什麼、某個議題在哪幾場被討論過、上次客戶卡在哪裡。不用匯出，也不用一份一份貼逐字稿。</p>
+          <div class="guide-hero__actions"><a class="b1 b--lg" href="../../#download">下載 Parley</a><a class="b2 b--lg" href="../../privacy/#zh">隱私權政策</a></div>
+        </header>
+        <div class="guide-article">
+          <section>
+            <h2>它做什麼</h2>
+            <p>Parley 雲端在 <span class="guide-code">https://api.parley.tw/mcp</span> 提供一個遠端 MCP 伺服器。把它加進 AI 助理之後，助理可以在你提問時，自己去列出、搜尋並讀取你同步到 Parley 雲端的錄音——包括完整的逐字稿（標上講者與時間），以及 Parley 存下的分析（摘要、重點、待辦）。</p>
+            <p>這個連接是<strong>唯讀</strong>的：助理不能修改、刪除或新增任何錄音。它也只讀得到你自己的錄音，和你所屬組織裡分享的錄音。</p>
+            <div class="guide-callout"><p><strong>和桌面版的本機 MCP 不一樣。</strong>桌面版內建一個只在你電腦上跑的 MCP 伺服器，適合 Claude Code 這類本機工具（見<a href="../meeting-notes-with-mcp/">用 MCP 整理會議筆記</a>）。雲端連接器則不需要開著電腦，在網頁版與手機上的 Claude 也能用，但只看得到已經同步到雲端的錄音。</p></div>
+          </section>
+          <section>
+            <h2>開始之前</h2>
+            <ul class="guide-list">
+              <li><strong>一個 Parley 雲端帳號。</strong>就是你在 App 裡登入的那個帳號（電子郵件、Google 或 Apple 登入都可以）。</li>
+              <li><strong>錄音已經同步到雲端。</strong>在 App 裡登入後，錄音會自動同步。只存在裝置上、還沒上傳成功的錄音，助理看不到。</li>
+              <li><strong>一個支援自訂連接器的 AI 助理。</strong>目前是 Claude（網頁版、桌面版或手機版）。團隊或企業方案可能需要由管理員先加入連接器。</li>
+            </ul>
+          </section>
+          <section>
+            <h2>在 Claude 加入連接器</h2>
+            <ol class="guide-list">
+              <li>打開 Claude，進入 <strong>Settings → Connectors</strong>（設定 → 連接器）。</li>
+              <li>點 <strong>Add custom connector</strong>（新增自訂連接器）。名稱填 <span class="guide-code">Parley</span>，網址填 <span class="guide-code">https://api.parley.tw/mcp</span>，然後新增。</li>
+              <li>在 Parley 那一列點 <strong>Connect</strong>（連接）。Claude 會開一個 Parley 的頁面，接著進行下面的登入與授權。</li>
+              <li>回到對話，確認工具選單裡 Parley 是開啟的，就可以開始問了。</li>
+            </ol>
+          </section>
+          <section>
+            <h2>登入與授權畫面</h2>
+            <h3>1. 登入 Parley</h3>
+            <p>如果這個瀏覽器還沒登入 Parley，會先看到 Parley 的登入頁。請用<strong>和 App 同一個帳號</strong>登入——用錯帳號，助理就會看到一個空的錄音庫。</p>
+            <h3>2. 確認並允許</h3>
+            <p>登入後會看到授權頁，標題寫著「<strong>「Claude」想讀取你的 Parley 錄音</strong>」，並列出它允許之後能做的事：</p>
+            <ul>
+              <li>列出你同步到雲端的錄音，以及你所屬組織分享的錄音</li>
+              <li>讀取逐字稿與 Parley 的分析結果</li>
+            </ul>
+            <p>頁面下方會寫出你目前的登入身分，以及授權完成後要回到的網址。確認名稱和網址都是你預期的助理，再按<strong>允許</strong>。按<strong>拒絕</strong>或關掉頁面，什麼都不會分享出去。</p>
+            <div class="guide-callout"><p><strong>只在你自己發起連接時才按允許。</strong>如果你沒有在任何 AI 助理裡新增 Parley，卻看到這個授權頁，請按拒絕。</p></div>
+          </section>
+          <section>
+            <h2>助理可以用的四個工具</h2>
+            <div class="guide-table-wrap">
+              <table class="guide-table">
+                <thead><tr><th>工具</th><th>做什麼</th><th>什麼時候會用到</th></tr></thead>
+                <tbody>
+                  <tr><td><span class="guide-code">list_orgs</span></td><td>列出你所屬的組織與角色。</td><td>要讀團隊共享的錄音時，先拿到組織 ID。</td></tr>
+                  <tr><td><span class="guide-code">list_recordings</span></td><td>由新到舊列出錄音卡片：標題、日期、長度、講者數、重點與待辦數量、開頭片段、資料夾。可依標題篩選、限定資料夾或日期。</td><td>「我上週錄了哪些會議？」</td></tr>
+                  <tr><td><span class="guide-code">get_recording</span></td><td>讀一份錄音的全部內容：標上講者與時間的完整逐字稿，加上 Parley 存下的摘要、重點與待辦。</td><td>深入一場會議，或引用原話。</td></tr>
+                  <tr><td><span class="guide-code">search_meetings</span></td><td>跨錄音搜尋「說過的話」（每一行逐字稿，附 m:ss 時間）和「分析的結論」。一次掃最新的 60 份符合條件的錄音。</td><td>「我們什麼時候談過價格？」「我答應過這個客戶什麼？」</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+          <section>
+            <h2>可以這樣問</h2>
+            <ul class="guide-list">
+              <li>「用 Parley 找出我這週所有會議裡答應別人的事，依對象分組，每一條附上會議名稱和時間點。」</li>
+              <li>「搜尋我的 Parley 會議裡所有提到『報價』的地方，整理客戶的反應怎麼隨時間改變。」</li>
+              <li>「讀最新一場和 ACME 的會議逐字稿，列出還沒回答的問題，幫我草擬一封後續追蹤信。」</li>
+              <li>「列出我們組織共享資料夾裡上個月的錄音，挑出反覆出現的客戶疑慮。」</li>
+            </ul>
+            <p>把範圍說清楚（哪個客戶、哪個資料夾、哪段時間）會比「幫我總結所有會議」準得多。重要的結論，請助理附上會議名稱與時間點，再回原逐字稿確認。</p>
+          </section>
+          <section>
+            <h2>中斷連接</h2>
+            <p>在 Claude 進入 <strong>Settings → Connectors</strong>，找到 Parley，選擇中斷連接（Disconnect）或移除。之後助理就無法再讀取你的錄音。</p>
+            <p>授權本身也會過期：存取權杖 1 小時、更新權杖 7 天；超過 7 天沒用，下次就要重新登入並允許。Parley 目前還沒有在 App 裡撤回授權的頁面，如果你想從 Parley 這端撤銷某個助理的存取，請來信 <a href="mailto:contact@pathors.com">contact@pathors.com</a>。資料怎麼處理，詳見<a href="../../privacy/#zh">隱私權政策</a>。</p>
+          </section>
+          <section>
+            <h2>ChatGPT 呢？</h2>
+            <p>ChatGPT 的支援即將推出。上線之後，這份指南會補上在 ChatGPT 裡加入 Parley 的步驟；使用的是同一個網址、同樣的登入與授權流程。</p>
+          </section>
+          <section>
+            <h2>繼續閱讀</h2>
+            <div class="guide-links">
+              <a class="guide-link-card" href="../meeting-notes-with-mcp/"><span>Guide 03</span><strong>用 MCP 整理會議筆記</strong><p>桌面版的本機 MCP 伺服器，以及怎麼設計好用的問法（英文）。</p></a>
+              <a class="guide-link-card" href="../local-first-meeting-transcription/"><span>Guide 02</span><strong>本機優先會議轉錄</strong><p>錄音到筆記的流程裡，哪些部分留在你的電腦上（英文）。</p></a>
+            </div>
+          </section>
+        </div>
+      </article>
+
+      <article id="en" lang="en" data-lang="en" data-title="Connect Parley to Claude or ChatGPT" data-description="Use the Parley Cloud MCP connector to let Claude read your synced recordings, transcripts, and analysis: setup, the consent screen, the four tools, example prompts, and how to disconnect.">
+        <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="../../en/">Parley</a><span>/</span><span>Guides</span><span>/</span><span>Connect Claude or ChatGPT</span></nav>
+        <header class="guide-hero">
+          <span class="guide-kicker">Cloud MCP connector</span>
+          <h1>Connect Parley to Claude or ChatGPT</h1>
+          <p class="guide-hero__dek">Add one URL, sign in, click Allow, and your AI assistant can work through your meetings directly: who committed to what, which meetings covered a topic, where a customer got stuck last time. No exporting, and no pasting transcripts one at a time.</p>
+          <div class="guide-hero__actions"><a class="b1 b--lg" href="../../en/#download">Download Parley</a><a class="b2 b--lg" href="../../privacy/?lang=en">Privacy policy</a></div>
+        </header>
+        <div class="guide-article">
+          <section>
+            <h2>What it does</h2>
+            <p>Parley Cloud runs a remote MCP server at <span class="guide-code">https://api.parley.tw/mcp</span>. Once you add it to an AI assistant, the assistant can list, search, and read the recordings you synced to Parley Cloud when you ask about them — including the full transcript labelled by speaker and time, and the analysis Parley saved (brief, findings, action items).</p>
+            <p>The connection is <strong>read-only</strong>: the assistant cannot change, delete, or add any recording. It reaches only your own recordings and the ones shared into organizations you belong to.</p>
+            <div class="guide-callout"><p><strong>Not the same as the desktop app's local MCP.</strong> The desktop app has a built-in MCP server that runs only on your computer, for local tools such as Claude Code (see <a href="../meeting-notes-with-mcp/">Meeting notes with MCP</a>). The cloud connector needs no computer left running and works in Claude on the web and on your phone, but it sees only recordings that have synced to the cloud.</p></div>
+          </section>
+          <section>
+            <h2>Before you start</h2>
+            <ul class="guide-list">
+              <li><strong>A Parley Cloud account.</strong> The one you sign in to in the app, with email, Google, or Apple.</li>
+              <li><strong>Recordings synced to the cloud.</strong> Recordings sync automatically once you are signed in to the app. A recording that exists only on a device, or has not finished uploading, is not visible to the assistant.</li>
+              <li><strong>An AI assistant that supports custom connectors.</strong> Today that is Claude, on the web, desktop, or mobile. On Team or Enterprise plans an admin may need to add the connector first.</li>
+            </ul>
+          </section>
+          <section>
+            <h2>Add the connector in Claude</h2>
+            <ol class="guide-list">
+              <li>In Claude, open <strong>Settings → Connectors</strong>.</li>
+              <li>Click <strong>Add custom connector</strong>. Enter <span class="guide-code">Parley</span> as the name and <span class="guide-code">https://api.parley.tw/mcp</span> as the URL, then add it.</li>
+              <li>Click <strong>Connect</strong> next to Parley. Claude opens a Parley page for the sign-in and consent steps below.</li>
+              <li>Back in a chat, check that Parley is turned on in the tools menu, and start asking.</li>
+            </ol>
+          </section>
+          <section>
+            <h2>The sign-in and consent screens</h2>
+            <h3>1. Sign in to Parley</h3>
+            <p>If this browser is not signed in to Parley yet, you see Parley's sign-in page first. Sign in with <strong>the same account you use in the app</strong> — with a different account, the assistant sees an empty library.</p>
+            <h3>2. Review and allow</h3>
+            <p>Next comes the consent page. It names the assistant asking for access (for example, “Claude wants to read your Parley recordings”) and lists what it will be able to do:</p>
+            <ul>
+              <li>List the recordings you synced to the cloud, and the ones shared in your organizations</li>
+              <li>Read transcripts and Parley's analysis</li>
+            </ul>
+            <p>The bottom of the page shows who you are signed in as and the address you will return to afterwards. Check that both match the assistant you meant to connect, then click <strong>Allow</strong>. If you click <strong>Deny</strong> or close the page, nothing is shared. The page is currently shown in Traditional Chinese: Allow is 「允許」 and Deny is 「拒絕」.</p>
+            <div class="guide-callout"><p><strong>Only click Allow for a connection you started.</strong> If you see this page without having added Parley to an AI assistant, click Deny.</p></div>
+          </section>
+          <section>
+            <h2>The four tools the assistant can use</h2>
+            <div class="guide-table-wrap">
+              <table class="guide-table">
+                <thead><tr><th>Tool</th><th>What it does</th><th>When it comes up</th></tr></thead>
+                <tbody>
+                  <tr><td><span class="guide-code">list_orgs</span></td><td>Lists the organizations you belong to, with your role.</td><td>Getting an organization ID before reading team-shared recordings.</td></tr>
+                  <tr><td><span class="guide-code">list_recordings</span></td><td>Lists recording cards, newest first: title, date, length, speaker count, finding and action-item counts, opening snippet, folder. Can filter by title, folder, or date.</td><td>“Which meetings did I record last week?”</td></tr>
+                  <tr><td><span class="guide-code">get_recording</span></td><td>Reads one recording in full: the complete transcript labelled by speaker and time, plus the brief, findings, and action items Parley saved.</td><td>Going deep on one meeting, or quoting it.</td></tr>
+                  <tr><td><span class="guide-code">search_meetings</span></td><td>Searches what was said (every transcript line, with an m:ss timestamp) and what the analysis concluded, across recordings. Each search reads the 60 newest matching recordings.</td><td>“When did we discuss pricing?” “What did I promise this customer?”</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+          <section>
+            <h2>Things to ask</h2>
+            <ul class="guide-list">
+              <li>“Use Parley to find everything I committed to in this week's meetings, grouped by person, each with the meeting name and timestamp.”</li>
+              <li>“Search my Parley meetings for every mention of the quote, and show how the customer's reaction changed over time.”</li>
+              <li>“Read the transcript of my latest meeting with ACME, list the questions we left unanswered, and draft a follow-up email.”</li>
+              <li>“List last month's recordings in our organization's shared folders and pick out the customer concerns that keep coming back.”</li>
+            </ul>
+            <p>A clear scope (a customer, a folder, a time range) works far better than “summarize all my meetings”. For conclusions that matter, ask the assistant to cite the meeting and timestamp, and check them against the transcript.</p>
+          </section>
+          <section>
+            <h2>Disconnect</h2>
+            <p>In Claude, open <strong>Settings → Connectors</strong>, find Parley, and choose Disconnect or remove it. The assistant can no longer read your recordings after that.</p>
+            <p>The authorization also expires on its own: access tokens last 1 hour and refresh tokens 7 days, so after 7 days without use you have to sign in and allow it again. Parley does not have an in-app page for revoking access yet; to revoke an assistant's access from Parley's side, email <a href="mailto:contact@pathors.com">contact@pathors.com</a>. The <a href="../../privacy/?lang=en">privacy policy</a> covers how the data is handled.</p>
+          </section>
+          <section>
+            <h2>What about ChatGPT?</h2>
+            <p>ChatGPT support is coming. When it is available, this guide will add the steps for adding Parley in ChatGPT; it uses the same URL and the same sign-in and consent flow.</p>
+          </section>
+          <section>
+            <h2>Continue reading</h2>
+            <div class="guide-links">
+              <a class="guide-link-card" href="../meeting-notes-with-mcp/"><span>Guide 03</span><strong>Meeting notes with MCP</strong><p>The desktop app's local MCP server, and how to write prompts that retrieve well.</p></a>
+              <a class="guide-link-card" href="../local-first-meeting-transcription/"><span>Guide 02</span><strong>Local-first meeting transcription</strong><p>Which parts of a recording-to-notes workflow stay on your computer.</p></a>
+            </div>
+          </section>
+        </div>
+      </article>
+    </main>
+    <footer class="foot guide-foot"><div class="wrap"><div class="foot__bottom"><p>© 2026 <a href="https://pathors.com" target="_blank" rel="noopener">Pathors AI</a> · Apache 2.0</p><p><a href="../../" lang="zh-Hant-TW" data-lang="zh">Parley 首頁</a><a href="../../en/" lang="en" data-lang="en">Parley home</a></p></div></div></footer>
+    <script src="../../legal.js"></script>
+  </body>
+</html>

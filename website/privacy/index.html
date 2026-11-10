@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Parley — 隱私權政策</title>
-    <meta name="description" content="Parley 如何處理錄音、逐字稿、雲端同步與帳號資料。" />
+    <meta name="description" content="Parley 如何處理錄音、逐字稿、雲端同步、AI 助理連接與帳號資料。" />
     <meta name="robots" content="index, follow" />
     <link rel="canonical" href="https://parley.tw/privacy/" />
     <link rel="icon" type="image/svg+xml" href="../assets/logo.svg" />
@@ -19,11 +19,11 @@
     </header>
 
     <main class="wrap">
-      <article id="zh" lang="zh-Hant-TW" data-lang="zh" data-title="Parley — 隱私權政策" data-description="Parley 如何處理錄音、逐字稿、雲端同步與帳號資料。">
+      <article id="zh" lang="zh-Hant-TW" data-lang="zh" data-title="Parley — 隱私權政策" data-description="Parley 如何處理錄音、逐字稿、雲端同步、AI 助理連接與帳號資料。">
         <p class="label">隱私權政策</p>
         <h1>你應該清楚知道，你的會議去了哪裡。</h1>
         <p class="lead">本政策說明 Parley 官方雲端版如何處理帳號、錄音、逐字稿與 AI 使用資料。開源的桌面版可以完全在你自己的電腦上執行，搭配你自己選用的第三方供應商，完全不啟用任何雲端服務。</p>
-        <p class="updated">最後更新：<time datetime="2026-09-28">2026 年 9 月 28 日</time></p>
+        <p class="updated">最後更新：<time datetime="2026-11-04">2026 年 11 月 4 日</time></p>
 
         <div class="note">
           <p><strong>簡單來說：</strong>Parley 只有在你按下錄音之後，才會收錄麥克風的聲音。音訊與逐字稿會同步到你的 Parley 帳號，讓你在其他裝置上也能取用。你可以在 App 內永久刪除帳號及其所有資料，也可以<a href="../account-deletion/">完全不安裝 App</a> 就申請刪除。</p>
@@ -36,6 +36,7 @@
           <div><dt>服務用量</dt><dd>轉錄秒數與 AI 額度的消耗量，用於套用你方案的額度並防止濫用。</dd></div>
           <div><dt>技術資料</dt><dd>維持服務運作與安全所需的基本請求、錯誤，以及裝置／瀏覽器資訊。每個請求會帶上 App 的平台與版本號（例如 iOS 1.24），讓我們分辨問題出在哪個版本。</dd></div>
           <div><dt>當機報告</dt><dd>行動版 App 意外關閉或卡住時，系統產生的當機位置與版本資訊。預設自動傳送，可以在設定中關閉。</dd></div>
+          <div><dt>AI 助理授權</dt><dd>當你把 Claude、ChatGPT 這類 AI 助理連接到 Parley 雲端時：該助理註冊時提供的名稱與返回網址、你按下允許的紀錄，以及發給它的存取權杖與更新權杖。</dd></div>
           <div><dt>問題回報</dt><dd>只有在你按下回報時才會送出：你寫的說明、你選擇保留的截圖，以及 App 附上的診斷資訊。</dd></div>
         </dl>
 
@@ -43,6 +44,7 @@
         <ul>
           <li>提供即時轉錄、你的錄音庫、跨裝置同步，以及你選擇使用的個人或組織資料夾。</li>
           <li>代你將音訊傳送給轉錄服務；當你使用 AI 功能時，也會傳送給模型供應商。</li>
+          <li>在你授權之後，讓你連接的 AI 助理讀取你的錄音，回答你在那個助理裡提出的問題。</li>
           <li>維護帳號安全、計算額度用量，以及診斷服務故障。</li>
           <li>找出並修正當機、轉錄失敗、同步失敗等問題，包括你回報的問題。</li>
         </ul>
@@ -50,6 +52,17 @@
 
         <h2>儲存與第三方</h2>
         <p>官方雲端版使用 Cloudflare D1 與 R2，儲存帳號資料、錄音的中繼資料，以及透過加密連線傳送的音訊物件。即時轉錄使用 Soniox；官方 AI 功能使用 Groq。如果你使用 Google 或 Apple 登入，你的登入資料由該供應商依其自身的政策處理。上述供應商僅為提供 Parley 服務而處理資料。</p>
+
+        <h2>連接 AI 助理（雲端 MCP 連接器）</h2>
+        <p>Parley 雲端提供一個遠端 MCP 伺服器（<span class="path">https://api.parley.tw/mcp</span>），讓你把 Anthropic 的 Claude、OpenAI 的 ChatGPT 等支援 MCP 的 AI 助理連接到自己的錄音。設定步驟見<a href="../guides/connect-claude-chatgpt/">連接指南</a>。</p>
+        <ul>
+          <li><strong>你允許之前，什麼都不會分享。</strong>助理會先帶你到 Parley 的登入頁，接著是一個寫出該助理名稱的授權頁。只有你在授權頁按下「允許」，它才拿得到存取權；按「拒絕」或直接關掉頁面，什麼都不會給出去。</li>
+          <li><strong>只能讀，而且只讀得到你的雲端錄音。</strong>助理可以列出並讀取你同步到 Parley 雲端的錄音、逐字稿與 Parley 存下的分析結果（摘要、重點、待辦），以及你所屬組織裡分享的錄音。它不能修改、刪除或新增任何東西。只存在裝置上、沒有同步到雲端的錄音，它讀不到。</li>
+          <li><strong>資料會送到你選的 AI 供應商。</strong>助理讀到的內容會傳給你選用的供應商（例如 Anthropic 或 OpenAI），從那之後由該供應商依它自己的隱私權政策處理，包括保存多久、會不會用於訓練。連接之前，請先看過該供應商的政策與你帳號的資料設定。</li>
+          <li><strong>授權會過期，也可以撤回。</strong>存取權杖 1 小時後失效，更新權杖 7 天後失效；超過 7 天沒有使用，助理就必須請你重新登入並再按一次允許。要撤回授權，請在該 AI 助理的設定中中斷與 Parley 的連接；在 Parley 提供撤回授權的頁面之前，你也可以來信下方的聯絡信箱，我們會撤銷發給該助理的權杖。</li>
+          <li><strong>我們不記錄你的錄音內容被讀了什麼。</strong>除了一般的請求紀錄（時間、路徑、回應狀態等維持服務運作所需的資訊），Parley 不會另外記錄或保存助理呼叫了哪些工具、查詢了什麼字詞，或取回了哪些錄音內容。</li>
+        </ul>
+        <p>授權紀錄與權杖保存在 Parley 雲端，直到它們過期、被撤銷，或你刪除帳號為止。刪除帳號會一併移除這些紀錄。</p>
 
         <h2>當機報告與問題回報</h2>
         <p>Parley 的行動版 App（iOS 與 Android）預設會在 App 意外關閉或卡住之後，於下次開啟時自動傳送一份當機報告給我們。報告只包含 App 版本、作業系統版本、裝置型號，以及當機發生在程式的哪個位置。你可以在 <span class="path">設定 → 回饋與診斷 → 自動傳送當機報告</span> 關閉；關閉之後，每次當機都會先詢問你要不要傳送。</p>
@@ -60,7 +73,7 @@
         <p>本網站（parley.tw）使用 Cloudflare Web Analytics 統計頁面瀏覽次數。它不使用 Cookie，也不收集任何個人資料；我們只看得到彙總後的頁面瀏覽數。這項統計只在 parley.tw 上運作，與 Parley 的各個 App 無關——App 本身不含任何使用行為的遙測，只會傳送上面「當機報告與問題回報」說明的內容。</p>
 
         <h2>保存與刪除</h2>
-        <p>你的帳號資料與個人錄音會一直保存，直到你將其刪除。刪除帳號會永久移除帳號本身、你個人錄音的音訊與逐字稿、你的資料夾以及用量資料，而且無法復原。iOS：<span class="path">設定 → 帳號 → 刪除帳號</span>。Android：<span class="path">帳號</span>面板 → <span class="path">刪除帳號</span>。如果你無法開啟 App，請依照<a href="../account-deletion/">刪除帳號頁面</a>的說明，從你註冊時使用的電子郵件地址來信申請。如果你是某個共享組織的擁有者，必須先移轉或刪除該組織，以免其他成員共享的錄音被意外一併刪除。</p>
+        <p>你的帳號資料與個人錄音會一直保存，直到你將其刪除。刪除帳號會永久移除帳號本身、你個人錄音的音訊與逐字稿、你的資料夾、用量資料，以及你給 AI 助理的授權，而且無法復原。iOS：<span class="path">設定 → 帳號 → 刪除帳號</span>。Android：<span class="path">帳號</span>面板 → <span class="path">刪除帳號</span>。如果你無法開啟 App，請依照<a href="../account-deletion/">刪除帳號頁面</a>的說明，從你註冊時使用的電子郵件地址來信申請。如果你是某個共享組織的擁有者，必須先移轉或刪除該組織，以免其他成員共享的錄音被意外一併刪除。</p>
         <p>已完成但同步失敗的錄音，會暫存在這台裝置上 App 專用的儲存空間，直到上傳成功後自動移除。刪除 App 會一併清除該裝置上所有這類尚未上傳的資料。</p>
 
         <h2>你的責任與選擇</h2>
@@ -70,11 +83,11 @@
         <p>關於隱私的疑問、資料請求，或對本政策的意見，請來信 <a href="mailto:contact@pathors.com">contact@pathors.com</a>。</p>
       </article>
 
-      <article id="en" lang="en" data-lang="en" data-title="Parley — Privacy policy" data-description="How Parley handles recordings, transcripts, cloud sync, and account data.">
+      <article id="en" lang="en" data-lang="en" data-title="Parley — Privacy policy" data-description="How Parley handles recordings, transcripts, cloud sync, AI assistant connections, and account data.">
         <p class="label">Privacy policy</p>
         <h1>You should know exactly where your meetings go.</h1>
         <p class="lead">This policy covers how the official cloud edition of Parley handles accounts, recordings, transcripts, and AI usage data. The open-source desktop edition can run entirely on your own machine and your own third-party providers, with no cloud service enabled at all.</p>
-        <p class="updated">Last updated: <time datetime="2026-09-28">28 September 2026</time></p>
+        <p class="updated">Last updated: <time datetime="2026-11-04">4 November 2026</time></p>
 
         <div class="note">
           <p><strong>The short version:</strong> Parley captures microphone audio only after you press record. Audio and transcripts sync to your Parley account so you can reach them from your other devices. You can permanently delete your account and all of its data from inside the app, or <a href="../account-deletion/?lang=en">without installing the app at all</a>.</p>
@@ -87,6 +100,7 @@
           <div><dt>Service usage</dt><dd>Transcription seconds and AI credit consumption, used to apply your plan's allowance and prevent abuse.</dd></div>
           <div><dt>Technical data</dt><dd>Basic request, error, and device/browser information needed to keep the service running and secure. Every request carries the app's platform and version (for example iOS 1.24), so we can tell which release a problem comes from.</dd></div>
           <div><dt>Crash reports</dt><dd>Where the mobile app crashed or froze, and which version it was, as the operating system records it. Sent automatically by default; you can turn this off in Settings.</dd></div>
+          <div><dt>AI assistant authorizations</dt><dd>When you connect an AI assistant such as Claude or ChatGPT to Parley Cloud: the name and return address the assistant registered with, the record that you clicked Allow, and the access and refresh tokens issued to it.</dd></div>
           <div><dt>Problem reports</dt><dd>Sent only when you tap to report: what you wrote, a screenshot if you chose to keep it, and the diagnostics the app attaches.</dd></div>
         </dl>
 
@@ -94,6 +108,7 @@
         <ul>
           <li>To provide live transcription, your recording library, cross-device sync, and the personal or organization folders you choose.</li>
           <li>To send audio to a transcription service on your behalf, and to a model provider when you use AI features.</li>
+          <li>Once you authorize it, to let an AI assistant you connected read your recordings to answer what you ask it.</li>
           <li>To keep accounts secure, meter allowances, and diagnose service failures.</li>
           <li>To find and fix crashes, failed transcriptions, failed syncs, and the problems you report.</li>
         </ul>
@@ -101,6 +116,17 @@
 
         <h2>Storage and third parties</h2>
         <p>The official cloud edition uses Cloudflare D1 and R2 to store account data, recording metadata, and audio objects transferred over encrypted connections. Live transcription uses Soniox; the official AI features use Groq. If you sign in with Google or Apple, that provider handles your sign-in data under its own policy. These providers process data only to deliver the Parley service.</p>
+
+        <h2>Connecting an AI assistant (cloud MCP connector)</h2>
+        <p>Parley Cloud runs a remote MCP server (<span class="path">https://api.parley.tw/mcp</span>) that lets you connect an MCP-capable AI assistant, such as Anthropic's Claude or OpenAI's ChatGPT, to your own recordings. The <a href="../guides/connect-claude-chatgpt/?lang=en">connector guide</a> walks through setup.</p>
+        <ul>
+          <li><strong>Nothing is shared until you allow it.</strong> The assistant first sends you to Parley's sign-in page, then to a consent page that names the assistant. It gets access only if you click Allow on that page; if you click Deny or close the page, nothing is shared.</li>
+          <li><strong>Read-only, and only your cloud recordings.</strong> The assistant can list and read the recordings you synced to Parley Cloud, their transcripts, and the analysis Parley saved with them (brief, findings, action items), plus recordings shared into organizations you belong to. It cannot change, delete, or add anything. Recordings that exist only on a device and were never synced are not reachable.</li>
+          <li><strong>The data goes to the AI provider you chose.</strong> What the assistant reads is sent to the provider you use it with (for example Anthropic or OpenAI), and from there that provider's own privacy policy governs it, including how long it is kept and whether it is used for training. Review that policy and your account's data settings before connecting.</li>
+          <li><strong>Access expires, and you can revoke it.</strong> Access tokens last 1 hour and refresh tokens 7 days; after 7 days without use, the assistant must ask you to sign in and click Allow again. To revoke access, disconnect Parley in the AI assistant's settings. Until Parley offers a page for revoking access, you can also email the address below and we will revoke the tokens issued to that assistant.</li>
+          <li><strong>We do not log what was read.</strong> Beyond normal request logs (time, path, response status, and similar information needed to run the service), Parley does not separately record or keep which tools an assistant called, what it searched for, or what recording content it retrieved.</li>
+        </ul>
+        <p>Authorization records and tokens are kept in Parley Cloud until they expire, are revoked, or you delete your account. Deleting your account removes them too.</p>
 
         <h2>Crash reports and problem reports</h2>
         <p>By default, Parley's mobile apps (iOS and Android) send us a crash report the next time you open the app after it crashed or froze. The report contains only the app version, the operating system version, the device model, and where in the app's code the crash happened. You can turn this off in <span class="path">Settings → Feedback &amp; diagnostics → Send crash reports automatically</span>; once it is off, the app asks you before sending each one.</p>
@@ -111,7 +137,7 @@
         <p>This website (parley.tw) uses Cloudflare Web Analytics to count page views. It sets no cookies and collects no personal data; we see only aggregate page-view counts. It runs on parley.tw only and is separate from the Parley apps, which contain no usage telemetry and send only what "Crash reports and problem reports" above describes.</p>
 
         <h2>Retention and deletion</h2>
-        <p>Your account data and personal recordings are kept until you delete them. Deleting your account permanently removes the account, the audio and transcripts of your personal recordings, your folders, and your usage data — and it cannot be undone. On iOS: <span class="path">Settings → Account → Delete account</span>. On Android: the <span class="path">Account</span> sheet → <span class="path">Delete account</span>. If you cannot open the app, follow the <a href="../account-deletion/?lang=en">account deletion page</a> to request it by email from your registered address. If you own a shared organization, you must transfer or delete that organization first, so other members' shared recordings are not destroyed by accident.</p>
+        <p>Your account data and personal recordings are kept until you delete them. Deleting your account permanently removes the account, the audio and transcripts of your personal recordings, your folders, your usage data, and the authorizations you gave AI assistants — and it cannot be undone. On iOS: <span class="path">Settings → Account → Delete account</span>. On Android: the <span class="path">Account</span> sheet → <span class="path">Delete account</span>. If you cannot open the app, follow the <a href="../account-deletion/?lang=en">account deletion page</a> to request it by email from your registered address. If you own a shared organization, you must transfer or delete that organization first, so other members' shared recordings are not destroyed by accident.</p>
         <p>A finished recording that fails to sync is held in your device's app support storage until it uploads, then removed automatically. Deleting the app clears any such pending data from that device.</p>
 
         <h2>Your responsibilities and choices</h2>
@@ -127,11 +153,13 @@
         <nav lang="zh-Hant-TW" data-lang="zh" aria-label="其他頁面">
           <a href="../">Parley 首頁</a>
           <a href="../support/">支援</a>
+          <a href="../terms/">服務條款</a>
           <a href="../account-deletion/">刪除帳號</a>
         </nav>
         <nav lang="en" data-lang="en" aria-label="Other pages">
           <a href="../en/">Parley home</a>
           <a href="../support/?lang=en">Support</a>
+          <a href="../terms/?lang=en">Terms of service</a>
           <a href="../account-deletion/?lang=en">Account deletion</a>
         </nav>
         <p class="copyright">© 2026 Pathors AI</p>

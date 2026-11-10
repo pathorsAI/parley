@@ -146,3 +146,16 @@
 @media (max-width: 480px) {
   .guide-nav__links .b1 { display: none; }
 }
+
+/* Bilingual guides carry both languages; ../../legal.js hides the inactive one. */
+[hidden] { display: none !important; }
+.guide-code {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--page-2);
+  color: var(--ink);
+  font: 14px var(--mono);
+  word-break: break-all;
+}

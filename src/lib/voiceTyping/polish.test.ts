@@ -18,6 +18,11 @@ import {
   polishSkipReason,
   polishSystemPrompt,
   polishVerdict,
+  CUSTOM_INSTRUCTIONS_LINE,
+  MAX_CUSTOM_INSTRUCTIONS_CHARS,
+  POLISH_TIMEOUT_MAX_MS,
+  POLISH_TIMEOUT_MS,
+  polishTimeoutMs,
 } from "./polish";
 import type { LlmProvider, Settings, VoiceTypingPolishStyle } from "../types";
 
@@ -119,6 +124,18 @@ describe("polishSystemPrompt", () => {
     expect(prompt).toContain("Preserve these user-dictionary terms exactly as written: Parley\n");
     expect(prompt.endsWith(`${SPEAKER_TERMS_LINE}王小明`)).toBe(true);
     expect(prompt.split("王小明")).toHaveLength(2);
+  });
+
+  /** The user's own instructions go last, inside the standing rules. */
+  it("appends custom instructions after everything else, trimmed and capped", () => {
+    expect(polishSystemPrompt([], "tidy", [], "   ")).toBe(POLISH_SYSTEM_PROMPT);
+    const prompt = polishSystemPrompt(["Parley"], "tidy", ["王小明"], "  用正式語氣  ");
+    expect(prompt.endsWith(`\n\n${CUSTOM_INSTRUCTIONS_LINE}用正式語氣`)).toBe(true);
+    expect(prompt.indexOf(SPEAKER_TERMS_LINE)).toBeLessThan(prompt.indexOf(CUSTOM_INSTRUCTIONS_LINE));
+    const long = polishSystemPrompt([], "concise", [], "x".repeat(MAX_CUSTOM_INSTRUCTIONS_CHARS + 50));
+    expect(long.startsWith(CONCISE_SYSTEM_PROMPT)).toBe(true);
+    expect(long.endsWith("x".repeat(MAX_CUSTOM_INSTRUCTIONS_CHARS))).toBe(true);
+    expect(long).not.toContain("x".repeat(MAX_CUSTOM_INSTRUCTIONS_CHARS + 1));
   });
 
   it("keeps the dictionary cap for terms that are not the speaker's", () => {
@@ -387,5 +404,15 @@ describe("prompt parity with iOS", () => {
       .map((line) => (line.startsWith(" ".repeat(8)) ? line.slice(8) : line))
       .join("\n");
     expect(dedented).toBe(CONCISE_SYSTEM_PROMPT);
+  });
+});
+
+describe("polishTimeoutMs", () => {
+  /** Long dictations timed out at a flat 4 s and went out raw. */
+  it("keeps the base budget for short dictations and grows it for long ones, up to the cap", () => {
+    expect(polishTimeoutMs(0)).toBe(POLISH_TIMEOUT_MS);
+    expect(polishTimeoutMs(120)).toBe(POLISH_TIMEOUT_MS);
+    expect(polishTimeoutMs(330)).toBe(POLISH_TIMEOUT_MS + 2100);
+    expect(polishTimeoutMs(779)).toBe(POLISH_TIMEOUT_MAX_MS);
   });
 });

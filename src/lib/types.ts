@@ -412,6 +412,11 @@ export interface Settings {
    *  Default `tidy`. Replaced the boolean `voiceTypingPolish` (false → `off`,
    *  true → `tidy`; see `migrateVoiceTypingPolishStyle`). */
   voiceTypingPolishStyle: VoiceTypingPolishStyle;
+  /** Voice typing: the user's own instructions for the polish pass ("use
+   *  bullet points", "keep English terms in English", "formal tone"), appended
+   *  to the style's prompt within its rules (see `CUSTOM_INSTRUCTIONS_LINE`).
+   *  Empty = the built-in prompt alone. Default "". */
+  voiceTypingCustomInstructions: string;
   /** Voice typing: after the paste, put back whatever was on the clipboard
    *  before the dictation. Off by default — the dictation stays on the
    *  clipboard, ready to paste again elsewhere (there is no Copy button on the

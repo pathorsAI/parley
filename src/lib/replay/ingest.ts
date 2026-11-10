@@ -36,6 +36,10 @@ export interface IngestProgress {
 export interface IngestOptions {
   /** Called as the ingest moves through its stages. */
   onProgress?: (p: IngestProgress) => void;
+  /** Ignore a cached transcription of this file and ask the provider again —
+   *  re-transcribing a saved recording, where the cached result may be the
+   *  very transcript being replaced. */
+  fresh?: boolean;
 }
 
 /** Audio extensions offered in the native file picker. */
@@ -243,6 +247,7 @@ export async function transcribeRecording(
     vocabulary: request.vocabulary,
     diarization: request.diarization,
     batchUrl: request.batchUrl ?? null,
+    fresh: opts.fresh ?? false,
   }).catch((e: unknown) => {
     throw usesLocalModel(provider) ? localUploadError(settings, e) : e;
   });

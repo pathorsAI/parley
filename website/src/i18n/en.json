@@ -133,6 +133,7 @@
   "footer.guideOpen": "Open-source recorders",
   "footer.guideLocal": "Local-first transcription",
   "footer.guideMcp": "Meeting notes with MCP",
+  "footer.guideConnector": "Connect Claude or ChatGPT",
   "footer.legal": "Legal &amp; support",
   "footer.download": "Download",
   "footer.releases": "Releases",
@@ -140,6 +141,7 @@
   "footer.license": "License",
   "footer.support": "Support",
   "footer.privacy": "Privacy policy",
+  "footer.terms": "Terms of service",
   "footer.deletion": "Account deletion",
   "footer.contact": "Contact"
 }

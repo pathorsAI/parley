@@ -105,11 +105,21 @@ describe("transcribeRecording payload", () => {
         vocabulary: ["Parley"],
         diarization: true,
         batchUrl: null,
+        fresh: false,
       }),
     ]);
     expect(Object.keys(fileCalls()[0] as object).sort()).toEqual(
-      ["apiKey", "batchUrl", "diarization", "languageHints", "model", "path", "provider", "vocabulary"],
+      ["apiKey", "batchUrl", "diarization", "fresh", "languageHints", "model", "path", "provider", "vocabulary"],
     );
+  });
+
+  it("asks for a fresh run (no cached result) when re-transcribing", async () => {
+    await transcribeRecording(
+      settingsFor({ transcriptionProvider: "deepgram", deepgramApiKey: "dg" }),
+      "/rec/call.m4a",
+      { fresh: true },
+    );
+    expect(fileCalls()).toEqual([expect.objectContaining({ fresh: true })]);
   });
 
   it("sends hosted Parley the session token and the cloud batch URL", async () => {

@@ -32,6 +32,9 @@ interface ReplayTranscriptProps {
   /** Seek to a segment's start when its row is clicked. */
   onSeek: (ms: number) => void;
   emptyLabel: string;
+  /** Shown under the empty label — e.g. the re-transcribe button for a
+   *  recording whose transcript is missing. */
+  emptyAction?: ReactNode;
   /** Preview (the ingest wizard): no playhead dimming — every line renders fully
    *  "lit". The active line still highlights while audio is playing (playheadMs>0)
    *  so the trim step's transcript follows playback. */
@@ -68,6 +71,7 @@ export function ReplayTranscript({
   playing,
   onSeek,
   emptyLabel,
+  emptyAction,
   preview = false,
 }: Readonly<ReplayTranscriptProps>) {
   const { t } = useI18n();
@@ -362,8 +366,9 @@ export function ReplayTranscript({
 
   if (rows.length === 0) {
     return (
-      <div className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
-        {emptyLabel}
+      <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-sm text-muted-foreground">
+        <span>{emptyLabel}</span>
+        {emptyAction}
       </div>
     );
   }

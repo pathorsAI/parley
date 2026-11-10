@@ -133,6 +133,7 @@
   "footer.guideOpen": "開源會議錄音工具",
   "footer.guideLocal": "本機優先會議轉錄",
   "footer.guideMcp": "用 MCP 整理會議筆記",
+  "footer.guideConnector": "連接 Claude 或 ChatGPT",
   "footer.legal": "法律與支援",
   "footer.download": "下載",
   "footer.releases": "版本紀錄",
@@ -140,6 +141,7 @@
   "footer.license": "授權條款",
   "footer.support": "支援",
   "footer.privacy": "隱私權政策",
+  "footer.terms": "服務條款",
   "footer.deletion": "刪除帳號",
   "footer.contact": "聯絡我們"
 }
