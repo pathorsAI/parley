@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, Mic } from "lucide-react";
 import { toast } from "sonner";
 import { isMeetingActive, useStore } from "../lib/store";
+import { useLiveMeeting } from "../lib/meeting/liveSession";
 import * as ipc from "../lib/ipc/commands";
 import type { Permissions } from "../lib/ipc/commands";
 import { AUDIO_LEVEL_EVENT, listenEvent, type AudioLevelPayload } from "../lib/ipc/events";
@@ -130,13 +131,19 @@ function SystemAudioStatus({ perms }: Readonly<{ perms: Permissions | null }>) {
  *
  * Device switching and the test are locked during a meeting — the mic belongs
  * to the live capture then (the same rule as Settings › 轉錄).
+ *
+ * `shrink`: in a bar that can get narrow (the floating meeting window), the
+ * chip gives up width first — the device name truncates — so the controls
+ * after it stay in view.
  */
-export function MicChip() {
+export function MicChip({ shrink = false }: Readonly<{ shrink?: boolean }> = {}) {
   const { t } = useI18n();
   const inputDevice = useStore((s) => s.settings.inputDevice);
   const updateSettings = useStore((s) => s.updateSettings);
-  const meetingActive = useStore((s) => isMeetingActive(s.meetingStatus));
-  const paused = useStore((s) => s.meetingStatus === "paused");
+  // Renders in both windows: the running meeting is read wherever this
+  // window holds it (the main window's live store, the meeting window's mirror).
+  const meetingActive = useLiveMeeting((s) => isMeetingActive(s.meetingStatus));
+  const paused = useLiveMeeting((s) => s.meetingStatus === "paused");
   const [devices, setDevices] = useState<string[]>([]);
   const [perms, setPerms] = useState<Permissions | null>(null);
   const [testing, setTesting] = useState(false);
@@ -215,10 +222,10 @@ export function MicChip() {
           type="button"
           aria-label={t("mic.chip.label", { name: deviceName })}
           title={t("mic.chip.title", { name: deviceName })}
-          className="inline-flex h-7 min-w-0 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border bg-background px-2 text-xs font-medium text-foreground transition-colors hover:bg-muted aria-expanded:bg-muted"
+          className={`inline-flex h-7 min-w-0 ${shrink ? "shrink" : "shrink-0"} cursor-pointer items-center gap-1.5 rounded-full border bg-background px-2 text-xs font-medium text-foreground transition-colors hover:bg-muted aria-expanded:bg-muted`}
         >
           <Mic className="size-3.5 shrink-0" />
-          <span className="max-w-[150px] truncate">{deviceName}</span>
+          <span className="min-w-0 max-w-[150px] truncate">{deviceName}</span>
           <ChipMeter level={level} />
           <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
         </button>

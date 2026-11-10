@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Archive,
   ArchiveRestore,
@@ -31,6 +31,7 @@ import { beginMeeting } from "../../lib/meeting/start";
 import { command } from "../../lib/commands/registry";
 import { formatChordLabel } from "../../lib/commands/format";
 import { useStore, type LibrarySelection } from "../../lib/store";
+import { useNewFolderRequest } from "../../lib/shell/sidebar";
 import { useI18n } from "../../i18n";
 import type { LibraryTree } from "./useLibraryTree";
 import { isArchived, type Folder as LocalFolder } from "../../lib/history/folders";
@@ -64,6 +65,8 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
   // R8a: creation lives behind the section header's ＋ — the tree is
   // navigation, not a permanently-open data-entry form.
   const [newFolderOpen, setNewFolderOpen] = useState(false);
+  // ⇧⌘N opens the same field (lib/shell/sidebar.ts carries the request).
+  useNewFolderRequest(useCallback(() => setNewFolderOpen(true), []));
 
   // Folder facts + every node's count in one pass. The grid filters with the
   // SAME index and the SAME rule (lib/library/scope), so "和運租車 · 8" is a
@@ -88,7 +91,7 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
   // OWN their recordings (buildOwnershipIndex above is fed the whole list), so
   // putting one away can't dump what is inside it into 還沒歸檔.
   const liveFolders = tree.personalFolders.filter((f) => !isArchived(f));
-  // A recording just filed into a folder (the filing card's fly-in): its row
+  // A recording just filed into a folder (a suggested folder's fly-in): its row
   // flashes once so the eye lands on where the recording went.
   const pulsingFolder = usePulsingFolder();
   const archivedFolders = tree.personalFolders.filter(isArchived);
@@ -116,9 +119,13 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
   const startChord = command("meeting.start").keys.find((c) => !c.alias);
 
   const nav = (
-    // `bg-sidebar`, not `bg-background`: on macOS the token is translucent so
-    // the window's native sidebar material shows through.
-    <nav className="flex h-full min-h-0 w-full flex-col overflow-y-auto border-r border-sidebar-border bg-sidebar px-2 py-2 text-sidebar-foreground">
+    // No background of its own: the column around it (AppShell) paints
+    // `bg-sidebar` once — on macOS the token is translucent so the window's
+    // native sidebar material shows through, and a second layer would darken
+    // it. No right border: the shell's resize handle is the 1px line between
+    // the rail and the page, and a border of its own beside it drew that line
+    // twice as thick.
+    <nav className="flex h-full min-h-0 w-full flex-col overflow-y-auto px-2 py-2 text-sidebar-foreground">
       {/* Blue text, not a blue fill: the titlebar already carries the filled
           start button and Home repeats it as its hero, so a third filled
           control here would spend the whole accent budget on one action. */}
@@ -702,6 +709,21 @@ function NewNameInput({
   useEffect(() => {
     ref.current?.focus();
   }, []);
+  // One answer per field. Enter (or the check) commits and the parent closes
+  // the field — and the input's blur then fires on the way out, which would
+  // commit the same name again: one press, two (or more) new folders.
+  const doneRef = useRef(false);
+  const commit = () => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    if (value.trim()) onCommit(value);
+    else onCancel();
+  };
+  const cancel = () => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    onCancel();
+  };
   return (
     <div
       className="flex shrink-0 items-center gap-1 rounded-md py-1 pr-1"
@@ -718,20 +740,20 @@ function NewNameInput({
         onKeyDown={(e) => {
           if (e.key === "Enter") {
             e.preventDefault();
-            if (value.trim()) onCommit(value);
+            if (value.trim()) commit();
           } else if (e.key === "Escape") {
             e.preventDefault();
-            onCancel();
+            cancel();
           }
         }}
-        onBlur={() => (value.trim() ? onCommit(value) : onCancel())}
+        onBlur={commit}
         className="min-w-0 flex-1 rounded border bg-background px-1.5 py-0.5 text-sm outline-none focus:border-primary"
       />
       <button
         type="button"
         aria-label={t("history.folder.create")}
         onMouseDown={(e) => e.preventDefault()}
-        onClick={() => (value.trim() ? onCommit(value) : onCancel())}
+        onClick={commit}
         className="grid size-5 shrink-0 place-items-center rounded text-muted-foreground hover:text-foreground"
       >
         <Check className="size-3.5" />

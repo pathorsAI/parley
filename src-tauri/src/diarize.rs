@@ -62,10 +62,10 @@ const MODEL: ModelSource<'static> = ModelSource {
 const OUTPUT_NAME: &str = "embedding";
 
 /// 16 kHz → 16 samples per millisecond.
-const SAMPLES_PER_MS: usize = 16;
+pub(crate) const SAMPLES_PER_MS: usize = 16;
 /// Slices shorter than this give unstable embeddings; we skip embedding them and
 /// inherit a neighbour's cluster instead (0.5 s).
-const MIN_SLICE_SAMPLES: usize = SAMPLES_PER_MS * 500;
+pub(crate) const MIN_SLICE_SAMPLES: usize = SAMPLES_PER_MS * 500;
 /// Safety cap on auto-detected speaker count.
 const KMAX: usize = 8;
 /// Auto-K stops merging once the best average-linkage cosine drops below this.
@@ -496,7 +496,7 @@ fn carry_labels(assigned: &mut [Option<(usize, f32)>], order: impl Iterator<Item
 /// Build a single-threaded ONNX session for the speaker model. One per worker
 /// thread — `with_intra_threads(1)` keeps each session to one core so W parallel
 /// workers don't oversubscribe.
-fn build_session(model: &Path) -> Result<Session> {
+pub(crate) fn build_session(model: &Path) -> Result<Session> {
     Session::builder()
         .context("ort session builder")?
         .with_optimization_level(GraphOptimizationLevel::Level3)
@@ -512,7 +512,7 @@ fn build_session(model: &Path) -> Result<Session> {
 /// re-normalize — a cleaner, more discriminative embedding than one pass over the
 /// whole (often long) turn, which reduces distinct speakers being merged. Short
 /// slices fall back to a single embedding.
-fn embed_segment(session: &mut Session, slice: &[f32]) -> Result<Vec<f32>> {
+pub(crate) fn embed_segment(session: &mut Session, slice: &[f32]) -> Result<Vec<f32>> {
     if slice.len() <= EMBED_WIN_SAMPLES {
         return embed_slice(session, slice);
     }
@@ -562,11 +562,11 @@ fn embed_slice(session: &mut Session, slice: &[f32]) -> Result<Vec<f32>> {
 // Clustering (pure Rust; embeddings are L2-normalized so cosine == dot product)
 // ---------------------------------------------------------------------------
 
-fn dot(a: &[f32], b: &[f32]) -> f32 {
+pub(crate) fn dot(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b).map(|(x, y)| x * y).sum()
 }
 
-fn l2_normalize(v: &[f32]) -> Vec<f32> {
+pub(crate) fn l2_normalize(v: &[f32]) -> Vec<f32> {
     let norm = dot(v, v).sqrt();
     if norm <= f32::EPSILON {
         return v.to_vec();
@@ -1119,7 +1119,7 @@ const ORT_LIB_FILE: &str = "libonnxruntime.so";
 /// bundled resource dir (release) first, then the crate-local `onnxruntime/` dir
 /// (dev, populated by `scripts/fetch-onnxruntime.sh`). The library is intentionally
 /// bundled rather than downloaded — it's the core runtime.
-fn locate_and_set_dylib(app: &AppHandle) -> Result<PathBuf> {
+pub(crate) fn locate_and_set_dylib(app: &AppHandle) -> Result<PathBuf> {
     let candidates = [
         app.path()
             .resource_dir()
@@ -1148,7 +1148,7 @@ fn locate_and_set_dylib(app: &AppHandle) -> Result<PathBuf> {
 /// to `app_data_dir()/models/`. Verifies SHA-256; a stale/partial file is
 /// re-downloaded. Emits `diarize://progress` (stage `downloading-model`) while
 /// downloading.
-async fn ensure_model(app: &AppHandle) -> Result<PathBuf> {
+pub(crate) async fn ensure_model(app: &AppHandle) -> Result<PathBuf> {
     let dir = model_download::models_root(app).map_err(|e| anyhow!(e))?;
     let client = model_download::http_client().map_err(|e| anyhow!(e))?;
     ensure_model_in(&dir, &client, &MODEL, |received| {

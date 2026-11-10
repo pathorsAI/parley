@@ -1,6 +1,6 @@
 import { isTauri } from "../tauriEvents";
 import { log } from "../log";
-import { runCommand } from "./bind";
+import { MENU_COMMAND_EVENT, runCommand } from "./bind";
 import { COMMANDS, type CommandId } from "./registry";
 import { listenEvent } from "../ipc/events";
 
@@ -13,11 +13,11 @@ import { listenEvent } from "../ipc/events";
  * the other half of that deal: it refuses to bind anything with a `native`
  * accelerator on macOS, so exactly one of the two fires.
  *
- * Rust decides WHICH window hears the event (see src-tauri/src/menu.rs) — global
- * commands go to the focused window, main-scope ones to the main window — so
- * there is nothing to route here. The payload is the bare command id.
+ * Rust sends every click to the window in front (see src-tauri/src/menu.rs), so
+ * a tab strip there can take ⌘1 over; `runCommand` passes a main-window command
+ * it didn't take on to the main window. The payload is the bare command id.
  */
-const MENU_COMMAND = "menu://command";
+const MENU_COMMAND = MENU_COMMAND_EVENT;
 
 /** Ids the table actually knows, so a stale menu item can't reach `runCommand`
  *  with something that isn't a command at all. */

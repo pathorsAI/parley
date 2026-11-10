@@ -46,7 +46,7 @@ function render(over: Partial<GuideBarViewProps>): string {
     createElement(GuideBarView, {
       phase: "filed",
       justCompleted: null,
-      tab: "report",
+      tab: "summary",
       folderName: null,
       renamed: false,
       onShowSuggestion: noop,
@@ -76,7 +76,7 @@ describe("GuideBarView", () => {
     const html = render({ phase: "filed" });
     expect(html).toContain('data-lap="filed"');
     expect(html).toContain("1 / 3 · 先看 Parley 幫你做了什麼");
-    expect(html).toContain("按「採用建議」或任一個資料夾試試");
+    expect(html).toContain("點上面任一個建議的資料夾試試");
     expect(html).toContain("看建議");
     expect(html).toContain("不用了");
     expect(primaryButtons(html)).toHaveLength(1);
@@ -94,7 +94,7 @@ describe("GuideBarView", () => {
   });
 
   it("step 2: replay, with the CTA only when not already on the Replay tab", () => {
-    const report = render({ phase: "replayed", tab: "report" });
+    const report = render({ phase: "replayed", tab: "summary" });
     expect(report).toContain("2 / 3 · 回放");
     expect(report).toContain("點任一句，音訊會跳到那個時間。試試看。");
     expect(report).toContain("開回放");
@@ -120,7 +120,7 @@ describe("GuideBarView", () => {
     expect(html).not.toContain("先複製給 ChatGPT");
   });
 
-  it("step 3 on Report: the command, live status, the questions and the copy fallback", () => {
+  it("step 3 off Replay: the command, live status, the questions and the copy fallback", () => {
     const html = render({ phase: "handedOff" });
     expect(html).toContain("3 / 3 · 交給你的 AI");
     expect(html).toContain("讓 Claude Code 直接讀你的錄音資料庫，不用複製貼上。");
@@ -129,8 +129,9 @@ describe("GuideBarView", () => {
     expect(html).toContain("等待連線…");
     for (const q of ["Q-mcp-1", "Q-mcp-2", "Q-mcp-3"]) expect(html).toContain(q);
     expect(html).toContain("沒有 Claude Code？先複製給 ChatGPT");
-    expect(html).toContain("看完整說明");
-    expect(primaryButtons(html)).toHaveLength(1);
+    // Already the full form: no CTA leading to it.
+    expect(html).not.toContain("看完整說明");
+    expect(primaryButtons(html)).toHaveLength(0);
 
     activity.info = { client: { name: "claude-code", version: "2.1" }, lastRequestAt: Date.now(), recent: [] };
     expect(render({ phase: "handedOff" })).toContain("已連線：claude-code v2.1");

@@ -74,9 +74,6 @@ class HandoffStringsParityTest {
         "sample_missing" to "The sample recording is no longer in the library.",
         // The account sheet, sign-in and What's New, ported from iOS Settings
         // and #478: the same sentences, not a second translation of them.
-        "account_about_detail" to "Live coaching and deep analysis live in the desktop app; the phone " +
-            "handles recording, transcribing, and reading back in-person meetings. On the Mac, Claude Code " +
-            "can also read your whole recording library over MCP.",
         "org_role_owner" to "Owner",
         "org_role_admin" to "Admin",
         "org_role_member" to "Member",

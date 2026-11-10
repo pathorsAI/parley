@@ -1,5 +1,5 @@
 import { toast } from "sonner";
-import { isMeetingActive, useStore } from "../store";
+import { isLiveMeetingActive, useLiveStore, useStore } from "../store";
 import { meetingUsesRealPipeline, prepareTranscription, type TranscriptionRequest } from "../transcription/prepare";
 import { blockMessageKey } from "../transcription/errors";
 import { startMockStream } from "../mockStream";
@@ -11,6 +11,7 @@ import * as ipc from "../ipc/commands";
 import { isTauri } from "../platform";
 import { liveSaves } from "../history/history";
 import { endMeeting, recoverOrphanedMeeting } from "./controls";
+import { backOutOfStart, beginLiveSession } from "./liveSession";
 
 /** How long Start waits for the previous meeting's save before going ahead
  *  anyway. Its Stop-time snapshot keeps that save correct regardless; the
@@ -20,6 +21,11 @@ export const PREVIOUS_SAVE_WAIT_MS = 30_000;
 /** In-flight latch: a double-click (or two start buttons hit in quick
  *  succession) would otherwise race two transcription sessions open. */
 let starting = false;
+
+/** A start is in flight (checks, the previous save, the capture opening). */
+export function isStartingMeeting(): boolean {
+  return starting;
+}
 
 /**
  * Open the capture session and start recording.
@@ -52,7 +58,9 @@ export async function beginMeeting(): Promise<void> {
 async function readyToStart(): Promise<boolean> {
   const s = useStore.getState();
   const t = (key: TranslationKey) => translate(s.settings.language, key);
-  if (isMeetingActive(s.meetingStatus)) {
+  // The one rule a running meeting still imposes on the main window: no
+  // second meeting on top of it.
+  if (isLiveMeetingActive()) {
     log.info("meeting: start pressed while a meeting is recording");
     // Its own window holds it: bring that up beside the explanation.
     if (isTauri()) {
@@ -111,7 +119,9 @@ async function start(): Promise<void> {
     return;
   }
 
-  s.startMeeting();
+  // No start cue: a meeting starts silently (only its end sounds, #607).
+
+  beginLiveSession();
 
   if (prepared.ok) {
     await openCaptureSession(settings, prepared.request);
@@ -119,7 +129,7 @@ async function start(): Promise<void> {
     // Hosted STT selected but no usable cloud session — never fake it with a
     // mock transcript; tell the user to sign in and back out of "recording".
     log.info("meeting: start blocked (parley, no session)");
-    useStore.getState().stopMeeting();
+    backOutOfStart();
     toast.error(t(blockMessageKey("meeting", "signin")));
   } else if (import.meta.env.DEV) {
     // Dev-only: a scripted transcript so the UI can be exercised without a key.
@@ -131,7 +141,7 @@ async function start(): Promise<void> {
     // nothing — a recorder that looked like it worked but didn't. Refuse and
     // point at the fix instead.
     log.info("meeting: start blocked (no STT key)", { provider: settings.transcriptionProvider });
-    useStore.getState().stopMeeting();
+    backOutOfStart();
     toast.error(t(blockMessageKey("meeting", "no-key")), {
       duration: 8000,
       action: { label: t("ai.fail.openSettings"), onClick: openTranscriptionSettings },
@@ -143,7 +153,7 @@ async function start(): Promise<void> {
  *  backs the UI out of "recording" rather than leaving a recorder that isn't
  *  recording. */
 async function openCaptureSession(settings: Settings, request: TranscriptionRequest): Promise<void> {
-  const meetingId = useStore.getState().liveMeetingId;
+  const meetingId = useLiveStore.getState().liveMeetingId;
   // Before the call: an End pressed while the start is in flight must still
   // find this meeting's snapshot waiting for its recording.
   if (meetingId) liveSaves.markRecording(meetingId);
@@ -184,7 +194,7 @@ async function openCaptureSession(settings: Settings, request: TranscriptionRequ
       inputDevice: settings.inputDevice,
       error: String(e),
     });
-    useStore.getState().stopMeeting();
+    backOutOfStart();
     // A start refused because the backend is still recording (a race with
     // the check above) must not leave that recording running unseen.
     void recoverOrphanedMeeting().catch(() => {});

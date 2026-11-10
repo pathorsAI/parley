@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { formatClock } from "../../lib/store";
 import { useI18n } from "../../i18n";
 import { useEvalNames } from "./useAnalysis";
+import { useRelabel } from "../../lib/speakers/useRelabel";
 import type { TimelineEvent } from "../../lib/types";
 
 /**
@@ -39,6 +40,7 @@ export function FindingRow({
   onOpenSolution: (event: TimelineEvent) => void;
 }>) {
   const { t } = useI18n();
+  const relabel = useRelabel();
   const evalNames = useEvalNames();
   // Selection can come from the TIMELINE, where the matching row is usually
   // scrolled out of view — bring it into view so clicking a dot lands somewhere
@@ -83,7 +85,7 @@ export function FindingRow({
                 {t(`finding.cat.${event.category}`)}
               </span>
             )}
-            <span className="text-[13px] font-semibold text-foreground">{event.title}</span>
+            <span className="text-[13px] font-semibold text-foreground">{relabel(event.title)}</span>
             {event.resolved && (
               <span className="rounded bg-success px-1.5 text-[10px] font-medium text-success-foreground">
                 {t("timeline.resolved")}
@@ -102,13 +104,13 @@ export function FindingRow({
               </span>
             ))}
           </span>
-          <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">{event.detail}</span>
+          <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">{relabel(event.detail)}</span>
           {/* The referenced transcript quote is intentionally NOT shown — clicking
               the row already seeks to that moment in the transcript. Quotes are
               still kept on the event for time-anchoring. */}
           {event.resolved && event.resolution && (
             <span className="mt-1 block text-[11px] leading-snug text-success-foreground">
-              {t("timeline.resolvedHow")}: {event.resolution}
+              {t("timeline.resolvedHow")}: {relabel(event.resolution)}
             </span>
           )}
         </span>

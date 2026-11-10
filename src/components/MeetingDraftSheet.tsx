@@ -1,6 +1,6 @@
 import { BellRing, CalendarDays, CalendarPlus, Eraser, FolderOpen, NotebookPen, Save, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
-import { isMeetingActive, useStore } from "../lib/store";
+import { useStore } from "../lib/store";
 import { ensureNotificationPermission } from "../lib/meeting/reminder";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
@@ -108,8 +108,9 @@ function MeetingWhenFields() {
  * into the saved drafts (總覽's 即將開始) and clears the fields for the next;
  * a saved draft opens here again from that list (editingDraftId).
  *
- * The fields are the prep slice the live meeting reads, so a new draft closed
- * unsaved is still the prep 直接錄音 rides. Closing while editing a saved one
+ * The fields are the main window's prep slice, so a new draft closed unsaved is
+ * still the prep 直接錄音 rides. A running meeting took its own copy when it
+ * started (meeting/liveSession.ts), so the sheet works during a meeting too. Closing while editing a saved one
  * leaves that draft as it was.
  */
 export function MeetingDraftSheet() {
@@ -118,8 +119,6 @@ export function MeetingDraftSheet() {
   const setDraftOpen = useStore((s) => s.setDraftOpen);
   const todos = useStore((s) => s.todos);
   const resetPrep = useStore((s) => s.resetPrep);
-  const meetingActive = useStore((s) => isMeetingActive(s.meetingStatus));
-  const finalizing = useStore((s) => s.isFinalizingMeeting);
   // Same test the title bar uses to offer its "clear prep" item.
   const hasDraft = useStore(
     (s) =>
@@ -176,7 +175,6 @@ export function MeetingDraftSheet() {
                 size="sm"
                 variant="ghost"
                 className="mr-auto h-8 text-destructive hover:text-destructive"
-                disabled={meetingActive}
                 onClick={() => {
                   useStore.getState().deleteDraft(editingId);
                   setDraftOpen(false);
@@ -191,14 +189,14 @@ export function MeetingDraftSheet() {
                 size="sm"
                 variant="ghost"
                 className="mr-auto h-8 text-muted-foreground"
-                disabled={!hasDraft || meetingActive}
+                disabled={!hasDraft}
                 onClick={resetPrep}
               >
                 <Eraser className="size-3.5" />
                 {t("draft.clear")}
               </Button>
             )}
-            <Button size="sm" className="h-8" disabled={!hasDraft || meetingActive || finalizing} onClick={save}>
+            <Button size="sm" className="h-8" disabled={!hasDraft} onClick={save}>
               <Save className="size-3.5" />
               {t("draft.save")}
             </Button>

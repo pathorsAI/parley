@@ -1,11 +1,11 @@
 import { useMemo, useState } from "react";
 import { AudioLines } from "lucide-react";
-import { useStore, speakerKey, defaultSpeakerLabel } from "../../lib/store";
+import { useStore, speakerKey } from "../../lib/store";
+import { localizedDefaultSpeakerLabel } from "../../lib/speakers/labels";
 import { speakerDotClass } from "../../lib/speakerColors";
 import { useI18n } from "../../i18n";
 import { Input } from "@/components/ui/input";
-import { OnboardingHint } from "@/components/OnboardingHint";
-import { rememberOwnName, useWhoAmIHint } from "@/lib/onboarding/whoAmI";
+import { rememberOwnName } from "@/lib/onboarding/whoAmI";
 import { Button } from "@/components/ui/button";
 import { VoiceDiarizeDialog } from "./VoiceDiarizeDialog";
 import type { Source, TranscriptSegment } from "../../lib/types";
@@ -35,7 +35,6 @@ interface ReplaySpeakerTagsProps {
 export function ReplaySpeakerTags({ segments, names, label }: Readonly<ReplaySpeakerTagsProps>) {
   const { t } = useI18n();
   const setSpeakerName = useStore((s) => s.setSpeakerName);
-  const whoAmI = useWhoAmIHint();
   const [voiceOpen, setVoiceOpen] = useState(false);
   // A just-saved live meeting is still having its speakers corrected from the
   // audio in the background (history.saveLiveToHistory). A manual pass now
@@ -71,10 +70,9 @@ export function ReplaySpeakerTags({ segments, names, label }: Readonly<ReplaySpe
             value={names[sp.key] ?? ""}
             onChange={(e) => {
               setSpeakerName(sp.key, e.target.value);
-              whoAmI.onRename(e.target.value);
             }}
             onBlur={(e) => rememberOwnName(sp, e.target.value)}
-            placeholder={defaultSpeakerLabel(sp)}
+            placeholder={localizedDefaultSpeakerLabel(sp, t)}
             className="h-7 w-28 text-xs"
           />
         </div>
@@ -98,9 +96,6 @@ export function ReplaySpeakerTags({ segments, names, label }: Readonly<ReplaySpe
         </Button>
       </span>
       {voiceOpen && !correcting && <VoiceDiarizeDialog onClose={() => setVoiceOpen(false)} />}
-      {whoAmI.visible && (
-        <OnboardingHint text={t("speakers.hintWhoAmI")} onDismiss={whoAmI.dismiss} className="basis-full" />
-      )}
     </div>
   );
 }

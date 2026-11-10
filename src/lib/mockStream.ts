@@ -1,4 +1,4 @@
-import { useStore } from "./store";
+import { useLiveStore } from "./store";
 import { toTraditional } from "./zhConvert";
 import type { Source } from "./types";
 
@@ -22,12 +22,12 @@ let timer: ReturnType<typeof setTimeout> | null = null;
 
 export function startMockStream() {
   stopMockStream();
-  const { meetingStartedAt } = useStore.getState();
+  const { meetingStartedAt } = useLiveStore.getState();
   const base = meetingStartedAt ?? Date.now();
   let line = 0;
 
   function emitLine() {
-    const status = useStore.getState().meetingStatus;
+    const status = useLiveStore.getState().meetingStatus;
     // Paused → hold this position and poll for resume (the dev stand-in for the
     // backend's dropped-audio pause); anything else ends the stream.
     if (status === "paused") {
@@ -44,7 +44,7 @@ export function startMockStream() {
     let wordIdx = 0;
 
     function emitWord() {
-      const status = useStore.getState().meetingStatus;
+      const status = useLiveStore.getState().meetingStatus;
       if (status === "paused") {
         timer = setTimeout(emitWord, 300);
         return;
@@ -54,7 +54,7 @@ export function startMockStream() {
       const partial = words.slice(0, wordIdx).join(" ");
       const isFinal = wordIdx >= words.length;
       void toTraditional(partial).then((text) => {
-        useStore.getState().upsertSegment({
+        useLiveStore.getState().upsertSegment({
           id,
           source,
           speaker,

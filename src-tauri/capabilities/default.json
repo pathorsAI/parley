@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main and secondary (settings / finding-solution / diagnostics / history / voice-typing) windows",
-  "windows": ["main", "settings", "finding-solution", "diagnostics", "history", "voice-typing", "meeting"],
+  "description": "Capability for the main and secondary (settings / finding-solution / diagnostics / history / voice-typing / meeting / meeting-prompt) windows",
+  "windows": ["main", "settings", "finding-solution", "diagnostics", "history", "voice-typing", "meeting", "meeting-prompt"],
   "permissions": [
     "core:default",
     "opener:default",
@@ -29,6 +29,8 @@
     "core:window:allow-current-monitor",
     "core:window:allow-primary-monitor",
     "core:window:allow-scale-factor",
+    "core:window:allow-cursor-position",
+    "core:window:allow-monitor-from-point",
     "core:event:allow-emit",
     "core:event:allow-emit-to",
     "core:event:allow-listen",

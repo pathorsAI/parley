@@ -14,7 +14,6 @@ import {
 import { navigateTo, type Location } from "../../lib/nav/navigate";
 import { useCommandShortcut } from "../../lib/commands/bind";
 import { formatKey } from "../../lib/commands/format";
-import { isMeetingActive, useStore } from "../../lib/store";
 import { useI18n, type TranslationKey } from "../../i18n";
 import type { LibraryTree } from "./useLibraryTree";
 
@@ -35,12 +34,11 @@ import type { LibraryTree } from "./useLibraryTree";
  * already scrolling through. Actions stay where they are: on the row, on the
  * card, under the pointer.
  *
- * It never opens over a RUNNING meeting, for the same reason the shell hides
- * the tree there — the live coach owns that window.
+ * It opens during a meeting too: the meeting has its own window, and nothing
+ * the palette jumps to reaches it.
  */
 export function CommandPalette({ tree }: Readonly<{ tree: LibraryTree }>) {
   const { t } = useI18n();
-  const meetingActive = useStore((s) => isMeetingActive(s.meetingStatus));
 
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -48,23 +46,14 @@ export function CommandPalette({ tree }: Readonly<{ tree: LibraryTree }>) {
   const inputRef = useRef<HTMLInputElement>(null);
   const activeRef = useRef<HTMLButtonElement>(null);
 
-  // `nav.jumpTo` toggles. The guard reads the store directly rather than the
-  // subscribed value, so the binding never has to be re-registered.
+  // `nav.jumpTo` toggles.
   //
   // That command is one of the few marked `whileTyping` in the registry, and
   // this is the reason: the palette's own search field has focus whenever it is
   // open, so a chord that respected the typing guard could open this thing but
   // never close it again. The flag is set on the row, not passed here — the
   // table decides what a command may interrupt.
-  useCommandShortcut("nav.jumpTo", () => {
-    if (isMeetingActive(useStore.getState().meetingStatus)) return;
-    setOpen((o) => !o);
-  });
-
-  // A meeting starting while the palette is up takes the window back.
-  useEffect(() => {
-    if (meetingActive) setOpen(false);
-  }, [meetingActive]);
+  useCommandShortcut("nav.jumpTo", () => setOpen((o) => !o));
 
   // Every open is a fresh start: last search left up is a search you have to
   // clear before you can use the thing.

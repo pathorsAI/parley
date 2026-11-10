@@ -3,11 +3,9 @@ import { createPortal } from "react-dom";
 import {
   AudioLines,
   Calendar,
-  Check,
   ChevronDown,
-  ChevronRight,
+  ChevronLeft,
   Eraser,
-  FileAudio,
   Folder as FolderIcon,
   FolderClosed,
   History,
@@ -15,25 +13,23 @@ import {
   Mic,
   Minus,
   Pause,
-  Pencil,
   Play,
   Settings,
   Square,
   UsersRound,
   X,
 } from "lucide-react";
-import { useStore, type AppMode } from "../lib/store";
+import { useLiveStore, useStore, type AppMode } from "../lib/store";
 import { usePersonalFolders, useOrgFolders } from "../lib/library/useFolders";
 import { useWindowFocused, useWindowMaximized, controlWindow, type WindowAction } from "../lib/shell/windowState";
 import { useMeetingElapsed } from "../lib/meeting/elapsed";
-import { renameLoadedRecording, renameTarget } from "../lib/replay/rename";
 import { breadcrumbParents, type CrumbIcon, type ParentCrumb } from "../lib/library/breadcrumb";
 import { leaveRecordingTo } from "../lib/nav/navigate";
 import type { Settings as AppSettings } from "../lib/types";
-import { log } from "../lib/log";
-import { toast } from "sonner";
 import { isMac, isTauri } from "../lib/platform";
 import { focusMeetingWindow } from "../lib/meeting/meetingWindow";
+import { pressTitleBar } from "../lib/window/press";
+import { mainZoomFallback, toggleZoom, useTrackRestoreFrame } from "../lib/window/zoom";
 import { beginMeeting } from "../lib/meeting/start";
 import { cancelActiveMeeting, endMeeting, toggleMeetingPause } from "../lib/meeting/controls";
 import { useCommandShortcut } from "../lib/commands/bind";
@@ -53,7 +49,33 @@ import { StudyGenerationChip } from "./study/StudyGenerationChip";
 
 
 type TFn = ReturnType<typeof useI18n>["t"];
-type StudyTab = "report" | "replay";
+
+/**
+ * The bare stretches of the title bar that drag the window. Only a press
+ * directly ON one of them counts (not on what sits inside it), the way a bare
+ * `data-tauri-drag-region` behaves.
+ *
+ * Windows / Linux keep Tauri's drag region: its double click maximizes
+ * natively, and WindowsControls follows that state. macOS does not: there that
+ * double click would also run toggleMaximize, which does nothing useful on a
+ * window macOS tiled to fill the screen — so the header drags and zooms itself
+ * (onMacTitleBarPress).
+ */
+function dragSurface(mac: boolean): Record<string, string> {
+  return mac ? { "data-drag-surface": "" } : { "data-tauri-drag-region": "" };
+}
+
+/** macOS: a press on a bare stretch of the title bar drags the window; a
+ *  double click fills the screen or goes back (toggleZoom). Not in fullscreen,
+ *  where there is no window to move. */
+function onMacTitleBarPress(e: React.MouseEvent<HTMLElement>, fullscreen: boolean) {
+  if (fullscreen) return;
+  const target = e.target;
+  if (!(target instanceof HTMLElement) || !target.hasAttribute("data-drag-surface")) return;
+  // No text cursor, no word selected by the double click.
+  e.preventDefault();
+  pressTitleBar(e, () => void toggleZoom(mainZoomFallback));
+}
 type Layout = AppSettings["layout"];
 
 
@@ -135,10 +157,11 @@ function crumbLabel(crumb: ParentCrumb, t: TFn): string {
 }
 
 /**
- * Where the open recording lives, then its name: `和運租車 › 第二次報價`. The
- * parent crumb IS the way out — it closes the recording and opens that node of
- * the tree (through the nav stack, so ⌘[ comes back). It replaced a loud
- * 關閉這場錄音 button at the other end of the titlebar.
+ * The way out of the open recording: `‹ 和運租車`, back to the node of the tree
+ * it lives in. It closes the recording and opens that node (through the nav
+ * stack, so ⌘[ comes back). The recording's name and its folder are the page
+ * header's to show and change — repeating them here made two breadcrumbs and
+ * two places to rename.
  */
 function RecordingBreadcrumb({ t }: Readonly<{ t: TFn }>) {
   const loadedHistoryId = useStore((s) => s.loadedHistoryId);
@@ -159,122 +182,23 @@ function RecordingBreadcrumb({ t }: Readonly<{ t: TFn }>) {
     personalFolders,
     orgFolders,
   });
+  const back = parents[parents.length - 1];
+  if (!back) return null;
+  const label = crumbLabel(back, t);
 
   return (
     <nav aria-label={t("replay.breadcrumb")} className="min-w-0">
-      <ol className="flex min-w-0 items-center gap-0.5 text-xs">
-        {parents.map((crumb) => {
-          const label = crumbLabel(crumb, t);
-          return (
-            <li key={`${crumb.icon}:${label}`} className="flex min-w-0 shrink items-center gap-0.5">
-              <button
-                type="button"
-                title={t("replay.breadcrumb.open", { name: label })}
-                onClick={() => void leaveRecordingTo(crumb.selection)}
-                className="flex min-w-0 items-center gap-1 rounded px-1.5 py-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              >
-                <CrumbGlyph icon={crumb.icon} />
-                <span className="max-w-28 truncate">{label}</span>
-              </button>
-              <ChevronRight aria-hidden className="size-3 shrink-0 text-muted-foreground/60" />
-            </li>
-          );
-        })}
-        <li aria-current="page" className="flex min-w-0 items-center pl-1">
-          <RecordingName t={t} />
-        </li>
-      </ol>
+      <button
+        type="button"
+        title={t("replay.breadcrumb.open", { name: label })}
+        onClick={() => void leaveRecordingTo(back.selection)}
+        className="flex min-w-0 items-center gap-1 rounded px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      >
+        <ChevronLeft aria-hidden className="size-3.5 shrink-0" />
+        <CrumbGlyph icon={back.icon} />
+        <span className="max-w-40 truncate">{label}</span>
+      </button>
     </nav>
-  );
-}
-
-/**
- * The breadcrumb's last crumb: the loaded recording's name, doubling as an
- * inline rename affordance (hover → pencil → input; Enter/blur commits, Escape
- * cancels — the same interaction as the History card). Rename persists to disk
- * + cloud + the History window via renameHistoryEntry, then updates the header
- * immediately via renameReplay. Only offered for recordings saved in the local
- * library; an unsaved upload or a read-only org recording (loadedHistoryId
- * null) renders the name read-only.
- */
-function RecordingName({ t }: Readonly<{ t: TFn }>) {
-  const replayName = useStore((s) => s.replay?.name ?? "");
-  const loadedHistoryId = useStore((s) => s.loadedHistoryId);
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(replayName);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  function startEdit() {
-    setDraft(replayName);
-    setEditing(true);
-    requestAnimationFrame(() => inputRef.current?.select());
-  }
-  async function commit() {
-    setEditing(false);
-    const clean = renameTarget(draft, replayName, loadedHistoryId);
-    if (!clean || !loadedHistoryId) return;
-    try {
-      await renameLoadedRecording(loadedHistoryId, clean);
-    } catch (e) {
-      log.error("replay: rename failed", { error: String(e) });
-      const message = e instanceof Error ? e.message : String(e);
-      toast.error(t("replay.renameFailed", { error: message }));
-    }
-  }
-
-  if (editing) {
-    return (
-      <span className="flex min-w-0 items-center gap-1.5 text-xs text-foreground">
-        <FileAudio className="size-3.5 shrink-0 text-muted-foreground" />
-        <input
-          ref={inputRef}
-          value={draft}
-          onChange={(ev) => setDraft(ev.target.value)}
-          onKeyDown={(ev) => {
-            ev.stopPropagation();
-            if (ev.key === "Enter") {
-              ev.preventDefault();
-              void commit();
-            } else if (ev.key === "Escape") {
-              ev.preventDefault();
-              setDraft(replayName);
-              setEditing(false);
-            }
-          }}
-          onBlur={() => void commit()}
-          className="h-6 w-44 min-w-0 rounded border bg-background px-1.5 text-xs text-foreground outline-none focus:border-primary"
-        />
-        <button
-          type="button"
-          aria-label={t("history.renameSave")}
-          onMouseDown={(ev) => ev.preventDefault()}
-          onClick={() => void commit()}
-          className="grid size-5 shrink-0 place-items-center rounded text-muted-foreground hover:text-foreground"
-        >
-          <Check className="size-3" />
-        </button>
-      </span>
-    );
-  }
-
-  return (
-    <span className="group/rename flex min-w-0 items-center gap-1.5 text-xs text-foreground">
-      <FileAudio className="size-3.5 shrink-0 text-muted-foreground" />
-      <span className="max-w-48 truncate" title={replayName}>
-        {replayName}
-      </span>
-      {loadedHistoryId && (
-        <button
-          type="button"
-          aria-label={t("replay.rename")}
-          title={t("replay.rename")}
-          onClick={startEdit}
-          className="grid size-5 shrink-0 place-items-center rounded text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/rename:opacity-100"
-        >
-          <Pencil className="size-3" />
-        </button>
-      )}
-    </span>
   );
 }
 
@@ -341,39 +265,23 @@ function SwitchTab({
 
 /**
  * The center slot does ONE thing (R6): page tabs for a tense that has pages —
- * the live postures, or the study report/replay pair. Every other route
- * renders nothing here; "where am I" is the sidebar highlight + the tense
- * badge on the left, not a passive label in a control slot.
+ * the live postures. A loaded recording's tabs (summary, actions, notes,
+ * delivery, replay) live in the study page's own header, under its title, so
+ * study renders nothing here. Every other route renders nothing either; "where
+ * am I" is the sidebar highlight + the tense badge on the left, not a passive
+ * label in a control slot.
  */
 function CenterSwitcher({
   mode,
-  studyTab,
   layout,
-  onStudyTab,
   onLayout,
   t,
 }: Readonly<{
   mode: AppMode;
-  studyTab: StudyTab;
   layout: Layout;
-  onStudyTab: (tab: StudyTab) => void;
   onLayout: (layout: Layout) => void;
   t: TFn;
 }>) {
-  if (mode === "study") {
-    return (
-      <SwitchTrack>
-        {(["report", "replay"] as const).map((tab) => (
-          <SwitchTab
-            key={tab}
-            active={studyTab === tab}
-            label={t(`study.${tab}`)}
-            onClick={() => onStudyTab(tab)}
-          />
-        ))}
-      </SwitchTrack>
-    );
-  }
   if (mode === "live") {
     return (
       <SwitchTrack>
@@ -419,13 +327,15 @@ function RecorderCluster({
     <>
       <Button
         size="sm"
-        variant={paused ? "default" : "outline"}
+        variant="outline"
         onClick={onTogglePause}
         // Held while a start/end/cancel invoke is in flight: pausing mid-start
         // could land set_meeting_paused BEFORE start_meeting resets the flag,
         // splitting UI and backend pause state.
         disabled={busy}
-        className="h-8"
+        // Paused, 繼續 is tinted — light blue, not solid — so it sits with
+        // the grey 暫停 / 結束 buttons beside it.
+        className={paused ? "h-8 border-transparent bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary" : "h-8"}
       >
         {paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
         {paused ? t("titlebar.resume") : t("titlebar.pause")}
@@ -641,17 +551,14 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   const { t } = useI18n();
   const focused = useWindowFocused();
   const maximized = useWindowMaximized();
-  const status = useStore((s) => s.meetingStatus);
-  const isFinalizingMeeting = useStore((s) => s.isFinalizingMeeting);
+  // The running meeting (the live store); the rest is this window's own.
+  const status = useLiveStore((s) => s.meetingStatus);
+  const isFinalizingMeeting = useLiveStore((s) => s.isFinalizingMeeting);
   const layout = useStore((s) => s.settings.layout);
   const updateSettings = useStore((s) => s.updateSettings);
-  const meetingStartedAt = useStore((s) => s.meetingStartedAt);
-  const studyTab = useStore((s) => s.studyTab);
-  const setStudyTab = useStore((s) => s.setStudyTab);
+  const meetingStartedAt = useLiveStore((s) => s.meetingStartedAt);
   const appMode = useStore((s) => s.appMode);
   const openLibrary = useStore((s) => s.openLibrary);
-  const showReplay = useStore((s) => s.showReplay);
-  const replayName = useStore((s) => s.replay?.name ?? null);
   const resetPrep = useStore((s) => s.resetPrep);
   const setDraftOpen = useStore((s) => s.setDraftOpen);
   // A non-empty prep draft unlocks the explicit "clear prep" menu item.
@@ -748,12 +655,16 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   // Reserve the leading gutter for macOS traffic lights and the trailing one
   // for Windows caption buttons; fullscreen shows no controls on either OS.
   const mac = isMac();
+  // macOS: double-clicking the title bar zooms like Chrome (lib/window/zoom.ts),
+  // which needs the frame to go back to.
+  useTrackRestoreFrame(mac);
   const padLeft = !fullscreen && mac ? "pl-[104px]" : "pl-4";
   const padRight = !fullscreen && !mac ? "pr-[140px]" : "pr-3";
 
   return (
     <header
-      data-tauri-drag-region
+      {...dragSurface(mac)}
+      onMouseDown={mac ? (e) => onMacTitleBarPress(e, fullscreen) : undefined}
       className={`relative grid h-[52px] shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(max-content,1fr)] items-center gap-3 border-b bg-background ${padLeft} ${padRight}`}
     >
       {/* macOS traffic lights: native sizing/colours, glyphs reveal on hover of
@@ -769,7 +680,7 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           Parley) — while recording, the session vitals (rec + elapsed + mic
           level). Where the meeting saves is decided by the folder picker, so a
           second folder chip here would be a silently-losing source of truth. */}
-      <div data-tauri-drag-region className="flex min-w-0 items-center gap-2">
+      <div {...dragSurface(mac)} className="flex min-w-0 items-center gap-2">
         {/* The recording pill (below) is the one badge worth a fixed slot: a
             recording in progress is state you must not miss. The study tense needs no counterpart — the
             page tabs in the center already say which tense you are in,
@@ -779,40 +690,26 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
             OUT, not a filing prompt — filing still has ONE home, the report
             page's link bar. */}
         {studyMode && <RecordingBreadcrumb t={t} />}
-        {/* A loaded recording stays reachable while you look at something else.
-            Navigating the tree away from it used to leave nothing on screen
-            pointing back — the only route out was 離開, which discards it. */}
-        {!studyMode && !meetingHere && replayName && (
-          <button
-            type="button"
-            onClick={showReplay}
-            title={replayName}
-            className="flex min-w-0 items-center gap-1.5 rounded-md border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          >
-            <FileAudio className="size-3.5 shrink-0" />
-            <span className="max-w-40 truncate">{replayName}</span>
-          </button>
-        )}
         {meetingHere && (
           <>
-            {/* ONE recording pill: dot + elapsed. Red while recording; the
-                warning family while paused, so a paused meeting doesn't read
-                as a running one. */}
+            {/* ONE recording pill: dot + elapsed on grey. The red dot is the
+                only colour; paused, it goes grey and still, so a paused
+                meeting doesn't read as a running one. */}
             <span
               className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 ${
-                paused ? "bg-warning text-warning-foreground" : "bg-recording/10 text-recording"
+                paused ? "bg-muted text-muted-foreground" : "bg-muted text-foreground"
               }`}
             >
               <span
                 aria-hidden
                 className={`size-2 rounded-full ${
-                  paused ? "bg-warning-foreground" : "animate-pulse bg-recording"
+                  paused ? "bg-muted-foreground/60" : "animate-pulse bg-recording"
                 }`}
               />
               <span className="font-display text-[13px] font-semibold tabular-nums">{elapsed}</span>
             </span>
             {paused ? (
-              <span className="text-xs font-medium text-warning-foreground">
+              <span className="text-xs font-medium text-muted-foreground">
                 {t("titlebar.paused")}
               </span>
             ) : (
@@ -822,19 +719,17 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
         )}
       </div>
 
-      {/* Titlebar-center switcher — two tenses, one slot: live shows the
-          posture switch (coach/transcript); a loaded recording swaps in the
-          study tabs (report/replay) plus the analysis-status
-          chip (the ONE generation surface for the whole study tense).
+      {/* Titlebar-center switcher: live shows the posture switch
+          (coach/transcript); a loaded recording shows only the
+          analysis-status chip (the ONE generation surface for the whole study
+          tense) — its tabs sit in the page header.
           A grid column, not an absolutely-centred overlay: equal side tracks
           keep it centred, and a long breadcrumb truncates in its own track
           instead of sliding underneath the tabs. */}
       <div className="flex items-center gap-2">
         <CenterSwitcher
           mode={appMode}
-          studyTab={studyTab}
           layout={layout}
-          onStudyTab={setStudyTab}
           onLayout={(v) => updateSettings({ layout: v })}
           t={t}
         />

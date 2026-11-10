@@ -94,6 +94,15 @@ pub fn build<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     #[cfg(target_os = "macos")]
     let settings = command_item(handle, "global", "settings.open", "Settings…", "CmdOrCtrl+,")?;
 
+    // Undo / Redo are Parley's own items, not the predefined ones: the
+    // predefined ones go straight to the text system, so ⌘Z could never undo
+    // a transcript replace. The frontend hands a text field's undo back to
+    // the system through `native_edit` (src/lib/edit/undo.ts).
+    #[cfg(target_os = "macos")]
+    let undo = command_item(handle, "global", "edit.undo", "Undo", "CmdOrCtrl+Z")?;
+    #[cfg(target_os = "macos")]
+    let redo = command_item(handle, "global", "edit.redo", "Redo", "Shift+CmdOrCtrl+Z")?;
+
     #[cfg(target_os = "macos")]
     let zoom_in = command_item(handle, "global", "zoom.in", "Zoom In", "CmdOrCtrl+=")?;
     #[cfg(target_os = "macos")]
@@ -123,6 +132,11 @@ pub fn build<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let nav_forward = command_item(handle, "main", "nav.forward", "Forward", "CmdOrCtrl+]")?;
     #[cfg(target_os = "macos")]
     let nav_jump = command_item(handle, "main", "nav.jumpTo", "Jump to…", "CmdOrCtrl+K")?;
+
+    #[cfg(target_os = "macos")]
+    let new_draft = command_item(handle, "main", "file.newDraft", "New Meeting Draft", "CmdOrCtrl+N")?;
+    #[cfg(target_os = "macos")]
+    let new_folder = command_item(handle, "main", "file.newFolder", "New Folder", "Shift+CmdOrCtrl+N")?;
 
     #[cfg(target_os = "macos")]
     let meeting_start = command_item(handle, "main", "meeting.start", "Start Meeting", "CmdOrCtrl+R")?;
@@ -258,6 +272,12 @@ pub fn build<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<Menu<R>> {
                 "File",
                 true,
                 &[
+                    #[cfg(target_os = "macos")]
+                    &new_draft,
+                    #[cfg(target_os = "macos")]
+                    &new_folder,
+                    #[cfg(target_os = "macos")]
+                    &PredefinedMenuItem::separator(handle)?,
                     // ⌘W lives here (and in Window) already, which is why the
                     // command table marks `window.close` as owned by the OS.
                     &PredefinedMenuItem::close_window(handle, None)?,
@@ -270,7 +290,13 @@ pub fn build<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<Menu<R>> {
                 "Edit",
                 true,
                 &[
+                    #[cfg(target_os = "macos")]
+                    &undo,
+                    #[cfg(target_os = "macos")]
+                    &redo,
+                    #[cfg(not(target_os = "macos"))]
                     &PredefinedMenuItem::undo(handle, None)?,
+                    #[cfg(not(target_os = "macos"))]
                     &PredefinedMenuItem::redo(handle, None)?,
                     &PredefinedMenuItem::separator(handle)?,
                     &PredefinedMenuItem::cut(handle, None)?,
@@ -370,16 +396,15 @@ fn route_command<R: Runtime>(app: &AppHandle<R>, rest: &str) {
         // whichever one the user is looking at. Broadcasting would be wrong,
         // not merely wasteful: page zoom is per-window, so ⌘= from the menu
         // would resize every open window at once.
-        //
-        // Found by scanning rather than via `get_focused_window()`, which sits
-        // behind Tauri's `unstable` feature — not worth turning that on for one
-        // lookup over a handful of windows.
-        "global" => app
-            .webview_windows()
-            .into_iter()
-            .find(|(_, win)| win.is_focused().unwrap_or(false))
-            .map(|(label, _)| label)
-            .unwrap_or_else(|| MAIN_WINDOW.to_string()),
+        "global" => focused_label(app).unwrap_or_else(|| MAIN_WINDOW.to_string()),
+        // Main-window commands go to the window in FRONT when that is another
+        // Parley window: its tab strip may have taken the chord over (⌘1 picks
+        // Settings' first category, as it picks the study page's first tab).
+        // That window hands anything it doesn't take on to the main window
+        // and brings it forward (runCommand in src/lib/commands/bind.ts).
+        "main" if focused_label(app).is_some_and(|l| l != MAIN_WINDOW) => {
+            focused_label(app).unwrap_or_else(|| MAIN_WINDOW.to_string())
+        }
         // Only the main window's shell can navigate or start a meeting. Bring it
         // forward first: picking "Go → Home" from the Settings window should
         // show you the result, not change something behind your back.
@@ -401,6 +426,47 @@ fn route_command<R: Runtime>(app: &AppHandle<R>, rest: &str) {
 
     if let Err(e) = app.emit_to(label.as_str(), CMD_EVENT, command) {
         log::warn!("menu: emit {command} to {label} failed: {e}");
+    }
+}
+
+/// The label of the Parley window in front, if any.
+///
+/// Found by scanning rather than via `get_focused_window()`, which sits behind
+/// Tauri's `unstable` feature — not worth turning that on for one lookup over
+/// a handful of windows.
+fn focused_label<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
+    app.webview_windows()
+        .into_iter()
+        .find(|(_, win)| win.is_focused().unwrap_or(false))
+        .map(|(label, _)| label)
+}
+
+/// Edit › Undo / Redo for the focused text field: send `undo:` / `redo:` down
+/// the key window's responder chain, as the predefined menu items do. The
+/// frontend calls it when ⌘Z lands in a field (src/lib/edit/undo.ts). A no-op
+/// off macOS, where the webview never takes the chord from a field.
+#[tauri::command]
+pub(crate) fn native_edit<R: Runtime>(app: AppHandle<R>, action: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use objc::runtime::{Object, BOOL};
+        use objc::{class, msg_send, sel, sel_impl};
+        let selector = match action.as_str() {
+            "undo" => sel!(undo:),
+            "redo" => sel!(redo:),
+            other => return Err(format!("unknown edit action {other}")),
+        };
+        app.run_on_main_thread(move || unsafe {
+            let ns_app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
+            let nil: *mut Object = std::ptr::null_mut();
+            let _: BOOL = msg_send![ns_app, sendAction: selector to: nil from: nil];
+        })
+        .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, action);
+        Ok(())
     }
 }
 

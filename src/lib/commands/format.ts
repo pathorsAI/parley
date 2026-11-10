@@ -89,6 +89,8 @@ export function formatKey(key: string, mac: boolean = isMac()): string {
  */
 export function formatChord(chord: Chord, mac: boolean): string[] {
   const caps: string[] = [];
+  // Apple's order is ⌃⌥⇧⌘; a display-only ⌃ (see Chord.ctrl) leads.
+  if (chord.ctrl) caps.push(mac ? "⌃" : "Ctrl");
   if (chord.mod && !mac) caps.push("Ctrl");
   if (chord.alt) caps.push(mac ? "⌥" : "Alt");
   if (chord.shift === true) caps.push(mac ? "⇧" : "Shift");

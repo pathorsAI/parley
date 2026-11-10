@@ -78,8 +78,15 @@ pub async fn transcribe_file(
     // batch API is used (see `TranscribeConfig::vocabulary` for the live twin).
     // Optional so a caller that predates the dictionary still works.
     vocabulary: Option<Vec<String>>,
+    // Re-transcribe: skip the cached result and ask the provider again. The
+    // cache only holds SUCCESSFUL runs, but a successful run can still be the
+    // broken transcript the user is trying to replace (empty, cut short), and
+    // re-reading it would hand them the same thing back. The new result still
+    // overwrites the cache entry.
+    fresh: Option<bool>,
 ) -> Result<TranscriptionResult, String> {
     ensure_crypto_provider();
+    let fresh = fresh.unwrap_or(false);
     let vocabulary = vocabulary.unwrap_or_default();
 
     // File (batch) transcription is dispatched by the provider's registry row.
@@ -114,8 +121,15 @@ pub async fn transcribe_file(
     // re-transcribes.
     let suffix = cache_suffix(&provider, upload.model);
     let cache_path = cache_file_path(&app, &path, suffix.as_deref());
-    if let Some(cached) = read_cached(cache_path.as_deref()).await {
-        return Ok(cached);
+    if !fresh {
+        if let Some(cached) = read_cached(cache_path.as_deref()).await {
+            return Ok(cached);
+        }
+    } else {
+        log::info!(
+            "replay: fresh transcription requested, cache skipped provider={}",
+            provider
+        );
     }
 
     let batch = upload.provider.and_then(|p| p.spec().batch.as_ref());

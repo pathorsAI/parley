@@ -7,10 +7,11 @@ import type { FilingSuggestion } from "../types";
 import { log } from "../log";
 
 /**
- * Propose a better title for the loaded recording plus the folders it could be
+ * Name the loaded recording (the title is applied at once — see
+ * applySuggestedTitle) and propose the folders it could be
  * filed under, into the store and onto the loaded entry. The ONE entry point for
  * both the study pipeline (which dispatches it as soon as there is a transcript
- * — it depends on nothing upstream) and the card's manual regenerate (`force`
+ * — it depends on nothing upstream) and a manual regenerate (`force`
  * re-runs over a done/error state; the pipeline never forces). A run that
  * outlives its recording being on screen still saves its suggestion onto that
  * entry; a superseded run is discarded (runGuard).
@@ -71,6 +72,43 @@ function withoutStaleTitle(
   return suggestion.folders.length > 0 ? { ...suggestion, title: "" } : null;
 }
 
+/**
+ * Name the recording with the suggested title, right away. The title is not a
+ * suggestion any more (only the folder is): a recording called
+ * "即時會議 · <date>" helps nobody, and the user can still rename it. Goes
+ * through the user's rename path (renameHistoryEntry), which also clears the
+ * suggestion's title on disk and in the store, then flags the name as
+ * Parley's for the page header's "auto-named" tag — until anyone renames it.
+ *
+ * Only while the recording still carries the name it had when the pass
+ * started: a rename in the meantime is the user's answer. On screen that was
+ * already checked (withoutStaleTitle blanks the title); off screen the saved
+ * entry's own title is checked. Read-only recordings never get here — the
+ * runner declines them, and they have no entry id.
+ */
+async function applySuggestedTitle(
+  entryId: string,
+  title: string,
+  titleAtStart: string,
+  landedOnScreen: boolean,
+): Promise<void> {
+  try {
+    if (!landedOnScreen) {
+      const { readEntry } = await import("../history/entryStore");
+      const { meta } = await readEntry(entryId);
+      if ((meta.title ?? "") !== titleAtStart) return;
+    }
+    const history = await import("../history/history");
+    await history.renameHistoryEntry(entryId, title);
+    const s = useStore.getState();
+    if (s.loadedHistoryId === entryId) s.renameReplay(title);
+    s.setTitleAutoApplied(entryId);
+  } catch (e) {
+    // The suggestion keeps its title (nothing cleared it), so nothing is lost.
+    log.warn("filing: applying the suggested title failed", { entryId, error: String(e) });
+  }
+}
+
 export async function runFilingSuggestion(opts?: { force?: boolean }): Promise<void> {
   const state = useStore.getState();
   if (state.filingStatus === "running") return;
@@ -114,15 +152,24 @@ export async function runFilingSuggestion(opts?: { force?: boolean }): Promise<v
     // but it was never answered — remembering it would make the restart that
     // cancelled it decline to run.
     if (!suggestion && !run.superseded()) rememberEmpty(state.replay?.id, run.target().entryId);
+    const entryId = run.target().entryId;
+    let landedOnScreen = false;
     await landStage(run, {
       stage: "filing",
       apply: () => {
+        landedOnScreen = true;
         useStore.getState().setFilingSuggestion(suggestion);
         useStore.getState().setFilingStatus("done");
       },
       patch: suggestion ? { filingSuggestion: suggestion, filingSuggested: true } : null,
       persistWhileLoaded: true,
     });
+    // After the suggestion is on disk, so the rename's own write (which clears
+    // the suggestion's title) is the one that lands last.
+    const title = suggestion?.title.trim() ?? "";
+    if (title && entryId && !run.superseded()) {
+      await applySuggestedTitle(entryId, title, currentTitle, landedOnScreen);
+    }
   } catch (e) {
     if (run.superseded()) log.info("filing: superseded pass ended", { error: String(e) });
     else log.error("filing: suggestion failed", { error: String(e) });

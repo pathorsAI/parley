@@ -1,5 +1,4 @@
-import { create } from "zustand";
-import { useStore, isMeetingActive } from "../store";
+import { useStore, isLiveMeetingActive } from "../store";
 import type { MeetingDraft } from "../store/prep";
 import { translate } from "../../i18n";
 import { isTauri } from "../platform";
@@ -28,12 +27,6 @@ export function planReminder(p: {
   return { kind: "fire" };
 }
 
-/** The draft whose reminder card the main window shows (null = none up). */
-export const useReminderDue = create<{ draftId: string | null; dismiss: () => void }>((set) => ({
-  draftId: null,
-  dismiss: () => set({ draftId: null }),
-}));
-
 /** The notification's headline: whose meeting, and how soon. */
 export function reminderHeadline(language: Parameters<typeof translate>[0], title: string, minutes: number): string {
   const name = title.trim() || translate(language, "floating.untitled");
@@ -55,9 +48,8 @@ export async function ensureNotificationPermission(): Promise<boolean> {
   }
 }
 
-/** Reach the user wherever they are: a system notification, the Dock, and the
- *  window itself (shown if it was closed to the Dock or tray), where the
- *  reminder card waits with Start. */
+/** The reminder is a system notification, and only that: Parley shows no card
+ *  of its own and does not bring its window forward. */
 async function alertUser(title: string, body: string): Promise<void> {
   if (!isTauri()) return;
   try {
@@ -68,14 +60,6 @@ async function alertUser(title: string, body: string): Promise<void> {
   } catch (error) {
     log.warn("reminder: notification failed", { error: String(error) });
   }
-  try {
-    const { getCurrentWindow, UserAttentionType } = await import("@tauri-apps/api/window");
-    const win = getCurrentWindow();
-    if (!(await win.isVisible())) await win.show();
-    await win.requestUserAttention(UserAttentionType.Informational);
-  } catch (error) {
-    log.warn("reminder: window attention failed", { error: String(error) });
-  }
 }
 
 function fire(draft: MeetingDraft): void {
@@ -83,10 +67,9 @@ function fire(draft: MeetingDraft): void {
   if (draft.meetingAt == null) return;
   s.markDraftReminded(draft.id, draft.meetingAt);
   // Already recording: the reminder has nothing left to say.
-  if (isMeetingActive(s.meetingStatus)) return;
+  if (isLiveMeetingActive()) return;
   const minutes = Math.max(0, Math.round((draft.meetingAt - Date.now()) / 60_000));
   log.info("reminder: firing", { draft: draft.id, meetingAt: draft.meetingAt, minutes });
-  useReminderDue.setState({ draftId: draft.id });
   void alertUser(
     reminderHeadline(s.settings.language, draft.title, minutes),
     translate(s.settings.language, "reminder.body"),
@@ -129,9 +112,6 @@ export function initMeetingReminder(): () => void {
 
   const unsubscribe = useStore.subscribe((next, prev) => {
     if (next.drafts === prev.drafts) return;
-    // A card whose draft is gone (recorded, deleted) goes with it.
-    const due = useReminderDue.getState().draftId;
-    if (due && !next.drafts.some((d) => d.id === due)) useReminderDue.getState().dismiss();
     replan();
   });
   replan();

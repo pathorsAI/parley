@@ -1,6 +1,6 @@
 [package]
 name = "parley"
-version = "0.35.3"
+version = "0.35.5"
 description = "Parley — realtime meeting copilot for interviews and negotiations"
 authors = ["you"]
 edition = "2021"
@@ -90,6 +90,9 @@ libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 coreaudio-sys = "0.2"
+# Claims Parley as the notification sender before tauri-plugin-notification
+# can (see notify_sender.rs). Already in the tree through that plugin.
+notify-rust = "4.18"
 core-foundation = "0.10"
 objc = "0.2"
 block2 = "0.6"
@@ -122,10 +125,12 @@ winreg = "0.55"
 # Win32_Storage_FileSystem (GetDiskFreeSpaceExW), Win32_Graphics_Dxgi (the GPU
 # list) and Win32_System_LibraryLoader (the Vulkan loader probe and the
 # delay-load hooks, see vulkan_delayload.rs) are the local STT provider's
-# hardware probe (see hardware.rs).
+# hardware probe (see hardware.rs). Win32_Media_Audio is PlaySoundW, the
+# system sound a meeting recording starts and stops with (see commands/cue.rs).
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Dxgi",
+    "Win32_Media_Audio",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
     "Win32_System_DataExchange",

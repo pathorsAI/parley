@@ -1,11 +1,10 @@
 import { useEffect, useState } from "react";
-import { ArrowUp, ChevronDown, Loader2, MessageCircle, Sparkles } from "lucide-react";
+import { ArrowUp, Loader2, MessageCircle } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
 import { useStore } from "../../lib/store";
 import { useStickToBottom } from "../../lib/useStickToBottom";
-import { meetingCommand } from "../../lib/meeting/meetingWindow";
 import { useI18n } from "../../i18n";
 import { log } from "../../lib/log";
 import { FindingRow } from "../analysis/FindingRow";
@@ -13,63 +12,7 @@ import { openSolution, selectAndSeek } from "../analysis/useAnalysis";
 import { ASK_SUGGESTIONS, useCoachAsk } from "./coachAsk";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
-
-/**
- * Auto-analysis cadence, reachable from the coach posture (⑥). The same two
- * controls used to exist ONLY in the transcript posture's findings panel, so
- * whether the feed refreshed itself depended on a posture the user might never
- * open — the setting is global, its door was not.
- */
-function AutoAnalyzeMenu() {
-  const { t } = useI18n();
-  const autoAnalyze = useStore((s) => s.autoAnalyze);
-  const autoAnalyzeSec = useStore((s) => s.autoAnalyzeSec);
-  const setAutoAnalyze = useStore((s) => s.setAutoAnalyze);
-  const setAutoAnalyzeSec = useStore((s) => s.setAutoAnalyzeSec);
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button
-          size="icon"
-          variant="outline"
-          className="h-7 w-6 rounded-l-none"
-          aria-label={t("evaluations.autoEvery")}
-          title={
-            autoAnalyze
-              ? t("evaluations.autoOnHint", { sec: autoAnalyzeSec })
-              : t("evaluations.autoOffHint")
-          }
-        >
-          <ChevronDown className="size-3" />
-          {autoAnalyze && (
-            <span className="absolute right-0.5 top-0.5 size-1.5 rounded-full bg-primary" />
-          )}
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-60">
-        <label className="flex cursor-pointer items-center gap-1.5 text-xs">
-          <input
-            type="checkbox"
-            checked={autoAnalyze}
-            onChange={(e) => setAutoAnalyze(e.target.checked)}
-            className="size-3.5 accent-primary"
-          />
-          {t("evaluations.autoEvery")}
-          <Input
-            type="number"
-            value={autoAnalyzeSec}
-            onChange={(e) => setAutoAnalyzeSec(Number(e.target.value))}
-            className="h-6 w-14 px-1 text-center text-xs"
-            disabled={!autoAnalyze}
-          />
-          {t("evaluations.autoSeconds")}
-        </label>
-      </PopoverContent>
-    </Popover>
-  );
-}
 
 /**
  * The header upload button's other replacement: import from the idle feed —
@@ -136,8 +79,6 @@ export function CoachFeed({
   const { t } = useI18n();
   const findings = useStore((s) => s.findings);
   const selectedId = useStore((s) => s.selectedFindingId);
-  const analysisStatus = useStore((s) => s.analysisStatus);
-  const running = analysisStatus === "running";
 
   const askCards = useCoachAsk((s) => s.cards);
   const askCoach = useCoachAsk((s) => s.ask);
@@ -183,8 +124,8 @@ export function CoachFeed({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* Feed header: title + muted count, and the analyze action (the feed's
-          manual refresh). */}
+      {/* Feed header: title + muted count. The feed refreshes itself (auto
+          analysis, set in the findings panel); it has no manual button. */}
       <div className="flex items-center justify-between px-3 pt-2.5 pb-1.5">
         <span className="flex items-baseline gap-2">
           <span className="text-xs font-semibold text-foreground">{t("feed.title")}</span>
@@ -192,19 +133,6 @@ export function CoachFeed({
             <span className="text-[11px] tabular-nums text-muted-foreground">{findings.length}</span>
           )}
         </span>
-        <div className="flex items-center">
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 rounded-r-none border-r-0"
-            disabled={running}
-            onClick={() => meetingCommand("analyze")}
-          >
-            {running ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
-            {t("feed.analyze")}
-          </Button>
-          <AutoAnalyzeMenu />
-        </div>
       </div>
 
       <ScrollArea className="min-h-0 flex-1" viewportRef={viewportRef}>
@@ -241,8 +169,8 @@ export function CoachFeed({
           )}
           {askCards.map((c) => (
             <div key={c.id} className="rounded-lg bg-muted/50 px-3 py-2 text-sm">
-              <p className="mb-1 flex items-start gap-1.5 text-xs font-medium text-muted-foreground">
-                <MessageCircle className="mt-0.5 size-3.5 shrink-0" />
+              <p className="mb-2.5 flex items-start gap-1.5 text-sm leading-5 font-normal text-muted-foreground">
+                <MessageCircle className="mt-[3px] size-3.5 shrink-0" />
                 <span className="min-w-0">{c.question}</span>
               </p>
               {c.answer ? (

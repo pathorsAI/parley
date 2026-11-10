@@ -1,48 +1,59 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Clock, MessageCircleQuestion, X } from "lucide-react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { Clock, MessageCircleQuestion, Pencil, RotateCw, X } from "lucide-react";
 import { DEFAULT_GETTING_STARTED, useStore } from "../../lib/store";
+import { useCommandScope } from "../../lib/commands/bind";
+import { useVoiceSelf } from "../../lib/speakers/voiceprint";
+import { useRelabel } from "../../lib/speakers/useRelabel";
 import { missingProviderRequirement, providerGateKey } from "../../lib/ai/settings";
-import { useBriefQueued } from "../../lib/analysis/studyPipeline";
+import { regenerateArtifact, useBriefQueued, type StudyArtifactKey } from "../../lib/analysis/studyPipeline";
+import { normalizeBriefHeadings, splitBrief, type BriefSection as BriefSectionPart } from "../../lib/analysis/briefSections";
+import { meetingBackgroundOf, meetingNotesOf } from "../../lib/history/meetingNotes";
+import { notesForDisplay, notesLineCount } from "../../lib/meeting/notesMarkdown";
+import { MeetingContextSheet } from "../MeetingContextButton";
+import type { StudyTab } from "../../lib/store/study";
 import { useI18n } from "../../i18n";
 import { ReplayScreen } from "../replay/ReplayScreen";
 import { ReportContent } from "../sidebar/ReportContent";
 import { DeliveryPanel } from "../delivery/DeliveryPanel";
+import { ReportNav } from "./ReportNav";
 import { ActionItemsPanel } from "../replay/ActionItemsPanel";
 import { AskPanel } from "../sidebar/AskPanel";
-import { StudyLinkBar } from "./StudyLinkBar";
-import { FilingSuggestionCard } from "./FilingSuggestionCard";
-import { HandoffSection } from "./HandoffSection";
-import { OnboardingHint } from "../OnboardingHint";
-import { markHintSeen, useHint } from "../../lib/onboarding/gettingStarted";
-import { LapContext, useLapContext, useLapState } from "../../lib/onboarding/lap";
+import { StudyHeader, STUDY_TABPANEL_ID, studyTabId } from "./StudyHeader";
+import { LapContext, useLapState } from "../../lib/onboarding/lap";
 import { GuideBar } from "./GuideBar";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
-
-/** The report's section anchors (order = page order = TOC-rail order). */
-const SECTIONS = [
-  { id: "study-brief", key: "study.brief" },
-  { id: "study-actions", key: "actionItems.title" },
-  { id: "study-delivery", key: "study.delivery" },
-  { id: "handoff", key: "study.handoff.title" },
-] as const;
+import { cn } from "@/lib/utils";
 
 /**
- * The STUDY tense: a loaded recording, viewed through two pages (titlebar-center
- * tabs) — the REPORT (brief + action items + delivery, one scroll, read the
- * outcome) and the REPLAY workbench (player + transcript + findings, check
- * the evidence). Ask rides along both as a slide-over drawer.
+ * The STUDY tense: a loaded recording, under one header (its name, where it is
+ * filed, the copy menu) and five tabs — 總結 (the brief), 後續行動, 筆記 (the
+ * notes typed in the floating window during the meeting; only when there are
+ * some), 評分 (delivery) and 回放 (the replay workbench: player + transcript +
+ * findings, check the evidence). Ask rides along every tab as a slide-over
+ * drawer.
  */
 export function StudyScreen({ libraryCount = 0 }: Readonly<{ libraryCount?: number }> = {}) {
-  const tab = useStore((s) => s.studyTab);
+  const storedTab = useStore((s) => s.studyTab);
   const gettingStarted = useStore((s) => s.settings.gettingStarted) ?? DEFAULT_GETTING_STARTED;
   const entryId = useStore((s) => s.loadedHistoryId);
   const readOnly = useStore((s) => s.replayReadOnly);
+  const notes = useStore((s) => meetingNotesOf(s.meetingContext));
+  const background = useStore((s) => meetingBackgroundOf(s.meetingContext));
   const lap = useLapState({ gettingStarted, entryId, readOnly, libraryCount });
-  // The report's destination picker, owned here so the filing card's "Choose
-  // another…" and the guide bar open the same sheet as the filing bar.
+  useCommandScope("study");
+  // Which speaker is the user, by their voiceprint (the 評分 page reads it).
+  useVoiceSelf();
+  // Kept tabs belong to one recording; another one starts them afresh.
+  const replayId = useStore((st) => st.replay?.id ?? null);
+  // The destination picker, owned here so the guide bar opens the same sheet
+  // as the header's filing row.
   const [pickerOpen, setPickerOpen] = useState(false);
+  // A recording without notes (or a background) has no such tab; land on the
+  // summary instead.
+  const missing = (storedTab === "notes" && !notes) || (storedTab === "context" && !background);
+  const tab: StudyTab = missing ? "summary" : storedTab;
 
   // The LLM pipeline (analysis → action items ∥ delivery → brief)
   // is NOT mounted here — it's a store subscription (initStudyPipeline, see
@@ -51,13 +62,22 @@ export function StudyScreen({ libraryCount = 0 }: Readonly<{ libraryCount?: numb
     <LapContext.Provider value={lap}>
       {/* data-study-root: the stage the lap's confetti is clipped to. */}
       <div data-study-root className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+        <StudyHeader
+          tab={tab}
+          notesCount={notesLineCount(notes)}
+          hasContext={!!background}
+          pickerOpen={pickerOpen}
+          onPickerOpenChange={setPickerOpen}
+        />
         {/* Ask floats over the page, so it sits above the guide bar, not on it. */}
-        <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
-          {tab === "replay" ? (
-            <ReplayScreen />
-          ) : (
-            <ReportPage pickerOpen={pickerOpen} onPickerOpenChange={setPickerOpen} />
-          )}
+        <div
+          id={STUDY_TABPANEL_ID}
+          role="tabpanel"
+          aria-labelledby={studyTabId(tab)}
+          className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
+        >
+          {tab === "replay" && <ReplayScreen />}
+          <KeptTabs key={replayId ?? ""} tab={tab} notes={notes} background={background} />
           <AskDrawer />
         </div>
         <GuideBar onOpenPicker={() => setPickerOpen(true)} />
@@ -65,6 +85,7 @@ export function StudyScreen({ libraryCount = 0 }: Readonly<{ libraryCount?: numb
     </LapContext.Provider>
   );
 }
+
 
 /** Jump to a moment on the recording: park the playhead, then switch to the
  *  replay tab — its player aligns to the store playhead on mount. */
@@ -77,167 +98,181 @@ function useSeekToReplay(): (ms: number) => void {
   }, []);
 }
 
-/** 報告: the whole post-meeting report on one scroll — brief, action items,
- *  delivery. Every piece is restored from the saved entry; only a missing
- *  brief generates (once) and is saved back. */
-function ReportPage({
-  pickerOpen,
-  onPickerOpenChange,
-}: Readonly<{ pickerOpen: boolean; onPickerOpenChange: (open: boolean) => void }>) {
-  const { t } = useI18n();
+/** Every tab but replay: one reading column, edge to edge with the header. Each piece is restored
+ *  from the saved entry; only a missing one generates (once) and is saved. */
+type PageTab = Exclude<StudyTab, "replay">;
+
+/**
+ * The reading tabs, each built the first time it is opened and then KEPT:
+ * switching away only hides it, so coming back shows exactly what was there —
+ * same content, same scroll position, same section — instead of a fresh
+ * render. Keyed by recording (in StudyScreen), so another recording starts
+ * clean. 回放 is not kept: it owns the audio player and its shortcuts.
+ */
+function KeptTabs({
+  tab,
+  notes,
+  background,
+}: Readonly<{ tab: StudyTab; notes: string; background: string }>) {
+  const [opened, setOpened] = useState<PageTab[]>([]);
+  if (tab !== "replay" && !opened.includes(tab)) setOpened([...opened, tab]);
+  return (
+    <>
+      {opened.map((t) => (
+        <div key={t} className={cn("min-h-0 flex-1", t !== tab && "hidden")}>
+          <TabPage tab={t} notes={notes} background={background} />
+        </div>
+      ))}
+    </>
+  );
+}
+
+function TabPage({
+  tab,
+  notes,
+  background,
+}: Readonly<{ tab: PageTab; notes: string; background: string }>) {
   const seek = useSeekToReplay();
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  const [activeId, setActiveId] = useState<string>(SECTIONS[0].id);
+  const briefDone = useStore((s) => s.briefStatus === "done" && !!s.brief);
+  const actionsDone = useStore((s) => s.actionItemsStatus === "done");
 
-  // The section that owns the viewport: the last heading that has crossed the
-  // top edge. Scrolled-to-bottom pins the last section, which may be too short
-  // to ever reach the top on its own.
-  useEffect(() => {
-    const viewport = scrollRef.current?.closest("[data-slot='scroll-area-viewport']");
-    if (!viewport) return;
-    const onScroll = () => {
-      const viewportTop = viewport.getBoundingClientRect().top;
-      let current: string = SECTIONS[0].id;
-      for (const s of SECTIONS) {
-        const el = viewport.querySelector(`#${s.id}`);
-        if (el && el.getBoundingClientRect().top - viewportTop <= 96) current = s.id;
-      }
-      if (viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 4)
-        current = SECTIONS[SECTIONS.length - 1].id;
-      setActiveId(current);
-    };
-    onScroll();
-    viewport.addEventListener("scroll", onScroll, { passive: true });
-    return () => viewport.removeEventListener("scroll", onScroll);
-  }, []);
-
-  const jumpTo = (id: string) => {
-    scrollRef.current
-      ?.querySelector(`#${id}`)
-      ?.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
+  let body: ReactNode;
+  if (tab === "summary") {
+    body = (
+      <>
+        <BriefSection onSeek={seek} />
+        {briefDone && <SavedFooter artifact="brief" />}
+      </>
+    );
+  } else if (tab === "actions") {
+    body = (
+      <>
+        <UnsidedActionsNote />
+        <ActionItemsPanel onSeek={seek} embedded />
+        <BriefNextSection onSeek={seek} />
+        {actionsDone && <SavedFooter artifact="actions" />}
+      </>
+    );
+  } else if (tab === "notes") {
+    body = <NotesSection notes={notes} />;
+  } else if (tab === "context") {
+    body = <BackgroundSection background={background} />;
+  } else {
+    body = <DeliveryPanel mode="replay" variant="full" />;
+  }
 
   return (
-    <div className="relative min-h-0 flex-1">
-      <ScrollArea className="h-full">
-        <div ref={scrollRef} className="mx-auto max-w-2xl px-6 py-5">
-          {/* Above the filing suggestion when it shows, else right above the
-              filing bar — either way, next to where filing happens. */}
-          <FilingHint />
-          <FilingSuggestionCard onPickAnother={() => onPickerOpenChange(true)} />
-          <StudyLinkBar pickerOpen={pickerOpen} onPickerOpenChange={onPickerOpenChange} />
-          <div className="flex flex-col gap-8 pb-10">
-            <ReportSection id="study-brief" title={t("study.brief")}>
-              <BriefSection onSeek={seek} />
-            </ReportSection>
+    <ScrollArea className="h-full">
+      {/* Same edges as the header above and the replay tab (px-6, full
+          width), so switching tabs never shifts the page's left edge. */}
+      <div className="px-6 py-5 pb-10">
+        {body}
+      </div>
+    </ScrollArea>
+  );
+}
 
-            <ReportSection id="study-actions" title={t("actionItems.title")}>
-              <ActionItemsPanel onSeek={seek} embedded />
-            </ReportSection>
-
-            <ReportSection id="study-delivery" title={t("study.delivery")}>
-              <DeliveryPanel mode="replay" variant="full" />
-            </ReportSection>
-
-            <ReportSection id="handoff" title={t("study.handoff.title")}>
-              <HandoffSection />
-            </ReportSection>
-          </div>
-        </div>
-      </ScrollArea>
-      <ReportToc activeId={activeId} onJump={jumpTo} />
+/**
+ * Action items made before they said who does what (no side on any item) are
+ * one flat list. Say why, and offer the regeneration that sorts them into 我們
+ * and 對方 — otherwise an old recording just looks like the grouping is broken.
+ */
+function UnsidedActionsNote() {
+  const { t } = useI18n();
+  const show = useStore(
+    (s) =>
+      s.actionItemsStatus === "done" &&
+      !!s.loadedHistoryId &&
+      s.actionItems.length > 0 &&
+      s.actionItems.every((a) => !a.side)
+  );
+  if (!show) return null;
+  return (
+    <div className="mb-3 flex items-center justify-between gap-3 rounded-md bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
+      <span>{t("study.actions.unsided")}</span>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-6 shrink-0 gap-1 px-2 text-xs"
+        onClick={() => regenerateArtifact("actions")}
+      >
+        <RotateCw className="size-3" />
+        {t("study.regenerate")}
+      </Button>
     </div>
   );
 }
 
-/** Notion-style TOC rail: tick marks hugging the right edge — one per section,
- *  the active one emphasized — that expand into a jump list on hover (or on
- *  keyboard focus). An overlay, so the centered report column never reflows and
- *  narrow windows keep it. */
-function ReportToc({
-  activeId,
-  onJump,
-}: Readonly<{ activeId: string; onJump: (id: string) => void }>) {
+/**
+ * Under a finished, saved artifact: it is kept with the recording (reopening
+ * reads it back, it never regenerates by itself), and a way to ask for a new
+ * one — the same regeneration the titlebar's analysis chip runs. Nothing to
+ * say for an unsaved or read-only recording, where it isn't kept.
+ */
+function SavedFooter({ artifact }: Readonly<{ artifact: Extract<StudyArtifactKey, "brief" | "actions"> }>) {
   const { t } = useI18n();
+  const saved = useStore((s) => !!s.loadedHistoryId);
+  if (!saved) return null;
   return (
-    <nav
-      aria-label={t("study.toc")}
-      className="group absolute right-1.5 top-1/2 z-20 -translate-y-1/2"
-    >
-      {/* Collapsed: the where-am-I glance. */}
-      <div className="flex flex-col items-end gap-2 px-2 py-3 transition-opacity duration-150 group-focus-within:opacity-0 group-hover:opacity-0">
-        {SECTIONS.map((s) => (
-          <span
-            key={s.id}
-            className={`h-0.5 rounded-full transition-all duration-200 ${
-              s.id === activeId ? "w-5 bg-foreground/80" : "w-3 bg-muted-foreground/35"
-            }`}
-          />
-        ))}
-      </div>
-      {/* Expanded: the jump list. Invisible buttons stay tabbable, so keyboard
-          focus reveals the card via group-focus-within. */}
-      <div className="pointer-events-none absolute right-0 top-1/2 min-w-36 -translate-y-1/2 rounded-lg border bg-popover/95 p-1 opacity-0 shadow-lg backdrop-blur transition-opacity duration-150 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
-        {SECTIONS.map((s) => (
-          <button
-            key={s.id}
-            type="button"
-            onClick={() => onJump(s.id)}
-            className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors ${
-              s.id === activeId
-                ? "bg-muted/60 font-medium text-foreground"
-                : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
-            }`}
-          >
-            <span
-              className={`h-3 w-0.5 shrink-0 rounded-full ${
-                s.id === activeId ? "bg-primary" : "bg-transparent"
-              }`}
-            />
-            {t(s.key)}
-          </button>
-        ))}
-      </div>
-    </nav>
+    <div className="mt-6 flex items-center justify-between gap-3">
+      <p className="text-[11px] text-muted-foreground/70">{t("study.saved")}</p>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-7 gap-1 text-xs text-muted-foreground"
+        onClick={() => regenerateArtifact(artifact)}
+      >
+        <RotateCw className="size-3" />
+        {t("study.regenerate")}
+      </Button>
+    </div>
   );
 }
 
-/** One-time "one customer, one folder" line, shown while the recording is
- *  unfiled. Filing the recording counts as having taken the point. Quiet while
- *  the guide bar is up — it teaches the same thing, and once is enough. */
-function FilingHint() {
+/** 筆記: what the user typed in the floating window during the meeting,
+ *  rendered from its Markdown (lists, to-dos, headings). Read-only here — it is
+ *  saved inside the meeting context, which the filing row's 會議背景 sheet
+ *  edits — so the to-do boxes show their state but don't toggle. */
+function NotesSection({ notes }: Readonly<{ notes: string }>) {
   const { t } = useI18n();
-  const [visible, dismiss] = useHint("report.filing");
-  const lapVisible = useLapContext().visible;
-  const loadedHistoryId = useStore((s) => s.loadedHistoryId);
-  // An org copy (read-only) or an unsaved session can't be filed from here.
-  const fileable = useStore((s) => !s.replayReadOnly) && !!loadedHistoryId;
-  const folderId = useStore((s) => s.replayFolderId);
-
-  // Unfiled → filed on the SAME recording retires the hint.
-  const prev = useRef<{ id: string | null; folderId: string | null }>({ id: null, folderId: null });
-  useEffect(() => {
-    const was = prev.current;
-    prev.current = { id: loadedHistoryId, folderId };
-    if (was.id && was.id === loadedHistoryId && !was.folderId && folderId) markHintSeen("report.filing");
-  }, [loadedHistoryId, folderId]);
-
-  if (!visible || lapVisible || !fileable || folderId) return null;
-  return <OnboardingHint text={t("study.hint.filing")} onDismiss={dismiss} className="mb-3" />;
+  const seek = useSeekToReplay();
+  return (
+    <div>
+      <p className="mb-2 text-[11px] text-muted-foreground/70">{t("study.notes.caption")}</p>
+      <div className="notes-rendered">
+        <ReportContent markdown={notesForDisplay(notes)} onTimestamp={seek} plain />
+      </div>
+    </div>
+  );
 }
 
-function ReportSection({
-  id,
-  title,
-  children,
-}: Readonly<{ id: string; title: string; children: ReactNode }>) {
+/** 會議背景: what was prepared before the meeting (the draft's context), the
+ *  notes taken during it left to their own tab. The tab exists only when there
+ *  is a background; editing it opens the same sheet the page's menu used to. */
+function BackgroundSection({ background }: Readonly<{ background: string }>) {
+  const { t } = useI18n();
+  const seek = useSeekToReplay();
+  const editable = useStore((s) => !s.replayReadOnly && !!s.loadedHistoryId);
+  const [editing, setEditing] = useState(false);
   return (
-    <section id={id} className="scroll-mt-4">
-      <h2 className="mb-2.5 text-xs font-semibold text-muted-foreground">
-        {title}
-      </h2>
-      {children}
-    </section>
+    <div>
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <p className="text-[11px] text-muted-foreground/70">{t("study.context.caption")}</p>
+        {editable && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1 text-xs text-muted-foreground"
+            onClick={() => setEditing(true)}
+          >
+            <Pencil className="size-3" />
+            {t("study.context.edit")}
+          </Button>
+        )}
+      </div>
+      <ReportContent markdown={background} onTimestamp={seek} />
+      <MeetingContextSheet open={editing} onOpenChange={setEditing} />
+    </div>
   );
 }
 
@@ -251,7 +286,7 @@ function BriefSection({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>) {
   const { t } = useI18n();
   const brief = useStore((s) => s.brief);
   const status = useStore((s) => s.briefStatus);
-  const saved = useStore((s) => !!s.loadedHistoryId);
+  const entryId = useStore((s) => s.loadedHistoryId);
   // null = configured. Otherwise the i18n key naming what's still missing.
   const gate = useStore((s) =>
     providerGateKey(missingProviderRequirement(s.settings, "deep"), "study.brief.missingKey")
@@ -260,12 +295,12 @@ function BriefSection({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>) {
   const running = status === "running";
 
   // One caption row whose TEXT changes with the stage — queued, generating
-  // (also while text streams in), saved — so moving between them never adds
-  // or removes a line above the brief.
+  // (also while text streams in) — so moving between them never adds or
+  // removes a line above the brief.
+  // (Saved is said by the footer under the brief, with its regenerate.)
   let caption: string | null = null;
   if (!brief && queued) caption = t("study.brief.queued");
   else if (running) caption = t("study.brief.generating");
-  else if (status === "done" && saved && !!brief) caption = t("study.brief.saved");
 
   return (
     <div>
@@ -283,7 +318,88 @@ function BriefSection({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>) {
       {status === "error" && (
         <p className="text-sm text-muted-foreground">{t("study.brief.error")}</p>
       )}
-      {brief && <ReportContent markdown={brief} onTimestamp={onSeek} />}
+      {/* Keyed by recording: another recording opens on its first section. */}
+      {brief && <BriefTabs key={entryId ?? ""} brief={brief} onSeek={onSeek} />}
+    </div>
+  );
+}
+
+/** One label per brief section: the prompt's known headings translated, any
+ *  other heading as the model wrote it. */
+function useSectionLabel(): (s: BriefSectionPart) => string {
+  const { t } = useI18n();
+  return (s) => (s.key ? t(`study.brief.section.${s.key}`) : s.title);
+}
+
+/**
+ * The brief laid out like the 評分 report: every section down the left column
+ * under a numbered heading, and a nav on the right that tracks and jumps
+ * between them. The forward-looking section isn't here — it reads under
+ * 後續行動 ({@link BriefNextSection}). A brief that can't be cut (no
+ * headings, or a single section) is shown whole, with no nav.
+ */
+function BriefTabs({ brief, onSeek }: Readonly<{ brief: string; onSeek: (ms: number) => void }>) {
+  const { t } = useI18n();
+  const label = useSectionLabel();
+  // Speakers renamed after the brief was written read under their current names.
+  const relabel = useRelabel();
+  const { lead, sections } = useMemo(() => splitBrief(relabel(brief)), [brief, relabel]);
+
+  if (sections.length < 2) {
+    const whole = [lead, ...sections.map((s) => s.body)].filter(Boolean).join("\n\n");
+    return <ReportContent markdown={whole || normalizeBriefHeadings(relabel(brief))} onTimestamp={onSeek} plain />;
+  }
+  const num = (i: number) => String(i + 1).padStart(2, "0");
+  const nav = [
+    ...(lead ? [{ id: "brief-lead", label: t("study.brief.nav.lead") }] : []),
+    ...sections.map((s, i) => ({ id: `brief-${i}`, label: `${num(i)} ${label(s)}` })),
+  ];
+  return (
+    <div className="@container">
+      <div className="grid grid-cols-1 gap-3 @min-[680px]:grid-cols-[minmax(0,1fr)_128px] @min-[680px]:gap-8">
+        <div className="order-1 flex min-w-0 flex-col gap-6 @min-[680px]:order-none">
+          {lead && (
+            <section id="brief-lead" className="scroll-mt-4">
+              <ReportContent markdown={lead} onTimestamp={onSeek} plain />
+            </section>
+          )}
+          {sections.map((s, i) => (
+            <section
+              key={`${s.title}-${i}`}
+              id={`brief-${i}`}
+              className={cn("scroll-mt-4", (lead || i > 0) && "border-t pt-6")}
+            >
+              <div className="mb-2 flex items-baseline gap-2">
+                <span className="font-mono text-xs font-semibold text-primary">{num(i)}</span>
+                <h3 className="text-base font-semibold">{label(s)}</h3>
+              </div>
+              <ReportContent markdown={s.body} onTimestamp={onSeek} plain />
+            </section>
+          ))}
+        </div>
+        <ReportNav items={nav} label={t("study.brief.nav.aria")} />
+      </div>
+    </div>
+  );
+}
+
+/** Under the action items: the brief's forward-looking section (the next
+ *  agenda, or how to move the deal on), moved here from 總結 because it is the
+ *  same question — what happens after this meeting. */
+function BriefNextSection({ onSeek }: Readonly<{ onSeek: (ms: number) => void }>) {
+  const label = useSectionLabel();
+  const brief = useStore((s) => s.brief);
+  const relabel = useRelabel();
+  const next = useMemo(() => (brief ? splitBrief(relabel(brief)).next : []), [brief, relabel]);
+  if (next.length === 0) return null;
+  return (
+    <div className="mt-8 flex flex-col gap-6">
+      {next.map((s, i) => (
+        <section key={`${s.title}-${i}`}>
+          <h2 className="mb-2 text-xs font-semibold text-muted-foreground">{label(s)}</h2>
+          <ReportContent markdown={s.body} onTimestamp={onSeek} />
+        </section>
+      ))}
     </div>
   );
 }
@@ -310,7 +426,7 @@ function BriefSkeleton() {
 }
 
 /** Ask, freed from the replay screen's third-level tab: a floating button that
- *  opens a right slide-over, available on BOTH study pages. The panel stays
+ *  opens a right slide-over, available on every study tab. The panel stays
  *  mounted while closed so the conversation survives toggling. */
 function AskDrawer() {
   const { t } = useI18n();

@@ -19,6 +19,7 @@ use tauri::{AppHandle, State};
 use crate::audio::microphone::Microphone;
 use crate::capture::{
     run_metered_session, spawn_capture, Begin, MeteredSession, MicCoordinator, MicUser,
+    RecorderBuf, Recording,
 };
 use crate::transcription::common::{CONNECT_TIMEOUT, DRAIN_READ_GRACE};
 use crate::transcription::{Entry, SessionRequest, SttProvider, TranscribeConfig};
@@ -51,6 +52,9 @@ struct Running {
     task: tauri::async_runtime::JoinHandle<()>,
     cutoff: Arc<AtomicBool>,
     gate: Arc<AtomicBool>,
+    /// The check's own audio, kept in memory only until the check ends: it
+    /// becomes the user's voiceprint (voiceprint.rs) and is then dropped.
+    recorder: RecorderBuf,
 }
 
 /// Start the check on `input_device` with the given STT provider. A check
@@ -112,6 +116,7 @@ pub async fn start_mic_check(
         .filter(|m| !m.trim().is_empty())
         .unwrap_or_else(|| provider.default_model().to_string());
     let cutoff = Arc::new(AtomicBool::new(false));
+    let recorder: RecorderBuf = Arc::new(Mutex::new(Some(Recording::new(None))));
     let task = run_metered_session(
         &app,
         rx,
@@ -129,7 +134,7 @@ pub async fn start_mic_check(
                 level_events: true,
             },
             label: MIC_CHECK_SOURCE,
-            recorder: None,
+            recorder: Some(recorder.clone()),
             error_event: ERROR_EVENT,
             error_mute: None,
             cutoff: Some(cutoff.clone()),
@@ -148,6 +153,7 @@ pub async fn start_mic_check(
             task,
             cutoff,
             gate,
+            recorder,
         });
         generation
     };
@@ -196,21 +202,27 @@ fn take_running(state: &MicCheckState, only: Option<u64>) -> Option<Running> {
 /// hasn't flushed within the grace.
 fn stop_running(app: &AppHandle, coord: &MicCoordinator, run: Running, tail: Duration) {
     if tail.is_zero() {
-        cut(coord, &run);
+        cut(app, coord, &run);
     }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         if !tail.is_zero() {
             tokio::time::sleep(tail).await;
             use tauri::Manager;
-            cut(&app.state::<MicCoordinator>(), &run);
+            cut(&app, &app.state::<MicCoordinator>(), &run);
         }
         tokio::time::sleep(FLUSH_ABORT_GRACE).await;
         run.task.abort();
     });
 }
 
-fn cut(coord: &MicCoordinator, run: &Running) {
+fn cut(app: &AppHandle, coord: &MicCoordinator, run: &Running) {
     run.cutoff.store(true, Ordering::SeqCst);
     coord.stop_if(MicUser::MicTest, &run.gate);
+    // The audio is complete once the mic is released; enroll the voiceprint
+    // from it (taking it, so a second cut finds nothing).
+    let pcm = run.recorder.lock().unwrap_or_else(|e| e.into_inner()).take().map(|r| r.pcm);
+    if let Some(pcm) = pcm {
+        crate::voiceprint::enroll_from_mic_check(app.clone(), pcm);
+    }
 }

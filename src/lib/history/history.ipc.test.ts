@@ -86,17 +86,22 @@ vi.mock("../speakers/postDiarize", () => ({
 
 import * as history from "./history";
 import { setNotifier } from "../notify";
-import { useStore } from "../store";
+import { useLiveStore, useStore } from "../store";
 import { seg, replaySession } from "../test/fixtures";
 import type { HistoryEntry } from "./types";
 
 const INITIAL = useStore.getInitialState();
+const INITIAL_LIVE = useLiveStore.getState();
 let uuid = 0;
 
 // Notices reach the user through the installed notifier (main.tsx installs
 // sonner's toast); trace them under the toast names they render as.
+let lastAction: { label: string; onClick: () => void } | undefined;
 setNotifier({
-  message: (t) => { calls.push(["toast.message", t]); },
+  message: (t, action) => {
+    lastAction = action;
+    calls.push(action ? ["toast.message", t, action.label] : ["toast.message", t]);
+  },
   success: (t) => { calls.push(["toast.success", t]); },
   error: (t) => { calls.push(["toast.error", t]); },
 });
@@ -129,6 +134,7 @@ const flush = async () => {
 
 beforeEach(() => {
   useStore.setState(INITIAL, true);
+  useLiveStore.setState(INITIAL_LIVE, true);
   calls.length = 0;
   disk.clear();
   folders.list = [];
@@ -158,7 +164,7 @@ const studyState = () =>
   });
 
 /** The snapshot the recording event would save the just-stopped meeting with. */
-const stoppedMeeting = () => history.liveSnapshotFor(useStore.getState().liveMeetingId ?? undefined, undefined);
+const stoppedMeeting = () => history.liveSnapshotFor(useLiveStore.getState().liveMeetingId ?? undefined, undefined);
 
 describe("history IPC traffic", () => {
   it("saveTranscriptToHistory", async () => {
@@ -186,24 +192,46 @@ describe("history IPC traffic", () => {
   });
 
   it("saveLiveToHistory: kept, opened, no correction", async () => {
-    useStore.getState().startMeeting();
-    useStore.getState().upsertSegment(seg({ id: "m1", source: "me", speaker: 0, text: "spoken words" }));
-    useStore.getState().stopMeeting();
-    useStore.setState({ meetingStartedAt: 1_000, isFinalizingMeeting: true });
+    const live = () => useLiveStore.getState();
+    live().startMeeting();
+    live().upsertSegment(seg({ id: "m1", source: "me", speaker: 0, text: "spoken words" }));
+    live().stopMeeting();
+    useLiveStore.setState({ meetingStartedAt: 1_000, isFinalizingMeeting: true });
     expect(await trace(() => history.saveLiveToHistory("/tmp-rec.ogg", 5_000, stoppedMeeting()))).toMatchSnapshot();
     const s = useStore.getState();
+    // Home with nothing loaded: the report opens by itself.
     expect(s.appMode).toBe("study");
-    expect(s.isFinalizingMeeting).toBe(false);
+    expect(live().isFinalizingMeeting).toBe(false);
     expect(s.loadedHistoryId).toBe("uuid-1");
+  });
+
+  it("saveLiveToHistory: a busy main window keeps its recording and is offered the report instead", async () => {
+    disk.set("other", baseMeta("other"));
+    await history.loadHistoryEntry("other");
+    const live = () => useLiveStore.getState();
+    live().startMeeting();
+    const id = live().liveMeetingId!;
+    live().upsertSegment(seg({ id: "m1", source: "me", speaker: 0, text: "spoken words" }));
+    live().stopMeeting();
+    calls.length = 0;
+    await history.saveLiveToHistory("/tmp-rec.ogg", 5_000, stoppedMeeting());
+    await flush();
+    expect(useStore.getState().loadedHistoryId).toBe("other");
+    expect((disk.get(id) as HistoryEntry | undefined)?.segments.map((x) => x.text)).toEqual(["spoken words"]);
+    expect(calls).toContainEqual(["toast.message", "會議已存好", "打開"]);
+    lastAction!.onClick();
+    await flush();
+    expect(useStore.getState().loadedHistoryId).toBe(id);
   });
 
   it("saveLiveToHistory: speaker correction rewrites the saved entry and the store", async () => {
     diar.qualifies = true;
-    useStore.getState().startMeeting();
-    useStore.getState().upsertSegment(seg({ id: "x1", source: "mix", speaker: 1, text: "line one" }));
-    useStore.getState().upsertSegment(seg({ id: "x2", source: "mix", speaker: 2, text: "line two", startMs: 1000, endMs: 2000 }));
-    useStore.getState().stopMeeting();
-    useStore.setState({ meetingStartedAt: 1_000, micSessionRateHz: 4 });
+    const live = () => useLiveStore.getState();
+    live().startMeeting();
+    live().upsertSegment(seg({ id: "x1", source: "mix", speaker: 1, text: "line one" }));
+    live().upsertSegment(seg({ id: "x2", source: "mix", speaker: 2, text: "line two", startMs: 1000, endMs: 2000 }));
+    live().stopMeeting();
+    useLiveStore.setState({ meetingStartedAt: 1_000, micSessionRateHz: 4 });
     const seen: (string | null)[] = [];
     const un = useStore.subscribe((st, prev) => {
       if (st.postSaveDiarizingId !== prev.postSaveDiarizingId) seen.push(st.postSaveDiarizingId);
@@ -211,12 +239,14 @@ describe("history IPC traffic", () => {
     expect(await trace(() => history.saveLiveToHistory("/tmp-rec.ogg", 5_000, stoppedMeeting()))).toMatchSnapshot();
     un();
     expect(seen).toEqual(["uuid-1", null]);
+    // The opened report and the stopped meeting both carry the correction.
     expect(useStore.getState().segments.map((x) => x.speaker)).toEqual([2, 3]);
+    expect(live().segments.map((x) => x.speaker)).toEqual([2, 3]);
   });
 
   it("saveLiveToHistory: discarded when nothing was said", async () => {
-    useStore.getState().startMeeting();
-    useStore.getState().stopMeeting();
+    useLiveStore.getState().startMeeting();
+    useLiveStore.getState().stopMeeting();
     expect(await trace(() => history.saveLiveToHistory("/tmp-rec.ogg", 5_000, stoppedMeeting()))).toMatchSnapshot();
     expect(useStore.getState().appMode).toBe("home");
   });
@@ -305,6 +335,31 @@ describe("history IPC traffic", () => {
     expect(s.brief).toBe("saved");
   });
 
+  it("loadHistoryEntry during a meeting loads into the main window and leaves the meeting alone", async () => {
+    const live = useLiveStore.getState();
+    live.startMeeting();
+    useLiveStore.setState({ meetingContext: "live ctx", meetingFolderId: "live-fold", todos: [{ id: "t", text: "agenda", done: false }] });
+    live.upsertSegment(seg({ id: "l1", source: "mix", speaker: 1, text: "live line" }));
+    live.setSpeakerName("mix-1", "Dana");
+    live.setFindings([{ id: "lf", atMs: 0, side: "them", severity: "info", source: "extra", title: "t", detail: "d" }]);
+    const before = useLiveStore.getState();
+    disk.set("e1", baseMeta("e1", { meetingContext: "saved ctx", folderId: "f" } as never));
+
+    await history.loadHistoryEntry("e1");
+
+    const s = useStore.getState();
+    expect(s.loadedHistoryId).toBe("e1");
+    expect(s.meetingContext).toBe("saved ctx");
+    const after = useLiveStore.getState();
+    expect(after.meetingStatus).toBe("recording");
+    expect(after.segments).toBe(before.segments);
+    expect(after.speakerNames).toBe(before.speakerNames);
+    expect(after.findings).toBe(before.findings);
+    expect(after.meetingContext).toBe("live ctx");
+    expect(after.meetingFolderId).toBe("live-fold");
+    expect(after.todos).toBe(before.todos);
+  });
+
   it("migrateDuplicateFolders", async () => {
     folders.list = [
       { id: "old", name: "Acme", createdAt: 1 },
@@ -319,6 +374,38 @@ describe("history IPC traffic", () => {
 // The save race (C1): the recording of a stopped meeting is encoded while the
 // user may already be in the next one. Its save must use what the stopped
 // meeting looked like, never the live store.
+describe("persistTranscriptText", () => {
+  it("writes only the edited text onto the saved transcript, then tells listeners", async () => {
+    disk.set(
+      "e1",
+      baseMeta("e1", {
+        // Untimed on disk; the screen shows an estimate (replay/timing).
+        segments: [seg({ id: "s1", text: "東昇 hi", startMs: 0, endMs: 0 }), seg({ id: "s2", text: "ok", startMs: 0, endMs: 0 })],
+        brief: "kept",
+      }),
+    );
+    await history.persistTranscriptText("e1", [
+      seg({ id: "s1", text: "東森 hi", startMs: 400, endMs: 900 }),
+      seg({ id: "s2", text: "ok", startMs: 900, endMs: 1200 }),
+    ]);
+    await flush();
+    const meta = disk.get("e1") as HistoryEntry;
+    expect(meta.segments.map((s) => [s.text, s.startMs, s.endMs])).toEqual([
+      ["東森 hi", 0, 0],
+      ["ok", 0, 0],
+    ]);
+    expect(meta.brief).toBe("kept");
+    expect(calls.some((c) => (c as unknown[])[0] === "emit")).toBe(true);
+  });
+
+  it("writes nothing when the text on disk already matches", async () => {
+    disk.set("e1", baseMeta("e1"));
+    await history.persistTranscriptText("e1", [seg({ id: "s1", text: "hello there" })]);
+    await flush();
+    expect(calls.filter((c) => (c as unknown[])[1] === "save_history_entry")).toEqual([]);
+  });
+});
+
 describe("live save race", () => {
   const fire = (name: string, payload: unknown) => handlers.get(name)!({ payload });
   const savedEntries = () => [...disk.values()] as HistoryEntry[];
@@ -333,12 +420,12 @@ describe("live save race", () => {
 
   /** Start a meeting the backend records, say `words` in it, stop it. */
   function recordAndStop(words: string, startedAt: number): string {
-    useStore.getState().startMeeting();
-    const id = useStore.getState().liveMeetingId!;
+    useLiveStore.getState().startMeeting();
+    const id = useLiveStore.getState().liveMeetingId!;
     history.liveSaves.markRecording(id);
-    useStore.setState({ meetingStartedAt: startedAt });
-    useStore.getState().upsertSegment(seg({ id: `${id}-s`, source: "me", speaker: 0, text: words }));
-    useStore.getState().stopMeeting();
+    useLiveStore.setState({ meetingStartedAt: startedAt });
+    useLiveStore.getState().upsertSegment(seg({ id: `${id}-s`, source: "me", speaker: 0, text: words }));
+    useLiveStore.getState().stopMeeting();
     return id;
   }
 
@@ -346,9 +433,9 @@ describe("live save race", () => {
     const a = recordAndStop("meeting A words", 1_000);
     expect(history.liveSaves.hasPending()).toBe(true);
     // The user is already in meeting B — nothing said yet.
-    useStore.getState().startMeeting();
-    useStore.setState({ meetingStartedAt: 9_000 });
-    const b = useStore.getState().liveMeetingId;
+    useLiveStore.getState().startMeeting();
+    useLiveStore.setState({ meetingStartedAt: 9_000 });
+    const b = useLiveStore.getState().liveMeetingId;
 
     fire("meeting://recording-saved", { path: "/tmp-a.ogg", durationMs: 4_000, meetingId: a, startedAtMs: 1_000 });
     await flush();
@@ -360,18 +447,18 @@ describe("live save race", () => {
     expect(entry.segments.map((x) => x.text)).toEqual(["meeting A words"]);
     expect(calls).toContainEqual(["invoke", "finish_meeting_journal", { meetingId: a }]);
     // Meeting B is untouched and still on screen.
-    const s = useStore.getState();
+    const s = useLiveStore.getState();
     expect(s.liveMeetingId).toBe(b);
     expect(s.meetingStatus).toBe("recording");
     // The meeting runs in its own window; the main window stays where it was.
-    expect(s.appMode).toBe("home");
+    expect(useStore.getState().appMode).toBe("home");
     expect(history.liveSaves.hasPending()).toBe(false);
   });
 
   it("keeps the final words that land after Stop while the meeting is still on screen", async () => {
     const a = recordAndStop("first words", 1_000);
     // The provider's closing flush, after Stop.
-    useStore.getState().upsertSegment(seg({ id: "late", source: "me", speaker: 0, text: "last words", startMs: 2_000, endMs: 2_500 }));
+    useLiveStore.getState().upsertSegment(seg({ id: "late", source: "me", speaker: 0, text: "last words", startMs: 2_000, endMs: 2_500 }));
     fire("meeting://recording-saved", { path: "/tmp-a.ogg", durationMs: 4_000, meetingId: a, startedAtMs: 1_000 });
     await flush();
     expect(savedEntries()[0].segments.map((x) => x.text)).toEqual(["first words", "last words"]);
@@ -379,12 +466,39 @@ describe("live save race", () => {
 
   it("a discarded recording settles its meeting without touching the next one's screen", async () => {
     const a = recordAndStop("hi", 1_000);
-    useStore.getState().startMeeting();
+    useLiveStore.getState().startMeeting();
     fire("meeting://recording-discarded", { meetingId: a, startedAtMs: 1_000 });
     await flush();
     expect(history.liveSaves.hasPending()).toBe(false);
     expect(useStore.getState().appMode).toBe("home");
     expect(calls.filter((c) => (c as unknown[])[0] === "toast.message")).toEqual([]);
+  });
+
+  it("saves the live meeting's transcript, names, findings and prep even with another recording opened in between", async () => {
+    useStore.getState().setMeetingContext("prep for A");
+    useStore.getState().addTodo("agenda A");
+    const { beginLiveSession } = await import("../meeting/liveSession");
+    beginLiveSession();
+    const id = useLiveStore.getState().liveMeetingId!;
+    history.liveSaves.markRecording(id);
+    useLiveStore.getState().upsertSegment(seg({ id: "a1", source: "mix", speaker: 1, text: "live words" }));
+    useLiveStore.getState().setSpeakerName("mix-1", "Carol");
+    useLiveStore.getState().setFindings([{ id: "lf", atMs: 0, side: "them", severity: "info", source: "extra", title: "live", detail: "d" }]);
+    // Meanwhile the main window opens (and edits) another recording.
+    disk.set("other", baseMeta("other", { meetingContext: "other ctx" }));
+    await history.loadHistoryEntry("other");
+    useStore.getState().setSpeakerName("them-1", "Renamed");
+    useLiveStore.getState().stopMeeting();
+    fire("meeting://recording-saved", { path: "/tmp-a.ogg", durationMs: 4_000, meetingId: id, startedAtMs: 1_000 });
+    await flush();
+    const saved = disk.get(id) as HistoryEntry;
+    expect(saved.segments.map((x) => x.text)).toEqual(["live words"]);
+    expect(saved.speakerNames).toEqual({ "mix-1": "Carol" });
+    expect(saved.findings.map((f) => f.id)).toEqual(["lf"]);
+    expect(saved.meetingContext).toContain("prep for A");
+    // The other recording stays open: the report is offered, not forced.
+    expect(useStore.getState().loadedHistoryId).toBe("other");
+    expect(useStore.getState().meetingContext).toBe("other ctx");
   });
 
   it("a recording from a meeting this window never saw is kept without a transcript", async () => {

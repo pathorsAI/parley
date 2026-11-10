@@ -48,6 +48,17 @@ describe("matchShortcut", () => {
     expect(matchShortcut(stroke({ key: "k", ctrlKey: true }), spec, MAC)).toBe(false);
   });
 
+  it("matches a ⌥ letter chord by its physical key, since ⌥ changes the character", () => {
+    const cmdAltF: ShortcutSpec = { mod: true, alt: true, key: "f" };
+    // macOS: ⌥⌘F arrives as "ƒ".
+    expect(matchShortcut(stroke({ key: "ƒ", code: "KeyF", metaKey: true, altKey: true }), cmdAltF, MAC)).toBe(true);
+    expect(matchShortcut(stroke({ key: "f", code: "KeyF", ctrlKey: true, altKey: true }), cmdAltF, PC)).toBe(true);
+    // Another physical key, or no ⌥, is not it — and ⌘F is not ⌥⌘F.
+    expect(matchShortcut(stroke({ key: "ƒ", code: "KeyG", metaKey: true, altKey: true }), cmdAltF, MAC)).toBe(false);
+    expect(matchShortcut(stroke({ key: "f", code: "KeyF", metaKey: true }), cmdAltF, MAC)).toBe(false);
+    expect(matchShortcut(stroke({ key: "ƒ", code: "KeyF", metaKey: true, altKey: true }), { mod: true, key: "f" }, MAC)).toBe(false);
+  });
+
   it("matches shift and alt exactly, in both directions", () => {
     const shifted: ShortcutSpec = { mod: true, shift: true, key: "k" };
     expect(matchShortcut(stroke({ key: "k", metaKey: true, shiftKey: true }), shifted, MAC)).toBe(

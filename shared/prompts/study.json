@@ -24,7 +24,7 @@
         "opportunity": "{\"moments\": [{\"time\": \"[m:ss]\", \"side\": \"me\" | \"them\", \"severity\": \"info\" | \"warn\" | \"critical\", \"source\": \"eval\" | \"extra\", \"evalIds\": [string], \"title\": string, \"detail\": string}]}",
         "adversarial": "{\"moments\": [{\"time\": \"[m:ss]\", \"side\": \"me\" | \"them\", \"severity\": \"info\" | \"warn\" | \"critical\", \"source\": \"eval\" | \"extra\", \"evalIds\": [string], \"title\": string, \"detail\": string, \"resolved\": boolean, \"resolution\": string}]}"
       },
-      "actionItems": "{\"actions\": [{\"text\": string, \"linkedEventId\": string | null, \"time\": \"[m:ss]\" | null}]}",
+      "actionItems": "{\"actions\": [{\"text\": string, \"side\": \"us\" | \"them\" | null, \"owner\": string | null, \"linkedEventId\": string | null, \"time\": \"[m:ss]\" | null}]}",
       "delivery": "{\"tone\": \"neutral\" | \"warm\" | \"firm\" | \"sharp\" | \"aggressive\" | \"rude\", \"tone_evidence\": string, \"filler_level\": \"ok\" | \"frequent\", \"filler_examples\": [string], \"filler_note\": string, \"pace\": \"slow\" | \"comfortable\" | \"fast\", \"summary\": string}\n- tone: the overall tone of the USER'S OWN contributions, not the other party's.\n- tone_evidence: a short verbatim quote from the user's own words that shows the tone; \"\" if none.\n- filler_level: \"frequent\" ONLY when watchlist fillers are dense enough in a short stretch to distract; default \"ok\".\n- filler_examples: the tics the user actually overused; [] when \"ok\".\n- filler_note: one short line about the over-frequent stretch; \"\" when \"ok\".\n- pace: how fast the user speaks overall.\n- summary: one short plain-language line on how the user comes across."
     }
   },
@@ -96,15 +96,15 @@
     }
   },
   "actionItems": {
-    "systemTemplate": "{{intro}}\n\nYou are given the FINDINGS from the analysis (notable moments, each with an id) and the full timestamped transcript. {{flavour}}\n- linkedEventId: the finding id it derives from when it maps to one, else null.\n- time: the [m:ss] it relates to (copy a real transcript timestamp), else null.\n\nBe selective — surface the actions that genuinely matter (typically 3-7), not busywork. Ground everything in what was actually said.",
+    "systemTemplate": "{{intro}}\n\nYou are given the FINDINGS from the analysis (notable moments, each with an id) and the full timestamped transcript. {{flavour}}\n- side: WHOSE follow-up it is. \"us\" = ME and my own side (my company / team — everyone on the user's side of the table); \"them\" = the other party. Cover BOTH sides: what my side committed to or needs to do, AND what the other party said they would do or still owes. null only when it truly belongs to neither.\n- owner: the person who should do it, by the name the transcript uses (their speaker label, or a name someone said, e.g. \"Kevin\"), when the transcript makes it clear; else null. Never invent a name.\n- linkedEventId: the finding id it derives from when it maps to one, else null.\n- time: the [m:ss] it relates to (copy a real transcript timestamp), else null.\n\nBe selective — surface the actions that genuinely matter (typically 3-7 in total across both sides), not busywork. Ground everything in what was actually said.",
     "intro": {
       "decision": "You are writing the FOLLOW-UPS from a finished internal working meeting, for ME. The meeting is OVER. These are the things the meeting agreed someone would go do, plus anything left open that needs chasing.",
       "opportunity": "You are writing the POST-CALL next steps after a finished sales conversation, for ME. The call is OVER.",
       "adversarial": "You are writing the POST-MEETING ACTION ITEMS for the user (\"ME\") after a finished negotiation against the other party (\"THEM\"). The meeting is OVER."
     },
     "flavour": {
-      "decision": "Produce the follow-ups this meeting generated — things someone agreed to do, decisions that need writing up or communicating, and open questions that need chasing before the next session. For each action:\n- text: the concrete next step, phrased as an action. It must stand on its own — carry the WHAT into this line rather than leaving it to a separate \"why\" field, but keep it to one readable sentence.",
-      "default": "Produce a short, concrete list of follow-up ACTIONS ME should take next — things to send, clarify, prepare, decide, or do differently next time. For each action:\n- text: the concrete next step, phrased as an action ME can do. It must stand on its own — carry the WHAT into this line rather than leaving it to a separate \"why\" field, but keep it to one readable sentence."
+      "decision": "Produce the follow-ups this meeting generated — things someone agreed to do, decisions that need writing up or communicating, and open questions that need chasing before the next session. In an internal meeting nearly everything is \"us\"; use \"them\" only for an outside party (a client, vendor, partner) who owes something. For each action:\n- text: the concrete next step, phrased as an action. It must stand on its own — carry the WHAT into this line rather than leaving it to a separate \"why\" field, but keep it to one readable sentence.",
+      "default": "Produce a short, concrete list of follow-up ACTIONS for BOTH sides — what ME and my side should do next (things to send, clarify, prepare, decide, or do differently next time), and what the other party committed to or still owes us. For each action:\n- text: the concrete next step, phrased as an action its owner can do. It must stand on its own — carry the WHAT into this line rather than leaving it to a separate \"why\" field, but keep it to one readable sentence."
     },
     "findingsHeader": "Findings:",
     "noFindings": "(no findings)",
@@ -138,6 +138,8 @@
     },
     "prosodyTemplate": "Your delivery signals: ~{{rate}} syllables/sec, pitch variation {{pitch}} semitones.\n\n",
     "measuredRateTemplate": "Acoustically measured speaking rate for this session: ~{{rate}} syllables/sec (≈ {{perMinute}} syllables/min). Use this for the pace read rather than guessing from the text.\n\n",
+    "selfTemplate": "In this transcript the user is the speaker labeled \"{{label}}\". Judge only that speaker's lines; every other speaker is someone else.\n\n",
+    "speakerTemplate": "Judge only the lines of the speaker labeled \"{{label}}\" — this read is about that one speaker, who may or may not be the user. Ignore every other speaker's lines except as context.\n\n",
     "watchlistTemplate": "Filler watchlist (judge OVER-use of these as verbal crutches only — ignore meaningful uses, and ignore non-lexical um/uh sounds): {{words}}\n\n",
     "transcriptLabel": {
       "live": "Recent transcript",

@@ -10,13 +10,18 @@ function spokenInOrder(segments: TranscriptSegment[]): TranscriptSegment[] {
     .sort((a, b) => a.startMs - b.startMs);
 }
 
+/** How a line's speaker is written. Defaults to the English labels models
+ *  see; the copy formats pass the on-screen, localized labeller. */
+type Labeller = (s: TranscriptSegment) => string;
+
 /** Final-only transcript text, labelled by speaker (with custom names) — LLM context. */
 export function transcriptAsText(
   segments: TranscriptSegment[],
-  names?: Record<string, string>
+  names?: Record<string, string>,
+  label: Labeller = (s) => speakerLabel(s, names),
 ): string {
   return spokenInOrder(segments)
-    .map((s) => `[${speakerLabel(s, names)}] ${s.text.trim()}`)
+    .map((s) => `[${label(s)}] ${s.text.trim()}`)
     .join("\n");
 }
 
@@ -30,10 +35,11 @@ export function formatClock(ms: number): string {
  *  so the model can cite moments the UI can jump back to. */
 export function transcriptWithTimestamps(
   segments: TranscriptSegment[],
-  names?: Record<string, string>
+  names?: Record<string, string>,
+  label: Labeller = (s) => speakerLabel(s, names),
 ): string {
   return spokenInOrder(segments)
-    .map((s) => `[${formatClock(s.startMs)}] [${speakerLabel(s, names)}] ${s.text.trim()}`)
+    .map((s) => `[${formatClock(s.startMs)}] [${label(s)}] ${s.text.trim()}`)
     .join("\n");
 }
 

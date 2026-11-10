@@ -1,4 +1,5 @@
 import { useStore } from "./store";
+import { mcpSession } from "./sessionSync";
 import { isTauri } from "./tauriEvents";
 import { CLOUD_ENABLED } from "./flags";
 import { syncEnabled } from "./cloud/client";
@@ -166,6 +167,9 @@ function normalizeActionItem(raw: unknown): ActionItem | null {
     linkedEventId: asNonEmptyString(o.linkedEventId) ?? null,
     atMs: Number.isFinite(o.atMs) ? Number(o.atMs) : null,
     severity: normalizeActionSeverity(o.severity),
+    side: o.side === "us" || o.side === "them" ? o.side : undefined,
+    owner: asTrimmed(o.owner),
+    ownerKey: asTrimmed(o.ownerKey),
   };
 }
 
@@ -202,7 +206,9 @@ function applyFindingCommand(s: Store, action: string, a: Record<string, unknown
 }
 
 function applyCommand(cmd: SessionCommand): void {
-  const s = useStore.getState();
+  // The session the MCP mirror shows (sessionSync.mcpSession): the loaded
+  // recording, else the live meeting. Settings edits go to useStore below.
+  const s = mcpSession().state;
   const a = cmd.args ?? {};
   switch (cmd.action) {
     case "add_todo":
@@ -225,13 +231,13 @@ function applyCommand(cmd: SessionCommand): void {
           description: argStr(a.description ?? ""),
           prompt: argStr(a.prompt),
         };
-        s.updateSettings({ evaluations: [...s.settings.evaluations, def] });
+        useStore.getState().updateSettings({ evaluations: [...s.settings.evaluations, def] });
       }
       break;
     }
     case "remove_evaluation":
       if (a.id) {
-        s.updateSettings({ evaluations: s.settings.evaluations.filter((e) => e.id !== a.id) });
+        useStore.getState().updateSettings({ evaluations: s.settings.evaluations.filter((e) => e.id !== a.id) });
       }
       break;
     case "add_finding":

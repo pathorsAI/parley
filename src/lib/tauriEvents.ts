@@ -1,5 +1,5 @@
 import { toast } from "sonner";
-import { useStore } from "./store";
+import { useLiveStore, useStore } from "./store";
 import { normalizeTranscriptText } from "./textNormalize";
 import { log } from "./log";
 import { translate } from "../i18n/messages";
@@ -31,7 +31,9 @@ export async function listenForTranscript(): Promise<UnlistenFn> {
     if (p.source === "voice-typing" || p.source === "mic-check") return;
     normalizeTranscriptText(p.text)
       .then((text) => {
-        useStore.getState().upsertSegment({
+        // The running meeting's transcript: the live store, whatever the main
+        // window is showing.
+        useLiveStore.getState().upsertSegment({
           id: p.id,
           // A meeting's segments are "me" | "them".
           source: p.source as Source,
@@ -57,7 +59,7 @@ export async function listenForProsody(): Promise<UnlistenFn> {
   return listenIfTauri(AUDIO_PROSODY_EVENT, (event) => {
     const p = event.payload;
     if (p.source !== "me") return;
-    useStore.getState().setProsody({
+    useLiveStore.getState().setProsody({
       f0Hz: p.f0_hz,
       pitchVarSemitones: p.pitch_var_semitones,
       monotonyScore: p.monotony_score,
@@ -90,7 +92,7 @@ export async function listenForMeetingError(): Promise<UnlistenFn> {
   return listenIfTauri(MEETING_ERROR_EVENT, (event) => {
     const { code } = event.payload;
     // Tear the (transcript-less) meeting down so the UI leaves "recording".
-    useStore.getState().stopMeeting();
+    useLiveStore.getState().stopMeeting();
     void stopBackendMeeting("meeting: stop after backend error failed", { code });
     const language = useStore.getState().settings.language;
     // On-device failures point at Settings › Transcription (a smaller model,
@@ -117,7 +119,7 @@ export async function listenForMeetingError(): Promise<UnlistenFn> {
 export async function listenForTranscriptionLink(): Promise<UnlistenFn> {
   return listenIfTauri(MEETING_TRANSCRIPTION_EVENT, (event) => {
     const p = event.payload;
-    const store = useStore.getState();
+    const store = useLiveStore.getState();
     if (p.state === "reconnecting") {
       log.info("meeting: transcription reconnecting", { source: p.source, attempt: p.attempt });
       store.reportTranscriptionLink(p.source, "reconnecting");
@@ -136,7 +138,7 @@ export async function listenForTranscriptionLink(): Promise<UnlistenFn> {
       log.info("meeting: transcription live again", {
         source: p.source,
         leg: p.leg,
-        stillReconnecting: useStore.getState().transcriptionReconnectingSources,
+        stillReconnecting: useLiveStore.getState().transcriptionReconnectingSources,
       });
     }
   });
@@ -162,7 +164,7 @@ export async function listenForMeetingWarning(): Promise<UnlistenFn> {
     warnedSystemAudio = true;
     // A persistent live-screen banner, not a toast (⑥): the damage — a silent
     // counterpart — is only noticed minutes later, long after 10s expire.
-    useStore.getState().setSystemAudioWarning(true);
+    useLiveStore.getState().setSystemAudioWarning(true);
   });
   return () => {
     unStatus();

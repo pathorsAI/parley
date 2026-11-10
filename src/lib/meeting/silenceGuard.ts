@@ -12,7 +12,7 @@
 // ends the meeting, saving the recording cut a little after the last words.
 
 import { getCurrentWindow, UserAttentionType } from "@tauri-apps/api/window";
-import { isMeetingActive, useStore } from "../store";
+import { isMeetingActive, useLiveStore, useStore } from "../store";
 import type { TranscriptSegment } from "../types";
 import { isTauri } from "../platform";
 import { log } from "../log";
@@ -89,7 +89,7 @@ export function broughtSpeech(prev: TranscriptSegment[], next: TranscriptSegment
  *  unless the link is down: then words may have been spoken after the last
  *  transcribed ones, and the recording is their only copy. */
 export async function endSilentMeeting(reason: "timeout" | "confirmed"): Promise<void> {
-  const s = useStore.getState();
+  const s = useLiveStore.getState();
   if (!isMeetingActive(s.meetingStatus)) return;
   const keepMs = s.transcriptionLink === "live" ? recordingKeepMs(s.segments) : undefined;
   log.info("meeting: ended by the silence guard", { reason, keepMs, link: s.transcriptionLink });
@@ -97,7 +97,7 @@ export async function endSilentMeeting(reason: "timeout" | "confirmed"): Promise
   await endMeeting(keepMs == null ? {} : { keepMs });
   if (reason === "timeout") {
     const key = keepMs == null ? "meeting.silence.autoEndedUntrimmed" : "meeting.silence.autoEnded";
-    notify.message(translate(s.settings.language, key));
+    notify.message(translate(useStore.getState().settings.language, key));
   }
 }
 
@@ -107,7 +107,7 @@ let lastActivityAt = Date.now();
 export function keepRecording(): void {
   log.info("meeting: silence prompt answered, still in the meeting");
   lastActivityAt = Date.now();
-  useStore.getState().setSilencePrompt(null);
+  useLiveStore.getState().setSilencePrompt(null);
 }
 
 function askUser(): void {
@@ -127,12 +127,12 @@ function askUser(): void {
  * stretches the window instead (see {@link silenceStep}).
  */
 export function initSilenceGuard(): () => void {
-  const unsubscribe = useStore.subscribe((next, prev) => {
+  const unsubscribe = useLiveStore.subscribe((next, prev) => {
     const entered = next.meetingStatus === "recording" && prev.meetingStatus !== "recording";
     if (entered || broughtSpeech(prev.segments, next.segments)) lastActivityAt = Date.now();
   });
   const timer = setInterval(() => {
-    const s = useStore.getState();
+    const s = useLiveStore.getState();
     const now = Date.now();
     if (s.meetingStatus !== "recording" || s.isFinalizingMeeting) return;
     const linkLive = s.transcriptionLink === "live";

@@ -273,7 +273,7 @@ export function Onboarding() {
     const id = await samplePulse.run(loadSampleRecording);
     finish();
     if (id) {
-      await openRecording(id, "report");
+      await openRecording(id, "summary");
     } else {
       log.warn("onboarding: sample recording unavailable");
     }
@@ -475,21 +475,23 @@ export function Onboarding() {
                 >
                   {t("onboarding.done.startMeeting")}
                 </Button>
-                {samplePulse.active ? (
-                  <TranscribingPulse className="h-8" />
-                ) : (
-                  <Button
-                    size="sm"
-                    className="h-8 text-xs"
-                    onClick={() =>
-                      walkThroughSample().catch((error) =>
-                        log.error("onboarding: sample walkthrough failed", { error: String(error) }),
-                      )
-                    }
-                  >
-                    {t("onboarding.done.sample")}
-                  </Button>
-                )}
+                <Button
+                  size="sm"
+                  className="h-8 text-xs"
+                  disabled={samplePulse.active}
+                  onClick={() =>
+                    walkThroughSample().catch((error) =>
+                      log.error("onboarding: sample walkthrough failed", { error: String(error) }),
+                    )
+                  }
+                >
+                  {t("onboarding.done.sample")}
+                </Button>
+              </div>
+              {/* The transcribing beat sits under the buttons, in a slot that is
+                  always there: the buttons never move when it shows. */}
+              <div className="-mt-6 flex h-8 items-center justify-center">
+                {samplePulse.active && <TranscribingPulse className="ob-fade-in" />}
               </div>
             </div>
           )}
