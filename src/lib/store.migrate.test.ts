@@ -104,6 +104,35 @@ describe("mergePersistedState backfill", () => {
   });
 });
 
+// Cloud or Local arrived after people had already onboarded: their saved state
+// picks the route it was effectively on, and nobody is sent back through the
+// wizard for it. (The test build is the cloud edition.)
+describe("setupMode backfill", () => {
+  it("an onboarded user on Parley's hosted transcription becomes cloud, still onboarded", () => {
+    const merged = mergePersistedState({ settings: { onboarded: true, transcriptionProvider: "parley" } }, current());
+    expect(merged.settings.setupMode).toBe("cloud");
+    expect(merged.settings.onboarded).toBe(true);
+  });
+
+  it("an onboarded user on their own key or an on-device model becomes local", () => {
+    for (const transcriptionProvider of ["soniox", "local"] as const) {
+      const merged = mergePersistedState({ settings: { onboarded: true, transcriptionProvider } }, current());
+      expect(merged.settings.setupMode).toBe("local");
+      expect(merged.settings.onboarded).toBe(true);
+    }
+  });
+
+  it("keeps a saved route, and ignores a malformed one", () => {
+    const kept = mergePersistedState({ settings: { setupMode: "local", transcriptionProvider: "parley" } }, current());
+    expect(kept.settings.setupMode).toBe("local");
+    const bad = mergePersistedState(
+      { settings: { setupMode: "hybrid" as never, transcriptionProvider: "parley" } },
+      current(),
+    );
+    expect(bad.settings.setupMode).toBe("cloud");
+  });
+});
+
 // The on/off "AI polish" switch became a three-way style. Nobody's polish may
 // change behind their back: off stays off, on becomes exactly what "on" did.
 describe("voice typing polish style migration", () => {

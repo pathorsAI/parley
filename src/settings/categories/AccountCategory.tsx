@@ -4,14 +4,17 @@ import { log } from "../../lib/log";
 import { isTauri } from "../../lib/tauriEvents";
 import { signOut } from "../../lib/cloud/client";
 import type { CloudAuth } from "../../lib/cloud/types";
-import type { Settings } from "../../lib/types";
+import type { Settings, SetupMode } from "../../lib/types";
+import { cloudRoutePatch, localRoutePatch } from "../../lib/onboarding/setupMode";
+import type { TranslationKey } from "../../i18n/messages";
 import { useI18n } from "../../i18n";
 import { DestinationField } from "../../components/DestinationSheet";
 import { Field, Section } from "../fields";
 import { ApiKeysField } from "../ApiKeysField";
 import type { SettingsPanelProps } from "./types";
 
-/** Settings › Account: sign-in, cloud sync, the default org share, and API keys. */
+/** Settings › Account: sign-in, the setup route, cloud sync, the default org
+ *  share, and API keys. */
 export function AccountCategory({
   settings,
   patch,
@@ -36,6 +39,7 @@ export function AccountCategory({
         signInAbort={signInAbort}
         onSignIn={onSignIn}
       />
+      <SetupModeField settings={settings} patch={patch} signedIn={!!cloudAuth} />
       {cloudAuth && (
         <Field label={t("settings.account.sync.title")}>
           <div className="flex max-w-md flex-col gap-2 rounded-lg border p-3">
@@ -169,6 +173,63 @@ function AccountSignInField({
           </p>
         </div>
       )}
+    </Field>
+  );
+}
+
+/** Each route's name, the same words onboarding's two cards use. */
+const SETUP_MODE_LABEL: Record<SetupMode, TranslationKey> = {
+  cloud: "onboarding.account.cloud.tag",
+  local: "onboarding.account.local.tag",
+};
+
+/**
+ * Switch the setup route after onboarding. It is the same change as picking a
+ * card there: Cloud puts transcription and AI on Parley's hosted models (and
+ * needs a session — the hosted models ride it), Local moves anything hosted
+ * off Parley to the user's own providers (see localRoutePatch). The MCP
+ * connection Parley hands out follows it.
+ */
+function SetupModeField({
+  settings,
+  patch,
+  signedIn,
+}: Readonly<SettingsPanelProps & { signedIn: boolean }>) {
+  const { t } = useI18n();
+  const mode = settings.setupMode;
+  const choose = (next: SetupMode) => {
+    if (next === mode) return;
+    patch(next === "cloud" ? cloudRoutePatch() : localRoutePatch(settings));
+  };
+  return (
+    <Field label={t("settings.account.setup.title")}>
+      <div className="flex max-w-md flex-col gap-1.5">
+        <div
+          role="radiogroup"
+          aria-label={t("settings.account.setup.title")}
+          className="grid grid-cols-2 overflow-hidden rounded-md border"
+        >
+          {(["cloud", "local"] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              role="radio"
+              aria-checked={mode === m}
+              // Cloud can't be picked signed out; a cloud setup that has since
+              // signed out still shows as selected until it is switched.
+              disabled={m === "cloud" && !signedIn && mode !== "cloud"}
+              onClick={() => choose(m)}
+              className={`cursor-pointer py-1.5 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                mode === m ? "bg-primary/10 font-medium text-primary" : "text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              {t(SETUP_MODE_LABEL[m])}
+            </button>
+          ))}
+        </div>
+        <p className="text-[11px] text-muted-foreground">{t("settings.account.setup.desc")}</p>
+        {!signedIn && <p className="text-[11px] text-muted-foreground">{t("settings.account.setup.signInFirst")}</p>}
+      </div>
     </Field>
   );
 }

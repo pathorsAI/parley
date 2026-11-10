@@ -11,10 +11,11 @@ import { useLapContext, type LapPhase, type LapStep } from "../../lib/onboarding
 import type { StudyTab } from "../../lib/store/study";
 import { copyHandoffPrompt, useHandoff } from "../../lib/onboarding/useHandoff";
 import { clientLabel, useMcpActivity } from "../../lib/mcp/activity";
-import { claudeCodeCommand, useMcpEndpoint } from "../../lib/mcp/connect";
+import { claudeCodeCommand, useMcpEndpoint, useMcpTarget } from "../../lib/mcp/connect";
 import { modChordCap } from "../../lib/commands/format";
 import { confettiBurst } from "../../lib/onboarding/motion";
 import { CopyButton } from "../CopyButton";
+import { CloudMcpConnector } from "../CloudMcpConnector";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -106,6 +107,8 @@ export interface GuideBarViewProps {
 /** The bar's markup for one state — pure props, so each step renders in tests. */
 export function GuideBarView(props: Readonly<GuideBarViewProps>) {
   const { t } = useI18n();
+  // Step 3 hands off over the MCP connection this setup route uses.
+  const mcpTarget = useMcpTarget();
   const { phase, justCompleted } = props;
   const state = justCompleted ? `${justCompleted}-done` : phase;
 
@@ -142,7 +145,7 @@ export function GuideBarView(props: Readonly<GuideBarViewProps>) {
     body = (
       <Step
         label={t("lap.step3.label")}
-        text={t("study.handoff.mcpLead")}
+        text={t(mcpTarget === "cloud" ? "mcp.cloud.lead" : "study.handoff.mcpLead")}
         cta={compact ? <PrimaryCta onClick={props.onShowHandoff}>{t("lap.step3.cta")}</PrimaryCta> : null}
         onDismiss={props.onDismiss}
       >
@@ -307,9 +310,13 @@ function PrimaryCta({ onClick, children }: Readonly<{ onClick: () => void; child
 }
 
 /** Step 3's working parts: the command to paste, whether Claude has connected,
- *  three questions to ask it, and the copy fallback for everyone else. */
+ *  three questions to ask it, and the copy fallback for everyone else. On the
+ *  cloud route the command and connector steps are the remote server's, and
+ *  there is no connected/waiting line (the cloud server reports none) — so the
+ *  step completes through the copy fallback or by being dismissed. */
 function HandoffStep() {
   const { t } = useI18n();
+  const target = useMcpTarget();
   const endpoint = useMcpEndpoint();
   const { info } = useMcpActivity();
   const client = clientLabel(info?.client);
@@ -318,29 +325,35 @@ function HandoffStep() {
 
   return (
     <div className="mt-2 flex flex-col gap-2">
-      <div className="flex items-center gap-1 rounded-md bg-muted/60 py-0.5 pl-3 pr-0.5">
-        <code className="min-w-0 flex-1 truncate font-mono text-xs" title={command}>
-          {command}
-        </code>
-        <CopyButton
-          iconOnly
-          value={command}
-          title={t("settings.mcp.copyCommand")}
-          className="size-7 shrink-0 text-muted-foreground"
-        />
-      </div>
-      <p
-        data-mcp-status={client ? "connected" : "waiting"}
-        className="flex items-center gap-1.5 text-xs text-muted-foreground"
-      >
-        <span
-          className={cn(
-            "size-1.5 shrink-0 rounded-full",
-            client ? "bg-success-foreground" : "animate-pulse bg-muted-foreground/40"
-          )}
-        />
-        {client ? t("study.handoff.connected", { client }) : t("lap.step3.waiting")}
-      </p>
+      {target === "cloud" ? (
+        <CloudMcpConnector lead={false} />
+      ) : (
+        <>
+          <div className="flex items-center gap-1 rounded-md bg-muted/60 py-0.5 pl-3 pr-0.5">
+            <code className="min-w-0 flex-1 truncate font-mono text-xs" title={command}>
+              {command}
+            </code>
+            <CopyButton
+              iconOnly
+              value={command}
+              title={t("settings.mcp.copyCommand")}
+              className="size-7 shrink-0 text-muted-foreground"
+            />
+          </div>
+          <p
+            data-mcp-status={client ? "connected" : "waiting"}
+            className="flex items-center gap-1.5 text-xs text-muted-foreground"
+          >
+            <span
+              className={cn(
+                "size-1.5 shrink-0 rounded-full",
+                client ? "bg-success-foreground" : "animate-pulse bg-muted-foreground/40"
+              )}
+            />
+            {client ? t("study.handoff.connected", { client }) : t("lap.step3.waiting")}
+          </p>
+        </>
+      )}
       <ul className="flex flex-col">
         {mcpQuestions.map((q) => (
           <li key={q} className="flex items-center gap-1.5">

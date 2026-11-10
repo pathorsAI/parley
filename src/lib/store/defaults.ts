@@ -59,6 +59,9 @@ export const DEFAULT_SETTINGS: Settings = {
   onboarded: false,
   onboardingStep: 0,
   onboardingStepId: "",
+  // A fresh install starts local: the cloud route is something the user
+  // picks (and signs in for) on onboarding's account step.
+  setupMode: "local",
   userName: "",
   userRole: "",
   userCompany: "",

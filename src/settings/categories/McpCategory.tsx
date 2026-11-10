@@ -8,7 +8,15 @@ import { log } from "../../lib/log";
 import { isMac } from "../../lib/platform";
 import { isTauri } from "../../lib/tauriEvents";
 import { openDiagnosticsWindow } from "../../lib/diagnostics";
-import { claudeCodeCommand, mcpClientConfigJson, type McpServerInfo } from "../../lib/mcp/connect";
+import { CLOUD_ENABLED } from "../../lib/flags";
+import {
+  CLOUD_MCP_URL,
+  claudeCodeCommand,
+  mcpClientConfigJson,
+  mcpTarget,
+  type McpServerInfo,
+} from "../../lib/mcp/connect";
+import { openCloudMcpGuide } from "../../components/CloudMcpConnector";
 import { clientLabel, connState, relativeTime, type McpActivityInfo } from "../../components/McpStatusChip";
 import { useI18n } from "../../i18n";
 import { CachesPanel } from "../CachesPanel";
@@ -16,7 +24,12 @@ import { Section } from "../fields";
 import type { SettingsPanelProps } from "./types";
 
 /** Settings › MCP: the server, who is talking to it, how to connect — and, on
- *  Windows, the logs and caches panels (macOS keeps those in the menu bar). */
+ *  Windows, the logs and caches panels (macOS keeps those in the menu bar).
+ *
+ *  The connection follows the setup route. Local: the server built into this
+ *  app, as it always was. Cloud: Parley's remote server first (its URL, the
+ *  Claude Code command, the custom-connector steps), with the built-in server
+ *  still there underneath, folded away as the advanced option it now is. */
 export function McpCategory({
   settings,
   patch,
@@ -32,9 +45,36 @@ export function McpCategory({
     logPath: string;
   }
 >) {
+  const { t } = useI18n();
+  const cloud = mcpTarget(settings.setupMode, CLOUD_ENABLED) === "cloud";
+  const localServer = (
+    <McpServerSection
+      settings={settings}
+      patch={patch}
+      mcpInfo={mcpInfo}
+      mcpActivity={mcpActivity}
+      templatesPath={templatesPath}
+      showAutoAnalysis={!cloud}
+    />
+  );
   return (
     <>
-      <McpServerSection settings={settings} patch={patch} mcpInfo={mcpInfo} mcpActivity={mcpActivity} templatesPath={templatesPath} />
+      {cloud ? (
+        <>
+          <CloudMcpSection>
+            <AutoAnalysisToggle settings={settings} patch={patch} />
+          </CloudMcpSection>
+          <details className="group flex max-w-2xl flex-col">
+            <summary className="flex cursor-pointer list-none items-center gap-1.5 text-sm font-medium text-muted-foreground">
+              <ChevronRight className="size-3.5 shrink-0 transition-transform group-open:rotate-90" />
+              {t("settings.mcp.local.advanced")}
+            </summary>
+            <div className="mt-4">{localServer}</div>
+          </details>
+        </>
+      ) : (
+        localServer
+      )}
       {/* Logs and caches are system-level chores: on macOS they live in the
           menu bar's Diagnostics menu (menu.rs). Windows draws no menu bar, so
           there this page is still their only door. */}
@@ -50,11 +90,15 @@ function McpServerSection({
   mcpInfo,
   mcpActivity,
   templatesPath,
+  showAutoAnalysis,
 }: Readonly<
   SettingsPanelProps & {
     mcpInfo: McpServerInfo | null;
     mcpActivity: McpActivityInfo | null;
     templatesPath: string;
+    /** The auto-analysis switch sits here on the local route; on the cloud
+     *  route it moves up to the cloud section, which is the one in use. */
+    showAutoAnalysis: boolean;
   }
 >) {
   const { t } = useI18n();
@@ -149,18 +193,78 @@ function McpServerSection({
         />
       </div>
 
-      {/* Lives on the MCP panel because turning it OFF is what hands
-          analysis to the external AI connected here. */}
-      <label className="flex max-w-xl items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          className="size-3.5 accent-primary"
-          checked={settings.autoStudyAnalysis}
-          onChange={(e) => patch({ autoStudyAnalysis: e.target.checked })}
+      {showAutoAnalysis && <AutoAnalysisToggle settings={settings} patch={patch} />}
+    </Section>
+  );
+}
+
+/** Lives on the MCP panel because turning it OFF is what hands analysis to the
+ *  external AI connected here. */
+function AutoAnalysisToggle({ settings, patch }: Readonly<SettingsPanelProps>) {
+  const { t } = useI18n();
+  return (
+    <label className="flex max-w-xl items-center gap-2 text-sm">
+      <input
+        type="checkbox"
+        className="size-3.5 accent-primary"
+        checked={settings.autoStudyAnalysis}
+        onChange={(e) => patch({ autoStudyAnalysis: e.target.checked })}
+      />
+      {t("settings.autoStudyAnalysis.title")}
+      <InfoTip label={t("settings.info")}>{t("settings.autoStudyAnalysis.desc")}</InfoTip>
+    </label>
+  );
+}
+
+/**
+ * The cloud route's connection: Parley's remote MCP server. Its URL, the
+ * Claude Code command and the custom-connector steps for Claude on the web,
+ * desktop and phone. No status card — the remote server reports no live
+ * connection to the app — only the fact that it sees recordings synced to the
+ * cloud.
+ */
+function CloudMcpSection({ children }: Readonly<{ children: React.ReactNode }>) {
+  const { t } = useI18n();
+  return (
+    <Section title={t("settings.mcp.cloud.title")} info={t("settings.mcp.cloud.description")}>
+      <div className="flex max-w-xl flex-col gap-2 rounded-lg border p-3">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium">{t("settings.mcp.cloud.url")}</span>
+          <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">{CLOUD_MCP_URL}</span>
+          <CopyButton
+            iconOnly
+            value={CLOUD_MCP_URL}
+            title={t("settings.mcp.copyUrl")}
+            className="size-6 shrink-0 text-muted-foreground"
+          />
+        </div>
+        <p className="text-[11px] text-muted-foreground">{t("mcp.cloud.synced")}</p>
+      </div>
+
+      <div className="flex max-w-xl flex-col divide-y rounded-lg border">
+        <CopyRow
+          label={t("settings.mcp.claudeCodeInstructions")}
+          info={t("settings.mcp.cloud.claudeCodeHelp")}
+          value={() => claudeCodeCommand(CLOUD_MCP_URL)}
+          copyLabel={t("settings.mcp.copyCommand")}
         />
-        {t("settings.autoStudyAnalysis.title")}
-        <InfoTip label={t("settings.info")}>{t("settings.autoStudyAnalysis.desc")}</InfoTip>
-      </label>
+        <div className="flex flex-col gap-1 px-3 py-2">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium">{t("mcp.cloud.connector")}</span>
+            <button
+              type="button"
+              onClick={openCloudMcpGuide}
+              className="ml-auto cursor-pointer text-[11px] text-primary underline-offset-2 transition-colors hover:underline"
+            >
+              {t("mcp.cloud.guide")}
+            </button>
+          </div>
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            {t("mcp.cloud.connectorSteps", { url: CLOUD_MCP_URL })}
+          </p>
+        </div>
+      </div>
+      {children}
     </Section>
   );
 }

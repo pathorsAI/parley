@@ -3,7 +3,7 @@ import { Popover } from "radix-ui";
 import { AlertCircle, Plug } from "lucide-react";
 import { isTauri } from "../lib/tauriEvents";
 import { clientLabel, connState, useMcpActivity, type McpConnState } from "../lib/mcp/activity";
-import { useMcpEndpoint } from "../lib/mcp/connect";
+import { useMcpEndpoint, useMcpTarget } from "../lib/mcp/connect";
 import { useI18n } from "../i18n";
 import { cn } from "@/lib/utils";
 import { CopyButton } from "@/components/CopyButton";
@@ -51,8 +51,13 @@ export function McpStatusChip() {
   // the "handed off" checklist step on the first successful tool call — the chip
   // is always mounted in the main window, so that fires wherever the user is.
   const { info, now } = useMcpActivity({ fast: open });
+  const target = useMcpTarget();
 
-  if (!isTauri()) return null;
+  // The chip is the LOCAL server's activity. On the cloud route that server
+  // isn't the connection Parley hands out, and the remote one reports nothing
+  // to the app, so there is no chip at all. (The hooks above still run, so a
+  // power user's local tool call still ticks the checklist.)
+  if (!isTauri() || target === "cloud") return null;
 
   const state = connState(info, now);
   const stateLabel = t(`mcp.state.${state}`);
