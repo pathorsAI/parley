@@ -120,7 +120,7 @@ function canonicalShare(share: unknown): CloudDraftShare {
   if (!share || typeof share !== "object" || typeof (share as { orgId?: unknown }).orgId !== "string") return null;
   const src = share as Record<string, unknown>;
   const out: Record<string, unknown> = {};
-  for (const k of Object.keys(src).sort()) out[k] = src[k];
+  for (const k of Object.keys(src).sort((a, b) => a.localeCompare(b))) out[k] = src[k];
   if (!("folderId" in out)) out.folderId = null;
   return out as CloudDraftShare;
 }
@@ -304,39 +304,70 @@ export function applyExchange(
     parked: { ...state.parked },
   };
 
+  const rows = applicableRows(exchange, outgoing, next, byId, localFp);
+  recordRejections(exchange.rejected, outgoing, next, byId, localFp);
+
+  const changes: DraftChanges = { upserts: [], removed: [] };
+  for (const [id, row] of rows) foldRow(id, row, next, byId, localFp, changes);
+  return { changes, state: next };
+}
+
+/** The rows of an exchange that may be applied (see {@link applyExchange}):
+ *  pulled rows for drafts untouched here, pushed answers for drafts that still
+ *  look as they did when sent. */
+function applicableRows(
+  exchange: SyncExchange,
+  outgoing: Outgoing,
+  state: DraftSyncState,
+  byId: Map<string, MeetingDraft>,
+  localFp: (id: string) => string,
+): Map<string, CloudMeetingDraft> {
   const rows = new Map<string, CloudMeetingDraft>();
   for (const row of exchange.pulled) {
     if (typeof row?.id !== "string" || outgoing.sentFrom.has(row.id)) continue;
-    const fp = localFp(row.id);
-    const untouched = fp === (next.synced[row.id] ?? "");
-    // A form parked here loses to a newer write from elsewhere.
-    const parkedAndOlder =
-      next.parked[row.id] === fp && (byId.get(row.id)?.updatedAt ?? 0) < (row.updatedAt ?? 0);
-    if (untouched || parkedAndOlder) rows.set(row.id, row);
+    if (pulledApplies(row, state, byId, localFp)) rows.set(row.id, row);
   }
   for (const row of exchange.pushed) {
     if (typeof row?.id !== "string") continue;
     if (outgoing.sentFrom.has(row.id) && outgoing.sentFrom.get(row.id) === localFp(row.id)) rows.set(row.id, row);
   }
+  return rows;
+}
 
-  recordRejections(exchange.rejected, outgoing, next, byId, localFp);
+/** A pulled row applies to a draft untouched since the snapshot — or to one
+ *  parked here, when the row is a newer write from elsewhere. */
+function pulledApplies(
+  row: CloudMeetingDraft,
+  state: DraftSyncState,
+  byId: Map<string, MeetingDraft>,
+  localFp: (id: string) => string,
+): boolean {
+  const fp = localFp(row.id);
+  if (fp === (state.synced[row.id] ?? "")) return true;
+  return state.parked[row.id] === fp && (byId.get(row.id)?.updatedAt ?? 0) < (row.updatedAt ?? 0);
+}
 
-  const changes: DraftChanges = { upserts: [], removed: [] };
-  for (const [id, row] of rows) {
-    delete next.pendingDeletes[id];
-    delete next.parked[id];
-    const current = byId.get(id);
-    if (row.deletedAt !== null) {
-      delete next.synced[id];
-      if (current) changes.removed.push(id);
-      continue;
-    }
-    const draft = fromCloudDraft(row, current?.remindedFor ?? null);
-    const fp = fingerprint(draft);
-    next.synced[id] = fp;
-    if (fp !== localFp(id)) changes.upserts.push(draft);
+/** Fold one applicable row into the snapshot and the list changes. */
+function foldRow(
+  id: string,
+  row: CloudMeetingDraft,
+  state: DraftSyncState,
+  byId: Map<string, MeetingDraft>,
+  localFp: (id: string) => string,
+  changes: DraftChanges,
+): void {
+  delete state.pendingDeletes[id];
+  delete state.parked[id];
+  const current = byId.get(id);
+  if (row.deletedAt !== null) {
+    delete state.synced[id];
+    if (current) changes.removed.push(id);
+    return;
   }
-  return { changes, state: next };
+  const draft = fromCloudDraft(row, current?.remindedFor ?? null);
+  const fp = fingerprint(draft);
+  state.synced[id] = fp;
+  if (fp !== localFp(id)) changes.upserts.push(draft);
 }
 
 /** Permanent refusals: park a local form so it isn't offered again, or drop a
