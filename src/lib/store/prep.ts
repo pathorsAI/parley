@@ -160,8 +160,16 @@ export interface PrepSlice {
   /** File a draft made elsewhere (an MCP client) straight into the list,
    *  leaving the prep alone — so it works mid-meeting too. */
   addDraft: (fields: NewDraftFields) => MeetingDraft;
-  /** Note that this draft's reminder fired for its `meetingAt`. */
+  /** Note that this draft's reminder fired for its `meetingAt`. Per-device
+   *  state: deliberately leaves `updatedAt` alone (it is not synced). */
   markDraftReminded: (id: string, at: number) => void;
+  /** Fold drafts from Parley Cloud into the list (cloud/draftSync.ts): each of
+   *  `upserts` replaces the draft with its id, keeping this device's
+   *  `remindedFor` (a new one starts unreminded), and `removed` ids leave the
+   *  list. Only the LIST changes: the prep fields — a draft loaded for editing
+   *  included — are never touched, so a save made after a remote change is
+   *  simply the newer write. */
+  mergeCloudDrafts: (upserts: MeetingDraft[], removed: string[]) => void;
   /** The meeting-draft sheet is open: the prep below, filled in before
    *  recording ("新增會議草稿"). UI state only; not part of the draft itself. */
   draftOpen: boolean;
@@ -362,6 +370,25 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
   },
   markDraftReminded: (id, at) =>
     set((s) => ({ drafts: s.drafts.map((d) => (d.id === id ? { ...d, remindedFor: at } : d)) })),
+  mergeCloudDrafts: (upserts, removed) =>
+    set((s) => {
+      if (upserts.length === 0 && removed.length === 0) return {};
+      const gone = new Set(removed);
+      const incoming = new Map(upserts.map((d) => [d.id, d]));
+      const drafts: MeetingDraft[] = [];
+      for (const d of s.drafts) {
+        if (gone.has(d.id)) continue;
+        const next = incoming.get(d.id);
+        if (next) {
+          incoming.delete(d.id);
+          drafts.push({ ...next, remindedFor: d.remindedFor });
+        } else {
+          drafts.push(d);
+        }
+      }
+      for (const d of incoming.values()) drafts.push({ ...d, remindedFor: null });
+      return { drafts };
+    }),
   setMeetingOrgShare: (meetingOrgShare) => set({ meetingOrgShare }),
   setMeetingFolder: (meetingFolderId) => set({ meetingFolderId }),
   resetPrep: () =>
