@@ -429,9 +429,11 @@ private fun MeetingContent(
                 storageLow = storageLow,
                 issue = issue,
             ),
-            onStop = onStop,
-            onDiscard = onDiscard,
-            onTogglePause = onTogglePause,
+            actions = LiveMeetingActions(
+                onStop = onStop,
+                onDiscard = onDiscard,
+                onTogglePause = onTogglePause,
+            ),
         )
         return
     }
@@ -471,6 +473,17 @@ private fun MeetingContent(
 }
 
 /**
+ * What the live controls do to the meeting: end it, throw it away, or pause and
+ * resume the microphone. Grouped so [LiveMeetingLayout] takes them as one thing
+ * rather than three loose lambdas.
+ */
+private class LiveMeetingActions(
+    val onStop: () -> Unit,
+    val onDiscard: () -> Unit,
+    val onTogglePause: () -> Unit,
+)
+
+/**
  * The meeting while the microphone is (about to be) open: the live transcript
  * on top, and under it the controls, which the user can drag shorter to give
  * the transcript more room — see [LiveControlsPanel].
@@ -486,9 +499,7 @@ private fun LiveMeetingLayout(
     elapsed: Long,
     level: Float,
     notices: List<PanelNotice>,
-    onStop: () -> Unit,
-    onDiscard: () -> Unit,
-    onTogglePause: () -> Unit,
+    actions: LiveMeetingActions,
 ) {
     val context = LocalContext.current
     val phase = when (state) {
@@ -522,9 +533,9 @@ private fun LiveMeetingLayout(
                 level = level,
                 notices = notices,
             ),
-            onStop = onStop,
-            onDiscard = onDiscard,
-            onTogglePause = onTogglePause,
+            onStop = actions.onStop,
+            onDiscard = actions.onDiscard,
+            onTogglePause = actions.onTogglePause,
         ) {
             // Copying works mid-meeting on purpose: the reason to grab a line
             // is usually that it was just said.

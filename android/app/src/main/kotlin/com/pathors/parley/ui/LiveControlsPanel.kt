@@ -314,27 +314,46 @@ private fun BoxScope.FullColumn(
             NoticeLines(readout.notices)
         }
         Spacer(Modifier.height(12.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            // Pause on one side, an equal spacer on the other, so Stop stays centred.
-            val pauseDiameter = shape.stopDp.dp * 0.72f
-            if (readout.recording) {
-                RoundPauseButton(
-                    diameter = pauseDiameter,
-                    paused = readout.paused,
-                    onToggle = onTogglePause,
-                )
-                Spacer(Modifier.width(24.dp))
-            }
-            RoundStopButton(diameter = shape.stopDp.dp, onStop = onStop)
-            if (readout.recording) {
-                Spacer(Modifier.width(24.dp))
-                Spacer(Modifier.size(pauseDiameter))
-            }
-        }
+        FullStopRow(
+            stopDiameter = shape.stopDp.dp,
+            readout = readout,
+            onStop = onStop,
+            onTogglePause = onTogglePause,
+        )
         if (shape.showsDiscard) {
             DiscardControl(onDiscard = onDiscard)
         } else {
             Spacer(Modifier.height(4.dp))
+        }
+    }
+}
+
+/**
+ * The full panel's Stop, with Pause beside it while the microphone can be
+ * paused — that is, once the recording has actually started.
+ */
+@Composable
+private fun FullStopRow(
+    stopDiameter: Dp,
+    readout: LiveReadout,
+    onStop: () -> Unit,
+    onTogglePause: () -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        // Pause on one side, an equal spacer on the other, so Stop stays centred.
+        val pauseDiameter = stopDiameter * 0.72f
+        if (readout.recording) {
+            RoundPauseButton(
+                diameter = pauseDiameter,
+                paused = readout.paused,
+                onToggle = onTogglePause,
+            )
+            Spacer(Modifier.width(24.dp))
+        }
+        RoundStopButton(diameter = stopDiameter, onStop = onStop)
+        if (readout.recording) {
+            Spacer(Modifier.width(24.dp))
+            Spacer(Modifier.size(pauseDiameter))
         }
     }
 }
