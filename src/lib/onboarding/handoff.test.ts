@@ -3,6 +3,7 @@ import { useStore } from "../store";
 import { seg, replaySession } from "../test/fixtures";
 import type { ActionItem, TimelineEvent } from "../types";
 import {
+  buildDeliveryMarkdown,
   buildHandoffPrompt,
   buildReportMarkdown,
   findingMarkdownLine,
@@ -10,7 +11,7 @@ import {
   speakerDisplayNames,
   type HandoffPromptInput,
 } from "./handoff";
-import { handoffPromptFromState, reportMarkdownFromState } from "./useHandoff";
+import { handoffPromptFromState, reportMarkdownFromState, studyPageTextFromState } from "./useHandoff";
 
 const INITIAL = useStore.getState();
 beforeEach(() => useStore.setState(INITIAL, true));
@@ -183,5 +184,51 @@ describe("store-fed builders", () => {
     const md = reportMarkdownFromState(useStore.getState());
     expect(md).toContain("# Weekly sync");
     expect(md).toContain("## Brief\n\n- shipped");
+  });
+});
+
+describe("per-tab page text (copy this page)", () => {
+  const actions: ActionItem[] = [
+    { id: "a1", text: "Send the quote", done: false, linkedEventId: null, atMs: 125_000 },
+    { id: "a2", text: "Book the demo", done: true, linkedEventId: null, atMs: null },
+  ];
+
+  it("writes the delivery read with its labels", () => {
+    const md = buildDeliveryMarkdown(
+      {
+        tone: "firm",
+        toneEvidence: "這個價格我們不能接受",
+        fillers: { level: "frequent", examples: ["就是", "然後"], note: "開場兩分鐘" },
+        pace: "fast",
+        summary: "立場清楚，但開場有點趕。",
+      },
+      "zh-TW"
+    );
+    expect(md).toBe(
+      "立場清楚，但開場有點趕。\n\n" +
+        "- 語氣: 堅定 — “這個價格我們不能接受”\n" +
+        "- 贅字: 偏多 (就是, 然後) — 開場兩分鐘\n" +
+        "- 語速: 偏快"
+    );
+    expect(buildDeliveryMarkdown(null, "en")).toBe("");
+  });
+
+  it("copies the tab on screen from the loaded session", () => {
+    const segments = [seg({ id: "a", source: "me", speaker: 0, text: "hi", startMs: 0 })];
+    useStore.setState({
+      replay: replaySession(segments),
+      segments,
+      brief: "- shipped\n",
+      actionItems: actions,
+      meetingContext: "Acme\n\nNotes taken during the meeting:\ncall back Friday",
+      deliveryAssessment: null,
+    });
+    const s = useStore.getState();
+    expect(studyPageTextFromState(s, "summary")).toBe("- shipped");
+    // Just the actions: numbered, no done marks, no timestamps.
+    expect(studyPageTextFromState(s, "actions")).toBe("1. Send the quote\n2. Book the demo");
+    expect(studyPageTextFromState(s, "notes")).toBe("call back Friday");
+    expect(studyPageTextFromState(s, "delivery")).toBe("");
+    expect(studyPageTextFromState(s, "replay")).toContain("hi");
   });
 });

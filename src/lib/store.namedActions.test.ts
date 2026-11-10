@@ -59,7 +59,7 @@ describe("named store actions", () => {
   it("applyDiarizedSpeakers and setSegments", () => {
     const segments = [seg({ id: "a" })];
     expect(effect(() => useStore.getState().applyDiarizedSpeakers(segments, { "them-1": "A" }))).toEqual({
-      changed: { segments, speakerNames: { "them-1": "A" } },
+      changed: { segments, speakerNames: { "them-1": "A" }, speakerAliases: {} },
       updates: 1,
     });
     const next = [seg({ id: "b" })];

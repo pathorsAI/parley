@@ -1,4 +1,4 @@
-import { isMeetingActive, useStore } from "../store";
+import { isMeetingActive, useLiveStore, useStore } from "../store";
 import { notify } from "../notify";
 import { translate } from "../../i18n/messages";
 import { stopMockStream } from "../mockStream";
@@ -6,6 +6,7 @@ import { meetingUsesRealPipeline } from "../transcription/prepare";
 import { log } from "../log";
 import * as ipc from "../ipc/commands";
 import { liveSaves, orphanSnapshot, snapshotLiveMeeting } from "../history/history";
+import { cancelLiveSession } from "./liveSession";
 
 /**
  * The live meeting's recorder controls — end, pause/resume, cancel — and the
@@ -33,8 +34,8 @@ export function stopBackendMeeting(failureLog: string, fields: Record<string, un
  */
 export async function endMeeting(opts: { keepMs?: number } = {}): Promise<void> {
   log.info("meeting: stop requested", opts.keepMs == null ? {} : { keepMs: opts.keepMs });
-  const store = useStore.getState();
-  const real = meetingUsesRealPipeline(store.settings);
+  const store = useLiveStore.getState();
+  const real = meetingUsesRealPipeline(useStore.getState().settings);
   store.stopMeeting();
   if (!real) {
     stopMockStream();
@@ -53,7 +54,7 @@ export async function endMeeting(opts: { keepMs?: number } = {}): Promise<void> 
     await ipc.stopMeeting(opts.keepMs == null ? {} : { keepMs: opts.keepMs });
   } catch (e) {
     log.error("meeting: stop failed", { error: String(e) });
-    useStore.getState().setFinalizingMeeting(false);
+    useLiveStore.getState().setFinalizingMeeting(false);
   }
 }
 
@@ -62,7 +63,7 @@ export async function endMeeting(opts: { keepMs?: number } = {}): Promise<void> 
  * drop/readmit audio. The backend flag is idempotent, so no busy guard.
  */
 export function toggleMeetingPause(): void {
-  const store = useStore.getState();
+  const store = useLiveStore.getState();
   const paused = store.meetingStatus === "paused";
   if (paused) {
     log.info("meeting: resume requested");
@@ -71,7 +72,7 @@ export function toggleMeetingPause(): void {
     log.info("meeting: pause requested");
     store.pauseMeeting();
   }
-  if (meetingUsesRealPipeline(store.settings)) {
+  if (meetingUsesRealPipeline(useStore.getState().settings)) {
     ipc.setMeetingPaused({ paused: !paused }).catch((e) =>
       log.error("meeting: pause toggle failed", { error: String(e) }),
     );
@@ -82,9 +83,8 @@ export function toggleMeetingPause(): void {
  *  encoding it), back to idle. */
 export async function cancelActiveMeeting(): Promise<void> {
   log.info("meeting: cancel requested");
-  const store = useStore.getState();
-  const real = meetingUsesRealPipeline(store.settings);
-  store.cancelMeeting();
+  const real = meetingUsesRealPipeline(useStore.getState().settings);
+  cancelLiveSession();
   if (!real) {
     stopMockStream();
     return;
@@ -109,7 +109,7 @@ export async function cancelActiveMeeting(): Promise<void> {
  */
 export async function recoverOrphanedMeeting(): Promise<boolean> {
   const active = await ipc.activeMeeting();
-  const store = useStore.getState();
+  const store = useLiveStore.getState();
   if (!active || isMeetingActive(store.meetingStatus)) return false;
   log.warn("meeting: the backend is still recording a meeting this window lost; stopping and saving it", {
     id: active.meetingId,
@@ -124,6 +124,6 @@ export async function recoverOrphanedMeeting(): Promise<boolean> {
       : orphanSnapshot(active.meetingId, active.startedAtMs),
   );
   await ipc.stopMeeting();
-  notify.message(translate(store.settings.language, "meeting.orphan.recovered"));
+  notify.message(translate(useStore.getState().settings.language, "meeting.orphan.recovered"));
   return true;
 }

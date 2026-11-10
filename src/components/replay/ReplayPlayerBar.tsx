@@ -2,6 +2,7 @@ import { useState } from "react";
 import { AlertTriangle, Check, Download, Loader2, Pause, Play, Scissors } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatClock, type ReplayTrim } from "../../lib/store";
 import { Scrubber } from "./Scrubber";
 import { TrimBar } from "./TrimBar";
@@ -89,12 +90,22 @@ export function ReplayPlayerBar({
       <div className="px-4 pb-3 pt-3">
         <div className="flex items-center gap-3">
           {audioMissing ? (
-            <span
-              className="flex size-8 shrink-0 items-center justify-center text-muted-foreground"
-              title={labels.audioMissing}
-            >
-              <AlertTriangle className="size-4" />
-            </span>
+            // Why there's no play button, on hover (or focus) of the warning
+            // that stands in for it, rather than a line of its own under the bar.
+            <TooltipProvider delayDuration={150}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label={labels.audioMissing}
+                    className="flex size-8 shrink-0 cursor-default items-center justify-center rounded-md text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  >
+                    <AlertTriangle className="size-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{labels.audioMissing}</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           ) : (
             <Button
               variant="outline"
@@ -170,7 +181,7 @@ export function ReplayPlayerBar({
           )}
         </div>
 
-        <AudioNotice audioMissing={audioMissing} labels={labels} />
+        {!audioMissing && <AudioNotice labels={labels} />}
 
         {trimOpen && (
           <>
@@ -215,21 +226,14 @@ export function ReplayPlayerBar({
   );
 }
 
-/** Why the recording won't play, under the transport row — missing on this
- *  computer, or a file neither the webview nor the decode fallback could play. */
-function AudioNotice({
-  audioMissing,
-  labels,
-}: Readonly<{ audioMissing: boolean; labels: ReplayPlayerBarProps["labels"] }>) {
-  const text = audioMissing ? labels.audioMissing : labels.audioUnplayable;
+/** Why the recording won't play, under the transport row: a file neither the
+ *  webview nor the decode fallback could play. (Audio missing on this computer
+ *  says so on its warning icon instead.) */
+function AudioNotice({ labels }: Readonly<{ labels: ReplayPlayerBarProps["labels"] }>) {
+  const text = labels.audioUnplayable;
   if (!text) return null;
   return (
-    <output
-      className={cn(
-        "mt-2 flex items-center gap-1.5 text-[11px]",
-        audioMissing ? "text-muted-foreground" : "text-danger-foreground",
-      )}
-    >
+    <output className="mt-2 flex items-center gap-1.5 text-[11px] text-danger-foreground">
       <AlertTriangle className="size-3 shrink-0" />
       {text}
     </output>

@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import type { TimelineEvent } from "../../lib/types";
 import { useI18n } from "../../i18n";
 import { useEvalNames } from "./useAnalysis";
+import { useRelabel } from "../../lib/speakers/useRelabel";
 
 const SEVERITIES = ["info", "warn", "critical"] as const;
 
@@ -78,6 +79,7 @@ function FindingHoverCard({
   evalNames: Map<string, string>;
 }>) {
   const { t } = useI18n();
+  const relabel = useRelabel();
   const ref = useRef<HTMLDivElement>(null);
   // Start off-screen: the first paint measures, the layout effect places it —
   // so the card never flashes at the wrong spot.
@@ -120,13 +122,13 @@ function FindingHoverCard({
           </span>
         )}
       </div>
-      <div className="mt-0.5 line-clamp-2 font-medium text-popover-foreground">{event.title}</div>
+      <div className="mt-0.5 line-clamp-2 font-medium text-popover-foreground">{relabel(event.title)}</div>
       {/* Clamped: the card is a glance, not the finding. The full detail and
        *  resolution are one click away in the findings list beside it. */}
-      <div className="mt-0.5 line-clamp-3 text-muted-foreground">{event.detail}</div>
+      <div className="mt-0.5 line-clamp-3 text-muted-foreground">{relabel(event.detail)}</div>
       {event.resolved && event.resolution && (
         <div className="mt-0.5 line-clamp-2 text-success-foreground">
-          {t("timeline.resolvedHow")}: {event.resolution}
+          {t("timeline.resolvedHow")}: {relabel(event.resolution)}
         </div>
       )}
     </div>,
@@ -147,8 +149,7 @@ interface AnalysisTimelineProps {
   onSelect: (event: TimelineEvent) => void;
   /** Shown as a recovery action on error (and not at all when omitted). */
   onReanalyze?: () => void;
-  /** Active eval-template name, shown as a chip next to the title (omit to hide). */
-  templateName?: string;
+
   /** True when the eval set changed since these findings were computed — prompts
    *  the user to re-analyze (via the player's Analyze menu). */
   stale?: boolean;
@@ -176,7 +177,6 @@ export function AnalysisTimeline({
   selectedId,
   onSelect,
   onReanalyze,
-  templateName,
   stale,
   pending = false,
   expectSides = false,
@@ -200,14 +200,6 @@ export function AnalysisTimeline({
       <div className="mb-1.5 flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-1.5">
           <span className="shrink-0 text-[11px] font-medium text-foreground">{t("timeline.title")}</span>
-          {templateName && (
-            <span
-              className="truncate rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
-              title={`${t("timeline.templateLabel")}: ${templateName}`}
-            >
-              {t("timeline.templateLabel")}: {templateName}
-            </span>
-          )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {stale && (

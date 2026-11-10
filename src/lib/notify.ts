@@ -6,8 +6,14 @@
  * the app installs a {@link Notifier} at boot (main.tsx shows them as toasts).
  * Until one is installed, notices go nowhere.
  */
+/** A button on a notice ("Open"), already translated. */
+export interface NoticeAction {
+  label: string;
+  onClick: () => void;
+}
+
 export interface Notifier {
-  message(text: string): void;
+  message(text: string, action?: NoticeAction): void;
   success(text: string): void;
   error(text: string): void;
 }
@@ -23,7 +29,7 @@ export function setNotifier(notifier: Notifier | null): void {
 
 /** Tell the user something, through whatever this window installed. */
 export const notify: Notifier = {
-  message: (text) => current.message(text),
+  message: (text, action) => current.message(text, action),
   success: (text) => current.success(text),
   error: (text) => current.error(text),
 };

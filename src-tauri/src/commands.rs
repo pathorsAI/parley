@@ -15,6 +15,7 @@
 
 pub(crate) mod ai_memory;
 pub(crate) mod config;
+pub(crate) mod cue;
 pub(crate) mod export;
 pub(crate) mod key_check;
 pub(crate) mod logs;

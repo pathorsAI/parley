@@ -17,7 +17,7 @@ import {
   snapshotAnalysis,
   type AnalysisSnapshot,
 } from "./history";
-import { speakerKey, useStore } from "../store";
+import { speakerKey, useLiveStore, useStore } from "../store";
 import { setNotifier } from "../notify";
 
 const toast = { message: vi.fn(), success: vi.fn(), error: vi.fn() };
@@ -190,6 +190,8 @@ describe("mergeAnalysisSnapshot (the completed-pipeline overwrite)", () => {
     return {
       segments: [],
       speakerNames: {},
+      speakerAliases: {},
+      selfSpeaker: null,
       findings: [finding],
       actionItems: [],
       analyzed: true,
@@ -305,7 +307,8 @@ describe("shouldKeepLiveRecording (the live save's keep/discard gate)", () => {
 describe("leaveStoppedCockpit (a meeting that ended without a report)", () => {
   it("leaves the stopped cockpit for Home and says why", () => {
     vi.mocked(toast.message).mockClear();
-    useStore.setState({ appMode: "live", meetingStatus: "stopped" });
+    useStore.setState({ appMode: "live" });
+    useLiveStore.setState({ meetingStatus: "stopped" });
     leaveStoppedCockpit("meeting.notSaved.tooShort");
     expect(useStore.getState().appMode).toBe("home");
     expect(toast.message).toHaveBeenCalledTimes(1);
@@ -315,13 +318,16 @@ describe("leaveStoppedCockpit (a meeting that ended without a report)", () => {
     vi.mocked(toast.message).mockClear();
     // The meeting ran in its own window: the main window stays put, and the
     // user still hears why there is no report.
-    useStore.setState({ appMode: "library", meetingStatus: "stopped" });
+    useStore.setState({ appMode: "library" });
+    useLiveStore.setState({ meetingStatus: "stopped" });
     leaveStoppedCockpit("meeting.notSaved.noTranscript");
     expect(useStore.getState().appMode).toBe("library");
     expect(toast.message).toHaveBeenCalledTimes(1);
     vi.mocked(toast.message).mockClear();
 
-    useStore.setState({ appMode: "live", meetingStatus: "recording" });
+    // A newer meeting is already recording (the live store): say nothing.
+    useStore.setState({ appMode: "live" });
+    useLiveStore.setState({ meetingStatus: "recording" });
     leaveStoppedCockpit("meeting.notSaved.noTranscript");
     expect(useStore.getState().appMode).toBe("live");
     expect(toast.message).not.toHaveBeenCalled();
@@ -365,5 +371,30 @@ describe("a transcript that synced with no timing (#576)", () => {
     } finally {
       useStore.setState({ replay: null, segments: [] });
     }
+  });
+});
+
+describe("action item sides survive save → load", () => {
+  afterEach(() => useStore.setState({ actionItems: [] }));
+
+  it("keeps side and owner through the snapshot, the JSON on disk, and the stage merge", () => {
+    const items = [
+      { id: "a1", text: "Send the quote", done: false, linkedEventId: null, atMs: 1000, side: "us" as const, owner: "Kevin" },
+      { id: "a2", text: "Confirm the budget", done: true, linkedEventId: null, atMs: null, side: "them" as const },
+    ];
+    useStore.setState({ actionItems: items });
+    const onDisk = JSON.parse(JSON.stringify(mergeAnalysisSnapshot(entry(), snapshotAnalysis()))) as HistoryEntry;
+    expect(onDisk.actionItems).toEqual(items);
+    const merged = JSON.parse(JSON.stringify(mergeStageOutputs(entry(), { actionItems: items }))) as HistoryEntry;
+    expect(merged.actionItems).toEqual(items);
+  });
+
+  it("an entry saved before sides existed loads unchanged, with no side or owner", () => {
+    const old = JSON.parse(
+      '{"actionItems":[{"id":"o1","text":"Follow up","done":false,"linkedEventId":null,"atMs":null}]}'
+    ) as Pick<HistoryEntry, "actionItems">;
+    const loaded = mergeStageOutputs(entry(), { actionItems: old.actionItems });
+    expect(loaded.actionItems[0].side).toBeUndefined();
+    expect(loaded.actionItems[0].owner).toBeUndefined();
   });
 });

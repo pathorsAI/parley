@@ -19,6 +19,7 @@ function facts(patch: Partial<StudyPipelineFacts> = {}): StudyPipelineFacts {
     hasRealtimeKey: false,
     readOnly: false,
     hasTranscript: true,
+    selfKnown: true,
     analysisStatus: "idle",
     actionItemsStatus: "idle",
     briefStatus: "idle",
@@ -42,6 +43,12 @@ describe("evaluateStages (the scheduler's whole topology)", () => {
     expect(evaluateStages(facts({ wizardOpen: true }))).toEqual([]);
     // ...and simply closing it un-defers. No gate to release, nothing to leak.
     expect(evaluateStages(facts({ wizardOpen: false }))).toEqual(["findings"]);
+  });
+
+  it("holds delivery until the recording says which speaker is the user", () => {
+    const f = facts({ analysisStatus: "done", selfKnown: false });
+    expect(evaluateStages(f)).toEqual(["actions"]);
+    expect(displayOf(deriveStudyPipeline(f), "delivery")).toBe("idle");
   });
 
   it("finished findings fan out to action items + delivery (brief still waits)", () => {

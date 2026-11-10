@@ -6,7 +6,7 @@ vi.mock("../../lib/log", () => ({
 }));
 
 import { runTimeline, typingSchedule } from "./timeline";
-import { INTRO_BEATS, INTRO_STEPS, TRANSCRIPT_BUDGET_MS, stepDurationMs } from "./IntroStage";
+import { INTRO_BEATS, INTRO_STEPS, TRANSCRIPT_BUDGET_MS, beatsFrom, stepDurationMs } from "./IntroStage";
 import { sampleManifest } from "../../lib/onboarding/sample";
 
 describe("intro beat schedule", () => {
@@ -73,5 +73,19 @@ describe("typingSchedule", () => {
       expect(s.endMs).toBeLessThanOrEqual(TRANSCRIPT_BUDGET_MS + 1e-6);
       expect(s.msPerChar).toBeLessThanOrEqual(22);
     }
+  });
+});
+
+describe("jumping to a step", () => {
+  it("plays from that step at once, keeping the gaps between the beats after it", () => {
+    expect(beatsFrom("folder")).toEqual([
+      { id: "folder", at: 0 },
+      { id: "mcp", at: 1900 },
+      { id: "ready", at: 4600 },
+    ]);
+  });
+
+  it("from the overview is the whole demo", () => {
+    expect(beatsFrom("overview")).toEqual(INTRO_BEATS);
   });
 });

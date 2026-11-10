@@ -183,28 +183,6 @@ export function properNouns(terms: readonly string[]): string[] {
   );
 }
 
-/** One line of the context step's reading log. */
-export type ReadingStep = { kind: "file"; name: string } | { kind: "auto"; count: number };
-
-/**
- * What the context step says it read, in reading order: each file by name,
- * except Claude Code's auto memory (often dozens of small files), which is one
- * line with a count where its first file was.
- */
-export function readingSteps(files: readonly MemoryFile[]): ReadingStep[] {
-  const out: ReadingStep[] = [];
-  let auto: { kind: "auto"; count: number } | null = null;
-  for (const f of files) {
-    if (f.kind === "auto") {
-      if (auto) auto.count += 1;
-      else out.push((auto = { kind: "auto", count: 1 }));
-    } else {
-      out.push({ kind: "file", name: f.name });
-    }
-  }
-  return out;
-}
-
 /**
  * Mask what looks like a credential before memory text leaves the machine: the
  * prompt asks the model to skip secrets, but by then they've been sent. Catches

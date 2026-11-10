@@ -86,13 +86,6 @@ export function StudyGenerationChip() {
   // is what left a hung pass with no way out.
   const regenLocked = !pipeline.hasDeepKey || pipeline.diarizing;
 
-  function confirmRegenAll() {
-    setConfirming(false);
-    reanalyzeAll().catch((error) =>
-      log.error("study: reanalyze all failed", { error: String(error) }),
-    );
-  }
-
   const outputOption = LANGUAGE_OPTIONS.find((o) => o.value === language);
   const outputLanguage = outputOption?.nativeLabel ?? language;
 
@@ -159,36 +152,53 @@ export function StudyGenerationChip() {
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
 
-      {/* Regenerate-all confirm: the context field doubles as the "are you sure"
-          step — it overwrites every output, so it never fires on one click. */}
-      <Sheet open={confirming} onOpenChange={setConfirming}>
-        <SheetContent
-          closeLabel={t("common.cancel")}
-          title={t("studyGen.regenAll")}
-          description={t("studyGen.regenAll.hint")}
-          footer={
-            <>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-8"
-                onClick={() => setConfirming(false)}
-              >
-                {t("common.cancel")}
-              </Button>
-              <Button size="sm" className="h-8 gap-1.5" onClick={confirmRegenAll}>
-                <Sparkles className="size-3.5" />
-                {t("studyGen.regenAll.confirm")}
-              </Button>
-            </>
-          }
-        >
-          <div className="px-4 py-3">
-            <MeetingContextField rows={5} />
-          </div>
-        </SheetContent>
-      </Sheet>
+      <RegenAllSheet open={confirming} onOpenChange={setConfirming} />
     </>
+  );
+}
+
+/**
+ * The "regenerate all" confirm: the meeting-context field doubles as the "are
+ * you sure" step — it overwrites every output and spends a fresh deep pass, so
+ * it never fires on one click. Shared by the titlebar chip and the
+ * transcript's "outputs are stale" notice, so both ask the same way.
+ */
+export function RegenAllSheet({
+  open,
+  onOpenChange,
+}: Readonly<{ open: boolean; onOpenChange: (open: boolean) => void }>) {
+  const { t } = useI18n();
+
+  function confirmRegenAll() {
+    onOpenChange(false);
+    reanalyzeAll().catch((error) =>
+      log.error("study: reanalyze all failed", { error: String(error) }),
+    );
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        closeLabel={t("common.cancel")}
+        title={t("studyGen.regenAll")}
+        description={t("studyGen.regenAll.hint")}
+        footer={
+          <>
+            <Button size="sm" variant="outline" className="h-8" onClick={() => onOpenChange(false)}>
+              {t("common.cancel")}
+            </Button>
+            <Button size="sm" className="h-8 gap-1.5" onClick={confirmRegenAll}>
+              <Sparkles className="size-3.5" />
+              {t("studyGen.regenAll.confirm")}
+            </Button>
+          </>
+        }
+      >
+        <div className="px-4 py-3">
+          <MeetingContextField rows={5} />
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }
 

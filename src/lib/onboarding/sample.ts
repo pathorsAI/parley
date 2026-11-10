@@ -32,6 +32,7 @@ import { log } from "../log";
 import { isTauri } from "../platform";
 import { useStore } from "../store";
 import type {
+  DeliveryAssessment,
   ActionItem,
   AppLanguage,
   FilingFolderSuggestion,
@@ -65,6 +66,8 @@ export interface SampleManifest {
   suggestion: { title: string; folders: { name: string; reason: string }[] };
   /** The prewritten brief (markdown, with [m:ss] timestamps). */
   brief: string;
+  /** The prewritten 評分 read (tone, fillers, pace, summary). */
+  delivery: DeliveryAssessment;
   findings: {
     atMs: number;
     side: SampleSide;
@@ -207,6 +210,7 @@ export function buildSampleEntry(
     actionItems,
     analyzed: true,
     brief: manifest.brief,
+    deliveryAssessment: manifest.delivery,
     meetingContext: manifest.context,
     meetingBatna: "",
     meetingTarget: "",

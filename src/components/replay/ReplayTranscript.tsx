@@ -1,16 +1,25 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Replace, ReplaceAll, Search, X } from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useI18n } from "../../i18n";
-import { modChordCap } from "../../lib/commands/format";
-import { speakerLabel, speakerKey, defaultSpeakerLabel, formatClock, isTrimmed, useStore, type ReplayTrim } from "../../lib/store";
+import { formatChordLabel, modChordCap } from "../../lib/commands/format";
+import { command } from "../../lib/commands/registry";
+import { speakerKey, formatClock, isTrimmed, useStore, type ReplayTrim } from "../../lib/store";
+import { displaySpeakerLabel, localizedDefaultSpeakerLabel } from "../../lib/speakers/labels";
 import { cn } from "@/lib/utils";
 import { useCommandShortcut } from "../../lib/commands/bind";
-import { markGettingStarted, useHint } from "../../lib/onboarding/gettingStarted";
+import { markGettingStarted } from "../../lib/onboarding/gettingStarted";
 import { useLapContext } from "../../lib/onboarding/lap";
 import { emitTranscriptSeek } from "../../lib/onboarding/motion";
 import { isTextSelected } from "../../lib/replay/selection";
+import { countOccurrences } from "../../lib/replay/findReplace";
+import { editChangeVars, replaceInTranscript, teachReplacement } from "../../lib/replay/transcriptEdit";
+import { useStudyPipeline } from "../../lib/analysis/studyPipeline";
+import { log } from "../../lib/log";
 import type { TranscriptSegment } from "../../lib/types";
+import { RegenAllSheet } from "../study/StudyGenerationChip";
 
 interface ReplayTranscriptProps {
   segments: TranscriptSegment[];
@@ -43,6 +52,13 @@ interface ReplayTranscriptProps {
  * bubbling to the row). Saving calls `setSpeakerName(speakerKey(seg), name)`, the
  * same store action the live SpeakerBar uses, so the rename applies to every line
  * of that speaker and to the analysis context at once.
+ *
+ * The find bar also REPLACES (its chevron, ⌥⌘F, or "Replace…" on a text
+ * selection): the edit lands in the store and the saved entry at once
+ * (replay/transcriptEdit), a toast offers to teach the dictionary the fixed
+ * word, and — when the recording already has outputs built from the old text —
+ * a notice at the top offers to regenerate them. Never in the ingest-wizard
+ * preview or on a read-only org recording, whose text is not the user's to edit.
  */
 /** How long the guide bar's first-line pulse runs. */
 const FIRST_LINE_PULSE_MS = 2000;
@@ -59,6 +75,7 @@ export function ReplayTranscript({
   preview = false,
 }: Readonly<ReplayTranscriptProps>) {
   const { t } = useI18n();
+  const label = (seg: TranscriptSegment) => displaySpeakerLabel(seg, speakerNames, t);
   const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const setSpeakerName = useStore((s) => s.setSpeakerName);
   // Bumped on every explicit seek (scrubber, timeline finding, action item) so we
@@ -66,16 +83,27 @@ export function ReplayTranscript({
   const seekNonce = useStore((s) => s.replaySeekNonce);
   // Which speaker key is being edited inline (null = none).
   const [editingKey, setEditingKey] = useState<string | null>(null);
-  // First-visit hint: the transcript is a seek surface, and ⌘F searches it.
-  // Not in the ingest-wizard preview, where neither is the point.
-  const [seekHintVisible, dismissSeekHint] = useHint("replay.seek");
-  // The guide bar teaches the same thing while it's up; saying it twice is noise.
-  const lap = useLapContext();
-  const showSeekHint = seekHintVisible && !preview && !lap.visible;
   // A transcript that synced with no timing shows an estimated clock (#576) —
   // say so, so a jump that lands a few lines off doesn't read as a bug.
   const timingEstimated = useStore((s) => !preview && !!s.replay?.timingEstimated);
+  // Replace is an edit to the user's own recording: not in the wizard preview,
+  // not on someone else's read-only org recording.
+  const canReplace = useStore((s) => !preview && !s.replayReadOnly);
+  // The transcript was edited after the summary / action items / findings were
+  // made from it (store.transcriptEditedId) — say so, and offer the rebuild.
+  const outputsStale = useStore(
+    (s) =>
+      canReplace &&
+      !!s.replay &&
+      s.transcriptEditedId === s.replay.id &&
+      (!!s.brief || s.actionItems.length > 0 || s.findings.length > 0)
+  );
+  const pipeline = useStudyPipeline();
+  // Same lock as the titlebar chip's "regenerate all".
+  const regenLocked = !pipeline.hasDeepKey || pipeline.diarizing;
+  const [regenConfirming, setRegenConfirming] = useState(false);
 
+  const lap = useLapContext();
   // While the guide bar is on its replay step, the first line pulses once, for
   // about two seconds — "this, click this" — then settles.
   const pulseDue = !preview && lap.visible && lap.phase === "replayed" && !lap.justCompleted;
@@ -103,7 +131,6 @@ export function ReplayTranscript({
     onSeek(ms);
     if (preview) return;
     markGettingStarted("replayed");
-    if (seekHintVisible) dismissSeekHint();
   }
 
   // Ctrl/⌘F-style find: a floating bar over the transcript. A "match" is a LINE
@@ -113,6 +140,14 @@ export function ReplayTranscript({
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [matchIdx, setMatchIdx] = useState(0);
+  // The replace row under the find field (collapsed = the plain find bar).
+  const replaceInputRef = useRef<HTMLInputElement>(null);
+  const [replaceOpen, setReplaceOpen] = useState(false);
+  const [replacement, setReplacement] = useState("");
+  // "Replace…" floating over a text selection in the transcript.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const [selectionAction, setSelectionAction] = useState<SelectionAction | null>(null);
 
   const rows = useMemo(
     () =>
@@ -131,6 +166,13 @@ export function ReplayTranscript({
     return rows.filter((r) => r.text.toLowerCase().includes(q)).map((r) => r.id);
   }, [rows, trimmedQuery]);
   const currentMatchId = matchIds.length > 0 ? matchIds[Math.min(matchIdx, matchIds.length - 1)] : null;
+  // "Replace all" counts OCCURRENCES, not lines — a line can hold the misheard
+  // name twice, and the number on the button is the blast radius.
+  const occurrenceCount = useMemo(
+    () => (trimmedQuery ? rows.reduce((n, r) => n + countOccurrences(r.text, trimmedQuery), 0) : 0),
+    [rows, trimmedQuery]
+  );
+  const replaceDisabled = matchIds.length === 0 || replacement === trimmedQuery;
 
   function openSearch() {
     setSearchOpen(true);
@@ -143,8 +185,83 @@ export function ReplayTranscript({
 
   function closeSearch() {
     setSearchOpen(false);
+    setReplaceOpen(false);
     setQuery("");
     setMatchIdx(0);
+  }
+
+  /** Open the bar with the replace row out. With a query already there, the
+   *  cursor goes to "Replace with" — that is the field left to fill. */
+  function openReplace(prefill?: string) {
+    if (prefill) setQuery(prefill);
+    setSearchOpen(true);
+    setReplaceOpen(true);
+    const hasQuery = !!(prefill ?? query).trim();
+    requestAnimationFrame(() => {
+      const field = hasQuery ? replaceInputRef.current : searchInputRef.current;
+      field?.focus();
+      field?.select();
+    });
+  }
+
+  function toggleReplace() {
+    if (replaceOpen) {
+      setReplaceOpen(false);
+      requestAnimationFrame(() => searchInputRef.current?.focus());
+    } else {
+      openReplace();
+    }
+  }
+
+  /** After a replace: say how many, and offer to teach the dictionary the
+   *  fixed word so the next transcription gets it right. Never added on its
+   *  own — only when the action is clicked. */
+  function announceReplaced(count: number, from: string, to: string) {
+    const term = to.trim();
+    const teach = () => {
+      teachReplacement(from, term)
+        .then((added) =>
+          added ? toast.success(t("replay.replacedTaught", { term })) : toast(t("replay.replacedKnown", { term }))
+        )
+        .catch((e) => {
+          log.error("replay: dictionary add failed", { error: String(e) });
+          toast.error(t("replay.replacedTeachFailed"));
+        });
+    };
+    const { language } = useStore.getState().settings;
+    toast(t("replay.replaced", { count, ...editChangeVars(language, { from, to }) }), {
+      // Deleting a word (empty replacement) leaves nothing to teach.
+      action: term ? { label: t("replay.replacedTeach"), onClick: teach } : undefined,
+    });
+  }
+
+  /** Replace in the CURRENT match line only, then move on to the next match. */
+  function replaceCurrent() {
+    if (replaceDisabled || !currentMatchId) return;
+    const at = Math.min(matchIdx, matchIds.length - 1);
+    const count = replaceInTranscript(trimmedQuery, replacement, { onlySegmentId: currentMatchId });
+    if (count === 0) {
+      // Every hit on this line already reads as the replacement: just step on.
+      stepMatch(1);
+      return;
+    }
+    // The line usually stops matching, so the next match slides into this
+    // index. A replacement that contains the query (派斯 → 派斯科技) keeps the
+    // line in the list, and then the next match is one further on.
+    const text = useStore.getState().segments.find((s) => s.id === currentMatchId)?.text ?? "";
+    const stillMatches = countOccurrences(text, trimmedQuery) > 0;
+    const remaining = stillMatches ? matchIds.length : matchIds.length - 1;
+    const next = stillMatches ? at + 1 : at;
+    setMatchIdx(remaining > 0 ? next % remaining : 0);
+    announceReplaced(count, trimmedQuery, replacement);
+  }
+
+  function replaceAll() {
+    if (replaceDisabled) return;
+    const count = replaceInTranscript(trimmedQuery, replacement);
+    if (count === 0) return;
+    setMatchIdx(0);
+    announceReplaced(count, trimmedQuery, replacement);
   }
 
   function stepMatch(dir: 1 | -1) {
@@ -167,6 +284,47 @@ export function ReplayTranscript({
     },
     { enabled: !preview }
   );
+  // ⌘G / ⇧⌘G: the next / previous match, opening the bar on the last query if
+  // it was closed — as a Mac find bar does.
+  const findStep = (dir: 1 | -1) => {
+    if (!searchOpen) setSearchOpen(true);
+    stepMatch(dir);
+  };
+  useCommandShortcut("replay.findNext", () => findStep(1), { enabled: !preview });
+  useCommandShortcut("replay.findPrev", () => findStep(-1), { enabled: !preview });
+  // ⌥⌘F: the same bar with the replace row out — prefilled with the transcript
+  // text the user has highlighted, if any.
+  useCommandShortcut("replay.replace", () => openReplace(selectionAction?.text), { enabled: canReplace });
+  const replaceChordLabel = formatChordLabel(command("replay.replace").keys[0]);
+
+  // "Replace…" over a selection inside the transcript, like a selection
+  // toolbar: shown while there is a single-line selection within the list,
+  // gone when it collapses, the list scrolls, or Escape is pressed.
+  useEffect(() => {
+    if (!canReplace) {
+      setSelectionAction(null);
+      return;
+    }
+    const onSelectionChange = () =>
+      setSelectionAction(selectionActionFor(globalThis.getSelection(), listRef.current, rootRef.current));
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSelectionAction(null);
+    };
+    document.addEventListener("selectionchange", onSelectionChange);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("selectionchange", onSelectionChange);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [canReplace]);
+
+  function replaceSelection() {
+    const text = selectionAction?.text;
+    if (!text) return;
+    globalThis.getSelection()?.removeAllRanges();
+    setSelectionAction(null);
+    openReplace(text);
+  }
 
   // Typing a new query restarts at the first match.
   useEffect(() => {
@@ -216,66 +374,139 @@ export function ReplayTranscript({
   }
 
   return (
-    <div className="relative h-full">
+    // Scroll is captured here (it doesn't bubble): moving the list leaves the
+    // floating "Replace…" pointing at nothing, so it goes.
+    <div ref={rootRef} className="relative h-full" onScrollCapture={() => selectionAction && setSelectionAction(null)}>
+      {selectionAction && (
+        <Button
+          type="button"
+          size="xs"
+          variant="outline"
+          // Act on the press, not the click: WebKit collapses the selection
+          // as the mouse comes up, which unmounted this button before its
+          // click could land — so clicking it did nothing. preventDefault
+          // keeps the selection (the prefill) alive until then. The click
+          // is still there for the keyboard.
+          onMouseDown={(e) => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            replaceSelection();
+          }}
+          onClick={replaceSelection}
+          style={{ left: selectionAction.left, top: selectionAction.top }}
+          className="absolute z-20 -translate-x-1/2 -translate-y-full gap-1 bg-background shadow-md"
+        >
+          <Replace className="size-3" />
+          {t("replay.replaceSelection")}
+        </Button>
+      )}
       {!preview &&
         (searchOpen ? (
-          <div className="absolute right-3 top-2 z-10 flex items-center gap-0.5 rounded-md border bg-background/95 py-1 pl-2 pr-1 shadow-md backdrop-blur">
-            <Search className="size-3.5 shrink-0 text-muted-foreground/70" />
-            <input
-              ref={searchInputRef}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  stepMatch(e.shiftKey ? -1 : 1);
-                } else if (e.key === "Escape") {
-                  e.preventDefault();
-                  closeSearch();
-                }
-              }}
-              placeholder={t("replay.searchPlaceholder")}
-              className="h-6 w-40 bg-transparent px-1.5 text-xs outline-none placeholder:text-muted-foreground/60"
-            />
-            {trimmedQuery && (
-              <span
-                className={cn(
-                  "select-none whitespace-nowrap px-1 text-[10px] tabular-nums",
-                  matchIds.length === 0 ? "text-destructive" : "text-muted-foreground"
-                )}
+          // VS Code's find widget: a full-height toggle strip on the left (›
+          // closed, ⌄ open) that owns the replace row, each query in its own
+          // field, arrows — not chevrons — to step through hits, and the two
+          // replace actions as icon buttons named by their tooltips.
+          <div
+            data-transcript-undo
+            className="absolute right-3 top-2 z-10 flex items-stretch rounded-md border bg-background/95 shadow-md backdrop-blur"
+          >
+            {canReplace && (
+              <button
+                type="button"
+                aria-label={t("replay.replaceToggle", { key: replaceChordLabel })}
+                aria-expanded={replaceOpen}
+                title={t("replay.replaceToggle", { key: replaceChordLabel })}
+                onClick={toggleReplace}
+                className="flex w-5 shrink-0 items-start justify-center rounded-l-md pt-[9px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               >
-                {matchIds.length === 0 ? 0 : Math.min(matchIdx, matchIds.length - 1) + 1}/{matchIds.length}
-              </span>
+                {replaceOpen ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+              </button>
             )}
-            <button
-              type="button"
-              aria-label={t("replay.searchPrev")}
-              title={t("replay.searchPrev")}
-              disabled={matchIds.length === 0}
-              onClick={() => stepMatch(-1)}
-              className="grid size-5 place-items-center rounded text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:hover:text-muted-foreground"
-            >
-              <ChevronUp className="size-3.5" />
-            </button>
-            <button
-              type="button"
-              aria-label={t("replay.searchNext")}
-              title={t("replay.searchNext")}
-              disabled={matchIds.length === 0}
-              onClick={() => stepMatch(1)}
-              className="grid size-5 place-items-center rounded text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:hover:text-muted-foreground"
-            >
-              <ChevronDown className="size-3.5" />
-            </button>
-            <button
-              type="button"
-              aria-label={t("replay.searchClose")}
-              title={t("replay.searchClose")}
-              onClick={closeSearch}
-              className="grid size-5 place-items-center rounded text-muted-foreground hover:text-foreground"
-            >
-              <X className="size-3.5" />
-            </button>
+            <div className={cn("flex flex-col gap-1 py-1 pr-1", canReplace ? "pl-1" : "pl-1.5")}>
+              <div className="flex items-center gap-0.5">
+                <input
+                  ref={searchInputRef}
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      stepMatch(e.shiftKey ? -1 : 1);
+                    } else if (e.key === "Escape") {
+                      e.preventDefault();
+                      closeSearch();
+                    }
+                  }}
+                  placeholder={t("replay.searchPlaceholder")}
+                  aria-label={t("replay.searchPlaceholder")}
+                  className={FIND_FIELD}
+                />
+                <span
+                  className={cn(
+                    "w-12 select-none whitespace-nowrap px-1 text-center text-[10px] tabular-nums",
+                    trimmedQuery && matchIds.length === 0 ? "text-destructive" : "text-muted-foreground"
+                  )}
+                >
+                  {trimmedQuery
+                    ? `${matchIds.length === 0 ? 0 : Math.min(matchIdx, matchIds.length - 1) + 1}/${matchIds.length}`
+                    : ""}
+                </span>
+                <FindIconButton
+                  label={t("replay.searchPrev")}
+                  disabled={matchIds.length === 0}
+                  onClick={() => stepMatch(-1)}
+                >
+                  <ArrowUp className="size-3.5" />
+                </FindIconButton>
+                <FindIconButton
+                  label={t("replay.searchNext")}
+                  disabled={matchIds.length === 0}
+                  onClick={() => stepMatch(1)}
+                >
+                  <ArrowDown className="size-3.5" />
+                </FindIconButton>
+                <FindIconButton label={t("replay.searchClose")} onClick={closeSearch}>
+                  <X className="size-3.5" />
+                </FindIconButton>
+              </div>
+              {canReplace && replaceOpen && (
+                <div className="flex items-center gap-0.5">
+                  <input
+                    ref={replaceInputRef}
+                    value={replacement}
+                    onChange={(e) => setReplacement(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        // ⌘/Ctrl+Enter replaces everything; plain Enter, this one.
+                        if (e.metaKey || e.ctrlKey) replaceAll();
+                        else replaceCurrent();
+                      } else if (e.key === "Escape") {
+                        e.preventDefault();
+                        closeSearch();
+                      }
+                    }}
+                    placeholder={t("replay.replacePlaceholder")}
+                    aria-label={t("replay.replacePlaceholder")}
+                    className={FIND_FIELD}
+                  />
+                  <FindIconButton
+                    label={t("replay.replaceOneTip")}
+                    disabled={replaceDisabled}
+                    onClick={replaceCurrent}
+                  >
+                    <Replace className="size-3.5" />
+                  </FindIconButton>
+                  <FindIconButton
+                    label={t("replay.replaceAllTip", { count: occurrenceCount, key: modChordCap("Enter") })}
+                    disabled={replaceDisabled}
+                    onClick={replaceAll}
+                  >
+                    <ReplaceAll className="size-3.5" />
+                  </FindIconButton>
+                </div>
+              )}
+            </div>
           </div>
         ) : (
           <button
@@ -291,7 +522,24 @@ export function ReplayTranscript({
           </button>
         ))}
       <ScrollArea className="h-full">
-        <div className="mx-auto flex max-w-3xl flex-col gap-1 px-4 py-4">
+        <div ref={listRef} className="mx-auto flex max-w-3xl flex-col gap-1 px-4 py-4">
+          {outputsStale && (
+            // Same weight as the timing note below; pr-10 clears the search button.
+            <div
+              role="note"
+              className="mb-1 flex items-baseline gap-2 border-b border-border pb-2 pl-2 pr-10 text-xs text-muted-foreground"
+            >
+              <span className="min-w-0">{t("replay.transcriptEdited")}</span>
+              <button
+                type="button"
+                disabled={regenLocked}
+                onClick={() => setRegenConfirming(true)}
+                className="shrink-0 font-medium text-primary hover:underline disabled:pointer-events-none disabled:opacity-50"
+              >
+                {t("replay.transcriptEditedRegen")}
+              </button>
+            </div>
+          )}
           {timingEstimated && (
             // pr-10 keeps the text clear of the floating search button.
             <div
@@ -301,23 +549,6 @@ export function ReplayTranscript({
               {t("replay.timingEstimated")}
             </div>
           )}
-          {showSeekHint && (
-            // pr-10 keeps the × clear of the floating search button.
-            <div className="mb-1 flex items-center gap-2 border-b border-border pb-2 pl-2 pr-10 text-xs text-muted-foreground">
-              <span className="min-w-0 flex-1">
-                {t("replay.seekHint", { shortcut: modChordCap("F") })}
-              </span>
-              <button
-                type="button"
-                aria-label={t("common.dismiss")}
-                title={t("common.dismiss")}
-                onClick={dismissSeekHint}
-                className="grid size-5 shrink-0 place-items-center rounded text-muted-foreground hover:text-foreground"
-              >
-                <X className="size-3.5" />
-              </button>
-            </div>
-          )}
           {rows.map((seg, i) => {
             const masked = !preview && seg.startMs > playheadMs;
             const trimmed = isTrimmed(seg, trim);
@@ -325,7 +556,7 @@ export function ReplayTranscript({
             // audio) — but not when there's no playback (review step: playheadMs=0).
             const active = seg.id === activeId && (!preview || playheadMs > 0);
             const isCurrentMatch = searching && seg.id === currentMatchId;
-            const showBadge = i === 0 || speakerLabel(seg, speakerNames) !== speakerLabel(rows[i - 1], speakerNames);
+            const showBadge = i === 0 || label(seg) !== label(rows[i - 1]);
             const key = speakerKey(seg);
             return (
               <div
@@ -355,7 +586,7 @@ export function ReplayTranscript({
                     (editingKey === key ? (
                       <SpeakerNameInput
                         defaultValue={speakerNames[key] ?? ""}
-                        placeholder={defaultSpeakerLabel(seg)}
+                        placeholder={localizedDefaultSpeakerLabel(seg, t)}
                         onCommit={(name) => {
                           setSpeakerName(key, name);
                           setEditingKey(null);
@@ -365,7 +596,7 @@ export function ReplayTranscript({
                     ) : (
                       <button
                         type="button"
-                        title={speakerLabel(seg, speakerNames)}
+                        title={label(seg)}
                         onClick={(e) => {
                           // Don't let the rename click also seek the row.
                           e.stopPropagation();
@@ -373,7 +604,7 @@ export function ReplayTranscript({
                         }}
                         className="cursor-text text-left text-xs font-semibold text-muted-foreground hover:text-foreground"
                       >
-                        {speakerLabel(seg, speakerNames)}
+                        {label(seg)}
                       </button>
                     ))}
                   {/* A paragraph, not a button: WebKit will not drag-select text inside a
@@ -401,8 +632,43 @@ export function ReplayTranscript({
           })}
         </div>
       </ScrollArea>
+      {canReplace && <RegenAllSheet open={regenConfirming} onOpenChange={setRegenConfirming} />}
     </div>
   );
+}
+
+/** Where the floating "Replace…" sits (relative to the transcript's root) and
+ *  the text it would prefill. */
+interface SelectionAction {
+  text: string;
+  left: number;
+  top: number;
+}
+
+/** Longest selection worth offering to replace: a misheard word or name, not a passage. */
+const MAX_SELECTION_REPLACE = 80;
+
+/**
+ * The "Replace…" button for the current selection, or null: only for a
+ * non-empty selection that lies inside the transcript list and stays on one
+ * line (a find & replace works within a line, so a selection spanning two can
+ * never match). Positioned centred just above the selection.
+ */
+function selectionActionFor(
+  selection: Selection | null,
+  list: HTMLElement | null,
+  root: HTMLElement | null
+): SelectionAction | null {
+  if (!selection || !list || !root || !isTextSelected(selection) || selection.rangeCount === 0) return null;
+  const range = selection.getRangeAt(0);
+  if (!list.contains(range.commonAncestorContainer)) return null;
+  const text = selection.toString().trim();
+  if (!text || text.length > MAX_SELECTION_REPLACE || /[\r\n]/.test(text)) return null;
+  const rect = range.getBoundingClientRect();
+  const box = root.getBoundingClientRect();
+  // Never above the pane's top edge, where it would be clipped away.
+  const top = Math.max(rect.top - box.top - 6, 30);
+  return { text, left: rect.left + rect.width / 2 - box.left, top };
 }
 
 /**
@@ -471,5 +737,31 @@ function SpeakerNameInput({
       onBlur={(e) => onCommit(e.currentTarget.value)}
       className="mb-0.5 h-5 w-28 rounded-md border border-input bg-background px-1.5 text-[11px] focus:outline-none focus:ring-1 focus:ring-ring"
     />
+  );
+}
+
+/** A find/replace query field: bordered like VS Code's, so the two rows read
+ *  as two inputs and line up. */
+const FIND_FIELD =
+  "h-6 w-44 rounded border border-input bg-background px-1.5 text-xs outline-none placeholder:text-muted-foreground/60 focus:border-primary";
+
+/** One icon action in the find bar, named by its tooltip (and aria-label). */
+function FindIconButton({
+  label,
+  disabled = false,
+  onClick,
+  children,
+}: Readonly<{ label: string; disabled?: boolean; onClick: () => void; children: ReactNode }>) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      disabled={disabled}
+      onClick={onClick}
+      className="grid size-6 shrink-0 place-items-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+    >
+      {children}
+    </button>
   );
 }

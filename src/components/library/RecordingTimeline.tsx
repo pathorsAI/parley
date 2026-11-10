@@ -50,6 +50,7 @@ export function RecordingTimeline({
   orgs,
   busyId,
   downloadingId,
+  openingId,
   sharingId,
   folders,
   folderNames,
@@ -66,6 +67,8 @@ export function RecordingTimeline({
   orgs: CloudOrg[];
   busyId: string | null;
   downloadingId: string | null;
+  /** The row whose recording is being opened (its transcript is on its way). */
+  openingId: string | null;
   sharingId: string | null;
   /** Where a row can be filed — the scope's folders, archived ones left out. */
   folders: LocalFolder[];
@@ -106,6 +109,7 @@ export function RecordingTimeline({
               folderLabel={folderName(entry.folderId)}
               busy={busyId === entry.id}
               downloading={downloadingId === entry.id}
+              opening={openingId === entry.id}
               sharing={sharingId === entry.id}
               onOpen={() => onOpen(entry)}
               onDelete={() => onDelete(entry)}
@@ -170,6 +174,7 @@ function TimelineRow({
   folderLabel,
   busy,
   downloading,
+  opening,
   sharing,
   onOpen,
   onDelete,
@@ -188,6 +193,7 @@ function TimelineRow({
   folderLabel: string | undefined;
   busy: boolean;
   downloading: boolean;
+  opening: boolean;
   sharing: boolean;
   onOpen: () => void;
   onDelete: () => void;
@@ -224,25 +230,42 @@ function TimelineRow({
   }
 
   const stats = (
+    // Fixed-width columns, so each stat lines up down the list whatever its
+    // digits (1 vs 12 people, 0:05 vs 4:53:29) or whether there is a sync icon.
     <span className="flex shrink-0 items-center gap-3 text-[11px] tabular-nums text-muted-foreground">
       <span
-        className="inline-flex items-center gap-1"
+        className="inline-flex w-8 items-center gap-1"
         title={t("history.speakers", { count: entry.speakerCount })}
       >
-        <Users className="size-3" />
+        <Users className="size-3 shrink-0" />
         {entry.speakerCount}
       </span>
-      <span className="inline-flex items-center gap-1 tabular-nums">
-        <Clock className="size-3" />
+      <span className="inline-flex w-[3.75rem] items-center gap-1">
+        <Clock className="size-3 shrink-0" />
         {formatDuration(entry.durationMs)}
       </span>
-      {!isOrgContext && <SyncIcon sync={entry.sync} signedIn={signedIn} />}
+      {!isOrgContext && signedIn && (
+        <span className="inline-flex w-3 justify-center">
+          <SyncIcon sync={entry.sync} signedIn={signedIn} />
+        </span>
+      )}
     </span>
   );
 
   const row = (
-    // Rows are split by hairlines, not boxed.
-    <div className="group relative flex min-h-9 items-center gap-2.5 border-b border-border px-2 py-2 transition-colors last:border-b-0 hover:bg-muted/60">
+    // Rows are split by hairlines, not boxed. The whole row opens the recording,
+    // as its hover suggests: the open button only spans the title, so a click on
+    // the date, the icons or the stats used to do nothing. Clicks on the row's
+    // own controls (the open button included) are theirs, not the row's; the
+    // keyboard path stays on the open button.
+    // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
+    <div
+      onClick={(ev) => {
+        if (editing || (ev.target as HTMLElement).closest("button, input, a, [role='menuitem']")) return;
+        onOpen();
+      }}
+      className="group relative flex min-h-9 cursor-pointer items-center gap-2.5 border-b border-border px-2 py-2 transition-colors last:border-b-0 hover:bg-muted/60"
+    >
       <span
         className="w-11 shrink-0 text-[11px] tabular-nums text-muted-foreground"
         title={new Date(entry.createdAt).toLocaleString(locale)}
@@ -319,15 +342,19 @@ function TimelineRow({
         </button>
       )}
 
-      {downloading ? (
+      {downloading || opening ? (
         <span className="inline-flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
           <Loader2 className="size-3.5 animate-spin" />
-          {t("history.sync.downloading")}
+          {t(downloading ? "history.sync.downloading" : "history.opening")}
         </span>
       ) : (
         stats
       )}
 
+      {/* The row's own controls share one fixed-width slot, right-aligned: a
+          cloud-only row has no rename or 移動, and without the slot its stats
+          slid right of every other row's. */}
+      <div className="flex w-[4.75rem] shrink-0 items-center justify-end gap-0.5">
       {!editing && (
         <CardActions
           className="flex shrink-0 items-center gap-0.5 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100"
@@ -361,6 +388,7 @@ function TimelineRow({
           {sharing ? <Loader2 className="size-3.5 animate-spin" /> : <FolderInput className="size-3.5" />}
         </button>
       )}
+      </div>
     </div>
   );
 

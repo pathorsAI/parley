@@ -2,6 +2,7 @@ import { listen, type EventCallback, type UnlistenFn } from "@tauri-apps/api/eve
 import { isTauri } from "../platform";
 import type { SessionEvent } from "../voiceTyping/transcript";
 import type { LocalSttProgress, LocalSttSlowPayload } from "../transcription/localModels";
+import type { MicAppPayload } from "../meeting/detect";
 
 /**
  * The Tauri event contract: the names the backend emits, their payloads, and
@@ -64,6 +65,11 @@ export const LOCAL_STT_PROGRESS_EVENT = "local-stt://progress";
 /** Emitted (at most once per session) when on-device decoding falls behind
  *  real time (local_stt.rs `SLOW_EVENT`). */
 export const LOCAL_STT_SLOW_EVENT = "local-stt://slow";
+/** Another app has held the microphone long enough to be a call
+ *  (meeting_detect.rs). */
+export const MEETING_DETECTED_EVENT = "meeting://detected";
+/** An app announced by {@link MEETING_DETECTED_EVENT} released the mic. */
+export const MEETING_DETECT_ENDED_EVENT = "meeting://ended";
 
 // ── Their payloads (as serialized: snake_case unless the Rust side renames) ─
 
@@ -201,6 +207,8 @@ export interface BackendEventPayloads {
   [CACHE_CLEAR_SPEAKERS_EVENT]: unknown;
   [LOCAL_STT_PROGRESS_EVENT]: LocalSttProgress;
   [LOCAL_STT_SLOW_EVENT]: LocalSttSlowPayload;
+  [MEETING_DETECTED_EVENT]: MicAppPayload;
+  [MEETING_DETECT_ENDED_EVENT]: MicAppPayload;
 }
 
 export type BackendEvent = keyof BackendEventPayloads;

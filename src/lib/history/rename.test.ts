@@ -60,4 +60,12 @@ describe("renameHistoryEntry", () => {
     await renameHistoryEntry("rec-2", "other");
     expect(useStore.getState().filingSuggestion).toBe(pending);
   });
+
+  it("retires the auto-named tag of the recording it renames, and only that one", async () => {
+    useStore.setState({ loadedHistoryId: "rec-1", titleAutoApplied: "rec-1" });
+    await renameHistoryEntry("rec-2", "other");
+    expect(useStore.getState().titleAutoApplied).toBe("rec-1");
+    await renameHistoryEntry("rec-1", "mine");
+    expect(useStore.getState().titleAutoApplied).toBeNull();
+  });
 });

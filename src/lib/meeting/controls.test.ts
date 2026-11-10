@@ -13,7 +13,7 @@ vi.mock("../mockStream", () => ({ startMockStream: vi.fn(), stopMockStream: mock
 vi.mock("../dictionary", () => ({ recognitionTerms: () => [] }));
 vi.mock("../log", () => ({ log: mocks.log, attachConsoleOnce: vi.fn() }));
 
-import { useStore } from "../store";
+import { useLiveStore, useStore } from "../store";
 import type { MeetingStatus } from "../types";
 import { cancelActiveMeeting, endMeeting, recoverOrphanedMeeting, stopBackendMeeting, toggleMeetingPause } from "./controls";
 import { liveSaves } from "../history/history";
@@ -24,9 +24,9 @@ function setup(opts: { key: string; tauri?: boolean; status?: MeetingStatus }) {
   useStore.setState({
     settings: { ...base, transcriptionProvider: "soniox", sonioxApiKey: opts.key },
     cloudAuth: null,
-    meetingStatus: opts.status ?? "recording",
-    isFinalizingMeeting: false,
   });
+  // The meeting itself is the live store's.
+  useLiveStore.setState({ meetingStatus: opts.status ?? "recording", isFinalizingMeeting: false });
   if (opts.tauri === false) delete (globalThis as Record<string, unknown>).__TAURI_INTERNALS__;
   else (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = {};
 }
@@ -48,9 +48,10 @@ describe("endMeeting", () => {
   it("stops the real session and shows finalizing until the save reports back", async () => {
     setup({ key: "sk" });
     await endMeeting();
+    // The stop cue plays after the captures are down, so it is not recorded.
     expect(commands()).toEqual([["stop_meeting", {}]]);
-    expect(useStore.getState().meetingStatus).toBe("stopped");
-    expect(useStore.getState().isFinalizingMeeting).toBe(true);
+    expect(useLiveStore.getState().meetingStatus).toBe("stopped");
+    expect(useLiveStore.getState().isFinalizingMeeting).toBe(true);
     expect(mocks.stopMockStream).not.toHaveBeenCalled();
   });
 
@@ -58,8 +59,14 @@ describe("endMeeting", () => {
     setup({ key: "sk" });
     mocks.invoke.mockRejectedValueOnce(new Error("gone"));
     await endMeeting();
-    expect(useStore.getState().isFinalizingMeeting).toBe(false);
+    expect(useLiveStore.getState().isFinalizingMeeting).toBe(false);
     expect(mocks.log.error).toHaveBeenCalledWith("meeting: stop failed", { error: "Error: gone" });
+  });
+
+  it("plays no cue when the meeting ends", async () => {
+    setup({ key: "sk" });
+    await endMeeting();
+    expect(commands()).toEqual([["stop_meeting", {}]]);
   });
 
   it("stops the mock stream when there is no real pipeline", async () => {
@@ -69,7 +76,7 @@ describe("endMeeting", () => {
       await endMeeting();
       expect(mocks.invoke).not.toHaveBeenCalled();
       expect(mocks.stopMockStream).toHaveBeenCalledTimes(1);
-      expect(useStore.getState().isFinalizingMeeting).toBe(false);
+      expect(useLiveStore.getState().isFinalizingMeeting).toBe(false);
     }
   });
 });
@@ -78,9 +85,9 @@ describe("toggleMeetingPause", () => {
   it("pauses then resumes, telling the backend each time", () => {
     setup({ key: "sk" });
     toggleMeetingPause();
-    expect(useStore.getState().meetingStatus).toBe("paused");
+    expect(useLiveStore.getState().meetingStatus).toBe("paused");
     toggleMeetingPause();
-    expect(useStore.getState().meetingStatus).toBe("recording");
+    expect(useLiveStore.getState().meetingStatus).toBe("recording");
     expect(commands()).toEqual([
       ["set_meeting_paused", { paused: true }],
       ["set_meeting_paused", { paused: false }],
@@ -90,7 +97,7 @@ describe("toggleMeetingPause", () => {
   it("only flips the store on the mock pipeline", () => {
     setup({ key: "" });
     toggleMeetingPause();
-    expect(useStore.getState().meetingStatus).toBe("paused");
+    expect(useLiveStore.getState().meetingStatus).toBe("paused");
     expect(mocks.invoke).not.toHaveBeenCalled();
   });
 });
@@ -100,14 +107,14 @@ describe("cancelActiveMeeting", () => {
     setup({ key: "sk" });
     await cancelActiveMeeting();
     expect(commands()).toEqual([["cancel_meeting"]]);
-    expect(useStore.getState().meetingStatus).toBe("idle");
+    expect(useLiveStore.getState().meetingStatus).toBe("idle");
   });
 
   it("logs a failed backend cancel and still leaves the UI idle", async () => {
     setup({ key: "sk" });
     mocks.invoke.mockRejectedValueOnce("nope");
     await cancelActiveMeeting();
-    expect(useStore.getState().meetingStatus).toBe("idle");
+    expect(useLiveStore.getState().meetingStatus).toBe("idle");
     expect(mocks.log.error).toHaveBeenCalledWith("meeting: cancel failed", { error: "nope" });
   });
 
@@ -144,11 +151,11 @@ describe("recoverOrphanedMeeting", () => {
 
   it("stops and keeps a recording the backend is making for a meeting this window lost", async () => {
     setup({ key: "sk", status: "idle" });
-    useStore.setState({ transcriptionDropped: false, liveMeetingId: null });
+    useLiveStore.setState({ transcriptionDropped: false, liveMeetingId: null });
     mocks.invoke.mockImplementation((cmd: string) => Promise.resolve(cmd === "active_meeting" ? backend : undefined));
     expect(await recoverOrphanedMeeting()).toBe(true);
     expect(commands()).toEqual([["active_meeting"], ["stop_meeting", {}]]);
-    expect(useStore.getState().transcriptionDropped).toBe(true);
+    expect(useLiveStore.getState().transcriptionDropped).toBe(true);
     // Its save is waited for, as a transcript-less recording dated by the backend.
     expect(liveSaves.hasPending()).toBe(true);
     const snap = liveSaves.snapshotOf("lost-1");

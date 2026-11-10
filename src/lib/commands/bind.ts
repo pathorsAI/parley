@@ -4,15 +4,21 @@ import { isMac } from "../platform";
 import { log } from "../log";
 import { openSettings } from "../nav/settings";
 import { navigateTo } from "../nav/navigate";
-import { isMeetingActive, useStore } from "../store";
-import { cockpitHold, toggleSidebar, toggleSidebarPeek } from "../shell/sidebar";
+import { isLiveMeetingActive, useStore } from "../store";
+import { cockpitHold, requestNewFolder, toggleSidebar, toggleSidebarPeek } from "../shell/sidebar";
 import { zoomIn, zoomOut, zoomReset } from "../zoom";
 import { toggleShortcutSheet } from "./sheet";
+import { editRedo, editUndo } from "../edit/undo";
+import { sendChordToRichText } from "../edit/richText";
 import {
+  COMMANDS,
+  chordKey,
   command,
   commandsInScope,
   findConflicts,
+  shadowedChordKeys,
   type Chord,
+  type CommandDef,
   type CommandId,
   type CommandScope,
 } from "./registry";
@@ -55,10 +61,27 @@ const HANDLERS: Partial<Record<CommandId, () => void>> = {
   "zoom.in": () => zoomIn(),
   "zoom.out": () => zoomOut(),
   "zoom.reset": () => zoomReset(),
+  "edit.undo": () => editUndo(),
+  "edit.redo": () => editRedo(),
+
+  // The draft sheet sits at the app root, so it opens over any screen — except
+  // the study page, whose prep fields ARE the open recording's (the titlebar
+  // hides its 新增會議草稿 there for the same reason), so ⌘N goes home first.
+  // A running meeting is no obstacle: it took its own copy of the prep.
+  "file.newDraft": () => {
+    const s = useStore.getState();
+    if (s.appMode !== "study") {
+      s.setDraftOpen(true);
+      return;
+    }
+    void navigateTo({ kind: "home" }).then((outcome) => {
+      if (outcome.status === "applied") useStore.getState().setDraftOpen(true);
+    });
+  },
+  "file.newFolder": () => requestNewFolder(),
 
   // Routed through navigateTo, not straight at the store, so ⌘1/⌘2 land in the
-  // back stack (⌘1 then ⌘[ has to work) and inherit the one meeting guard
-  // instead of re-deciding it here.
+  // back stack (⌘1 then ⌘[ has to work).
   "nav.home": () => {
     void navigateTo({ kind: "home" });
   },
@@ -71,7 +94,7 @@ const HANDLERS: Partial<Record<CommandId, () => void>> = {
   // where we already are, and the entry is in the stack from when it opened.
   "nav.study": () => {
     const s = useStore.getState();
-    if (!s.replay || isMeetingActive(s.meetingStatus)) return;
+    if (!s.replay) return;
     s.showReplay();
   },
   // During the cockpit hold (meeting stopped, its cockpit still up) the tree is
@@ -82,7 +105,7 @@ const HANDLERS: Partial<Record<CommandId, () => void>> = {
   "view.toggleSidebar": () => {
     const s = useStore.getState();
     const hold = cockpitHold({
-      meetingActive: isMeetingActive(s.meetingStatus),
+      meetingActive: isLiveMeetingActive(),
       liveRoute: s.appMode === "live",
     });
     if (hold) toggleSidebarPeek();
@@ -113,6 +136,22 @@ const COMPONENT_HANDLERS = new Map<CommandId, (e: KeyboardEvent) => void>();
  * binding does, in the same order.
  */
 export function runCommand(id: CommandId): void {
+  // ⌘B with the caret in the meeting notes means bold, not the sidebar: the
+  // menu bar took the chord before the editor saw it (lib/edit/richText.ts).
+  // Typed, the chord never fires the binding itself — it is not whileTyping.
+  if (id === "view.toggleSidebar" && sendChordToRichText({ key: "b" })) return;
+  // The menu bar names the OUTER command (Go › Home for ⌘1) even where an inner
+  // one has taken the chord over (the study page's first tab), because AppKit
+  // matched the chord before the webview saw it. Hand it to the inner one.
+  const def = command(id);
+  if (runShadowing(def)) return;
+  // The menu bar delivers to the window in FRONT (src-tauri/src/menu.rs), so a
+  // tab strip there can take ⌘1 over. A main-window command it didn't take —
+  // Go › Home from Settings — is passed on to the main window, as before.
+  if (def.scope === "main" && !scopeSnapshot.includes("main")) {
+    void forwardToMainWindow(id);
+    return;
+  }
   const own = HANDLERS[id];
   if (own) {
     own();
@@ -131,6 +170,74 @@ export function runCommand(id: CommandId): void {
   owned(new KeyboardEvent("keydown"));
 }
 
+/** Run `id` in the main window and bring it forward. */
+async function forwardToMainWindow(id: CommandId): Promise<void> {
+  try {
+    const [{ emitTo }, { WebviewWindow }] = await Promise.all([
+      import("@tauri-apps/api/event"),
+      import("@tauri-apps/api/webviewWindow"),
+    ]);
+    await emitTo("main", MENU_COMMAND_EVENT, id);
+    // Best effort, each on its own: the command has been delivered either way.
+    const main = await WebviewWindow.getByLabel("main");
+    await main?.show().catch(() => {});
+    await main?.unminimize().catch(() => {});
+    await main?.setFocus().catch(() => {});
+  } catch (error) {
+    log.warn("commands: forward to main window failed", { id, error: String(error) });
+  }
+}
+
+/** The event the menu bar sends a command on (see ./menuBridge.ts). */
+export const MENU_COMMAND_EVENT = "menu://command";
+
+/** The handler a command offers, wherever it lives. */
+function handlerOf(id: CommandId): ((e: KeyboardEvent) => void) | undefined {
+  const own = HANDLERS[id];
+  return own ? () => own() : COMPONENT_HANDLERS.get(id);
+}
+
+/**
+ * For a menu click on `def`: if the chord its menu item carries is taken over
+ * by a command live right now, run that command as though its chord had been
+ * pressed — it may read the key (⌘3 is the third tab). True when it did.
+ */
+function runShadowing(def: CommandDef): boolean {
+  const taken = shadowedChordKeys(def, scopeSnapshot);
+  const chord = def.keys.find((k) => k.native && taken.has(chordKey(k)));
+  if (!chord) return false;
+  const key = chordKey(chord);
+  const inner = COMMANDS.find(
+    (c) =>
+      c.shadows?.includes(def.id) && scopeSnapshot.includes(c.scope) && c.keys.some((k) => chordKey(k) === key)
+  );
+  const run = inner && handlerOf(inner.id);
+  if (!run) return false;
+  const mac = isMac();
+  run(
+    new KeyboardEvent("keydown", {
+      key: chord.key,
+      metaKey: !!chord.mod && mac,
+      ctrlKey: !!chord.mod && !mac,
+      shiftKey: chord.shift === true,
+      altKey: !!chord.alt,
+    })
+  );
+  return true;
+}
+
+/**
+ * `run`, unless a command live right now has taken this chord over — then the
+ * keystroke is that command's, and it has its own binding.
+ */
+function unlessShadowed(def: CommandDef, chord: Chord, run: (e: KeyboardEvent) => void) {
+  const key = chordKey(chord);
+  return (e: KeyboardEvent) => {
+    if (shadowedChordKeys(def, scopeSnapshot).has(key)) return;
+    run(e);
+  };
+}
+
 /** Bind every command in `scope` that carries a module-level handler. Returns
  *  the remover for all of them. */
 function bindScope(scope: CommandScope): () => void {
@@ -139,7 +246,7 @@ function bindScope(scope: CommandScope): () => void {
     const run = HANDLERS[def.id];
     if (!run) continue;
     for (const chord of bindableChords(def.id)) {
-      removers.push(bindShortcut(chord, run, { whileTyping: def.whileTyping }));
+      removers.push(bindShortcut(chord, unlessShadowed(def, chord, run), { whileTyping: def.whileTyping }));
     }
   }
   return () => {
@@ -239,7 +346,7 @@ export function useCommandShortcut(
     if (!enabled) return;
     const run = (e: KeyboardEvent) => handlerRef.current(e);
     const removers = chords.map((chord) =>
-      bindShortcut(chord, run, { whileTyping: def.whileTyping })
+      bindShortcut(chord, unlessShadowed(def, chord, run), { whileTyping: def.whileTyping })
     );
     // Published even when `chords` is empty — on macOS that is the normal case
     // for a menu-claimed chord like ⌘K, and it is precisely then that the menu
