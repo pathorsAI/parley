@@ -191,14 +191,7 @@ fun RecordingDetailScreen(
     // onto the transcript although the study is about to run. Until then the
     // page shown is provisional and follows what the meta already holds.
     var chosenFace by rememberSaveable { mutableStateOf<DetailFace?>(null) }
-    val face = chosenFace ?: state.meta?.let {
-        initialFace(
-            // A recording the study is about to analyse opens on the report,
-            // where the chip and the sections say what is coming.
-            hasAnalysis = state.hasAnalysis || study?.progress?.active == true,
-            forceTranscript = DemoMode.navigation.value?.screen == DemoMode.Screen.TRANSCRIPT,
-        )
-    }
+    val face = chosenFace ?: provisionalFace(state, study)
     LaunchedEffect(face, studyKnown) {
         if (chosenFace == null && face != null && studyKnown) chosenFace = face
         // Search belongs to the transcript; leaving it closes the field, which
@@ -222,20 +215,13 @@ fun RecordingDetailScreen(
     val leave = rememberUpdatedState(onBack)
     LaunchedEffect(filing.movedTo) { if (filing.movedTo != null) leave.value() }
 
-    // What the checklist opened this screen for, acted on once the transcript
-    // is up (iOS `handleIntent`). Saveable, so a rotation does not do it twice.
-    var intentHandled by rememberSaveable { mutableStateOf(openFor == OpenFor.READ) }
-    LaunchedEffect(state.meta != null) {
-        if (intentHandled || state.meta == null) return@LaunchedEffect
-        intentHandled = true
-        // A beat for the push to settle, as iOS waits: a sheet thrown up
-        // mid-transition reads as the screen glitching rather than as an answer.
-        delay(INTENT_DELAY_MS)
-        when {
-            openFor == OpenFor.SHARE && readable.isNotEmpty() -> menu.shareToAI()
-            openFor == OpenFor.FILE && menu.onMoveToFolder != null -> openPicker()
-        }
-    }
+    OpenIntentEffect(
+        openFor = openFor,
+        metaLoaded = state.meta != null,
+        canShare = readable.isNotEmpty(),
+        menu = menu,
+        openPicker = openPicker,
+    )
 
     // The guide bar's "Open the transcript": a request the pages carry out,
     // counted so the same request twice is still two.
@@ -300,6 +286,51 @@ fun RecordingDetailScreen(
         choosingFolder = choosingFolder,
         onDismissPicker = { choosingFolder = false },
     )
+}
+
+/**
+ * The page to show before the reader has one: none until the recording has
+ * loaded, then whatever [initialFace] makes of what the meta already holds.
+ * Provisional — [RecordingDetailScreen] fixes it once the study for this visit
+ * is known.
+ */
+private fun provisionalFace(state: RecordingDetailViewModel.UiState, study: RecordingStudy?): DetailFace? =
+    state.meta?.let {
+        initialFace(
+            // A recording the study is about to analyse opens on the report,
+            // where the chip and the sections say what is coming.
+            hasAnalysis = state.hasAnalysis || study?.progress?.active == true,
+            forceTranscript = DemoMode.navigation.value?.screen == DemoMode.Screen.TRANSCRIPT,
+        )
+    }
+
+/**
+ * What the checklist opened this screen for, acted on once the transcript is
+ * up (iOS `handleIntent`): the Share-to-AI hand-off, or the folder picker.
+ * Saveable, so a rotation does not do it twice.
+ *
+ * @param canShare whether there is a transcript to hand off yet.
+ */
+@Composable
+private fun OpenIntentEffect(
+    openFor: OpenFor,
+    metaLoaded: Boolean,
+    canShare: Boolean,
+    menu: DetailMenu,
+    openPicker: () -> Unit,
+) {
+    var intentHandled by rememberSaveable { mutableStateOf(openFor == OpenFor.READ) }
+    LaunchedEffect(metaLoaded) {
+        if (intentHandled || !metaLoaded) return@LaunchedEffect
+        intentHandled = true
+        // A beat for the push to settle, as iOS waits: a sheet thrown up
+        // mid-transition reads as the screen glitching rather than as an answer.
+        delay(INTENT_DELAY_MS)
+        when {
+            openFor == OpenFor.SHARE && canShare -> menu.shareToAI()
+            openFor == OpenFor.FILE && menu.onMoveToFolder != null -> openPicker()
+        }
+    }
 }
 
 /** The transcript as "copy" and "share" hand it on: speaker-labelled final segments. */
@@ -814,11 +845,13 @@ private fun DetailDialogs(
         FolderPickerSheet(
             scopes = viewModel.moveScopes(),
             current = viewModel.currentPlace(),
-            onConfirm = viewModel::moveTo,
-            // The sample is filed on this phone; a folder made for it would be
-            // a cloud folder nothing else is in.
-            onCreate = if (viewModel.isSample) null else viewModel::createFolder,
-            onDismiss = onDismissPicker,
+            callbacks = FolderPickerCallbacks(
+                onConfirm = viewModel::moveTo,
+                // The sample is filed on this phone; a folder made for it would
+                // be a cloud folder nothing else is in.
+                onCreate = if (viewModel.isSample) null else viewModel::createFolder,
+                onDismiss = onDismissPicker,
+            ),
         )
     }
 

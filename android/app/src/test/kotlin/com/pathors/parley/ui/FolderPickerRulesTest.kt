@@ -19,8 +19,8 @@ import org.junit.Test
 class FolderPickerRulesTest {
 
     private val folders = listOf(
-        CloudFolder(id = "f1", name = "Northwind"),
-        CloudFolder(id = "f2", name = "Acme Corp"),
+        CloudFolder(id = "f1", name = NORTHWIND),
+        CloudFolder(id = "f2", name = ACME),
     )
 
     @Test
@@ -85,7 +85,7 @@ class FolderPickerRulesTest {
     // ── sections ─────────────────────────────────────────────────────────────
 
     private val team = CloudOrg(id = "o1", name = "Pathors")
-    private val teamFolders = listOf(CloudFolder(id = "t1", name = "Acme pipeline", orgId = "o1"))
+    private val teamFolders = listOf(CloudFolder(id = "t1", name = PIPELINE, orgId = "o1"))
     private val scopes = listOf(FolderScope(null, folders), FolderScope(team, teamFolders))
     private fun root(scope: FolderScope) = if (scope.org == null) "Unfiled" else "No folder"
 
@@ -98,11 +98,11 @@ class FolderPickerRulesTest {
             listOf(
                 Item.ScopeHeader(null),
                 Item.Place(SaveDestination.PERSONAL_ROOT, "Unfiled", isRoot = true),
-                Item.Place(SaveDestination(folderId = "f1"), "Northwind"),
-                Item.Place(SaveDestination(folderId = "f2"), "Acme Corp"),
+                Item.Place(SaveDestination(folderId = "f1"), NORTHWIND),
+                Item.Place(SaveDestination(folderId = "f2"), ACME),
                 Item.ScopeHeader(team),
                 Item.Place(SaveDestination(orgId = "o1"), "No folder", isRoot = true),
-                Item.Place(SaveDestination(orgId = "o1", folderId = "t1"), "Acme pipeline"),
+                Item.Place(SaveDestination(orgId = "o1", folderId = "t1"), PIPELINE),
             ),
             items(),
         )
@@ -113,14 +113,14 @@ class FolderPickerRulesTest {
         assertEquals(
             listOf(
                 Item.ScopeHeader(null),
-                Item.Place(SaveDestination(folderId = "f2"), "Acme Corp"),
+                Item.Place(SaveDestination(folderId = "f2"), ACME),
                 Item.ScopeHeader(team),
-                Item.Place(SaveDestination(orgId = "o1", folderId = "t1"), "Acme pipeline"),
+                Item.Place(SaveDestination(orgId = "o1", folderId = "t1"), PIPELINE),
             ),
             items("acme"),
         )
         assertEquals(
-            listOf(Item.ScopeHeader(null), Item.Place(SaveDestination(folderId = "f1"), "Northwind")),
+            listOf(Item.ScopeHeader(null), Item.Place(SaveDestination(folderId = "f1"), NORTHWIND)),
             items("north"),
         )
         assertEquals(
@@ -135,12 +135,12 @@ class FolderPickerRulesTest {
         assertEquals(
             listOf(
                 Item.SuggestedHeader,
-                Item.Place(SaveDestination(folderId = "f2"), "Acme Corp", suggested = true),
+                Item.Place(SaveDestination(folderId = "f2"), ACME, suggested = true),
                 Item.ScopeHeader(null),
-                Item.Place(SaveDestination(folderId = "f1"), "Northwind"),
-                Item.Place(SaveDestination(folderId = "f2"), "Acme Corp"),
+                Item.Place(SaveDestination(folderId = "f1"), NORTHWIND),
+                Item.Place(SaveDestination(folderId = "f2"), ACME),
                 Item.ScopeHeader(team),
-                Item.Place(SaveDestination(orgId = "o1", folderId = "t1"), "Acme pipeline"),
+                Item.Place(SaveDestination(orgId = "o1", folderId = "t1"), PIPELINE),
             ),
             items(suggested = listOf(folders[1], CloudFolder(id = "gone", name = "Deleted")), showsRoot = false),
         )
@@ -157,3 +157,6 @@ class FolderPickerRulesTest {
 }
 
 private const val GLOBEX = "Globex"
+private const val ACME = "Acme Corp"
+private const val NORTHWIND = "Northwind"
+private const val PIPELINE = "Acme pipeline"

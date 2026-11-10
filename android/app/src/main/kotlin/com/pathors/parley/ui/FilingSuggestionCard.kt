@@ -817,18 +817,22 @@ private fun FilingPicker(state: FilingUiState, directory: FolderDirectory, actio
         scopes = scopes,
         current = SaveDestination(folderId = state.currentFolderId),
         selected = state.selectedFolder?.let(::destinationOf),
-        suggested = suggested,
-        // Unfiled is not an answer to "where should this live".
-        showsRoot = false,
-        title = stringResource(R.string.folder_picker_save_title),
-        confirmLabel = stringResource(R.string.folder_picker_choose),
-        orgHandoff = OrgHandoff.COPY,
-        onConfirm = { destination ->
-            val target = targetOf(destination)
-            actions.onChoose(target, labels.of(destination))
-        },
-        onCreate = actions.onCreate,
-        onDismiss = { actions.onChoosingChange(false) },
+        options = FolderPickerOptions(
+            suggested = suggested,
+            // Unfiled is not an answer to "where should this live".
+            showsRoot = false,
+            title = stringResource(R.string.folder_picker_save_title),
+            confirmLabel = stringResource(R.string.folder_picker_choose),
+            orgHandoff = OrgHandoff.COPY,
+        ),
+        callbacks = FolderPickerCallbacks(
+            onConfirm = { destination ->
+                val target = targetOf(destination)
+                actions.onChoose(target, labels.of(destination))
+            },
+            onCreate = actions.onCreate,
+            onDismiss = { actions.onChoosingChange(false) },
+        ),
     )
 }
 

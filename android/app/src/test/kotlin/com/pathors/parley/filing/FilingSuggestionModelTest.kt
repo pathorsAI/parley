@@ -369,7 +369,7 @@ class FilingSuggestionModelTest {
         assertTrue(runBlocking { model.acceptSuggested() })
         assertFalse("nothing left to accept", runBlocking { model.acceptSuggested() })
 
-        assertEquals(1, count("POST /folders"))
+        assertEquals(1, count(CREATE_FOLDER))
         assertEquals("the offer's own write, then the answer", 2, pushes.size)
         val created = state.existingFolders.single { it.name == "Globex" }
         assertEquals(created.id, lastMeta().folderId)
@@ -537,7 +537,7 @@ class FilingSuggestionModelTest {
         model.present(pending(), FilingTarget.Sample(sample))
         assertTrue(runBlocking { model.apply(null, FolderTarget.New("Globex")) })
 
-        assertEquals(1, count("POST /folders"))
+        assertEquals(1, count(CREATE_FOLDER))
         assertEquals(1, sample.folders.size)
     }
 
@@ -601,11 +601,11 @@ class FilingSuggestionModelTest {
         model.present(pending(), FilingTarget.Cloud(RECORDING))
         runBlocking {
             val card = FilingCardController(model, this, this)
-            card.choose(FolderTarget.Existing("f-other"), "Northwind")
-            assertEquals(FolderPick.Chosen(FolderTarget.Existing("f-other"), "Northwind"), state.chosenElsewhere)
+            card.choose(FolderTarget.Existing(OTHER_ID), "Northwind")
+            assertEquals(FolderPick.Chosen(FolderTarget.Existing(OTHER_ID), "Northwind"), state.chosenElsewhere)
             card.save(null)
         }
-        assertEquals("f-other", lastMeta().folderId)
+        assertEquals(OTHER_ID, lastMeta().folderId)
     }
 
     @Test
@@ -643,7 +643,7 @@ class FilingSuggestionModelTest {
     fun `a folder made in the picker is listed, and filed into only on save`() {
         model.present(pending(), FilingTarget.Cloud(RECORDING))
         val made = runBlocking { FilingCardController(model, this, this).createFolder("Globex") }
-        assertEquals(1, count("POST /folders"))
+        assertEquals(1, count(CREATE_FOLDER))
         assertTrue(state.existingFolders.any { it.id == made.id })
         assertTrue("created, not filed", pushes.isEmpty())
     }
@@ -704,6 +704,8 @@ class FilingSuggestionModelTest {
         const val ACME_ID = "f-acme"
         const val FOLDER_ID = "folderId"
         const val CHAT = "POST /v1/chat/completions"
+        const val CREATE_FOLDER = "POST /folders"
+        const val OTHER_ID = "f-other"
         const val FOLDERS_JSON = """{"folders":[{"id":"f-acme","name":"Acme Corp"},{"id":"f-shared","name":"Sales","orgId":"org-1"}]}"""
         const val SUGGESTION_JSON =
             """{"title":"Acme renewal terms","folders":[{"name":"Acme Corp","isNew":false,"reason":"customer"}]}"""

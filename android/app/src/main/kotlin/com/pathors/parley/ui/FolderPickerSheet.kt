@@ -40,6 +40,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -98,42 +99,38 @@ enum class OrgHandoff {
  * move, and a tester filed a meeting into the wrong customer that way. A
  * folder made with Create is selected the same way, not filed into.
  *
- * The sheet decides nothing about *how* a recording moves. [onConfirm] is the
- * caller's own move, and [onCreate] makes a folder in the FIRST scope — null
- * where there is no endpoint to create one with, which hides the row rather
- * than offering something that cannot work.
- *
- * [suggested] is iOS's "Suggested" section: the filing card's "Choose
- * another…" opens the picker with the suggestion's own folders listed first.
- * A suggested folder that is not in the personal scope (deleted meanwhile) is
- * not offered.
+ * The sheet decides nothing about *how* a recording moves. The
+ * [FolderPickerCallbacks] are the caller's own: its move, and a create that
+ * makes a folder in the FIRST scope — null where there is no endpoint to
+ * create one with, which hides the row rather than offering something that
+ * cannot work. How the sheet presents itself (its title and button, the
+ * "Suggested" section, whether the root is a choice) is [FolderPickerOptions];
+ * "Move to…" takes the defaults.
  *
  * @param current where the recording is now, as the library renders it
  *   (orphans are the root), so its row says "Current folder" and the confirm
  *   button stays off while it is selected. Null when the recording is nowhere
  *   yet worth naming.
- * @param onConfirm the confirm button, with the selection. The sheet dismisses
- *   itself after.
  * @param selected what the sheet opens with selected: where the recording is,
  *   unless the caller is holding a choice of its own (the filing card's).
- * @param onCreate create a folder with this name in the first scope. A throw
- *   keeps the sheet up with an error under the field.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FolderPickerSheet(
     scopes: List<FolderScope>,
     current: SaveDestination?,
-    onConfirm: (SaveDestination) -> Unit,
-    onCreate: (suspend (String) -> CloudFolder)?,
-    onDismiss: () -> Unit,
+    callbacks: FolderPickerCallbacks,
     selected: SaveDestination? = current,
-    suggested: List<CloudFolder> = emptyList(),
-    showsRoot: Boolean = true,
-    title: String = stringResource(R.string.folder_picker_title),
-    confirmLabel: String = stringResource(R.string.folder_picker_move),
-    orgHandoff: OrgHandoff = OrgHandoff.MOVE,
+    options: FolderPickerOptions = FolderPickerOptions(),
 ) {
+    val onConfirm = callbacks.onConfirm
+    val onCreate = callbacks.onCreate
+    val onDismiss = callbacks.onDismiss
+    val suggested = options.suggested
+    val showsRoot = options.showsRoot
+    val title = options.title ?: stringResource(R.string.folder_picker_title)
+    val confirmLabel = options.confirmLabel ?: stringResource(R.string.folder_picker_move)
+    val orgHandoff = options.orgHandoff
     // Fully expanded from the start. iOS opens at its medium detent and grows
     // on focus; a half-height Material sheet asked to expand while the IME is
     // animating in stays where it was, leaving the keyboard over the list.
@@ -214,6 +211,46 @@ fun FolderPickerSheet(
         }
     }
 }
+
+/**
+ * What the picker calls back into — the caller's own move, create and dismiss.
+ *
+ * @param onConfirm the confirm button, with the selection. The sheet dismisses
+ *   itself after.
+ * @param onCreate create a folder with this name in the first scope. A throw
+ *   keeps the sheet up with an error under the field. Null hides the create
+ *   row: there is nowhere to make one.
+ * @param onDismiss the sheet going away, by the confirm button, Cancel, a
+ *   drag or the back gesture.
+ */
+class FolderPickerCallbacks(
+    val onConfirm: (SaveDestination) -> Unit,
+    val onCreate: (suspend (String) -> CloudFolder)?,
+    val onDismiss: () -> Unit,
+)
+
+/**
+ * How the picker presents itself. The defaults are "Move to…"; the filing
+ * card's "Choose another…" sets the rest.
+ *
+ * @param suggested iOS's "Suggested" section: the filing card opens the picker
+ *   with the suggestion's own folders listed first. A suggested folder that is
+ *   not in the personal scope (deleted meanwhile) is not offered.
+ * @param showsRoot whether each library's root ("Unfiled", "Not in a folder")
+ *   is a row. Off where the root is no answer to "where should this live".
+ * @param title the sheet's title; null is "Move to…".
+ * @param confirmLabel the header's confirm button; null is "Move".
+ * @param orgHandoff what choosing an organization from the personal library
+ *   does, said under the header.
+ */
+@Immutable
+data class FolderPickerOptions(
+    val suggested: List<CloudFolder> = emptyList(),
+    val showsRoot: Boolean = true,
+    val title: String? = null,
+    val confirmLabel: String? = null,
+    val orgHandoff: OrgHandoff = OrgHandoff.MOVE,
+)
 
 /** Where a create goes, and the caller's create. */
 private class PickerTarget(

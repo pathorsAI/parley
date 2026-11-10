@@ -665,11 +665,13 @@ private fun MoveToFolderSheet(
             orgId = state.scopeOrgId,
             folderId = LibraryFolders.liveFolderId(target.folderId, state.folders),
         ),
-        onConfirm = { destination -> viewModel.moveTo(target, destination) },
-        // The sample is filed on this phone; a folder made for it would be a
-        // cloud folder nothing else is in.
-        onCreate = if (SampleManifest.isSample(target.id)) null else viewModel::createFolder,
-        onDismiss = onDismiss,
+        callbacks = FolderPickerCallbacks(
+            onConfirm = { destination -> viewModel.moveTo(target, destination) },
+            // The sample is filed on this phone; a folder made for it would be
+            // a cloud folder nothing else is in.
+            onCreate = if (SampleManifest.isSample(target.id)) null else viewModel::createFolder,
+            onDismiss = onDismiss,
+        ),
     )
 }
 
