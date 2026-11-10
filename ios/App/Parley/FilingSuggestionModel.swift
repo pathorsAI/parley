@@ -101,11 +101,11 @@ final class FilingSuggestionModel: ObservableObject {
 
     /// Where the visible suggestion's answer is written. nil = nothing on offer.
     private var target: Target?
-    /// Told after each write that landed: the new title (if it changed), the
-    /// folder filed into (if it changed), and a folder created for it (if one
-    /// was). The recording screen keeps its title, its folder and its folder
+    /// Told after each write that landed: the new title (if it changed), where
+    /// the recording is now filed (if that changed; an org copy does not move
+    /// it), and a folder created for it (if one was). The recording screen keeps its title, its folder and its folder
     /// list in step with this.
-    var onApplied: ((_ title: String?, _ folderId: String?, _ created: CloudFolder?) -> Void)?
+    var onApplied: ((_ title: String?, _ filed: FolderDestination?, _ created: CloudFolder?) -> Void)?
     /// Told once the offer is fully answered — accepted in full, or skipped —
     /// so a screen that presented it from the recording's own data stops
     /// presenting it.
@@ -178,6 +178,13 @@ final class FilingSuggestionModel: ObservableObject {
     /// What the title field starts with: the proposed name while it is still on
     /// offer, the recording's own once it has been answered.
     var editableTitle: String { proposedTitle ?? currentTitle }
+
+    /// Whether an organization's folder can be offered: only a recording the
+    /// server holds can be shared there, so never the sample.
+    var canShareToOrganizations: Bool {
+        if case .cloud = target { return true }
+        return false
+    }
 
     /// Whether the name half has been answered, so the card can say "renamed"
     /// instead of offering it again.
@@ -257,9 +264,10 @@ final class FilingSuggestionModel: ObservableObject {
         // survives this screen, and the desktop finds the pass already
         // spent instead of running its own.
         async let proposal = FilingPass.shared.run(id: settled.id, cloud: app.cloud)
-        // Personal folders only: an org folder is not somewhere this
-        // recording can be moved to from here. Kept for the Adjust sheet,
-        // and not worth losing the card over — the pass lists them itself.
+        // Personal folders only: the chips move the recording, and an org
+        // folder is a shared copy instead. The picker adds the organizations'
+        // folders under their own headings. Not worth losing the card over
+        // — the pass lists them itself.
         let folders = ((try? await app.cloud.listFolders()) ?? []).filter { $0.orgId == nil }
         // Best-effort by design: nil is every failure as well as "nothing
         // to offer", and the recording is already safely in the cloud
@@ -299,22 +307,21 @@ final class FilingSuggestionModel: ObservableObject {
 
     // MARK: accepting
 
-    /// The inline title field's Return: rename, and leave the folder half on
-    /// offer.
-    func rename(to title: String, app: AppState) async {
-        await apply(title: title, folder: nil, app: app)
-    }
-
-    /// Take the suggestion as offered: the proposed name and the best proposed
-    /// folder, in one go. Whichever of the two the pass had nothing to say
-    /// about is simply left alone.
-    func acceptSuggested(app: AppState) async {
-        await apply(title: proposedTitle, folder: proposedFolder, app: app)
+    /// Where a proposed folder would file the recording: the folder itself, or
+    /// one to create under that name.
+    static func destination(for folder: FilingFolderSuggestion) -> FolderDestination {
+        folder.folderId.map { .folder(id: $0, orgId: nil) } ?? .newFolder(name: folder.name)
     }
 
     /// Rename the recording and file it, either or both. `nil` means "leave
     /// that one as it is"; a title that matches what the recording is already
     /// called, or a folder it is already in, is dropped the same way.
+    ///
+    /// An organization destination is a shared COPY (`shareRecording`), made
+    /// after the rename has landed so the copy carries the new name. The
+    /// personal original keeps its folder, the desktop's rule for org
+    /// destinations. Only a cloud recording can go there: the sample is not on
+    /// the server to copy.
     ///
     /// ONE read-modify-write for both, rather than a rename followed by a move:
     /// the two would each read the meta and push it back, and the second push
@@ -331,39 +338,55 @@ final class FilingSuggestionModel: ObservableObject {
     ///   that wrote — and so carried `filingSuggested` with it — apart from a
     ///   Save that found nothing to change.
     @discardableResult
-    func apply(title: String?, folder: FilingFolderSuggestion?, app: AppState) async -> Bool {
+    func apply(title: String?, destination: FolderDestination?, app: AppState) async -> Bool {
         guard !isWriting, let target else { return false }
         var newTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
         if newTitle?.isEmpty == true || newTitle == currentTitle { newTitle = nil }
-        var newFolder = folder
-        if let alreadyThere = folder?.folderId, alreadyThere == currentFolderId { newFolder = nil }
-        guard newTitle != nil || newFolder != nil else { return false }
+        var newFolder = destination
+        if newFolder == .current(orgId: nil, folderId: currentFolderId) { newFolder = nil }
+        var shareTo: (orgId: String, folderId: String?)?
+        if let orgId = newFolder?.orgId {
+            guard case .cloud = target else { return false }
+            shareTo = (orgId, newFolder?.folderId)
+            newFolder = nil
+        }
+        guard newTitle != nil || newFolder != nil || shareTo != nil else { return false }
         isWriting = true
         writeFailed = false
         defer { isWriting = false }
         do {
+            // `moves` separates "file at the top level" (a nil folder id) from
+            // "leave the folder alone".
+            var moves = false
             var targetId: String?
             var created: CloudFolder?
-            if let newFolder {
-                if let existing = newFolder.folderId {
-                    targetId = existing
-                } else {
-                    let folder = try await app.cloud.createFolder(name: newFolder.name)
-                    created = folder
-                    targetId = folder.id
-                    existingFolders.append(folder)
-                }
+            switch newFolder {
+            case .newFolder(let name):
+                let folder = try await app.cloud.createFolder(name: name)
+                created = folder
+                targetId = folder.id
+                existingFolders.append(folder)
+                moves = true
+            case .some(let destination):
+                targetId = destination.folderId
+                moves = true
+            case nil:
+                break
             }
             switch target {
             case .cloud(let id):
                 try await Self.write(id: id, cloud: app.cloud) { meta in
                     if let newTitle { meta.title = newTitle }
-                    if let targetId { meta.folderId = targetId }
+                    if moves { meta.folderId = targetId }
+                }
+                if let shareTo {
+                    try await app.cloud.shareRecording(
+                        id: id, orgId: shareTo.orgId, folderId: shareTo.folderId)
                 }
             case .sample:
                 let store = SampleRecordingStore.shared
                 if let newTitle { store.setTitle(newTitle) }
-                if let targetId { store.setFolder(targetId) }
+                if moves { store.setFolder(targetId) }
             }
             if let newTitle {
                 currentTitle = newTitle
@@ -372,9 +395,9 @@ final class FilingSuggestionModel: ObservableObject {
                 // open, because it is still worth taking.
                 titleAnswered = true
             }
-            if let targetId {
-                GettingStartedStore.shared.mark(.filed)
-                currentFolderId = targetId
+            if moves || shareTo != nil {
+                if targetId != nil || shareTo != nil { GettingStartedStore.shared.mark(.filed) }
+                if moves { currentFolderId = targetId }
                 // The home half is settled, wherever it settled — including the
                 // folder created a moment ago, whose id came back from
                 // `createFolder`. Retiring it here is what stops a second tap
@@ -383,7 +406,7 @@ final class FilingSuggestionModel: ObservableObject {
                 // retrying.
                 folderAnswered = true
             }
-            onApplied?(newTitle, targetId, created)
+            onApplied?(newTitle, moves ? .current(orgId: nil, folderId: targetId) : nil, created)
             if !hasSomethingToOffer {
                 if target == .sample { SampleRecordingStore.shared.answerSuggestion() }
                 onRetired?()

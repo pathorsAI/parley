@@ -15,21 +15,22 @@ import SwiftUI
 /// ## The pieces
 ///
 /// - **The name** is the proposal, and tapping it edits it in place. Return
-///   renames the recording then and there (for a cloud recording, the same meta
-///   re-push every rename and move on the phone uses; for the sample, its local
-///   title) and leaves the folder half on offer.
+///   only closes the field: nothing is written until Save.
 /// - **The chips** are the folders: the pass's own candidates, best first — a
-///   folder that does not exist yet is dashed, because tapping it creates it —
-///   then, where there is room, folders the user already has. At most three.
-///   Tapping one files into that folder and does nothing to the name.
-/// - **Choose another…** opens the searchable folder picker with the chips'
-///   existing folders at the top, for the recording none of them fits. It
-///   files the same way a chip does.
-/// - **Accept** (採用) takes the WHOLE suggestion: the name as the field shows
-///   it and the first chip, in one tap. **Skip** answers the offer with no.
+///   folder that does not exist yet is dashed, because saving into it creates
+///   it — then, where there is room, folders the user already has. At most
+///   three. A chip is a CHOICE, not an action: tapping one selects it (filled,
+///   with a checkmark), tapping it again clears it, and the best candidate
+///   starts out selected. Chips used to file on the tap, and a tester who
+///   tapped one to see what it was found the meeting already filed there.
+/// - **Choose another…** opens the folder picker, personal and organization
+///   folders both, for the recording none of the chips fits. Its pick becomes
+///   the selection here, shown as a chip of its own.
+/// - **Save** (儲存) writes the name as the field shows it and the selected
+///   folder, in one push. **Skip** answers the offer with no.
 ///
-/// The same rule as the desktop: only filing — Accept, a chip, the picker —
-/// ticks the checklist's `filed`; a rename on its own does not.
+/// The same rule as the desktop: only filing ticks the checklist's `filed`; a
+/// rename on its own does not.
 ///
 /// Every write is one read-modify-write through `FilingSuggestionModel.apply`,
 /// so a rename followed by a chip is two pushes in order, never two racing.
@@ -44,6 +45,12 @@ struct FilingSuggestionCard: View {
     @State private var editing = false
     @FocusState private var titleFocused: Bool
     @State private var choosing = false
+    /// The folder Save files into, once the user has touched the choice. Until
+    /// then it is the best candidate (`selected`).
+    @State private var chosen: FolderDestination?
+    @State private var choiceTouched = false
+    /// A pick from the picker that is not one of the chips, with its label.
+    @State private var picked: (destination: FolderDestination, label: String)?
     /// How much of the proposed title has typed itself in, the first time the
     /// card shows it. nil = all of it.
     @State private var typedCount: Int?
@@ -78,6 +85,12 @@ struct FilingSuggestionCard: View {
         .onAppear { draft = model.editableTitle }
         .onChange(of: model.editableTitle) { _, title in
             if !editing { draft = title }
+        }
+        // A new offer (the next recording's) starts from its own best guess.
+        .onChange(of: model.proposedFolders.map(FilingSuggestionModel.key(for:))) { _, _ in
+            chosen = nil
+            choiceTouched = false
+            picked = nil
         }
         .sheet(isPresented: $choosing) { picker }
         #if DEBUG
@@ -202,13 +215,14 @@ struct FilingSuggestionCard: View {
                         .foregroundStyle(Color(.label))
                         .focused($titleFocused)
                         .submitLabel(.done)
-                        .onSubmit(commitTitle)
+                        .onSubmit(endEditing)
                         // A vertical field turns Return into a newline; a
-                        // title is one line, so Return is the rename.
+                        // title is one line, so Return closes the field.
+                        // It does not save: Save does.
                         .onChange(of: draft) { _, text in
                             if text.contains("\n") {
                                 draft = text.replacingOccurrences(of: "\n", with: "")
-                                commitTitle()
+                                endEditing()
                             }
                         }
                 } else {
@@ -240,11 +254,12 @@ struct FilingSuggestionCard: View {
                 if model.isWriting {
                     ProgressView().controlSize(.mini)
                 } else {
-                    Button(action: accept) {
-                        Text("Accept")
+                    Button(action: save) {
+                        Text("Save")
                             .font(.parley.bodyEmphasized)
                     }
                     .buttonStyle(.borderless)
+                    .disabled(!hasSomethingToSave)
                 }
             }
             if model.proposedTitle != nil {
@@ -267,15 +282,14 @@ struct FilingSuggestionCard: View {
         return LapMotion.typed(full, count: typedCount)
     }
 
-    private func commitTitle() {
+    /// Close the title field and keep what was typed for Save. An emptied
+    /// field goes back to the proposal rather than saving a blank name.
+    private func endEditing() {
         editing = false
         titleFocused = false
-        let typed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !typed.isEmpty else {
+        if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             draft = model.editableTitle
-            return
         }
-        Task { await model.rename(to: typed, app: app) }
     }
 
     // MARK: the folders
@@ -285,6 +299,9 @@ struct FilingSuggestionCard: View {
             HStack(spacing: 8) {
                 ForEach(model.proposedFolders, id: \.name) { folder in
                     chip(folder)
+                }
+                if let picked, !chipDestinations.contains(picked.destination) {
+                    pickedChip(picked.destination, label: picked.label)
                 }
                 Button {
                     choosing = true
@@ -305,29 +322,63 @@ struct FilingSuggestionCard: View {
 
     private func chip(_ folder: FilingFolderSuggestion) -> some View {
         let isNew = folder.folderId == nil
+        let destination = FilingSuggestionModel.destination(for: folder)
+        let isSelected = selected == destination
         return Button {
-            file(in: folder)
+            toggle(destination)
         } label: {
             chipLabel(
                 Text(verbatim: folder.name),
                 caption: isNew ? Text("New folder") : Text("Existing folder"),
-                dashed: isNew, tint: Theme.primary)
+                dashed: isNew, tint: Theme.primary, selected: isSelected)
         }
         .buttonStyle(.plain)
         .matchedGeometryEffect(id: "chip-\(FilingSuggestionModel.key(for: folder))", in: motion, isSource: true)
         .scaleEffect(popping == FilingSuggestionModel.key(for: folder) ? 1.06 : 1)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityHint(Text(verbatim: folder.reason))
     }
 
+    /// The picker's pick, when it is none of the candidates: selected, and
+    /// saying when it is an organization's folder, because Save then shares a
+    /// copy rather than moving the recording.
+    private func pickedChip(_ destination: FolderDestination, label: String) -> some View {
+        let isSelected = selected == destination
+        var isNew = false
+        if case .newFolder = destination { isNew = true }
+        let caption: Text =
+            isNew
+            ? Text("New folder")
+            : destination.orgId != nil ? Text("Copy to organization") : Text("Existing folder")
+        return Button {
+            toggle(destination)
+        } label: {
+            chipLabel(
+                Text(verbatim: label), caption: caption, dashed: isNew,
+                tint: Theme.primary, selected: isSelected)
+        }
+        .buttonStyle(.plain)
+        .matchedGeometryEffect(id: "chip-picked", in: motion, isSource: true)
+        .scaleEffect(popping == "picked" ? 1.06 : 1)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
     /// An outlined chip: the name in the tint (it is a thing to tap), a
-    /// caption saying what tapping it does to the folder list, and a dashed
-    /// outline for the folder that does not exist yet.
-    private func chipLabel(_ name: Text, caption: Text?, dashed: Bool, tint: Color) -> some View {
+    /// caption saying what saving into it does to the folder list, and a dashed
+    /// outline for the folder that does not exist yet. Selected, it takes the
+    /// tint as a wash and a checkmark in place of its folder glyph: the one
+    /// fill on the card, because it is the one answer the card is holding.
+    private func chipLabel(
+        _ name: Text, caption: Text?, dashed: Bool, tint: Color, selected: Bool = false
+    ) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 5) {
-                Image(systemName: dashed ? "folder.badge.plus" : "folder")
-                    .font(.parley.caption)
-                    .accessibilityHidden(true)
+                Image(
+                    systemName: selected
+                        ? "checkmark.circle.fill" : dashed ? "folder.badge.plus" : "folder"
+                )
+                .font(.parley.caption)
+                .accessibilityHidden(true)
                 name
                     .font(.parley.subheadlineEmphasized)
                     .lineLimit(1)
@@ -342,33 +393,58 @@ struct FilingSuggestionCard: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
         .frame(minHeight: 44)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
+                .fill(selected ? Theme.primary.opacity(0.12) : Color.clear))
         .overlay(
             RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
                 .strokeBorder(
-                    Color(.separator),
-                    style: StrokeStyle(lineWidth: 1, dash: dashed ? [4, 3] : [])))
+                    selected ? Theme.primary : Color(.separator),
+                    style: StrokeStyle(lineWidth: selected ? 1.5 : 1, dash: dashed ? [4, 3] : [])))
         .contentShape(Rectangle())
     }
 
-    /// 採用: the name as the field shows it, and the first chip.
-    private func accept() {
-        commitDraftIfEditing()
-        let title = currentDraft
-        let folder = model.proposedFolder
-        guard let folder else {
-            Task { await model.apply(title: title, folder: nil, app: app) }
-            return
-        }
-        fly(into: FilingSuggestionModel.key(for: folder)) {
-            await model.apply(title: title, folder: folder, app: app)
-        }
+    /// The chips' own destinations, so a picker pick that is already a chip
+    /// selects that chip instead of drawing a second one.
+    private var chipDestinations: [FolderDestination] {
+        model.proposedFolders.map(FilingSuggestionModel.destination(for:))
     }
 
-    /// A chip or the picker: file, and leave the name to its own answer.
-    private func file(in folder: FilingFolderSuggestion) {
+    /// What Save files into: the user's choice once they have made one, the
+    /// best candidate until then. nil = leave the folder alone.
+    private var selected: FolderDestination? {
+        choiceTouched ? chosen : model.proposedFolder.map(FilingSuggestionModel.destination(for:))
+    }
+
+    private func toggle(_ destination: FolderDestination) {
         commitDraftIfEditing()
-        fly(into: FilingSuggestionModel.key(for: folder)) {
-            await model.apply(title: nil, folder: folder, app: app)
+        let next: FolderDestination? = selected == destination ? nil : destination
+        choiceTouched = true
+        chosen = next
+    }
+
+    private var hasSomethingToSave: Bool {
+        if selected != nil { return true }
+        guard let title = currentDraft else { return false }
+        return title != model.currentTitle
+    }
+
+    /// 儲存: the name as the field shows it and the selected folder, in one
+    /// write. The flight goes into the selected chip.
+    private func save() {
+        commitDraftIfEditing()
+        let title = currentDraft
+        let destination = selected
+        guard let destination else {
+            Task { await model.apply(title: title, destination: nil, app: app) }
+            return
+        }
+        let key =
+            model.proposedFolders.first {
+                FilingSuggestionModel.destination(for: $0) == destination
+            }.map(FilingSuggestionModel.key(for:)) ?? "picked"
+        fly(into: key) {
+            await model.apply(title: title, destination: destination, app: app)
         }
     }
 
@@ -387,43 +463,35 @@ struct FilingSuggestionCard: View {
 
     // MARK: choose another
 
-    /// The searchable picker, with the chips' real folders offered first.
-    /// Choosing or creating there answers the offer exactly as a chip would.
+    /// The folder picker, with the chips' real folders offered first and the
+    /// user's organizations under their own headings. Its confirm is a choice,
+    /// not a write: the pick becomes this card's selection, and Save writes it
+    /// with the name.
     private var picker: some View {
         let live = Set(model.existingFolders.map(\.id))
         let suggested = model.proposedFolders.compactMap { folder -> CloudFolder? in
             guard let id = folder.folderId, live.contains(id) else { return nil }
             return model.existingFolders.first { $0.id == id }
         }
+        let orgGroups: (() async -> [FolderGroup])? =
+            model.canShareToOrganizations && !app.orgs.isEmpty
+            ? { await FolderGroup.organizations(app: app) } : nil
         return FolderPickerSheet(
-            folders: model.existingFolders,
-            currentFolderId: model.currentFolderId,
+            groups: [.personal(model.existingFolders)],
+            loadMoreGroups: orgGroups,
+            current: .current(orgId: nil, folderId: model.currentFolderId),
             suggested: suggested,
-            onSelect: { folderId in
-                guard let folderId,
-                    let folder = model.existingFolders.first(where: { $0.id == folderId })
-                else { return }
-                // No flight from the picker: the chip it would fly into is not
-                // on screen.
-                Task {
-                    await model.apply(
-                        title: nil,
-                        folder: FilingFolderSuggestion(
-                            folderId: folder.id, name: folder.name, reason: ""),
-                        app: app)
+            canCreate: true,
+            title: "Choose a folder",
+            confirm: .choose,
+            orgTransfer: .copy,
+            onConfirm: { destination, label in
+                if !chipDestinations.contains(destination) {
+                    picked = (destination, label)
                 }
-            },
-            onCreate: { name in
-                let landed = await model.apply(
-                    title: nil,
-                    folder: FilingFolderSuggestion(folderId: nil, name: name, reason: ""),
-                    app: app)
-                if !landed { throw FilingSuggestionCard.CreateFailed() }
+                choiceTouched = true
+                chosen = destination
             })
-    }
-
-    private struct CreateFailed: LocalizedError {
-        var errorDescription: String? { String(localized: "That didn't save. Try again.") }
     }
 }
 
