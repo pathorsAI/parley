@@ -158,7 +158,7 @@ Halcyon Labs, 子午線 / Meridian).
 ## Open Graph cards
 
 `assets/og-zh.png` and `assets/og-en.png` (1200×630) are rendered from `tools/og/og.html`,
-filled with the hero headline and the route figure's strings, by headless Chrome:
+filled with the hero headline and the local-mode library's strings, by headless Chrome:
 
 ```bash
 node website/tools/og/render.mjs
