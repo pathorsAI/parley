@@ -6,7 +6,7 @@
 // key, and shown by the speaker's current name.
 
 import type { ActionItem, TranscriptSegment } from "../types";
-import { defaultSpeakerLabel, speakerKey, speakerLabel } from "./labels";
+import { knownDefaultLabels, labelContextOf, speakerKey, speakerLabel } from "./labels";
 
 type Line = Pick<TranscriptSegment, "source" | "speaker">;
 
@@ -34,10 +34,13 @@ export function ownerSpeakerKey(
 ): string | undefined {
   const want = owner ? norm(owner) : "";
   if (!want) return undefined;
+  const ctx = labelContextOf(segments);
   const hits: string[] = [];
   for (const [key, line] of speakersOf(segments)) {
     const custom = names[key];
-    if ((custom && norm(custom) === want) || norm(defaultSpeakerLabel(line)) === want) hits.push(key);
+    if ((custom && norm(custom) === want) || knownDefaultLabels(line, ctx).some((d) => norm(d) === want)) {
+      hits.push(key);
+    }
   }
   return hits.length === 1 ? hits[0] : undefined;
 }
@@ -68,7 +71,7 @@ export function ownerDisplayName(
   item: Pick<ActionItem, "owner" | "ownerKey">,
   segments: readonly Line[],
   names: Record<string, string>,
-  label: (line: Line) => string = (line) => speakerLabel(line, names),
+  label: (line: Line) => string = (line) => speakerLabel(line, names, labelContextOf(segments)),
 ): string | undefined {
   const speakers = speakersOf(segments);
   const key = item.ownerKey && speakers.has(item.ownerKey) ? item.ownerKey : ownerSpeakerKey(item.owner, segments, names);

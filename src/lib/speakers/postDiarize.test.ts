@@ -168,6 +168,46 @@ describe("rediarizeSegments (audio-based correction of a saved live meeting)", (
   });
 });
 
+describe("rediarizeSegments on a separate-tracks meeting", () => {
+  it("re-clusters the mic side and the far side apart, so numbers stay within a side", async () => {
+    const segs = [
+      seg({ id: "m1", source: "me", speaker: 1, startMs: 0, endMs: 2000, text: "我先講" }),
+      // A second person at the user's mic the provider missed.
+      seg({ id: "m2", source: "me", speaker: 1, startMs: 2000, endMs: 4000, text: "我補充" }),
+      seg({ id: "t1", source: "them", speaker: 1, startMs: 4000, endMs: 6000, text: "好" }),
+      seg({ id: "t2", source: "them", speaker: 1, startMs: 6000, endMs: 8000, text: "我是另一位" }),
+    ];
+    invoke.mockImplementation((cmd: string, args?: { segments?: { id: string }[] }) =>
+      Promise.resolve(
+        cmd === "diarize_audio"
+          ? (args?.segments ?? []).map((sp, i) => ({ id: sp.id, speaker: i === 0 ? 1 : 2, confidence: 0.9 }))
+          : undefined,
+      ),
+    );
+
+    const result = await rediarizeSegments(segs, "/rec.ogg");
+
+    const diarizeCalls = invoke.mock.calls.filter((c) => c[0] === "diarize_audio");
+    expect(diarizeCalls).toHaveLength(2);
+    const calls = diarizeCalls.map((c) => (c[1] as { segments: { id: string }[] }).segments.map((sp) => sp.id));
+    expect(calls).toEqual([["m1", "m2"], ["t1", "t2"]]);
+    // me 1, me 2, remote 1, remote 2 — and no line changed side.
+    expect(result?.segments.map((s) => `${s.source}${s.speaker}`)).toEqual(["me1", "me2", "them1", "them2"]);
+  });
+
+  it("leaves an undiarized side alone: old split meetings recorded the mic only", async () => {
+    const segs = [
+      seg({ id: "m1", source: "me", speaker: 0, text: "one" }),
+      seg({ id: "m2", source: "me", speaker: 0, text: "two" }),
+      seg({ id: "t1", source: "them", speaker: 0, text: "three" }),
+      seg({ id: "t2", source: "them", speaker: 0, text: "four" }),
+    ];
+    expect(qualifiesForRediarization(segs)).toBe(false);
+    expect(await rediarizeSegments(segs, "/rec.ogg")).toBeNull();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+});
+
 describe("qualifiesForRediarization (whether the post-save gate goes up at all)", () => {
   it("needs a diarized mix meeting with at least two spoken final lines", () => {
     const mix = (id: string, text = "hi", isFinal = true) =>

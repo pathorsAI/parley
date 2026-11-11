@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AudioLines, Loader2, X } from "lucide-react";
 import { useStore, speakerKey } from "../../lib/store";
-import { localizedDefaultSpeakerLabel } from "../../lib/speakers/labels";
+import { localizedDefaultSpeakerLabel, labelContextOf } from "../../lib/speakers/labels";
 import { speakerDotClass } from "../../lib/speakerColors";
 import { runVoiceDiarize } from "../../lib/speakers/diarize";
 import { useI18n } from "../../i18n";
@@ -36,6 +36,7 @@ interface SpeakerEntry {
 export function VoiceDiarizeDialog({ onClose }: Readonly<{ onClose: () => void }>) {
   const { t } = useI18n();
   const segments = useStore((s) => s.segments);
+  const labelCtx = useMemo(() => labelContextOf(segments), [segments]);
   const speakerNames = useStore((s) => s.speakerNames);
   const setSpeakerName = useStore((s) => s.setSpeakerName);
 
@@ -133,7 +134,7 @@ export function VoiceDiarizeDialog({ onClose }: Readonly<{ onClose: () => void }
                       <Input
                         value={speakerNames[sp.key] ?? ""}
                         onChange={(e) => setSpeakerName(sp.key, e.target.value)}
-                        placeholder={localizedDefaultSpeakerLabel(sp, t)}
+                        placeholder={localizedDefaultSpeakerLabel(sp, t, labelCtx)}
                         className="h-8 text-sm"
                       />
                       <span className="truncate text-[11px] text-muted-foreground" title={sp.sample}>

@@ -44,7 +44,7 @@ import { useI18n } from "../../i18n";
 import { CancelMeetingDialog } from "../TitleBar";
 import { MicChip } from "../MicChip";
 import { TranscriptPanel } from "../TranscriptPanel";
-import { displaySpeakerLabel } from "../../lib/speakers/labels";
+import { displaySpeakerLabel, labelContextOf } from "../../lib/speakers/labels";
 import { DestinationField } from "../DestinationSheet";
 import { MeetingContextField } from "../MeetingContextField";
 import { useMeetingDestination } from "../useMeetingDestination";
@@ -118,6 +118,7 @@ function RecordingClock({ withLabel = true }: Readonly<{ withLabel?: boolean }>)
 function MiniTranscript() {
   const { t } = useI18n();
   const segments = useStore((s) => s.segments);
+  const labelCtx = useMemo(() => labelContextOf(segments), [segments]);
   const names = useStore((s) => s.speakerNames);
   const boxRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<HTMLDivElement>(null);
@@ -163,7 +164,7 @@ function MiniTranscript() {
             <p key={seg.id} className="text-sm leading-[22px] text-foreground">
               {/* align-top: the smaller name must not grow the 22px line box. */}
               <span className="mr-1.5 align-top text-xs leading-[22px] font-semibold text-primary">
-                {displaySpeakerLabel(seg, names, t)}
+                {displaySpeakerLabel(seg, names, t, labelCtx)}
               </span>
               {seg.text}
             </p>

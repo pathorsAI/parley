@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AudioLines, Check, Loader2, Mic, Pause, Play, Scissors } from "lucide-react";
-import { localizedDefaultSpeakerLabel } from "../lib/speakers/labels";
+import { localizedDefaultSpeakerLabel, labelContextOf } from "../lib/speakers/labels";
 import { useStore, speakerKey, formatClock, hasSpokenSegment, type ReplayTrim } from "../lib/store";
 import { speakerDotClass } from "../lib/speakerColors";
 import { hasProviderKey } from "../lib/ai/settings";
@@ -59,6 +59,7 @@ export function IngestWizard() {
   const close = useStore((s) => s.closeIngestWizard);
   const enterReplay = useStore((s) => s.enterReplay);
   const segments = useStore((s) => s.segments);
+  const labelCtx = useMemo(() => labelContextOf(segments), [segments]);
   const speakerNames = useStore((s) => s.speakerNames);
   const setSpeakerName = useStore((s) => s.setSpeakerName);
   const analysisStatus = useStore((s) => s.analysisStatus);
@@ -485,7 +486,7 @@ export function IngestWizard() {
                     <Input
                       value={speakerNames[sp.key] ?? ""}
                       onChange={(e) => setSpeakerName(sp.key, e.target.value)}
-                      placeholder={localizedDefaultSpeakerLabel(sp, t)}
+                      placeholder={localizedDefaultSpeakerLabel(sp, t, labelCtx)}
                       className="h-7 w-32 shrink-0 text-xs"
                     />
                     <span

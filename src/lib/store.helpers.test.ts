@@ -64,13 +64,16 @@ describe("speakerKey (stable per-speaker identity)", () => {
 });
 
 describe("defaultSpeakerLabel", () => {
-  it("labels the primary mic voice as You", () => {
-    expect(defaultSpeakerLabel({ source: "me", speaker: 1 })).toBe("You");
-    expect(defaultSpeakerLabel({ source: "me", speaker: 0 })).toBe("You");
+  it("labels a lone mic voice as Me", () => {
+    expect(defaultSpeakerLabel({ source: "me", speaker: 1 })).toBe("Me");
+    expect(defaultSpeakerLabel({ source: "me", speaker: 0 })).toBe("Me");
   });
 
-  it("labels secondary mic voices as numbered Speakers", () => {
-    expect(defaultSpeakerLabel({ source: "me", speaker: 2 })).toBe("Speaker 2");
+  it("numbers mic voices once the mic carries several", () => {
+    expect(defaultSpeakerLabel({ source: "me", speaker: 2 })).toBe("Me 2");
+    // With several voices on the mic, the first one is numbered too.
+    expect(defaultSpeakerLabel({ source: "me", speaker: 1 }, { micSpeakers: 2 })).toBe("Me 1");
+    expect(defaultSpeakerLabel({ source: "them", speaker: 2 }, { micSpeakers: 2 })).toBe("Remote 2");
   });
 
   it("labels remote voices as Them / Remote N", () => {
@@ -97,7 +100,7 @@ describe("speakerLabel (prefers a user-assigned name)", () => {
   });
 
   it("falls back to the default label when names is omitted", () => {
-    expect(speakerLabel({ source: "me", speaker: 1 })).toBe("You");
+    expect(speakerLabel({ source: "me", speaker: 1 })).toBe("Me");
   });
 });
 
@@ -122,7 +125,7 @@ describe("transcriptAsText", () => {
       seg({ id: "p", source: "them", speaker: 1, text: "partial", startMs: 3000, isFinal: false }),
       seg({ id: "e", source: "them", speaker: 1, text: "   ", startMs: 4000 }),
     ];
-    expect(transcriptAsText(segs)).toBe("[You] first\n[Remote 1] second");
+    expect(transcriptAsText(segs)).toBe("[Me] first\n[Remote 1] second");
   });
 
   it("applies custom speaker names", () => {
@@ -137,7 +140,7 @@ describe("transcriptWithTimestamps", () => {
       seg({ id: "a", source: "me", speaker: 1, text: "hello", startMs: 5_000 }),
       seg({ id: "b", source: "them", speaker: 1, text: "world", startMs: 65_000 }),
     ];
-    expect(transcriptWithTimestamps(segs)).toBe("[0:05] [You] hello\n[1:05] [Remote 1] world");
+    expect(transcriptWithTimestamps(segs)).toBe("[0:05] [Me] hello\n[1:05] [Remote 1] world");
   });
 });
 

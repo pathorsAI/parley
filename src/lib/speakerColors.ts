@@ -8,7 +8,7 @@ type SpeakerLike = Pick<TranscriptSegment, "source" | "speaker">;
 const ME_DOT = "bg-primary";
 const OTHER_DOT = "bg-muted-foreground/45";
 
-// The primary mic voice (me, speaker ≤ 1) is "You".
+// The primary mic voice (me, speaker ≤ 1) is "Me" (我).
 function isPrimaryMe(seg: SpeakerLike): boolean {
   return seg.source === "me" && (seg.speaker || 1) <= 1;
 }

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef, useState, useMemo } from "react";
 import { DropdownMenu } from "radix-ui";
 import { Check, ChevronDown, Copy } from "lucide-react";
 import {
@@ -8,7 +8,7 @@ import {
 } from "../lib/store";
 import type { TranscriptSegment } from "../lib/types";
 import { useHint } from "../lib/onboarding/gettingStarted";
-import { displaySpeakerLabel } from "../lib/speakers/labels";
+import { displaySpeakerLabel, labelContextOf } from "../lib/speakers/labels";
 import { useHandoff } from "../lib/onboarding/useHandoff";
 import { useI18n } from "../i18n";
 import { cn } from "@/lib/utils";
@@ -33,8 +33,9 @@ export function TranscriptCopyMenu({
   disabled?: boolean;
 }>) {
   const { t } = useI18n();
+  const labelCtx = useMemo(() => labelContextOf(segments), [segments]);
   // Copied text reads like the screen: localized default labels.
-  const label = (seg: TranscriptSegment) => displaySpeakerLabel(seg, speakerNames, t);
+  const label = (seg: TranscriptSegment) => displaySpeakerLabel(seg, speakerNames, t, labelCtx);
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handoff = useHandoff();

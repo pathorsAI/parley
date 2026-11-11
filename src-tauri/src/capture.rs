@@ -274,7 +274,9 @@ impl Recording {
         }
     }
 
-    fn push(&mut self, chunk: &[i16]) {
+    /// Append a chunk to the buffer and the crash journal. The session meter
+    /// calls it, and so does the record-only sink of separate-tracks mode.
+    pub(crate) fn push(&mut self, chunk: &[i16]) {
         self.pcm.extend_from_slice(chunk);
         if let Some(j) = &self.journal {
             j.push(chunk);

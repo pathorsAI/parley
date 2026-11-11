@@ -143,6 +143,9 @@ export const startMeeting = (args: {
   /** This meeting's id (store.liveMeetingId): its history entry's id and its
    *  crash journal's name. Echoed on `meeting://recording-*`. */
   meetingId?: string | null;
+  /** Transcribe mic ("me") and system audio ("them") as two sessions so the
+   *  transcript knows which words came from this mic. Backend default: true. */
+  separateTracks?: boolean;
 }) => invoke<void>("start_meeting", args);
 /** `keepMs` cuts the saved recording to its first `keepMs` (the silence
  *  guard's trailing-silence trim); omitted, the whole recording is kept. */

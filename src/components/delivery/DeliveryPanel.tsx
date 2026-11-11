@@ -7,7 +7,7 @@ import { useProsody } from "../../lib/analysis/useDelivery";
 import { syllablesPerMin } from "../../lib/analysis/delivery";
 import { computeSpeechStats, talkShare } from "../../lib/analysis/speechStats";
 import { isSpeaker, resolveSelf, speakerRoster, type SelfSpeaker } from "../../lib/speakers/self";
-import { displaySpeakerLabel, speakerLabel } from "../../lib/speakers/labels";
+import { displaySpeakerLabel, speakerLabel, labelContextOf } from "../../lib/speakers/labels";
 import { useRelabel } from "../../lib/speakers/useRelabel";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -401,6 +401,7 @@ function DeliveryScorecard({
   const names = useStore((s) => s.speakerNames);
   const marked = useStore((s) => s.selfSpeaker);
   const roster = useMemo(() => speakerRoster(segments, self), [segments, self]);
+  const labelCtx = useMemo(() => labelContextOf(segments), [segments]);
   const [picked, setPicked] = useState<string | null>(null);
   // A pick on a speaker that is gone (re-diarized) falls back to the default.
   const viewed = roster.find((r) => r.key === picked) ?? roster[0];
@@ -412,7 +413,7 @@ function DeliveryScorecard({
   if (!viewed) return null;
   // The model reads the transcript with English labels; the screen localizes.
   const label = speakerLabel(viewed, names);
-  const displayLabel = displaySpeakerLabel(viewed, names, t);
+  const displayLabel = displaySpeakerLabel(viewed, names, t, labelCtx);
   // The pipeline's tone read is the user's; anyone else is read when shown.
   const ownRead = viewed.isSelf && !!self;
   const pending = !assessment && (running || display === "queued");

@@ -1,7 +1,7 @@
 // The transcript rendered as text: the LLM prompt context and the copy formats.
 
 import type { TranscriptSegment } from "../types";
-import { speakerLabel } from "../speakers/labels";
+import { labelContextOf, speakerLabel } from "../speakers/labels";
 
 /** Final, non-empty segments in start-time order — what every text form reads. */
 function spokenInOrder(segments: TranscriptSegment[]): TranscriptSegment[] {
@@ -18,8 +18,10 @@ type Labeller = (s: TranscriptSegment) => string;
 export function transcriptAsText(
   segments: TranscriptSegment[],
   names?: Record<string, string>,
-  label: Labeller = (s) => speakerLabel(s, names),
+  label?: Labeller,
 ): string {
+  const ctx = labelContextOf(segments);
+  label ??= (s) => speakerLabel(s, names, ctx);
   return spokenInOrder(segments)
     .map((s) => `[${label(s)}] ${s.text.trim()}`)
     .join("\n");
@@ -36,8 +38,10 @@ export function formatClock(ms: number): string {
 export function transcriptWithTimestamps(
   segments: TranscriptSegment[],
   names?: Record<string, string>,
-  label: Labeller = (s) => speakerLabel(s, names),
+  label?: Labeller,
 ): string {
+  const ctx = labelContextOf(segments);
+  label ??= (s) => speakerLabel(s, names, ctx);
   return spokenInOrder(segments)
     .map((s) => `[${formatClock(s.startMs)}] [${label(s)}] ${s.text.trim()}`)
     .join("\n");
