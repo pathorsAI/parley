@@ -3,9 +3,9 @@ import { isTauri } from "../platform";
 import { log } from "../log";
 
 /**
- * The short system sound a voice-typing dictation starts and stops with
+ * The short sound a voice-typing dictation starts and stops with
  * (issue #607): it is started blind from a hotkey, so the sound is how the
- * user knows Parley is listening. The sound itself is the OS's own
+ * user knows Parley is listening. The sound itself is a bundled WAV
  * (commands/cue.rs). Meeting recordings play no cue at either end.
  */
 export type RecordingCue = "start" | "stop";
