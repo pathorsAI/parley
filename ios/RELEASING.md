@@ -298,7 +298,7 @@ the App Store Connect API and does six things, then optionally a seventh:
 | 2 | finds or creates the App Store version — or renames the one already waiting, when asked to — refusing one Apple has taken out of our hands |
 | 3 | attaches the TestFlight build, waiting up to 30 minutes if it is still processing |
 | 4 | sets **What's New** in both locales from `AppStore/metadata/*.md` |
-| 5 | replaces the **6.9-inch screenshot set** in both locales from `AppStore/screenshots/` |
+| 5 | replaces the **6.9-inch screenshot set** in both locales from `AppStore/screenshots/` — or leaves it alone when Connect already holds the same files (md5 `sourceFileChecksum`), in the same order, all `COMPLETE` |
 | 6 | answers **export compliance** on the build — `usesNonExemptEncryption = false`, because the app speaks only HTTPS |
 | 7 | creates a review submission and submits it — **skipped in a dry run** |
 
@@ -314,8 +314,21 @@ gh workflow run "iOS store submission" -f version=1.12 -f build=23 -f dry_run=fa
 point: a dry run leaves the version in Connect in exactly the state it would be
 submitted in, so the product page can be read before anybody commits to it.
 Steps 1–6 are idempotent — re-running re-attaches the same build, overwrites the
-same text, and replaces the screenshot set with an identical one — and step 7 is
+same text, and leaves an unchanged screenshot set where it is — and step 7 is
 the one door that does not open twice.
+
+**Why an unchanged set is left alone.** Apple hangs processing an identical file
+re-uploaded shortly after a previous upload of it. On 2026-11-10, submitting 1.37
+(build 55) failed three times with `<file> was still UPLOAD_COMPLETE after 900s`:
+once on a dry run right after a failed run, once on the real submit three minutes
+after a successful dry run. The same run went through when started an hour later.
+A dry run followed by the real run is the designed flow, so replacing the set
+every time tripped this on every release whose screenshots had not changed. Step
+5 now compares the set in Connect with the PNGs first and prints
+`already holds these N screenshots, all COMPLETE — leaving it alone` when they
+match. Anything different — one regenerated frame, a new order, a missing frame,
+an asset not `COMPLETE` — still deletes and re-uploads the whole set. If a run
+that *does* change screenshots hits the hang, wait an hour before re-running.
 
 `release_type` is `AFTER_APPROVAL` by default, meaning Apple releases the version
 as soon as it passes review. Pass `MANUAL` to hold it.

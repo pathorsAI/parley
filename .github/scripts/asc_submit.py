@@ -21,7 +21,8 @@ The steps, in order, each printed as its own `::group::`:
      already waiting — and refuse to edit one Apple has taken out of our hands
   3. attach the TestFlight build, waiting for it to finish processing
   4. set What's New per locale from ios/AppStore/metadata/*.md
-  5. replace the 6.9-inch screenshot set per locale from ios/AppStore/screenshots/
+  5. replace the 6.9-inch screenshot set per locale from ios/AppStore/screenshots/,
+     unless Connect already holds exactly those files in that order
   6. declare export compliance on the build
   7. create a review submission and submit it — skipped by `--dry-run`
 
@@ -36,7 +37,7 @@ whatever is in Connect and call it 1.15".
 
 `--dry-run` is the workflow's default and stops before step 7 only. Everything
 before it is idempotent: re-running re-attaches the same build, overwrites the
-same text, and replaces the screenshot set with an identical one. Step 7 is the
+same text, and leaves a screenshot set alone when it already matches. Step 7 is the
 one door that does not open twice, which is why it is the one step a dry run
 leaves shut.
 
@@ -827,28 +828,67 @@ def set_localization(
     )["data"]
 
 
+def screenshot_set_matches(connect: Connect, set_id: str, files: list[Path]) -> bool:
+    """Whether a set in Connect already holds exactly these files, in this order.
+
+    Matched on the md5 `sourceFileChecksum` that `upload_screenshot` sends on
+    commit, not on file names: a regenerated frame keeps its name. And only when
+    every asset is COMPLETE, because a frame stuck in UPLOAD_COMPLETE or FAILED is
+    an empty slot in the listing that blocks submission, and the way out of that
+    is the replace below, not leaving it there.
+    """
+    shots = connect.api(
+        "GET", f"/appScreenshotSets/{set_id}/appScreenshots", params={"limit": 50}
+    )["data"]
+    if len(shots) != len(files):
+        return False
+    for shot, path in zip(shots, files):
+        attributes = shot.get("attributes") or {}
+        if (attributes.get("assetDeliveryState") or {}).get("state") != "COMPLETE":
+            return False
+        if attributes.get("sourceFileChecksum") != hashlib.md5(
+            path.read_bytes()
+        ).hexdigest():
+            return False
+    return True
+
+
 def replace_screenshot_set(
     connect: Connect, localization_id: str, locale: str, files: list[Path]
 ) -> int:
     """Upload a locale's 6.9-inch set, replacing whatever is there.
 
+    Returns how many screenshots were uploaded: 0 when the set was left alone.
+
     Replacing rather than adding: a screenshot cannot be swapped in place, so an
     incremental update would leave the previous release's frames interleaved with
-    this one's in an order nobody chose.
+    this one's in an order nobody chose. So when anything differs — a file, the
+    order, the count, an asset Apple never finished — the whole set goes.
+
+    When nothing differs the set is left alone. Re-uploading an identical file
+    shortly after a previous upload of it is what Apple hangs on: on 2026-11-10
+    the 1.37 submission failed three times with a screenshot "still
+    UPLOAD_COMPLETE after 900s" — a dry run followed by the real run minutes
+    later is exactly that — and the same run went through an hour later.
     """
-    sets = connect.api(
-        "GET", f"/appStoreVersionLocalizations/{localization_id}/appScreenshotSets"
-    )["data"]
+    sets = [
+        existing
+        for existing in connect.api(
+            "GET", f"/appStoreVersionLocalizations/{localization_id}/appScreenshotSets"
+        )["data"]
+        if existing["attributes"].get("screenshotDisplayType")
+        == SCREENSHOT_DISPLAY_TYPE
+    ]
+    if len(sets) == 1 and screenshot_set_matches(connect, sets[0]["id"], files):
+        print(
+            f"  {locale}: the {SCREENSHOT_DISPLAY_TYPE} set {sets[0]['id']} already "
+            f"holds these {len(files)} screenshots, all COMPLETE — leaving it alone"
+        )
+        return 0
+
     for existing in sets:
-        if (
-            existing["attributes"].get("screenshotDisplayType")
-            == SCREENSHOT_DISPLAY_TYPE
-        ):
-            print(
-                f"  deleting the existing {SCREENSHOT_DISPLAY_TYPE} set "
-                f"{existing['id']}"
-            )
-            connect.api("DELETE", f"/appScreenshotSets/{existing['id']}")
+        print(f"  deleting the existing {SCREENSHOT_DISPLAY_TYPE} set {existing['id']}")
+        connect.api("DELETE", f"/appScreenshotSets/{existing['id']}")
 
     created = connect.api(
         "POST",
@@ -1207,11 +1247,10 @@ def main(argv: list[str] | None = None) -> int:
             uploaded[locale] = "skipped (no PNGs)"
             continue
         print(f"  {locale}: {', '.join(path.name for path in files)}")
-        uploaded[locale] = str(
-            replace_screenshot_set(
-                connect, version_localizations[locale]["id"], locale, files
-            )
+        count = replace_screenshot_set(
+            connect, version_localizations[locale]["id"], locale, files
         )
+        uploaded[locale] = str(count) if count else f"unchanged ({len(files)})"
     summary["screenshots"] = ", ".join(f"{k}: {v}" for k, v in uploaded.items())
     endgroup()
 

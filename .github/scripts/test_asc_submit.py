@@ -693,6 +693,10 @@ class ScreenshotUpload(unittest.TestCase):
                         },
                     ]
                 },
+                # One frame where the repository now has none: not a match.
+                ("GET", "/appScreenshotSets/OLD/appScreenshots"): {
+                    "data": [shot("A", b"old-frame")]
+                },
                 ("DELETE", "/appScreenshotSets/OLD"): {},
                 ("POST", "/appScreenshotSets"): {"data": {"id": "NEW"}},
             }
@@ -711,6 +715,124 @@ class ScreenshotUpload(unittest.TestCase):
             created["relationships"]["appStoreVersionLocalization"]["data"],
             {"type": "appStoreVersionLocalizations", "id": "LOC"},
         )
+
+
+def shot(shot_id: str, blob: bytes, state: str = "COMPLETE") -> dict:
+    """An appScreenshot as Connect lists it: the md5 we committed, and its state."""
+    return {
+        "id": shot_id,
+        "attributes": {
+            "sourceFileChecksum": hashlib.md5(blob).hexdigest(),
+            "assetDeliveryState": {"state": state, "errors": []},
+        },
+    }
+
+
+class UnchangedScreenshotSet(unittest.TestCase):
+    """A set Connect already holds is left alone; anything different replaces it.
+
+    Re-uploading identical files minutes after the last upload of them is what
+    hung the 1.37 submission three times on 2026-11-10, and a dry run followed by
+    the real run does exactly that whenever the screenshots did not change.
+    """
+
+    SETS = ("GET", "/appStoreVersionLocalizations/LOC/appScreenshotSets")
+    SHOTS = ("GET", "/appScreenshotSets/OLD/appScreenshots")
+    BLOBS = (b"frame-one", b"frame-two", b"frame-three")
+
+    def setUp(self):
+        directory = Path(self.enterContext(_temporary_directory()))
+        self.files = []
+        for index, blob in enumerate(self.BLOBS, start=1):
+            path = directory / f"0{index}.png"
+            path.write_bytes(blob)
+            self.files.append(path)
+
+    def connect(self, shots: list[dict]) -> FakeConnect:
+        return FakeConnect(
+            {
+                self.SETS: {
+                    "data": [
+                        {
+                            "id": "OLD",
+                            "attributes": {
+                                "screenshotDisplayType": submit.SCREENSHOT_DISPLAY_TYPE
+                            },
+                        }
+                    ]
+                },
+                self.SHOTS: {"data": shots},
+                ("DELETE", "/appScreenshotSets/OLD"): {},
+                ("POST", "/appScreenshotSets"): {"data": {"id": "NEW"}},
+                ("POST", "/appScreenshots"): {
+                    "data": {
+                        "id": "SHOT",
+                        "attributes": {"uploadOperations": [{"url": "https://u"}]},
+                    }
+                },
+                ("PATCH", "/appScreenshots/SHOT"): {
+                    "data": {
+                        "attributes": {
+                            "assetDeliveryState": {"state": "COMPLETE", "errors": []}
+                        }
+                    }
+                },
+            }
+        )
+
+    def replace(self, connect: FakeConnect) -> int:
+        with contextlib.redirect_stdout(io.StringIO()):
+            return submit.replace_screenshot_set(connect, "LOC", "en-US", self.files)
+
+    def assert_replaced(self, connect: FakeConnect, count: int) -> None:
+        self.assertEqual(count, len(self.files))
+        self.assertTrue(connect.made("DELETE", "/appScreenshotSets/OLD"))
+        self.assertTrue(connect.made("POST", "/appScreenshotSets"))
+        self.assertEqual([blob for _, blob in connect.uploads], list(self.BLOBS))
+
+    def test_an_identical_set_is_left_alone(self):
+        connect = self.connect(
+            [shot(f"S{i}", blob) for i, blob in enumerate(self.BLOBS)]
+        )
+        self.assertEqual(self.replace(connect), 0)
+        self.assertFalse(connect.made("DELETE", "/appScreenshotSets/OLD"))
+        self.assertFalse(connect.made("POST", "/appScreenshotSets"))
+        self.assertFalse(connect.made("POST", "/appScreenshots"))
+        self.assertEqual(connect.uploads, [])
+
+    def test_one_changed_file_replaces_the_set(self):
+        connect = self.connect(
+            [
+                shot("S0", self.BLOBS[0]),
+                shot("S1", b"last-release-frame-two"),
+                shot("S2", self.BLOBS[2]),
+            ]
+        )
+        self.assert_replaced(connect, self.replace(connect))
+
+    def test_an_asset_apple_never_finished_replaces_the_set(self):
+        connect = self.connect(
+            [
+                shot("S0", self.BLOBS[0]),
+                shot("S1", self.BLOBS[1], state="UPLOAD_COMPLETE"),
+                shot("S2", self.BLOBS[2]),
+            ]
+        )
+        self.assert_replaced(connect, self.replace(connect))
+
+    def test_the_same_files_in_another_order_replace_the_set(self):
+        connect = self.connect(
+            [
+                shot("S1", self.BLOBS[1]),
+                shot("S0", self.BLOBS[0]),
+                shot("S2", self.BLOBS[2]),
+            ]
+        )
+        self.assert_replaced(connect, self.replace(connect))
+
+    def test_a_missing_frame_replaces_the_set(self):
+        connect = self.connect([shot("S0", self.BLOBS[0]), shot("S1", self.BLOBS[1])])
+        self.assert_replaced(connect, self.replace(connect))
 
 
 class ReviewSubmission(unittest.TestCase):
