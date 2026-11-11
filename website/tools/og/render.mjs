@@ -3,7 +3,7 @@
 //   node website/tools/og/render.mjs      (or: bun website/tools/og/render.mjs)
 //
 // Fills og.html from the site's own strings (website/src/i18n/*.json), so the card
-// shows the hero's headline and the models figure in its local state.
+// shows the hero's headline and the local-mode library.
 // Fonts are inlined as data: URLs because Chrome will not load @font-face files
 // across file:// URLs.
 //
@@ -76,16 +76,12 @@ for (const [lang, cfg] of Object.entries(LANGS)) {
     htmlLang: cfg.htmlLang,
     url: cfg.url,
     h1: t["hero.h1"],
-    device: text("route.device"),
-    rec1: text("route.rec1"),
-    rec2: text("route.rec2"),
-    rec3: text("route.rec3"),
-    deviceNote: text("route.deviceNote"),
-    stt: text("route.stt"),
-    ai: text("route.ai"),
-    sttLocal: text("route.sttLocal"),
-    aiLocal: text("route.local"),
-    capByok: text("route.capByok"),
+    device: text("modes.device"),
+    rec1: text("modes.rec1"),
+    rec2: text("modes.rec2"),
+    rec3: text("modes.rec3"),
+    deviceNote: text("modes.localNote"),
+    cap: text("plans.p"),
   };
   const html = template
     .replace(/<!--[\s\S]*?-->\n?/, "")

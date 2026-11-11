@@ -59,16 +59,18 @@ from `/en/`, `@lang`, `@canonical`, …). Comments that start with `<!--#` are t
 are stripped from the output.
 
 The hero line, "Be in the meeting. Parley takes the notes." / 「專心開會，紀錄交給 Parley。」, is
-the page's position: Parley is a meeting notes app. The page reads like one: hero and the report
-screenshot, how it works (before / during / after cards), a feature grid, local vs hosted models,
-two plans, an FAQ, download. Live coaching is not on the page. Keep the claims to what the code
+the page's position: Parley is a meeting notes app. The page reads like one: hero (platform marks, a
+marquee of the models it runs on), how it works (before / during / after cards), a feature grid, the two modes (local keeps
+everything on your computer, cloud syncs your devices), an FAQ, download. Live coaching is not on the page. Keep the claims to what the code
 backs: the app is open source (the cloud service is not, so never write "fully open source"), and
 the cloud edition only says that recordings go to Parley. Do not publish free-tier numbers — the
 wording is "a free allowance that covers everyday use". Retired features (live translation,
 interpreter, the intel board, scenarios, job-interview or diligence use cases) must not come back;
 the test suite checks for them.
 
-The look: white paper and ink, blue for what is live or clickable, content on hairline cards. The
+The look: white paper and ink, blue for what is live or clickable, sections separated by
+whitespace (only the plans and the download sit on cards). Icons are drawn for this page in ink,
+not taken from an icon set, and features follow one pattern: icon, bold lead sentence, grey sentence. The
 app icon (`assets/app-icon.svg`, a copy of the repo's `app-icon.svg`) is the logo in the nav,
 footer and favicon, and its teal → sky → indigo gradient appears only in the hero glow, the word
 "Parley" in the headline, the cloud plan's edge and the download card.
@@ -76,27 +78,21 @@ footer and favicon, and its teal → sky → indigo gradient appears only in the
 ## What script.js does
 
 The page is complete without JavaScript: the Mac download is the default call to action, the
-models row shows the local route, the transcript is shown in full and every section is visible.
+model list is a still, wrapped row, the transcript is shown in full and every section is visible.
 With it:
 
 - **OS-aware downloads** — iPhone/iPad visitors get the App Store first, Android visitors
   Google Play, Windows visitors the Windows installer, everyone else the Mac. The download row
   reorders itself the same way. The Google Play badge is Google's unmodified artwork and is
   never restyled into a button.
-- **Models route** — the toggle switches between the two setups the app offers on first launch.
-  Local: wires run straight from your computer to the transcription and AI providers, the
-  Parley node sits dashed below the path, and the example hosts step through real endpoints
-  (transcription starts on-device on whisper.cpp, AI on Ollama). Providers are shown by
-  name and mark, never by hostname. Cloud edition: the Parley node rises into
-  the path, the wire stops there and the providers step aside; the cloud copy says only that
-  recordings go to Parley. The nodes are HTML; the wires are an SVG redrawn from their
-  measured boxes, so the same code draws the stacked phone layout.
+- **Model marquee** — the HTML lists the models once; the script copies the list (hidden from
+  screen readers) and CSS scrolls the pair by half its width, so it loops. Hover pauses it.
 - **Transcript demo** (the "In the meeting" row) — the transcript types itself in time with a
   canvas waveform, speakers resolve from "…" to 講者 A/B (Speaker A/B), unsettled words stay
   grey. The demo is `aria-hidden`; screen readers get its one-line description.
 - **A 160ms fade** as sections scroll into view (opacity only), and the small-screen menu.
 
-`prefers-reduced-motion` gets still wires and fixed hosts, the full transcript, a static
+`prefers-reduced-motion` gets the still model list, the full transcript, a static
 waveform, the demos in their final state and no fades.
 
 ## Keeping it short
@@ -162,7 +158,7 @@ Halcyon Labs, 子午線 / Meridian).
 ## Open Graph cards
 
 `assets/og-zh.png` and `assets/og-en.png` (1200×630) are rendered from `tools/og/og.html`,
-filled with the hero headline and the route figure's strings, by headless Chrome:
+filled with the hero headline and the local-mode library's strings, by headless Chrome:
 
 ```bash
 node website/tools/og/render.mjs

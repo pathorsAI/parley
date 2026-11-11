@@ -59,7 +59,6 @@
     <nav class="nav__links" id="nav-links" aria-label="{{nav.primary|attr}}">
       <a href="#flow">{{nav.meetings}}</a>
       <a href="#features">{{nav.features}}</a>
-      <a href="#models">{{nav.models}}</a>
       <a href="#plans">{{nav.plans}}</a>
       <a href="#faq">{{nav.faq}}</a>
       <a href="{{@base}}guides/open-source-meeting-recorder/">{{nav.guides}}</a>
@@ -77,7 +76,8 @@
   <!-- ============ Hero ============ -->
   <section class="hero">
     <div class="wrap hero__in">
-      <p class="plats">{{hero.platforms}}</p>
+      <!--# Where it runs, as marks: Apple (Mac and iPhone), Windows, Android, then the source. -->
+      <p class="plats"><span class="sr-only">{{hero.platforms}}</span><svg viewBox="0 0 384 512" width="13" height="16" fill="currentColor" aria-hidden="true"><title>macOS · iOS</title><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/></svg><svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><title>Windows</title><path d="M0 0h7.4v7.4H0zM8.6 0H16v7.4H8.6zM0 8.6h7.4V16H0zM8.6 8.6H16V16H8.6z"/></svg><svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor" aria-hidden="true"><title>Android</title><path d="M17.523 15.341a.999.999 0 1 1 0-1.998.999.999 0 0 1 0 1.998m-11.046 0a.999.999 0 1 1 0-1.998.999.999 0 0 1 0 1.998m11.405-6.02 1.997-3.459a.416.416 0 0 0-.152-.568.416.416 0 0 0-.568.152l-2.022 3.503C15.59 8.244 13.853 7.851 12 7.851s-3.59.393-5.137 1.099L4.841 5.447a.416.416 0 0 0-.568-.152.416.416 0 0 0-.152.568l1.997 3.459C2.689 11.187.343 14.659 0 18.761h24c-.344-4.102-2.689-7.574-6.118-9.44"/></svg><i class="plats__sep" aria-hidden="true"></i><svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><title>GitHub</title><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg><span class="plats__open" aria-hidden="true">{{hero.openShort}}</span></p>
       <h1>{{hero.h1}}</h1>
       <p class="sub">{{hero.sub}}</p>
       <div class="ctas">
@@ -90,8 +90,12 @@
         <a class="b2" id="cta-secondary" href="https://apps.apple.com/app/id6795031201">{{cta.iphone}}</a>
       </div>
       <p class="fine">{{hero.fine}} <a href="https://github.com/pathorsAI/parley">{{hero.open}}</a></p>
-      <!--# The models people run it on: local ones first, then the hosted APIs. -->
+      <!--# The models people run it on. script.js copies the list once and scrolls the
+           pair by half its width, so it loops as a marquee; without JS or with reduced
+           motion it is this one still, wrapped list. Hover pauses it. -->
       <p class="works__k">{{hero.works}}</p>
+      <div class="marquee">
+        <div class="marquee__track">
       <ul class="works" aria-label="{{hero.works|attr}}">
         <li>whisper.cpp</li>
         <li><span class="logo" style="--m:url('{{@base}}assets/logos/ollama.svg')"></span>Ollama</li>
@@ -99,17 +103,14 @@
         <li><span class="logo" style="--m:url('{{@base}}assets/logos/openai.svg')"></span>OpenAI</li>
         <li><span class="logo" style="--m:url('{{@base}}assets/logos/gemini.svg')"></span>Gemini</li>
         <li><span class="logo" style="--m:url('{{@base}}assets/logos/deepgram.svg')"></span>Deepgram</li>
+        <li><span class="logo" style="--m:url('{{@base}}assets/logos/assemblyai.svg')"></span>AssemblyAI</li>
+        <li>Soniox</li>
         <li><span class="logo" style="--m:url('{{@base}}assets/logos/groq.svg')"></span>Groq</li>
         <li><span class="logo" style="--m:url('{{@base}}assets/logos/qwen.svg')"></span>Qwen</li>
+        <li><span class="logo" style="--m:url('{{@base}}assets/logos/kimi.svg')"></span>Kimi</li>
         <li><span class="logo" style="--m:url('{{@base}}assets/logos/openrouter.svg')"></span>OpenRouter</li>
       </ul>
-    </div>
-    <div class="wrap bigshot">
-      <div class="winshot winshot--report">
-        <picture>
-          <source type="image/webp" srcset="{{@base}}assets/shots/desktop-report-{{@lang}}.webp">
-          <img src="{{@base}}assets/shots/desktop-report-{{@lang}}.jpg" width="2000" height="1250" decoding="async" alt="{{shot.reportAlt|attr}}">
-        </picture>
+        </div>
       </div>
     </div>
   </section>
@@ -122,7 +123,7 @@
         <h2>{{flow.h2}}</h2>
       </div>
       <div class="flow">
-        <article class="card flow__c fade" id="before">
+        <article class="flow__c fade" id="before">
           <p class="flow__step">{{before.kicker}}</p>
           <h3>{{before.h3}}</h3>
           <p class="flow__p">{{before.p}}</p>
@@ -141,7 +142,7 @@
             </div>
           </figure>
         </article>
-        <article class="card flow__c fade" id="meetings">
+        <article class="flow__c fade" id="meetings">
           <p class="flow__step">{{meetings.kicker}}</p>
           <h3>{{meetings.h3}}</h3>
           <p class="flow__p">{{meetings.p}}</p>
@@ -160,7 +161,7 @@
             <p class="sr-only">{{demo.alt}}</p>
           </div>
         </article>
-        <article class="card flow__c fade" id="after">
+        <article class="flow__c fade" id="after">
           <p class="flow__step">{{after.kicker}}</p>
           <h3>{{after.h3}}</h3>
           <p class="flow__p">{{after.p}}</p>
@@ -189,90 +190,40 @@
         <p class="k">{{feat.kicker}}</p>
         <h2>{{feat.h2}}</h2>
       </div>
+      <!--# Spokenly-style: an ink line icon, then a bold lead sentence that runs into the grey one. No cards. -->
       <ul class="feats fade">
-        <li class="feat"><svg class="feat__i" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 5h16v10H4zM9 19h6M12 15v4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><h3>{{feat.local.h}}</h3><p>{{feat.local.p}}</p></li>
-        <li class="feat"><svg class="feat__i" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M7 18h10a4 4 0 0 0 .5-7.97A6 6 0 0 0 6 9.5 4.25 4.25 0 0 0 7 18z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><h3>{{feat.hosted.h}}</h3><p>{{feat.hosted.p}}</p></li>
-        <li class="feat"><svg class="feat__i" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 19c.8-3 3.2-4.5 6-4.5s5.2 1.5 6 4.5M16 5.5a3 3 0 0 1 0 5.5M18 14.8c1.4.6 2.4 2 2.9 4.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><h3>{{feat.speakers.h}}</h3><p>{{feat.speakers.p}}</p></li>
-        <li class="feat"><svg class="feat__i" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 12h2l2-6 3 12 3-9 2 3h4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><h3>{{feat.audio.h}}</h3><p>{{feat.audio.p}}</p></li>
-        <li class="feat"><svg class="feat__i" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM20 20l-4-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><h3>{{feat.search.h}}</h3><p>{{feat.search.p}}</p></li>
-        <li class="feat"><svg class="feat__i" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M8 9l-4 3 4 3M16 9l4 3-4 3M13.5 6l-3 12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><h3>{{feat.mcp.h}}</h3><p>{{feat.mcp.p}}</p></li>
-        <li class="feat"><svg class="feat__i" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M8 3h8a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM11 18h2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><h3>{{feat.phone.h}}</h3><p>{{feat.phone.p}}</p></li>
-        <li class="feat"><svg class="feat__i" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 9c0 5-6 4-12 9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><h3>{{feat.open.h}}</h3><p>{{feat.open.p}}</p></li>
+        <li class="feat"><svg class="feat__i" viewBox="0 0 32 32" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="7" width="22" height="14" rx="2"/><path d="M2.5 25h27"/><path d="M12 12.5v3M16 10.5v7M20 12.5v3"/></svg><p><b>{{feat.local.h}}</b> {{feat.local.p}}</p></li>
+        <li class="feat"><svg class="feat__i" viewBox="0 0 32 32" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 24h13.25a5.25 5.25 0 0 0 .9-10.42A7.5 7.5 0 0 0 9.4 12.6 5.75 5.75 0 0 0 9.5 24z"/><path d="M13 18v2M16 16v6M19 18v2"/></svg><p><b>{{feat.hosted.h}}</b> {{feat.hosted.p}}</p></li>
+        <li class="feat"><svg class="feat__i" viewBox="0 0 32 32" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 6h12a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-6l-4 3.5V16H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z"/><path d="M22.5 11H27a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-1.5v3.5l-4-3.5H15a2 2 0 0 1-2-2v-.5"/></svg><p><b>{{feat.speakers.h}}</b> {{feat.speakers.p}}</p></li>
+        <li class="feat"><svg class="feat__i" viewBox="0 0 32 32" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h15M4 15h11M4 21h8"/><path d="M19.5 16.5v9l7.5-4.5z"/></svg><p><b>{{feat.audio.h}}</b> {{feat.audio.p}}</p></li>
+        <li class="feat"><svg class="feat__i" viewBox="0 0 32 32" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h20M4 14h10M4 20h7"/><circle cx="21" cy="20" r="4.5"/><path d="m24.3 23.3 3.7 3.7"/></svg><p><b>{{feat.search.h}}</b> {{feat.search.p}}</p></li>
+        <li class="feat"><svg class="feat__i" viewBox="0 0 32 32" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="6" width="25" height="20" rx="3"/><path d="m9.5 13 3.5 3-3.5 3M16 19.5h6"/></svg><p><b>{{feat.mcp.h}}</b> {{feat.mcp.p}}</p></li>
       </ul>
     </div>
   </section>
 
-  <!-- ============ Models: on your machine, or hosted by Parley ============ -->
-  <section class="sec" id="models">
-    <div class="wrap models">
-      <div class="models__tx fade">
-        <p class="k">{{models.kicker}}</p>
-        <h2>{{models.h2}}</h2>
-        <p class="p">{{models.p}}</p>
-      </div>
-      <div class="card models__vis">
-          <!--#
-          Where the conversation goes, in the two setups the app offers on first launch.
-          Local: on-device whisper.cpp and Ollama, or straight to the providers you picked.
-          Hosted: to Parley, which runs the models; that is all it says.
-          The nodes are plain HTML; script.js draws the wires, cycles the example hosts
-          (real providers, by name and mark) and flips the mode.
-        -->
-        <figure class="route fade" id="route" data-mode="byok" aria-labelledby="route-cap">
-          <fieldset class="seg">
-            <legend class="sr-only">{{route.label}}</legend>
-            <button type="button" aria-pressed="true" data-mode="byok">{{route.byok}}</button>
-            <button type="button" aria-pressed="false" data-mode="cloud">{{route.cloud}}</button>
-          </fieldset>
-          <div class="route__map" id="route-map">
-            <svg class="route__wires" aria-hidden="true"></svg>
-            <div class="rt-dev" data-node="dev">
-              <p class="rt-dev__k">{{route.device}}</p>
-              <ul class="rt-lib" aria-hidden="true">
-                <li class="is-live"><span>{{route.rec1}}</span><time>18:47</time></li>
-                <li><span>{{route.rec2}}</span><time>32:10</time></li>
-                <li><span>{{route.rec3}}</span><time>45:03</time></li>
-              </ul>
-              <p class="rt-dev__note">{{route.deviceNote}}</p>
-            </div>
-            <div class="rt-mid">
-              <div class="rt-node rt-node--parley" data-node="parley">
-                <p class="rt-k">{{route.parley}}</p>
-                <p class="rt-prov"><img class="rt-mark" src="{{@base}}assets/app-icon.svg" alt="" width="18" height="18"><span class="rt-n">Parley</span></p>
-                <p class="rt-note"><span class="when-byok">{{route.parleyOff}}</span><span class="when-cloud">{{route.parleyOn}}</span></p>
-              </div>
-            </div>
-            <div class="rt-dest">
-              <div class="rt-node" data-node="stt">
-                <p class="rt-k">{{route.stt}}</p>
-                <p class="rt-prov" data-cycle='[{"n": "whisper.cpp", "l": ""}, {"n": "Soniox", "l": ""}, {"n": "Deepgram", "l": "{{@base}}assets/logos/deepgram.svg"}, {"n": "OpenAI", "l": "{{@base}}assets/logos/openai.svg"}]' data-local="whisper.cpp"><span class="logo" hidden></span><span class="rt-n">whisper.cpp</span></p>
-                <p class="rt-note" data-direct="{{route.direct|attr}}" data-local-note="{{route.sttLocal|attr}}">{{route.sttLocal}}</p>
-              </div>
-              <div class="rt-node" data-node="ai">
-                <p class="rt-k">{{route.ai}}</p>
-                <p class="rt-prov" data-cycle='[{"n": "Ollama", "l": "{{@base}}assets/logos/ollama.svg"}, {"n": "Claude", "l": "{{@base}}assets/logos/claude.svg"}, {"n": "OpenAI", "l": "{{@base}}assets/logos/openai.svg"}, {"n": "Gemini", "l": "{{@base}}assets/logos/gemini.svg"}]' data-local="Ollama"><span class="logo" style="--m:url('{{@base}}assets/logos/ollama.svg')"></span><span class="rt-n">Ollama</span></p>
-                <p class="rt-note" data-direct="{{route.direct|attr}}" data-local-note="{{route.local|attr}}">{{route.local}}</p>
-              </div>
-            </div>
-          </div>
-          <figcaption class="route__cap" id="route-cap">
-            <span class="when-byok">{{route.capByok}}</span>
-            <span class="when-cloud">{{route.capCloud}}</span>
-          </figcaption>
-        </figure>
-      </div>
-    </div>
-  </section>
-
-  <!-- ============ Plans: no prices; the cloud copy says only "a free allowance" ============ -->
+  <!-- ============ Two modes: local keeps it on your computer, cloud syncs your devices ============ -->
   <section class="sec" id="plans">
     <div class="wrap">
       <div class="sec__head fade">
         <p class="k">{{plans.kicker}}</p>
         <h2>{{plans.h2}}</h2>
+        <p class="p">{{plans.p}}</p>
       </div>
+      <!--# No prices: the cloud copy says only "a free allowance". Each card leads with a
+           drawing of what the mode means — the library on one computer, or the same
+           meeting on a phone and a computer. -->
       <div class="plans fade">
         <div class="card plan">
+          <div class="mode mode--local" aria-hidden="true">
+            <p class="mode__k">{{modes.device}}</p>
+            <ul class="mode__lib">
+              <li class="is-live"><span>{{modes.rec1}}</span><time>18:47</time></li>
+              <li><span>{{modes.rec2}}</span><time>32:10</time></li>
+              <li><span>{{modes.rec3}}</span><time>45:03</time></li>
+            </ul>
+            <p class="mode__note"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>{{modes.localNote}}</p>
+          </div>
           <p class="plan__k">{{plans.localName}}</p>
           <p class="plan__price">{{plans.localPrice}}</p>
           <p class="plan__tag">{{plans.localTag}}</p>
@@ -299,6 +250,19 @@
           </ul>
         </div>
         <div class="card plan plan--cloud">
+          <div class="mode mode--cloud" aria-hidden="true">
+            <div class="mode__dev">
+              <p class="mode__k">iPhone</p>
+              <p class="mode__row"><i class="rec-dot"></i>{{modes.rec1}}</p>
+              <p class="mode__st">{{modes.recording}}</p>
+            </div>
+            <svg class="sync__i" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h13l-3.5-3.5M20 15H7l3.5 3.5"/></svg>
+            <div class="mode__dev">
+              <p class="mode__k">Mac · Windows</p>
+              <p class="mode__row">{{modes.rec1}}</p>
+              <p class="mode__st is-done"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg>{{modes.synced}}</p>
+            </div>
+          </div>
           <p class="plan__k">{{plans.cloudName}}</p>
           <p class="plan__price">{{plans.cloudPrice}}</p>
           <p class="plan__tag">{{plans.cloudTag}}</p>

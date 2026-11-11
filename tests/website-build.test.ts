@@ -90,7 +90,7 @@ describe("website build", () => {
     expect(en).toContain('content="https://parley.tw/assets/og-en.png"');
     expect(zh).toContain('href="styles.css"');
     expect(en).toContain('href="../styles.css"');
-    expect(en).toContain('src="../assets/shots/desktop-report-en.jpg"');
+    expect(en).toContain('href="../assets/app-icon.svg"');
     expect(en).toContain('href="../privacy/?lang=en"');
   });
 
