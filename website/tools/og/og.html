@@ -28,14 +28,9 @@ h1 { font-size: 54px; font-weight: 700; line-height: 1.16; letter-spacing: -.02e
 :lang(zh) h1 { font-size: 46px; line-height: 1.3; letter-spacing: 0; }
 .url { font-size: 18px; font-weight: 600; color: var(--secondary); margin-top: 22px; }
 .right { display: flex; flex-direction: column; justify-content: flex-end; min-width: 0; }
-/* The models figure, local state, frozen: your computer, two wires to on-device models, no Parley. */
-.map { position: relative; width: 470px; height: 300px; }
-.map svg { position: absolute; inset: 0; overflow: visible; }
-.map path { fill: none; stroke: var(--signal); stroke-width: 2; stroke-dasharray: 2 10; stroke-linecap: round; }
-.map circle { fill: #FFFFFF; stroke: var(--signal); stroke-width: 2; }
+/* Local mode, frozen: your recordings, on your computer. */
 .dev {
-  position: absolute; left: 0; top: 18px; width: 212px; height: 264px;
-  padding: 20px 20px 18px; border-radius: 16px; background: #F6F7F9;
+  width: 380px; padding: 24px 24px 20px; border-radius: 18px; background: #F6F7F9;
   display: flex; flex-direction: column;
 }
 .k { font-size: 15px; font-weight: 600; color: var(--secondary); }
@@ -44,15 +39,8 @@ h1 { font-size: 54px; font-weight: 700; line-height: 1.16; letter-spacing: -.02e
 .lib li:first-child::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--recording); margin: 8px 8px 0 0; }
 .lib li span { flex: 1; }
 .lib time { font-size: 14px; color: var(--tertiary); }
-.note { margin-top: auto; padding-top: 12px; border-top: 1px solid #D5DAE0; font-size: 14px; color: var(--secondary); line-height: 1.5; }
-.node {
-  position: absolute; left: 282px; width: 188px; height: 96px;
-  padding: 14px 16px; border: 1.5px solid #D5DAE0; border-radius: 14px; background: #FFFFFF;
-}
-.node.stt { top: 36px; } .node.ai { top: 168px; }
-.host { font-size: 17px; font-weight: 600; line-height: 1.45; margin-top: 4px; }
+.note { margin-top: 6px; padding-top: 12px; border-top: 1px solid #D5DAE0; font-size: 15px; font-weight: 600; line-height: 1.5; }
 .grad { background: linear-gradient(120deg, #0D9488 0%, #0284C7 50%, #4F46E5 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
-.direct { font-size: 14px; color: var(--secondary); margin-top: 2px; }
 .cap { font-size: 18px; font-weight: 600; margin-top: 20px; }
 </style>
 </head>
@@ -65,25 +53,16 @@ h1 { font-size: 54px; font-weight: 700; line-height: 1.16; letter-spacing: -.02e
     </div>
   </div>
   <div class="right">
-    <div class="map">
-      <svg width="470" height="300" viewBox="0 0 470 300" aria-hidden="true">
-        <path d="M212,150 C247,150 247,84 282,84"/>
-        <path d="M212,150 C247,150 247,216 282,216"/>
-        <circle cx="212" cy="150" r="4"/><circle cx="282" cy="84" r="4"/><circle cx="282" cy="216" r="4"/>
-      </svg>
-      <div class="dev">
-        <p class="k">{{device}}</p>
-        <ul class="lib">
-          <li><span>{{rec1}}</span><time>18:47</time></li>
-          <li><span>{{rec2}}</span><time>32:10</time></li>
-          <li><span>{{rec3}}</span><time>45:03</time></li>
-        </ul>
-        <p class="note">{{deviceNote}}</p>
-      </div>
-      <div class="node stt"><p class="k">{{stt}}</p><p class="host">whisper.cpp</p><p class="direct">{{sttLocal}}</p></div>
-      <div class="node ai"><p class="k">{{ai}}</p><p class="host">Ollama</p><p class="direct">{{aiLocal}}</p></div>
+    <div class="dev">
+      <p class="k">{{device}}</p>
+      <ul class="lib">
+        <li><span>{{rec1}}</span><time>18:47</time></li>
+        <li><span>{{rec2}}</span><time>32:10</time></li>
+        <li><span>{{rec3}}</span><time>45:03</time></li>
+      </ul>
+      <p class="note">{{deviceNote}}</p>
     </div>
-    <p class="cap">{{capByok}}</p>
+    <p class="cap">{{cap}}</p>
   </div>
 </body>
 </html>

@@ -333,149 +333,24 @@
     else size();
   }
 
-  /* ---------- Models figure: where the conversation goes ----------
-     The nodes are laid out by CSS; this draws the wires between them, flips the
-     mode, and (local only) steps through a few real providers so the
-     "you choose" part is visible. Without JS the own-keys state stands on its own. */
+  /* ---------- Model marquee ----------
+     The HTML has the list once. Copy it, hide the copy from screen readers, and
+     let CSS scroll the pair by half its width so it loops without a seam. */
 
-  const SVG_NS = "http://www.w3.org/2000/svg";
-
-  function svgEl(name, attrs) {
-    const el = document.createElementNS(SVG_NS, name);
-    for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
-    return el;
-  }
-
-  function curve(a, b, vertical) {
-    if (vertical) {
-      const my = (a.y + b.y) / 2;
-      return `M${a.x},${a.y} C${a.x},${my} ${b.x},${my} ${b.x},${b.y}`;
-    }
-    const mx = (a.x + b.x) / 2;
-    return `M${a.x},${a.y} C${mx},${a.y} ${mx},${b.y} ${b.x},${b.y}`;
-  }
-
-  function setupRoute() {
-    const fig = document.getElementById("route");
-    const map = fig?.querySelector(".route__map");
-    const svg = fig?.querySelector(".route__wires");
-    if (!map || !svg) return;
-    const node = (name) => map.querySelector(`[data-node="${name}"]`);
-    const els = { dev: node("dev"), parley: node("parley"), stt: node("stt"), ai: node("ai") };
-    if (Object.values(els).some((el) => !el)) return;
-    const stacked = matchMedia("(max-width: 560px)");
-
-    function box(el) {
-      const m = map.getBoundingClientRect();
-      const r = el.getBoundingClientRect();
-      const l = r.left - m.left;
-      const t = r.top - m.top;
-      return { l, t, r: l + r.width, b: t + r.height, cx: l + r.width / 2, cy: t + r.height / 2 };
-    }
-
-    function draw() {
-      const D = box(els.dev);
-      const P = box(els.parley);
-      const S = box(els.stt);
-      const A = box(els.ai);
-      // Narrow screens stack the nodes (see the 560px rule in styles.css): wires run downwards.
-      const vertical = stacked.matches;
-      const into = (B) => (vertical ? { x: B.cx, y: B.t } : { x: B.l, y: B.cy });
-      const outOf = (B) => (vertical ? { x: B.cx, y: B.b } : { x: B.r, y: B.cy });
-      const from = outOf(D);
-      // Cloud edition: the recording goes to Parley, and that is the whole story.
-      const legs =
-        fig.dataset.mode === "cloud" ? [[from, into(P)]] : [[from, into(S)], [from, into(A)]];
-      const nodes = [];
-      for (const [a, b] of legs) {
-        const d = curve(a, b, vertical);
-        nodes.push(svgEl("path", { class: "w", d }), svgEl("path", { class: "f", d }));
-      }
-      const ends = new Map(legs.flat().map((p) => [`${p.x},${p.y}`, p]));
-      for (const p of ends.values()) nodes.push(svgEl("circle", { cx: p.x, cy: p.y, r: 3 }));
-      svg.replaceChildren(...nodes);
-    }
-
-    // The Parley node slides while the mode changes; keep the wires on it.
-    let follow = 0;
-    function track(ms) {
-      cancelAnimationFrame(follow);
-      const until = performance.now() + ms;
-      const step = () => {
-        draw();
-        if (performance.now() < until) follow = requestAnimationFrame(step);
-      };
-      step();
-    }
-
-    const buttons = [...fig.querySelectorAll(".seg button")];
-    function setMode(mode) {
-      if (fig.dataset.mode === mode) return;
-      for (const b of buttons) b.setAttribute("aria-pressed", String(b.dataset.mode === mode));
-      fig.dataset.mode = mode;
-      track(reduceMotion.matches ? 0 : 650);
-    }
-    for (const btn of buttons) btn.addEventListener("click", () => setMode(btn.dataset.mode));
-
-    if ("ResizeObserver" in globalThis) new ResizeObserver(() => draw()).observe(map);
-    else addEventListener("resize", draw);
-    stacked.addEventListener?.("change", draw);
-    document.fonts?.ready.then(draw);
-    draw();
-
-    // Local: step through real providers, one node at a time, by name and mark.
-    const cycles = [...fig.querySelectorAll("[data-cycle]")].map((el) => {
-      let items = [];
-      try {
-        items = JSON.parse(el.dataset.cycle);
-      } catch {
-        items = [];
-      }
-      return {
-        el,
-        items,
-        i: 0,
-        name: el.querySelector(".rt-n"),
-        logo: el.querySelector(".logo"),
-        note: el.closest(".rt-node")?.querySelector(".rt-note[data-local-note]"),
-      };
-    });
-    if (reduceMotion.matches || !cycles.length) return;
-    let inView = true;
-    let hovering = false;
-    if ("IntersectionObserver" in globalThis) {
-      new IntersectionObserver((entries) => {
-        inView = entries.some((e) => e.isIntersecting);
-      }).observe(fig);
-    }
-    fig.addEventListener("pointerenter", () => { hovering = true; });
-    fig.addEventListener("pointerleave", () => { hovering = false; });
-    let turn = 0;
-    setInterval(() => {
-      if (!inView || hovering || document.hidden || fig.dataset.mode !== "byok") return;
-      const c = cycles[turn++ % cycles.length];
-      if (c.items.length < 2) return;
-      c.i = (c.i + 1) % c.items.length;
-      const next = c.items[c.i];
-      c.el.classList.add("is-swap");
-      setTimeout(() => {
-        c.name.textContent = next.n;
-        if (c.logo) {
-          c.logo.hidden = !next.l;
-          if (next.l) c.logo.style.setProperty("--m", `url('${next.l}')`);
-        }
-        if (c.note?.dataset.localNote) {
-          c.note.textContent = next.n === c.el.dataset.local ? c.note.dataset.localNote : c.note.dataset.direct;
-        }
-        c.el.classList.remove("is-swap");
-        draw();
-      }, 200);
-    }, 2600);
+  function setupMarquee() {
+    const marquee = document.querySelector(".marquee");
+    const list = marquee?.querySelector(".works");
+    if (!list || reduceMotion.matches) return;
+    const copy = list.cloneNode(true);
+    copy.setAttribute("aria-hidden", "true");
+    copy.removeAttribute("aria-label");
+    list.after(copy);
+    marquee.classList.add("is-on");
   }
 
   setupNav();
   setupDownloads(detectOS());
   setupFades();
-  setupRoute();
+  setupMarquee();
   setupHero();
 })();
