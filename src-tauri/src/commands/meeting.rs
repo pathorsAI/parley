@@ -268,10 +268,16 @@ impl MeetingSessions {
     /// The session for capture `label`; `record` = it tees into the meeting's
     /// recording (only one session per meeting does).
     fn session(&self, label: &'static str, record: bool) -> MeteredSession {
+        self.session_with(label, record, self.diarization)
+    }
+
+    /// [`Self::session`] with the speaker labelling decided by the caller,
+    /// for a side that must never be split into several speakers.
+    fn session_with(&self, label: &'static str, record: bool, diarization: bool) -> MeteredSession {
         MeteredSession {
             provider: self.provider,
             config: TranscribeConfig {
-                diarization: self.diarization,
+                diarization,
                 ..self.config.clone()
             },
             label,
@@ -453,11 +459,22 @@ impl MeetingCaptures<'_> {
         )]
     }
 
-    /// Two sessions: the mic is "me", the system audio "them", each diarized
-    /// when the provider can. The transcript then always knows which words
-    /// came from this computer's microphone, so the 評分 report scores the
-    /// user's own speech even with several people on the call (or several
-    /// people around this mic, told apart within "me").
+    /// Two sessions: the mic is "me", the system audio "them". The transcript
+    /// then always knows which words came from this computer's microphone, so
+    /// the 評分 report scores the user's own speech even with several people
+    /// on the call.
+    ///
+    /// With both captures running (an online meeting), the mic side is NOT
+    /// diarized: it is the one person at this computer. Diarizing it split
+    /// that one voice into several speakers — short lines from a single
+    /// laptop mic swapped between 我 1 and 我 2 (and, in the mixed mode
+    /// before, 說話者 1 / 說話者 2) every utterance, live and again in the
+    /// post-save pass. Undiarized, every mic line is speaker 0, so it reads as
+    /// 我 and the post-save re-clustering leaves the side alone
+    /// (postDiarize.ts only re-clusters a side with a speaker number on it).
+    /// The far side keeps diarization: several people on the call are still
+    /// told apart. A mic-only meeting (no system audio: people in one room
+    /// around this mic) keeps diarization on the mic, see below.
     ///
     /// The recording still holds both sides: each capture is fanned out to its
     /// session and to the mixer, and the mix feeds a record-only sink. If one
@@ -488,7 +505,7 @@ impl MeetingCaptures<'_> {
                     false,
                 ));
                 vec![
-                    run_metered_session(self.app, a_stt, sessions.session("me", false)),
+                    run_metered_session(self.app, a_stt, sessions.session_with("me", false, false)),
                     run_metered_session(self.app, b_stt, sessions.session("them", false)),
                     tauri::async_runtime::spawn(record_only(
                         rx_mix,
@@ -878,6 +895,49 @@ fn spawn_farend_tap(
 
 #[cfg(test)]
 mod tests {
+
+    use super::{MeetingSessions, MeetingWiring};
+    use crate::transcription::{SttProvider, TranscribeConfig};
+
+    fn diarizing_sessions() -> MeetingSessions {
+        MeetingSessions {
+            provider: SttProvider::from_id("soniox").unwrap(),
+            diarization: true,
+            separate_tracks: true,
+            config: TranscribeConfig {
+                api_key: String::new(),
+                model: String::new(),
+                language_hints: Vec::new(),
+                diarization: true,
+                vocabulary: Vec::new(),
+                relay_endpoint: None,
+                leg: 0,
+                time_offset_ms: 0,
+                level_events: true,
+            },
+            wiring: MeetingWiring {
+                recorder: Default::default(),
+                error_mute: Default::default(),
+                paused: Default::default(),
+            },
+        }
+    }
+
+    #[test]
+    fn sessions_follow_the_meeting_diarization_by_default() {
+        let sessions = diarizing_sessions();
+        assert!(sessions.session("them", false).config.diarization);
+        assert!(sessions.session("me", true).config.diarization);
+    }
+
+    #[test]
+    fn a_side_can_be_kept_to_one_speaker() {
+        // The online meeting's mic side: one person, never split.
+        let me = diarizing_sessions().session_with("me", false, false);
+        assert!(!me.config.diarization);
+        assert_eq!(me.label, "me");
+        assert!(me.recorder.is_none());
+    }
     use super::{encode_stopped, keep_leading, Stopped};
 
     #[test]
