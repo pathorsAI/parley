@@ -59,8 +59,8 @@ from `/en/`, `@lang`, `@canonical`, …). Comments that start with `<!--#` are t
 are stripped from the output.
 
 The hero line, "Be in the meeting. Parley takes the notes." / 「專心開會，紀錄交給 Parley。」, is
-the page's position: Parley is a meeting notes app. The page reads like one: hero and the report
-screenshot, how it works (before / during / after cards), a feature grid, local vs hosted models,
+the page's position: Parley is a meeting notes app. The page reads like one: hero (platform marks, a
+marquee of the models it runs on), how it works (before / during / after cards), a feature grid, local vs hosted models,
 two plans, an FAQ, download. Live coaching is not on the page. Keep the claims to what the code
 backs: the app is open source (the cloud service is not, so never write "fully open source"), and
 the cloud edition only says that recordings go to Parley. Do not publish free-tier numbers — the
@@ -68,7 +68,9 @@ wording is "a free allowance that covers everyday use". Retired features (live t
 interpreter, the intel board, scenarios, job-interview or diligence use cases) must not come back;
 the test suite checks for them.
 
-The look: white paper and ink, blue for what is live or clickable, content on hairline cards. The
+The look: white paper and ink, blue for what is live or clickable, sections separated by
+whitespace (only the plans and the download sit on cards). Icons are drawn for this page in ink,
+not taken from an icon set, and features follow one pattern: icon, bold lead sentence, grey sentence. The
 app icon (`assets/app-icon.svg`, a copy of the repo's `app-icon.svg`) is the logo in the nav,
 footer and favicon, and its teal → sky → indigo gradient appears only in the hero glow, the word
 "Parley" in the headline, the cloud plan's edge and the download card.
