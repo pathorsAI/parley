@@ -1,7 +1,8 @@
-/* parley.tw — "paper and signal".
-   White paper, ink text, blue only where something is live or clickable.
-   No cards, no gradients, no purple. Sections are separated by whitespace and a
-   hairline; findings and answers carry a 2px ink rule on the left. */
+/* parley.tw — a meeting notes app, sold like one.
+   White paper and ink text; blue marks what is live or clickable. The app icon's
+   teal → sky → indigo gradient appears in three places only: the glow behind the
+   hero, the word "Parley" in the headline, and the cloud plan's edge. Content sits
+   on cards with a hairline border; drawn app UI sits on the grey inner panel. */
 
 /* ---------- Fonts (self-hosted, SIL OFL 1.1 — see assets/fonts/LICENSE-OFL.txt) ---------- */
 @font-face {
@@ -50,6 +51,12 @@
   --code-dim: #7C8FA3;
   --shot-shadow: 0 0 0 1px var(--hairline-2), 0 10px 28px rgba(17, 20, 24, .10);
   --win-shadow: 0 0 0 1px var(--hairline-2), 0 24px 60px rgba(17, 20, 24, .12);
+  --card: #FFFFFF;
+  --card-shadow: 0 1px 2px rgba(17, 20, 24, .04), 0 8px 24px rgba(17, 20, 24, .05);
+  --brand: linear-gradient(120deg, #0D9488 0%, #0284C7 50%, #4F46E5 100%);
+  --glow-1: rgba(45, 212, 191, .20);
+  --glow-2: rgba(56, 189, 248, .18);
+  --glow-3: rgba(129, 140, 248, .18);
 
   --font: "DM Sans", "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif;
   --font-display: "Alexandria", "DM Sans", "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif;
@@ -77,6 +84,12 @@
     --code-bg: #111D29;
     --shot-shadow: 0 0 0 1px var(--hairline-2), 0 10px 28px rgba(0, 0, 0, .35);
     --win-shadow: 0 0 0 1px var(--hairline-2), 0 24px 60px rgba(0, 0, 0, .45);
+    --card: #101C28;
+    --card-shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .25);
+    --brand: linear-gradient(120deg, #5EEAD4 0%, #38BDF8 50%, #818CF8 100%);
+    --glow-1: rgba(45, 212, 191, .14);
+    --glow-2: rgba(56, 189, 248, .12);
+    --glow-3: rgba(129, 140, 248, .14);
   }
 }
 
@@ -150,16 +163,20 @@ kbd {
 /* ---------- Nav ---------- */
 .nav {
   position: sticky; top: 0; z-index: 20;
-  background: var(--page);
+  background: color-mix(in srgb, var(--page) 82%, transparent);
+  -webkit-backdrop-filter: saturate(1.6) blur(14px);
+  backdrop-filter: saturate(1.6) blur(14px);
   border-bottom: 1px solid transparent;
   transition: border-color .15s ease;
 }
 .nav.is-scrolled { border-bottom-color: var(--hairline); }
 .nav__in { display: flex; align-items: center; gap: 28px; height: 68px; }
 .wm {
-  font-family: var(--font-display); font-weight: 700; font-size: 21px; letter-spacing: -.01em;
+  display: inline-flex; align-items: center; gap: 9px;
+  font-family: var(--font-display); font-weight: 700; font-size: 20px; letter-spacing: -.01em;
   color: var(--ink); line-height: 1;
 }
+.wm img { width: 28px; height: 28px; border-radius: 7px; }
 .wm:hover { color: var(--ink); }
 .nav__links { display: flex; gap: 24px; flex: 1; font-size: 14.5px; }
 .nav__links a { color: var(--secondary); }
@@ -172,28 +189,49 @@ kbd {
   border: 0; border-radius: 9px; background: transparent; color: var(--ink); cursor: pointer;
 }
 
-/* ---------- Hero ---------- */
-.hero {
-  display: grid; grid-template-columns: minmax(0, .95fr) minmax(0, 1.1fr); gap: 56px; align-items: center;
-  padding-top: 72px; padding-bottom: 64px;
+/* ---------- Hero ----------
+   Centred copy, the model strip, then the report screenshot, over a soft glow in
+   the app icon's colours that fades out before the first section. */
+.hero { position: relative; overflow: hidden; isolation: isolate; }
+.hero::before {
+  content: ""; position: absolute; z-index: -1; inset: -120px -10% auto; height: 760px;
+  background:
+    radial-gradient(38% 46% at 24% 30%, var(--glow-1), transparent 70%),
+    radial-gradient(34% 44% at 52% 18%, var(--glow-2), transparent 70%),
+    radial-gradient(36% 46% at 78% 32%, var(--glow-3), transparent 70%);
+  filter: blur(8px);
 }
-.plats { font-size: 13px; font-weight: 600; color: var(--secondary); }
+.hero__in {
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  padding-top: 84px; padding-bottom: 56px;
+}
+.plats {
+  display: inline-block; padding: 5px 13px; border-radius: 999px;
+  font-size: 12.5px; font-weight: 600; color: var(--secondary);
+  background: color-mix(in srgb, var(--card) 70%, transparent); box-shadow: inset 0 0 0 1px var(--hairline-2);
+}
 h1 {
-  font-size: 50px; font-weight: 700; line-height: 1.16; letter-spacing: -.02em;
-  margin-top: 14px; text-wrap: balance;
+  font-size: 64px; font-weight: 700; line-height: 1.1; letter-spacing: -.025em;
+  margin-top: 22px; text-wrap: balance;
 }
-:lang(en) h1 { font-size: 46px; }
-:lang(zh) h1 { font-size: 48px; line-height: 1.25; letter-spacing: 0; }
-.sub { font-size: 17.5px; line-height: 1.65; color: var(--secondary); margin-top: 20px; max-width: 540px; text-wrap: pretty; }
-.ctas { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 30px; }
+:lang(zh) h1 { line-height: 1.22; letter-spacing: 0; }
+.grad { background: var(--brand); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.sub { font-size: 18.5px; line-height: 1.65; color: var(--secondary); margin: 22px auto 0; max-width: 640px; text-wrap: pretty; }
+.hero .ctas { justify-content: center; }
+.hero .fine { margin-left: auto; margin-right: auto; }
+.works__k { margin-top: 44px; font-size: 12.5px; font-weight: 600; color: var(--tertiary); letter-spacing: .02em; }
+.works { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px 26px; margin-top: 14px; font-size: 15px; font-weight: 600; }
+.works li { display: inline-flex; align-items: center; gap: 7px; color: var(--secondary); }
+.works .logo { width: 17px; height: 17px; }
+.ctas { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 32px; }
 .fine { font-size: 13px; line-height: 1.6; color: var(--secondary); margin-top: 14px; max-width: 640px; }
 .fine a { color: var(--secondary); white-space: nowrap; text-decoration: underline; text-decoration-color: var(--hairline-2); text-underline-offset: 3px; }
 .fine a:hover { color: var(--ink); }
 
-/* Live transcript ("In the meeting" row): on the panel, a hairline above the recorder strip. */
-.demo { min-width: 0; padding: 40px 40px 32px; }
+/* Live transcript (the "During" card): the grey panel, a hairline above the recorder strip. */
+.demo { min-width: 0; padding: 20px 20px 16px; }
 .lines {
-  height: 212px; overflow: hidden;
+  height: 196px; overflow: hidden;
   display: flex; flex-direction: column; justify-content: flex-end;
 }
 .turn { margin-bottom: 18px; }
@@ -202,7 +240,7 @@ h1 {
 .who .ts, .ts {
   font-weight: 400; font-size: 12px; color: var(--tertiary); font-variant-numeric: tabular-nums;
 }
-.txt { font-size: 17px; line-height: 1.6; margin-top: 3px; color: var(--ink); }
+.txt { font-size: 15px; line-height: 1.6; margin-top: 3px; color: var(--ink); }
 .txt .tail { color: var(--tertiary); }
 .rec {
   display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; align-items: center;
@@ -211,12 +249,12 @@ h1 {
 .rec__st { grid-column: 1 / 3; display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--secondary); }
 .rec__st i { width: 7px; height: 7px; border-radius: 50%; background: var(--recording); }
 .rec__clock {
-  font-family: var(--font-display); font-weight: 600; font-size: 30px; line-height: 1.2;
+  font-family: var(--font-display); font-weight: 600; font-size: 24px; line-height: 1.2;
   font-variant-numeric: tabular-nums; letter-spacing: .01em;
 }
 .rec canvas { width: 100%; height: 34px; color: var(--signal); }
 
-/* ---------- Hero figure: where the conversation goes ----------
+/* ---------- Models figure: where the conversation goes ----------
    Nodes are HTML; script.js measures them and draws the wires into the SVG behind.
    Own keys: the Parley node sits below the path, dashed. Cloud edition: it rises
    into the path and the wires run through it. */
@@ -280,171 +318,156 @@ html:not(.js) .seg { display: none; }
   background: var(--page);
   transition: transform .5s cubic-bezier(.2, .8, .2, 1), border-color .3s ease;
 }
-.rt-host {
-  margin-top: 3px; font-family: var(--mono); font-size: 12px; line-height: 1.5; color: var(--ink);
+/* A provider by name and mark, never by hostname. */
+.rt-prov {
+  display: flex; align-items: center; gap: 7px; margin-top: 4px;
+  font-size: 15px; font-weight: 600; line-height: 1.4; color: var(--ink);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: opacity .2s ease;
 }
-.rt-host span { transition: opacity .2s ease; }
-.rt-host span.is-swap { opacity: 0; }
+.rt-prov.is-swap { opacity: 0; }
+.rt-prov .logo[hidden] { display: none; }
+.rt-mark { width: 18px; height: 18px; border-radius: 5px; flex: none; }
 .rt-note { margin-top: 2px; font-size: 12px; line-height: 1.45; color: var(--secondary); }
 .rt-note .is-good { color: var(--signal); font-weight: 500; }
 .route[data-mode="byok"] .rt-node--parley { transform: translateY(104px); border-style: dashed; }
 /* Cloud edition: the providers step aside and Parley takes the far end of the wire. */
 .route[data-mode="cloud"] .rt-node--parley { transform: translateX(calc(100% + 42px)); }
-.route[data-mode="byok"] .rt-node--parley :is(.rt-k, .rt-host, .rt-note) { color: var(--tertiary); }
+.route[data-mode="byok"] .rt-node--parley :is(.rt-k, .rt-prov, .rt-note) { color: var(--tertiary); }
+.route[data-mode="byok"] .rt-mark { opacity: .45; filter: grayscale(1); }
 .route[data-mode="byok"] .when-cloud, .route[data-mode="cloud"] .when-byok { display: none; }
 .route[data-mode="cloud"] .rt-dest { opacity: 0; visibility: hidden; }
 
 .route__cap { margin-top: 18px; font-size: 15px; font-weight: 600; line-height: 1.5; }
 .route__cap a { font-weight: 600; white-space: nowrap; }
 /* ---------- Screenshots: light even in dark mode, framed by a hairline and a soft shadow ---------- */
-.winshot { border-radius: 12px; overflow: hidden; background: #FFFFFF; box-shadow: var(--win-shadow); }
+.winshot { border-radius: 14px; overflow: hidden; background: #FFFFFF; box-shadow: var(--win-shadow); }
 .winshot img { width: 100%; height: auto; }
-/* Right under the hero: the whole desktop window mid-meeting, full width, never cropped. */
-.bigshot { padding-bottom: 96px; }
+/* Right under the hero copy: the meeting report, the whole window, full width. */
+.bigshot { padding-bottom: 24px; }
 
 /* ---------- Sections ---------- */
-.sec { border-top: 1px solid var(--hairline); padding: 88px 0; }
-.k { font-size: 13px; font-weight: 600; color: var(--secondary); }
+.sec { padding: 104px 0; }
+.sec__head { text-align: center; max-width: 760px; margin: 0 auto 52px; }
+.sec__head h2 { margin-left: auto; margin-right: auto; }
+.k { font-size: 13px; font-weight: 600; color: var(--signal); letter-spacing: .02em; }
 h2 {
-  font-size: 34px; font-weight: 700; line-height: 1.3; letter-spacing: -.01em;
-  margin-top: 10px; max-width: 700px; text-wrap: balance;
+  font-size: 40px; font-weight: 700; line-height: 1.22; letter-spacing: -.015em;
+  margin-top: 10px; max-width: 760px; text-wrap: balance;
 }
-:lang(zh) h2 { letter-spacing: 0; }
-.p { font-size: 16.5px; color: var(--secondary); max-width: 640px; margin-top: 14px; text-wrap: pretty; }
-h3 { font-size: 18px; font-weight: 600; line-height: 1.4; }
+:lang(zh) h2 { letter-spacing: 0; line-height: 1.3; }
+.p { font-size: 17px; color: var(--secondary); max-width: 560px; margin-top: 16px; text-wrap: pretty; }
+h3 { font-size: 19px; font-weight: 700; line-height: 1.4; }
+.card {
+  background: var(--card); border-radius: 18px;
+  box-shadow: 0 0 0 1px var(--hairline), var(--card-shadow);
+}
 
-/* ---------- Rows: a label, one H2, one sentence — and a visual larger than the words ----------
-   The copy is first in the source; .row--rev moves the visual to the left on wide screens. */
-.row__in {
-  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
-  gap: 56px; align-items: center;
+/* How it works: before, during, after — three cards, each with a piece of the app drawn in. */
+.flow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+.flow__c { display: flex; flex-direction: column; min-width: 0; padding: 26px 24px 24px; }
+.flow__step {
+  align-self: flex-start; padding: 2px 10px; border-radius: 999px;
+  font-size: 12.5px; font-weight: 700; color: var(--signal); background: var(--chip-bg);
 }
-.row--rev .row__in { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); }
-.row--rev .row__vis { order: -1; }
-.row h2 { font-size: 32px; }
-.panel { background: var(--page-2); border-radius: 12px; }
-/* Find it: the palette floats on the panel the way it floats over the library in the app. */
-.cmdk { display: flex; align-items: center; justify-content: center; padding: 56px 40px; }
-.cmdk picture { display: block; width: 100%; max-width: 620px; }
-.cmdk img { width: 100%; height: auto; border-radius: 12px; box-shadow: var(--win-shadow); }
+.flow__c h3 { margin-top: 14px; }
+.flow__p { margin-top: 6px; font-size: 15px; line-height: 1.6; color: var(--secondary); text-wrap: pretty; }
+.flow__p + :is(.draft, .demo, .facts) { margin-top: 22px; }
+.draft, .demo, .facts { flex: 1; border-radius: 12px; background: var(--page-2); }
 
-/* Models: the app's provider settings drawn in HTML, then every provider mark. */
-.prefs { padding: 34px 40px 32px; }
-.prefs__h { font-size: 13px; font-weight: 600; color: var(--secondary); }
-.prefs__row {
-  display: flex; align-items: center; justify-content: space-between; gap: 16px;
-  padding: 14px 0; border-bottom: 1px solid var(--hairline-2);
+/* The meeting-draft editor. */
+.draft { padding: 18px 18px 16px; display: flex; flex-direction: column; }
+.draft__t { font-size: 16px; font-weight: 700; line-height: 1.35; }
+.draft__when { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 6px; font-size: 13px; color: var(--secondary); font-variant-numeric: tabular-nums; }
+.draft__when em, .facts__chips span {
+  font-style: normal; font-size: 11.5px; font-weight: 600; color: var(--signal);
+  background: var(--chip-bg); padding: 1px 7px; border-radius: 6px;
 }
-.prefs__row:first-of-type { margin-top: 8px; }
-.prefs__l { font-size: 15.5px; font-weight: 500; }
-.prefs__v {
-  position: relative; display: inline-flex; align-items: center; gap: 9px;
-  height: 40px; min-width: 216px; padding: 0 38px 0 13px;
-  border-radius: 9px; background: var(--page); box-shadow: 0 0 0 1px var(--hairline-2);
-  font-size: 15px; font-weight: 600;
+.draft__agenda { margin: 14px 0 0; padding: 12px 0 0 20px; border-top: 1px solid var(--hairline-2); font-size: 14.5px; line-height: 1.85; }
+.draft__foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: auto; padding-top: 16px; }
+.draft__folder {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px;
+  border-radius: 999px; background: var(--page); box-shadow: 0 0 0 1px var(--hairline-2);
+  font-size: 12.5px; font-weight: 600; color: var(--secondary);
 }
-.prefs__v::after {
-  content: ""; position: absolute; right: 14px; top: 50%; width: 7px; height: 7px; margin-top: -6px;
-  border-right: 1.5px solid var(--tertiary); border-bottom: 1.5px solid var(--tertiary); transform: rotate(45deg);
+.draft__go {
+  display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 12px;
+  border-radius: 8px; background: var(--signal); color: var(--on-signal); font-size: 13px; font-weight: 600; white-space: nowrap;
 }
-.prefs__n, .prefs__v .logo, .prefs__v em { transition: opacity .2s ease; }
-.prefs__v.is-swap :is(.prefs__n, .logo, em) { opacity: 0; }
-.prefs__v em {
-  font-style: normal; font-size: 12px; font-weight: 600; color: var(--signal);
-  background: var(--chip-bg); padding: 1px 8px; border-radius: 6px;
-}
-.prefs .prov { margin-top: 26px; gap: 8px 20px; font-size: 13.5px; }
+.draft__go i { width: 7px; height: 7px; border-radius: 50%; background: var(--recording); box-shadow: 0 0 0 2px var(--on-signal); }
 
-/* Open source: build it yourself, on the dark code surface the MCP command uses. */
-.term {
-  position: relative; display: flex; align-items: center; min-height: 300px;
-  padding: 40px 44px; border-radius: 12px; background: var(--code-bg); color: var(--code-ink);
-}
-.term pre { margin: 0; overflow-x: auto; font-family: var(--mono); font-size: 15px; line-height: 2; }
-.term__p { color: var(--code-dim); user-select: none; }
-.term .code__copy { top: 16px; right: 16px; }
+/* Who does what, then the delivery facts as plain tiles. */
+.facts { padding: 14px 18px 16px; }
+.facts__who { margin-bottom: 14px; }
+.facts__who li { padding: 9px 0; border-bottom: 1px solid var(--hairline-2); font-size: 14px; line-height: 1.55; }
+.facts__who b { font-weight: 700; margin-right: 8px; }
+.facts__tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.facts__tiles div { background: var(--page); border-radius: 9px; box-shadow: 0 0 0 1px var(--hairline-2); padding: 10px 10px 8px; min-width: 0; }
+.facts__tiles dt { font-size: 11.5px; color: var(--secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.facts__tiles dd { margin: 2px 0 0; font-family: var(--font-display); font-size: 22px; font-weight: 600; line-height: 1.25; font-variant-numeric: tabular-nums; }
+.facts__tiles small { display: block; font-family: var(--font); font-size: 11px; font-weight: 500; line-height: 1.2; color: var(--secondary); }
+.facts__chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 
-/* For your AI: a neutral chat client drawn in HTML. */
-.chat { display: flex; flex-direction: column; min-height: 360px; padding: 40px 40px 28px; }
-.chat__q {
-  align-self: flex-end; max-width: 80%;
-  padding: 10px 16px; border: 1px solid var(--hairline); border-radius: 16px 16px 4px 16px;
-  background: var(--page); font-size: 16px; font-weight: 600;
+/* Features: a 4 × 2 grid of short claims, each with a line icon. */
+.feats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.feat { padding: 24px 22px 22px; border-radius: 16px; background: var(--card); box-shadow: 0 0 0 1px var(--hairline), var(--card-shadow); }
+.feat__i {
+  width: 40px; height: 40px; padding: 9px; border-radius: 11px;
+  color: var(--signal); background: var(--chip-bg);
 }
-.chat__tool { margin-top: 26px; font-family: var(--mono); font-size: 12.5px; color: var(--secondary); overflow-wrap: anywhere; }
-.chat__a { margin: 8px 0 32px; font-size: 17px; line-height: 1.8; }
+.feat h3 { margin-top: 16px; font-size: 17px; }
+.feat p { margin-top: 6px; font-size: 14.5px; line-height: 1.6; color: var(--secondary); text-wrap: pretty; }
+
+/* Models: the copy on the left, the route figure on a card on the right. */
+.models { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 56px; align-items: center; }
+.models__vis { padding: 26px 28px 24px; min-width: 0; }
+
+/* Plans: two cards; the cloud one gets the brand gradient on its edge. */
+.plans { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; max-width: 980px; margin: 0 auto; }
+.plan { display: flex; flex-direction: column; padding: 32px 32px 30px; min-width: 0; }
+.plan--cloud { position: relative; }
+.plan--cloud::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1.5px; pointer-events: none;
+  background: var(--brand);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+}
+.plan__k { font-size: 15px; font-weight: 700; color: var(--secondary); }
+.plan__price { margin-top: 8px; font-family: var(--font-display); font-size: 38px; font-weight: 700; line-height: 1.15; letter-spacing: -.01em; }
+.plan__tag { margin-top: 4px; font-size: 14.5px; color: var(--secondary); }
+.plan__list { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--hairline); }
+.plan__list li { position: relative; padding: 6px 0 6px 26px; font-size: 15.5px; line-height: 1.55; }
+.plan__list li::before {
+  content: ""; position: absolute; left: 3px; top: 13px; width: 10px; height: 5.5px;
+  border-left: 1.8px solid var(--signal); border-bottom: 1.8px solid var(--signal); transform: rotate(-45deg);
+}
+.plan__cta { margin-top: 24px; align-self: stretch; }
+.plan .prov { margin-top: 22px; gap: 8px 16px; font-size: 13px; }
+
+/* FAQ: native disclosure, a hairline between questions. */
+.faq { max-width: 820px; }
+.faq h2 { text-align: center; margin: 0 auto 36px; }
+.faq__i { border-bottom: 1px solid var(--hairline); }
+.faq__i:first-child { border-top: 1px solid var(--hairline); }
+.faq__i summary {
+  position: relative; list-style: none; cursor: pointer;
+  padding: 20px 40px 20px 0; font-size: 17px; font-weight: 600; line-height: 1.5;
+}
+.faq__i summary::-webkit-details-marker { display: none; }
+.faq__i summary::after {
+  content: ""; position: absolute; right: 6px; top: 50%; width: 9px; height: 9px; margin-top: -7px;
+  border-right: 1.7px solid var(--secondary); border-bottom: 1.7px solid var(--secondary);
+  transform: rotate(45deg); transition: transform .2s ease;
+}
+.faq__i[open] summary::after { transform: rotate(-135deg); margin-top: -2px; }
+.faq__i p { padding: 0 40px 22px 0; font-size: 16px; line-height: 1.75; color: var(--secondary); }
+
 /* Timestamp chips: blue, as in the app, where they play back that moment. */
 .chip {
   display: inline-block; margin-left: 6px; padding: 0 7px;
   border-radius: 6px; background: var(--chip-bg); color: var(--signal);
   font-size: 13px; font-weight: 600; line-height: 1.65; font-variant-numeric: tabular-nums; white-space: nowrap;
 }
-.chat__box {
-  display: flex; align-items: center; gap: 12px; margin-top: auto;
-  height: 46px; padding: 0 7px 0 18px;
-  border: 1px solid var(--hairline-2); border-radius: 23px; background: var(--page);
-}
-.chat__box span { flex: 0 1 38%; height: 8px; border-radius: 4px; background: var(--hairline); }
-.chat__box i { width: 32px; height: 32px; margin-left: auto; border-radius: 50%; background: var(--hairline-2); }
-/* Played once by script.js: question, tool call, then the answer types itself. */
-.chat.is-pending .chat__q, .chat.is-pending .chat__tool, .chat.is-pending .chat__a { opacity: 0; }
-.chat.is-play .chat__q { transition: opacity .25s ease-out; }
-.chat.is-play .chat__tool { transition: opacity .25s ease-out .35s; }
-.chat__a .chip.is-off { display: none; }
-
-/* Code: the MCP command, small, under the row's sentence. */
-.code {
-  position: relative; margin-top: 26px; max-width: 460px;
-  background: var(--code-bg); color: var(--code-ink);
-  border-radius: 10px; border: 1px solid var(--code-bg);
-}
-.code pre {
-  margin: 0; padding: 14px 16px; overflow-x: auto;
-  font-family: var(--mono); font-size: 12.5px; line-height: 1.7;
-}
-.code__c { color: var(--code-dim); }
-.code__copy {
-  position: absolute; top: 10px; right: 10px;
-  height: 26px; padding: 0 9px;
-  font: inherit; font-size: 12px; font-weight: 600;
-  color: var(--code-ink); background: transparent;
-  border: 1px solid rgba(220, 230, 240, .22); border-radius: 7px; cursor: pointer;
-}
-.code__copy:hover { border-color: rgba(220, 230, 240, .5); }
-.code__copy.is-done { color: #7FD3F8; border-color: rgba(127, 211, 248, .5); }
-.more { margin-top: 14px; font-size: 14.5px; font-weight: 600; }
-
-/* One account: the desktop library, the phone's library overlapping its lower left. */
-.combo { position: relative; aspect-ratio: 100 / 64; }
-.combo__win { position: absolute; top: 0; right: 0; width: 84%; }
-.combo__phone {
-  position: absolute; left: 5px; bottom: 0; width: 27%; height: 80%; overflow: hidden;
-  border-radius: 26px 26px 0 0;
-  box-shadow: 0 0 0 5px var(--bezel), 0 18px 40px rgba(17, 20, 24, .18);
-  clip-path: inset(-60px -60px 0 -60px); /* no bezel along the cut edge */
-}
-.combo__phone img { width: 100%; height: auto; }
-
-/* Beyond the meeting: what you said → what gets typed. */
-.polish { display: flex; flex-direction: column; justify-content: center; min-height: 400px; padding: 40px; }
-.polish__raw { font-size: 17px; line-height: 1.8; color: var(--secondary); }
-/* Filler words: a drawn strike (so it can be animated), then greyed out. */
-.polish__raw s {
-  text-decoration: none; color: var(--tertiary);
-  background: linear-gradient(var(--secondary), var(--secondary)) no-repeat 0 58% / 100% 1.5px;
-}
-.polish__lab { margin: 22px 0 12px; font-size: 13px; font-weight: 600; color: var(--signal); }
-.polish__out { font-size: 17px; line-height: 1.7; border-left: 2px solid var(--ink); padding-left: 16px; }
-.polish__out ol { margin: 6px 0 0; padding-left: 22px; }
-.polish.is-pending s { color: var(--secondary); background-size: 0 1.5px; }
-.polish.is-pending .polish__lab, .polish.is-pending .polish__out, .polish.is-pending li { opacity: 0; }
-.polish.is-play s { transition: background-size .35s ease-out .1s, color .3s ease-out .45s; }
-.polish.is-play .polish__lab { transition: opacity .25s ease-out .6s; }
-.polish.is-play .polish__out { transition: opacity .25s ease-out .85s; }
-.polish.is-play li { transition: opacity .25s ease-out 1.05s; }
-.polish.is-play li:nth-child(2) { transition-delay: 1.25s; }
-.polish.is-play li:nth-child(3) { transition-delay: 1.45s; }
 
 /* Provider marks: one row of names, drawn in the text colour. */
 .prov { display: flex; flex-wrap: wrap; gap: 10px 26px; margin-top: 40px; font-size: 15px; }
@@ -457,15 +480,24 @@ h3 { font-size: 18px; font-weight: 600; line-height: 1.4; }
   mask: var(--m) center / contain no-repeat;
 }
 
-/* Download */
-.dl { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 30px; }
+/* Download: the closing card, centred, with the hero's glow behind it. */
+.cta-band { position: relative; overflow: hidden; isolation: isolate; padding: 64px 40px 52px; text-align: center; }
+.cta-band::before {
+  content: ""; position: absolute; z-index: -1; inset: 0;
+  background:
+    radial-gradient(50% 80% at 20% 100%, var(--glow-1), transparent 70%),
+    radial-gradient(50% 80% at 80% 0%, var(--glow-3), transparent 70%);
+}
+.cta-band h2 { margin: 0 auto; }
+.dl { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px; margin-top: 30px; }
 /* The Play badge: unmodified, 48px tall, with clear space on every side. */
 .badge-play { display: inline-block; margin: 0 6px; border-radius: 8px; line-height: 0; }
 .badge-play img { height: 48px; width: auto; }
-#download .fine { margin-top: 24px; }
+#download .fine { margin: 24px auto 0; }
 
 /* ---------- Footer ---------- */
 .foot { border-top: 1px solid var(--hairline); padding: 56px 0 44px; font-size: 14.5px; }
+.foot .wm { align-self: flex-start; }
 .foot__top { display: grid; grid-template-columns: 1.25fr repeat(4, 1fr); gap: 28px; }
 .foot__col { display: flex; flex-direction: column; gap: 8px; }
 .foot__col h2 { font-size: 13px; font-weight: 600; color: var(--secondary); margin: 0 0 4px; letter-spacing: 0; line-height: 1.4; }
@@ -487,9 +519,6 @@ h3 { font-size: 18px; font-weight: 600; line-height: 1.4; }
   .route__wires .f { animation: none; }
   .rt-node { transition: none; }
   /* The demos show their final state. */
-  .chat.is-pending :is(.chat__q, .chat__tool, .chat__a),
-  .polish.is-pending :is(.polish__lab, .polish__out, li) { opacity: 1; }
-  .polish.is-pending s { color: var(--tertiary); background-size: 100% 1.5px; }
 }
 @media print {
   .js .fade { opacity: 1; }
@@ -498,10 +527,10 @@ h3 { font-size: 18px; font-weight: 600; line-height: 1.4; }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 1080px) {
-  .hero { gap: 40px; }
-  h1, :lang(en) h1 { font-size: 42px; }
-  :lang(zh) h1 { font-size: 42px; }
-  .row__in { gap: 44px; }
+  h1 { font-size: 52px; }
+  .feats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .flow { grid-template-columns: minmax(0, 1fr); max-width: 560px; margin: 0 auto; }
+  .models { grid-template-columns: minmax(0, 1fr); gap: 32px; }
 }
 @media (max-width: 980px) {
   :root { --gutter: 24px; }
@@ -519,31 +548,20 @@ h3 { font-size: 18px; font-weight: 600; line-height: 1.4; }
   .nav.is-open { border-bottom-color: var(--hairline); }
   .nav__lang { margin-left: auto; }
   .nav__menu { display: grid; }
-  .hero { grid-template-columns: 1fr; gap: 44px; padding-top: 44px; padding-bottom: 48px; }
-  .bigshot { padding-bottom: 72px; }
-  .sec { padding: 64px 0; }
+  .hero__in { padding-top: 52px; padding-bottom: 44px; }
+  .sec { padding: 72px 0; }
   .foot__top { grid-template-columns: 1fr 1fr 1fr; }
   .foot__top .wm { grid-column: 1 / -1; }
 }
-/* Rows stack: the words first, then the visual at full width. */
-@media (max-width: 860px) {
-  .row__in, .row--rev .row__in { grid-template-columns: minmax(0, 1fr); gap: 32px; }
-  .row--rev .row__vis { order: 0; }
-}
 @media (max-width: 760px) {
-  h1, :lang(en) h1, :lang(zh) h1 { font-size: 34px; }
-  .demo, .prefs { padding: 26px 22px 22px; }
-  .prefs__v { min-width: 0; }
-  .term { min-height: 0; padding: 52px 22px 28px; }
-  .term pre { font-size: 13px; }
-  h2, .row h2 { font-size: 26px; }
+  h1 { font-size: 38px; }
+  h2 { font-size: 28px; }
   .sub { font-size: 16.5px; }
-  .lines { height: 250px; }
-  .bigshot { padding-bottom: 56px; }
+  .sec__head { margin-bottom: 32px; }
+  .feats, .plans { grid-template-columns: minmax(0, 1fr); }
+  .models__vis, .plan { padding: 22px 18px 20px; }
+  .cta-band { padding: 44px 20px 36px; }
   .winshot { border-radius: 8px; }
-  .chat, .polish { min-height: 0; padding: 28px 22px 22px; }
-  .chat__a, .polish__raw, .polish__out { font-size: 16px; }
-  .combo__phone { border-radius: 16px 16px 0 0; box-shadow: 0 0 0 3px var(--bezel), 0 12px 28px rgba(17, 20, 24, .18); }
 }
 @media (max-width: 600px) {
   :root { --gutter: 20px; }
@@ -552,10 +570,7 @@ h3 { font-size: 18px; font-weight: 600; line-height: 1.4; }
   /* The whole report window is unreadable at phone width: zoom into its content
      column (roughly 37–82% of the screenshot's width) and crop the rest. */
   .winshot--report { max-height: 520px; }
-  .cmdk { padding: 28px 12px; }
-  .cmdk img { border-radius: 8px; }
   .winshot--report picture { display: block; width: 220%; margin-left: -78%; }
-  /* The ⌘K crop: zoom in until the palette spans the width. */
 }
 /* The route stacks: your computer on top, the Parley node in the middle when it is
    on the path (below both providers when it is not), the providers side by side. */

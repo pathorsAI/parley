@@ -3,7 +3,7 @@
 //   node website/tools/og/render.mjs      (or: bun website/tools/og/render.mjs)
 //
 // Fills og.html from the site's own strings (website/src/i18n/*.json), so the card
-// shows the hero's headline and its route figure in the own-keys state.
+// shows the hero's headline and the models figure in its local state.
 // Fonts are inlined as data: URLs because Chrome will not load @font-face files
 // across file:// URLs.
 //
@@ -83,7 +83,8 @@ for (const [lang, cfg] of Object.entries(LANGS)) {
     deviceNote: text("route.deviceNote"),
     stt: text("route.stt"),
     ai: text("route.ai"),
-    direct: text("route.direct"),
+    sttLocal: text("route.sttLocal"),
+    aiLocal: text("route.local"),
     capByok: text("route.capByok"),
   };
   const html = template

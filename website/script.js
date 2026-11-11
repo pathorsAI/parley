@@ -114,30 +114,6 @@
     });
   }
 
-  /* ---------- Copy button for the MCP command ---------- */
-  function showCopied(btn, original) {
-    btn.textContent = btn.dataset.done || original;
-    btn.classList.add("is-done");
-    setTimeout(() => {
-      btn.textContent = original;
-      btn.classList.remove("is-done");
-    }, 1600);
-  }
-
-  function setupCopy() {
-    document.querySelectorAll(".code__copy").forEach((btn) => {
-      const original = btn.textContent;
-      btn.addEventListener("click", async () => {
-        try {
-          await navigator.clipboard.writeText(btn.dataset.copy || "");
-          showCopied(btn, original);
-        } catch {
-          /* clipboard unavailable: the command is on screen to select by hand */
-        }
-      });
-    });
-  }
-
   /* ---------- 160ms fade-in on scroll (no movement) ---------- */
   function setupFades() {
     const els = document.querySelectorAll(".fade");
@@ -357,9 +333,9 @@
     else size();
   }
 
-  /* ---------- Hero figure: where the conversation goes ----------
+  /* ---------- Models figure: where the conversation goes ----------
      The nodes are laid out by CSS; this draws the wires between them, flips the
-     mode, and (own keys only) steps through a few real provider hosts so the
+     mode, and (local only) steps through a few real providers so the
      "you choose" part is visible. Without JS the own-keys state stands on its own. */
 
   const SVG_NS = "http://www.w3.org/2000/svg";
@@ -447,15 +423,22 @@
     document.fonts?.ready.then(draw);
     draw();
 
-    // Own keys: step through real hosts, one node at a time.
+    // Local: step through real providers, one node at a time, by name and mark.
     const cycles = [...fig.querySelectorAll("[data-cycle]")].map((el) => {
-      let hosts = [];
+      let items = [];
       try {
-        hosts = JSON.parse(el.dataset.cycle);
+        items = JSON.parse(el.dataset.cycle);
       } catch {
-        hosts = [];
+        items = [];
       }
-      return { el, hosts, i: 0, note: el.closest(".rt-node")?.querySelector(".rt-note[data-local-note]") };
+      return {
+        el,
+        items,
+        i: 0,
+        name: el.querySelector(".rt-n"),
+        logo: el.querySelector(".logo"),
+        note: el.closest(".rt-node")?.querySelector(".rt-note[data-local-note]"),
+      };
     });
     if (reduceMotion.matches || !cycles.length) return;
     let inView = true;
@@ -471,14 +454,18 @@
     setInterval(() => {
       if (!inView || hovering || document.hidden || fig.dataset.mode !== "byok") return;
       const c = cycles[turn++ % cycles.length];
-      if (c.hosts.length < 2) return;
-      c.i = (c.i + 1) % c.hosts.length;
-      const host = c.hosts[c.i];
+      if (c.items.length < 2) return;
+      c.i = (c.i + 1) % c.items.length;
+      const next = c.items[c.i];
       c.el.classList.add("is-swap");
       setTimeout(() => {
-        c.el.textContent = host;
+        c.name.textContent = next.n;
+        if (c.logo) {
+          c.logo.hidden = !next.l;
+          if (next.l) c.logo.style.setProperty("--m", `url('${next.l}')`);
+        }
         if (c.note?.dataset.localNote) {
-          c.note.textContent = host === c.el.dataset.local ? c.note.dataset.localNote : c.note.dataset.direct;
+          c.note.textContent = next.n === c.el.dataset.local ? c.note.dataset.localNote : c.note.dataset.direct;
         }
         c.el.classList.remove("is-swap");
         draw();
@@ -486,132 +473,9 @@
     }, 2600);
   }
 
-  /* ---------- Models: each setting steps through real providers ----------
-     One row at a time, so the eye can follow it. The HTML is the first entry of
-     each list, which is also what reduced motion and no-JS visitors see. */
-
-  function setupPrefs() {
-    const panel = document.querySelector(".prefs");
-    if (!panel || reduceMotion.matches) return;
-    const rows = [...panel.querySelectorAll(".prefs__v[data-cycle]")].map((el) => {
-      let items = [];
-      try {
-        items = JSON.parse(el.dataset.cycle);
-      } catch {
-        items = [];
-      }
-      return { el, items, i: 0, logo: el.querySelector(".logo"), name: el.querySelector(".prefs__n"), tag: el.querySelector("em") };
-    });
-    if (!rows.length) return;
-    let inView = false;
-    if ("IntersectionObserver" in globalThis) {
-      new IntersectionObserver((entries) => {
-        inView = entries.some((e) => e.isIntersecting);
-      }).observe(panel);
-    } else inView = true;
-    let turn = 0;
-    setInterval(() => {
-      if (!inView || document.hidden) return;
-      const row = rows[turn++ % rows.length];
-      if (row.items.length < 2) return;
-      row.i = (row.i + 1) % row.items.length;
-      const next = row.items[row.i];
-      row.el.classList.add("is-swap");
-      setTimeout(() => {
-        if (row.name) row.name.textContent = next.n;
-        if (row.logo) {
-          row.logo.style.setProperty("--m", next.l ? `url('${next.l}')` : "none");
-          row.logo.hidden = !next.l;
-        }
-        if (row.tag) row.tag.hidden = !next.t;
-        row.el.classList.remove("is-swap");
-      }, 200);
-    }, 1800);
-  }
-
-  /* ---------- Row demos: the AI chat and voice-typing polish ----------
-     Each plays once, the first time it is mostly in view. The HTML is the final
-     state, so without JS, without IntersectionObserver or with reduced motion the
-     visitor simply sees the finished demo. */
-
-  function onceInView(el, play) {
-    const io = new IntersectionObserver(
-      (entries) => {
-        if (!entries.some((e) => e.isIntersecting)) return;
-        io.disconnect();
-        play(el);
-      },
-      { threshold: 0.35 },
-    );
-    io.observe(el);
-  }
-
-  // The answer's direct children: text runs are typed out, timestamp chips pop in whole.
-  function blankParts(el) {
-    const parts = [...el.childNodes].map((node) => ({
-      node,
-      text: node.nodeType === Node.TEXT_NODE ? node.textContent : null,
-    }));
-    showParts(parts, 0);
-    return parts;
-  }
-
-  function showParts(parts, count) {
-    let left = count;
-    for (const part of parts) {
-      if (part.text === null) {
-        part.node.classList?.toggle("is-off", left < 1);
-        left -= 1;
-      } else {
-        part.node.textContent = part.text.slice(0, Math.max(0, left));
-        left -= part.text.length;
-      }
-    }
-  }
-
-  function typeParts(parts, duration) {
-    const total = parts.reduce((n, part) => n + (part.text === null ? 1 : part.text.length), 0);
-    const TICK = 30;
-    const step = Math.max(1, Math.ceil(total / (duration / TICK)));
-    let shown = 0;
-    const timer = setInterval(() => {
-      shown = Math.min(total, shown + step);
-      showParts(parts, shown);
-      if (shown >= total) clearInterval(timer);
-    }, TICK);
-  }
-
-  function playChat(chat) {
-    const answer = chat.querySelector(".chat__a");
-    const parts = answer ? blankParts(answer) : [];
-    chat.classList.replace("is-pending", "is-play");
-    // Question at once, the tool call at 0.35s, the answer typed from 0.7s to 1.5s.
-    setTimeout(() => typeParts(parts, 800), 700);
-  }
-
-  function playPolish(polish) {
-    polish.classList.replace("is-pending", "is-play");
-  }
-
-  function setupDemos() {
-    if (reduceMotion.matches || !("IntersectionObserver" in globalThis)) return;
-    const demos = [
-      [document.querySelector(".chat"), playChat],
-      [document.querySelector(".polish"), playPolish],
-    ];
-    for (const [el, play] of demos) {
-      if (!el) continue;
-      el.classList.add("is-pending");
-      onceInView(el, play);
-    }
-  }
-
   setupNav();
   setupDownloads(detectOS());
-  setupCopy();
   setupFades();
   setupRoute();
-  setupPrefs();
   setupHero();
-  setupDemos();
 })();
