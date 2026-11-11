@@ -30,12 +30,32 @@ const KNOWN_IDS: ReadonlySet<string> = new Set(COMMANDS.map((c) => c.id));
  */
 export function initMenuCommands(): void {
   if (!isTauri()) return;
-  listenEvent<string>(MENU_COMMAND, (event) => {
-    const id = event.payload;
-    if (!KNOWN_IDS.has(id)) {
-      log.warn("menu: unknown command", { id });
-      return;
-    }
-    runCommand(id as CommandId);
-  }).catch((error) => log.warn("menu: command listener failed", { error: String(error) }));
+  void listenForThisWindow().catch((error) =>
+    log.warn("menu: command listener failed", { error: String(error) })
+  );
+}
+
+/**
+ * Only the command addressed to THIS window. An untargeted listen hears every
+ * window's commands, and that is a loop: a secondary window (the voice-typing
+ * overlay is always up) would hear ⌘K meant for the main window, find no
+ * "main" scope, forward it to main with `emitTo` — and hear its own forward,
+ * forever, toggling the palette and pulling the main window to the front on
+ * every pass. The screen flickers until the app is quit.
+ */
+async function listenForThisWindow(): Promise<void> {
+  const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+  const label = getCurrentWebviewWindow().label;
+  await listenEvent<string>(
+    MENU_COMMAND,
+    (event) => {
+      const id = event.payload;
+      if (!KNOWN_IDS.has(id)) {
+        log.warn("menu: unknown command", { id });
+        return;
+      }
+      runCommand(id as CommandId);
+    },
+    label
+  );
 }

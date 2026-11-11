@@ -221,13 +221,20 @@ export type BackendEvent = keyof BackendEventPayloads;
  * call site. Exactly Tauri's `listen` — it rejects outside the Tauri shell;
  * see {@link listenIfTauri} for the guarded form.
  */
+/**
+ * Subscribe to `name`. With no `target` the listener hears the event whatever
+ * window it was addressed to — Tauri's `listen` is "any target", so an
+ * `emitTo("main", …)` reaches every window that listens this way. Pass this
+ * window's label as `target` when only events addressed to it should count.
+ */
 export function listenEvent<E extends BackendEvent>(
   name: E,
   handler: EventCallback<BackendEventPayloads[E]>,
+  target?: string,
 ): Promise<UnlistenFn>;
-export function listenEvent<T>(name: string, handler: EventCallback<T>): Promise<UnlistenFn>;
-export function listenEvent(name: string, handler: EventCallback<unknown>): Promise<UnlistenFn> {
-  return listen(name, handler);
+export function listenEvent<T>(name: string, handler: EventCallback<T>, target?: string): Promise<UnlistenFn>;
+export function listenEvent(name: string, handler: EventCallback<unknown>, target?: string): Promise<UnlistenFn> {
+  return target === undefined ? listen(name, handler) : listen(name, handler, { target });
 }
 
 const noop: UnlistenFn = () => {};
