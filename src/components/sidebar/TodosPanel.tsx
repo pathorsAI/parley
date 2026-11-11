@@ -94,8 +94,8 @@ export function TodosPanel() {
     setChecking(true);
     try {
       const { checkTodos } = await import("../../lib/ai/todos");
-      const ids = await checkTodos({ settings, segments, todos: cur, names: speakerNames });
-      if (ids.length) markTodosDone(ids);
+      const checks = await checkTodos({ settings, segments, todos: cur, names: speakerNames });
+      if (checks.length) markTodosDone(checks);
     } catch (e) {
       console.error("checkTodos failed", e);
     } finally {

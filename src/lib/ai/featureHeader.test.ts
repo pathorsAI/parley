@@ -116,13 +116,13 @@ describe("X-Parley-Feature on Parley Cloud", () => {
   });
 
   it("tags live meeting analysis as meeting", async () => {
-    const spy = stubFetch('{"done_ids":["t1"]}');
+    const spy = stubFetch('{"done":[{"id":"t1","at":"0:05"}]}');
     const done = await checkTodos({
       settings: hosted,
       segments,
       todos: [{ id: "t1", text: "Agree a ship date", done: false }],
     });
-    expect(done).toEqual(["t1"]);
+    expect(done).toEqual([{ id: "t1", atMs: 5_000 }]);
     expect(features(spy)).toEqual(["meeting"]);
   });
 
@@ -182,12 +182,56 @@ describe("X-Parley-Feature on a BYOK provider", () => {
   });
 
   it("is not sent by meeting analysis", async () => {
-    const spy = stubFetch('{"done_ids":[]}');
+    const spy = stubFetch('{"done":[]}');
     await checkTodos({
       settings: byok,
       segments,
       todos: [{ id: "t1", text: "Agree a ship date", done: false }],
     });
     expect(features(spy)).toEqual([null]);
+  });
+});
+
+describe("checkTodos: which items were covered, and where", () => {
+  const BUDGET = "Confirm the budget";
+  const TIMELINE = "Agree the timeline";
+  const timed = [seg({ text: "The budget is approved.", startMs: 192_000, endMs: 195_000 })];
+
+  it("sends the transcript with its [m:ss] stamps and reads each item's stamp back as ms", async () => {
+    const spy = stubFetch('{"done":[{"id":"t1","at":"3:12"},{"id":"t2","at":"later"},{"id":"zz","at":"0:01"}]}');
+    const done = await checkTodos({
+      settings: hosted,
+      segments: timed,
+      todos: [
+        { id: "t1", text: BUDGET, done: false },
+        { id: "t2", text: TIMELINE, done: false },
+      ],
+    });
+    expect(done).toEqual([{ id: "t1", atMs: 192_000 }, { id: "t2", atMs: undefined }]);
+    expect(JSON.stringify(bodies(spy)[0].messages)).toContain("[3:12]");
+  });
+
+  it("does not ask about an item the user unticked after the AI ticked it", async () => {
+    const spy = stubFetch('{"done":[{"id":"t1","at":"3:12"}]}');
+    const done = await checkTodos({
+      settings: hosted,
+      segments: timed,
+      todos: [
+        { id: "t1", text: BUDGET, done: false, aiDismissed: true },
+        { id: "t2", text: TIMELINE, done: false },
+      ],
+    });
+    expect(done).toEqual([]);
+    expect(JSON.stringify(bodies(spy)[0].messages)).not.toContain(BUDGET);
+  });
+
+  it("skips the call when everything left is done or dismissed", async () => {
+    const spy = stubFetch('{"done":[]}');
+    await checkTodos({
+      settings: hosted,
+      segments: timed,
+      todos: [{ id: "t1", text: BUDGET, done: false, aiDismissed: true }],
+    });
+    expect(spy).not.toHaveBeenCalled();
   });
 });

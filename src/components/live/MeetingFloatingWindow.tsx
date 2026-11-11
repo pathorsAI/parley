@@ -49,6 +49,7 @@ import { DestinationField } from "../DestinationSheet";
 import { MeetingContextField } from "../MeetingContextField";
 import { useMeetingDestination } from "../useMeetingDestination";
 import { CoachFeed } from "./CoachFeed";
+import { AgendaBar, MiniAgendaCount, useAgendaEndReminder } from "./AgendaBar";
 import { NotesEditor } from "./NotesEditor";
 import { LiveBanners } from "./LiveScreen";
 import { ASK_SUGGESTIONS, useCoachAsk, type AskCard } from "./coachAsk";
@@ -265,6 +266,7 @@ function MiniWindow({
       <div className="flex h-12 shrink-0 items-center gap-2 pr-1.5 pl-2" title={fixed ? undefined : t("floating.dockHint")}>
         <DragGrip />
         <RecordingClock withLabel={false} />
+        <MiniAgendaCount />
         {coach ? (
           <form
             className="flex h-8 min-w-0 flex-1 items-center gap-1 rounded-lg border border-input bg-background pr-1 pl-2.5"
@@ -650,6 +652,17 @@ export function MeetingFloatingWindow() {
   const meetingActive = status === "recording" || status === "paused";
   const paused = status === "paused";
 
+  // 結束前 5 分鐘 still-open agenda items: one toast, whichever layout is up.
+  useAgendaEndReminder();
+
+  /** An AI tick's 「AI · mm:ss」: over to the transcript, which scrolls to the
+   *  line nearest that moment and flashes it (TranscriptPanel's highlightMs —
+   *  the signal waits in the store until the tab has mounted). */
+  function jumpToTranscript(ms: number) {
+    setHighlightMs(ms);
+    setTab("transcript");
+  }
+
   // Each meeting starts with an empty question thread.
   useEffect(() => {
     useCoachAsk.getState().reset();
@@ -690,6 +703,7 @@ export function MeetingFloatingWindow() {
       <FloatingTitleBar onClose={() => setConfirmCancel(true)} onCollapse={() => void toggleMini(true)} />
       <LiveBanners />
       <MeetingHeading />
+      <AgendaBar onJump={jumpToTranscript} />
 
       {bgOpen && (
         <div className="mx-5 mt-4 flex shrink-0 flex-col gap-2 rounded-lg border p-3">

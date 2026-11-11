@@ -6,7 +6,7 @@
 // `ReplaySession` is added to `../types`, prefer importing it from there and drop
 // this declaration.
 
-import type { TranscriptSegment } from "../types";
+import type { TodoItem, TranscriptSegment } from "../types";
 
 /**
  * A fully transcribed uploaded recording ready for the replay UI to play and
@@ -43,4 +43,7 @@ export interface ReplaySession {
    *  over the recording instead. The replay screen says so, and saving writes
    *  the untimed transcript back rather than the guess (see replay/timing). */
   timingEstimated?: boolean;
+  /** The saved meeting's agenda (HistoryEntry.agenda), for the report's
+   *  沒談到的議程. Absent when the recording has none. */
+  agenda?: readonly TodoItem[];
 }

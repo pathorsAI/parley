@@ -89,6 +89,7 @@ exports[`store action trace > every action changes exactly what it did before, a
       "todos": [
         {
           "done": true,
+          "doneBy": "user",
           "id": "uuid-2",
           "text": "a",
         },
@@ -109,11 +110,14 @@ exports[`store action trace > every action changes exactly what it did before, a
       "todos": [
         {
           "done": true,
+          "doneBy": "user",
           "id": "uuid-2",
           "text": "a",
         },
         {
           "done": true,
+          "doneAtMs": 65000,
+          "doneBy": "ai",
           "id": "uuid-3",
           "text": "b",
         },
@@ -129,6 +133,8 @@ exports[`store action trace > every action changes exactly what it did before, a
       "todos": [
         {
           "done": true,
+          "doneAtMs": 65000,
+          "doneBy": "ai",
           "id": "uuid-3",
           "text": "b",
         },

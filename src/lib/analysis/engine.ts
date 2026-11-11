@@ -430,7 +430,7 @@ export function useAnalysisEngine() {
         todoBusy.current = true;
         import("../ai/todos")
           .then(({ checkTodos }) => checkTodos({ settings, segments, todos, names: speakerNames }))
-          .then((ids) => ids.length && markTodosDone(ids))
+          .then((checks) => checks.length && markTodosDone(checks))
           .catch((e) => console.error("[todos]", e))
           .finally(() => {
             todoBusy.current = false;

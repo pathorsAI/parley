@@ -11,6 +11,7 @@ import type {
   FilingSuggestion,
   MeetingKind,
   TimelineEvent,
+  TodoItem,
   TranscriptSegment,
 } from "../types";
 
@@ -95,6 +96,12 @@ export interface HistoryEntry {
    *  distinguish "never ran" from "ran, and the user has since dealt with it",
    *  so without this flag every reopen would re-spend the pass. */
   filingSuggested?: boolean;
+  /** The meeting draft's agenda as the meeting left it — each item ticked or
+   *  not, by whom and where (TodoItem.doneBy / doneAtMs). A live meeting's
+   *  save writes it once; nothing rewrites it later (the analysis overwrite
+   *  keeps meta's). Absent on uploads, meetings without an agenda and entries
+   *  saved before it existed: the report then shows no 沒談到的議程. */
+  agenda?: TodoItem[];
 }
 
 /** The card shown in the history grid — small, so listing stays cheap. */
