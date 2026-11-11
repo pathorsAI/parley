@@ -132,12 +132,18 @@ export function useAgendaEndReminder(): void {
   const endAt = useStore((s) => s.meetingEndAt);
   // Survives the effect re-running (a language change): still once per meeting.
   const shownFor = useRef<string | null>(null);
+  // When this window first saw each meeting: the meeting window opens as the
+  // meeting starts, so this is its start (see agendaReminderDue).
+  const seen = useRef<{ id: string; at: number } | null>(null);
 
   useEffect(() => {
     if (!meetingId || endAt == null) return;
+    if (seen.current?.id !== meetingId) seen.current = { id: meetingId, at: Date.now() };
+    const startedAt = seen.current.at;
     const check = () => {
       const { todos } = useStore.getState();
-      if (!agendaReminderDue({ now: Date.now(), meetingEndAt: endAt, todos, alreadyShown: shownFor.current === meetingId })) {
+      const alreadyShown = shownFor.current === meetingId;
+      if (!agendaReminderDue({ now: Date.now(), meetingEndAt: endAt, todos, alreadyShown, startedAt })) {
         return;
       }
       shownFor.current = meetingId;

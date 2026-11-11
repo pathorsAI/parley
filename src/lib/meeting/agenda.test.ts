@@ -104,7 +104,14 @@ describe("agendaReminderDue", () => {
   const END = 10_000_000;
   const open = [item("a", BUDGET, { done: true }), item("b", TIMELINE)];
   const due = (over: Partial<Parameters<typeof agendaReminderDue>[0]>) =>
-    agendaReminderDue({ now: END - AGENDA_REMINDER_LEAD_MS, meetingEndAt: END, todos: open, alreadyShown: false, ...over });
+    agendaReminderDue({
+      now: END - AGENDA_REMINDER_LEAD_MS,
+      meetingEndAt: END,
+      todos: open,
+      alreadyShown: false,
+      startedAt: END - 60 * 60_000,
+      ...over,
+    });
 
   it("fires from five minutes before the drafted end while something is open", () => {
     expect(due({})).toBe(true);
@@ -113,6 +120,11 @@ describe("agendaReminderDue", () => {
 
   it("waits until then", () => {
     expect(due({ now: END - AGENDA_REMINDER_LEAD_MS - 1 })).toBe(false);
+  });
+
+  it("stays quiet for a meeting that started inside the last five minutes or after its end", () => {
+    expect(due({ startedAt: END - AGENDA_REMINDER_LEAD_MS })).toBe(false);
+    expect(due({ startedAt: END + 60_000, now: END + 120_000 })).toBe(false);
   });
 
   it("never without an end time, once shown, or with nothing open", () => {

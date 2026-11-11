@@ -91,9 +91,15 @@ export function agendaReminderDue(p: {
   meetingEndAt: number | null;
   todos: readonly TodoItem[];
   alreadyShown: boolean;
+  /** When this window first saw the meeting. A meeting that only started
+   *  inside the last five minutes (or after its planned end: a draft
+   *  recorded late) gets no reminder: "N items left" the moment recording
+   *  begins is noise, not a nudge. */
+  startedAt: number;
 }): boolean {
   if (p.alreadyShown || p.meetingEndAt == null) return false;
-  if (p.now < p.meetingEndAt - AGENDA_REMINDER_LEAD_MS) return false;
+  const remindAt = p.meetingEndAt - AGENDA_REMINDER_LEAD_MS;
+  if (p.startedAt >= remindAt || p.now < remindAt) return false;
   return p.todos.some((t) => !t.done);
 }
 
