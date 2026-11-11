@@ -13,6 +13,7 @@ import { AppSidebar } from "./AppSidebar";
 import { CommandPalette } from "./CommandPalette";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useLibraryTree } from "./useLibraryTree";
+import { useFolderOpenTracking } from "./useFolderOpenTracking";
 import { useI18n } from "../../i18n";
 import { useNavShortcuts } from "../../lib/nav/useNavShortcuts";
 import { useCommandScope } from "../../lib/commands/bind";
@@ -54,6 +55,9 @@ export function AppShell() {
   const collapsed = useSidebarCollapsed();
   const peek = useSidebarPeek();
   const tree = useLibraryTree();
+  // Feeds the sidebar's most-used folder order; lives here, not in the
+  // sidebar, so opens through ⌘K count while the tree is collapsed.
+  useFolderOpenTracking(tree.personalFolders, tree.orgFolders);
 
   // Above the focused branch on purpose, both of them: the main window's keys
   // must not die and revive with the tree. Pressing back/forward during a
@@ -126,11 +130,12 @@ export function AppShell() {
           {/* The tree scrolls; the theme switch stays pinned under it. The
               sidebar colour is painted once, here, for the tree and the footer
               alike, so the two always read as one surface. */}
-          <div className="flex h-full min-h-0 flex-col bg-sidebar">
-            <div className="min-h-0 flex-1">
-              <AppSidebar tree={tree} />
-            </div>
-            <div className="shrink-0 px-3 pt-1 pb-2.5">
+          <div className="relative h-full min-h-0 bg-sidebar">
+            <AppSidebar tree={tree} />
+            {/* Floats over the tree's bottom-left corner instead of taking a
+                row of its own; the tree pads its foot so the last rows can
+                scroll out from under it. */}
+            <div className="pointer-events-none absolute bottom-2.5 left-3">
               <SidebarThemeSwitch />
             </div>
           </div>

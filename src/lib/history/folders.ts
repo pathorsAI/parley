@@ -51,6 +51,21 @@ export interface Folder {
    * the remote copy silently un-archive it.
    */
   archivedAt?: number;
+  /**
+   * When the folder was pinned to the top of the sidebar (epoch ms); absent
+   * when it is not. Pinned folders sort first, oldest pin on top, ahead of the
+   * usage-ranked rest (lib/library/folderRank).
+   *
+   * LOCAL ONLY, exactly like {@link archivedAt}: the cloud table has no column
+   * for it, so {@link writeLocalFolders} carries it across the mirror-down.
+   * Archiving clears it — a folder on the shelf has no business at the top.
+   */
+  pinnedAt?: number;
+}
+
+/** Is this folder pinned to the top of the sidebar? */
+export function isPinned(f: Folder): boolean {
+  return typeof f.pinnedAt === "number";
 }
 
 /** Has this folder been put away? */
@@ -211,20 +226,24 @@ export async function listFoldersFresh(): Promise<Folder[]> {
 /** Replace the whole registry — used to mirror the cloud list down so a
  *  folder created on another device shows here (and one deleted there disappears).
  *
- *  `archivedAt` is local-only (see {@link Folder}), so the incoming list can't
- *  speak to it: each folder keeps whatever archive state this machine already
- *  had for that id. Without this, every cloud reload un-archives everything.
+ *  `archivedAt` and `pinnedAt` are local-only (see {@link Folder}), so the
+ *  incoming list can't speak to them: each folder keeps whatever archive and
+ *  pin state this machine already had for that id. Without this, every cloud
+ *  reload un-archives and un-pins everything.
  *
  *  Does NOT bump the mutation generation: this is the mirror coming down, not
  *  an edit the user made, and counting it would have every reload invalidate
  *  the next one. */
 export function writeLocalFolders(folders: Folder[]): void {
-  const archived = new Map(read().map((f) => [f.id, f.archivedAt]));
+  const local = new Map(read().map((f) => [f.id, f]));
   persist(
     folders.map((f) => {
-      const at = f.archivedAt ?? archived.get(f.id);
-      const base = { id: f.id, name: f.name, createdAt: f.createdAt };
-      return typeof at === "number" ? { ...base, archivedAt: at } : base;
+      const archivedAt = f.archivedAt ?? local.get(f.id)?.archivedAt;
+      const pinnedAt = f.pinnedAt ?? local.get(f.id)?.pinnedAt;
+      const out: Folder = { id: f.id, name: f.name, createdAt: f.createdAt };
+      if (typeof archivedAt === "number") out.archivedAt = archivedAt;
+      if (typeof pinnedAt === "number") out.pinnedAt = pinnedAt;
+      return out;
     })
   );
 }
@@ -251,8 +270,8 @@ export function mirrorCloudFolders(cloud: readonly Folder[], since: number): Fol
     });
     return listLocalFolders();
   }
-  // Through writeLocalFolders, never persist(): the archived flag is local-only
-  // and has to be carried across, which is that function's whole job.
+  // Through writeLocalFolders, never persist(): the archive and pin stamps are
+  // local-only and have to be carried across, which is that function's whole job.
   writeLocalFolders([...cloud]);
   return listLocalFolders();
 }
@@ -278,14 +297,34 @@ export function createLocalFolder(name: string): Folder {
 }
 
 /** Put a personal folder away, or bring it back (no-op if missing). Membership
- *  is untouched — this only decides whether the folder is in your way. */
+ *  is untouched — this only decides whether the folder is in your way.
+ *  Archiving drops the pin, and restoring does not bring it back: a folder you
+ *  shelved and then wanted again earns its place by being used, like a new one. */
 export function setLocalFolderArchived(id: string, archived: boolean): void {
   generation += 1;
   persist(
     read().map((f) => {
       if (f.id !== id) return f;
-      if (!archived) return { id: f.id, name: f.name, createdAt: f.createdAt };
-      return { ...f, archivedAt: f.archivedAt ?? Date.now() };
+      const base: Folder = { id: f.id, name: f.name, createdAt: f.createdAt };
+      if (!archived) return base;
+      return { ...base, archivedAt: f.archivedAt ?? Date.now() };
+    })
+  );
+}
+
+/** Pin a personal folder to the top of the sidebar, or unpin it (no-op if
+ *  missing, archived, or already in the asked-for state — re-pinning must not
+ *  move a pinned folder to the bottom of the pinned group). */
+export function setLocalFolderPinned(id: string, pinned: boolean): void {
+  const target = read().find((f) => f.id === id);
+  if (!target || isArchived(target) || isPinned(target) === pinned) return;
+  generation += 1;
+  persist(
+    read().map((f) => {
+      if (f.id !== id) return f;
+      // Only a live folder gets here, so there is no archive stamp to keep.
+      const base: Folder = { id: f.id, name: f.name, createdAt: f.createdAt };
+      return pinned ? { ...base, pinnedAt: Date.now() } : base;
     })
   );
 }

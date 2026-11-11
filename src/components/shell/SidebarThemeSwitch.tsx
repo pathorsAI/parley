@@ -20,7 +20,7 @@ export function SidebarThemeSwitch() {
     <div
       role="radiogroup"
       aria-label={t("settings.basic.theme")}
-      className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-foreground/[0.07] p-0.5"
+      className="pointer-events-auto inline-flex shrink-0 items-center gap-0.5 rounded-full border border-foreground/[0.06] bg-sidebar/40 p-0.5 shadow-sm backdrop-blur-md"
     >
       {options.map(([value, label, Icon]) => {
         const on = theme === value;

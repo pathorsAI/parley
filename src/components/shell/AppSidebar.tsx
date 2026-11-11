@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Archive,
   ArchiveRestore,
@@ -12,6 +12,8 @@ import {
   House,
   Mic,
   Pencil,
+  Pin,
+  PinOff,
   Plus,
   Trash2,
   UsersRound,
@@ -34,7 +36,18 @@ import { useStore, type LibrarySelection } from "../../lib/store";
 import { useNewFolderRequest } from "../../lib/shell/sidebar";
 import { useI18n } from "../../i18n";
 import type { LibraryTree } from "./useLibraryTree";
-import { isArchived, type Folder as LocalFolder } from "../../lib/history/folders";
+import { isArchived, isPinned, type Folder as LocalFolder } from "../../lib/history/folders";
+import {
+  rankFolders,
+  readFolderOpens,
+  readOrgFolderOpens,
+  recordingTimesByFolder,
+} from "../../lib/library/folderRank";
+import {
+  orgFolderPinnedAt,
+  setOrgFolderPinned,
+  useOrgFolderPins,
+} from "../../lib/library/orgFolderPins";
 import { usePulsingFolder } from "../../lib/onboarding/motion";
 import { useArchiveFolder } from "../library/useArchiveFolder";
 import type { CloudOrg } from "../../lib/cloud/types";
@@ -46,7 +59,7 @@ import type { CloudOrg } from "../../lib/cloud/types";
  * and the number beside a row is a count of exactly what clicking it opens.
  *
  *   資料夾
- *     和運租車 · 8
+ *     和運租車 (pin) · 8   ← pinned first, then most-used (lib/library/folderRank)
  *     台數科 · 3
  *   還沒歸檔 · 7           ← filed nowhere yet
  *   語音輸入
@@ -91,6 +104,35 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
   // OWN their recordings (buildOwnershipIndex above is fed the whole list), so
   // putting one away can't dump what is inside it into 還沒歸檔.
   const liveFolders = tree.personalFolders.filter((f) => !isArchived(f));
+
+  // Pinned first, then most-used — but ranked as a SNAPSHOT, so the list never
+  // reshuffles under the cursor. Opening a folder is itself a use, and a row
+  // that jumped the moment you clicked it would be gone from where your eye
+  // left it. The snapshot is retaken only when the set of folders changes
+  // (create, delete, archive, restore), when a pin changes, and on mount;
+  // opens and newly filed recordings from this session count from the next
+  // retake on. The one exception is the summaries' first arrival — they load
+  // after the folders, and a launch ranking that never saw a recording would
+  // be ranking on opens alone. Renames don't retake it: the order is held as
+  // ids and the rows read the current folder objects.
+  const rankKey =
+    liveFolders
+      .map((f) => `${f.id}:${f.pinnedAt ?? ""}`)
+      .sort()
+      .join("|") + (tree.summaries.length > 0 ? "#loaded" : "");
+  const rankedIds = useMemo(
+    () =>
+      rankFolders(liveFolders, {
+        opens: readFolderOpens(),
+        recordingTimes: recordingTimesByFolder(tree.summaries),
+        now: Date.now(),
+      }).map((f) => f.id),
+    // Keyed on rankKey alone, on purpose: see above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rankKey]
+  );
+  const liveById = new Map(liveFolders.map((f) => [f.id, f]));
+  const orderedFolders = rankedIds.flatMap((id) => liveById.get(id) ?? []);
   // A recording just filed into a folder (a suggested folder's fly-in): its row
   // flashes once so the eye lands on where the recording went.
   const pulsingFolder = usePulsingFolder();
@@ -125,7 +167,7 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
     // it. No right border: the shell's resize handle is the 1px line between
     // the rail and the page, and a border of its own beside it drew that line
     // twice as thick.
-    <nav className="flex h-full min-h-0 w-full flex-col overflow-y-auto px-2 py-2 text-sidebar-foreground">
+    <nav className="flex h-full min-h-0 w-full flex-col overflow-y-auto px-2 pt-2 pb-12 text-sidebar-foreground">
       {/* Blue text, not a blue fill: the titlebar already carries the filled
           start button and Home repeats it as its hero, so a third filled
           control here would spend the whole accent budget on one action. */}
@@ -187,8 +229,9 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
         {t("shell.folders")}
       </GroupLabel>
 
-      {liveFolders.map((f) => {
+      {orderedFolders.map((f) => {
         const node: LibraryNode = { kind: "folder", folderId: f.id };
+        const pinned = isPinned(f);
         return (
           <Row
             key={f.id}
@@ -196,9 +239,12 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
             pulsing={pulsingFolder === f.id}
             icon={<Folder className="size-3.5" />}
             label={f.name}
+            badge={pinned ? <PinBadge label={t("sidebar.pinned")} /> : undefined}
             count={countAt(node)}
             active={nodeActive(node)}
             onSelect={() => selectLibrary({ kind: "personal", node })}
+            onPin={pinned ? undefined : () => tree.pinPersonalFolder(f.id, true)}
+            onUnpin={pinned ? () => tree.pinPersonalFolder(f.id, false) : undefined}
             onRename={(name) => tree.renamePersonalFolder(f.id, name)}
             onArchive={() => archive.requestArchive(f)}
             onDelete={() => {
@@ -265,24 +311,24 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
                     selectLibrary({ kind: "org", id: o.id, name: o.name, folderId: null });
                   }}
                 />
-                {open &&
-                  (tree.orgFolders[o.id] ?? []).map((f) => (
-                    <OrgFolderRow
-                      key={f.id}
-                      tree={tree}
-                      org={o}
-                      folder={f}
-                      active={libraryActive && orgSel?.id === o.id && orgSel.folderId === f.id}
-                      onSelect={() =>
-                        selectLibrary({ kind: "org", id: o.id, name: o.name, folderId: f.id })
+                {open && (
+                  <OrgFolderList
+                    tree={tree}
+                    org={o}
+                    folders={tree.orgFolders[o.id] ?? []}
+                    activeFolderId={
+                      libraryActive && orgSel?.id === o.id ? orgSel.folderId : null
+                    }
+                    onSelect={(folderId) =>
+                      selectLibrary({ kind: "org", id: o.id, name: o.name, folderId })
+                    }
+                    onDeleted={(folderId) => {
+                      if (orgSel?.id === o.id && orgSel.folderId === folderId) {
+                        selectLibrary({ kind: "org", id: o.id, name: o.name, folderId: null });
                       }
-                      onDeleted={() => {
-                        if (orgSel?.id === o.id && orgSel.folderId === f.id) {
-                          selectLibrary({ kind: "org", id: o.id, name: o.name, folderId: null });
-                        }
-                      }}
-                    />
-                  ))}
+                    }}
+                  />
+                )}
                 {open &&
                   (newFolderScope === o.id ? (
                     <NewNameInput
@@ -377,6 +423,73 @@ export function AppSidebar({ tree }: Readonly<{ tree: LibraryTree }>) {
 }
 
 /**
+ * One org's expanded folder list, in the personal list's order: pinned first
+ * (oldest pin on top), then most-opened. Org recordings are not local, so
+ * opens are all the frecency there is to go on.
+ *
+ * Its own component so the ranking can be a per-org hook, and mounted only
+ * while the org is expanded — so expanding it counts as the "on mount" retake.
+ * Same no-jump rule as the personal list: the snapshot is retaken only when
+ * this org's folder ids or pins change, never because a folder was opened.
+ */
+function OrgFolderList({
+  tree,
+  org,
+  folders,
+  activeFolderId,
+  onSelect,
+  onDeleted,
+}: Readonly<{
+  tree: LibraryTree;
+  org: CloudOrg;
+  folders: readonly LocalFolder[];
+  activeFolderId: string | null;
+  onSelect: (folderId: string) => void;
+  onDeleted: (folderId: string) => void;
+}>) {
+  const pins = useOrgFolderPins();
+  const pinned = folders.map((f) => {
+    const pinnedAt = orgFolderPinnedAt(pins, org.id, f.id);
+    return pinnedAt === undefined ? f : { ...f, pinnedAt };
+  });
+  const rankKey = pinned
+    .map((f) => `${f.id}:${f.pinnedAt ?? ""}`)
+    .sort()
+    .join("|");
+  const rankedIds = useMemo(
+    () =>
+      rankFolders(pinned, {
+        opens: readOrgFolderOpens(org.id),
+        recordingTimes: {},
+        now: Date.now(),
+      }).map((f) => f.id),
+    // Keyed on rankKey alone, on purpose — see the personal list's snapshot.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rankKey, org.id]
+  );
+  const byId = new Map(pinned.map((f) => [f.id, f]));
+  return (
+    <>
+      {rankedIds.flatMap((id) => {
+        const f = byId.get(id);
+        if (!f) return [];
+        return (
+          <OrgFolderRow
+            key={f.id}
+            tree={tree}
+            org={org}
+            folder={f}
+            active={activeFolderId === f.id}
+            onSelect={() => onSelect(f.id)}
+            onDeleted={() => onDeleted(f.id)}
+          />
+        );
+      })}
+    </>
+  );
+}
+
+/**
  * One shared folder under an org. Its own component so the rename/delete
  * promise handlers don't sit five callbacks deep inside the org list.
  */
@@ -390,19 +503,25 @@ function OrgFolderRow({
 }: Readonly<{
   tree: LibraryTree;
   org: CloudOrg;
+  /** Carries `pinnedAt` when this device has the folder pinned (orgFolderPins). */
   folder: LocalFolder;
   active: boolean;
   onSelect: () => void;
   /** Called only when the delete actually went through. */
   onDeleted: () => void;
 }>) {
+  const { t } = useI18n();
+  const pinned = isPinned(folder);
   return (
     <Row
       depth={1}
       icon={<Folder className="size-3.5" />}
       label={folder.name}
+      badge={pinned ? <PinBadge label={t("sidebar.pinned")} /> : undefined}
       active={active}
       onSelect={onSelect}
+      onPin={pinned ? undefined : () => setOrgFolderPinned(org.id, folder.id, true)}
+      onUnpin={pinned ? () => setOrgFolderPinned(org.id, folder.id, false) : undefined}
       onRename={(name) => {
         tree.renameOrgFolder(org.id, folder.id, name).catch(() => {});
       }}
@@ -410,10 +529,25 @@ function OrgFolderRow({
         tree
           .deleteOrgFolder(org.id, folder)
           .then((deleted) => {
-            if (deleted) onDeleted();
+            if (!deleted) return;
+            // A pin on a folder that no longer exists would only ever be junk.
+            setOrgFolderPinned(org.id, folder.id, false);
+            onDeleted();
           })
           .catch(() => {});
       }}
+    />
+  );
+}
+
+/** The small pin beside a pinned folder's name. */
+function PinBadge({ label }: Readonly<{ label: string }>) {
+  // Steps aside while the row is hovered or focused: the hover strip's unpin
+  // button says the same thing then, and two pins side by side read as two states.
+  return (
+    <Pin
+      aria-label={label}
+      className="size-3 shrink-0 text-muted-foreground group-focus-within/row:hidden group-hover/row:hidden"
     />
   );
 }
@@ -461,6 +595,8 @@ function Row({
   expanded,
   onToggle,
   onRename,
+  onPin,
+  onUnpin,
   onArchive,
   onUnarchive,
   onDelete,
@@ -480,6 +616,9 @@ function Row({
   expanded?: boolean;
   onToggle?: () => void;
   onRename?: (name: string) => void;
+  /** A folder's pin, in the menu and the hover strip. Pass one or the other. */
+  onPin?: () => void;
+  onUnpin?: () => void;
   /** Menu-only, on purpose — see the hover strip below. */
   onArchive?: () => void;
   onUnarchive?: () => void;
@@ -534,12 +673,13 @@ function Row({
     );
   }
 
-  // Rename and delete are the two the hover icons run — the menu is a second way
-  // to reach them, not a second implementation of them. Archiving is menu-ONLY:
-  // a third icon in a row this narrow costs more than it is worth for something
-  // you do to a folder once, when you are done with it.
-  const actionable = !!(onRename ?? onArchive ?? onUnarchive ?? onDelete);
-  const hasHoverStrip = !!(onRename ?? onDelete);
+  // Pin, rename and delete are what the hover icons run — the menu is a second
+  // way to reach them, not a second implementation of them. Pin earns its icon
+  // because it is something you do to a folder you are in the middle of using.
+  // Archiving is menu-ONLY: you do it to a folder once, when you are done with
+  // it, and a fourth icon in a row this narrow costs more than that is worth.
+  const actionable = !!(onPin ?? onUnpin ?? onRename ?? onArchive ?? onUnarchive ?? onDelete);
+  const hasHoverStrip = !!(onPin ?? onUnpin ?? onRename ?? onDelete);
 
   const row = (
     <div
@@ -597,6 +737,20 @@ function Row({
           pushed renameable rows' counts left of every other row's. */}
       {hasHoverStrip && (
         <div className="hidden shrink-0 items-center gap-0.5 pr-1 group-focus-within/row:flex group-hover/row:flex">
+          {(onPin ?? onUnpin) && (
+            <button
+              type="button"
+              aria-label={t(onPin ? "sidebar.menu.pin" : "sidebar.menu.unpin")}
+              title={t(onPin ? "sidebar.menu.pin" : "sidebar.menu.unpin")}
+              onClick={(e) => {
+                e.stopPropagation();
+                (onPin ?? onUnpin)?.();
+              }}
+              className="grid size-5 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              {onPin ? <Pin className="size-3" /> : <PinOff className="size-3" />}
+            </button>
+          )}
           {onRename && (
             <button
               type="button"
@@ -653,6 +807,18 @@ function Row({
       >
         <ContextMenuLabel>{label}</ContextMenuLabel>
         <ContextMenuSeparator />
+        {onPin && (
+          <ContextMenuItem onSelect={onPin}>
+            <Pin className="size-3.5" />
+            {t("sidebar.menu.pin")}
+          </ContextMenuItem>
+        )}
+        {onUnpin && (
+          <ContextMenuItem onSelect={onUnpin}>
+            <PinOff className="size-3.5" />
+            {t("sidebar.menu.unpin")}
+          </ContextMenuItem>
+        )}
         {onRename && (
           <ContextMenuItem onSelect={startEdit}>
             <Pencil className="size-3.5" />
