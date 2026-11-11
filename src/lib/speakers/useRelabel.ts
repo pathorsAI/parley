@@ -5,7 +5,7 @@ import { useCallback, useMemo } from "react";
 import { translate } from "../../i18n/messages";
 import { useStore } from "../store";
 import type { AppLanguage, TranscriptSegment } from "../types";
-import { displaySpeakerLabel, type SpeakerLabelT } from "./labels";
+import { displaySpeakerLabel, labelContextOf, type SpeakerLabelT } from "./labels";
 import { speakerRelabeler } from "./relabel";
 
 type Line = Pick<TranscriptSegment, "source" | "speaker">;
@@ -19,7 +19,8 @@ export function speakerT(lang: AppLanguage): SpeakerLabelT {
 /** `(seg) => label` as the screen shows it, for a store snapshot. */
 export function displayLabelerOf(s: StoreState, lang: AppLanguage = s.settings.language): (seg: Line) => string {
   const t = speakerT(lang);
-  return (seg) => displaySpeakerLabel(seg, s.speakerNames, t);
+  const ctx = labelContextOf(s.segments);
+  return (seg) => displaySpeakerLabel(seg, s.speakerNames, t, ctx);
 }
 
 /** Relabel AI text against a store snapshot (copy paths, outside React). */
@@ -34,7 +35,9 @@ export function relabelFromState(
 export function useSpeakerLabel(): (seg: Line) => string {
   const names = useStore((s) => s.speakerNames);
   const lang = useStore((s) => s.settings.language);
-  return useCallback((seg: Line) => displaySpeakerLabel(seg, names, speakerT(lang)), [names, lang]);
+  const segments = useStore((s) => s.segments);
+  const ctx = useMemo(() => labelContextOf(segments), [segments]);
+  return useCallback((seg: Line) => displaySpeakerLabel(seg, names, speakerT(lang), ctx), [names, lang, ctx]);
 }
 
 /**
@@ -68,7 +71,8 @@ function sharedRelabeler(
   const c = lastRelabeler;
   if (c && c.segments === segments && c.names === names && c.aliases === aliases && c.lang === lang) return c.fn;
   const t = speakerT(lang);
-  const fn = speakerRelabeler(segments, names, aliases, (seg) => displaySpeakerLabel(seg, names, t));
+  const ctx = labelContextOf(segments);
+  const fn = speakerRelabeler(segments, names, aliases, (seg) => displaySpeakerLabel(seg, names, t, ctx));
   lastRelabeler = { segments, names, aliases, lang, fn };
   return fn;
 }

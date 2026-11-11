@@ -177,6 +177,12 @@ pub fn start_meeting(
     // the recording events so the save can never pick up another meeting's
     // state; one is made up for a caller that sends none.
     meeting_id: Option<String>,
+    // Transcribe the mic and the system audio as two sessions (each diarized
+    // when the provider can) instead of one mixed session. On by default:
+    // it is the only way the transcript knows which words came from this
+    // computer's microphone, which the 評分 report needs to score the user
+    // alone. Costs a second STT session. `false` restores the 1x mixed mode.
+    separate_tracks: Option<bool>,
 ) -> Result<(), String> {
     let provider = SttProvider::from_id(&provider).map_err(|e| e.to_string())?;
     let relay_endpoint = relay_url.filter(|u| !u.trim().is_empty());
@@ -212,6 +218,7 @@ pub fn start_meeting(
         provider,
         // Honor the request only if the provider can actually diarize.
         diarization: diarization.unwrap_or(true) && provider.supports_diarization(),
+        separate_tracks: separate_tracks.unwrap_or(true),
         config: TranscribeConfig {
             api_key,
             model,
@@ -235,11 +242,16 @@ pub fn start_meeting(
 /// the meeting's recording buffer, error mute and pause switch.
 struct MeetingSessions {
     provider: SttProvider,
-    /// Diarizing providers separate speakers themselves, so mic + system are
-    /// mixed into ONE session (1x cost) and diarization labels speakers.
-    /// Providers without diarization keep two sessions so "me"/"them" stays
-    /// deterministic.
+    /// Whether the provider labels speakers within a session. Each session
+    /// gets it, so in separate-tracks mode both the mic side and the system
+    /// side are diarized on their own.
     diarization: bool,
+    /// Two sessions ("me" = mic, "them" = system audio) instead of one mixed
+    /// session. Forced for providers without diarization, which have no
+    /// other way to tell "me" from "them". With it off, a diarizing provider
+    /// gets mic + system mixed into ONE session (1x cost) and the transcript
+    /// no longer says which speaker was on the mic.
+    separate_tracks: bool,
     /// The first leg's config; `diarization` is filled in per session.
     config: TranscribeConfig,
     wiring: MeetingWiring,
@@ -341,10 +353,10 @@ fn start_meeting_captures(
         gate,
         far,
     };
-    if sessions.diarization {
+    if sessions.diarization && !sessions.separate_tracks {
         captures.start_mixed(mic, sys, sessions)
     } else {
-        captures.start_split(mic, sys, sessions)
+        captures.start_separate(mic, sys, sessions)
     }
 }
 
@@ -422,6 +434,7 @@ impl MeetingCaptures<'_> {
                     a,
                     b,
                     tx_mix,
+                    true,
                 ));
                 // Record the mixed stream → the saved file holds both sides.
                 ("mix", rx_mix)
@@ -440,30 +453,105 @@ impl MeetingCaptures<'_> {
         )]
     }
 
-    /// No diarization → two sessions. Record the mic only (mixing two
-    /// un-aligned streams into one file would garble it).
-    fn start_split<S: crate::audio::AudioSource>(
+    /// Two sessions: the mic is "me", the system audio "them", each diarized
+    /// when the provider can. The transcript then always knows which words
+    /// came from this computer's microphone, so the 評分 report scores the
+    /// user's own speech even with several people on the call (or several
+    /// people around this mic, told apart within "me").
+    ///
+    /// The recording still holds both sides: each capture is fanned out to its
+    /// session and to the mixer, and the mix feeds a record-only sink. If one
+    /// capture failed, the other is transcribed and recorded on its own.
+    fn start_separate<S: crate::audio::AudioSource>(
         &self,
         mic: Microphone,
         sys: S,
         sessions: &MeetingSessions,
     ) -> Vec<tauri::async_runtime::JoinHandle<()>> {
-        let mut tasks = Vec::new();
-        if let Some(rx) = self.mic(mic) {
-            tasks.push(run_metered_session(
+        let rx_me = self.mic(mic);
+        let rx_them = self.system(sys);
+        log::info!(
+            "meeting: capture started, separate tracks (mic: {}, system: {})",
+            rx_me.is_some(),
+            rx_them.is_some()
+        );
+        match (rx_me, rx_them) {
+            (Some(a), Some(b)) => {
+                let (a_stt, a_mix) = fan_out(a);
+                let (b_stt, b_mix) = fan_out(b);
+                let (tx_mix, rx_mix) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+                tauri::async_runtime::spawn(crate::audio::mixer::mix_streams(
+                    self.app.clone(),
+                    a_mix,
+                    b_mix,
+                    tx_mix,
+                    false,
+                ));
+                vec![
+                    run_metered_session(self.app, a_stt, sessions.session("me", false)),
+                    run_metered_session(self.app, b_stt, sessions.session("them", false)),
+                    tauri::async_runtime::spawn(record_only(
+                        rx_mix,
+                        sessions.wiring.recorder.clone(),
+                        sessions.wiring.paused.clone(),
+                    )),
+                ]
+            }
+            (Some(a), None) => vec![run_metered_session(
                 self.app,
-                rx,
+                a,
                 sessions.session("me", true),
-            ));
+            )],
+            (None, Some(b)) => {
+                vec![run_metered_session(
+                    self.app,
+                    b,
+                    sessions.session("them", true),
+                )]
+            }
+            (None, None) => Vec::new(),
         }
-        if let Some(rx) = self.system(sys) {
-            tasks.push(run_metered_session(
-                self.app,
-                rx,
-                sessions.session("them", false),
-            ));
+    }
+}
+
+/// Copy every chunk of `rx` into two receivers: one for a transcription
+/// session, one for the recording mixer. Runs until the capture closes; a
+/// consumer that went away just stops getting copies, the other keeps going.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn fan_out(
+    mut rx: UnboundedReceiver<Vec<i16>>,
+) -> (UnboundedReceiver<Vec<i16>>, UnboundedReceiver<Vec<i16>>) {
+    let (tx_a, rx_a) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+    let (tx_b, rx_b) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+    tauri::async_runtime::spawn(async move {
+        while let Some(chunk) = rx.recv().await {
+            let a = tx_a.send(chunk.clone()).is_ok();
+            let b = tx_b.send(chunk).is_ok();
+            if !a && !b {
+                break;
+            }
         }
-        tasks
+    });
+    (rx_a, rx_b)
+}
+
+/// The recording side of separate-tracks mode: tee the mixed stream into the
+/// meeting's recording, honouring pause exactly like a session's meter does
+/// (a paused chunk is neither transcribed nor recorded), so the saved file's
+/// timeline matches the two transcripts.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+async fn record_only(
+    mut rx: UnboundedReceiver<Vec<i16>>,
+    recorder: RecorderBuf,
+    paused: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
+    while let Some(chunk) = rx.recv().await {
+        if paused.load(std::sync::atomic::Ordering::SeqCst) {
+            continue;
+        }
+        if let Some(recording) = recorder.lock().unwrap().as_mut() {
+            recording.push(&chunk);
+        }
     }
 }
 

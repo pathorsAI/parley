@@ -9,7 +9,7 @@
 
 import { translate } from "../../i18n/messages";
 import type { TranscriptSegment } from "../types";
-import { defaultSpeakerLabel, speakerKey } from "./labels";
+import { knownDefaultLabels, labelContextOf, labelMessage, speakerKey, type LabelContext } from "./labels";
 
 type Line = Pick<TranscriptSegment, "source" | "speaker">;
 
@@ -48,16 +48,23 @@ function tokenPattern(token: string): string {
   return `${head}${escapeRegExp(token)}${tail}`;
 }
 
-/** The numbered default labels a speaker may be cited by: the English one the
- *  model saw, plus each language's on-screen form (a model writing Chinese
- *  sometimes translates "Speaker 3" itself). Never bare 你 / You / 對方 / Them —
- *  far too common as ordinary words. */
-function numberedDefaults(line: Line): string[] {
-  const english = defaultSpeakerLabel(line);
-  if (!/\d$/.test(english)) return [];
-  const n = line.source === "them" ? line.speaker : line.speaker === 0 ? 1 : line.speaker;
-  const key = line.source === "them" ? "speaker.remote" : "speaker.speaker";
-  return [english, translate("zh-TW", key, { number: n }), translate("en", key, { number: n })];
+/** The numbered default labels a speaker may be cited by: every English form
+ *  the model may have seen (see knownDefaultLabels), plus each language's
+ *  on-screen form (a model writing Chinese sometimes translates "Remote 3"
+ *  itself). Never a bare 我 / Me / You / 對方 / Them — far too common as
+ *  ordinary words. */
+function numberedDefaults(line: Line, ctx: LabelContext): string[] {
+  const out = knownDefaultLabels(line, ctx).filter((l) => /\d$/.test(l));
+  for (const c of [ctx, {}]) {
+    const m = labelMessage(line, c);
+    if (!m.params) continue;
+    out.push(translate("zh-TW", m.key, m.params), translate("en", m.key, m.params));
+  }
+  // Pre-side naming of a second mic voice (說話者 N).
+  if (line.source === "me" && line.speaker > 1) {
+    out.push(translate("zh-TW", "speaker.speaker", { number: line.speaker }));
+  }
+  return [...new Set(out)];
 }
 
 /**
@@ -96,6 +103,7 @@ export function speakerRelabeler(
     if (!speakers.has(key)) speakers.set(key, s);
   }
   if (speakers.size === 0) return identity;
+  const ctx = labelContextOf(segments);
 
   // Current labels are protected: they map to themselves.
   const current = new Map<string, string>();
@@ -117,7 +125,7 @@ export function speakerRelabeler(
     owner.set(t, prior === undefined || prior === key ? key : null);
   };
   for (const [key, line] of speakers) {
-    for (const d of numberedDefaults(line)) claim(d, key);
+    for (const d of numberedDefaults(line, ctx)) claim(d, key);
     for (const a of aliases[key] ?? []) claim(a, key);
   }
 

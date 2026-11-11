@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown } from "lucide-react";
 import { useStore, speakerKey } from "../lib/store";
-import { displaySpeakerLabel } from "../lib/speakers/labels";
+import { displaySpeakerLabel, labelContextOf } from "../lib/speakers/labels";
 import { useStickToBottom } from "../lib/useStickToBottom";
 import { useI18n } from "../i18n";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -13,6 +13,7 @@ export function TranscriptPanel({ variant = "default" }: Readonly<{ variant?: "d
   const floating = variant === "floating";
   const { t } = useI18n();
   const segments = useStore((s) => s.segments);
+  const labelCtx = useMemo(() => labelContextOf(segments), [segments]);
   const status = useStore((s) => s.meetingStatus);
   const names = useStore((s) => s.speakerNames);
   const highlightMs = useStore((s) => s.highlightMs);
@@ -62,7 +63,7 @@ export function TranscriptPanel({ variant = "default" }: Readonly<{ variant?: "d
     return () => clearTimeout(timer);
   }, [highlightMs, runs, setHighlightMs, programmaticScroll]);
 
-  const label = (seg: Segment) => displaySpeakerLabel(seg, names, t);
+  const label = (seg: Segment) => displaySpeakerLabel(seg, names, t, labelCtx);
 
   if (runs.length === 0) {
     return (

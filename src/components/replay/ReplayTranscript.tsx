@@ -7,7 +7,7 @@ import { useI18n } from "../../i18n";
 import { formatChordLabel, modChordCap } from "../../lib/commands/format";
 import { command } from "../../lib/commands/registry";
 import { speakerKey, formatClock, isTrimmed, useStore, type ReplayTrim } from "../../lib/store";
-import { displaySpeakerLabel, localizedDefaultSpeakerLabel } from "../../lib/speakers/labels";
+import { displaySpeakerLabel, localizedDefaultSpeakerLabel, labelContextOf } from "../../lib/speakers/labels";
 import { cn } from "@/lib/utils";
 import { useCommandShortcut } from "../../lib/commands/bind";
 import { markGettingStarted } from "../../lib/onboarding/gettingStarted";
@@ -75,7 +75,8 @@ export function ReplayTranscript({
   preview = false,
 }: Readonly<ReplayTranscriptProps>) {
   const { t } = useI18n();
-  const label = (seg: TranscriptSegment) => displaySpeakerLabel(seg, speakerNames, t);
+  const labelCtx = useMemo(() => labelContextOf(segments), [segments]);
+  const label = (seg: TranscriptSegment) => displaySpeakerLabel(seg, speakerNames, t, labelCtx);
   const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const setSpeakerName = useStore((s) => s.setSpeakerName);
   // Bumped on every explicit seek (scrubber, timeline finding, action item) so we
@@ -586,7 +587,7 @@ export function ReplayTranscript({
                     (editingKey === key ? (
                       <SpeakerNameInput
                         defaultValue={speakerNames[key] ?? ""}
-                        placeholder={localizedDefaultSpeakerLabel(seg, t)}
+                        placeholder={localizedDefaultSpeakerLabel(seg, t, labelCtx)}
                         onCommit={(name) => {
                           setSpeakerName(key, name);
                           setEditingKey(null);

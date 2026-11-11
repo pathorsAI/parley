@@ -511,6 +511,21 @@ describe("transcript upsert (partial → final in place)", () => {
     expect(useStore.getState().segments).toEqual([final, second]);
   });
 
+  it("drops the mic's echo of the other side, whichever track finalizes first", () => {
+    const text = "我們下週三可以先做一次測試";
+    const them = seg({ id: "them-1", source: "them", text, isFinal: true, startMs: 0, endMs: 3000 });
+    const me = seg({ id: "me-1", source: "me", text, isFinal: true, startMs: 100, endMs: 3100 });
+
+    useStore.getState().upsertSegment(me);
+    useStore.getState().upsertSegment(them);
+    expect(useStore.getState().segments).toEqual([them]);
+
+    useStore.getState().clearTranscript();
+    useStore.getState().upsertSegment(them);
+    useStore.getState().upsertSegment(me);
+    expect(useStore.getState().segments).toEqual([them]);
+  });
+
   it("clearTranscript empties the segment list", () => {
     useStore.getState().upsertSegment(seg({ id: "s1" }));
     useStore.getState().clearTranscript();

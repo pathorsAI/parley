@@ -1413,6 +1413,8 @@ export const zhTW = {
   "speaker.speaker": "說話者 {number}",
   "speaker.remote": "遠端 {number}",
   "speaker.them": "對方",
+  "speaker.me": "我",
+  "speaker.meNumbered": "我 {number}",
 
   "wargame.kind.rebut": "邏輯反駁",
   "wargame.kind.reframe": "重構／拒絕前提",
@@ -3193,6 +3195,8 @@ export const en = {
   "speaker.speaker": "Speaker {number}",
   "speaker.remote": "Remote {number}",
   "speaker.them": "Them",
+  "speaker.me": "Me",
+  "speaker.meNumbered": "Me {number}",
 
   "wargame.kind.rebut": "Logical rebuttal",
   "wargame.kind.reframe": "Refuse / reframe premise",
