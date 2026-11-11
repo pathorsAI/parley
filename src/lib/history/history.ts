@@ -28,6 +28,7 @@ import type {
   DefaultSaveLocation,
   FilingSuggestion,
   Settings,
+  TodoItem,
   TranscriptSegment,
 } from "../types";
 import type { StudyCacheEntry } from "./studyCache";
@@ -188,6 +189,9 @@ export interface LiveMeetingSnapshot {
   save: MeetingSaveTarget;
   /** The name typed in the floating window; absent = the dated default. */
   title?: string;
+  /** The meeting's agenda as it ended (ticks, who and where) — saved with the
+   *  recording so the report can list what was not covered. Absent = none. */
+  agenda?: TodoItem[];
   /** The backend recorded it without this window knowing (the page reloaded
    *  under a running capture): its transcript is gone, keep the audio. */
   orphan: boolean;
@@ -209,8 +213,16 @@ export function snapshotLiveMeeting(): LiveMeetingSnapshot | null {
     micActivity: s.micActivity,
     save: resolveMeetingSave(s),
     title: s.meetingTitle.trim() || undefined,
+    ...agendaField(s.todos),
     orphan: false,
   };
+}
+
+/** The entry field an agenda saves as: present only when there is one, so a
+ *  meeting without an agenda writes the same meta.json as before. Exported for
+ *  testing. */
+export function agendaField(todos: readonly TodoItem[] | undefined): { agenda?: TodoItem[] } {
+  return todos?.length ? { agenda: todos.map((t) => ({ ...t })) } : {};
 }
 
 /** The live meeting's analysis slice, its in-meeting notes folded into the
@@ -467,6 +479,7 @@ export async function saveLiveToHistory(
     audio: "audio.ogg",
     folderId: save.folderId,
     ...analysis,
+    ...agendaField(snap.agenda),
     speechRateHz,
     // Only a diarized meeting needs it: a two-stream one already knows which
     // lines are the mic's.

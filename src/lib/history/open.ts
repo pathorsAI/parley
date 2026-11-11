@@ -42,6 +42,7 @@ export function replaySessionFor(meta: HistoryEntry, audioPath: string, audioSrc
     speakerNames: meta.speakerNames,
     speechRateHz: meta.speechRateHz ?? null,
     ...(meta.micActivity?.length ? { micActivity: meta.micActivity } : {}),
+    ...(Array.isArray(meta.agenda) && meta.agenda.length ? { agenda: meta.agenda } : {}),
     ...(estimated ? { timingEstimated: true } : {}),
   };
 }

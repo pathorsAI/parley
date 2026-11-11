@@ -6,6 +6,7 @@ import type { MeetingShare } from "../history/history";
 import { log } from "../log";
 import { liveMeetingRunning, noteDraftTaken } from "./liveProbe";
 import { retitleForTime } from "../meeting/draftTitle";
+import { applyAiChecks, toggleAgendaItem, type AgendaCheck } from "../meeting/agenda";
 import type { SliceCreator } from "./types";
 
 /** Default reminder lead: enough to wrap up and join, short enough to still
@@ -205,8 +206,9 @@ export interface PrepSlice {
   addTodo: (text: string) => void;
   toggleTodo: (id: string) => void;
   removeTodo: (id: string) => void;
-  /** Mark the given checklist item ids as done (used by the AI auto-checker). */
-  markTodosDone: (ids: string[]) => void;
+  /** Tick the items the AI heard covered (checkTodos), with where it heard
+   *  them — the AI's ticks, which the user can still untick. */
+  markTodosDone: (checks: readonly AgendaCheck[]) => void;
   /** Replace the checklist with a template's items (all unchecked). */
   applyTodoTemplate: (items: string[]) => void;
 }
@@ -405,18 +407,17 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
       return { todos: [...state.todos, { id: crypto.randomUUID(), text: t, done: false }] };
     }),
 
+  // A click (or an MCP client) is the user's tick — see toggleAgendaItem for
+  // how unticking an AI tick keeps the AI from ticking it again.
   toggleTodo: (id) =>
     set((state) => ({
-      todos: state.todos.map((t) => (t.id === id ? { ...t, done: !t.done } : t)),
+      todos: state.todos.map((t) => (t.id === id ? toggleAgendaItem(t) : t)),
     })),
 
   removeTodo: (id) => set((state) => ({ todos: state.todos.filter((t) => t.id !== id) })),
 
-  markTodosDone: (ids) =>
-    set((state) => {
-      const set_ = new Set(ids);
-      return { todos: state.todos.map((t) => (set_.has(t.id) ? { ...t, done: true } : t)) };
-    }),
+  markTodosDone: (checks) =>
+    set((state) => ({ todos: applyAiChecks(state.todos, checks) })),
 
   applyTodoTemplate: (items) =>
     set({

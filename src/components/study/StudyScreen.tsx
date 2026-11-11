@@ -17,6 +17,7 @@ import { ReportContent } from "../sidebar/ReportContent";
 import { DeliveryPanel } from "../delivery/DeliveryPanel";
 import { ReportNav } from "./ReportNav";
 import { ActionItemsPanel } from "../replay/ActionItemsPanel";
+import { AgendaNotCovered } from "./AgendaNotCovered";
 import { AskPanel } from "../sidebar/AskPanel";
 import { StudyHeader, STUDY_TABPANEL_ID, studyTabId } from "./StudyHeader";
 import { LapContext, useLapState } from "../../lib/onboarding/lap";
@@ -149,6 +150,7 @@ function TabPage({
       <>
         <UnsidedActionsNote />
         <ActionItemsPanel onSeek={seek} embedded />
+        <AgendaNotCovered />
         <BriefNextSection onSeek={seek} />
         {actionsDone && <SavedFooter artifact="actions" />}
       </>

@@ -176,6 +176,17 @@ export interface TodoItem {
   id: string;
   text: string;
   done: boolean;
+  /** Who ticked it: the AI tracking the meeting (checkTodos) or the user (a
+   *  click, an MCP client). Absent while unticked, and on items saved before
+   *  the field existed. */
+  doneBy?: "ai" | "user";
+  /** Where in the recording the AI heard it covered (meeting-relative ms, the
+   *  transcript's clock) — what the agenda's 「AI · mm:ss」 tag jumps to. Only
+   *  on AI ticks, and only when the model named a line. */
+  doneAtMs?: number;
+  /** The user unticked an item the AI had ticked: the AI judged wrong, so it
+   *  stops checking this one for the rest of the meeting — it is the user's. */
+  aiDismissed?: boolean;
 }
 
 /**

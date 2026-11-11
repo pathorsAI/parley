@@ -758,12 +758,37 @@ describe("todos + action items", () => {
     expect(useStore.getState().todos[0].done).toBe(false);
   });
 
-  it("markTodosDone marks only the given ids done", () => {
+  it("markTodosDone marks only the given ids done, as the AI's ticks with their time", () => {
     useStore.getState().applyTodoTemplate(["a", "b", "c"]);
     const [a, b] = useStore.getState().todos;
-    useStore.getState().markTodosDone([a.id, b.id]);
+    useStore.getState().markTodosDone([{ id: a.id, atMs: 3_000 }, { id: b.id }]);
     const todos = useStore.getState().todos;
     expect(todos.map((t) => t.done)).toEqual([true, true, false]);
+    expect(todos[0]).toMatchObject({ doneBy: "ai", doneAtMs: 3_000 });
+    expect(todos[1].doneBy).toBe("ai");
+    expect(todos[1].doneAtMs).toBeUndefined();
+  });
+
+  it("unticking an AI tick dismisses it: the AI's next pass leaves it unticked", () => {
+    useStore.getState().applyTodoTemplate(["a"]);
+    const [a] = useStore.getState().todos;
+    useStore.getState().markTodosDone([{ id: a.id, atMs: 3_000 }]);
+    useStore.getState().toggleTodo(a.id);
+    expect(useStore.getState().todos[0]).toMatchObject({ done: false, aiDismissed: true });
+    expect(useStore.getState().todos[0].doneBy).toBeUndefined();
+    expect(useStore.getState().todos[0].doneAtMs).toBeUndefined();
+    useStore.getState().markTodosDone([{ id: a.id, atMs: 9_000 }]);
+    expect(useStore.getState().todos[0].done).toBe(false);
+  });
+
+  it("a user's tick is the user's, with no time point", () => {
+    useStore.getState().applyTodoTemplate(["a"]);
+    const [a] = useStore.getState().todos;
+    useStore.getState().toggleTodo(a.id);
+    expect(useStore.getState().todos[0]).toMatchObject({ done: true, doneBy: "user" });
+    useStore.getState().toggleTodo(a.id);
+    expect(useStore.getState().todos[0].done).toBe(false);
+    expect(useStore.getState().todos[0].aiDismissed).toBeUndefined();
   });
 
   it("applyTodoTemplate replaces the checklist (blank items dropped, all unchecked)", () => {

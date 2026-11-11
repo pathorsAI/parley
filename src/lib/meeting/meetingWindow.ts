@@ -19,6 +19,7 @@ const STATE = "meeting-window://state"; // main → window: the mirrored keys
 const HELLO = "meeting-window://hello"; // window → main: "I'm up, push me state"
 const PATCH = "meeting-window://patch"; // window → main: fields edited there
 const COMMAND = "meeting-window://command"; // window → main: run a meeting action
+const TOGGLE_TODO = "meeting-window://toggle-todo"; // window → main: an agenda item clicked
 
 /** Store keys the meeting window mirrors from the main window's live store. */
 const MIRRORED = [
@@ -45,7 +46,12 @@ const MIRRORED = [
   "meetingFloor",
   "meetingFolderId",
   "meetingOrgShare",
+  // The agenda and the drafted end time: the agenda bar and its end-of-meeting
+  // reminder (meeting/agenda.ts). The agenda is not EDITABLE — the AI ticks it
+  // in the main window while the user clicks it here, and a whole-list patch
+  // would undo one or the other — so a click travels as toggleMeetingTodo.
   "todos",
+  "meetingEndAt",
   "autoAnalyze",
   "autoAnalyzeSec",
 ] as const satisfies readonly (keyof ParleyState)[];
@@ -96,6 +102,23 @@ export function meetingCommand(cmd: MeetingCommand): void {
     return;
   }
   runCommand(cmd);
+}
+
+/**
+ * The user ticked or unticked an agenda item in a view of the running meeting.
+ * In the meeting window it is shown at once and sent to the main window, whose
+ * live store owns the agenda (its echo then confirms it); in the main window it
+ * lands there directly.
+ */
+export function toggleMeetingTodo(id: string): void {
+  if (isMeetingWindow()) {
+    useStore.getState().toggleTodo(id);
+    emitEvent(TOGGLE_TODO, { id }).catch((error) =>
+      log.warn("meeting-window: agenda toggle failed to send", { error: String(error) }),
+    );
+    return;
+  }
+  useLiveStore.getState().toggleTodo(id);
 }
 
 function runCommand(cmd: MeetingCommand): void {
@@ -221,6 +244,7 @@ export function initMeetingWindowHost(): () => void {
       useLiveStore.setState(patch);
     }),
     listenEvent<{ cmd: MeetingCommand }>(COMMAND, (e) => runCommand(e.payload.cmd)),
+    listenEvent<{ id: string }>(TOGGLE_TODO, (e) => useLiveStore.getState().toggleTodo(e.payload.id)),
   ];
   return () => {
     clearTimeout(timer);

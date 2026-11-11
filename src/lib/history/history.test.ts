@@ -7,6 +7,7 @@ vi.mock("../log", () => ({
 }));
 
 import {
+  agendaField,
   applyCorrectedSpeakers,
   buildSummary,
   leaveStoppedCockpit,
@@ -15,6 +16,7 @@ import {
   replaySessionFor,
   shouldKeepLiveRecording,
   snapshotAnalysis,
+  snapshotLiveMeeting,
   type AnalysisSnapshot,
 } from "./history";
 import { speakerKey, useLiveStore, useStore } from "../store";
@@ -396,5 +398,43 @@ describe("action item sides survive save → load", () => {
     const loaded = mergeStageOutputs(entry(), { actionItems: old.actionItems });
     expect(loaded.actionItems[0].side).toBeUndefined();
     expect(loaded.actionItems[0].owner).toBeUndefined();
+  });
+});
+
+describe("the agenda is kept with the recording", () => {
+  const AGENDA = [
+    { id: "a", text: "Confirm the budget", done: true, doneBy: "ai" as const, doneAtMs: 192_000 },
+    { id: "b", text: "Agree the timeline", done: true, doneBy: "user" as const },
+    { id: "c", text: "Scope the pilot", done: false, aiDismissed: true },
+  ];
+  afterEach(() => useLiveStore.setState({ liveMeetingId: null, todos: [] }));
+
+  it("rides the live save's snapshot, the JSON on disk and the opened recording, ticks and all", () => {
+    useLiveStore.setState({ liveMeetingId: "m1", todos: AGENDA });
+    const snap = snapshotLiveMeeting();
+    expect(snap?.agenda).toEqual(AGENDA);
+    const saved = entry({ ...snap?.analysis, ...agendaField(snap?.agenda) });
+    const onDisk = JSON.parse(JSON.stringify(saved)) as HistoryEntry;
+    expect(onDisk.agenda).toEqual(AGENDA);
+    expect(replaySessionFor(onDisk, "", "").agenda).toEqual(AGENDA);
+  });
+
+  it("an analysis overwrite keeps the saved agenda", () => {
+    const saved = entry({ agenda: AGENDA });
+    expect(mergeAnalysisSnapshot(saved, snapshotAnalysis()).agenda).toEqual(AGENDA);
+  });
+
+  it("a meeting without an agenda, and an entry saved before it existed, write and open none", () => {
+    useLiveStore.setState({ liveMeetingId: "m1", todos: [] });
+    expect(snapshotLiveMeeting()).not.toHaveProperty("agenda");
+    expect(agendaField([])).toEqual({});
+    expect(replaySessionFor(entry(), "", "")).not.toHaveProperty("agenda");
+  });
+
+  it("the snapshot is a copy: ticking the live agenda after Stop does not change the save", () => {
+    useLiveStore.setState({ liveMeetingId: "m1", todos: AGENDA.map((t) => ({ ...t })) });
+    const snap = snapshotLiveMeeting();
+    useLiveStore.getState().toggleTodo("c");
+    expect(snap?.agenda?.[2].done).toBe(false);
   });
 });
