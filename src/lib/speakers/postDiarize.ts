@@ -90,7 +90,8 @@ function lineGroups(segments: TranscriptSegment[]): TranscriptSegment[][] {
     const lines = spoken.filter((s) => s.source === source);
     if (lines.length < 2) continue;
     if (source !== "mix" && !lines.some((s) => s.speaker > 0)) continue;
-    groups.push(lines.sort((a, b) => a.startMs - b.startMs));
+    lines.sort((a, b) => a.startMs - b.startMs);
+    groups.push(lines);
   }
   return groups;
 }

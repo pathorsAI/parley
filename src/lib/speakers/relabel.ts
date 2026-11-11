@@ -88,24 +88,23 @@ export function relabelSpeakers(
   return speakerRelabeler(segments, names, aliases, label)(text);
 }
 
-/** {@link relabelSpeakers} with the speaker scan and pattern built once, for
- *  relabelling many texts against the same names. */
-export function speakerRelabeler(
-  segments: readonly Line[],
-  names: Record<string, string>,
-  aliases: Record<string, readonly string[]>,
-  label: (seg: Line) => string,
-): (text: string) => string {
-  const identity = (text: string) => text;
+/** One line per distinct speaker, keyed by speaker key. */
+function distinctSpeakers(segments: readonly Line[]): Map<string, Line> {
   const speakers = new Map<string, Line>();
   for (const s of segments) {
     const key = speakerKey(s);
     if (!speakers.has(key)) speakers.set(key, s);
   }
-  if (speakers.size === 0) return identity;
-  const ctx = labelContextOf(segments);
+  return speakers;
+}
 
-  // Current labels are protected: they map to themselves.
+/** Each speaker's current label, and the tokens that must never be rewritten
+ *  (current labels and custom names). */
+function currentLabels(
+  speakers: Map<string, Line>,
+  names: Record<string, string>,
+  label: (seg: Line) => string,
+): { current: Map<string, string>; protectedTokens: Set<string> } {
   const current = new Map<string, string>();
   const protectedTokens = new Set<string>();
   for (const [key, line] of speakers) {
@@ -115,8 +114,16 @@ export function speakerRelabeler(
     const custom = names[key];
     if (custom) protectedTokens.add(custom);
   }
+  return { current, protectedTokens };
+}
 
-  // Old token → the speaker key it belongs to; null once two speakers claim it.
+/** Old token → the speaker key it belongs to; null once two speakers claim it. */
+function tokenOwners(
+  speakers: Map<string, Line>,
+  aliases: Record<string, readonly string[]>,
+  protectedTokens: Set<string>,
+  ctx: LabelContext,
+): Map<string, string | null> {
   const owner = new Map<string, string | null>();
   const claim = (token: string, key: string) => {
     const t = token.trim();
@@ -128,6 +135,23 @@ export function speakerRelabeler(
     for (const d of numberedDefaults(line, ctx)) claim(d, key);
     for (const a of aliases[key] ?? []) claim(a, key);
   }
+  return owner;
+}
+
+/** {@link relabelSpeakers} with the speaker scan and pattern built once, for
+ *  relabelling many texts against the same names. */
+export function speakerRelabeler(
+  segments: readonly Line[],
+  names: Record<string, string>,
+  aliases: Record<string, readonly string[]>,
+  label: (seg: Line) => string,
+): (text: string) => string {
+  const identity = (text: string) => text;
+  const speakers = distinctSpeakers(segments);
+  if (speakers.size === 0) return identity;
+
+  const { current, protectedTokens } = currentLabels(speakers, names, label);
+  const owner = tokenOwners(speakers, aliases, protectedTokens, labelContextOf(segments));
 
   const replacement = new Map<string, string>();
   for (const [token, key] of owner) {
