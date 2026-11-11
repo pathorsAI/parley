@@ -58,52 +58,52 @@ Values computed by the build are written `{{@name}}` (`@base` for asset paths th
 from `/en/`, `@lang`, `@canonical`, …). Comments that start with `<!--#` are template notes and
 are stripped from the output.
 
-The hero line, "Your conversations go where you decide." / 「你的對話，由你決定去哪裡。」, is
-the page's position: recordings stay on your computer, you pick the providers, and the cloud
-edition is an option, not a precondition. Keep the claims to what the code backs: the app is
-open source (the cloud service is not, so never write "fully open source"). The page leads
-with open source and running on your own machine; the cloud edition only says that recordings
-go to Parley. Do
-not publish free-tier numbers — the wording is "a free allowance that covers everyday use".
-Retired features (live translation, interpreter, the intel board, scenarios, job-interview or
-diligence use cases) must not come back; the test suite checks for them.
+The hero line, "Be in the meeting. Parley takes the notes." / 「專心開會，紀錄交給 Parley。」, is
+the page's position: Parley is a meeting notes app. The page reads like one: hero and the report
+screenshot, how it works (before / during / after cards), a feature grid, local vs hosted models,
+two plans, an FAQ, download. Live coaching is not on the page. Keep the claims to what the code
+backs: the app is open source (the cloud service is not, so never write "fully open source"), and
+the cloud edition only says that recordings go to Parley. Do not publish free-tier numbers — the
+wording is "a free allowance that covers everyday use". Retired features (live translation,
+interpreter, the intel board, scenarios, job-interview or diligence use cases) must not come back;
+the test suite checks for them.
+
+The look: white paper and ink, blue for what is live or clickable, content on hairline cards. The
+app icon (`assets/app-icon.svg`, a copy of the repo's `app-icon.svg`) is the logo in the nav,
+footer and favicon, and its teal → sky → indigo gradient appears only in the hero glow, the word
+"Parley" in the headline, the cloud plan's edge and the download card.
 
 ## What script.js does
 
 The page is complete without JavaScript: the Mac download is the default call to action, the
-hero shows the own-keys route, the transcript is shown in full and every section is visible.
+models row shows the local route, the transcript is shown in full and every section is visible.
 With it:
 
 - **OS-aware downloads** — iPhone/iPad visitors get the App Store first, Android visitors
   Google Play, Windows visitors the Windows installer, everyone else the Mac. The download row
   reorders itself the same way. The Google Play badge is Google's unmodified artwork and is
   never restyled into a button.
-- **Hero route** — the toggle switches between the two setups the app offers on first launch.
-  Own keys: wires run straight from your computer to the transcription and AI providers, the
+- **Models route** — the toggle switches between the two setups the app offers on first launch.
+  Local: wires run straight from your computer to the transcription and AI providers, the
   Parley node sits dashed below the path, and the example hosts step through real endpoints
-  (the AI one starts on Ollama at `127.0.0.1:11434`). Cloud edition: the Parley node rises into
+  (transcription starts on-device on whisper.cpp, AI on Ollama). Providers are shown by
+  name and mark, never by hostname. Cloud edition: the Parley node rises into
   the path, the wire stops there and the providers step aside; the cloud copy says only that
   recordings go to Parley. The nodes are HTML; the wires are an SVG redrawn from their
   measured boxes, so the same code draws the stacked phone layout.
-- **Models panel** — each of the three settings steps through real providers, one row at a
-  time; the deep-analysis row starts on local Ollama.
 - **Transcript demo** (the "In the meeting" row) — the transcript types itself in time with a
   canvas waveform, speakers resolve from "…" to 講者 A/B (Speaker A/B), unsettled words stay
   grey. The demo is `aria-hidden`; screen readers get its one-line description.
-- **Row demos** — the "Your AI" chat (question, tool call, then the answer types itself) and
-  the voice-typing polish (fillers struck out, then the tidy list) each play once, the first
-  time they scroll into view. The HTML is their final state.
-- **A 160ms fade** as sections scroll into view (opacity only), the copy button on the MCP
-  command, the small-screen menu.
+- **A 160ms fade** as sections scroll into view (opacity only), and the small-screen menu.
 
 `prefers-reduced-motion` gets still wires and fixed hosts, the full transcript, a static
 waveform, the demos in their final state and no fades.
 
 ## Keeping it short
 
-The home page is one large visual per section with a label, one H2 and one sentence under it.
-`tests/website-build.test.ts` fails if the visible text inside `<main>` grows past 700 CJK
-characters (zh) or 450 words (en): add a screenshot before you add a paragraph.
+Every card is a heading and one sentence. `tests/website-build.test.ts` fails if the visible text
+inside `<main>` grows past 1200 CJK characters (zh) or 900 words (en): sharpen a card before you
+add one.
 
 ## Transcript waveform
 
