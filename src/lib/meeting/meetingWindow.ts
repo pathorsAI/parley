@@ -113,7 +113,7 @@ export function meetingCommand(cmd: MeetingCommand): void {
 export function toggleMeetingTodo(id: string): void {
   if (isMeetingWindow()) {
     useStore.getState().toggleTodo(id);
-    void emitEvent(TOGGLE_TODO, { id }).catch((error) =>
+    emitEvent(TOGGLE_TODO, { id }).catch((error) =>
       log.warn("meeting-window: agenda toggle failed to send", { error: String(error) }),
     );
     return;
