@@ -55,10 +55,19 @@ function SelectTrigger({
   )
 }
 
+// `popper` by default, not Radix's `item-aligned`. Item-aligned lays the open
+// list over the trigger with the chosen item on top of it, sizes the list from
+// the window height, and on the first wheel event grows the list instead of
+// scrolling it. In the desktop app's WKWebView (with its native page zoom) that
+// arithmetic comes out wrong: a long list such as Settings › Transcription's
+// providers was cut short with room to spare below it, and the wheel did
+// nothing — only the scroll-down arrow moved it. Popper opens the list below
+// the trigger, caps it at the space Radix measures
+// (--radix-select-content-available-height), and scrolls the rest normally.
 function SelectContent({
   className,
   children,
-  position = "item-aligned",
+  position = "popper",
   align = "center",
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Content>) {
