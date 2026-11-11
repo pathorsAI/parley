@@ -60,6 +60,7 @@ import {
 } from "./lib/releaseNotes";
 import { refreshSession } from "./lib/cloud/client";
 import { initDictionarySync } from "./lib/cloud/dictionarySync";
+import { initDraftSync } from "./lib/cloud/draftSync";
 import { runOrgNotices } from "./lib/cloud/orgNotices";
 import { CLOUD_ENABLED } from "./lib/flags";
 import { initVoiceTyping } from "./lib/voiceTyping/host";
@@ -234,6 +235,10 @@ const App = () => {
     // Personal dictionary ↔ cloud (and so the iPhone). Main window only: it lives
     // for the whole session; the other windows just edit the file and broadcast.
     const unDictionarySync = initDictionarySync();
+    // Saved meeting drafts ↔ cloud, so a meeting prepared on another device or
+    // over the cloud MCP lands under 即將開始 and reminds here. Main window
+    // only: it owns the drafts.
+    const unDraftSync = initDraftSync();
     // Asks whether a meeting nobody has spoken in for a long time is over,
     // and ends it when nobody answers (main window only, like the save).
     const unSilenceGuard = initSilenceGuard();
@@ -254,6 +259,7 @@ const App = () => {
       unStudyPipeline();
       unVoiceTyping();
       unDictionarySync();
+      unDraftSync();
       unSilenceGuard();
       unMeetingReminder();
       unMeetingWindow();
