@@ -14,10 +14,12 @@ import {
   filingChoices,
   folderGeneration,
   isArchived,
+  isPinned,
   listLocalFolders,
   mirrorCloudFolders,
   renameLocalFolder,
   setLocalFolderArchived,
+  setLocalFolderPinned,
   writeLocalFolders,
   type Folder,
 } from "./folders";
@@ -170,5 +172,77 @@ describe("createLocalFolder revives rather than duplicates", () => {
 
     expect(second.id).not.toBe(first.id);
     expect(listLocalFolders()).toHaveLength(2);
+  });
+});
+
+describe("pinning a folder", () => {
+  it("stamps it, and unpinning clears the stamp", () => {
+    const f = createLocalFolder("和運租車");
+    setLocalFolderPinned(f.id, true);
+    expect(isPinned(byName("和運租車"))).toBe(true);
+
+    setLocalFolderPinned(f.id, false);
+    expect(byName("和運租車").pinnedAt).toBeUndefined();
+  });
+
+  it("does not restamp a folder that is already pinned", () => {
+    const f = createLocalFolder("first");
+    setLocalFolderPinned(f.id, true);
+    const at = byName("first").pinnedAt;
+    const gen = folderGeneration();
+
+    setLocalFolderPinned(f.id, true);
+
+    expect(byName("first").pinnedAt).toBe(at);
+    expect(folderGeneration()).toBe(gen);
+  });
+
+  it("survives a rename", () => {
+    const f = createLocalFolder("old");
+    setLocalFolderPinned(f.id, true);
+    renameLocalFolder(f.id, "new");
+    expect(isPinned(byName("new"))).toBe(true);
+  });
+
+  it("is dropped by archiving, and restoring does not bring it back", () => {
+    const f = createLocalFolder("台數科");
+    setLocalFolderPinned(f.id, true);
+
+    setLocalFolderArchived(f.id, true);
+    expect(byName("台數科").pinnedAt).toBeUndefined();
+
+    setLocalFolderArchived(f.id, false);
+    expect(isPinned(byName("台數科"))).toBe(false);
+  });
+
+  it("cannot pin an archived folder", () => {
+    const f = createLocalFolder("shelved");
+    setLocalFolderArchived(f.id, true);
+    setLocalFolderPinned(f.id, true);
+    expect(isPinned(byName("shelved"))).toBe(false);
+  });
+});
+
+describe("the cloud mirror-down cannot unpin", () => {
+  // Same reason as the archive flag: the cloud folder table has no column for
+  // the pin, so every reload hands the folders back without it.
+  it("carries the local pin across a cloud list that does not know about it", () => {
+    const f = createLocalFolder("和運租車");
+    setLocalFolderPinned(f.id, true);
+    const at = byName("和運租車").pinnedAt;
+
+    writeLocalFolders([{ id: f.id, name: "和運租車", createdAt: f.createdAt }]);
+
+    expect(byName("和運租車").pinnedAt).toBe(at);
+  });
+
+  it("carries it through mirrorCloudFolders too", () => {
+    const f = createLocalFolder("台數科");
+    setLocalFolderPinned(f.id, true);
+    const since = folderGeneration();
+
+    mirrorCloudFolders([{ id: f.id, name: "台數科", createdAt: f.createdAt }], since);
+
+    expect(isPinned(byName("台數科"))).toBe(true);
   });
 });

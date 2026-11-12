@@ -453,6 +453,9 @@ export const zhTW = {
   "cmd.voice.pushToTalk": "按住說話",
 
   // ── 側邊欄的右鍵選單 ──
+  "sidebar.menu.pin": "釘選",
+  "sidebar.menu.unpin": "取消釘選",
+  "sidebar.pinned": "已釘選",
   "sidebar.menu.rename": "重新命名",
   "sidebar.menu.archive": "封存",
   "sidebar.menu.unarchive": "取消封存",
@@ -2238,6 +2241,9 @@ export const en = {
   "cmd.voice.pushToTalk": "Hold to talk",
 
   // ── Sidebar right-click menu ──
+  "sidebar.menu.pin": "Pin",
+  "sidebar.menu.unpin": "Unpin",
+  "sidebar.pinned": "Pinned",
   "sidebar.menu.rename": "Rename",
   "sidebar.menu.archive": "Archive",
   "sidebar.menu.unarchive": "Restore",

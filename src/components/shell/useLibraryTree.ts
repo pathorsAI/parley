@@ -10,6 +10,7 @@ import {
   mirrorCloudFolders,
   renameLocalFolder,
   setLocalFolderArchived,
+  setLocalFolderPinned,
   type Folder as LocalFolder,
 } from "../../lib/history/folders";
 import {
@@ -60,6 +61,8 @@ export interface LibraryTree {
   /** Put a personal folder away (or bring it back) — nothing moves, nothing is
    *  deleted; it just leaves the tree and the filing pickers. */
   archivePersonalFolder: (id: string, archived: boolean) => void;
+  /** Pin a personal folder to the top of the sidebar list, or unpin it. */
+  pinPersonalFolder: (id: string, pinned: boolean) => void;
   /** ASK to delete a personal folder. Resolves true once the user has said yes
    *  and the folder is gone, false if they backed out. */
   deletePersonalFolder: (folder: LocalFolder) => Promise<boolean>;
@@ -226,6 +229,13 @@ export function useLibraryTree(): LibraryTree {
     emitFoldersUpdated().catch(() => {});
   }, []);
 
+  // Pins are local-only too (Folder.pinnedAt), for the same reason.
+  const pinPersonalFolder = useCallback((id: string, pinned: boolean) => {
+    setLocalFolderPinned(id, pinned);
+    setPersonalFolders(listLocalFolders());
+    emitFoldersUpdated().catch(() => {});
+  }, []);
+
   // ── Deleting a folder, in two halves ────────────────────────────────────────
   // Asking and doing used to be one call, because `confirm()` blocked until the
   // user answered. On Windows that dialog is a window of its own, and the focus
@@ -353,6 +363,7 @@ export function useLibraryTree(): LibraryTree {
     createPersonalFolder,
     renamePersonalFolder,
     archivePersonalFolder,
+    pinPersonalFolder,
     deletePersonalFolder,
     createOrgFolder: createOrgFolderUI,
     renameOrgFolder: renameOrgFolderUI,
