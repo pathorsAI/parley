@@ -7,6 +7,8 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- PlaybackService: a recording keeps playing with the screen off. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Android 14+: be told when the user screenshots Parley, to offer "Report this
          screen?" (feedback/FeedbackCenter.screenshotTaken). A normal permission, granted
@@ -50,6 +52,16 @@
             android:name=".meeting.MeetingService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <!-- Hosts the open recording's MediaSession so playback survives the app
+             going to the background, with the system media notification
+             (playback/PlaybackService.kt). Media3 promotes it to the foreground
+             while playing. Not exported: system media controls reach the
+             session through its platform token, not by binding this. -->
+        <service
+            android:name=".playback.PlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
 
         <!-- Drains the transcript backfill queue as a system job, so a batch
              transcription survives the person leaving the app (upload/BackfillJob). -->
