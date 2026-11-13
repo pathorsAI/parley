@@ -123,6 +123,8 @@
     <string name="meeting_discard_title">Discard this recording?</string>
     <string name="meeting_discard_body">The audio and transcript are thrown away. Nothing is saved or uploaded.</string>
     <string name="meeting_discard_confirm">Discard</string>
+    <string name="meeting_latest">Latest</string>
+    <string name="meeting_jump_to_latest">Jump to latest</string>
     <string name="meeting_connecting">Connecting…</string>
     <string name="meeting_recording">Recording</string>
     <string name="meeting_recording_live">Recording · live transcript</string>
