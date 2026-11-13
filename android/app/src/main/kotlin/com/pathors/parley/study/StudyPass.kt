@@ -397,9 +397,8 @@ class StudyPass(
         val segments: List<TranscriptSegment> = meta.segments.map { it.toKit() }
         // The desktop's labels, not the screen's: what the model reads is the
         // same on every device, whatever language the phone is read in.
-        private val label: (TranscriptSegment) -> String = { segment ->
-            SpeakerLabel.prompt(segment, meta.speakerNames)
-        }
+        private val label: (TranscriptSegment) -> String =
+            SpeakerLabel.prompter(segments, meta.speakerNames)
         val timestamped: String = StudyPromptBuilder.transcriptWithTimestamps(segments, label)
         val plain: String get() = StudyPromptBuilder.transcriptAsText(segments, label)
         val brief: String = StudyPromptBuilder.meetingBrief(

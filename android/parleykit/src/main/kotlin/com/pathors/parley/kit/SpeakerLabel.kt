@@ -57,31 +57,55 @@ object SpeakerLabel {
 
     /**
      * What a study PROMPT calls a speaker nobody has named: the desktop's
-     * `defaultSpeakerLabel` (store.ts), word for word and always in English,
-     * whatever language the phone is read in. Display copy may be localized
-     * and lettered; what the model reads must be what the desktop sends it,
-     * or the same recording is analysed differently on each device:
+     * `defaultSpeakerLabel` (src/lib/speakers/labels.ts), word for word and
+     * always in English, whatever language the phone is read in. Display copy
+     * may be localized and lettered; what the model reads must be what the
+     * desktop sends it, or the same recording is analysed differently on each
+     * device. Names follow the capture side (#689):
      *
      * - `mix`: "Speaker N", an undecided speaker (0) read as 1;
-     * - `me`: "You" for speaker 0 or 1, "Speaker N" after that;
+     * - `me`: "Me" while the mic carries one voice; once it carries several
+     *   ([micSpeakers] > 1, or this speaker is 2 or more) "Me N", with 0 read
+     *   as 1;
      * - `them` (and anything else): "Them" for speaker 0, "Remote N" from 1 —
      *   so `them` speaker 1 is "Remote 1", not "Them".
+     *
+     * [micSpeakers] is the whole transcript's count of distinct diarized mic
+     * voices — see [micSpeakers] (the desktop's `labelContextOf`).
      */
-    fun promptFallback(source: String, speaker: Int): String {
-        val display = if (speaker == 0) 1 else speaker
+    fun promptFallback(source: String, speaker: Int, micSpeakers: Int = 0): String {
+        val n = if (speaker > 0) speaker else 1
         return when (source) {
-            SOURCE_MIX -> "Speaker $display"
-            SOURCE_ME -> if (display <= 1) "You" else "Speaker $display"
+            SOURCE_MIX -> "Speaker $n"
+            SOURCE_ME -> if (micSpeakers > 1 || speaker > 1) "Me $n" else "Me"
             else -> if (speaker > 0) "Remote $speaker" else "Them"
         }
     }
 
     /**
+     * Distinct diarized voices on the mic side of [segments] — the desktop's
+     * `labelContextOf`: `me` lines with a speaker above 0 and some text.
+     */
+    fun micSpeakers(segments: List<TranscriptSegment>): Int =
+        segments.asSequence()
+            .filter { it.source == SOURCE_ME && it.speaker > 0 && it.text.isNotBlank() }
+            .map { it.speaker }
+            .toSet()
+            .size
+
+    /**
      * [promptFallback], unless [names] holds a name for this speaker — the
      * desktop's `speakerLabel`, which takes any assigned name as it is.
      */
-    fun prompt(segment: TranscriptSegment, names: Map<String, String>): String =
-        names["${segment.source}-${segment.speaker}"] ?: promptFallback(segment.source, segment.speaker)
+    fun prompt(segment: TranscriptSegment, names: Map<String, String>, micSpeakers: Int = 0): String =
+        names["${segment.source}-${segment.speaker}"]
+            ?: promptFallback(segment.source, segment.speaker, micSpeakers)
+
+    /** [prompt] for every line of [segments], numbered as the whole transcript needs. */
+    fun prompter(segments: List<TranscriptSegment>, names: Map<String, String>): (TranscriptSegment) -> String {
+        val mic = micSpeakers(segments)
+        return { prompt(it, names, mic) }
+    }
 
     /**
      * 1 → A, 2 → B … 26 → Z, 27 → AA — bijective base 26, the way spreadsheet
