@@ -33,7 +33,7 @@ Put your phone on the table and hit record. What people say becomes text as they
 say it, labelled by speaker — so what you walk out with is a record you can
 quote, not a thirty-minute audio file and a blank memory.
 
-Sign in and you get 20 hours of transcription free. No API keys to bring.
+Sign in and you get 40 hours of transcription free. No API keys to bring.
 
 Type by talking, in any app
 
