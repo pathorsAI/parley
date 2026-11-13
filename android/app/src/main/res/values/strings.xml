@@ -645,4 +645,45 @@
     <string name="ime_settings_enable_action">Open keyboard settings</string>
     <string name="ime_settings_privacy">What it doesn\'t do</string>
     <string name="ime_settings_privacy_detail">Parley only writes into the field you are in. It never reads what is already there, keeps no record of it, and has no letter keys to log. The microphone opens only while you are dictating, shows a notification the whole time, and never opens in a password field.</string>
+
+    <!-- Personal dictionary (iOS PersonalDictionaryView) -->
+    <string name="dictionary_title">Personal dictionary</string>
+    <string name="dictionary_account_detail">Names, jargon, and corrections Parley listens for when it transcribes. Synced with your account.</string>
+    <string name="dictionary_account_open">Open</string>
+    <string name="dictionary_corrections_header">Learned corrections</string>
+    <string name="dictionary_corrections_footer">What transcription heard, and what it should have been — added here or learned on your other devices. Parley listens for the right word when it transcribes.</string>
+    <string name="dictionary_corrections_empty">Nothing learned yet.</string>
+    <string name="dictionary_learning">Learning</string>
+    <string name="dictionary_add_correction">Add correction</string>
+    <string name="dictionary_terms_header">Your terms</string>
+    <string name="dictionary_terms_footer">Names, jargon, and anything else you say often. Parley listens for them when it transcribes and keeps your spelling.</string>
+    <string name="dictionary_add_term_hint">Add a name or term</string>
+    <string name="dictionary_add">Add</string>
+    <string name="dictionary_clear">Clear the dictionary</string>
+    <string name="dictionary_clear_title">Clear your personal dictionary?</string>
+    <string name="dictionary_clear_message">Parley forgets every correction and every term you added — here and, while you\'re signed in, on your other devices.</string>
+    <string name="dictionary_clear_confirm">Clear everything</string>
+    <string name="dictionary_sync_syncing">Syncing…</string>
+    <string name="dictionary_sync_synced">Synced · %1$s</string>
+    <string name="dictionary_sync_failed">Couldn\'t sync. Parley will try again on its own.</string>
+    <string name="dictionary_sync_failed_last">Couldn\'t sync. Parley will try again on its own. Last synced %1$s.</string>
+    <string name="dictionary_ago_now">just now</string>
+    <string name="dictionary_ago_minutes">%1$d min ago</string>
+    <string name="dictionary_ago_hours">%1$d hr ago</string>
+    <string name="dictionary_ago_days">%1$d d ago</string>
+    <string name="dictionary_search_hint">Search the dictionary</string>
+    <string name="dictionary_search">Search</string>
+    <string name="dictionary_no_matches">No matches.</string>
+    <string name="dictionary_edit_correction">Edit correction</string>
+    <string name="dictionary_edit_term">Edit term</string>
+    <string name="dictionary_heard_as">Heard as</string>
+    <string name="dictionary_should_be">Should be</string>
+    <string name="dictionary_term">Term</string>
+    <string name="dictionary_problem_single">Use at least two characters, so one character isn\'t changed everywhere it appears.</string>
+    <string name="dictionary_problem_grows">The correction can\'t contain what was heard, or it would keep growing every time it\'s applied.</string>
+    <string name="dictionary_correction_footer">Parley listens for it when it transcribes.</string>
+    <string name="dictionary_save">Save</string>
+    <string name="dictionary_edit">Edit</string>
+    <string name="dictionary_delete">Delete</string>
+    <string name="dictionary_row_actions">More actions for %1$s</string>
 </resources>

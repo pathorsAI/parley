@@ -107,6 +107,7 @@ class TranscriptBackfillerTest {
         service: BatchTranscriptionService,
         store: LocalAudioStore? = null,
         keep: Boolean = false,
+        terms: List<String> = emptyList(),
     ) = TranscriptBackfiller(
         cloud = cloud(),
         queue = queue,
@@ -114,6 +115,7 @@ class TranscriptBackfillerTest {
         transcriber = BatchTranscriber(service, pollIntervalMs = 1, maxPolls = 5),
         localAudio = store,
         keepsAudioOnPhone = { keep },
+        recognitionTerms = { terms },
     )
 
     private fun queue(name: String) = PendingBackfillQueue(temporary.newFolder(name))
@@ -167,6 +169,21 @@ class TranscriptBackfillerTest {
         assertEquals(listOf(FIRST_LINE, SECOND_LINE), meta.segments.map { it.text })
         assertEquals(2_953_000.0, meta.durationMs, 0.0)
         assertEquals("Renewal terms", meta.title)
+    }
+
+    /**
+     * The batch job is biased toward the personal dictionary, as the live relay
+     * was — iOS `MeetingUploader` passes `LexiconStore.recognitionTerms()`.
+     */
+    @Test
+    fun `a run sends the personal dictionary as the batch job's terms`() = runBlocking {
+        val queue = queue("terms")
+        queue.enqueueMoving(BackfillRequest(pending = pending("rec-1")), audio("a.ogg"))
+        val service = FakeBatch(fullTranscript())
+
+        backfiller(queue, ledger("terms-l"), service, terms = listOf("Parley", "Cerana")).drain()
+
+        assertEquals(listOf("Parley", "Cerana"), service.startedWithTerms)
     }
 
     /**
@@ -753,8 +770,12 @@ private class FakeBatch(
         terms: List<String>,
     ): String {
         if (failStart) throw IOException("no route to host")
+        startedWithTerms = terms
         return "job-1"
     }
+
+    /** The `terms` the last job was created with. */
+    var startedWithTerms: List<String>? = null
 
     override suspend fun batchJobStatus(id: String): BatchJobStatus =
         BatchJobStatus(status = "completed", durationMs = 2_953_000.0)

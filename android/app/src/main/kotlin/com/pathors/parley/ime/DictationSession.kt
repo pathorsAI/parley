@@ -132,6 +132,11 @@ class DictationSession(
      * the one attached.
      */
     val ownerToken: Long = DictationFieldGate.NO_OWNER,
+    /**
+     * The personal dictionary's recognition terms, sent as the relay's hints
+     * — what iOS `DictationCoordinator` sends as its vocabulary.
+     */
+    private val hintTerms: () -> List<String> = { emptyList() },
 ) {
 
     private val _state = MutableStateFlow<DictationState>(DictationState.Idle)
@@ -302,6 +307,7 @@ class DictationSession(
                 // what turns on the relay's Simplified→Traditional rewrite, and
                 // the polish pass then refuses anything that drifts back.
                 languageHints = listOf("zh", "en"),
+                hintTerms = hintTerms(),
             ),
         )
         relay = client

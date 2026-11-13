@@ -7,7 +7,12 @@ import com.pathors.parley.kit.ChatCompletions
 import com.pathors.parley.kit.ChatGate
 import com.pathors.parley.kit.CloudChat
 import com.pathors.parley.kit.HttpStatusFailure
+import com.pathors.parley.kit.CloudDictionaryEntry
+import com.pathors.parley.kit.DictionaryPullResponse
+import com.pathors.parley.kit.DictionaryPushResponse
+import com.pathors.parley.kit.DictionarySyncTransport
 import com.pathors.parley.kit.ParleyClientHeader
+import com.pathors.parley.kit.ParleyStreamProtocol
 import com.pathors.parley.kit.RetryAfter
 import com.pathors.parley.util.deleteQuietly
 import java.io.File
@@ -22,6 +27,7 @@ import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
@@ -161,7 +167,7 @@ class CloudClient(
     private val http: OkHttpClient = ParleyHttp.shared,
     private val tokenProvider: suspend () -> String?,
     private val onUnauthorized: suspend () -> Unit = {},
-) : BatchTranscriptionService, ChatCompletions {
+) : BatchTranscriptionService, ChatCompletions, DictionarySyncTransport {
     private val base: HttpUrl = baseUrl.trimEnd('/').toHttpUrl()
 
     /**
@@ -593,8 +599,11 @@ class CloudClient(
                 if (languageHints.isNotEmpty()) {
                     addQueryParameter("languages", languageHints.joinToString(","))
                 }
-                // Repeated rather than comma-joined: a term may not contain a comma.
-                terms.filter { it.isNotBlank() && ',' !in it }.forEach { addQueryParameter("terms", it) }
+                // Repeated rather than comma-joined: a term may not contain a
+                // comma. Cleaned and capped like the streaming hints (iOS
+                // `batchTermsQuery`).
+                ParleyStreamProtocol.cleanVocabulary(terms.filter { ',' !in it })
+                    .forEach { addQueryParameter("terms", it) }
             }
             .build()
         val request = Request.Builder().url(url).post(audio.asRequestBody(OCTET_STREAM))
@@ -629,6 +638,37 @@ class CloudClient(
 
     /** A job the cloud answers `404 not_found` for: expired, deleted, or never this account's. */
     override fun isJobNotFound(error: Throwable): Boolean = (error as? CloudException)?.isNotFound == true
+
+    // ── personal dictionary ──────────────────────────────────────────────────
+
+    /**
+     * `GET /v1/dictionary[?since=]` — every entry changed after [since]
+     * (tombstones included), or all of them when null, plus the server's `now`
+     * for the next pull. Same call as iOS `pullDictionary(since:)`; the rules
+     * that use it are `kit/DictionarySync`.
+     */
+    override suspend fun pullDictionary(since: Long?): DictionaryPullResponse {
+        val url = url("v1", "dictionary").newBuilder()
+            .apply { if (since != null) addQueryParameter("since", since.toString()) }
+            .build()
+        return CloudJson.decodeFromString(DictionaryPullResponse.serializer(), getText(url))
+    }
+
+    /**
+     * `PUT /v1/dictionary` with `{ entries }` — one batch (the server takes up
+     * to 500). Answers with the merged state of every phrase it touched, and
+     * the entries it refused by index.
+     */
+    override suspend fun pushDictionary(entries: List<CloudDictionaryEntry>): DictionaryPushResponse {
+        val body = buildJsonObject {
+            put("entries", CloudJson.encodeToJsonElement(ListSerializer(CloudDictionaryEntry.serializer()), entries))
+        }
+        val request = Request.Builder()
+            .url(url("v1", "dictionary"))
+            .put(body.toString().toRequestBody(APPLICATION_JSON))
+        val text = execute(request) { response -> bodyText(response) }
+        return CloudJson.decodeFromString(DictionaryPushResponse.serializer(), text)
+    }
 
     // ── chat (the one-shot LLM passes) ───────────────────────────────────────
 

@@ -195,6 +195,8 @@ class ImportSession(
      * pass must not go with it.
      */
     private val runFilingPass: (recordingId: String) -> Unit = {},
+    /** The personal dictionary's recognition terms, sent as the relay's hints. */
+    private val hintTerms: () -> List<String> = { emptyList() },
 ) {
     private val _state = MutableStateFlow<ImportState>(ImportState.Idle)
     val state: StateFlow<ImportState> = _state.asStateFlow()
@@ -281,14 +283,7 @@ class ImportSession(
 
     /** Opens the relay and starts listening to it; audio goes out via [decodeAndStream]. */
     private suspend fun connectRelay(token: String): SttRelayClient {
-        val client = SttRelayClient(
-            SttRelayClient.Options(
-                bearerToken = token,
-                // An imported meeting is still a meeting: same billing bucket as
-                // live capture, which is what the relay meters by forwarded bytes.
-                feature = SttRelayClient.Feature.MEETING,
-            )
-        )
+        val client = SttRelayClient(importRelayOptions(token, hintTerms()))
         relay = client
         eventsJob = scope.launch { client.events.collect(::onRelayEvent) }
         client.connect()
@@ -553,3 +548,16 @@ class ImportSession(
         const val TAIL_TIMEOUT_MS = 15_000L
     }
 }
+
+/**
+ * The relay options an import opens with. An imported meeting is still a
+ * meeting: same billing bucket as live capture, which is what the relay meters
+ * by forwarded bytes — and the same personal-dictionary hints, as iOS
+ * `RecordingImporter` passes the batch job its terms.
+ */
+internal fun importRelayOptions(token: String, hintTerms: List<String>): SttRelayClient.Options =
+    SttRelayClient.Options(
+        bearerToken = token,
+        feature = SttRelayClient.Feature.MEETING,
+        hintTerms = hintTerms,
+    )
