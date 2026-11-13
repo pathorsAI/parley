@@ -52,6 +52,22 @@ data class FolderDirectory(
         }
     }
 
+    /** Folder [folderId] of scope [orgId] renamed — what a chip-row rename leaves behind. */
+    fun withFolderRenamed(orgId: String?, folderId: String, name: String): FolderDirectory =
+        mapScope(orgId) { folders -> folders.map { if (it.id == folderId) it.copy(name = name) else it } }
+
+    /** Folder [folderId] gone from scope [orgId] — what a chip-row delete leaves behind. */
+    fun withoutFolder(orgId: String?, folderId: String): FolderDirectory =
+        mapScope(orgId) { folders -> folders.filterNot { it.id == folderId } }
+
+    private fun mapScope(orgId: String?, edit: (List<CloudFolder>) -> List<CloudFolder>): FolderDirectory =
+        when {
+            orgId == null -> copy(personalFolders = edit(personalFolders))
+            // A scope this directory never loaded stays unloaded, not empty.
+            orgId !in orgFolders -> this
+            else -> copy(orgFolders = orgFolders + (orgId to edit(orgFolders.getValue(orgId))))
+        }
+
     /**
      * Where [destination] is, in words: the folder's name, or null for a
      * scope's root and for a folder this directory does not know.
