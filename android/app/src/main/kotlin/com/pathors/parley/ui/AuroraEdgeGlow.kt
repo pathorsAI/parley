@@ -179,7 +179,7 @@ private data class AuroraLook(
     val blendMode get() = if (dark) BlendMode.Plus else BlendMode.SrcOver
 }
 
-private interface AuroraPainter {
+private fun interface AuroraPainter {
     fun draw(scope: DrawScope, frame: AuroraFrame, look: AuroraLook)
 }
 
