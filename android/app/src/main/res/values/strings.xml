@@ -647,4 +647,10 @@
     <string name="ime_settings_enable_action">Open keyboard settings</string>
     <string name="ime_settings_privacy">What it doesn\'t do</string>
     <string name="ime_settings_privacy_detail">Parley only writes into the field you are in. It never reads what is already there, keeps no record of it, and has no letter keys to log. The microphone opens only while you are dictating, shows a notification the whole time, and never opens in a password field.</string>
+
+    <!-- Quick record: the launcher shortcut (xml/shortcuts.xml) and the Quick
+         Settings tile (quickrecord/RecordTileService). iOS StartRecordingControl. -->
+    <string name="quick_record_shortcut_short">Record</string>
+    <string name="quick_record_shortcut_long">Start Recording</string>
+    <string name="quick_record_tile_label">Parley Record</string>
 </resources>

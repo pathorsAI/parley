@@ -633,4 +633,10 @@
     <string name="ime_settings_enable_action">開啟鍵盤設定</string>
     <string name="ime_settings_privacy">它不會做的事</string>
     <string name="ime_settings_privacy_detail">Parley 只會往你所在的欄位寫入。它不會讀取欄位裡原本的內容、不留任何紀錄，也沒有文字鍵可以記錄。麥克風只在你語音輸入的期間開啟、全程顯示通知，而且在密碼欄位永遠不會開啟。</string>
+
+    <!-- Quick record: the launcher shortcut (xml/shortcuts.xml) and the Quick
+         Settings tile (quickrecord/RecordTileService). iOS StartRecordingControl. -->
+    <string name="quick_record_shortcut_short">錄音</string>
+    <string name="quick_record_shortcut_long">開始錄音</string>
+    <string name="quick_record_tile_label">Parley 錄音</string>
 </resources>
