@@ -79,6 +79,25 @@ object ParleyStreamProtocol {
         val channels: Int = CHANNELS,
     )
 
+    /**
+     * The most hint terms one session sends — the desktop's `VOCABULARY_LIMIT`
+     * and iOS `ParleyStreamProtocol.vocabularyLimit`.
+     */
+    const val VOCABULARY_LIMIT = 200
+
+    /**
+     * Trimmed, de-duplicated, blank-free and capped at [VOCABULARY_LIMIT],
+     * first-seen order kept — so a personal dictionary listed newest first
+     * keeps its newest words under the cap. iOS `cleanVocabulary`.
+     */
+    fun cleanVocabulary(vocabulary: List<String>): List<String> =
+        vocabulary.asSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+            .take(VOCABULARY_LIMIT)
+            .toList()
+
     @Serializable
     data class Hints(val terms: List<String>)
 

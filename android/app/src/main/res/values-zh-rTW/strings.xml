@@ -656,4 +656,45 @@
     <string name="quick_record_shortcut_short">錄音</string>
     <string name="quick_record_shortcut_long">開始錄音</string>
     <string name="quick_record_tile_label">Parley 錄音</string>
+
+    <!-- Personal dictionary (iOS PersonalDictionaryView) -->
+    <string name="dictionary_title">個人詞庫</string>
+    <string name="dictionary_account_detail">轉錄時 Parley 會優先辨識的名字、行話與更正，並和你的帳號同步。</string>
+    <string name="dictionary_account_open">開啟</string>
+    <string name="dictionary_corrections_header">學到的更正</string>
+    <string name="dictionary_corrections_footer">聽成什麼、應該是什麼——在這裡加的，或在你其他裝置上學到的。轉錄時 Parley 會優先辨識正確的詞。</string>
+    <string name="dictionary_corrections_empty">還沒學到任何東西。</string>
+    <string name="dictionary_learning">學習中</string>
+    <string name="dictionary_add_correction">新增更正</string>
+    <string name="dictionary_terms_header">你的詞</string>
+    <string name="dictionary_terms_footer">名字、行話，還有任何你常講的詞。轉錄時 Parley 會優先辨識這些詞，並照你的寫法來寫。</string>
+    <string name="dictionary_add_term_hint">加入名字或術語</string>
+    <string name="dictionary_add">加入</string>
+    <string name="dictionary_clear">清空詞庫</string>
+    <string name="dictionary_clear_title">要清空個人詞庫嗎？</string>
+    <string name="dictionary_clear_message">Parley 會忘掉每一項更正，以及你加入的每一個詞；登入時，你其他裝置上的也會一併清除。</string>
+    <string name="dictionary_clear_confirm">全部清空</string>
+    <string name="dictionary_sync_syncing">同步中…</string>
+    <string name="dictionary_sync_synced">已同步 · %1$s</string>
+    <string name="dictionary_sync_failed">暫時無法同步，Parley 稍後會自動再試。</string>
+    <string name="dictionary_sync_failed_last">暫時無法同步，Parley 稍後會自動再試。上次同步：%1$s。</string>
+    <string name="dictionary_ago_now">剛剛</string>
+    <string name="dictionary_ago_minutes">%1$d 分鐘前</string>
+    <string name="dictionary_ago_hours">%1$d 小時前</string>
+    <string name="dictionary_ago_days">%1$d 天前</string>
+    <string name="dictionary_search_hint">搜尋詞庫</string>
+    <string name="dictionary_search">搜尋</string>
+    <string name="dictionary_no_matches">沒有符合的結果。</string>
+    <string name="dictionary_edit_correction">編輯更正</string>
+    <string name="dictionary_edit_term">編輯詞</string>
+    <string name="dictionary_heard_as">聽成</string>
+    <string name="dictionary_should_be">應該是</string>
+    <string name="dictionary_term">詞</string>
+    <string name="dictionary_problem_single">請至少輸入兩個字，以免單一個字在每個出現的地方都被改掉。</string>
+    <string name="dictionary_problem_grows">「應該是」不能包含「聽成」的內容，否則每次套用都會越改越長。</string>
+    <string name="dictionary_correction_footer">轉錄時 Parley 會優先辨識這個詞。</string>
+    <string name="dictionary_save">儲存</string>
+    <string name="dictionary_edit">編輯</string>
+    <string name="dictionary_delete">刪除</string>
+    <string name="dictionary_row_actions">「%1$s」的更多動作</string>
 </resources>

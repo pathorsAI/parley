@@ -282,6 +282,11 @@ class MeetingSession(
      * Null when it cannot be found, in which case the status just says synced.
      */
     private val orgName: suspend (orgId: String) -> String? = { null },
+    /**
+     * The personal dictionary's recognition terms, read as each relay leg
+     * opens — so a word added mid-meeting is in the next leg's hints.
+     */
+    private val hintTerms: () -> List<String> = { emptyList() },
 ) : LiveMeeting {
     private val mic = MicCapture(context)
 
@@ -506,14 +511,7 @@ class MeetingSession(
     }
 
     private fun newRelay(token: String, leg: Int, timeOffsetMs: Long) =
-        SttRelayClient(
-            SttRelayClient.Options(
-                bearerToken = token,
-                feature = SttRelayClient.Feature.MEETING,
-                idPrefix = if (leg == 0) null else "${SttRelayClient.SOURCE}@$leg",
-                timeOffsetMs = timeOffsetMs,
-            )
-        )
+        SttRelayClient(meetingRelayOptions(token, leg, timeOffsetMs, hintTerms()))
 
     /**
      * Reopen the relay while the microphone keeps running.
@@ -1190,3 +1188,26 @@ class MeetingSession(
         const val ORG_NAME_TIMEOUT_MS = 5_000L
     }
 }
+
+/**
+ * The options one leg of a live meeting's relay opens with.
+ *
+ * The personal dictionary biases a meeting's recognition too, as on iOS
+ * (`MeetingRecorder.makeRelay`) and the desktop (`src/lib/meeting/start.ts`):
+ * a name someone added is a name people say in meetings. Every leg numbers its
+ * own segments from zero, so a reconnected leg gets its own id prefix — without
+ * it a reconnect would overwrite the opening of the meeting.
+ */
+internal fun meetingRelayOptions(
+    token: String,
+    leg: Int,
+    timeOffsetMs: Long,
+    hintTerms: List<String>,
+): SttRelayClient.Options =
+    SttRelayClient.Options(
+        bearerToken = token,
+        feature = SttRelayClient.Feature.MEETING,
+        idPrefix = if (leg == 0) null else "${SttRelayClient.SOURCE}@$leg",
+        timeOffsetMs = timeOffsetMs,
+        hintTerms = hintTerms,
+    )

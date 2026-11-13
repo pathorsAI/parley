@@ -22,7 +22,10 @@ import com.pathors.parley.feedback.Log
 import com.pathors.parley.feedback.PromptGateStore
 import com.pathors.parley.feedback.SyncFailureLedger
 import com.pathors.parley.feedback.UncaughtCrashRecorder
+import com.pathors.parley.dictionary.DictionarySyncModel
 import com.pathors.parley.kit.BatchJobStore
+import com.pathors.parley.kit.FileDictionarySyncStorage
+import com.pathors.parley.kit.LexiconStore
 import com.pathors.parley.kit.BatchTranscriber
 import com.pathors.parley.kit.ParleyClientHeader
 import com.pathors.parley.library.SaveLocationStore
@@ -64,6 +67,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 private const val TAG = "ParleyApplication"
@@ -98,6 +103,8 @@ class ParleyApplication : Application() {
         // queues too — not only the next cold start.
         container.autoSync.start()
         container.startWhatsNew()
+        // Before anything can write the dictionary, so every edit schedules a sync.
+        container.startDictionarySync()
         // The last process's crash, if it had one, and any report that did not
         // get out before it ended.
         container.feedback.handleLaunch()
@@ -254,6 +261,65 @@ class AppContainer(private val app: Application) {
         )
     }
 
+    /**
+     * The personal dictionary: the user's terms and corrections, which every
+     * live relay, batch job and import sends as recognition hints. iOS keeps
+     * the same file in its App Group; here the keyboard shares the process.
+     */
+    val lexicon: LexiconStore = LexiconStore(File(app.filesDir, LexiconStore.FILE_NAME))
+
+    /** Keeps [lexicon] in step with the account (`GET`/`PUT /v1/dictionary`). */
+    val dictionarySync: DictionarySyncModel = DictionarySyncModel(
+        storage = FileDictionarySyncStorage(lexicon, File(app.filesDir, FileDictionarySyncStorage.FILE_NAME)),
+        transport = cloud,
+        scope = appScope,
+        canSync = { !DemoMode.isActive },
+    )
+
+    /**
+     * Feed [dictionarySync] its triggers — iOS `DictionarySyncModel.start()`
+     * plus the `accountChanged` calls in `AppState` and the foreground hook in
+     * `ParleyApp`. The session token is the one place sign-in, sign-out, a 401
+     * and account deletion all land, so the account is followed from there;
+     * the user id it needs comes from `GET /me`. Called once, from
+     * `Application.onCreate` — the main thread, which a lifecycle observer has
+     * to be added on.
+     */
+    fun startDictionarySync() {
+        lexicon.didSave = dictionarySync::localChange
+        appScope.launch {
+            auth.tokenFlow.distinctUntilChanged().collectLatest { token ->
+                if (token == null) dictionarySync.accountChanged(null) else resolveDictionaryAccount()
+            }
+        }
+        ProcessLifecycleOwner.get().lifecycle.addObserver(
+            object : DefaultLifecycleObserver {
+                override fun onStart(owner: LifecycleOwner) {
+                    // A launch that was offline never learned who is signed in;
+                    // a foreground is the next chance to.
+                    if (dictionarySync.active.value) {
+                        dictionarySync.foregrounded()
+                    } else {
+                        appScope.launch { if (auth.currentToken() != null) resolveDictionaryAccount() }
+                    }
+                }
+            },
+        )
+    }
+
+    /**
+     * Who is signed in, for the dictionary's per-account snapshot. Offline, it
+     * stays unknown until the next foreground; a 401 clears the session, which
+     * the token flow reports as a sign-out.
+     */
+    private suspend fun resolveDictionaryAccount() {
+        if (DemoMode.isActive) return
+        val user = runCatching { cloud.me() }
+            .onFailure { if (it is CancellationException) throw it }
+            .getOrNull()
+        if (user != null) dictionarySync.accountChanged(user.id)
+    }
+
     /** The bundled sample recording's local-only library entry. */
     val sample: SampleRecordingStore = SampleRecordingStore(
         context = app,
@@ -332,6 +398,7 @@ class AppContainer(private val app: Application) {
         transcriber = BatchTranscriber(cloud, jobs = batchJobs),
         localAudio = localAudio,
         keepsAudioOnPhone = audioRetention::keepsAudioOnPhoneNow,
+        recognitionTerms = lexicon::recognitionTerms,
     )
 
     /**
@@ -574,6 +641,7 @@ class AppContainer(private val app: Application) {
             uploader = uploader,
             title = title,
             orgName = { orgId -> cloud.myOrgs().firstOrNull { it.id == orgId }?.name },
+            hintTerms = lexicon::recognitionTerms,
         )
 
     /** Start importing [uri], replacing (and cancelling) any previous import. */
@@ -589,6 +657,7 @@ class AppContainer(private val app: Application) {
             drainBackfills = ::drainPendingBackfills,
             defaultDestination = saveLocation::current,
             runFilingPass = ::suggestFilingInBackground,
+            hintTerms = lexicon::recognitionTerms,
         )
         _activeImport.value = session
         session.start()

@@ -115,6 +115,12 @@ class TranscriptBackfiller(
         TranscriptCoverage.BackfillPolicy.STANDARD,
     /** The clock a run's start is stamped with. Injectable for tests. */
     private val now: () -> Long = System::currentTimeMillis,
+    /**
+     * The personal dictionary's recognition terms, read at the start of each
+     * run and sent as the batch job's `terms` (iOS `MeetingUploader` passes
+     * `LexiconStore.recognitionTerms()` the same way).
+     */
+    private val recognitionTerms: () -> List<String> = { emptyList() },
 ) {
     private val drainMutex = Mutex()
 
@@ -361,6 +367,7 @@ class TranscriptBackfiller(
             audio = audio,
             diarization = true,
             languageHints = emptyList(),
+            terms = recognitionTerms(),
             resumeKey = id,
         )
 

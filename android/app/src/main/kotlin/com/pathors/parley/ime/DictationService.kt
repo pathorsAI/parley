@@ -141,6 +141,7 @@ class DictationService : Service() {
             cloud = container.cloud,
             settings = VoiceTypingSettings(applicationContext),
             ownerToken = owner,
+            hintTerms = container.lexicon::recognitionTerms,
         )
         val foreground = ensureForeground()
         _activeSession.value = session

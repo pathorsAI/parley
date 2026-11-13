@@ -122,7 +122,9 @@ class SttRelayClient(private val options: Options) : PcmSink {
      *   rewrite pass.
      * @property diarization ask the service to label speakers.
      * @property endpointing ask the service to mark utterance ends (`endpoint`).
-     * @property hintTerms words the recognizer should favor (names, jargon).
+     * @property hintTerms words the recognizer should favor (names, jargon) —
+     *   the personal dictionary's recognition terms. Cleaned and capped by
+     *   [ParleyStreamProtocol.cleanVocabulary] on the way into the start frame.
      * @property feature billing attribution — one of [Feature]. Anything else is
      *   recorded as unattributed by the relay.
      * @property idPrefix stem for committed segment ids, defaulting to the
@@ -566,7 +568,7 @@ class SttRelayClient(private val options: Options) : PcmSink {
                 languages = options.languageHints?.takeIf { it.isNotEmpty() },
                 diarization = options.diarization,
                 endpointing = options.endpointing,
-                hints = options.hintTerms
+                hints = ParleyStreamProtocol.cleanVocabulary(options.hintTerms)
                     .takeIf { it.isNotEmpty() }
                     ?.let { ParleyStreamProtocol.Hints(it) },
             )

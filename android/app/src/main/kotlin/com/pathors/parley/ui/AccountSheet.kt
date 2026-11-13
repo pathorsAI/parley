@@ -75,6 +75,7 @@ import com.pathors.parley.auth.CustomTabsLauncher
 import com.pathors.parley.cloud.CloudOrg
 import com.pathors.parley.cloud.CloudUser
 import com.pathors.parley.cloud.HostedQuota
+import com.pathors.parley.dictionary.PersonalDictionaryScreen
 import com.pathors.parley.feedback.FeedbackSettings
 import com.pathors.parley.library.FolderDirectory
 import com.pathors.parley.library.SaveDestination
@@ -134,6 +135,7 @@ fun AccountSheet(
     // show, and a settings pane that opens mid-scroll reads as broken.
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var confirmingDelete by remember { mutableStateOf(false) }
+    var showingDictionary by remember { mutableStateOf(false) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -172,6 +174,8 @@ fun AccountSheet(
                 onRetry = viewModel::uploadNow,
             )
 
+            DictionarySection(onOpen = { showingDictionary = true })
+
             AudioStorageSection()
 
             AppearanceSection()
@@ -206,6 +210,10 @@ fun AccountSheet(
                 },
             )
         }
+    }
+
+    if (showingDictionary) {
+        PersonalDictionaryScreen(onDismiss = { showingDictionary = false })
     }
 
     if (confirmingDelete) {
@@ -679,6 +687,32 @@ private fun SyncSection(pending: Int, uploading: Boolean, onRetry: () -> Unit) {
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+}
+
+/**
+ * The way into the personal dictionary — iOS Settings → "Personal dictionary".
+ * Here rather than on the library because it is a setting of the account: it
+ * syncs with it, and it changes what every recording is transcribed with.
+ */
+@Composable
+private fun DictionarySection(onOpen: () -> Unit) {
+    SectionHeader(R.string.dictionary_title)
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = stringResource(R.string.dictionary_account_detail),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(onClick = onOpen) {
+            Text(stringResource(R.string.dictionary_account_open))
+        }
+    }
 }
 
 /**
