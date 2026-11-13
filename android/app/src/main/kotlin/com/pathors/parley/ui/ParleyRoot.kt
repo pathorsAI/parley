@@ -112,6 +112,7 @@ fun ParleyRoot() {
     val container = rememberContainer()
     val signedIn by container.auth.isSignedIn.collectAsState(initial = null)
     val demo by DemoMode.enabled.collectAsState()
+    val signingIn by container.signingIn.collectAsState()
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         // With targetSdk 35+ the window is edge-to-edge whether or not the app
@@ -136,6 +137,13 @@ fun ParleyRoot() {
             // account) — but never over a store screenshot.
             if (!demo) FeedbackHost(container.feedback)
         }
+        // The sign-in page's edge glow lives here rather than in
+        // `OnboardingScreen` so that it can outlast it: a successful sign-in
+        // swaps the page out in one frame, and the glow fades over the library
+        // that replaces it, then leaves the composition. Outside the safe-drawing
+        // padding, because it belongs to the screen's physical edge. See
+        // `AuroraEdgeGlow`.
+        AuroraEdgeGlow(onSignInPage = signedIn == false && !demo, signingIn = signingIn)
     }
 }
 
