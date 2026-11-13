@@ -417,23 +417,41 @@ public actor CloudClient: BatchTranscriptionService, DictionarySyncTransport {
     // MARK: hosted batch transcription
 
     /// Create a job from raw (already compressed) audio; the response is the id.
-    /// The options ride in the query under Parley's own names (`diarization`,
-    /// `languages`, `terms`). `languages` is omitted entirely when empty so the
-    /// cloud auto-detects, rather than being handed an empty list to interpret.
+    /// The options ride in the query under Parley's own names — see
+    /// `batchJobQuery`.
     public func startBatchJob(
-        audio: Data, diarization: Bool, languages: [String], terms: [String]
+        audio: Data, diarization: Bool, languages: [String], terms: [String],
+        recordingId: String?
     ) async throws -> String {
-        var query = [URLQueryItem(name: "diarization", value: diarization ? "1" : "0")]
-        if !languages.isEmpty {
-            query.append(
-                URLQueryItem(name: "languages", value: languages.joined(separator: ",")))
-        }
-        query += Self.batchTermsQuery(terms)
+        let query = Self.batchJobQuery(
+            diarization: diarization, languages: languages, terms: terms,
+            recordingId: recordingId)
         let data = try await request(
             "stt/batch", method: "POST", body: audio, contentType: "application/octet-stream",
             query: query, timeout: Self.batchUploadTimeout)
         struct Created: Decodable { let id: String }
         return try JSONDecoder().decode(Created.self, from: data).id
+    }
+
+    /// `diarization`, `languages` (comma-separated), `terms` (repeated) and
+    /// `recording`. `languages` is omitted entirely when empty so the cloud
+    /// auto-detects, rather than being handed an empty list to interpret.
+    /// `recording` names the caller's own live recording when this is a
+    /// re-transcription of it, so the cloud does not charge for audio the live
+    /// session already paid for; a server that predates it ignores it.
+    static func batchJobQuery(
+        diarization: Bool, languages: [String], terms: [String], recordingId: String?
+    ) -> [URLQueryItem] {
+        var query = [URLQueryItem(name: "diarization", value: diarization ? "1" : "0")]
+        if !languages.isEmpty {
+            query.append(
+                URLQueryItem(name: "languages", value: languages.joined(separator: ",")))
+        }
+        query += batchTermsQuery(terms)
+        if let recordingId, !recordingId.isEmpty {
+            query.append(URLQueryItem(name: "recording", value: recordingId))
+        }
+        return query
     }
 
     /// One repeated `terms` item per term, cleaned and capped like the

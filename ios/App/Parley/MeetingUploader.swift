@@ -1203,12 +1203,17 @@ final class MeetingUploader {
         // Under a background task, and resumable: the job id is remembered
         // against the recording, so a pass that iOS suspends mid-poll is picked
         // up by the next foreground's pass instead of uploading the hour again.
+        //
+        // And named to the cloud as `recording`: this audio is a recording the
+        // cloud already holds (a backfill is queued only after the upload and
+        // push land, and a manual one starts from the cloud's own entry), so a
+        // live one is not billed a second time for minutes its session paid.
         let terms = LexiconStore.recognitionTerms()
         let transcript = try await BackgroundGrace.run("backfill-transcription") {
             try await BatchTranscriber(service: cloud)
                 .transcribe(
                     audio: audio, diarization: true, languages: [], terms: terms,
-                    resume: BatchResume(store: batchJobStore, key: id))
+                    resume: BatchResume(store: batchJobStore, key: id), recordingId: id)
         }
 
         // The transcription has completed and been billed, so a hand-triggered

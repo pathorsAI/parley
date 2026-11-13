@@ -205,6 +205,7 @@ private class ScriptedService(
         diarization: Boolean,
         languageHints: List<String>,
         terms: List<String>,
+        recordingId: String?,
     ): String {
         uploads++
         return "job-$uploads"

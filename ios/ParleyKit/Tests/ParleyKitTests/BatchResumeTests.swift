@@ -84,7 +84,22 @@ final class BatchResumeTests: XCTestCase {
         XCTAssertNil(store.job(for: key))
     }
 
-    func testFailedJobFallsBackToAFreshUpload() async throws {
+    /// The re-upload after a vanished job is a new `POST /stt/batch`, and it
+    /// must name the recording just as the first one did — otherwise the
+    /// retry of a backfill is billed when the original would not have been.
+    func testFreshUploadAfterAVanishedJobStillNamesTheRecording() async throws {
+        let store = InMemoryBatchJobStore()
+        store.save(record("old"), for: key)
+        let fake = ResumeFakeService(newJobId: "new", status: ["old": .notFound])
+
+        _ = try await transcriber(fake).transcribe(
+            audio: audio, resume: BatchResume(store: store, key: key), recordingId: key)
+
+        let named = await fake.startedRecordingIds
+        XCTAssertEqual(named, [key])
+    }
+
+        func testFailedJobFallsBackToAFreshUpload() async throws {
         let store = InMemoryBatchJobStore()
         store.save(record("old"), for: key)
         let fake = ResumeFakeService(newJobId: "new", status: ["old": .failed])
@@ -188,10 +203,14 @@ private actor ResumeFakeService: BatchTranscriptionService {
         pollHook = hook
     }
 
+    private(set) var startedRecordingIds: [String?] = []
+
     func startBatchJob(
-        audio: Data, diarization: Bool, languages: [String], terms: [String]
+        audio: Data, diarization: Bool, languages: [String], terms: [String],
+        recordingId: String?
     ) async throws -> String {
         starts += 1
+        startedRecordingIds.append(recordingId)
         return newJobId
     }
 

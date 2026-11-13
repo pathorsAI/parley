@@ -53,7 +53,24 @@ final class ParleyStreamClientTests: XCTestCase {
         XCTAssertTrue(CloudClient.batchTermsQuery([]).isEmpty)
     }
 
-    func testTheBatchTranscriptIsAskedForInParleysShape() {
+    func testARetranscriptionNamesItsRecording() {
+        let items = CloudClient.batchJobQuery(
+            diarization: true, languages: [], terms: [], recordingId: "rec-1")
+        XCTAssertEqual(items.map(\.name), ["diarization", "recording"])
+        XCTAssertEqual(items.last?.value, "rec-1")
+    }
+
+    func testAnImportNamesNoRecording() {
+        for recordingId in [nil, ""] as [String?] {
+            let items = CloudClient.batchJobQuery(
+                diarization: false, languages: ["zh", "en"], terms: ["Parley"],
+                recordingId: recordingId)
+            XCTAssertEqual(items.map(\.name), ["diarization", "languages", "terms"])
+            XCTAssertEqual(items.map(\.value), ["0", "zh,en", "Parley"])
+        }
+    }
+
+        func testTheBatchTranscriptIsAskedForInParleysShape() {
         XCTAssertEqual(BatchTranscriptResponse.format, "parley")
     }
 }

@@ -122,8 +122,14 @@ public struct BatchJobStatus: Decodable, Sendable {
 public protocol BatchTranscriptionService: Sendable {
     /// `terms` biases recognition toward the user's own words, the batch
     /// counterpart of the streaming `hints.terms`.
+    ///
+    /// `recordingId` is set only when `audio` is one of the caller's own
+    /// recordings already in the cloud, transcribed again (a backfill): the
+    /// cloud then does not bill a live recording's minutes a second time. An
+    /// imported file has no such recording and passes `nil`.
     func startBatchJob(
-        audio: Data, diarization: Bool, languages: [String], terms: [String]
+        audio: Data, diarization: Bool, languages: [String], terms: [String],
+        recordingId: String?
     ) async throws -> String
     func batchJobStatus(id: String) async throws -> BatchJobStatus
     func batchTranscript(id: String) async throws -> BatchTranscriptResponse
@@ -334,15 +340,22 @@ public struct BatchTranscriber: Sendable {
     }
 
     /// Upload (or resume) → poll → fetch → group → best-effort delete.
+    ///
+    /// `resume` is local bookkeeping (which remembered job to pick up);
+    /// `recordingId` is what the cloud is told — see
+    /// `BatchTranscriptionService.startBatchJob`. A remembered job that turns
+    /// out to be gone is uploaded again through this same call, so the fresh
+    /// job names the same recording.
     public func transcribe(
         audio: Data, diarization: Bool = true, languages: [String] = [], terms: [String] = [],
-        resume: BatchResume? = nil
+        resume: BatchResume? = nil, recordingId: String? = nil
     ) async throws -> BatchTranscriptionResult {
         if let resume, let result = try await resumed(audio: audio, resume: resume) {
             return result
         }
         let jobId = try await service.startBatchJob(
-            audio: audio, diarization: diarization, languages: languages, terms: terms)
+            audio: audio, diarization: diarization, languages: languages, terms: terms,
+            recordingId: recordingId)
         if let resume {
             resume.store.save(
                 BatchJobRecord(jobId: jobId, audioBytes: audio.count, createdAt: now()),

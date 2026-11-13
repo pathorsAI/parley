@@ -170,6 +170,21 @@ class TranscriptBackfillerTest {
     }
 
     /**
+     * The audio is a recording the cloud already holds, so the job names it:
+     * the cloud then does not bill a live recording's minutes a second time.
+     */
+    @Test
+    fun `a run names the recording it re-transcribes to the cloud`() = runBlocking {
+        val queue = queue("named")
+        queue.enqueueMoving(BackfillRequest(pending = pending("rec-1")), audio("a.ogg"))
+        val service = FakeBatch(fullTranscript())
+
+        backfiller(queue, ledger("named-ledger"), service).drain()
+
+        assertEquals(listOf<String?>("rec-1"), service.recordingIds)
+    }
+
+    /**
      * The run happens minutes or a launch after the upload queued it, and in
      * between the recording may have been renamed from the filing card, moved,
      * and marked as filed. Rebuilding the entry from the queued request put the
@@ -706,6 +721,7 @@ class TranscriptBackfillerTest {
                 diarization: Boolean,
                 languageHints: List<String>,
                 terms: List<String>,
+                recordingId: String?,
             ): String {
                 if (!enqueued) {
                     enqueued = true
@@ -746,12 +762,17 @@ private class FakeBatch(
     private val failStart: Boolean = false,
 ) : BatchTranscriptionService {
 
+    /** The `recording` each upload named to the cloud, in order. */
+    val recordingIds = mutableListOf<String?>()
+
     override suspend fun startBatchJob(
         audio: File,
         diarization: Boolean,
         languageHints: List<String>,
         terms: List<String>,
+        recordingId: String?,
     ): String {
+        recordingIds += recordingId
         if (failStart) throw IOException("no route to host")
         return "job-1"
     }
@@ -774,6 +795,7 @@ private class RunningProbe : BatchTranscriptionService {
         diarization: Boolean,
         languageHints: List<String>,
         terms: List<String>,
+        recordingId: String?,
     ): String {
         seen = backfiller.status("rec-renamed")
         throw IOException("stop here")

@@ -181,12 +181,18 @@ interface BatchTranscriptionService {
     /**
      * Create a job. [languageHints] travel as `languages`, [terms] as hint
      * terms the recognizer should favor (names, jargon).
+     *
+     * [recordingId] travels as `recording` and is set only when [audio] is a
+     * live recording already in the cloud being transcribed again (a
+     * backfill). The cloud uses it to not bill the same audio twice; an
+     * imported file has no such recording and leaves it null.
      */
     suspend fun startBatchJob(
         audio: File,
         diarization: Boolean,
         languageHints: List<String>,
         terms: List<String> = emptyList(),
+        recordingId: String? = null,
     ): String
 
     suspend fun batchJobStatus(id: String): BatchJobStatus
@@ -334,19 +340,28 @@ class BatchTranscriber(
     private val now: () -> Long = System::currentTimeMillis,
 ) {
 
-    /** Upload (or resume) → poll → fetch → group → best-effort delete. */
+    /**
+     * Upload (or resume) → poll → fetch → group → best-effort delete.
+     *
+     * [resumeKey] is local bookkeeping (which remembered job to pick up);
+     * [recordingId] is what the cloud is told — see
+     * [BatchTranscriptionService.startBatchJob]. A backfill passes the same id
+     * as both; they are separate because one is a cache key and the other a
+     * billing claim.
+     */
     suspend fun transcribe(
         audio: File,
         diarization: Boolean = true,
         languageHints: List<String> = emptyList(),
         terms: List<String> = emptyList(),
         resumeKey: String? = null,
+        recordingId: String? = null,
     ): BatchTranscriptionResult {
         if (resumeKey != null) {
             resume(resumeKey, audio)?.let { return it }
         }
         val audioBytes = withContext(Dispatchers.IO) { audio.length() }
-        val jobId = service.startBatchJob(audio, diarization, languageHints, terms)
+        val jobId = service.startBatchJob(audio, diarization, languageHints, terms, recordingId)
         if (resumeKey != null) {
             withContext(Dispatchers.IO) {
                 jobs.write(resumeKey, PersistedBatchJob(jobId, audioBytes, now()))

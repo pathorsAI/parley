@@ -258,6 +258,18 @@ final class BatchTranscriptionTests: XCTestCase {
         XCTAssertEqual(starts[0].byteCount, 7)
         XCTAssertFalse(starts[0].diarization)
         XCTAssertEqual(starts[0].languages, ["zh", "en"])
+        XCTAssertNil(starts[0].recordingId, "no recording unless the caller names one")
+    }
+
+    func testANamedRecordingReachesTheUpload() async throws {
+        let fake = FakeBatchService(statuses: [BatchJobStatus(status: "completed", durationMs: 0)])
+        let transcriber = BatchTranscriber(
+            service: fake, pollInterval: .milliseconds(1), maxPolls: 4)
+
+        _ = try await transcriber.transcribe(audio: Data(count: 3), recordingId: "rec-9")
+
+        let starts = await fake.starts
+        XCTAssertEqual(starts.map(\.recordingId), ["rec-9"])
     }
 
     func testJobErrorThrowsTheServersMessage() async throws {
@@ -417,6 +429,7 @@ private actor FakeBatchService: BatchTranscriptionService {
         let diarization: Bool
         let languages: [String]
         let terms: [String]
+        var recordingId: String? = nil
     }
 
     private let statuses: [BatchJobStatus]
@@ -444,12 +457,13 @@ private actor FakeBatchService: BatchTranscriptionService {
     }
 
     func startBatchJob(
-        audio: Data, diarization: Bool, languages: [String], terms: [String]
+        audio: Data, diarization: Bool, languages: [String], terms: [String],
+        recordingId: String?
     ) async throws -> String {
         starts.append(
             StartRecord(
                 byteCount: audio.count, diarization: diarization, languages: languages,
-                terms: terms))
+                terms: terms, recordingId: recordingId))
         return jobID
     }
 

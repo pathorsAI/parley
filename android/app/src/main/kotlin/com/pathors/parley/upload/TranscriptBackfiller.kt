@@ -357,11 +357,17 @@ class TranscriptBackfiller(
         // Keyed by the recording, so a run that was cut short — the process
         // frozen or killed in the background — picks up the job it already
         // uploaded instead of uploading the same hour of audio again.
+        //
+        // And named to the cloud as `recording`: this audio is a recording
+        // already in the cloud (the upload lands before a backfill is queued,
+        // and a manual one starts from the cloud's own entry), so a live one
+        // is not billed a second time for minutes its session already paid.
         val transcript = transcriber.transcribe(
             audio = audio,
             diarization = true,
             languageHints = emptyList(),
             resumeKey = id,
+            recordingId = id,
         )
 
         // The transcription has completed and been billed, so a hand-triggered

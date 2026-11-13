@@ -65,6 +65,26 @@ class CloudClientBatchTest {
     }
 
     @Test
+    fun `a re-transcription names its recording, so the cloud does not bill it twice`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("{\"id\":\"job-3\"}"))
+        val audio = temporary.newFile("backfill.ogg").apply { writeBytes(ByteArray(8)) }
+
+        client().startBatchJob(audio, diarization = true, languageHints = emptyList(), recordingId = "rec-1")
+
+        assertEquals("/stt/batch?diarization=1&recording=rec-1", server.takeRequest().path)
+    }
+
+    @Test
+    fun `a blank recording id is not sent at all`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("{\"id\":\"job-4\"}"))
+        val audio = temporary.newFile("blank.ogg").apply { writeBytes(ByteArray(8)) }
+
+        client().startBatchJob(audio, diarization = true, languageHints = emptyList(), recordingId = "")
+
+        assertEquals("/stt/batch?diarization=1", server.takeRequest().path)
+    }
+
+    @Test
     fun `hint terms travel as repeated terms parameters`() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"job-7"}"""))
         val audio = temporary.newFile("terms.ogg").apply { writeBytes(ByteArray(8)) }

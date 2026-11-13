@@ -314,6 +314,17 @@ class BatchTranscriptionTest {
         assertEquals(7L, fake.starts[0].byteCount)
         assertEquals(false, fake.starts[0].diarization)
         assertEquals(listOf("zh", "en"), fake.starts[0].languageHints)
+        assertNull("no recording unless the caller names one", fake.starts[0].recordingId)
+    }
+
+    @Test
+    fun `a named recording reaches the upload, apart from the resume key`() = runBlocking {
+        val fake = FakeBatchService(listOf(BatchJobStatus("completed", durationMs = 0.0)))
+        val transcriber = BatchTranscriber(fake, pollIntervalMs = 1, maxPolls = 4)
+
+        transcriber.transcribe(audio(3), recordingId = "rec-9")
+
+        assertEquals("rec-9", fake.starts.single().recordingId)
     }
 
     @Test
@@ -456,6 +467,7 @@ private class FakeBatchService(
         val byteCount: Long,
         val diarization: Boolean,
         val languageHints: List<String>,
+        val recordingId: String? = null,
     )
 
     val starts = mutableListOf<StartRecord>()
@@ -476,8 +488,9 @@ private class FakeBatchService(
         diarization: Boolean,
         languageHints: List<String>,
         terms: List<String>,
+        recordingId: String?,
     ): String {
-        starts += StartRecord(audio.length(), diarization, languageHints)
+        starts += StartRecord(audio.length(), diarization, languageHints, recordingId)
         return jobId
     }
 
