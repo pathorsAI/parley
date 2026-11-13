@@ -5,11 +5,14 @@ import android.net.Uri
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.session.MediaSession
+import com.pathors.parley.R
 import java.io.File
 
 /**
@@ -75,6 +78,16 @@ internal class PlaybackEngineListener(
  *
  * Playback speed likewise: `PlaybackParameters` resamples with pitch
  * correction, so 0.75×–2× is a property rather than a signal chain.
+ *
+ * ## Background playback
+ *
+ * The player is wrapped in a `MediaSession` and listed with
+ * [PlaybackSessions], which hands it to [PlaybackService] on the first play:
+ * that is what keeps it going with the screen off and puts the media
+ * notification up. The player itself stays here, driven directly — see
+ * [PlaybackRoster] for why the service does not own it.
+ *
+ * @param title what the notification and lock screen call the recording
  */
 // `androidx.annotation.OptIn`, not Kotlin's: media3 marks its opt-in with the
 // AndroidX annotation, which is checked by lint rather than by the compiler.
@@ -83,11 +96,18 @@ internal class ExoPlaybackEngine(
     context: Context,
     file: File,
     private val listener: PlaybackEngineListener,
+    title: String,
 ) : PlaybackEngine {
+
+    private val context = context.applicationContext
 
     private var ready = false
 
-    private val player: ExoPlayer = ExoPlayer.Builder(context.applicationContext)
+    private val player: ExoPlayer = ExoPlayer.Builder(this.context)
+        // Headphones pulled out, or a Bluetooth headset dropping: pause rather
+        // than carry on out of the phone's speaker. More likely with the screen
+        // off, which is now a normal way to listen.
+        .setHandleAudioBecomingNoisy(true)
         .build()
         .apply {
             // Music usage, speech content: this is somebody replaying a meeting,
@@ -101,9 +121,8 @@ internal class ExoPlaybackEngine(
                     .build(),
                 /* handleAudioFocus = */ true,
             )
-            // Explicitly off: the detail screen is not a media session, and a
-            // player that kept going after the screen was left would be a
-            // recording playing out loud with nothing on screen to stop it.
+            // Stop at the end of the recording rather than run on: there is
+            // only ever the one item, and the end is where the screen shows it.
             pauseAtEndOfMediaItems = true
             addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(state: Int) {
@@ -126,9 +145,30 @@ internal class ExoPlaybackEngine(
                     listener.onFailed(error.errorCodeName)
                 }
             })
-            setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
+            setMediaItem(
+                MediaItem.Builder()
+                    .setUri(Uri.fromFile(file))
+                    .setMediaMetadata(
+                        MediaMetadata.Builder()
+                            .setTitle(title.ifBlank { this@ExoPlaybackEngine.context.getString(R.string.app_name) })
+                            .setArtist(this@ExoPlaybackEngine.context.getString(R.string.app_name))
+                            .build(),
+                    )
+                    .build(),
+            )
             prepare()
         }
+
+    /**
+     * The player as the system sees it: notification, lock screen, headset
+     * buttons. Released with the player, and unlisted first so the service
+     * drops it — and stops, if it was the last — before it goes.
+     */
+    private val session: MediaSession = MediaSession.Builder(this.context, player)
+        .setId(PlaybackSessions.newId())
+        .setSessionActivity(PlaybackSessions.sessionActivity(this.context))
+        .build()
+        .also(PlaybackSessions::register)
 
     override val positionMs: Long get() = player.currentPosition.coerceAtLeast(0L)
 
@@ -142,6 +182,11 @@ internal class ExoPlaybackEngine(
         // doing nothing, which is what every podcast player does and what the
         // button visibly promises.
         if (player.playbackState == Player.STATE_ENDED) player.seekTo(0L)
+        // Dismissing the paused notification sends the player Media3's STOP,
+        // which leaves it idle — position and file kept, decoder let go. Play
+        // from the screen after that has to open it again.
+        if (player.playbackState == Player.STATE_IDLE) player.prepare()
+        PlaybackSessions.ensureHosted(context)
         player.play()
     }
 
@@ -153,7 +198,11 @@ internal class ExoPlaybackEngine(
         player.playbackParameters = PlaybackParameters(rate)
     }
 
-    override fun release() = player.release()
+    override fun release() {
+        PlaybackSessions.unregister(session)
+        session.release()
+        player.release()
+    }
 }
 
 /**

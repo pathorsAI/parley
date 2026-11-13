@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Long-press the launcher icon: "Record" opens parley://record, which lands on
+  the meeting screen already recording (quickrecord/QuickRecord). The same link
+  the Quick Settings tile opens; iOS has it as the lock-screen control, widget
+  and Siri phrase.
+
+  targetPackage is a literal because static shortcuts cannot use placeholders;
+  there is no applicationIdSuffix on any build type, so it is always this.
+-->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="record"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_record"
+        android:shortcutShortLabel="@string/quick_record_shortcut_short"
+        android:shortcutLongLabel="@string/quick_record_shortcut_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="parley://record"
+            android:targetClass="com.pathors.parley.MainActivity"
+            android:targetPackage="com.pathors.parley" />
+    </shortcut>
+</shortcuts>

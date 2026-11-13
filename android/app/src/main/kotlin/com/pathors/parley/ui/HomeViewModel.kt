@@ -114,6 +114,16 @@ sealed interface LibraryActionError {
      * make a third.
      */
     data class OriginalKept(val orgName: String) : LibraryActionError
+
+    /**
+     * A 403 renaming or deleting an org folder. Not a fault but the org's rule
+     * — only the folder's creator or an admin may change it — and saying so
+     * tells the user who can.
+     */
+    data object FolderForbidden : LibraryActionError
+
+    /** A folder create, rename or delete that did not land; nothing changed. */
+    data object FolderFailed : LibraryActionError
 }
 
 /**
@@ -571,6 +581,114 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         return folder
     }
 
+    // ── folder management (chip row) ─────────────────────────────────────────
+    //
+    // iOS `LibraryView`'s chip-row menu: long-press a folder for Rename /
+    // Delete, and the trailing "+" for a new one. None of it is optimistic —
+    // an org folder's id is the server's, and a rename or delete an org can
+    // refuse would have to be walked back on screen — so the row changes once,
+    // to what is true. The scope is read before each call and checked after
+    // it: a folder landing in a library the user has since switched away from
+    // would be a folder from somewhere else.
+
+    /**
+     * The chip row's "+": create [name] in the library that is showing and
+     * select it, the way iOS does. Unlike the picker's [createFolder], a
+     * failure is reported through [UiState.actionError] — there is no sheet
+     * left open to show it in.
+     */
+    fun createFolderFromRow(name: String) {
+        val trimmed = LibraryRules.folderNameToCommit(name, current = null) ?: return
+        val scope = _state.value.scopeOrgId
+        viewModelScope.launch {
+            val result = runCatchingCancellable { createFolder(trimmed) }
+            if (_state.value.scopeOrgId != scope) return@launch
+            result.fold(
+                onSuccess = { selectFolder(FolderFilter.Folder(it.id)) },
+                onFailure = { reportFolderFailure(result) },
+            )
+        }
+    }
+
+    /**
+     * Rename [folder] to [name], trimmed. Nothing is sent for a blank name or
+     * the name it already has.
+     */
+    fun renameFolder(folder: CloudFolder, name: String) {
+        val newName = LibraryRules.folderNameToCommit(name, current = folder.name) ?: return
+        val scope = _state.value.scopeOrgId
+        if (DemoMode.isActive) {
+            demoFolders[scope] = demoFoldersFor(scope).map { if (it.id == folder.id) it.copy(name = newName) else it }
+            applyFolderRenamed(scope, folder.id, newName)
+            return
+        }
+        viewModelScope.launch {
+            val result = runCatchingCancellable {
+                if (scope == null) {
+                    container.cloud.renameFolder(folder.id, newName)
+                } else {
+                    container.cloud.renameOrgFolder(scope, folder.id, newName)
+                }
+            }
+            when {
+                _state.value.scopeOrgId != scope -> Unit
+                result.isSuccess -> applyFolderRenamed(scope, folder.id, newName)
+                else -> reportFolderFailure(result)
+            }
+        }
+    }
+
+    /**
+     * Delete [folder]. The server re-homes its recordings to the scope's root
+     * and tombstones the folder; [withFolderDeleted] does the same to what is
+     * on screen, so the rows land in Unfiled without a reload, and a page that
+     * was showing the folder goes back to All.
+     */
+    fun deleteFolder(folder: CloudFolder) {
+        val scope = _state.value.scopeOrgId
+        if (DemoMode.isActive) {
+            demoFolders[scope] = demoFoldersFor(scope).filterNot { it.id == folder.id }
+            demoLibrary[scope] = demoRecordingsFor(scope).map {
+                if (it.folderId == folder.id) it.copy(folderId = null) else it
+            }
+            applyFolderDeleted(scope, folder.id)
+            return
+        }
+        viewModelScope.launch {
+            val result = runCatchingCancellable {
+                if (scope == null) {
+                    container.cloud.deleteFolder(folder.id)
+                } else {
+                    container.cloud.deleteOrgFolder(scope, folder.id)
+                }
+            }
+            when {
+                _state.value.scopeOrgId != scope -> Unit
+                result.isSuccess -> applyFolderDeleted(scope, folder.id)
+                else -> reportFolderFailure(result)
+            }
+        }
+    }
+
+    private fun applyFolderRenamed(scope: String?, folderId: String, name: String) {
+        _state.update { if (it.scopeOrgId == scope) withFolderRenamed(it, folderId, name) else it }
+        _account.update { it.copy(directory = it.directory.withFolderRenamed(scope, folderId, name)) }
+    }
+
+    private fun applyFolderDeleted(scope: String?, folderId: String) {
+        _state.update { if (it.scopeOrgId == scope) withFolderDeleted(it, folderId) else it }
+        _account.update { it.copy(directory = it.directory.withoutFolder(scope, folderId)) }
+        // The sample is filed on this phone only (`SampleRecordingStore`), so
+        // the server's re-home never reaches it.
+        if (scope == null && sample.value?.folderId == folderId) {
+            viewModelScope.launch { container.sample.setFolder(null) }
+        }
+    }
+
+    private fun reportFolderFailure(result: Result<*>) {
+        _state.update { it.copy(actionError = LibraryRules.folderError(forbidden = result.isForbidden())) }
+    }
+
     /**
      * Share a personal recording into [org] as a server-side copy, and — for
      * "Move to organization" — delete the personal original afterwards.
@@ -1004,6 +1122,34 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
 
     companion object {
         private const val MILLIS_PER_SECOND = 1_000
+
+        /** [state] with folder [folderId] called [name] — a rename the server took. */
+        internal fun withFolderRenamed(state: UiState, folderId: String, name: String): UiState =
+            state.copy(folders = state.folders.map { if (it.id == folderId) it.copy(name = name) else it })
+
+        /**
+         * [state] after folder [folderId] is deleted: the folder gone, every row
+         * filed in it moved to the root (Unfiled), and the page back to All if
+         * it was showing that folder — the recordings that were on it are still
+         * there, just no longer under a name.
+         */
+        internal fun withFolderDeleted(state: UiState, folderId: String): UiState = state.copy(
+            folders = state.folders.filterNot { it.id == folderId },
+            recordings = state.recordings.map { if (it.folderId == folderId) it.copy(folderId = null) else it },
+            folderFilter = if (state.folderFilter == FolderFilter.Folder(folderId)) {
+                FolderFilter.All
+            } else {
+                state.folderFilter
+            },
+        )
+
+        /**
+         * What the delete dialog says will move: the rows of [library] (the
+         * sample included, when it is there) filed in [folderId]. The count is
+         * what this phone has loaded, which is the library the user is looking at.
+         */
+        internal fun folderRecordingCount(library: List<RecordingSummary>, folderId: String): Int =
+            library.count { it.folderId == folderId }
 
         /**
          * What the "Move to…" picker lists for [recording]: the library that is

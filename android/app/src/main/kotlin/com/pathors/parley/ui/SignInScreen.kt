@@ -48,7 +48,8 @@ import com.pathors.parley.auth.SignInError
 fun SignInCallToAction(container: AppContainer, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val error by container.authError.collectAsState()
-    var waiting by remember { mutableStateOf(false) }
+    // In the container, not here: the edge glow over the whole app reads it too.
+    val waiting by container.signingIn.collectAsState()
     var noBrowser by remember { mutableStateOf(false) }
 
     Column(
@@ -62,7 +63,7 @@ fun SignInCallToAction(container: AppContainer, modifier: Modifier = Modifier) {
                 noBrowser = false
                 val launched = CustomTabsLauncher.launchSignIn(context, container.auth)
                 noBrowser = !launched
-                waiting = launched
+                container.setSigningIn(launched)
             },
             enabled = !waiting,
             // `heightIn`, not `height`: at the largest font scales the label
@@ -96,7 +97,7 @@ fun SignInCallToAction(container: AppContainer, modifier: Modifier = Modifier) {
             )
             // The Custom Tab hands nothing back when the user simply closes it,
             // so the way out of "waiting" is an explicit retry.
-            TextButton(onClick = { waiting = false }) {
+            TextButton(onClick = { container.setSigningIn(false) }) {
                 Text(stringResource(R.string.action_retry))
             }
         }
