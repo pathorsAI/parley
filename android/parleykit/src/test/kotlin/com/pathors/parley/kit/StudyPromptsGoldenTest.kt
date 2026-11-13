@@ -25,7 +25,7 @@ import org.junit.Test
  * to how either side assembles the pieces fails a test instead of quietly
  * analysing a recording differently on the phone.
  *
- * The labels are the ones the phone's study pass uses ([SpeakerLabel.prompt]),
+ * The labels are the ones the phone's study pass uses ([SpeakerLabel.prompter]),
  * not its localized display copy: an unnamed speaker reads "You" / "Them" /
  * "Remote N" / "Speaker N" in the prompt exactly as on the desktop, on every
  * source — the golden's `unnamedSpeakers` cases pin that.
@@ -62,8 +62,8 @@ class StudyPromptsGoldenTest {
     private val findings = TimelineEvent.listFromJson(input["findings"])
     private val actionItems = ActionItem.listFromJson(input["actionItems"])
 
-    private val timestamped = StudyPromptBuilder.transcriptWithTimestamps(segments) { SpeakerLabel.prompt(it, names) }
-    private val plain = StudyPromptBuilder.transcriptAsText(segments) { SpeakerLabel.prompt(it, names) }
+    private val timestamped = StudyPromptBuilder.transcriptWithTimestamps(segments, SpeakerLabel.prompter(segments, names))
+    private val plain = StudyPromptBuilder.transcriptAsText(segments, SpeakerLabel.prompter(segments, names))
 
     private data class Built(val system: String, val prompt: String)
 
@@ -116,7 +116,7 @@ class StudyPromptsGoldenTest {
         val unnamed = golden["unnamedSpeakers"]!!.jsonObject
         val unnamedSegments = segmentsOf(unnamed)
         val unnamedNames = unnamed["speakerNames"]!!.jsonObject.mapValues { it.value.jsonPrimitive.content }
-        val label: (TranscriptSegment) -> String = { SpeakerLabel.prompt(it, unnamedNames) }
+        val label: (TranscriptSegment) -> String = SpeakerLabel.prompter(unnamedSegments, unnamedNames)
         val cases = unnamed["cases"] as JsonArray
         assertTrue("no unnamed-speaker cases", cases.size >= 4)
         for (element in cases) {
