@@ -354,6 +354,21 @@ class AppContainer(private val app: Application) {
     val authError: StateFlow<SignInError?> = _authError.asStateFlow()
 
     /**
+     * A sign-in is under way: the Custom Tab was launched and nothing has come
+     * back yet. Here rather than in the sign-in button's own state because the
+     * sign-in page's edge glow (`AuroraEdgeGlow`, hosted by `ParleyRoot` so it
+     * can outlast the page) brightens and quickens on it — iOS
+     * `AppState.signingIn`. Cleared by an explicit retry, a failure, or a
+     * sign-in that stuck.
+     */
+    private val _signingIn = MutableStateFlow(false)
+    val signingIn: StateFlow<Boolean> = _signingIn.asStateFlow()
+
+    fun setSigningIn(value: Boolean) {
+        _signingIn.value = value
+    }
+
+    /**
      * The import currently running, if any. Application-scoped rather than
      * screen-scoped so a rotation or a trip to the home screen does not abandon a
      * half-transcribed file.
@@ -375,6 +390,9 @@ class AppContainer(private val app: Application) {
 
     fun setAuthError(error: SignInError?) {
         _authError.value = error
+        // A sign-in that failed is over: the glow eases back to idle and the
+        // button can be pressed again.
+        if (error != null) _signingIn.value = false
     }
 
     /**
@@ -412,7 +430,7 @@ class AppContainer(private val app: Application) {
         val verdict = SignInError.fromVerification(runCatching { cloud.me() })
         if (verdict != null) {
             auth.clearSession()
-            _authError.value = verdict
+            setAuthError(verdict)
             return
         }
         onSignedIn()
@@ -421,6 +439,7 @@ class AppContainer(private val app: Application) {
     /** Called after a sign-in that stuck: push anything that was waiting. */
     fun onSignedIn() {
         _authError.value = null
+        _signingIn.value = false
         drainPendingUploads()
         feedback.flush()
     }
