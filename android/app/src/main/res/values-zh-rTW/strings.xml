@@ -121,6 +121,8 @@
     <string name="meeting_discard_title">捨棄這次錄音？</string>
     <string name="meeting_discard_body">錄音與逐字稿會直接丟掉，不會儲存或上傳。</string>
     <string name="meeting_discard_confirm">捨棄</string>
+    <string name="meeting_latest">最新</string>
+    <string name="meeting_jump_to_latest">跳到最新</string>
     <string name="meeting_connecting">連線中…</string>
     <string name="meeting_recording">錄音中</string>
     <string name="meeting_recording_live">錄音中 · 即時轉錄</string>
@@ -446,6 +448,22 @@
     <string name="library_share_original_kept">已有一份複本在「%1$s」，但個人空間裡的原始錄音沒能刪除。恢復連線後，請到個人空間自行刪除。</string>
     <string name="home_delete_error_forbidden_org">只有上傳者或管理員可以刪除這筆錄音。</string>
     <string name="home_delete_confirm_body_org">這會從「%2$s」永久刪除「%1$s」，組織裡的每個人都將看不到。此動作無法復原。</string>
+    <!-- Folder management from the chip row (HomeScreen FolderChips) -->
+    <string name="library_folder_actions">資料夾選項</string>
+    <string name="library_folder_rename">重新命名</string>
+    <string name="library_folder_delete">刪除</string>
+    <string name="library_folder_new">新資料夾</string>
+    <string name="library_folder_rename_title">重新命名資料夾</string>
+    <string name="library_folder_name_hint">資料夾名稱</string>
+    <string name="library_folder_create">建立</string>
+    <string name="library_folder_save">儲存</string>
+    <string name="library_folder_delete_title">刪除「%1$s」？</string>
+    <string name="library_folder_delete_empty">這個資料夾是空的。</string>
+    <plurals name="library_folder_delete_body">
+        <item quantity="other">裡面的 %1$d 筆錄音會移到「未歸檔」，不會被刪除。</item>
+    </plurals>
+    <string name="library_folder_forbidden">只有建立這個資料夾的人或組織管理員可以修改。</string>
+    <string name="library_folder_failed">無法更新資料夾，請再試一次。</string>
     <!-- Folder picker (FolderPickerSheet) -->
     <string name="folder_picker_title">移到</string>
     <string name="folder_picker_subtitle">點一下資料夾來選取。</string>
@@ -632,4 +650,10 @@
     <string name="ime_settings_enable_action">開啟鍵盤設定</string>
     <string name="ime_settings_privacy">它不會做的事</string>
     <string name="ime_settings_privacy_detail">Parley 只會往你所在的欄位寫入。它不會讀取欄位裡原本的內容、不留任何紀錄，也沒有文字鍵可以記錄。麥克風只在你語音輸入的期間開啟、全程顯示通知，而且在密碼欄位永遠不會開啟。</string>
+
+    <!-- Quick record: the launcher shortcut (xml/shortcuts.xml) and the Quick
+         Settings tile (quickrecord/RecordTileService). iOS StartRecordingControl. -->
+    <string name="quick_record_shortcut_short">錄音</string>
+    <string name="quick_record_shortcut_long">開始錄音</string>
+    <string name="quick_record_tile_label">Parley 錄音</string>
 </resources>

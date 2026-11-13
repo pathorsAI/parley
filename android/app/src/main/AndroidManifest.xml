@@ -35,6 +35,10 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Long-press the launcher icon for "Record" (res/xml/shortcuts.xml). -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
             <!-- Cloud sign-in hand-off: https://api.parley.tw/sign-in?to=parley://auth-callback -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -45,6 +49,10 @@
                      adb shell am start -a android.intent.action.VIEW \
                        -d "'parley://demo/library'" -->
                 <data android:scheme="parley" android:host="demo" />
+                <!-- Start a meeting recording: the launcher shortcut and the Quick
+                     Settings tile (quickrecord/QuickRecord). Honoured once, and
+                     only within 30 seconds of arriving. -->
+                <data android:scheme="parley" android:host="record" />
             </intent-filter>
         </activity>
 
@@ -52,6 +60,20 @@
             android:name=".meeting.MeetingService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <!-- "Parley 錄音" in Quick Settings: opens parley://record, as the
+             launcher shortcut does (quickrecord/RecordTileService). Exported
+             with BIND_QUICK_SETTINGS_TILE, so only System UI can bind it. -->
+        <service
+            android:name=".quickrecord.RecordTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_mic"
+            android:label="@string/quick_record_tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
 
         <!-- Hosts the open recording's MediaSession so playback survives the app
              going to the background, with the system media notification

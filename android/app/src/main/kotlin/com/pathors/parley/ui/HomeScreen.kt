@@ -31,7 +31,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -39,7 +38,9 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
@@ -162,6 +163,11 @@ fun HomeScreen(
     // The recording the folder picker is moving, while it is up.
     var moving by remember { mutableStateOf<RecordingSummary?>(null) }
 
+    // The chip row's name dialog (new folder or rename), while it is up, and
+    // the folder the user has asked to delete, held until they confirm.
+    var namingFolder by remember { mutableStateOf<FolderNaming?>(null) }
+    var confirmingFolderDelete by remember { mutableStateOf<CloudFolder?>(null) }
+
     // The search field, and what is in it. See [LibrarySearch].
     val search = remember { LibrarySearch() }
     // The personal library with the bundled sample merged in — see
@@ -203,6 +209,11 @@ fun HomeScreen(
         onUpload = { viewModel.uploadNow() },
         onRefresh = { viewModel.refresh() },
         onSelectFolder = viewModel::selectFolder,
+        folderActions = FolderChipActions(
+            onCreate = { namingFolder = FolderNaming.Create },
+            onRename = { namingFolder = FolderNaming.Rename(it) },
+            onDelete = { confirmingFolderDelete = it },
+        ),
         syncPrompt = SyncPromptActions(
             onSend = viewModel::sendSyncDiagnostics,
             onDismiss = viewModel::dismissSyncPrompt,
@@ -307,6 +318,32 @@ fun HomeScreen(
         )
     }
 
+    namingFolder?.let { naming ->
+        FolderNameDialog(
+            naming = naming,
+            onConfirm = { name ->
+                namingFolder = null
+                when (naming) {
+                    FolderNaming.Create -> viewModel.createFolderFromRow(name)
+                    is FolderNaming.Rename -> viewModel.renameFolder(naming.folder, name)
+                }
+            },
+            onDismiss = { namingFolder = null },
+        )
+    }
+
+    confirmingFolderDelete?.let { folder ->
+        DeleteFolderDialog(
+            folder = folder,
+            recordingCount = HomeViewModel.folderRecordingCount(library, folder.id),
+            onConfirm = {
+                confirmingFolderDelete = null
+                viewModel.deleteFolder(folder)
+            },
+            onDismiss = { confirmingFolderDelete = null },
+        )
+    }
+
     LibraryErrorDialogs(viewModel, state)
 }
 
@@ -346,6 +383,8 @@ private class LibraryCallbacks(
     val onUpload: () -> Unit,
     val onRefresh: () -> Unit,
     val onSelectFolder: (FolderFilter) -> Unit,
+    /** The chip row's long-press Rename / Delete and its trailing "+". */
+    val folderActions: FolderChipActions = FolderChipActions(),
     /** The "keeps failing to sync" prompt under a queued row: send, or ×. */
     val syncPrompt: SyncPromptActions = SyncPromptActions(),
     val rowActions: (RecordingSummary) -> RecordingRowActions,
@@ -530,13 +569,17 @@ private fun LibraryBody(
                 onClose = search::close,
             )
         }
-        // No folders, no chip row: "All" and "Unfiled" would be the same
-        // list, and a row of two chips that change nothing is noise.
-        if (state.folders.isNotEmpty()) {
+        // The row is up whenever there is a folder, or once a load has
+        // finished without one: with no folders it is only the "+", which is
+        // the one place an org library can make its first folder. It waits
+        // out the first load so the lone "+" does not flash up ahead of the
+        // chips it belongs after (iOS `LibraryView.list`).
+        if (state.folders.isNotEmpty() || !state.loading) {
             FolderChips(
                 folders = state.folders,
                 selected = state.folderFilter,
                 onSelect = callbacks.onSelectFolder,
+                actions = callbacks.folderActions,
             )
         }
         PullToRefreshBox(
@@ -824,9 +867,12 @@ private fun FolderChips(
     folders: List<CloudFolder>,
     selected: FolderFilter,
     onSelect: (FolderFilter) -> Unit,
+    actions: FolderChipActions,
 ) {
     val listState = rememberLazyListState()
-    val pages = remember(folders) { LibraryFolders.pages(folders) }
+    // With no folders, All and Unfiled are the same list, so the row is only
+    // the "+".
+    val pages = remember(folders) { if (folders.isEmpty()) emptyList() else LibraryFolders.pages(folders) }
     // Only when the chip is not already fully on screen: scrolling a visible
     // chip to the leading edge would clip "All" for no reason.
     LaunchedEffect(selected, pages) {
@@ -852,8 +898,54 @@ private fun FolderChips(
                 FolderFilter.Unfiled -> unfiled
                 is FolderFilter.Folder -> folders.firstOrNull { it.id == page.id }?.name.orEmpty()
             }
-            FolderChip(label = label, selected = page == selected, onClick = { onSelect(page) })
+            // Long-press, the platform's door to "more about this one", so the
+            // row itself stays chips and nothing else. Real folders only: All
+            // and Unfiled are views of the library, not things anyone made.
+            val folder = (page as? FolderFilter.Folder)?.let { f -> folders.firstOrNull { it.id == f.id } }
+            FolderChip(
+                label = label,
+                selected = page == selected,
+                onClick = { onSelect(page) },
+                menu = folder?.let {
+                    FolderChipMenu(onRename = { actions.onRename(it) }, onDelete = { actions.onDelete(it) })
+                },
+            )
         }
+        item(key = "new-folder") { NewFolderButton(onClick = actions.onCreate) }
+    }
+}
+
+/** A real folder's long-press menu. */
+private class FolderChipMenu(val onRename: () -> Unit, val onDelete: () -> Unit)
+
+/**
+ * The trailing "+": a new folder in whatever library is showing.
+ *
+ * Drawn like an unselected chip — the quiet colour, a glyph over the same
+ * transparent 1dp rule — so it reads as the end of the row rather than a
+ * button laid on top of it, and the row keeps its height. The touch target is
+ * the 48dp minimum around the small glyph. After the last folder, so an
+ * overflowing row scrolls to reach it, and not one of the pager's pages.
+ */
+@Composable
+private fun NewFolderButton(onClick: () -> Unit) {
+    val label = stringResource(R.string.library_folder_new)
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .widthIn(min = 48.dp)
+            .clickable(onClickLabel = label, role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = label }
+            .padding(horizontal = 4.dp, vertical = 8.dp),
+    ) {
+        Icon(
+            Icons.Default.Add,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(16.dp),
+        )
+        Spacer(Modifier.height(5.dp))
+        Spacer(Modifier.height(1.dp))
     }
 }
 
@@ -862,9 +954,12 @@ private fun FolderChips(
  * rule transparent otherwise — always laid out, so a chip does not change
  * height on tap. The colour change runs 0.2 s, iOS's `easeInOut(0.2)`, so the
  * underline and the blue carry across to the new chip instead of snapping.
+ *
+ * A real folder's chip also carries [menu]: a long-press opens Rename and
+ * Delete under it (iOS's context menu). All and Unfiled get none.
  */
 @Composable
-private fun FolderChip(label: String, selected: Boolean, onClick: () -> Unit) {
+private fun FolderChip(label: String, selected: Boolean, onClick: () -> Unit, menu: FolderChipMenu? = null) {
     val signal = MaterialTheme.colorScheme.primary
     val quiet = MaterialTheme.colorScheme.onSurfaceVariant
     val textColor by animateColorAsState(
@@ -877,29 +972,63 @@ private fun FolderChip(label: String, selected: Boolean, onClick: () -> Unit) {
         animationSpec = tween(durationMillis = ChipAnimationMs),
         label = "chip-rule",
     )
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-            .widthIn(max = 220.dp)
-            .selectable(selected = selected, role = Role.Tab, onClick = onClick)
-            .padding(horizontal = 4.dp, vertical = 8.dp)
-            // The rule is as wide as the label, not as the 220dp cap.
-            .width(IntrinsicSize.Max),
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodySmall,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            color = textColor,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Spacer(Modifier.height(5.dp))
-        Canvas(
-            Modifier
-                .fillMaxWidth()
-                .height(1.dp),
-        ) { drawRect(ruleColor) }
+    var menuOpen by remember { mutableStateOf(false) }
+    val actionsLabel = stringResource(R.string.library_folder_actions)
+    Box {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier
+                .widthIn(max = 220.dp)
+                .semantics { this.selected = selected }
+                .combinedClickable(
+                    role = Role.Tab,
+                    onClick = onClick,
+                    onLongClickLabel = menu?.let { actionsLabel },
+                    onLongClick = menu?.let { { menuOpen = true } },
+                )
+                .padding(horizontal = 4.dp, vertical = 8.dp)
+                // The rule is as wide as the label, not as the 220dp cap.
+                .width(IntrinsicSize.Max),
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                color = textColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(5.dp))
+            Canvas(
+                Modifier
+                    .fillMaxWidth()
+                    .height(1.dp),
+            ) { drawRect(ruleColor) }
+        }
+        if (menu != null) {
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.library_folder_rename)) },
+                    leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                    onClick = {
+                        menuOpen = false
+                        menu.onRename()
+                    },
+                )
+                DropdownMenuItem(
+                    text = {
+                        Text(stringResource(R.string.library_folder_delete), color = MaterialTheme.colorScheme.error)
+                    },
+                    leadingIcon = {
+                        Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                    },
+                    onClick = {
+                        menuOpen = false
+                        menu.onDelete()
+                    },
+                )
+            }
+        }
     }
 }
 
@@ -1006,6 +1135,9 @@ private fun LibraryActionErrorDialog(error: LibraryActionError, onDismiss: () ->
                     LibraryActionError.ShareFailed -> stringResource(R.string.library_share_failed)
                     is LibraryActionError.OriginalKept ->
                         stringResource(R.string.library_share_original_kept, error.orgName)
+
+                    LibraryActionError.FolderForbidden -> stringResource(R.string.library_folder_forbidden)
+                    LibraryActionError.FolderFailed -> stringResource(R.string.library_folder_failed)
                 },
                 modifier = Modifier.verticalScroll(rememberScrollState()),
             )
