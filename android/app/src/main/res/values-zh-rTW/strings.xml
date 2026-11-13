@@ -355,6 +355,7 @@
     <string name="link_privacy_policy">隱私權政策</string>
 
     <!-- Foreground service notification -->
+    <string name="playback_channel_name">播放錄音</string>
     <string name="notification_channel_name">會議錄音</string>
     <string name="notification_channel_description">Parley 正在錄製會議時顯示。</string>
     <string name="notification_title">正在錄製會議</string>

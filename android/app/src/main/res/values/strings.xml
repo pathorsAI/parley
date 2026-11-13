@@ -360,6 +360,7 @@
     <string name="link_privacy_policy">Privacy Policy</string>
 
     <!-- Foreground service notification -->
+    <string name="playback_channel_name">Playback</string>
     <string name="notification_channel_name">Meeting recording</string>
     <string name="notification_channel_description">Shows while Parley is recording a meeting.</string>
     <string name="notification_title">Recording a meeting</string>

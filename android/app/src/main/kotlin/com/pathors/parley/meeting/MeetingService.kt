@@ -16,6 +16,7 @@ import com.pathors.parley.BuildConfig
 import com.pathors.parley.MainActivity
 import com.pathors.parley.R
 import com.pathors.parley.parleyContainer
+import com.pathors.parley.playback.PlaybackSessions
 import com.pathors.parley.screenshot.DemoMode
 import java.text.DateFormat
 import java.util.Date
@@ -203,6 +204,10 @@ class MeetingService : Service() {
     }
 
     private fun beginRecording() {
+        // A recording left playing in the background would otherwise be
+        // recorded into this meeting off the speaker. Paused, not stopped:
+        // its screen is still there to pick it up afterwards.
+        PlaybackSessions.pauseAll()
         createChannel()
         val startedAt = System.currentTimeMillis()
         startForegroundNotification(startedAt)
