@@ -249,28 +249,42 @@ object DictionarySync {
             sentFrom[phrase] = fp
         }
 
+        val removals = if (reset) {
+            emptyList()
+        } else {
+            state.synced.keys.sorted().filterNot(projection::containsKey).mapNotNull { removal(it, state, now) }
+        }
         val pendingDeletes = mutableMapOf<String, Long>()
         val released = mutableSetOf<String>()
-        if (!reset) {
-            for (phrase in state.synced.keys.sorted()) {
-                val synced = state.synced.getValue(phrase)
-                if (projection.containsKey(phrase) || !synced.heldPhrase) continue
-                val at = state.pendingDeletes[phrase] ?: state.clearedAt ?: now
-                pendingDeletes[phrase] = at
-                val unheld = merged(emptyList(), synced)
-                entries += CloudDictionaryEntry(
-                    id = synced.id,
-                    phrase = phrase,
-                    variants = unheld,
-                    source = synced.source,
-                    updatedAt = at,
-                    deletedAt = if (unheld.isEmpty()) at else null,
-                )
-                if (unheld.isNotEmpty()) released += phrase
-                sentFrom[phrase] = ABSENT
-            }
+        for (removal in removals) {
+            entries += removal
+            pendingDeletes[removal.phrase] = removal.updatedAt
+            if (removal.deletedAt == null) released += removal.phrase
+            sentFrom[removal.phrase] = ABSENT
         }
         return Outgoing(entries, sentFrom, pendingDeletes, released, reset)
+    }
+
+    /**
+     * The entry for a phrase the user removed here, stamped with when this
+     * phone first noticed — or null for one it never held. A tombstone only
+     * when the phone held all of it; otherwise it goes up live with just the
+     * variants the phone never held, so a deletion cannot reach past what the
+     * user saw.
+     */
+    private fun removal(phrase: String, state: DictionarySyncState, now: Long): CloudDictionaryEntry? {
+        val synced = state.synced.getValue(phrase)
+        if (!synced.heldPhrase) return null
+        val at = state.pendingDeletes[phrase] ?: state.clearedAt ?: now
+        val unheld = merged(emptyList(), synced)
+        return CloudDictionaryEntry(
+            id = synced.id,
+            phrase = phrase,
+            variants = unheld,
+            source = synced.source,
+            updatedAt = at,
+            deletedAt = if (unheld.isEmpty()) at else null,
+        )
     }
 
     /**
@@ -322,13 +336,10 @@ object DictionarySync {
         val parked = state.parked.toMutableMap()
         val base = state.copy(synced = synced)
 
+        // Pushed rows after pulled ones: the push's answer is the newer word.
         val rows = sortedMapOf<String, CloudDictionaryEntry>()
-        for (row in exchange.pulled) {
-            if (acceptsPulled(row, outgoing, base, current(row.phrase))) rows[row.phrase] = row
-        }
-        for (row in exchange.pushed) {
-            if (outgoing.sentFrom[row.phrase] == current(row.phrase)) rows[row.phrase] = row
-        }
+        exchange.pulled.filter { acceptsPulled(it, outgoing, base, current(it.phrase)) }.forEach { rows[it.phrase] = it }
+        exchange.pushed.filter { outgoing.sentFrom[it.phrase] == current(it.phrase) }.forEach { rows[it.phrase] = it }
         for (rejection in exchange.rejected) {
             val fp = outgoing.sentFrom[rejection.phrase]
             if (rejection.error in transientRejections || fp == null || fp != current(rejection.phrase)) continue
@@ -337,38 +348,43 @@ object DictionarySync {
         val folded = state.copy(synced = synced, pendingDeletes = pendingDeletes, parked = parked)
         if (rows.isEmpty()) return Applied(null, folded)
 
-        var lex = lexicon
-        for ((phrase, row) in rows) {
-            pendingDeletes.remove(phrase)
-            parked.remove(phrase)
-            lex = when {
-                row.deletedAt != null -> lex.copy(
-                    terms = lex.terms.filterNot { it.text == phrase },
-                    pairs = lex.pairs.filterNot { it.replacement == phrase && it.isConfirmed },
-                )
-                // A released phrase is one the user removed here; what is left
-                // of it in the cloud is not written back.
-                phrase in outgoing.released -> lex
-                else -> write(row, lex)
-            }
+        rows.keys.forEach {
+            pendingDeletes.remove(it)
+            parked.remove(it)
         }
         // Caps, as every other write to the lexicon is held to them.
-        lex = lex.evicted()
+        val lex = rows.values.fold(lexicon) { acc, row -> fold(row, acc, outgoing.released) }.evicted()
 
         // The snapshot keeps the cloud's whole row, and records what the phone
         // actually ended up holding of it — so neither a refused variant nor one
         // the caps evicted can ever be read as a deletion made here.
         val after = project(lex)
         for ((phrase, row) in rows) {
-            if (row.deletedAt != null) {
-                synced.remove(phrase)
-                continue
-            }
-            val held = after[phrase]?.variants?.filter { it in row.variants }.orEmpty()
-            synced[phrase] = DictionarySynced(row.id, row.variants, held, after.containsKey(phrase), row.source)
+            if (row.deletedAt != null) synced.remove(phrase) else synced[phrase] = snapshot(row, after[phrase])
         }
         val next = state.copy(synced = synced, pendingDeletes = pendingDeletes, parked = parked)
         return Applied(if (lex == lexicon) null else lex, next)
+    }
+
+    /** The snapshot of a live row: the cloud's whole variant list, and what of it the phone holds. */
+    private fun snapshot(row: CloudDictionaryEntry, held: Projected?) = DictionarySynced(
+        id = row.id,
+        variants = row.variants,
+        held = held?.variants?.filter { it in row.variants }.orEmpty(),
+        heldPhrase = held != null,
+        source = row.source,
+    )
+
+    /** One accepted row into the lexicon. */
+    private fun fold(row: CloudDictionaryEntry, lexicon: Lexicon, released: Set<String>): Lexicon = when {
+        row.deletedAt != null -> lexicon.copy(
+            terms = lexicon.terms.filterNot { it.text == row.phrase },
+            pairs = lexicon.pairs.filterNot { it.replacement == row.phrase && it.isConfirmed },
+        )
+        // A released phrase is one the user removed here; what is left of it
+        // in the cloud is not written back.
+        row.phrase in released -> lexicon
+        else -> write(row, lexicon)
     }
 
     /**

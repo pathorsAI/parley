@@ -12,6 +12,7 @@ import org.junit.rules.TemporaryFolder
 private const val PARLEY = "Parley"
 private const val HEARD = "怕理"
 private const val CERANA = "Cerana"
+private const val CERANA_AI = "Cerana AI"
 
 /**
  * The personal dictionary as a value and on disk: the refusals a pair is held
@@ -131,9 +132,9 @@ class LexiconTest {
         assertEquals(listOf("帕力"), store.load().pairs.map { it.original })
 
         store.addTerm(CERANA)
-        store.replaceTerm(CERANA, "Cerana AI")
-        store.replaceTerm("Cerana AI", "  ")
-        assertEquals(listOf("Cerana AI"), store.load().terms.map { it.text })
+        store.replaceTerm(CERANA, CERANA_AI)
+        store.replaceTerm(CERANA_AI, "  ")
+        assertEquals(listOf(CERANA_AI), store.load().terms.map { it.text })
     }
 
     // ── on the wire ──────────────────────────────────────────────────────────

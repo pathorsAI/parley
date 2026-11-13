@@ -8,25 +8,26 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 private const val PARLEY = "Parley"
+private const val PARLEY_CLOUD = "parley cloud"
 
 class DictionaryRulesTest {
     private val lexicon = Lexicon(
         pairs = listOf(LexiconPair("怕理", PARLEY, 2, 10), LexiconPair("色瑞", "Cerana", 2, 20)),
-        terms = listOf(LexiconTerm("Pathors", 1), LexiconTerm("parley cloud", 2)),
+        terms = listOf(LexiconTerm("Pathors", 1), LexiconTerm(PARLEY_CLOUD, 2)),
     )
 
     @Test
     fun `a blank query lists everything newest first`() {
         val all = DictionaryRules.filter(lexicon, "  ")
         assertEquals(listOf("色瑞", "怕理"), all.pairs.map { it.original })
-        assertEquals(listOf("parley cloud", "Pathors"), all.terms.map { it.text })
+        assertEquals(listOf(PARLEY_CLOUD, "Pathors"), all.terms.map { it.text })
     }
 
     @Test
     fun `a search matches either side of a correction and terms, ignoring case`() {
         val hit = DictionaryRules.filter(lexicon, "PARLEY")
         assertEquals(listOf("怕理"), hit.pairs.map { it.original })
-        assertEquals(listOf("parley cloud"), hit.terms.map { it.text })
+        assertEquals(listOf(PARLEY_CLOUD), hit.terms.map { it.text })
         assertEquals(listOf(PARLEY), DictionaryRules.filter(lexicon, "怕").pairs.map { it.replacement })
         assertTrue(DictionaryRules.filter(lexicon, "nothing like it").isEmpty)
     }

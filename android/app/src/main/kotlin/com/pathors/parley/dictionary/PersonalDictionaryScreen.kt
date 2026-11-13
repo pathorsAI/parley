@@ -115,7 +115,6 @@ private sealed interface DictionaryEdit {
     data object Clear : DictionaryEdit
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DictionaryContent(
     lexicon: Lexicon,
@@ -131,34 +130,17 @@ private fun DictionaryContent(
 
     Scaffold(
         topBar = {
-            Column {
-                TopAppBar(
-                    title = { Text(stringResource(R.string.dictionary_title)) },
-                    navigationIcon = {
-                        IconButton(onClick = onDismiss) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.action_back))
-                        }
-                    },
-                    actions = {
-                        if (!searching && !lexicon.isEmpty) {
-                            IconButton(onClick = { searching = true }) {
-                                Icon(Icons.Default.Search, stringResource(R.string.dictionary_search))
-                            }
-                        }
-                    },
-                )
-                if (searching) {
-                    SearchField(
-                        query = query,
-                        onQueryChange = { query = it },
-                        hint = stringResource(R.string.dictionary_search_hint),
-                        onClose = {
-                            searching = false
-                            query = ""
-                        },
-                    )
-                }
-            }
+            DictionaryTopBar(
+                searching = searching,
+                canSearch = !lexicon.isEmpty,
+                query = query,
+                onQueryChange = { query = it },
+                onSearch = { on ->
+                    searching = on
+                    if (!on) query = ""
+                },
+                onBack = onDismiss,
+            )
         },
     ) { padding ->
         LazyColumn(
@@ -175,21 +157,49 @@ private fun DictionaryContent(
             if (searching && query.isNotBlank()) {
                 searchResults(listing, onEdit = { edit = it }, store = store)
             } else {
-                correctionsSection(listing.pairs, onEdit = { edit = it }, store = store)
-                termsSection(listing.terms, onEdit = { edit = it }, store = store)
-                if (!lexicon.isEmpty) {
-                    item {
-                        HorizontalDivider(Modifier.padding(vertical = 8.dp))
-                        TextButton(onClick = { edit = DictionaryEdit.Clear }) {
-                            Text(stringResource(R.string.dictionary_clear), color = MaterialTheme.colorScheme.error)
-                        }
-                    }
-                }
+                dictionaryLists(listing, showClear = !lexicon.isEmpty, onEdit = { edit = it }, store = store)
             }
         }
     }
 
     EditDialogs(edit, store, onClear, onDone = { edit = null })
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DictionaryTopBar(
+    searching: Boolean,
+    canSearch: Boolean,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onSearch: (Boolean) -> Unit,
+    onBack: () -> Unit,
+) {
+    Column {
+        TopAppBar(
+            title = { Text(stringResource(R.string.dictionary_title)) },
+            navigationIcon = {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.action_back))
+                }
+            },
+            actions = {
+                if (!searching && canSearch) {
+                    IconButton(onClick = { onSearch(true) }) {
+                        Icon(Icons.Default.Search, stringResource(R.string.dictionary_search))
+                    }
+                }
+            },
+        )
+        if (searching) {
+            SearchField(
+                query = query,
+                onQueryChange = onQueryChange,
+                hint = stringResource(R.string.dictionary_search_hint),
+                onClose = { onSearch(false) },
+            )
+        }
+    }
 }
 
 @Composable
@@ -228,6 +238,25 @@ private fun EditDialogs(edit: DictionaryEdit?, store: LexiconStore, onClear: () 
 }
 
 // ── sections ─────────────────────────────────────────────────────────────────
+
+/** The unfiltered page: both sections with their add controls, then "Clear the dictionary". */
+private fun LazyListScope.dictionaryLists(
+    listing: DictionaryRules.Listing,
+    showClear: Boolean,
+    onEdit: (DictionaryEdit) -> Unit,
+    store: LexiconStore,
+) {
+    correctionsSection(listing.pairs, onEdit, store)
+    termsSection(listing.terms, onEdit, store)
+    if (showClear) {
+        item {
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            TextButton(onClick = { onEdit(DictionaryEdit.Clear) }) {
+                Text(stringResource(R.string.dictionary_clear), color = MaterialTheme.colorScheme.error)
+            }
+        }
+    }
+}
 
 private fun LazyListScope.correctionsSection(
     pairs: List<LexiconPair>,

@@ -1,6 +1,7 @@
 package com.pathors.parley.kit
 
 import java.io.File
+import java.nio.file.Files
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -121,7 +122,7 @@ class LexiconStore(
             tmp.writeText(text)
             if (!tmp.renameTo(target)) {
                 tmp.copyTo(target, overwrite = true)
-                tmp.delete()
+                Files.deleteIfExists(tmp.toPath())
             }
         }
     }
