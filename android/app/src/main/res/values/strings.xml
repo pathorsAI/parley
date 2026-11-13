@@ -454,6 +454,23 @@
     <string name="library_share_original_kept">A copy is now in “%1$s”, but the original couldn\'t be removed from your personal library. Delete it there when you\'re back online.</string>
     <string name="home_delete_error_forbidden_org">Only the uploader or an admin can delete this recording.</string>
     <string name="home_delete_confirm_body_org">This permanently deletes “%1$s” from “%2$s” for everyone in the organization. It cannot be undone.</string>
+    <!-- Folder management from the chip row (HomeScreen FolderChips) -->
+    <string name="library_folder_actions">Folder options</string>
+    <string name="library_folder_rename">Rename</string>
+    <string name="library_folder_delete">Delete</string>
+    <string name="library_folder_new">New folder</string>
+    <string name="library_folder_rename_title">Rename folder</string>
+    <string name="library_folder_name_hint">Folder name</string>
+    <string name="library_folder_create">Create</string>
+    <string name="library_folder_save">Save</string>
+    <string name="library_folder_delete_title">Delete “%1$s”?</string>
+    <string name="library_folder_delete_empty">The folder is empty.</string>
+    <plurals name="library_folder_delete_body">
+        <item quantity="one">1 recording in it moves to Unfiled. No recording is deleted.</item>
+        <item quantity="other">%1$d recordings in it move to Unfiled. No recording is deleted.</item>
+    </plurals>
+    <string name="library_folder_forbidden">Only the folder\'s creator or an organization admin can change it.</string>
+    <string name="library_folder_failed">Couldn\'t update the folder. Try again.</string>
     <!-- Folder picker (FolderPickerSheet) -->
     <string name="folder_picker_title">Move to</string>
     <string name="folder_picker_subtitle">Tap a folder to select it.</string>

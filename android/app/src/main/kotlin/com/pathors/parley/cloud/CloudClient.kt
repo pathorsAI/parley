@@ -478,7 +478,7 @@ class CloudClient(
     ): CloudFolder {
         val payload = buildJsonObject {
             put("id", JsonPrimitive(id))
-            put("name", JsonPrimitive(name))
+            put(NAME, JsonPrimitive(name))
             put("createdAt", JsonPrimitive(createdAtMs))
         }
         val text = postJson(url("folders"), payload)
@@ -491,6 +491,24 @@ class CloudClient(
                 createdAt = createdAtMs.toDouble(),
                 updatedAt = createdAtMs.toDouble(),
             )
+    }
+
+    /**
+     * `PATCH /folders/{id}` with `{ name }` — rename a personal folder (iOS
+     * `renameFolder`). Nothing comes back worth reading: the caller already
+     * holds the new name.
+     */
+    suspend fun renameFolder(id: String, name: String) {
+        patchName(url("folders", id), name)
+    }
+
+    /**
+     * `DELETE /folders/{id}` — the server re-homes the recordings in it to the
+     * personal root and tombstones the folder in one batch. No recording is
+     * deleted, so the caller only has to move its own rows to Unfiled.
+     */
+    suspend fun deleteFolder(id: String) {
+        execute(Request.Builder().url(url("folders", id)).delete()) { }
     }
 
     // ── organizations ────────────────────────────────────────────────────────
@@ -538,8 +556,25 @@ class CloudClient(
      * envelope and a retry after a lost response makes a second folder.
      */
     suspend fun createOrgFolder(orgId: String, name: String): CloudFolder {
-        val text = postJson(url("orgs", orgId, "folders"), buildJsonObject { put("name", JsonPrimitive(name)) })
+        val text = postJson(url("orgs", orgId, "folders"), buildJsonObject { put(NAME, JsonPrimitive(name)) })
         return CloudJson.decodeFromString(FolderEnvelope.serializer(), text).folder
+    }
+
+    /**
+     * `PATCH /orgs/{orgId}/folders/{id}` with `{ name }`. Only the folder's
+     * creator or an org owner/admin may; anyone else gets a 403, which the
+     * library turns into a sentence saying who can.
+     */
+    suspend fun renameOrgFolder(orgId: String, id: String, name: String) {
+        patchName(url("orgs", orgId, "folders", id), name)
+    }
+
+    /**
+     * `DELETE /orgs/{orgId}/folders/{id}` — its recordings move to the org
+     * root, none is deleted. Same 403 rule as [renameOrgFolder].
+     */
+    suspend fun deleteOrgFolder(orgId: String, id: String) {
+        execute(Request.Builder().url(url("orgs", orgId, "folders", id)).delete()) { }
     }
 
     /**
@@ -716,6 +751,12 @@ class CloudClient(
             Request.Builder().url(url).post(payload.toString().toRequestBody(APPLICATION_JSON)),
         ) { response -> bodyText(response) }
 
+    /** The one-field `PATCH { name }` both folder renames send. */
+    private suspend fun patchName(url: HttpUrl, name: String) {
+        val payload = buildJsonObject { put(NAME, JsonPrimitive(name)) }
+        execute(Request.Builder().url(url).patch(payload.toString().toRequestBody(APPLICATION_JSON))) { }
+    }
+
     private suspend fun bodyText(response: Response): String =
         withContext(Dispatchers.IO) { response.body?.string().orEmpty() }
 
@@ -783,6 +824,9 @@ class CloudClient(
         fun newCloudId(): String = UUID.randomUUID().toString().lowercase(Locale.ROOT)
 
         private const val FOLDER_ID = "folderId"
+
+        /** The folder name field every folder create and rename sends. */
+        private const val NAME = "name"
 
         /** How often [downloadAudio] reports progress. See its doc. */
         private const val PROGRESS_INTERVAL_BYTES = 64L * 1024L

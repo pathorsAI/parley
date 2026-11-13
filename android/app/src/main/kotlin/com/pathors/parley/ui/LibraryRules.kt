@@ -133,6 +133,23 @@ internal object LibraryRules {
             LibraryActionError.MoveFailed
         }
 
+    /**
+     * A folder create, rename or delete that did not land. A 403 is the org's
+     * rule (creator or admin only), everything else the same retryable failure.
+     */
+    fun folderError(forbidden: Boolean): LibraryActionError =
+        if (forbidden) LibraryActionError.FolderForbidden else LibraryActionError.FolderFailed
+
+    /**
+     * The name a folder dialog's confirm sends: [draft] trimmed, or null when
+     * there is nothing to send — a blank name, or the [current] name unchanged
+     * (null [current] for a new folder).
+     */
+    fun folderNameToCommit(draft: String, current: String?): String? {
+        val name = draft.trim()
+        return if (name.isEmpty() || name == current) null else name
+    }
+
     /** A share into [orgName] that did not happen. */
     fun shareError(forbidden: Boolean, orgName: String): LibraryActionError =
         if (forbidden) LibraryActionError.ShareForbidden(orgName) else LibraryActionError.ShareFailed
