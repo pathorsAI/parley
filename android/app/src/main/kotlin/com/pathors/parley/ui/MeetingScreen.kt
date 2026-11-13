@@ -12,6 +12,22 @@ import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.DragInteraction
+import androidx.compose.runtime.State
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.path
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -957,12 +973,27 @@ private fun failureMessage(reason: MeetingFailure): String = when (reason) {
 private fun LiveTranscript(segments: List<TranscriptSegment>, state: MeetingState) {
     val context = LocalContext.current
     val listState = rememberLazyListState()
+    var follow by remember { mutableStateOf(LiveTranscriptFollow.Start) }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(segments.size) {
-        if (segments.isNotEmpty()) listState.animateScrollToItem(segments.lastIndex)
+        if (follow.following && segments.isNotEmpty()) {
+            listState.animateScrollToItem(segments.lastIndex)
+        }
+    }
+
+    // An empty transcript is a meeting that has not said anything yet — a new
+    // one, if this screen outlived the last.
+    LaunchedEffect(segments.isEmpty()) {
+        if (segments.isEmpty()) follow = LiveTranscriptFollow.Start
     }
 
     LaunchedEffect(listState) { listState.stayOnNewestAcrossResizes() }
+
+    val latestSegments = rememberUpdatedState(segments.size)
+    LaunchedEffect(listState) {
+        listState.trackReaderFollow(latestSegments) { update -> follow = update(follow) }
+    }
 
     if (segments.isEmpty()) {
         Box(Modifier.fillMaxSize(), Alignment.Center) {
@@ -980,20 +1011,139 @@ private fun LiveTranscript(segments: List<TranscriptSegment>, state: MeetingStat
     }
 
     val current = currentSpeakingId(segments)
-    LazyColumn(
-        state = listState,
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        items(segments, key = { it.id }) { segment ->
-            TranscriptLine(
-                segment = segment,
-                speaker = speakerLabel(context, segment.speaker),
-                isCurrent = segment.id == current,
-            )
+    Box(Modifier.fillMaxSize()) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            items(segments, key = { it.id }) { segment ->
+                TranscriptLine(
+                    segment = segment,
+                    speaker = speakerLabel(context, segment.speaker),
+                    isCurrent = segment.id == current,
+                )
+            }
+        }
+        // The fade is scoped to the control: on the list it would also animate
+        // the turn whose arrival brought the control up.
+        AnimatedVisibility(
+            visible = follow.showsLatest(segments.size),
+            enter = fadeIn(tween(LATEST_FADE_MS, easing = LinearOutSlowInEasing)),
+            exit = fadeOut(tween(LATEST_FADE_MS, easing = LinearOutSlowInEasing)),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 12.dp),
+        ) {
+            LatestControl(onClick = {
+                follow = follow.jumpedToLatest()
+                scope.launch { listState.animateScrollToItem(segments.lastIndex) }
+            })
         }
     }
+}
+
+/**
+ * Feeds [LiveTranscriptFollow] what the list knows: when a finger starts or
+ * stops dragging it, and whether its last line is in view.
+ *
+ * The line that has to be right is *user* scroll versus programmatic scroll,
+ * and the drag interactions are exactly that line — the follow's own
+ * `animateScrollToItem` emits none, so it cannot switch itself off. Being at
+ * the end is `!canScrollForward`, which is also true when every turn fits.
+ */
+private suspend fun LazyListState.trackReaderFollow(
+    segmentCount: State<Int>,
+    update: ((LiveTranscriptFollow) -> LiveTranscriptFollow) -> Unit,
+) = coroutineScope {
+    val dragging = mutableStateOf(false)
+    launch {
+        interactionSource.interactions.collect { interaction ->
+            when (interaction) {
+                is DragInteraction.Start -> {
+                    dragging.value = true
+                    update { it.dragStarted(segmentCount.value) }
+                }
+                is DragInteraction.Stop, is DragInteraction.Cancel -> dragging.value = false
+            }
+        }
+    }
+    snapshotFlow { !canScrollForward }
+        .distinctUntilChanged()
+        .collect { atBottom ->
+            update { it.bottomChanged(atBottom, dragging.value, segmentCount.value) }
+        }
+}
+
+/**
+ * The way back to the newest line once the reader has scrolled away and more
+ * has been said. iOS `LiveView.latestControl`. Blue because it is the one live,
+ * tappable thing on the transcript; on the page colour with a hairline, not a
+ * filled pill, so it reads as a control sitting over the words rather than a
+ * banner competing with them. 44dp tall at the least, and the whole capsule
+ * takes the tap.
+ */
+@Composable
+private fun LatestControl(onClick: () -> Unit) {
+    val spoken = stringResource(R.string.meeting_jump_to_latest)
+    val capsule = RoundedCornerShape(percent = 50)
+    Row(
+        modifier = Modifier
+            .heightIn(min = 44.dp)
+            .clip(capsule)
+            .background(MaterialTheme.colorScheme.background, capsule)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, capsule)
+            .clickable(role = Role.Button, onClick = onClick)
+            .clearAndSetSemantics { contentDescription = spoken }
+            .padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = ArrowDown,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(16.dp),
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = stringResource(R.string.meeting_latest),
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.primary,
+        )
+    }
+}
+
+/** "Latest" fades in and out over this long — iOS `.easeOut(duration: 0.15)`. */
+private const val LATEST_FADE_MS = 150
+
+/**
+ * A straight down arrow, iOS's `arrow.down`. Drawn here because the app only
+ * ships the core Material icons, whose nearest is a chevron.
+ */
+private val ArrowDown: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "ArrowDown",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f,
+    ).apply {
+        path(fill = SolidColor(Color.Black)) {
+            moveTo(20f, 12f)
+            lineToRelative(-1.41f, -1.41f)
+            lineTo(13f, 16.17f)
+            verticalLineTo(4f)
+            horizontalLineToRelative(-2f)
+            verticalLineToRelative(12.17f)
+            lineToRelative(-5.58f, -5.59f)
+            lineTo(4f, 12f)
+            lineToRelative(8f, 8f)
+            lineToRelative(8f, -8f)
+            close()
+        }
+    }.build()
 }
 
 /**

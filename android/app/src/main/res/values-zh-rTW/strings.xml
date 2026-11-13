@@ -121,6 +121,8 @@
     <string name="meeting_discard_title">捨棄這次錄音？</string>
     <string name="meeting_discard_body">錄音與逐字稿會直接丟掉，不會儲存或上傳。</string>
     <string name="meeting_discard_confirm">捨棄</string>
+    <string name="meeting_latest">最新</string>
+    <string name="meeting_jump_to_latest">跳到最新</string>
     <string name="meeting_connecting">連線中…</string>
     <string name="meeting_recording">錄音中</string>
     <string name="meeting_recording_live">錄音中 · 即時轉錄</string>
