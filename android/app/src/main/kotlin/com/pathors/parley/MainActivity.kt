@@ -9,6 +9,8 @@ import androidx.activity.compose.setContent
 import androidx.lifecycle.lifecycleScope
 import com.pathors.parley.auth.AuthCallback
 import com.pathors.parley.auth.SignInError
+import com.pathors.parley.quickrecord.QuickRecord
+import com.pathors.parley.quickrecord.QuickRecordInbox
 import com.pathors.parley.screenshot.DemoMode
 import com.pathors.parley.ui.ParleyRoot
 import com.pathors.parley.ui.theme.ParleyTheme
@@ -23,7 +25,8 @@ import kotlinx.coroutines.launch
  * rather than starting a second copy of the app.
  *
  * The same door takes `parley://demo/…` in debug builds, which is how the store
- * screenshots are driven (see [DemoMode]).
+ * screenshots are driven (see [DemoMode]), and `parley://record` from the
+ * launcher shortcut and the Quick Settings tile (see [QuickRecord]).
  */
 class MainActivity : ComponentActivity() {
 
@@ -87,6 +90,15 @@ class MainActivity : ComponentActivity() {
         // Screenshot demo first: it claims only `parley://demo/…` in debug builds
         // and hands everything else straight on to the sign-in handler.
         if (DemoMode.handle(uri)) return
+        if (QuickRecord.isRequest(uri)) {
+            // Only a link that is arriving now. A recreated activity, or the same
+            // intent replayed from Recents after the task was closed, is the tap
+            // the user already made, not a new one — and one tap is one
+            // recording. The navigation graph takes it; see [QuickRecordInbox].
+            val replayed = (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0
+            if (arriving && !replayed) QuickRecordInbox.shared.post()
+            return
+        }
         lifecycleScope.launch {
             when (val result = container.auth.handleAuthCallback(uri)) {
                 is AuthCallback.Success -> container.completeSignIn()

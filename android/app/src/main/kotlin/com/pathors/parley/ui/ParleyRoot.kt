@@ -26,6 +26,9 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.pathors.parley.AppContainer
 import com.pathors.parley.R
+import com.pathors.parley.meeting.MeetingService
+import com.pathors.parley.quickrecord.QuickRecord
+import com.pathors.parley.quickrecord.QuickRecordInbox
 import com.pathors.parley.screenshot.DemoMode
 
 /** The four places the app can be. */
@@ -112,6 +115,15 @@ fun ParleyRoot() {
     val container = rememberContainer()
     val signedIn by container.auth.isSignedIn.collectAsState(initial = null)
     val demo by DemoMode.enabled.collectAsState()
+    val quickRecord by QuickRecordInbox.shared.requestedAt.collectAsState()
+
+    // A record request that meets the onboarding wall is dropped, not kept for
+    // after sign-in: that is minutes later, on a screen reached for another
+    // reason (see QuickRecord, "A request goes stale"). Still reading the token
+    // (null) is not signed out — the request waits for the answer.
+    LaunchedEffect(signedIn, quickRecord) {
+        if (signedIn == false && !demo && quickRecord != null) QuickRecordInbox.shared.take()
+    }
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         // With targetSdk 35+ the window is edge-to-edge whether or not the app
@@ -145,6 +157,7 @@ private fun ParleyNavHost(container: AppContainer) {
     val context = LocalContext.current
 
     DemoNavigation(navController, container)
+    QuickRecordNavigation(navController)
 
     // The Storage Access Framework: no storage permission, any provider (Files,
     // Drive, a recorder app), and the grant lives as long as we need the Uri.
@@ -245,6 +258,32 @@ private fun DemoNavigation(navController: NavHostController, container: AppConta
                     // The sample is always the lap's recording (LapRules.isLapRecording).
                     navController.navigate(Route.recording(sample.id, guided = true))
                 }
+        }
+    }
+}
+
+/**
+ * Takes a `parley://record` request (launcher shortcut, Quick Settings tile)
+ * and goes to the meeting screen, which starts the recording itself once the
+ * microphone is granted — the same path as the red circle, so a meeting started
+ * this way is no different. iOS `LiveView.takeQuickRecord`.
+ *
+ * Taking clears the request, fresh or not, so nothing here can fire twice for
+ * one tap. Where the app already is decides whether to navigate at all; see
+ * [QuickRecord.shouldOpenMeeting] for why a live meeting is only brought up.
+ */
+@Composable
+private fun QuickRecordNavigation(navController: NavHostController) {
+    val requested by QuickRecordInbox.shared.requestedAt.collectAsState()
+    LaunchedEffect(requested) {
+        if (requested == null || !QuickRecordInbox.shared.take()) return@LaunchedEffect
+        val onMeetingScreen = navController.currentDestination?.route == Route.MEETING
+        val meeting = MeetingService.activeSession.value?.state?.value
+        if (QuickRecord.shouldOpenMeeting(onMeetingScreen, meeting)) {
+            // Over the library, like every other start: the meeting's "done"
+            // lands back there. A settled meeting screen is replaced, and the
+            // new one clears its outcome and records again.
+            navController.navigate(Route.MEETING) { popUpTo(Route.HOME) }
         }
     }
 }
