@@ -134,6 +134,9 @@ final class AudioCapture: @unchecked Sendable {
     /// coming to the foreground — dies at its next step instead of racing the
     /// chain that replaced it.
     private var rebuildEpoch = 0
+    /// The session was reactivated as mixable after a non-mixable activation
+    /// was refused. See `reactivateSession()`. Cleared by `start()`.
+    private var mixesWithOthers = false
 
     /// What `isCapturing` reports, kept in step with the three flags above by
     /// their `didSet`. Written on `queue` like they are, read from anywhere,
@@ -259,6 +262,7 @@ final class AudioCapture: @unchecked Sendable {
         guard !wantsCapture else { return }
         wantsCapture = true
         lost = false
+        mixesWithOthers = false
         _ = recovery.apply(.restarted)
         do {
             try activateSession()
@@ -299,12 +303,53 @@ final class AudioCapture: @unchecked Sendable {
     }
 
     private func activateSession() throws {
+        #if DEBUG
+            // The Simulator cannot take a phone call. `InterruptionDrill` stands
+            // in for one: while it says the input is held, every activation is
+            // refused the way a call refuses it.
+            if InterruptionDrill.holdsInput {
+                throw NSError(
+                    domain: NSOSStatusErrorDomain,
+                    code: Int(AVAudioSession.ErrorCode.cannotInterruptOthers.rawValue))
+            }
+        #endif
         let session = AVAudioSession.sharedInstance()
         // .playAndRecord + .voiceChat keeps echo cancellation available for the
         // future "phone as the room mic for a desktop session" mode; .default
         // would also work for pure capture.
-        try session.setCategory(.playAndRecord, mode: .default, options: [.allowBluetooth])
+        var options: AVAudioSession.CategoryOptions = [.allowBluetooth]
+        if mixesWithOthers { options.insert(.mixWithOthers) }
+        try session.setCategory(.playAndRecord, mode: .default, options: options)
         try session.setActive(true)
+    }
+
+    /// Reactivate after the system took the microphone, falling back to a
+    /// mixable session when a non-mixable one is refused for trying to
+    /// interrupt somebody.
+    ///
+    /// A non-mixable session activated from the background has to interrupt
+    /// whatever audio is running, and iOS refuses that (`'!int'`,
+    /// `cannotInterruptOthers`) — which is the error people report for
+    /// reactivating right after a call, while the phone app's session is still
+    /// winding down. A mixable session interrupts nobody, so the same refusal
+    /// does not apply to it, and calls, Siri and alarms still interrupt it. The
+    /// cost is that another app's audio may play alongside the rest of this
+    /// capture, which for a recording that would otherwise stay silent is no
+    /// cost at all. Only after that refusal, and only until the next `start()`.
+    private func reactivateSession() throws {
+        do {
+            try activateSession()
+        } catch where !mixesWithOthers
+            && (error as NSError).code
+                == Int(AVAudioSession.ErrorCode.cannotInterruptOthers.rawValue)
+        {
+            #if DEBUG
+                if InterruptionDrill.holdsInput { throw error }
+            #endif
+            mixesWithOthers = true
+            AppLog.capture.notice("reactivation refused (!int); retrying as a mixable session")
+            try activateSession()
+        }
     }
 
     private func startEngine() throws {
@@ -400,7 +445,7 @@ final class AudioCapture: @unchecked Sendable {
             // client let go without saying so.
             do {
                 teardownEngine()
-                try activateSession()
+                try reactivateSession()
                 try startEngine()
                 // "Was broken" as it always meant: this chain had to work for
                 // it, or the system had taken the input. A route change that
@@ -534,6 +579,17 @@ final class AudioCapture: @unchecked Sendable {
             let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
             let type = AVAudioSession.InterruptionType(rawValue: raw)
         else { return }
+        // Why, where iOS says: a call or another app (`.default`), the app
+        // having been suspended, a muted built-in mic (iPad folio), a
+        // disconnected route. The answer is the same for all of them — hold
+        // and take the microphone back — but the diagnostics are not.
+        let reason = (note.userInfo?[AVAudioSessionInterruptionReasonKey] as? UInt)
+            .map(String.init) ?? "none"
+        let shouldResume = (note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt)
+            .map { AVAudioSession.InterruptionOptions(rawValue: $0).contains(.shouldResume) }
+        AppLog.capture.notice(
+            "interruption \(raw, privacy: .public) reason=\(reason, privacy: .public) shouldResume=\(String(describing: shouldResume), privacy: .public)"
+        )
         queue.async { [self] in
             guard wantsCapture else { return }
             switch type {
@@ -685,3 +741,57 @@ enum CaptureError: LocalizedError {
         }
     }
 }
+
+#if DEBUG
+    /// A phone call for the Simulator, which cannot take one.
+    ///
+    /// `parley://debug/interruption/<step>`:
+    ///
+    /// - `began` — post `.began` and refuse every reactivation, the way the
+    ///   phone app refuses it for as long as a call lasts. Leave it long enough
+    ///   (about 35 s) and the capture's ladder gives up, which is the moment
+    ///   that used to end the meeting.
+    /// - `ended` — the call hangs up: stop refusing, post `.ended`.
+    /// - `release` — stop refusing *without* posting `.ended`, the case iOS
+    ///   leaves to the app coming forward (background and reopen Parley).
+    /// - `reset` — post `mediaServicesWereReset`.
+    enum InterruptionDrill {
+        nonisolated(unsafe) static var holdsInput = false
+
+        static func handle(_ url: URL) -> Bool {
+            guard url.scheme == "parley", url.host == "debug",
+                url.pathComponents.dropFirst().first == "interruption"
+            else { return false }
+            let session = AVAudioSession.sharedInstance()
+            let center = NotificationCenter.default
+            switch url.lastPathComponent {
+            case "began":
+                holdsInput = true
+                center.post(
+                    name: AVAudioSession.interruptionNotification, object: session,
+                    userInfo: [
+                        AVAudioSessionInterruptionTypeKey:
+                            AVAudioSession.InterruptionType.began.rawValue
+                    ])
+            case "ended":
+                holdsInput = false
+                center.post(
+                    name: AVAudioSession.interruptionNotification, object: session,
+                    userInfo: [
+                        AVAudioSessionInterruptionTypeKey:
+                            AVAudioSession.InterruptionType.ended.rawValue,
+                        AVAudioSessionInterruptionOptionKey:
+                            AVAudioSession.InterruptionOptions.shouldResume.rawValue,
+                    ])
+            case "release":
+                holdsInput = false
+            case "reset":
+                center.post(name: AVAudioSession.mediaServicesWereResetNotification, object: session)
+            default:
+                return false
+            }
+            AppLog.capture.notice("interruption drill: \(url.lastPathComponent, privacy: .public)")
+            return true
+        }
+    }
+#endif

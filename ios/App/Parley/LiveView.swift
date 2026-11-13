@@ -353,7 +353,11 @@ struct LiveView: View {
         HStack(spacing: 7) {
             stateDot
             Group {
-                if recorder.isPaused {
+                if recorder.heldBySystem {
+                    // A call, Siri, an alarm: the system has the microphone,
+                    // and the meeting resumes by itself when it lets go.
+                    Text("On a call · recording paused")
+                } else if recorder.isPaused {
                     Text("Paused · nothing is being recorded")
                 } else {
                     Text("Recording · live transcript")
@@ -369,7 +373,7 @@ struct LiveView: View {
     /// while paused, because red is the colour of "this is being recorded".
     @ViewBuilder
     private var stateDot: some View {
-        if recorder.isPaused {
+        if recorder.isPaused || recorder.heldBySystem {
             Image(systemName: "pause.fill")
                 .font(.system(size: 8, weight: .bold))
                 .foregroundStyle(Color(.secondaryLabel))
@@ -384,7 +388,9 @@ struct LiveView: View {
     /// Chunks are reaching the file. Not while starting's microphone is still
     /// opening, which the waveform has always shown as live anyway, and not
     /// while paused, when they are dropped.
-    private var isHearing: Bool { recorder.isInMeeting && !recorder.isPaused }
+    private var isHearing: Bool {
+        recorder.isInMeeting && !recorder.isPaused && !recorder.heldBySystem
+    }
 
     /// The transcription is paused or over. That is the one fact on this
     /// panel that must survive any amount of shrinking: a person who has

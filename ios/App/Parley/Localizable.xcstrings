@@ -3064,23 +3064,6 @@
         }
       }
     },
-    "Lost the microphone — something else is using it" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Lost the microphone — something else is using it"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "失去麥克風 — 其他功能正在使用它"
-          }
-        }
-      }
-    },
     "Lost the microphone: %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3263,23 +3246,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "麥克風已恢復——錄音持續中"
-          }
-        }
-      }
-    },
-    "Microphone paused by the system — waiting to resume" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Microphone paused by the system — waiting to resume"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "系統暫停了麥克風——正在等待恢復"
           }
         }
       }
@@ -3942,6 +3908,24 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在 Mac 上還能讓 Claude Code 透過 MCP 直接讀整個錄音資料庫。"
+          }
+        }
+      }
+    },
+    "On a call · recording paused" : {
+      "comment" : "Live screen recording-state row while a call or another app holds the microphone",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "On a call · recording paused"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通話中 · 已暫停錄音"
           }
         }
       }
@@ -5132,6 +5116,24 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "錄音中"
+          }
+        }
+      }
+    },
+    "Recording paused while a call or another app uses the microphone. It picks up again on its own." : {
+      "comment" : "Live screen status line while the system holds the microphone during a meeting",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recording paused while a call or another app uses the microphone. It picks up again on its own."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通話或其他 App 正在使用麥克風，錄音已暫停，結束後會自動接著錄。"
           }
         }
       }

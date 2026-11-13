@@ -106,6 +106,11 @@ final class MeetingRecorder: ObservableObject {
     /// the meeting, which is what gets the audio captured so far onto disk and
     /// into the cloud instead of leaving a dead recording on screen.
     @Published private(set) var lostMicrophone = false
+    /// The system holds the microphone — a call, Siri, an alarm, another app
+    /// recording — and the meeting is waiting to take it back. The clock is
+    /// stopped and nothing is being written, exactly as in a pause, but this
+    /// one undoes itself: see `MeetingHold`.
+    @Published private(set) var heldBySystem = false
     /// The last start was refused because the microphone permission is off.
     /// Its own flag rather than a reading of `status`: the view needs to put
     /// the way to Settings under the sentence, and asking again cannot — once
@@ -206,6 +211,14 @@ final class MeetingRecorder: ObservableObject {
     private var leg = 0
     private var reconnectTask: Task<Void, Never>?
     private var reconnectAttempts = 0
+    /// The person's pause and the system's hold, and what each change of them
+    /// means for the clock and the relay. See `MeetingHold`.
+    private var hold = MeetingHold()
+    /// The relay was closed on purpose because the system took the microphone.
+    /// A close or an error from the leg being drained is then expected, and
+    /// must not start the reconnect ladder against a microphone that is not
+    /// producing anything — the leg comes back when the microphone does.
+    private var relaySuspended = false
     /// The user asked to stop, so a socket close is the expected end of the
     /// stream rather than something to reconnect from.
     private var finishRequested = false
@@ -242,6 +255,9 @@ final class MeetingRecorder: ObservableObject {
         micRecoveries = 0
         finishRequested = false
         lostMicrophone = false
+        _ = hold.apply(.stopped)
+        heldBySystem = false
+        relaySuspended = false
         leg = 0
         reconnectAttempts = 0
         transcription = .idle
@@ -366,15 +382,15 @@ final class MeetingRecorder: ObservableObject {
         guard phase == .recording else { return }
         feeding.withLock { $0 = false }
         phase = .paused
-        clock?.pause(at: Date())
+        apply(hold.apply(.userPaused))
         micLevel = 0
     }
 
     func resume() {
         guard phase == .paused else { return }
-        clock?.resume(at: Date())
         phase = .recording
         feeding.withLock { $0 = true }
+        apply(hold.apply(.userResumed))
     }
 
     /// End the meeting: stop the microphone, let the relay flush its last
@@ -384,6 +400,7 @@ final class MeetingRecorder: ObservableObject {
         guard isInMeeting else { return }
         finishRequested = true
         phase = .finishing
+        endHold()
         // Here rather than after the awaits below: closing the microphone,
         // draining the relay and uploading are seconds of work, and a beat that
         // waited for them would be answering a later question than the one that
@@ -426,6 +443,7 @@ final class MeetingRecorder: ObservableObject {
         guard isInMeeting else { return }
         finishRequested = true
         phase = .finishing
+        endHold()
         // A third outcome gets the third beat, exactly as dictation's ✕ does —
         // and it is that same beat, because throwing something away is one
         // meaning (see `Haptics.recordingDiscarded`). Never from the lock
@@ -476,7 +494,8 @@ final class MeetingRecorder: ObservableObject {
     private func connect(_ client: ParleyStreamClient, leg: Int) async {
         do {
             try await client.start()
-            guard self.leg == leg, phase == .recording || phase == .paused else { return }
+            guard self.leg == leg, !relaySuspended, phase == .recording || phase == .paused
+            else { return }
             reconnectAttempts = 0
             transcription = .live
             status = String(localized: "Transcribing live")
@@ -510,7 +529,7 @@ final class MeetingRecorder: ObservableObject {
         case .segment(let seg):
             upsert(seg)
         case .closed(let reason):
-            guard !finishRequested, isInMeeting else { return }
+            guard !finishRequested, !relaySuspended, isInMeeting else { return }
             let code = Self.closeCode(reason)
             AppLog.recording.error(
                 "relay leg \(eventLeg, privacy: .public) closed: \(code, privacy: .public)")
@@ -521,7 +540,7 @@ final class MeetingRecorder: ObservableObject {
             // to put in front of someone. While recording the reconnect path
             // owns the copy; once the meeting is winding down the stop path
             // does, and neither wants this overwriting it.
-            guard !finishRequested, isInMeeting else { return }
+            guard !finishRequested, !relaySuspended, isInMeeting else { return }
             let code = "stt_relay_error_\(relayCode ?? "unknown")"
             AppLog.recording.error(
                 "relay leg \(eventLeg, privacy: .public) error: \(code, privacy: .public)")
@@ -548,7 +567,7 @@ final class MeetingRecorder: ObservableObject {
     /// transcript appears live rather than after the upload, and the bridge
     /// keeps the words spoken in between for the leg that comes next.
     private func scheduleReconnect() {
-        guard reconnectTask == nil, isInMeeting, !finishRequested else { return }
+        guard reconnectTask == nil, isInMeeting, !finishRequested, !relaySuspended else { return }
 
         let previous = relay
         relay = nil
@@ -595,7 +614,7 @@ final class MeetingRecorder: ObservableObject {
 
     private func performReconnect(token: String, leg targetLeg: Int) async {
         reconnectTask = nil
-        guard leg == targetLeg, isInMeeting, !finishRequested else { return }
+        guard leg == targetLeg, isInMeeting, !finishRequested, !relaySuspended else { return }
         // The bridge decides the offset, because the bridge is what knows where
         // in the recording the audio it is holding was actually spoken. A leg
         // offset to "now" would file a gap's worth of speech after the words
@@ -629,39 +648,130 @@ final class MeetingRecorder: ObservableObject {
         case .running:
             // Only a rebuild reports `.running` — the first open does not go
             // through `onStatus` — so this is a recovery too, just one the
-            // user never saw a status line for.
+            // user never saw a status line for. A media-services reset ends
+            // this way rather than with `.resumed`, so it releases a hold too.
             micRecoveries += 1
             AppLog.capture.notice("microphone rebuilt (\(self.micRecoveries, privacy: .public) this meeting)")
+            micCameBack()
         case .interrupted:
             micLevel = 0
             AppLog.capture.notice("microphone interrupted by the system")
-            status = String(localized: "Microphone paused by the system — waiting to resume")
+            DiagnosticsJournal.record("mic_interrupted")
+            micTaken()
         case .resumed:
             micRecoveries += 1
             AppLog.capture.notice("microphone resumed (\(self.micRecoveries, privacy: .public) this meeting)")
             status = String(localized: "Microphone is back — still recording")
-        case .lost(let loss):
-            // The mic is gone and the capture has run out of ways to take it
-            // back. Everything captured so far is still good, so hand the view
-            // the cue to end the meeting properly rather than leave a recording
-            // that records nothing. A meeting is recorded from the foreground,
-            // so the two reasons are worth telling apart: another app holding
-            // the input is something the person in the room can act on, and an
-            // audio stack that refused is not.
-            switch loss {
-            case .takenBySystem:
-                AppLog.capture.error("microphone lost: taken by the system")
-                DiagnosticsJournal.record("mic_lost_taken_by_system")
-                status = String(
-                    localized: "Lost the microphone — something else is using it")
-            case .broken(let message):
-                AppLog.capture.error("microphone lost: \(message, privacy: .public)")
-                DiagnosticsJournal.record("mic_lost_broken", message)
-                status = String(localized: "Lost the microphone: \(message)")
-            }
+            micCameBack()
+        case .lost(.takenBySystem):
+            // The capture's ladder ran out while something else still holds
+            // the input — a call longer than half a minute, as a rule. This
+            // used to end the meeting, which is the "a call stops the
+            // recording for good" report. The capture is still armed: the
+            // call's `.ended`, the app coming forward, or a media-services
+            // reset each start a fresh rebuild. So the meeting keeps waiting,
+            // with the same file and the same transcript.
+            AppLog.capture.notice("microphone still held by the system; waiting")
+            DiagnosticsJournal.record("mic_held_by_system")
             micLevel = 0
-            lostMicrophone = true
+            micTaken()
+        case .lost(.broken(let message)):
+            // The audio stack itself refused, and nothing is going to hand the
+            // microphone back. Everything captured so far is still good, so
+            // hand the view the cue to end the meeting properly rather than
+            // leave a recording that records nothing.
+            AppLog.capture.error("microphone lost: \(message, privacy: .public)")
+            DiagnosticsJournal.record("mic_lost_broken", message)
+            status = String(localized: "Lost the microphone: \(message)")
+            micLevel = 0
+            apply(hold.apply(.micBroken))
         }
+    }
+
+    private func micTaken() {
+        heldBySystem = true
+        status = String(
+            localized:
+                "Recording paused while a call or another app uses the microphone. It picks up again on its own."
+        )
+        apply(hold.apply(.micTaken))
+    }
+
+    private func micCameBack() {
+        guard heldBySystem else { return }
+        heldBySystem = false
+        status = String(localized: "Microphone is back — still recording")
+        apply(hold.apply(.micBack))
+    }
+
+    /// Carry out what `MeetingHold` decided. The single place the clock and
+    /// the relay learn about a pause, the person's or the system's.
+    private func apply(_ effects: MeetingHold.Effects) {
+        switch effects.clock {
+        case .pause: clock?.pause(at: Date())
+        case .resume: clock?.resume(at: Date())
+        case nil: break
+        }
+        switch effects.relay {
+        case .suspend: suspendRelay()
+        case .reconnect: resumeRelay()
+        case nil: break
+        }
+        if effects.endMeeting { lostMicrophone = true }
+    }
+
+    /// Stop transcribing while the system holds the microphone. A call can
+    /// last an hour; an idle leg is closed by the server well before that, and
+    /// the reconnect ladder would then spend the call redialling a relay with
+    /// nothing to send. So the live leg is drained — the words said right
+    /// before the call still get their final transcript — and no new one is
+    /// dialled until the microphone is back.
+    private func suspendRelay() {
+        guard !relaySuspended else { return }
+        relaySuspended = true
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        // Nothing is being captured, so nothing is held; `hold()` only makes
+        // sure no chunk can reach the leg being drained.
+        audio.hold()
+        guard let dying = relay else { return }
+        relay = nil
+        Task { await dying.finish() }
+    }
+
+    /// The microphone is back: dial a fresh leg, if live transcription was
+    /// still running when the call came in. The bridge places it at the
+    /// recorded position, so the transcript's timeline skips the call exactly
+    /// as the audio file does.
+    private func resumeRelay() {
+        guard relaySuspended else { return }
+        relaySuspended = false
+        switch transcription {
+        case .idle, .stopped:
+            // Signed out, or live transcription had already given up: the
+            // upload transcribes the file either way.
+            audio.discard()
+            return
+        case .connecting, .live, .reconnecting:
+            break
+        }
+        guard let token = KeychainStore.get(AppState.tokenKey) else {
+            giveUpOnTranscription(
+                String(localized: "Live transcription stopped — the recording is still running"))
+            return
+        }
+        reconnectAttempts = 0
+        leg += 1
+        transcription = .reconnecting
+        let nextLeg = leg
+        Task { await performReconnect(token: token, leg: nextLeg) }
+    }
+
+    /// The meeting is ending: a hold has nothing left to wait for.
+    private func endHold() {
+        _ = hold.apply(.stopped)
+        heldBySystem = false
+        relaySuspended = false
     }
 
     // MARK: transcript
