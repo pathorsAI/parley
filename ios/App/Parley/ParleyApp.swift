@@ -59,6 +59,7 @@ struct ParleyApp: App {
                 .onOpenURL { url in
                     #if DEBUG
                         if ScreenshotDemo.shared.handle(url) { return }
+                        if InterruptionDrill.handle(url) { return }
                     #endif
                     // Any URL — the keyboard's dictate, the Live Activity's
                     // card — means the user came here in the middle of
