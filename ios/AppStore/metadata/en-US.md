@@ -92,6 +92,10 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.38
+
+A phone call no longer ends your meeting. Parley pauses while you're on the call and picks the recording back up when it ends, in the same recording with the same transcript.
+
 ## What's New — 1.37
 
 Pause a meeting and pick it back up: a Pause button sits next to Stop, and nothing is recorded or transcribed until you resume. It is still one recording with one transcript.
