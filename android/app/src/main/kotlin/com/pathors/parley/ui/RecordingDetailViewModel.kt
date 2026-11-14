@@ -1464,9 +1464,8 @@ class RecordingDetailViewModel(
      * draw a zero-width timeline for the first moment of every screen.
      */
     private fun openPlayer() {
-        val meta = _state.value.meta
-        val duration = meta?.durationMs?.toLong() ?: 0L
-        playback.open(recordingId, duration, meta?.title.orEmpty())
+        val duration = _state.value.meta?.durationMs?.toLong() ?: 0L
+        playback.open(recordingId, duration)
     }
 
     companion object {

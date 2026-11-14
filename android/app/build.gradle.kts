@@ -240,10 +240,6 @@ dependencies {
     // Opus streams natively, which is why Android needs none of the
     // hand-written seek machinery iOS had to build (see PlaybackEngine.kt).
     implementation(libs.androidx.media3.exoplayer)
-    // MediaSession + MediaSessionService: playback keeps going with the screen
-    // off, with the system media notification, headset buttons and lock-screen
-    // controls (playback/PlaybackService.kt). Same version as the player.
-    implementation(libs.androidx.media3.session)
     implementation(libs.androidx.browser)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
