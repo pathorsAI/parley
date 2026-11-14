@@ -51,6 +51,15 @@ on:
         default: ""
         type: choice
         options: ["", "internal", "alpha", "beta", "production"]
+      draft:
+        description: >-
+          Upload as a DRAFT release on the track instead of rolling it out.
+          Play builds its declaration forms (e.g. foreground-service
+          permissions) from uploaded bundles, so a draft is how a new
+          permission gets declared before any release carries it.
+        required: false
+        default: false
+        type: boolean
       skip_play_upload:
         description: >-
           Build and publish the GitHub release but do NOT upload to Play.
@@ -280,7 +289,10 @@ jobs:
           [ -n "$TRACK" ] || TRACK="${{ vars.PLAY_TRACK }}"
           [ -n "$TRACK" ] || TRACK="production"
           FRACTION="${{ vars.PLAY_USER_FRACTION }}"
-          if [ "$TRACK" = "production" ] && [ -n "$FRACTION" ]; then
+          if [ "${{ inputs.draft }}" = "true" ]; then
+            STATUS="draft"
+            FRACTION=""
+          elif [ "$TRACK" = "production" ] && [ -n "$FRACTION" ]; then
             STATUS="inProgress"
           else
             STATUS="completed"
