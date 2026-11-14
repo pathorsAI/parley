@@ -30,7 +30,7 @@ export interface HostedQuota {
   plan: string;
   /** Speech-to-text seconds consumed this period (meeting + voice typing). */
   sttSecondsUsed: number;
-  /** Speech-to-text seconds allowed this period (free tier: 20h = 72000). */
+  /** Speech-to-text seconds allowed this period (free tier: 40h = 144000). */
   sttSecondsLimit: number;
   /** LLM credits consumed this period. */
   llmCreditsUsed: number;

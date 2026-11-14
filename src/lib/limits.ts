@@ -18,7 +18,7 @@ export const HOSTED_VOICE_TYPING_MAX_SECONDS = 600; // 10 minutes
  *  voice typing SHARE this one pool (both stream through the same cloud relay).
  *  Authoritative value lives in the backend's `sttSecondsLimit`; mirrored here
  *  for display when the quota fetch hasn't landed yet. */
-export const HOSTED_STT_MONTHLY_SECONDS = 20 * 60 * 60; // 20 hours
+export const HOSTED_STT_MONTHLY_SECONDS = 40 * 60 * 60; // 40 hours
 
 /** Default LLM credit allowance per user per month. A credit is a USD-denominated
  *  unit: LLM usage debits credits by the actual backend cost. Authoritative value
