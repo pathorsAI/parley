@@ -151,9 +151,6 @@ class PlaybackController(
     private var engine: PlaybackEngine? = null
     private var recordingId: String? = null
 
-    /** The recording's name, for the media notification. */
-    private var title: String = ""
-
     /** The meta's duration, used until the engine reports its own. */
     private var fallbackDurationMs: Long = 0L
 
@@ -197,10 +194,9 @@ class PlaybackController(
      * the phone opens immediately, which is the common case for a meeting
      * recorded here.
      */
-    fun open(recordingId: String, durationMsHint: Long, title: String = "") {
+    fun open(recordingId: String, durationMsHint: Long) {
         if (released || this.recordingId == recordingId) return
         this.recordingId = recordingId
-        this.title = title
         fallbackDurationMs = durationMsHint.coerceAtLeast(0L)
 
         if (demo) {
@@ -393,7 +389,7 @@ class PlaybackController(
         withContext(Dispatchers.Main) {
             engine?.release()
             engine = try {
-                ExoPlaybackEngine(context, store.audioFile(id), engineListener(), title)
+                ExoPlaybackEngine(context, store.audioFile(id), engineListener())
             } catch (e: Throwable) {
                 Log.w(TAG, "could not open audio for $id", e)
                 null

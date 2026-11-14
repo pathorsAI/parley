@@ -95,7 +95,7 @@ android {
         // MediaMuxer's OGG output — which also needed 29 — no longer figures.
         minSdk = 29
         targetSdk = 36
-        versionCode = 16
+        versionCode = 17
 
         // 1.13, not 0.2: the jump is the point. Android shipped as 0.1.x while it
         // carried iOS 1.1's feature set, and this release is the one that closes
@@ -108,7 +108,7 @@ android {
         // 1.14 is the hotfix for 1.13's microphone: a meeting recorded through it
         // rebuilt the input in a loop and sent the relay nothing it could
         // transcribe (see audio/PlatformSilenceEdge.kt).
-        versionName = "1.23"
+        versionName = "1.24"
 
         // Instrumented tests only: audio/OggOpusEncoderDeviceTest drives the real
         // MediaCodec Opus encoder, which has no JVM stand-in.
@@ -240,10 +240,6 @@ dependencies {
     // Opus streams natively, which is why Android needs none of the
     // hand-written seek machinery iOS had to build (see PlaybackEngine.kt).
     implementation(libs.androidx.media3.exoplayer)
-    // MediaSession + MediaSessionService: playback keeps going with the screen
-    // off, with the system media notification, headset buttons and lock-screen
-    // controls (playback/PlaybackService.kt). Same version as the player.
-    implementation(libs.androidx.media3.session)
     implementation(libs.androidx.browser)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
