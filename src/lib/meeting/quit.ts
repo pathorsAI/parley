@@ -1,7 +1,7 @@
 import { useStore } from "../store";
 import { notify } from "../notify";
 import { translate } from "../../i18n/messages";
-import { liveSaves } from "../history/history";
+import { liveSaves, markLiveMeetingInterrupted } from "../history/history";
 import { log } from "../log";
 
 /** Rust → main window: quit, after ending and saving a live meeting (⌘Q, the
@@ -39,6 +39,8 @@ export async function quitAfterSaving(
       log.info("quit: saving the meeting first");
       notify.message(translate(useStore.getState().settings.language, "meeting.quitSaving"));
     }
+    // Cut off, not ended: it saves under its live name, marked recovered.
+    if (opts.meetingActive) markLiveMeetingInterrupted();
     await endIfRecording();
     if (liveSaves.hasPending()) {
       const saved = await liveSaves.whenSettled(opts.waitMs ?? QUIT_SAVE_WAIT_MS);

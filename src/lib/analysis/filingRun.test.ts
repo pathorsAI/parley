@@ -15,7 +15,7 @@ vi.mock("../ai/filing", () => ({ suggestFiling }));
 // title in the store, which the fake mirrors.
 const { renameHistoryEntry, readEntry } = vi.hoisted(() => ({
   renameHistoryEntry: vi.fn(async (_id: string, _title: string) => {}),
-  readEntry: vi.fn(async (_id: string) => ({ meta: { title: "" } })),
+  readEntry: vi.fn(async (_id: string) => ({ meta: { title: "" } as { title: string; recovered?: true } })),
 }));
 vi.mock("../history/history", () => ({ renameHistoryEntry }));
 vi.mock("../history/entryStore", () => ({ readEntry }));
@@ -109,6 +109,17 @@ describe("runFilingSuggestion — the title is applied, not suggested", () => {
     suggestFiling.mockResolvedValue({ title: "", folders: [{ folderId: "f", name: "F", reason: "" }] });
     await runFilingSuggestion();
     expect(renameHistoryEntry).not.toHaveBeenCalled();
+    expect(useStore.getState().titleAutoApplied).toBeNull();
+  });
+
+  it("never renames a recovered recording, but still suggests its folders", async () => {
+    arrange("rec-g");
+    readEntry.mockResolvedValueOnce({ meta: { title: "即時會議 · 1/1（已復原）", recovered: true } });
+    const folders = [{ folderId: "f", name: "F", reason: "" }];
+    suggestFiling.mockResolvedValue({ title: "Acme", folders });
+    await runFilingSuggestion();
+    expect(renameHistoryEntry).not.toHaveBeenCalled();
+    expect(landStage.mock.calls[0][1].patch).toEqual({ filingSuggestion: { title: "", folders }, filingSuggested: true });
     expect(useStore.getState().titleAutoApplied).toBeNull();
   });
 

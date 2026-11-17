@@ -73,6 +73,30 @@ function withoutStaleTitle(
 }
 
 /**
+ * A recovered recording (HistoryEntry.recovered — Parley quit, crashed or
+ * lost the page mid-meeting) keeps its live name and its （已復原） mark: the
+ * name is what tells the user it was cut off. So its suggestion carries the
+ * folders only. Persisting it title-less (with filingSuggested) also stops
+ * any other device from naming it later.
+ */
+async function withoutTitleIfRecovered(
+  suggestion: FilingSuggestion | null,
+  entryId: string | null | undefined,
+): Promise<FilingSuggestion | null> {
+  if (!suggestion?.title || !entryId) return suggestion;
+  try {
+    const { readEntry } = await import("../history/entryStore");
+    const { meta } = await readEntry(entryId);
+    if (!meta.recovered) return suggestion;
+  } catch (e) {
+    // Unreadable: keep the suggestion as it is, the rename re-checks the title.
+    log.warn("filing: reading the entry failed", { entryId, error: String(e) });
+    return suggestion;
+  }
+  return suggestion.folders.length > 0 ? { ...suggestion, title: "" } : null;
+}
+
+/**
  * Name the recording with the suggested title, right away. The title is not a
  * suggestion any more (only the folder is): a recording called
  * "即時會議 · <date>" helps nobody, and the user can still rename it. Goes
@@ -140,6 +164,7 @@ export async function runFilingSuggestion(opts?: { force?: boolean }): Promise<v
       signal: run.signal,
     });
     suggestion = withoutStaleTitle(suggestion, currentTitle, run);
+    suggestion = await withoutTitleIfRecovered(suggestion, run.target().entryId);
     // A null suggestion — nothing usable (the title failed the gates and no
     // folder survived) or a failed call — is done for THIS session only: the
     // stage reads "done" so the scheduler leaves it alone, but nothing is

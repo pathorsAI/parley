@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // Quit must not exit under a meeting: ⌘Q mid-meeting used to kill the process
 // before the transcript was saved, leaving an audio-only recording with no
 // summary, action items or score.
-const mocks = vi.hoisted(() => ({ notices: [] as string[] }));
+const mocks = vi.hoisted(() => ({ notices: [] as string[], interrupted: [] as number[] }));
 
 vi.mock("../log", () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -11,7 +11,7 @@ vi.mock("../log", () => ({
 }));
 vi.mock("../history/history", async () => {
   const { PendingSaves } = await import("./pendingSaves");
-  return { liveSaves: new PendingSaves<string>() };
+  return { liveSaves: new PendingSaves<string>(), markLiveMeetingInterrupted: () => mocks.interrupted.push(1) };
 });
 vi.mock("../notify", () => ({
   notify: { message: (t: string) => mocks.notices.push(t), success: vi.fn(), error: vi.fn() },
@@ -34,6 +34,7 @@ function endThatCaptures(id: string): () => Promise<void> {
 describe("quitAfterSaving", () => {
   beforeEach(() => {
     mocks.notices.length = 0;
+    mocks.interrupted.length = 0;
   });
 
   it("exits only after the stopped meeting's save settles", async () => {
@@ -42,6 +43,8 @@ describe("quitAfterSaving", () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(exit).not.toHaveBeenCalled();
     expect(mocks.notices).toHaveLength(1);
+    // Cut off, not ended: saved under its live name, marked recovered.
+    expect(mocks.interrupted).toHaveLength(1);
 
     saves.settle("m1");
     await quitting;
@@ -53,6 +56,7 @@ describe("quitAfterSaving", () => {
     await quitAfterSaving(async () => {}, exit, { meetingActive: false });
     expect(exit).toHaveBeenCalledOnce();
     expect(mocks.notices).toHaveLength(0);
+    expect(mocks.interrupted).toHaveLength(0);
   });
 
   it("still exits when the save never finishes", async () => {

@@ -501,6 +501,31 @@ describe("live save race", () => {
     expect(useStore.getState().meetingContext).toBe("other ctx");
   });
 
+  it("a meeting cut off by Quit keeps its live name, marked recovered", async () => {
+    useLiveStore.getState().startMeeting();
+    const id = useLiveStore.getState().liveMeetingId!;
+    history.liveSaves.markRecording(id);
+    useLiveStore.setState({ meetingTitle: "Weekly sync" });
+    useLiveStore.getState().upsertSegment(seg({ id: "q1", source: "me", speaker: 0, text: "words" }));
+    history.markLiveMeetingInterrupted();
+    useLiveStore.getState().stopMeeting();
+    fire("meeting://recording-saved", { path: "/tmp-q.ogg", durationMs: 4_000, meetingId: id, startedAtMs: 1_000 });
+    await flush();
+    const saved = disk.get(id) as HistoryEntry;
+    expect(saved.title).toBe("Weekly sync（已復原）");
+    expect(saved.recovered).toBe(true);
+    expect(saved.segments.map((x) => x.text)).toEqual(["words"]);
+  });
+
+  it("a meeting ended normally is not marked recovered", async () => {
+    const a = recordAndStop("words", 1_000);
+    fire("meeting://recording-saved", { path: "/tmp-a.ogg", durationMs: 4_000, meetingId: a, startedAtMs: 1_000 });
+    await flush();
+    const saved = disk.get(a) as HistoryEntry;
+    expect(saved.title).not.toContain("（已復原）");
+    expect(saved.recovered).toBeUndefined();
+  });
+
   it("a recording from a meeting this window never saw is kept without a transcript", async () => {
     fire("meeting://recording-saved", { path: "/tmp-x.ogg", durationMs: 4_000, meetingId: "lost", startedAtMs: 777 });
     await flush();
@@ -523,6 +548,7 @@ describe("recoverCrashedMeetings", () => {
     await flush();
     expect(disk.get("crashed")).toMatchObject({ id: "crashed", createdAt: 1_000, durationMs: 600_000, segments: [] });
     expect((disk.get("crashed") as HistoryEntry).title).toContain("（已復原）");
+    expect((disk.get("crashed") as HistoryEntry).recovered).toBe(true);
     expect(calls).toContainEqual(["invoke", "discard_recording", { path: "/tmp-d.ogg" }]);
     expect(calls).toContainEqual(["invoke", "finish_meeting_journal", { meetingId: "crashed" }]);
     expect(calls).toContainEqual(["invoke", "finish_meeting_journal", { meetingId: "already" }]);
