@@ -219,8 +219,9 @@ const TABLE = [
     labelKey: "cmd.window.close",
     ownedBy: "os",
   },
-  // The rest of what every Mac app answers to. AppKit's menu items own them
-  // (src-tauri/src/menu.rs keeps the predefined ones), so they are listed, not
+  // The rest of what every Mac app answers to. The menu bar owns them
+  // (src-tauri/src/menu.rs: AppKit's predefined items, and Parley's own Quit,
+  // which saves a live meeting before exiting), so they are listed, not
   // bound — a cheat sheet without ⌘Q looks like an app without it.
   {
     id: "window.minimize",

@@ -25,10 +25,10 @@
 //!   start/end session code as the hotkey's `voicetyping://ptt`. A menu click
 //!   cannot be "held", so it toggles; the label follows the session via
 //!   [`set_voice_typing_active`].
-//! * **Quit** — `app://quit-requested` to the main window, which stops an
-//!   active meeting before exiting (the same chain the close button used to
-//!   run). A fallback exit fires if the webview never answers, so Quit can
-//!   never be a dead item.
+//! * **Quit** — [`crate::quit::request`], the same orderly quit as ⌘Q on
+//!   macOS: the main window ends an active meeting and waits for it to be
+//!   saved before exiting. A fallback exit fires if the webview never answers,
+//!   so Quit can never be a dead item.
 
 use serde::Deserialize;
 use tauri::{AppHandle, Runtime};
@@ -113,18 +113,10 @@ mod imp {
     /// Emitted (app-wide) when the tray's voice-typing item is clicked.
     const TOGGLE_EVENT: &str = "voicetyping://toggle";
 
-    /// Emitted to the main window when the tray's Quit item is clicked.
-    const QUIT_EVENT: &str = "app://quit-requested";
-
     const TRAY_ID: &str = "main";
     const ITEM_OPEN: &str = "tray:open";
     const ITEM_VOICE: &str = "tray:voice-typing";
     const ITEM_QUIT: &str = "tray:quit";
-
-    /// How long Quit waits for the frontend's orderly exit (stop an active
-    /// meeting, then exit) before exiting from here. The frontend path is a
-    /// single IPC round trip; this only matters if the webview is wedged.
-    const QUIT_FALLBACK: std::time::Duration = std::time::Duration::from_secs(5);
 
     /// Managed state: the live menu items (once built), the current labels,
     /// and whether a dictation is running (which picks the voice label).
@@ -260,25 +252,8 @@ mod imp {
                     log::warn!("tray: voice-typing toggle emit failed: {e}");
                 }
             }
-            ITEM_QUIT => quit(app),
+            ITEM_QUIT => crate::quit::request(app),
             _ => {}
         }
-    }
-
-    /// Ask the main window to quit (so an active meeting is stopped first),
-    /// with a fallback exit in case it never does.
-    fn quit(app: &AppHandle) {
-        log::info!("tray: quit requested");
-        if app.get_webview_window("main").is_none() || app.emit_to("main", QUIT_EVENT, ()).is_err()
-        {
-            app.exit(0);
-            return;
-        }
-        let app = app.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(QUIT_FALLBACK);
-            log::warn!("tray: frontend did not exit in time; exiting from the backend");
-            app.exit(0);
-        });
     }
 }

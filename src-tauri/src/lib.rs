@@ -18,6 +18,7 @@ mod model_download;
 mod notify_sender;
 mod permissions;
 mod playback;
+mod quit;
 mod recording_journal;
 mod replay;
 mod replay_audio;
@@ -310,7 +311,8 @@ pub fn run() {
             autostart::mark_show_on_next_launch,
             autostart::clear_show_on_next_launch,
             tray::tray_active,
-            tray::set_tray_labels
+            tray::set_tray_labels,
+            quit::quit_acknowledged
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
