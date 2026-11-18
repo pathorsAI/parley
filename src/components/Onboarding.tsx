@@ -38,6 +38,7 @@ import { ContextStep } from "./onboarding/ContextStep";
 import { mergeTerms, type AddedTerm, type MicRun } from "../lib/onboarding/micCheck";
 import { useI18n, LANGUAGE_OPTIONS } from "../i18n";
 import { Button } from "@/components/ui/button";
+import { SwapContent } from "./SwapContent";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { PasswordInput } from "@/components/ui/password-input";
@@ -298,16 +299,20 @@ export function Onboarding() {
           // Every later step: its own title, the language, and a progress bar
           // along the bottom edge — one segment per step after the welcome.
           <div className="relative flex h-15 shrink-0 items-center justify-between px-5">
-            <h2 className="text-sm font-semibold text-primary">{t(stepTitle(current))}</h2>
+            <h2 key={current} className="ob-fade-in text-sm font-semibold text-primary">
+              {t(stepTitle(current))}
+            </h2>
             <LanguageMenu />
             <StepProgress reached={index} total={steps.length - 1} />
           </div>
         )}
 
-        {/* Body */}
+        {/* Body — keyed by the step, so each step eases in instead of
+            snapping into place. */}
         <div
+          key={current}
           className={cn(
-            "relative min-h-0 flex-1 overflow-y-auto",
+            "ob-step-in relative min-h-0 flex-1 overflow-y-auto",
             intro && "px-6 pt-[63px] pb-16",
             current === "done" && "items-center justify-center px-6 pb-16",
             !hero && "px-5 py-5",
@@ -651,9 +656,9 @@ function AccountStep({ onBack, onContinue }: Readonly<{ onBack: () => void; onCo
     );
   }
 
-  let cloudCta = t("onboarding.account.cloud.cta");
-  if (signingIn) cloudCta = t("settings.account.signingIn");
-  else if (cloudAuth) cloudCta = t("onboarding.account.cloud.use");
+  let cloudState: "signIn" | "signingIn" | "use" = "signIn";
+  if (signingIn) cloudState = "signingIn";
+  else if (cloudAuth) cloudState = "use";
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-6">
@@ -671,9 +676,39 @@ function AccountStep({ onBack, onContinue }: Readonly<{ onBack: () => void; onCo
               disabled={signingIn || (!cloudAuth && !isTauri())}
               onClick={pickCloud}
             >
-              {cloudCta}
-              {signingIn ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
+              {/* The label and icon cross-fade between states, inside a box as
+                  wide as the widest one: the button never jumps. */}
+              <SwapContent
+                active={cloudState}
+                states={{
+                  signIn: (
+                    <>
+                      {t("onboarding.account.cloud.cta")}
+                      <LogIn className="size-4" />
+                    </>
+                  ),
+                  signingIn: (
+                    <>
+                      {t("settings.account.signingIn")}
+                      <Loader2 className="size-4 animate-spin" />
+                    </>
+                  ),
+                  use: (
+                    <>
+                      {t("onboarding.account.cloud.use")}
+                      <LogIn className="size-4" />
+                    </>
+                  ),
+                }}
+              />
             </Button>
+            {signingIn && !error && (
+              // Where to look, under the button and out of the layout like the
+              // error below: the card keeps its height.
+              <p className="ob-fade-in absolute top-full right-0 mt-1 w-max text-right text-[11px] text-muted-foreground">
+                {t("settings.account.finishInBrowser")}
+              </p>
+            )}
             {error && (
               // Plain red text in the card's bottom padding, so a failure never
               // changes the card's height.
