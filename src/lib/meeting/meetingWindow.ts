@@ -54,6 +54,9 @@ const MIRRORED = [
   "meetingEndAt",
   "autoAnalyze",
   "autoAnalyzeSec",
+  // The live suggestion on screen (meeting/liveSuggestRun.ts): made in the
+  // main window, shown here. Its on/off is a setting, synced like the others.
+  "liveSuggestion",
 ] as const satisfies readonly (keyof ParleyState)[];
 
 /** Of those, the ones the meeting window edits; they travel back as patches. */

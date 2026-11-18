@@ -49,6 +49,7 @@ import { DestinationField } from "../DestinationSheet";
 import { MeetingContextField } from "../MeetingContextField";
 import { useMeetingDestination } from "../useMeetingDestination";
 import { CoachFeed } from "./CoachFeed";
+import { LiveSuggestionBar, LiveSuggestToggle } from "./LiveSuggestion";
 import { AgendaBar, MiniAgendaCount, useAgendaEndReminder } from "./AgendaBar";
 import { NotesEditor } from "./NotesEditor";
 import { LiveBanners } from "./LiveScreen";
@@ -704,6 +705,7 @@ export function MeetingFloatingWindow() {
       <LiveBanners />
       <MeetingHeading />
       <AgendaBar onJump={jumpToTranscript} />
+      <LiveSuggestionBar />
 
       {bgOpen && (
         <div className="mx-5 mt-4 flex shrink-0 flex-col gap-2 rounded-lg border p-3">
@@ -734,6 +736,7 @@ export function MeetingFloatingWindow() {
               onClick={() => setTab("coach")}
             />
           </div>
+          <LiveSuggestToggle />
           <button
             type="button"
             aria-label={t("floating.background")}
