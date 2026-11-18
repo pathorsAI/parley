@@ -32,7 +32,13 @@ struct IntroStage: View {
     @Namespace private var flight
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    init() {
+    /// The desktop welcome screen's row of four steps over the stage, each
+    /// ticking off as the film reaches it. Off on screens that only need the
+    /// film.
+    private let showsStepRow: Bool
+
+    init(showsStepRow: Bool = false) {
+        self.showsStepRow = showsStepRow
         let manifest = SampleRecordingStore.manifest(lang: SampleRecordingStore.preferredLang)
         let me: String = manifest?.speakers.me ?? ""
         let them: String = manifest?.speakers.them ?? ""
@@ -52,6 +58,7 @@ struct IntroStage: View {
         TimelineView(.animation(minimumInterval: 1 / 30, paused: finished || reduceMotion)) { context in
             let t = reduceMotion ? schedule.end : context.date.timeIntervalSince(start)
             VStack(alignment: .leading, spacing: 16) {
+                if showsStepRow { stepRow(at: t) }
                 stage(at: t)
                     .frame(maxWidth: .infinity, minHeight: 300, alignment: .topLeading)
                 caption(at: t)
@@ -77,6 +84,56 @@ struct IntroStage: View {
             transcript(at: t)
             folder(at: t)
             shareMark(at: t)
+        }
+    }
+
+    // MARK: the step row
+
+    /// Record, live transcript, file, AI summary — the desktop's `StepRow`:
+    /// each a label over a bar; done ones carry a check and a full bar, the
+    /// current one its number in blue and a bar filling over its beat.
+    private func stepRow(at t: TimeInterval) -> some View {
+        let starts: [TimeInterval] = [
+            schedule.recording, schedule.lines.first?.start ?? schedule.recording,
+            schedule.folder, schedule.share, schedule.end,
+        ]
+        let labels: [LocalizedStringKey] = ["Record", "Live transcript", "File", "AI summary"]
+        return HStack(alignment: .top, spacing: 8) {
+            ForEach(0..<4, id: \.self) { i in
+                let span = max(0.001, starts[i + 1] - starts[i])
+                let fill = t >= schedule.end ? 1 : min(1, max(0, (t - starts[i]) / span))
+                let done = fill >= 1
+                let current = !done && t >= starts[i]
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 4) {
+                        ZStack {
+                            Circle().fill(done || current ? Theme.primary : Color(.tertiaryLabel))
+                            if done {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 7, weight: .bold))
+                            } else {
+                                Text(verbatim: "\(i + 1)")
+                                    .font(.system(size: 8, weight: .semibold))
+                            }
+                        }
+                        .foregroundStyle(.white)
+                        .frame(width: 13, height: 13)
+                        Text(labels[i])
+                            .font(.parley.caption2)
+                            .foregroundStyle(current ? Theme.primary : Color(.label))
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.8)
+                    }
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color(.systemGray5))
+                            Capsule().fill(Theme.primary).frame(width: geo.size.width * fill)
+                        }
+                    }
+                    .frame(height: 3)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
     }
 

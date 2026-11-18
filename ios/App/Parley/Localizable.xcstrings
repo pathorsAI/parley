@@ -244,6 +244,23 @@
         }
       }
     },
+    "+ Add" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "+ Add"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "+ 新增"
+          }
+        }
+      }
+    },
     "--- Transcript ---" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -414,6 +431,40 @@
         }
       }
     },
+    "AI summary" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AI summary"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AI 分析與摘要"
+          }
+        }
+      }
+    },
+    "About you" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "About you"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "講者背景"
+          }
+        }
+      }
+    },
     "Account" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -565,6 +616,40 @@
         }
       }
     },
+    "Added to your background. You can edit it in the next step." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Added to your background. You can edit it in the next step."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已加入講者背景，下一步可以修改。"
+          }
+        }
+      }
+    },
+    "Adding it to your background…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Adding it to your background…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "整理成講者背景…"
+          }
+        }
+      }
+    },
     "Admin" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -645,6 +730,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "請允許使用麥克風"
+          }
+        }
+      }
+    },
+    "Allowed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allowed"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已允許"
           }
         }
       }
@@ -940,6 +1042,23 @@
         }
       }
     },
+    "Choose how to run Parley" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose how to run Parley"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選擇使用方式"
+          }
+        }
+      }
+    },
     "Clear" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1141,6 +1260,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "錄到一半連線中斷"
+          }
+        }
+      }
+    },
+    "Context" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Context"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "語境庫"
           }
         }
       }
@@ -1791,6 +1927,23 @@
         }
       }
     },
+    "Desktop app only" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Desktop app only"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "僅限電腦版"
+          }
+        }
+      }
+    },
     "Dictation is inserted exactly as it was transcribed." : {
       "comment" : "Settings › Polish with AI caption when the style is Off",
       "extractionState" : "manual",
@@ -1822,6 +1975,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "聽寫需要麥克風權限。請到「設定 › Parley」開啟麥克風。"
+          }
+        }
+      }
+    },
+    "Didn't catch anything. Try again, or check the microphone." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Didn't catch anything. Try again, or check the microphone."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沒有聽到內容。再試一次，或確認麥克風沒有被擋住。"
           }
         }
       }
@@ -2319,6 +2489,23 @@
         }
       }
     },
+    "File" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "File"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "歸檔"
+          }
+        }
+      }
+    },
     "Filed in “%@”. Every recording will get a suggestion like this." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2557,6 +2744,23 @@
         }
       }
     },
+    "Grant" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Grant"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "授權"
+          }
+        }
+      }
+    },
     "Handed to your AI" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2710,6 +2914,23 @@
         }
       }
     },
+    "I'm {role} at {company}, and I use Parley to {purpose}." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "I'm {role} at {company}, and I use Parley to {purpose}."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "我是 {company} 的 {role}，我主要用 Parley 來 {purpose}。"
+          }
+        }
+      }
+    },
     "Import an audio file" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2794,6 +3015,23 @@
         }
       }
     },
+    "Interface language" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Interface language"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "介面語言"
+          }
+        }
+      }
+    },
     "Into “%@”." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2807,6 +3045,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "放進「%@」。"
+          }
+        }
+      }
+    },
+    "Introduce yourself in a sentence" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Introduce yourself in a sentence"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請簡單介紹自己"
           }
         }
       }
@@ -3218,6 +3473,23 @@
         }
       }
     },
+    "Live transcript" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Live transcript"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "即時轉錄"
+          }
+        }
+      }
+    },
     "Live transcription stopped — the recording is still running" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3269,19 +3541,19 @@
         }
       }
     },
-    "Local — your own API keys or a model on your computer — is available in the desktop app." : {
+    "Local" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Local — your own API keys or a model on your computer — is available in the desktop app."
+            "value" : "Local"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "地端版（自備 API 金鑰，或電腦上的本機模型）只在電腦版提供。"
+            "value" : "地端版"
           }
         }
       }
@@ -3437,6 +3709,57 @@
         }
       }
     },
+    "Microphone (input device)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Microphone (input device)"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "麥克風（輸入裝置）"
+          }
+        }
+      }
+    },
+    "Microphone (your voice)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Microphone (your voice)"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "麥克風（你的聲音）"
+          }
+        }
+      }
+    },
+    "Microphone access is off. Allow it in Settings." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Microphone access is off. Allow it in Settings."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "麥克風權限是關閉的，請到「設定」開啟。"
+          }
+        }
+      }
+    },
     "Microphone access wasn't granted, so there is no window to keep open." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3467,6 +3790,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "尚未取得麥克風權限，請再點一次麥克風重試。"
+          }
+        }
+      }
+    },
+    "Microphone check" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Microphone check"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "麥克風測試"
           }
         }
       }
@@ -4722,6 +5062,23 @@
         }
       }
     },
+    "Parley provides the transcription and AI, with a free monthly allowance. Nothing to pay yourself." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Parley provides the transcription and AI, with a free monthly allowance. Nothing to pay yourself."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "轉錄與 AI 都由 Parley 提供，每月有免費額度，不用自己付費。"
+          }
+        }
+      }
+    },
     "Parley records both sides of the conversation." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5529,6 +5886,23 @@
         }
       }
     },
+    "Remove %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移除 %@"
+          }
+        }
+      }
+    },
     "Remove all" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6294,23 +6668,6 @@
         }
       }
     },
-    "Setup takes a minute." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Setup takes a minute."
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "先花一分鐘完成設定。"
-          }
-        }
-      }
-    },
     "Share" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6653,6 +7010,23 @@
         }
       }
     },
+    "Sign in first." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sign in first."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請先登入。"
+          }
+        }
+      }
+    },
     "Sign in or create an account" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6666,23 +7040,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "登入或建立帳號"
-          }
-        }
-      }
-    },
-    "Sign in to Parley" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sign in to Parley"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "登入 Parley"
           }
         }
       }
@@ -7062,6 +7419,23 @@
         }
       }
     },
+    "Start test" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start test"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "開始測試"
+          }
+        }
+      }
+    },
     "Start your first real meeting" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7429,6 +7803,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在 Parley 鍵盤上點麥克風，說的話就會打進游標處。"
+          }
+        }
+      }
+    },
+    "Tap “Start test” and read the sentence below to check the microphone picks you up." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tap “Start test” and read the sentence below to check the microphone picks you up."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "點擊「開始測試」並朗讀下方句子，確認麥克風能正常收音。"
+          }
+        }
+      }
+    },
+    "Terms" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Terms"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "常用詞"
           }
         }
       }
@@ -8148,6 +8556,23 @@
         }
       }
     },
+    "Transcription didn't work: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transcription didn't work: %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "轉錄沒有成功：%@"
+          }
+        }
+      }
+    },
     "Transcription dropped — reconnecting…" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8178,6 +8603,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "轉錄時數"
+          }
+        }
+      }
+    },
+    "Try again" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Try again"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "再測一次"
           }
         }
       }
@@ -8330,6 +8772,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "以個人版使用"
+          }
+        }
+      }
+    },
+    "Use your own API keys or a model on your computer; your data goes only to the providers you choose. Local is set up in the desktop app." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use your own API keys or a model on your computer; your data goes only to the providers you choose. Local is set up in the desktop app."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "用你自己的 API 金鑰，或電腦上的本機模型，資料只會送到你選的供應商。地端版請在電腦版設定。"
           }
         }
       }
@@ -8861,6 +9320,23 @@
         }
       }
     },
+    "You're on Cloud" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You're on Cloud"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已登入雲端版"
+          }
+        }
+      }
+    },
     "You're out of quota. The recording is safe on this phone and will sync once the quota resets." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8997,6 +9473,23 @@
         }
       }
     },
+    "Your voice needs microphone access. Parley records the room through the phone's microphone." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your voice needs microphone access. Parley records the room through the phone's microphone."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "錄下你的聲音需要麥克風權限，Parley 會用手機的麥克風錄下現場對話。"
+          }
+        }
+      }
+    },
     "Your words show up on the Parley keyboard as you talk, and land at the cursor when you stop — nothing happens on this screen." : {
       "localizations" : {
         "en" : {
@@ -9009,6 +9502,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "說話的內容會顯示在 Parley 鍵盤上，停止後整段話會打進游標處——這個畫面不會顯示任何東西。"
+          }
+        }
+      }
+    },
+    "company" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "company"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "公司"
           }
         }
       }
@@ -9030,6 +9540,23 @@
         }
       }
     },
+    "e.g. I'm a designer at Acme and often talk outbound-calling deals with Globex." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "e.g. I'm a designer at Acme and often talk outbound-calling deals with Globex."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "例如：我是派斯科技的設計師，常和東森談外撥專案。"
+          }
+        }
+      }
+    },
     "hr" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -9043,6 +9570,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "小時"
+          }
+        }
+      }
+    },
+    "iOS permissions" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iOS permissions"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iOS 權限"
+          }
+        }
+      }
+    },
+    "iPhone microphone" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iPhone microphone"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iPhone 麥克風"
           }
         }
       }
@@ -9064,6 +9625,23 @@
         }
       }
     },
+    "name / title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "name / title"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "姓名／職稱"
+          }
+        }
+      }
+    },
     "not provided" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -9077,6 +9655,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "未填"
+          }
+        }
+      }
+    },
+    "or" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "or"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "or"
+          }
+        }
+      }
+    },
+    "what you use it for" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "what you use it for"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "描述用途"
           }
         }
       }
