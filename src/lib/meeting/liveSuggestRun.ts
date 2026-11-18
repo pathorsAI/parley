@@ -15,6 +15,7 @@ import {
   cardExpired,
   finalTurns,
   nextTrigger,
+  parseStalled,
   parseSuggestions,
   speechPending,
   stillCurrent,
@@ -28,7 +29,7 @@ const REQUEST_TIMEOUT_MS = 6_000;
 /** After a failure, stay quiet this long (wall clock): no point asking a
  *  service that is unavailable, over quota or throttling us every second. */
 function backoffMs(status: number | null): number {
-  if (status === 503) return 5 * 60_000; // not configured on the server
+  if (status === 503) return 5 * 60_000; // the service is down
   if (status === 402) return 10 * 60_000; // hosted quota used up
   if (status === 429) return 30_000;
   return 15_000;
@@ -41,6 +42,7 @@ function createEngine() {
   let lastRequestAtMs: number | null = null;
   let lastTurnEndMs = 0;
   let lastLullEndMs = 0;
+  let stalledEndMs = 0;
   let quietUntil = 0;
 
   function reset(id: string | null) {
@@ -50,6 +52,7 @@ function createEngine() {
     lastRequestAtMs = null;
     lastTurnEndMs = 0;
     lastLullEndMs = 0;
+    stalledEndMs = 0;
     quietUntil = 0;
   }
 
@@ -87,7 +90,11 @@ function createEngine() {
         log.info("live-suggest: answer arrived stale, dropped", { mode });
         return;
       }
-      if (items.length === 0) return;
+      if (items.length === 0) {
+        // Nothing to say, and the topic has run dry: offer directions soon.
+        if (mode === "turn" && parseStalled(json)) stalledEndMs = sent[sent.length - 1]?.endMs ?? 0;
+        return;
+      }
       now.showLiveSuggestion({ mode, items, atMs: meetingElapsedMs(now), finalsAtShow: turns.length });
     } catch (e) {
       if (ctrl.signal.aborted) return;
@@ -116,6 +123,7 @@ function createEngine() {
       lastRequestAtMs,
       lastTurnEndMs,
       lastLullEndMs,
+      stalledEndMs,
     });
     if (!mode) return;
     const lastEnd = turns[turns.length - 1]?.endMs ?? 0;

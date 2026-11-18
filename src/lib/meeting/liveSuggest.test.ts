@@ -8,7 +8,9 @@ import {
   LULL_MS,
   MIN_REQUEST_GAP_MS,
   nextTrigger,
+  parseStalled,
   parseSuggestions,
+  STALLED_LULL_MS,
   speechPending,
   stillCurrent,
   TURN_SETTLE_MS,
@@ -30,6 +32,7 @@ function facts(over: Partial<TriggerFacts>): TriggerFacts {
     lastRequestAtMs: null,
     lastTurnEndMs: 0,
     lastLullEndMs: 0,
+    stalledEndMs: 0,
     ...over,
   };
 }
@@ -64,6 +67,16 @@ describe("nextTrigger", () => {
 
   it("a turn not yet asked about past the lull mark is a lull, not a stale turn", () => {
     expect(nextTrigger(facts({ nowMs: 58_000 + LULL_MS }))).toBe("lull");
+  });
+
+  it("offers directions early after a line the cloud called stalled", () => {
+    const stalled = { lastTurnEndMs: 58_000, lastRequestAtMs: 59_200, stalledEndMs: 58_000 };
+    expect(nextTrigger(facts({ ...stalled, nowMs: 58_000 + STALLED_LULL_MS - 1 }))).toBeNull();
+    expect(nextTrigger(facts({ ...stalled, nowMs: 59_200 + STALLED_LULL_MS }))).toBe("lull");
+    // Once asked, or once someone has spoken since, it is an ordinary lull again.
+    expect(nextTrigger(facts({ ...stalled, lastLullEndMs: 58_000, nowMs: 63_000 }))).toBeNull();
+    const turns = [turn("me", "你好", 50_000), turn("them", "我們晚上有三成電話沒人接", 58_000), turn("me", "好", 60_000)];
+    expect(nextTrigger(facts({ ...stalled, turns, nowMs: 63_500 }))).toBeNull();
   });
 
   it("needs a conversation before it can lull", () => {
@@ -181,6 +194,8 @@ describe("buildRequest / parseSuggestions", () => {
     expect(parseSuggestions("turn", body)).toHaveLength(1);
     expect(parseSuggestions("turn", { suggestions: [], abstained: "none" })).toEqual([]);
     expect(parseSuggestions("turn", null)).toEqual([]);
+    expect(parseStalled({ suggestions: [], stalled: true })).toBe(true);
+    expect(parseStalled({ suggestions: [] })).toBe(false);
   });
 });
 

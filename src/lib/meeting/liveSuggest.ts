@@ -56,8 +56,12 @@ export interface Turn {
 export const TURN_SETTLE_MS = 1_200;
 /** Nobody has finished a line for this long → a lull. */
 export const LULL_MS = 8_000;
-/** At most one request this often, whatever happens. */
+/** At most one request this often, whatever happens… */
 export const MIN_REQUEST_GAP_MS = 8_000;
+/** …except right after the cloud said the topic has run dry (`stalled`) and
+ *  had nothing to say: then directions come after this much quiet, and this
+ *  soon after that request, instead of waiting out a full lull. */
+export const STALLED_LULL_MS = 3_000;
 /** A card leaves after this long on screen… */
 export const CARD_TTL_MS = 45_000;
 /** …or once the transcript has this many new final lines since it appeared. */
@@ -97,20 +101,27 @@ export interface TriggerFacts {
   lastTurnEndMs: number;
   /** End of the last line before the lull already asked about. */
   lastLullEndMs: number;
+  /** End of the line the cloud called `stalled` with nothing to suggest
+   *  (0 = none): a lull after it may come early (STALLED_LULL_MS). */
+  stalledEndMs: number;
 }
 
 /**
  * Ask now, and how? A `turn` once per finished line from the other side,
  * after it has settled; a `lull` once per silence. Never while a request is
  * out, while someone is mid-sentence, or sooner than MIN_REQUEST_GAP_MS after
- * the last one. Pure.
+ * the last one — a lull after a line the cloud called stalled may come after
+ * STALLED_LULL_MS on both counts. Pure.
  */
 export function nextTrigger(f: TriggerFacts): SuggestMode | null {
   if (f.inFlight || f.pending) return null;
-  if (f.lastRequestAtMs != null && f.nowMs - f.lastRequestAtMs < MIN_REQUEST_GAP_MS) return null;
   const last = f.turns[f.turns.length - 1];
   if (!last) return null;
   const quiet = f.nowMs - last.endMs;
+  const sinceRequest = f.lastRequestAtMs == null ? Infinity : f.nowMs - f.lastRequestAtMs;
+  const stalled = f.stalledEndMs > 0 && last.endMs === f.stalledEndMs && last.endMs > f.lastLullEndMs;
+  if (stalled && quiet >= STALLED_LULL_MS && sinceRequest >= STALLED_LULL_MS && f.turns.length >= 2) return "lull";
+  if (sinceRequest < MIN_REQUEST_GAP_MS) return null;
   if (last.who === "them" && last.endMs > f.lastTurnEndMs && quiet >= TURN_SETTLE_MS && quiet < LULL_MS) {
     return "turn";
   }
@@ -183,6 +194,11 @@ export function buildRequest(input: {
 }
 
 const KINDS = new Set<SuggestKind>(["question", "branch", "topic", "generated"]);
+
+/** The cloud judged the conversation to have run dry on that line. */
+export function parseStalled(body: unknown): boolean {
+  return (body as { stalled?: unknown } | null)?.stalled === true;
+}
 
 /** The cloud's answer, checked: whatever is malformed is dropped. A turn
  *  shows one line, a lull at most three. Pure. */
