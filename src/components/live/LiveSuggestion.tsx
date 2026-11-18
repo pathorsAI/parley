@@ -1,5 +1,6 @@
 import { Lightbulb } from "lucide-react";
 import { useStore } from "../../lib/store";
+import { useLiveMeeting } from "../../lib/meeting/liveSession";
 import { CLOUD_ENABLED } from "../../lib/flags";
 import { useI18n, type TranslationKey } from "../../i18n";
 import type { SuggestKind, Suggestion } from "../../lib/meeting/liveSuggest";
@@ -19,14 +20,14 @@ function originLabel(item: Suggestion, t: (key: TranslationKey, vars?: Record<st
 
 /**
  * The live suggestion (即時建議), between the agenda and the tabs so it shows
- * on every tab: one line to say after the other side finishes a sentence, or a
+ * on every tab (and above the main window's live screen): one line to say after the other side finishes a sentence, or a
  * few directions when the talk runs dry. Nothing to click — it leaves on its
  * own (meeting/liveSuggest.ts cardExpired), and whether it was used is read
  * from the transcript afterwards. Renders nothing when there is no card.
  */
-export function LiveSuggestionBar() {
+export function LiveSuggestionBar({ className = "mx-5 mt-3" }: Readonly<{ className?: string }>) {
   const { t } = useI18n();
-  const card = useStore((s) => s.liveSuggestion);
+  const card = useLiveMeeting((s) => s.liveSuggestion);
   const on = useStore((s) => s.settings.liveSuggestions);
   if (!CLOUD_ENABLED || !on || !card || card.items.length === 0) return null;
   const lull = card.mode === "lull";
@@ -35,7 +36,7 @@ export function LiveSuggestionBar() {
     <div
       role="status"
       aria-live="polite"
-      className="mx-5 mt-3 shrink-0 animate-in fade-in-0 slide-in-from-top-1 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 duration-200"
+      className={`${className} shrink-0 animate-in fade-in-0 slide-in-from-top-1 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 duration-200`}
     >
       <p className="flex items-center gap-1.5 text-[11px] font-medium text-primary">
         <Lightbulb className="size-3 shrink-0" />
