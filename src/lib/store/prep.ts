@@ -10,7 +10,6 @@ import { applyAiChecks, toggleAgendaItem, type AgendaCheck } from "../meeting/ag
 import {
   emptyPlaybook,
   playbookWithItem,
-  playbookWithEdit,
   playbookWithoutItem,
   type MeetingPlaybook,
   type PlaybookItemFields,
@@ -195,7 +194,6 @@ export interface PrepSlice {
    *  meeting's copy is what live suggestions read. */
   meetingPlaybook: MeetingPlaybook;
   addPlaybookItem: (list: PlaybookList, fields: PlaybookItemFields) => void;
-  updatePlaybookItem: (list: PlaybookList, id: string, fields: PlaybookItemFields) => void;
   removePlaybookItem: (list: PlaybookList, id: string) => void;
   /** Principled-negotiation setup for THIS deal (per-meeting, not global). Feeds
    *  BATNA / ZOPA / walk-away reasoning in the analysis. */
@@ -426,8 +424,6 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
   setNegotiationField: (field, value) => set({ [field]: value }),
   addPlaybookItem: (list, fields) =>
     set((s) => ({ meetingPlaybook: playbookWithItem(s.meetingPlaybook, list, fields) })),
-  updatePlaybookItem: (list, id, fields) =>
-    set((s) => ({ meetingPlaybook: playbookWithEdit(s.meetingPlaybook, list, id, fields) })),
   removePlaybookItem: (list, id) =>
     set((s) => ({ meetingPlaybook: playbookWithoutItem(s.meetingPlaybook, list, id) })),
 

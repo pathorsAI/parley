@@ -6,7 +6,6 @@ import {
   MAX_PLAYBOOK_TEXT,
   normalizePlaybook,
   playbookFromLists,
-  playbookWithEdit,
   playbookWithItem,
   playbookWithoutItem,
   type MeetingPlaybook,
@@ -91,17 +90,6 @@ describe("editing", () => {
     expect(playbookWithItem(PB, "branches", { when: " x ", then: " y " }).branches[1]).toMatchObject({ when: "x", then: "y" });
     const full = { ...PB, topics: Array.from({ length: MAX_PLAYBOOK_ITEMS }, (_, i) => ({ id: `t${i}`, text: "t" })) };
     expect(playbookWithItem(full, "topics", { text: "one more" })).toBe(full);
-  });
-
-  it("edits an item in place; blanking it removes it", () => {
-    expect(playbookWithEdit(PB, "questions", "q1", { text: " Budget range? " }).questions).toEqual([
-      { id: "q1", text: "Budget range?" },
-    ]);
-    expect(playbookWithEdit(PB, "branches", "b1", { then: "Ask for their numbers" }).branches).toEqual([
-      { id: "b1", when: "too expensive", then: "Ask for their numbers" },
-    ]);
-    expect(playbookWithEdit(PB, "topics", "t1", { text: "" }).topics).toEqual([]);
-    expect(playbookWithEdit(PB, "branches", "b1", { when: " " }).branches).toEqual([]);
   });
 
   it("removes by id, leaving the other lists alone", () => {

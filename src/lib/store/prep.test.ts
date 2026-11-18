@@ -132,14 +132,11 @@ describe("the playbook in the prep", () => {
     return [p.questions.map((q) => q.text), p.branches.map((b) => `${b.when}→${b.then}`), p.topics.map((t) => t.text)];
   };
 
-  it("is edited with the add / update / remove actions", () => {
+  it("is edited with the add / remove actions", () => {
     useStore.setState(INITIAL, true);
     fill();
-    const s = useStore.getState();
-    const qid = s.meetingPlaybook.questions[0].id;
-    s.updatePlaybookItem("questions", qid, { text: "Budget range?" });
-    s.removePlaybookItem("topics", useStore.getState().meetingPlaybook.topics[0].id);
-    expect(texts()).toEqual([["Budget range?"], ["too expensive→Ask what they compare against"], []]);
+    useStore.getState().removePlaybookItem("topics", useStore.getState().meetingPlaybook.topics[0].id);
+    expect(texts()).toEqual([["Budget?"], ["too expensive→Ask what they compare against"], []]);
   });
 
   it("is saved with the draft, cleared for the next, and loaded back by edit and take", () => {

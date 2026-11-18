@@ -123,30 +123,6 @@ export function playbookWithItem(p: MeetingPlaybook, list: PlaybookList, f: Play
   return { ...p, [list]: [...p[list], { id, text }] };
 }
 
-/** `p` with item `id` of `list` edited. An edit that would blank the item
- *  removes it instead. Pure. */
-export function playbookWithEdit(
-  p: MeetingPlaybook,
-  list: PlaybookList,
-  id: string,
-  f: PlaybookItemFields,
-): MeetingPlaybook {
-  if (list === "branches") {
-    const branches = p.branches
-      .map((b) =>
-        b.id === id
-          ? { ...b, when: f.when === undefined ? b.when : itemText(f.when), then: f.then === undefined ? b.then : itemText(f.then) }
-          : b,
-      )
-      .filter((b) => b.when && b.then);
-    return { ...p, branches };
-  }
-  if (f.text === undefined) return p;
-  const text = itemText(f.text);
-  const items = p[list].map((x) => (x.id === id ? { ...x, text } : x)).filter((x) => x.text);
-  return { ...p, [list]: items };
-}
-
 /** `p` without item `id` of `list`. Pure. */
 export function playbookWithoutItem(p: MeetingPlaybook, list: PlaybookList, id: string): MeetingPlaybook {
   return { ...p, [list]: (p[list] as { id: string }[]).filter((x) => x.id !== id) };
