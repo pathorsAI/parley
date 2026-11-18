@@ -18,6 +18,7 @@ import { DeliveryPanel } from "../delivery/DeliveryPanel";
 import { ReportNav } from "./ReportNav";
 import { ActionItemsPanel } from "../replay/ActionItemsPanel";
 import { AgendaNotCovered } from "./AgendaNotCovered";
+import { LiveSuggestionsUsed } from "./LiveSuggestionsUsed";
 import { AskPanel } from "../sidebar/AskPanel";
 import { StudyHeader, STUDY_TABPANEL_ID, studyTabId } from "./StudyHeader";
 import { LapContext, useLapState } from "../../lib/onboarding/lap";
@@ -160,7 +161,12 @@ function TabPage({
   } else if (tab === "context") {
     body = <BackgroundSection background={background} />;
   } else {
-    body = <DeliveryPanel mode="replay" variant="full" />;
+    body = (
+      <>
+        <DeliveryPanel mode="replay" variant="full" />
+        <LiveSuggestionsUsed onSeek={seek} />
+      </>
+    );
   }
 
   return (
