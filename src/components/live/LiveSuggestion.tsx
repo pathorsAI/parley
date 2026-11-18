@@ -1,6 +1,7 @@
 import { Lightbulb } from "lucide-react";
 import { useStore } from "../../lib/store";
 import { useLiveMeeting } from "../../lib/meeting/liveSession";
+import { meetingCommand } from "../../lib/meeting/meetingWindow";
 import { CLOUD_ENABLED } from "../../lib/flags";
 import { useI18n, type TranslationKey } from "../../i18n";
 import type { SuggestKind, Suggestion } from "../../lib/meeting/liveSuggest";
@@ -58,12 +59,12 @@ export function LiveSuggestionBar({ className = "mx-5 mt-3" }: Readonly<{ classN
 }
 
 /** The 即時建議 switch, beside the background button. Needs a Parley Cloud
- *  sign-in: the suggestions are made there. */
+ *  sign-in: the suggestions are made there. Switched by the main window, which
+ *  owns the persisted settings (meetingWindow.ts toggleLiveSuggest). */
 export function LiveSuggestToggle() {
   const { t } = useI18n();
   const on = useStore((s) => s.settings.liveSuggestions);
   const signedIn = useStore((s) => !!s.cloudAuth?.token);
-  const updateSettings = useStore((s) => s.updateSettings);
   if (!CLOUD_ENABLED) return null;
   const label = signedIn ? t(on ? "liveSuggest.turnOff" : "liveSuggest.turnOn") : t("liveSuggest.signIn");
   return (
@@ -73,7 +74,7 @@ export function LiveSuggestToggle() {
       title={label}
       aria-pressed={on}
       disabled={!signedIn}
-      onClick={() => updateSettings({ liveSuggestions: !on })}
+      onClick={() => meetingCommand("toggleLiveSuggest")}
       className={`grid size-9 shrink-0 place-items-center rounded-[10px] border transition-colors hover:bg-muted disabled:opacity-50 ${
         on && signedIn ? "border-primary/40 bg-primary/10 text-primary" : "bg-background text-foreground/80"
       }`}
