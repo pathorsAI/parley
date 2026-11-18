@@ -33,7 +33,12 @@ BUNDLE_ID="com.pathors.parley.ios"
 
 # Keep in step with `route(_:)` in App/Parley/ScreenshotDemo.swift.
 ROUTES=(
-  "welcome:the signed-out welcome / sign-in screen"
+  "welcome:onboarding 1/4 — the welcome screen (signed out)"
+  "onboarding-account:onboarding 2/4 — sign in (signed out)"
+  "onboarding-org:onboarding 3/4 — organization: create one or go personal"
+  "onboarding-invited:onboarding 3/4 — organization, with an invitation"
+  "onboarding-joined:onboarding 3/4 — organization, already a member"
+  "onboarding-done:onboarding 4/4 — you're all set"
   "record:Record tab, a meeting in progress"
   "settled:a meeting just finished, filed into a folder"
   "adjust:the same, with the filing sheet open"
@@ -106,6 +111,11 @@ command -v xcrun >/dev/null || fail "Xcode is not installed. Install it from the
 xcodebuild -version >/dev/null 2>&1 || fail "xcodebuild is not usable — the active developer directory is probably the Command Line Tools. Run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"
 if [[ $BUILD -eq 1 ]]; then
   command -v xcodegen >/dev/null || fail "XcodeGen is not installed. Run: brew install xcodegen"
+  # Xcode 26 ships without the Metal toolchain, and AuroraEdgeGlow.metal needs it.
+  if ! xcrun -sdk iphoneos metal --version >/dev/null 2>&1; then
+    say "Downloading the Metal toolchain (one time)"
+    xcodebuild -downloadComponent MetalToolchain
+  fi
 fi
 
 # ── Simulator ──────────────────────────────────────────────────────────────
@@ -154,6 +164,8 @@ xcrun simctl install "$UDID" "$APP"
 launch_args=(-AppleLanguages "($LANG_ARG)" -AppleLocale "$LOCALE_ARG")
 if [[ "$ROUTE" == "welcome" ]]; then
   launch_args+=(-ParleyDemo signedOut)
+elif [[ "$ROUTE" == "onboarding-account" ]]; then
+  launch_args+=(-ParleyDemo signedOut -ParleyDemoRoute "$ROUTE")
 else
   launch_args+=(-ParleyDemo signedIn -ParleyDemoRoute "$ROUTE")
 fi

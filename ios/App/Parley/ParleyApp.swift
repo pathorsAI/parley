@@ -174,6 +174,13 @@ struct MainTabs: View {
     /// The selection, lifted out of this view so Settings can send the user to
     /// the Library — see `TabRouter`.
     @StateObject private var router = TabRouter()
+    /// Set when a first sign-in started from the onboarding: its last two steps
+    /// (organization, hand-off) cover the tabs until they are left.
+    @AppStorage(OnboardingFlag.afterSignInKey) private var onboardingAfterSignIn = false
+    @AppStorage(OnboardingFlag.completedKey) private var onboardingCompleted = false
+    #if DEBUG
+        @ObservedObject private var demo = ScreenshotDemo.shared
+    #endif
 
     var body: some View {
         TabView(selection: $router.tab) {
@@ -201,5 +208,32 @@ struct MainTabs: View {
             // The DEBUG screenshot routes land on a tab without a tap.
             .onReceive(ScreenshotDemo.shared.$tab) { router.tab = $0 }
         #endif
+        .overlay {
+            if let start = onboardingStart {
+                OnboardingAfterSignIn(startAt: start, finish: finishOnboarding)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: onboardingStart)
+    }
+
+    /// Which post-sign-in step to open on, or nil when there is none to show.
+    private var onboardingStart: OnboardingStep? {
+        #if DEBUG
+            if let step = demo.onboardingAfterSignInStep { return step }
+        #endif
+        return onboardingAfterSignIn ? .org : nil
+    }
+
+    private func finishOnboarding(_ exit: OnboardingAfterSignIn.Exit) {
+        onboardingAfterSignIn = false
+        onboardingCompleted = true
+        #if DEBUG
+            demo.onboarding = nil
+        #endif
+        switch exit {
+        case .sample: router.showGettingStarted()
+        case .record: router.tab = .record
+        }
     }
 }

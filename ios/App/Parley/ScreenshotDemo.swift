@@ -41,7 +41,10 @@
     /// "Show the getting-started list again", pressed, landing on the Library),
     /// `summary` / `jump` / `nosummary` (the recording page's two faces — see
     /// `docs/design/ios-recording-page.md`), and `voicehistory` (Library ›
-    /// Voice typing, one entry per polish outcome).
+    /// Voice typing, one entry per polish outcome), and the onboarding's steps:
+    /// `onboarding-account` (run with `-ParleyDemo signedOut`), then
+    /// `onboarding-org` / `onboarding-invited` / `onboarding-joined` and
+    /// `onboarding-done` (signed in, over the tabs).
     @MainActor
     final class ScreenshotDemo: ObservableObject {
         static let shared = ScreenshotDemo()
@@ -69,6 +72,30 @@
         @Published var allowsChecklist = false
         /// Library pushes the sample recording, as the lap opens it.
         @Published var showSample = false
+        /// The onboarding step to open on (`onboarding-*` routes). The account
+        /// step runs signed out; the rest run signed in, over the tabs.
+        @Published var onboarding: OnboardingScenario?
+
+        enum OnboardingScenario: Equatable {
+            case account, org, orgInvited, orgJoined, done
+        }
+
+        /// The post-sign-in step the current scenario opens, if it has one.
+        var onboardingAfterSignInStep: OnboardingStep? {
+            switch onboarding {
+            case .org, .orgInvited, .orgJoined: return .org
+            case .done: return .done
+            case .account, nil: return nil
+            }
+        }
+
+        /// The invitation the `onboarding-invited` route offers.
+        static var onboardingInvitation: CloudInvitation {
+            CloudInvitation(
+                id: "demo-invitation", organizationId: "demo-org-invite",
+                organizationName: t("Northwind Sales", "北風業務部"), role: "member",
+                status: "pending", expiresAtMs: nil)
+        }
         /// Library switches to its Voice typing section, seeded with one
         /// history entry per polish outcome (`voicehistory`).
         @Published var showVoiceTyping = false
@@ -160,6 +187,7 @@
             pressResetChecklist = false
             allowsChecklist = false
             showSample = false
+            onboarding = nil
             showVoiceTyping = false
             keyboardHarness = false
             recordingID = Self.featured.id
@@ -234,6 +262,11 @@
             case "keyboard":
                 tab = .settings
                 focusKeyboardSection = true
+            case "onboarding-account": onboarding = .account
+            case "onboarding-org": onboarding = .org
+            case "onboarding-invited": onboarding = .orgInvited
+            case "onboarding-joined": onboarding = .orgJoined
+            case "onboarding-done": onboarding = .done
             case "settings": tab = .settings
             case "movetofolder":
                 tab = .library
