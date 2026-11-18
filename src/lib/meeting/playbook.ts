@@ -1,7 +1,7 @@
 // A meeting draft's playbook: what to ask, how to steer when the other side
 // says something specific, and where the conversation can go next. The live
 // suggestions (meeting/liveSuggest.ts) pick from it; Parley Cloud stores it with
-// the draft. Everything here is pure.
+// the draft. Everything here is pure, apart from minting ids.
 
 /** A question worth asking, written the way it would be said. */
 export interface PlaybookQuestion {
@@ -91,4 +91,63 @@ export function playbookFromLists(lists: {
     branches: lists.branches ?? [],
     topics: (lists.topics ?? []).map((t) => ({ text: t })),
   });
+}
+
+// ── Editing (the draft sheet) ──────────────────────────────────────────────────
+
+/** The three playbook lists, by name. */
+export type PlaybookList = keyof MeetingPlaybook;
+
+/** The editable fields of a playbook item: `text` for a question or topic,
+ *  `when` / `then` for a branch. */
+export type PlaybookItemFields = { text?: string; when?: string; then?: string };
+
+/** A playbook item's field, trimmed and capped. */
+function itemText(v: string | undefined): string {
+  return (v ?? "").trim().slice(0, MAX_PLAYBOOK_TEXT);
+}
+
+/** `p` with a new item (a fresh id) at the end of `list`; unchanged when the
+ *  item is blank (a branch needs both sides) or the list is full. */
+export function playbookWithItem(p: MeetingPlaybook, list: PlaybookList, f: PlaybookItemFields): MeetingPlaybook {
+  if (p[list].length >= MAX_PLAYBOOK_ITEMS) return p;
+  const id = crypto.randomUUID();
+  if (list === "branches") {
+    const when = itemText(f.when);
+    const then = itemText(f.then);
+    if (!when || !then) return p;
+    return { ...p, branches: [...p.branches, { id, when, then }] };
+  }
+  const text = itemText(f.text);
+  if (!text) return p;
+  return { ...p, [list]: [...p[list], { id, text }] };
+}
+
+/** `p` with item `id` of `list` edited. An edit that would blank the item
+ *  removes it instead. Pure. */
+export function playbookWithEdit(
+  p: MeetingPlaybook,
+  list: PlaybookList,
+  id: string,
+  f: PlaybookItemFields,
+): MeetingPlaybook {
+  if (list === "branches") {
+    const branches = p.branches
+      .map((b) =>
+        b.id === id
+          ? { ...b, when: f.when === undefined ? b.when : itemText(f.when), then: f.then === undefined ? b.then : itemText(f.then) }
+          : b,
+      )
+      .filter((b) => b.when && b.then);
+    return { ...p, branches };
+  }
+  if (f.text === undefined) return p;
+  const text = itemText(f.text);
+  const items = p[list].map((x) => (x.id === id ? { ...x, text } : x)).filter((x) => x.text);
+  return { ...p, [list]: items };
+}
+
+/** `p` without item `id` of `list`. Pure. */
+export function playbookWithoutItem(p: MeetingPlaybook, list: PlaybookList, id: string): MeetingPlaybook {
+  return { ...p, [list]: (p[list] as { id: string }[]).filter((x) => x.id !== id) };
 }

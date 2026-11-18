@@ -6,6 +6,7 @@ import { syncEnabled } from "./cloud/client";
 import { log } from "./log";
 import type { ActionItem, EvalDef, TimelineEvent } from "./types";
 import type { MeetingDraft } from "./store/prep";
+import { playbookFromLists } from "./meeting/playbook";
 import * as ipc from "./ipc/commands";
 import { SESSION_COMMANDS_EVENT, listenEvent, type UnlistenFn } from "./ipc/events";
 
@@ -673,7 +674,20 @@ function draftForMcp(d: MeetingDraft) {
     context: d.meetingContext,
     folderId: d.meetingFolderId,
     agenda: d.todos.map((t) => t.text),
+    questions: d.playbook.questions.map((q) => q.text),
+    branches: d.playbook.branches.map((b) => ({ when: b.when, then: b.then })),
+    topics: d.playbook.topics.map((t) => t.text),
   };
+}
+
+/** `{ when, then }` branches from an MCP argument (the Rust side checked the
+ *  shape; anything else is dropped here too). */
+function asBranches(v: unknown): { when: string; then: string }[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter(
+    (b): b is { when: string; then: string } =>
+      !!b && typeof b === "object" && typeof b.when === "string" && typeof b.then === "string",
+  );
 }
 
 async function rpcListMeetingDrafts(): Promise<unknown> {
@@ -705,6 +719,11 @@ async function rpcCreateMeetingDraft(a: RpcArgs): Promise<unknown> {
     meetingContext: asString(a.context, "").trim(),
     meetingFolderId: asNonEmptyString(a.folderId) ?? null,
     agenda: (asStringArray(a.agenda) ?? []).map((t) => t.trim()).filter(Boolean),
+    playbook: playbookFromLists({
+      questions: asStringArray(a.questions),
+      branches: asBranches(a.branches),
+      topics: asStringArray(a.topics),
+    }),
   });
   return draftForMcp(draft);
 }
@@ -742,9 +761,9 @@ const RPC_HANDLERS = new Map<string, (a: RpcArgs) => Promise<unknown>>([
 
 /**
  * Execute an RPC command (one that carries an id) and return its result data.
- * Throwing here surfaces as the MCP tool's error message.
+ * Throwing here surfaces as the MCP tool's error message. Exported for tests.
  */
-async function applyRpcCommand(action: string, a: RpcArgs): Promise<unknown> {
+export async function applyRpcCommand(action: string, a: RpcArgs): Promise<unknown> {
   const handler = RPC_HANDLERS.get(action);
   if (!handler) throw new Error(`unknown command: ${action}`);
   return await handler(a);

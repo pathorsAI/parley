@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MeetingDraft } from "../store/prep";
 import type { CloudMeetingDraft, DraftSyncState } from "./draftSync";
+import { emptyPlaybook, type MeetingPlaybook } from "../meeting/playbook";
 
 // Meeting-draft cloud sync: the pure diff/merge, then the runner end to end
 // against a fake cloud over the REAL store (so the prep slice's merge action,
@@ -76,6 +77,7 @@ const draft = (over: Partial<MeetingDraft> = {}): MeetingDraft => ({
   meetingTarget: "",
   meetingFloor: "",
   todos: [{ id: "t1", text: "Ask budget", done: false }],
+  playbook: emptyPlaybook(),
   meetingFolderId: null,
   meetingOrgShare: null,
   updatedAt: NOW - 10_000,
@@ -120,6 +122,65 @@ describe("mapping", () => {
     expect(batches(rows).map((b) => b.length)).toEqual([PUSH_BATCH, 1]);
     const big = row({ meetingContext: "字".repeat(20_000) });
     expect(batches(Array.from({ length: 20 }, (_, i) => ({ ...big, id: `b${i}` }))).length).toBeGreaterThan(1);
+  });
+});
+
+const PLAYBOOK: MeetingPlaybook = {
+  questions: [{ id: "q1", text: "What does next year's volume look like?" }],
+  branches: [{ id: "b1", when: "too expensive", then: "Ask what they compare against" }],
+  topics: [{ id: "t1", text: "Their expansion plans" }],
+};
+
+/** A row as a server from before playbooks sends it: no `playbook` key. */
+const oldServerRow = (over: Partial<CloudMeetingDraft> = {}): CloudMeetingDraft => {
+  const { playbook: _none, ...rest } = row(over);
+  return rest;
+};
+
+describe("playbook", () => {
+  it("goes up in the PUT row and comes back down unchanged", () => {
+    const up = toCloudDraft(draft({ playbook: PLAYBOOK }));
+    expect(up.playbook).toEqual(PLAYBOOK);
+    expect(fromCloudDraft(up, null)).toEqual(draft({ playbook: PLAYBOOK }));
+  });
+
+  it("is read defensively off the wire", () => {
+    const messy = row({ playbook: { questions: [{ id: "q1", text: "  Budget?  " }, { text: "" }], branches: "x" } as never });
+    expect(fromCloudDraft(messy, null).playbook).toEqual({
+      questions: [{ id: "q1", text: "Budget?" }],
+      branches: [],
+      topics: [],
+    });
+  });
+
+  it("a row with no playbook key keeps the local draft's (an older server)", () => {
+    const r = oldServerRow({ title: "Moved" });
+    expect(fromCloudDraft(r, null, PLAYBOOK).playbook).toEqual(PLAYBOOK);
+    expect(fromCloudDraft(r, null).playbook).toEqual(emptyPlaybook());
+    // An explicit empty playbook from a new server does clear it.
+    expect(fromCloudDraft(row({ playbook: emptyPlaybook() }), null, PLAYBOOK).playbook).toEqual(emptyPlaybook());
+  });
+
+  it("an older server's pulled row updates the draft but keeps its playbook", () => {
+    const local = [draft({ playbook: PLAYBOOK })];
+    const state = stateWith(local);
+    const res = applyExchange(local, state, outgoingChanges(local, state, NOW), {
+      ...noExchange,
+      pulled: [oldServerRow({ title: "Moved", updatedAt: NOW - 1 })],
+    });
+    expect(res.changes.upserts).toEqual([draft({ title: "Moved", updatedAt: NOW - 1, playbook: PLAYBOOK })]);
+  });
+
+  it("an edited playbook is a change to push; an empty one fingerprints as before playbooks", () => {
+    const state = stateWith([draft()]);
+    expect(outgoingChanges([draft({ playbook: PLAYBOOK })], state, NOW).drafts.map((d) => d.id)).toEqual(["d1"]);
+    expect(fingerprint(draft())).not.toContain("playbook");
+    expect(fingerprint(draft({ playbook: PLAYBOOK }))).toContain("playbook");
+  });
+
+  it("a tombstone carries the empty playbook", () => {
+    const out = outgoingChanges([], stateWith([draft({ playbook: PLAYBOOK })]), NOW);
+    expect(out.drafts[0].playbook).toEqual(emptyPlaybook());
   });
 });
 

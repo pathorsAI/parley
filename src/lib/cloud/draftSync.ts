@@ -39,6 +39,7 @@ import { isTauri } from "../tauriEvents";
 import { DEFAULT_REMINDER_LEAD_MIN, type MeetingDraft } from "../store/prep";
 import type { MeetingShare } from "../history/history";
 import type { TodoItem } from "../types";
+import { emptyPlaybook, isPlaybookEmpty, normalizePlaybook, type MeetingPlaybook } from "../meeting/playbook";
 import { cloudFetch, syncEnabled } from "./client";
 
 /** The org-share choice as the cloud stores it: the desktop's MeetingShare,
@@ -58,6 +59,9 @@ export interface CloudMeetingDraft {
   meetingTarget: string;
   meetingFloor: string;
   todos: TodoItem[];
+  /** Always sent. A server from before playbooks leaves it out of its rows,
+   *  and the local draft's playbook then stands (fromCloudDraft). */
+  playbook?: MeetingPlaybook;
   meetingFolderId: string | null;
   meetingOrgShare: CloudDraftShare;
   /** Client epoch ms of the last change — the last-write-wins clock. */
@@ -153,6 +157,7 @@ export function toCloudDraft(d: MeetingDraft): CloudMeetingDraft {
     meetingTarget: d.meetingTarget,
     meetingFloor: d.meetingFloor,
     todos: todosOf(d.todos),
+    playbook: normalizePlaybook(d.playbook),
     meetingFolderId: d.meetingFolderId,
     meetingOrgShare: canonicalShare(d.meetingOrgShare),
     updatedAt: Number.isFinite(d.updatedAt) && d.updatedAt > 0 ? Math.floor(d.updatedAt) : 0,
@@ -161,8 +166,14 @@ export function toCloudDraft(d: MeetingDraft): CloudMeetingDraft {
 }
 
 /** A live cloud row as a local draft, read defensively (whatever is malformed
- *  falls back to empty). `remindedFor` is this device's, given by the caller. */
-export function fromCloudDraft(row: CloudMeetingDraft, remindedFor: number | null): MeetingDraft {
+ *  falls back to empty). `remindedFor` is this device's, given by the caller;
+ *  so is `localPlaybook`, kept when the row has no `playbook` at all (a server
+ *  from before playbooks must not wipe one made here). */
+export function fromCloudDraft(
+  row: CloudMeetingDraft,
+  remindedFor: number | null,
+  localPlaybook: MeetingPlaybook | null = null,
+): MeetingDraft {
   const lead = row.reminderLeadMin;
   return {
     id: row.id,
@@ -176,6 +187,7 @@ export function fromCloudDraft(row: CloudMeetingDraft, remindedFor: number | nul
     meetingTarget: str(row.meetingTarget),
     meetingFloor: str(row.meetingFloor),
     todos: todosOf(row.todos),
+    playbook: "playbook" in row ? normalizePlaybook(row.playbook) : (localPlaybook ?? emptyPlaybook()),
     meetingFolderId: typeof row.meetingFolderId === "string" ? row.meetingFolderId : null,
     // A share made in the cloud may lack `mode`; the desktop reads a missing
     // mode as a copy (only "move" is special), so it is kept as sent.
@@ -184,11 +196,13 @@ export function fromCloudDraft(row: CloudMeetingDraft, remindedFor: number | nul
   };
 }
 
-/** The fingerprint of a draft's synced content (incl. its clock). "" = absent. */
+/** The fingerprint of a draft's synced content (incl. its clock). "" = absent.
+ *  An empty playbook is left out, so a draft without one fingerprints as it
+ *  did before playbooks existed (snapshots taken then still match). */
 export function fingerprint(d: MeetingDraft | undefined): string {
   if (!d) return "";
-  const { deletedAt: _deleted, ...rest } = toCloudDraft(d);
-  return JSON.stringify(rest);
+  const { deletedAt: _deleted, playbook, ...rest } = toCloudDraft(d);
+  return JSON.stringify(isPlaybookEmpty(playbook) ? rest : { ...rest, playbook });
 }
 
 function tombstone(id: string, at: number): CloudMeetingDraft {
@@ -203,6 +217,7 @@ function tombstone(id: string, at: number): CloudMeetingDraft {
     meetingTarget: "",
     meetingFloor: "",
     todos: [],
+    playbook: emptyPlaybook(),
     meetingFolderId: null,
     meetingOrgShare: null,
     updatedAt: at,
@@ -364,7 +379,7 @@ function foldRow(
     if (current) changes.removed.push(id);
     return;
   }
-  const draft = fromCloudDraft(row, current?.remindedFor ?? null);
+  const draft = fromCloudDraft(row, current?.remindedFor ?? null, current?.playbook ?? null);
   const fp = fingerprint(draft);
   state.synced[id] = fp;
   if (fp !== localFp(id)) changes.upserts.push(draft);

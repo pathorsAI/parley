@@ -381,7 +381,10 @@ fn local_cases() -> Value {
         ["rename_org_folder", { "orgId": "o1", "name": "x" }],
         ["share_recording_to_org", { "id": "r1" }],
         ["delete_org_recording", { "id": "r1" }],
-        ["create_meeting_draft", { "agenda": "not a list" }]
+        ["create_meeting_draft", { "agenda": "not a list" }],
+        ["create_meeting_draft", { "questions": [1] }],
+        ["create_meeting_draft", { "branches": [{ "when": "too expensive" }] }],
+        ["create_meeting_draft", { "topics": "not a list" }]
     ]"#,
     )
     .unwrap()
@@ -397,6 +400,7 @@ fn rpc_cases() -> Value {
         ["create_folder", { "name": "Clients" }],
         ["list_meeting_drafts", {}],
         ["create_meeting_draft", { "title": "Pricing call", "startAt": "2026-11-03T14:00:00+08:00", "context": "BATNA: renew with the current vendor", "agenda": ["Confirm volume"] }],
+        ["create_meeting_draft", { "title": "Renewal", "questions": ["What does volume look like next year?"], "branches": [{ "when": "too expensive", "then": "Ask what they compare against" }], "topics": ["Their expansion plans"] }],
         ["rename_folder", { "id": "f1", "name": "Renamed" }],
         ["delete_folder", { "id": "f1" }],
         ["delete_folder", { "id": "fail-me" }],

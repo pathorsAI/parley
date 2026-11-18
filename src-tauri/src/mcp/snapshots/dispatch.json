@@ -1794,6 +1794,33 @@
     "tool": "create_meeting_draft"
   },
   {
+    "args": {
+      "questions": [
+        1
+      ]
+    },
+    "error": "questions must be an array of strings",
+    "tool": "create_meeting_draft"
+  },
+  {
+    "args": {
+      "branches": [
+        {
+          "when": "too expensive"
+        }
+      ]
+    },
+    "error": "branches must be an array of { when, then } objects with string values",
+    "tool": "create_meeting_draft"
+  },
+  {
+    "args": {
+      "topics": "not a list"
+    },
+    "error": "topics must be an array of strings",
+    "tool": "create_meeting_draft"
+  },
+  {
     "file": "templates.json",
     "lines": [
       "{",
@@ -1977,12 +2004,60 @@
           "agenda": [
             "Confirm volume"
           ],
+          "branches": null,
           "context": "BATNA: renew with the current vendor",
           "endAt": null,
           "folderId": null,
+          "questions": null,
           "reminderLeadMin": null,
           "startAt": "2026-11-03T14:00:00+08:00",
-          "title": "Pricing call"
+          "title": "Pricing call",
+          "topics": null
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "create_meeting_draft"
+  },
+  {
+    "args": {
+      "branches": [
+        {
+          "then": "Ask what they compare against",
+          "when": "too expensive"
+        }
+      ],
+      "questions": [
+        "What does volume look like next year?"
+      ],
+      "title": "Renewal",
+      "topics": [
+        "Their expansion plans"
+      ]
+    },
+    "result": {
+      "received": {
+        "action": "create_meeting_draft",
+        "args": {
+          "agenda": null,
+          "branches": [
+            {
+              "then": "Ask what they compare against",
+              "when": "too expensive"
+            }
+          ],
+          "context": null,
+          "endAt": null,
+          "folderId": null,
+          "questions": [
+            "What does volume look like next year?"
+          ],
+          "reminderLeadMin": null,
+          "startAt": null,
+          "title": "Renewal",
+          "topics": [
+            "Their expansion plans"
+          ]
         },
         "instance": "http://127.0.0.1:3011/mcp"
       }

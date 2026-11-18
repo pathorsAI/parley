@@ -13,16 +13,29 @@ pub(super) const DOMAIN: Domain = Domain {
     ],
 };
 
+/// A list argument, passed on as given when every item passes `ok`; `null`
+/// when absent.
+fn list_arg(args: &Value, key: &str, ok: fn(&Value) -> bool, shape: &str) -> anyhow::Result<Value> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(Value::Null),
+        Some(Value::Array(items)) if items.iter().all(ok) => Ok(Value::Array(items.clone())),
+        Some(_) => anyhow::bail!("{key} must be an array of {shape}"),
+    }
+}
+
+/// A playbook branch: `{ when, then }`, both strings.
+fn is_branch(v: &Value) -> bool {
+    v.get("when").is_some_and(Value::is_string) && v.get("then").is_some_and(Value::is_string)
+}
+
 /// The draft's fields, each passed on as given (`null` when absent); `agenda`,
-/// when given, must be an array of strings.
+/// `questions` and `topics`, when given, must be arrays of strings, and
+/// `branches` an array of `{ when, then }` string pairs.
 fn draft_args(args: Value) -> anyhow::Result<Value> {
-    let agenda = match args.get("agenda") {
-        None | Some(Value::Null) => Value::Null,
-        Some(Value::Array(items)) if items.iter().all(Value::is_string) => {
-            Value::Array(items.clone())
-        }
-        Some(_) => anyhow::bail!("agenda must be an array of strings"),
-    };
+    let agenda = list_arg(&args, "agenda", Value::is_string, "strings")?;
+    let questions = list_arg(&args, "questions", Value::is_string, "strings")?;
+    let branches = list_arg(&args, "branches", is_branch, "{ when, then } objects with string values")?;
+    let topics = list_arg(&args, "topics", Value::is_string, "strings")?;
     let field = |key: &str| args.get(key).cloned().unwrap_or(Value::Null);
     Ok(json!({
         "title": field("title"),
@@ -31,7 +44,10 @@ fn draft_args(args: Value) -> anyhow::Result<Value> {
         "reminderLeadMin": field("reminderLeadMin"),
         "context": field("context"),
         "folderId": field("folderId"),
-        "agenda": agenda
+        "agenda": agenda,
+        "questions": questions,
+        "branches": branches,
+        "topics": topics
     }))
 }
 
@@ -42,8 +58,10 @@ fn schemas() -> Vec<Value> {
             "List meeting drafts",
             "List the saved meeting drafts — the upcoming meetings the user has \
              prepared — as { id, title, startAt, endAt, reminderLeadMin, context, \
-             folderId, agenda }. Times are ISO 8601 strings, or null for a draft \
-             with no time yet.",
+             folderId, agenda, questions, branches, topics }. Times are ISO 8601 \
+             strings, or null for a draft with no time yet. `questions`, \
+             `branches` ({ when, then }) and `topics` are the draft's playbook, \
+             which live suggestions pick from during the meeting.",
             json!({ "type": "object", "properties": {} }),
         ),
         tool(
@@ -58,6 +76,12 @@ fn schemas() -> Vec<Value> {
              alternative if no deal), target and bottom line into `context` as \
              plain lines, e.g. 'BATNA: …', 'Target: …', 'Bottom line: …' — \
              Parley has no separate fields for them. \
+             Optionally give the meeting a playbook, which live suggestions pick \
+             from while it runs: `questions` worth asking (each written the way \
+             it would be said), `branches` for steering when the other side says \
+             something specific ({ when: what they say, then: where to steer }), \
+             and `topics` to bring up when the conversation runs dry. Up to 30 \
+             items each. \
              `title` may be left out: a draft with a start time is then named \
              after it. Safe to call while a meeting is recording.",
             json!({
@@ -69,7 +93,21 @@ fn schemas() -> Vec<Value> {
                     "reminderLeadMin": { "type": "number", "description": "Minutes before the start to remind the user (default 5)." },
                     "context": { "type": "string", "description": "Background for the analysis, including any BATNA / target / bottom line." },
                     "folderId": { "type": "string", "description": "Personal folder to file the recording into (see list_folders)." },
-                    "agenda": { "type": "array", "items": { "type": "string" }, "description": "Checklist items to cover in the meeting." }
+                    "agenda": { "type": "array", "items": { "type": "string" }, "description": "Checklist items to cover in the meeting." },
+                    "questions": { "type": "array", "items": { "type": "string" }, "description": "Playbook: questions to ask, one line each, as they would be said." },
+                    "branches": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "when": { "type": "string", "description": "What the other side says." },
+                                "then": { "type": "string", "description": "Where to steer the conversation when they do." }
+                            },
+                            "required": ["when", "then"]
+                        },
+                        "description": "Playbook: if they say `when`, steer with `then`."
+                    },
+                    "topics": { "type": "array", "items": { "type": "string" }, "description": "Playbook: directions to explore when the conversation runs dry." }
                 }
             }),
         ),

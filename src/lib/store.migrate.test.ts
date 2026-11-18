@@ -192,6 +192,11 @@ describe("saved meeting drafts", () => {
     meetingTarget: "",
     meetingFloor: "",
     todos: [],
+    playbook: {
+      questions: [{ id: "q1", text: "預算多少？" }],
+      branches: [{ id: "b1", when: "太貴", then: "問他跟誰比" }],
+      topics: [],
+    },
     meetingFolderId: null,
     meetingOrgShare: null,
     updatedAt: 1,
@@ -200,6 +205,20 @@ describe("saved meeting drafts", () => {
   it("come back on the next launch", () => {
     const restored = mergePersistedState({ settings: {}, drafts: [draft] }, current());
     expect(restored.drafts).toEqual([draft]);
+  });
+
+  it("saved before playbooks existed come back with the empty one", () => {
+    const { playbook: _none, ...old } = draft;
+    const restored = mergePersistedState({ settings: {}, drafts: [old] }, current());
+    expect(restored.drafts).toEqual([{ ...old, playbook: { questions: [], branches: [], topics: [] } }]);
+  });
+
+  it("with a malformed playbook keep its well-formed items", () => {
+    const restored = mergePersistedState(
+      { settings: {}, drafts: [{ ...draft, playbook: { questions: "x", branches: [{ id: "b1", when: "太貴" }], topics: [{ id: "t1", text: " 擴點 " }] } }] },
+      current(),
+    );
+    expect(restored.drafts[0].playbook).toEqual({ questions: [], branches: [], topics: [{ id: "t1", text: "擴點" }] });
   });
 
   it("drop anything malformed", () => {

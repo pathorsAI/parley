@@ -5,6 +5,7 @@
 
 import type { TodoItem } from "../types";
 import type { NewDraftFields } from "../store/prep";
+import { emptyPlaybook } from "./playbook";
 
 /** One item the AI heard covered, and where (ms on the transcript's clock;
  *  undefined when the model named no usable line). */
@@ -120,5 +121,6 @@ export function carryOverDraft(title: string, uncovered: readonly TodoItem[]): N
     meetingContext: "",
     meetingFolderId: null,
     agenda: uncovered.map((t) => t.text.trim()).filter(Boolean),
+    playbook: emptyPlaybook(),
   };
 }
