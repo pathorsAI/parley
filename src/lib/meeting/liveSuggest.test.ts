@@ -157,15 +157,15 @@ describe("transcript facts", () => {
 });
 
 describe("buildRequest / parseSuggestions", () => {
-  it("sends the tail, the open agenda and recent suggestions", () => {
+  it("sends the tail, the open agenda (as the questions to pick from) and recent suggestions", () => {
     const turns = Array.from({ length: 20 }, (_, i) => turn(i % 2 ? "them" : "me", `line ${i}`, i * 1000));
     const req = buildRequest({
       mode: "turn",
       language: "zh-TW",
       context: "c".repeat(7000),
       agenda: [
-        { text: "預算", done: false },
-        { text: "時程", done: true },
+        { id: "a1", text: "預算", done: false },
+        { id: "a2", text: "時程", done: true },
       ],
       playbook: emptyPlaybook(),
       turns,
@@ -175,6 +175,8 @@ describe("buildRequest / parseSuggestions", () => {
     expect(req.transcript).toHaveLength(16);
     expect(req.transcript[0].text).toBe("line 4");
     expect(req.agenda).toEqual(["預算"]);
+    // A ticked item is never offered: only open ones become questions.
+    expect(req.playbook.questions).toEqual([{ id: "a1", text: "預算" }]);
     expect(req.context).toHaveLength(6000);
     expect(req.shown).toEqual([{ key: "q:1", text: "t", atMs: 5 }]);
     expect(req.nowMs).toBe(20_000);

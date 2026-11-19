@@ -174,7 +174,10 @@ export interface SuggestRequest {
   language: "zh-TW" | "en";
   context: string;
   agenda: string[];
-  playbook: import("./playbook").MeetingPlaybook;
+  /** The cloud's playbook shape: its `questions` are the agenda items still
+   *  open (the agenda is the one list of things to ask), so a ticked item is
+   *  never suggested. */
+  playbook: import("./playbook").MeetingPlaybook & { questions: { id: string; text: string }[] };
   transcript: Turn[];
   shown: { key: string; text: string; atMs: number }[];
   nowMs: number;
@@ -185,21 +188,23 @@ export function buildRequest(input: {
   mode: SuggestMode;
   language: "zh-TW" | "en";
   context: string;
-  agenda: readonly { text: string; done: boolean }[];
+  agenda: readonly { id: string; text: string; done: boolean }[];
   playbook: import("./playbook").MeetingPlaybook;
   turns: readonly Turn[];
   shown: readonly ShownSuggestion[];
   nowMs: number;
 }): SuggestRequest {
+  const open = input.agenda.filter((t) => !t.done && t.text.trim());
   return {
     mode: input.mode,
     language: input.language,
     context: input.context.slice(0, 6_000),
-    agenda: input.agenda
-      .filter((t) => !t.done && t.text.trim())
-      .map((t) => t.text.trim())
-      .slice(0, 20),
-    playbook: input.playbook,
+    agenda: open.map((t) => t.text.trim()).slice(0, 20),
+    playbook: {
+      questions: open.slice(0, 30).map((t) => ({ id: t.id, text: t.text.trim() })),
+      branches: input.playbook.branches,
+      topics: input.playbook.topics,
+    },
     transcript: input.turns.slice(-TAIL_TURNS).map((t) => ({ ...t, text: t.text.slice(0, 600) })),
     shown: input.shown.slice(-SHOWN_SENT).map((s) => ({ key: s.key, text: s.text, atMs: s.atMs })),
     nowMs: Math.round(input.nowMs),
