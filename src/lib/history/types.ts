@@ -5,6 +5,7 @@
 // unchanged. `HistoryEntrySummary` is the lightweight card the history grid
 // lists (written to `summary.json` so listing never parses the full entries).
 
+import type { ShownSuggestion } from "../meeting/liveSuggest";
 import type {
   ActionItem,
   DeliveryAssessment,
@@ -102,6 +103,11 @@ export interface HistoryEntry {
    *  keeps meta's). Absent on uploads, meetings without an agenda and entries
    *  saved before it existed: the report then shows no 沒談到的議程. */
   agenda?: TodoItem[];
+  /** The live suggestions (即時建議) shown during the meeting, each with when
+   *  it appeared on the transcript's clock — what the report's adoption rate
+   *  compares with what the user then said (meeting/suggestAdoption.ts).
+   *  Written once by the live save; absent when none were shown. */
+  liveSuggestions?: ShownSuggestion[];
 }
 
 /** The card shown in the history grid — small, so listing stays cheap. */

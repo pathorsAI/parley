@@ -1,15 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowUp,
   CalendarDays,
   Captions,
   FileText,
   GripVertical,
   Loader2,
   Maximize2,
-  MessageCircle,
   Minimize2,
   Minus,
   NotebookPen,
@@ -20,7 +16,6 @@ import {
   X,
 } from "lucide-react";
 import { useStore } from "../../lib/store";
-import { useStickToBottom } from "../../lib/useStickToBottom";
 import {
   COMPACT_BELOW,
   MINI_HEIGHT,
@@ -48,11 +43,9 @@ import { displaySpeakerLabel, labelContextOf } from "../../lib/speakers/labels";
 import { DestinationField } from "../DestinationSheet";
 import { MeetingContextField } from "../MeetingContextField";
 import { useMeetingDestination } from "../useMeetingDestination";
-import { CoachFeed } from "./CoachFeed";
-import { AgendaBar, MiniAgendaCount, useAgendaEndReminder } from "./AgendaBar";
+import { LiveSuggestionFeed, LiveSuggestionLines, LiveSuggestToggle, useLiveSuggestionCard } from "./LiveSuggestion";
 import { NotesEditor } from "./NotesEditor";
 import { LiveBanners } from "./LiveScreen";
-import { ASK_SUGGESTIONS, useCoachAsk, type AskCard } from "./coachAsk";
 import { useTabShortcuts } from "../../lib/commands/tabs";
 
 type Tab = "notes" | "transcript" | "coach";
@@ -212,21 +205,29 @@ function MiniWindow({
   fixed = false,
 }: Readonly<{ tab: Tab; onTab: (tab: Tab) => void; onExpand: () => void; fixed?: boolean }>) {
   const { t } = useI18n();
-  const cards = useCoachAsk((s) => s.cards);
-  const ask = useCoachAsk((s) => s.ask);
-  const busy = cards.some((c) => c.busy);
-  const last = cards.length ? cards[cards.length - 1] : null;
-  const [draft, setDraft] = useState("");
-  const [idx, setIdx] = useState(-1);
-  const [open, setOpen] = useState(false);
-  const presets = ASK_SUGGESTIONS.map((k) => t(k));
-  const coach = tab === "coach";
-  const answerOpen = coach && open && !!last;
   useMiniDocking(!fixed);
+  // The 教練 tab shows the current live suggestion under the row; the window
+  // grows by its height, and back to the bare row when it goes.
+  const suggestion = useLiveSuggestionCard();
+  const shown = tab === "coach" ? suggestion : null;
+  const [suggestionH, setSuggestionH] = useState(0);
+  const suggestionRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = suggestionRef.current;
+    if (!el) {
+      setSuggestionH(0);
+      return;
+    }
+    const measure = () => setSuggestionH(Math.ceil(el.getBoundingClientRect().height));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [shown]);
 
-  // Only a change of tab or answer resizes the window: on mount it already has
-  // the size the shrink gave it, and resizing then raced the shrink's reading
-  // of the size to restore later.
+  // Only a change of tab or suggestion resizes the window: on mount it already
+  // has the size the shrink gave it, and resizing then raced the shrink's
+  // reading of the size to restore later.
   const firstRun = useRef(true);
   useEffect(() => {
     if (firstRun.current) {
@@ -235,26 +236,8 @@ function MiniWindow({
       if (!fixed) void holdMiniMinHeight(MINI_MIN_HEIGHT[tab]);
       return;
     }
-    if (!fixed) void setMiniHeight(miniHeight(tab, answerOpen), MINI_MIN_HEIGHT[tab]);
-  }, [tab, answerOpen, fixed]);
-
-  function send() {
-    if (!draft.trim() || busy) return;
-    void ask(draft);
-    setDraft("");
-    setIdx(-1);
-    setOpen(true);
-  }
-
-  // ↑ ↓ walk the quick questions into the box; Enter asks.
-  function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
-    e.preventDefault();
-    const step = e.key === "ArrowDown" ? 1 : -1;
-    const next = idx < 0 ? (step > 0 ? 0 : presets.length - 1) : (idx + step + presets.length) % presets.length;
-    setIdx(next);
-    setDraft(presets[next]);
-  }
+    if (!fixed) void setMiniHeight(miniHeight(tab) + suggestionH, MINI_MIN_HEIGHT[tab] + suggestionH);
+  }, [tab, fixed, suggestionH]);
 
   return (
     <div
@@ -266,38 +249,7 @@ function MiniWindow({
       <div className="flex h-12 shrink-0 items-center gap-2 pr-1.5 pl-2" title={fixed ? undefined : t("floating.dockHint")}>
         <DragGrip />
         <RecordingClock withLabel={false} />
-        <MiniAgendaCount />
-        {coach ? (
-          <form
-            className="flex h-8 min-w-0 flex-1 items-center gap-1 rounded-lg border border-input bg-background pr-1 pl-2.5"
-            onSubmit={(e) => {
-              e.preventDefault();
-              send();
-            }}
-          >
-            <input
-              value={draft}
-              onChange={(e) => {
-                setDraft(e.target.value);
-                setIdx(-1);
-              }}
-              onKeyDown={onKeyDown}
-              aria-label={t("feed.askPlaceholder")}
-              placeholder={t("floating.capsuleAsk")}
-              className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none select-text placeholder:text-muted-foreground"
-            />
-            <button
-              type="submit"
-              aria-label={t("floating.send")}
-              disabled={busy || !draft.trim()}
-              className="grid size-6 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground disabled:opacity-60"
-            >
-              {busy ? <Loader2 className="size-3 animate-spin" /> : <ArrowUp className="size-3" />}
-            </button>
-          </form>
-        ) : (
-          <div className="h-full min-w-0 flex-1" />
-        )}
+        <div className="h-full min-w-0 flex-1" />
         <div role="tablist" aria-label={t("floating.tabsLabel")} className="flex shrink-0 items-center rounded-lg bg-muted/50 p-0.5">
           {MINI_TABS.map(({ tab: k, icon: Icon }) => (
             <button
@@ -326,6 +278,11 @@ function MiniWindow({
           <Maximize2 className="size-3.5" />
         </button>
       </div>
+      {shown && (
+        <div ref={suggestionRef} className="shrink-0 border-t px-3 py-2">
+          <LiveSuggestionLines card={shown} compact />
+        </div>
+      )}
       {tab === "transcript" && (
         <div className="flex min-h-0 flex-1 flex-col border-t">
           <MiniTranscript />
@@ -336,53 +293,12 @@ function MiniWindow({
           <MiniNotes />
         </div>
       )}
-      {answerOpen && last && (
-        <div className="relative flex min-h-0 flex-1 flex-col border-t">
-          <button
-            type="button"
-            aria-label={t("floating.hideAnswer")}
-            title={t("floating.hideAnswer")}
-            onClick={() => setOpen(false)}
-            className="absolute top-1.5 right-1.5 grid size-6 place-items-center rounded text-muted-foreground hover:bg-muted"
-          >
-            <X className="size-3.5" />
-          </button>
-          <MiniAskThread cards={cards} />
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** The mini window's question thread: every question so far, oldest first,
- *  the newest asked under the last — following the tail while the answer
- *  streams in, unless the reader has scrolled up to an earlier one. */
-function MiniAskThread({ cards }: Readonly<{ cards: AskCard[] }>) {
-  const { viewportRef } = useStickToBottom([cards]);
-  return (
-    <div ref={viewportRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-2.5 pr-8">
-      {cards.map((c, i) => (
-        <div key={c.id} className={i > 0 ? "mt-3 border-t pt-3" : undefined}>
-          <p className="mb-2.5 flex items-start gap-1.5 text-sm leading-5 font-normal text-muted-foreground">
-            <MessageCircle className="mt-[3px] size-3.5 shrink-0" />
-            <span className="min-w-0">{c.question}</span>
-          </p>
-          {c.answer ? (
-            <div className="prose prose-sm dark:prose-invert max-w-none text-sm">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{c.answer}</ReactMarkdown>
-            </div>
-          ) : (
-            <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
-          )}
-        </div>
-      ))}
     </div>
   );
 }
 
 /** The mini window's height for `tab`, with the coach's answer open or not. */
-function miniHeight(tab: Tab, answerOpen = false): number {
-  if (tab === "coach") return answerOpen ? MINI_HEIGHT.coachAnswer : MINI_HEIGHT.coach;
+function miniHeight(tab: Tab): number {
   return MINI_HEIGHT[tab];
 }
 
@@ -527,107 +443,6 @@ function TabButton({
 }
 
 /**
- * The bottom bar's ask box. Focusing it offers the quick questions; ↑ ↓ walk
- * them, Enter asks the highlighted one (or what was typed), Esc closes them.
- */
-function AskBox({ onAsked }: Readonly<{ onAsked: () => void }>) {
-  const { t } = useI18n();
-  const ask = useCoachAsk((s) => s.ask);
-  const busy = useCoachAsk((s) => s.cards.some((c) => c.busy));
-  const [draft, setDraft] = useState("");
-  const [open, setOpen] = useState(false);
-  const [idx, setIdx] = useState(-1);
-  const presets = ASK_SUGGESTIONS.map((k) => t(k));
-  const showPresets = open && !draft;
-
-  function send(q: string) {
-    if (!q.trim() || busy) return;
-    void ask(q);
-    setDraft("");
-    setOpen(false);
-    setIdx(-1);
-    onAsked();
-  }
-
-  function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "Escape") {
-      setOpen(false);
-      setIdx(-1);
-      return;
-    }
-    if (draft) return;
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      e.preventDefault();
-      setOpen(true);
-      const step = e.key === "ArrowDown" ? 1 : -1;
-      setIdx((i) => (i < 0 ? (step > 0 ? 0 : presets.length - 1) : (i + step + presets.length) % presets.length));
-    } else if (e.key === "Enter" && idx >= 0) {
-      e.preventDefault();
-      send(presets[idx]);
-    }
-  }
-
-  return (
-    <form
-      className="relative flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg border border-input bg-background pr-1 pl-3"
-      onSubmit={(e) => {
-        e.preventDefault();
-        send(draft);
-      }}
-    >
-      {showPresets && (
-        <div
-          role="listbox"
-          aria-label={t("floating.presetsLabel")}
-          className="absolute right-0 bottom-full left-0 mb-2 flex flex-col rounded-lg border bg-popover p-1 shadow-lg"
-        >
-          <span className="px-2 pt-1 pb-1.5 text-[11px] text-muted-foreground">{t("floating.presetsHint")}</span>
-          {presets.map((q, i) => (
-            <button
-              key={q}
-              type="button"
-              role="option"
-              aria-selected={i === idx}
-              // mousedown, not click: the input's blur would close the list first.
-              onMouseDown={(e) => {
-                e.preventDefault();
-                send(q);
-              }}
-              className={`rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
-                i === idx ? "bg-primary/10 text-primary" : "text-foreground hover:bg-muted"
-              }`}
-            >
-              {q}
-            </button>
-          ))}
-        </div>
-      )}
-      <input
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onFocus={() => setOpen(true)}
-        onBlur={() => {
-          setOpen(false);
-          setIdx(-1);
-        }}
-        onKeyDown={onKeyDown}
-        aria-label={t("feed.askPlaceholder")}
-        placeholder={t("floating.askPlaceholder")}
-        className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
-      />
-      <button
-        type="submit"
-        aria-label={t("floating.send")}
-        disabled={busy || !draft.trim()}
-        className="grid size-6 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground transition-opacity disabled:opacity-60"
-      >
-        {busy ? <Loader2 className="size-3.5 animate-spin" /> : <ArrowUp className="size-3.5" />}
-      </button>
-    </form>
-  );
-}
-
-/**
  * The meeting, as the floating window the app becomes while it records
  * (useFloatingMeetingWindow): name and folder on top, notes / transcript /
  * coach in tabs, and pause, ask-the-coach and end along the bottom.
@@ -637,9 +452,8 @@ export function MeetingFloatingWindow() {
   const status = useStore((s) => s.meetingStatus);
   const finalizing = useStore((s) => s.isFinalizingMeeting);
   const liveMeetingId = useStore((s) => s.liveMeetingId);
-  const setHighlightMs = useStore((s) => s.setHighlightMs);
-  const coachCount = useStore((s) => s.findings.length) + useCoachAsk((s) => s.cards.length);
-  const [tab, setTab] = useState<Tab>("transcript");
+  // With live suggestions on, the meeting opens on 教練, where they run.
+  const [tab, setTab] = useState<Tab>(() => (useStore.getState().settings.liveSuggestions ? "coach" : "transcript"));
   // ⌘1–⌘3 / ⌘← ⌘→ in both layouts — the mini strip shares this state.
   useTabShortcuts(TAB_ORDER, tab, setTab);
   const [bgOpen, setBgOpen] = useState(false);
@@ -652,22 +466,6 @@ export function MeetingFloatingWindow() {
   const meetingActive = status === "recording" || status === "paused";
   const paused = status === "paused";
 
-  // 結束前 5 分鐘 still-open agenda items: one toast, whichever layout is up.
-  useAgendaEndReminder();
-
-  /** An AI tick's 「AI · mm:ss」: over to the transcript, which scrolls to the
-   *  line nearest that moment and flashes it (TranscriptPanel's highlightMs —
-   *  the signal waits in the store until the tab has mounted). */
-  function jumpToTranscript(ms: number) {
-    setHighlightMs(ms);
-    setTab("transcript");
-  }
-
-  // Each meeting starts with an empty question thread.
-  useEffect(() => {
-    useCoachAsk.getState().reset();
-  }, [liveMeetingId]);
-
   const togglePause = () => meetingCommand("togglePause");
   useCommandShortcut("meeting.togglePause", togglePause, { enabled: meetingActive });
 
@@ -677,9 +475,12 @@ export function MeetingFloatingWindow() {
     busyRef.current = true;
     meetingCommand(cmd);
   }
-  // A new meeting in the same window can be ended again.
+  // A new meeting in the same window can be ended again, and — the window is
+  // made once and kept between meetings — opens on 教練 again when live
+  // suggestions are on, whatever tab the last one ended on.
   useEffect(() => {
     busyRef.current = false;
+    if (liveMeetingId && useStore.getState().settings.liveSuggestions) setTab("coach");
   }, [liveMeetingId]);
 
   /** Resize first, then swap the view: the window is measured (on the way
@@ -703,7 +504,6 @@ export function MeetingFloatingWindow() {
       <FloatingTitleBar onClose={() => setConfirmCancel(true)} onCollapse={() => void toggleMini(true)} />
       <LiveBanners />
       <MeetingHeading />
-      <AgendaBar onJump={jumpToTranscript} />
 
       {bgOpen && (
         <div className="mx-5 mt-4 flex shrink-0 flex-col gap-2 rounded-lg border p-3">
@@ -730,10 +530,11 @@ export function MeetingFloatingWindow() {
             />
             <TabButton
               active={tab === "coach"}
-              label={coachCount ? `${t("floating.tabs.coach")} ${coachCount}` : t("floating.tabs.coach")}
+              label={t("floating.tabs.coach")}
               onClick={() => setTab("coach")}
             />
           </div>
+          <LiveSuggestToggle />
           <button
             type="button"
             aria-label={t("floating.background")}
@@ -751,15 +552,13 @@ export function MeetingFloatingWindow() {
           {/* 筆記 sits flush on the panel's left edge, so while it is the raised
               tab that corner stays square and the two read as one surface. */}
           <div
-            className={`min-h-0 flex-1 overflow-hidden rounded-lg bg-muted/50 ${
+            className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg bg-muted/50 ${
               tab === "notes" ? "rounded-tl-none" : ""
             }`}
           >
             {tab === "transcript" && <TranscriptPanel variant="floating" />}
             {tab === "notes" && <NotesPad />}
-            {tab === "coach" && (
-              <CoachFeed onSeek={setHighlightMs} askBar={false} emptyText={t("floating.coachEmpty")} />
-            )}
+            {tab === "coach" && <LiveSuggestionFeed />}
           </div>
         </div>
       </div>
@@ -781,7 +580,7 @@ export function MeetingFloatingWindow() {
           {paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
           {paused ? t("titlebar.resume") : t("titlebar.pause")}
         </button>
-        <AskBox onAsked={() => setTab("coach")} />
+        <div className="min-w-0 flex-1" />
         <button
           type="button"
           onClick={() => once("end")}

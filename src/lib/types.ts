@@ -453,6 +453,9 @@ export interface Settings {
   todoTemplates: TodoTemplate[];
   /** Per-metric opt-in for live delivery coaching (see DeliveryToggles). */
   delivery: DeliveryToggles;
+  /** Live suggestions (即時建議) while recording: Parley Cloud proposes the
+   *  next line. Needs a Parley Cloud sign-in; off by default. */
+  liveSuggestions: boolean;
   /** Whether to sync personal recordings + folders to Parley Cloud while signed in.
    *  Off → this device keeps everything local (no automatic push/pull); explicit
    *  org sharing still works. Default on (preserves the prior signed-in behavior). */

@@ -54,6 +54,11 @@ const MIRRORED = [
   "meetingEndAt",
   "autoAnalyze",
   "autoAnalyzeSec",
+  // The live suggestion on screen (meeting/liveSuggestRun.ts): made in the
+  // main window, shown here. Its on/off is a setting, synced like the others.
+  "liveSuggestion",
+  // Every suggestion shown this meeting: the 教練 tab's running list.
+  "liveSuggestLog",
 ] as const satisfies readonly (keyof ParleyState)[];
 
 /** Of those, the ones the meeting window edits; they travel back as patches. */
@@ -77,7 +82,14 @@ const EDITABLE = [
 
 type Mirrored = Pick<ParleyState, (typeof MIRRORED)[number]>;
 
-export type MeetingCommand = "togglePause" | "end" | "cancel" | "analyze" | "keepRecording" | "endSilent";
+export type MeetingCommand =
+  | "togglePause"
+  | "end"
+  | "cancel"
+  | "analyze"
+  | "keepRecording"
+  | "endSilent"
+  | "toggleLiveSuggest";
 
 function pick<K extends keyof ParleyState>(s: ParleyState, keys: readonly K[]): Pick<ParleyState, K> {
   const out = {} as Pick<ParleyState, K>;
@@ -142,6 +154,13 @@ function runCommand(cmd: MeetingCommand): void {
     case "endSilent":
       endSilentMeeting("confirmed").catch(fail);
       break;
+    case "toggleLiveSuggest": {
+      // A setting, but switched here: the main window owns the persisted
+      // settings, and the meeting window learns the result through settingsSync.
+      const s = useStore.getState();
+      s.updateSettings({ liveSuggestions: !s.settings.liveSuggestions });
+      break;
+    }
   }
 }
 

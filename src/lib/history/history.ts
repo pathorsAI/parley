@@ -33,6 +33,7 @@ import type {
 } from "../types";
 import type { StudyCacheEntry } from "./studyCache";
 import type { HistoryEntry } from "./types";
+import type { ShownSuggestion } from "../meeting/liveSuggest";
 import * as ipc from "../ipc/commands";
 import { listenEvent, type UnlistenFn } from "../ipc/events";
 import {
@@ -192,6 +193,8 @@ export interface LiveMeetingSnapshot {
   /** The meeting's agenda as it ended (ticks, who and where) — saved with the
    *  recording so the report can list what was not covered. Absent = none. */
   agenda?: TodoItem[];
+  /** The live suggestions shown during the meeting. Absent = none. */
+  liveSuggestions?: ShownSuggestion[];
   /** The backend recorded it without this window knowing (the page reloaded
    *  under a running capture): its transcript is gone, keep the audio. */
   orphan: boolean;
@@ -214,6 +217,7 @@ export function snapshotLiveMeeting(): LiveMeetingSnapshot | null {
     save: resolveMeetingSave(s),
     title: s.meetingTitle.trim() || undefined,
     ...agendaField(s.todos),
+    ...liveSuggestionsField(s.liveSuggestLog),
     orphan: false,
   };
 }
@@ -223,6 +227,14 @@ export function snapshotLiveMeeting(): LiveMeetingSnapshot | null {
  *  testing. */
 export function agendaField(todos: readonly TodoItem[] | undefined): { agenda?: TodoItem[] } {
   return todos?.length ? { agenda: todos.map((t) => ({ ...t })) } : {};
+}
+
+/** The entry field the shown live suggestions save as: present only when
+ *  there were some, so other meetings write the same meta.json as before. */
+export function liveSuggestionsField(log: readonly ShownSuggestion[] | undefined): {
+  liveSuggestions?: ShownSuggestion[];
+} {
+  return log?.length ? { liveSuggestions: log.map((x) => ({ ...x })) } : {};
 }
 
 /** The live meeting's analysis slice, its in-meeting notes folded into the
@@ -480,6 +492,7 @@ export async function saveLiveToHistory(
     folderId: save.folderId,
     ...analysis,
     ...agendaField(snap.agenda),
+    ...liveSuggestionsField(snap.liveSuggestions),
     speechRateHz,
     // Only a diarized meeting needs it: a two-stream one already knows which
     // lines are the mic's.
