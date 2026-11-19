@@ -684,6 +684,23 @@
         }
       }
     },
+    "Afterwards, one customer, one folder." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Afterwards, one customer, one folder."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "之後一個客戶一個資料夾。"
+          }
+        }
+      }
+    },
     "All" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -821,23 +838,6 @@
         }
       }
     },
-    "And share it with ChatGPT or Claude to analyse." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "And share it with ChatGPT or Claude to analyse."
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "再分享給 ChatGPT 或 Claude 分析。"
-          }
-        }
-      }
-    },
     "Appearance" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -919,6 +919,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "注音鍵盤"
+          }
+        }
+      }
+    },
+    "Brief" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Brief"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重點"
           }
         }
       }
@@ -2659,6 +2676,23 @@
         }
       }
     },
+    "Four steps, from the meeting to your AI." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Four steps, from the meeting to your AI."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "四個步驟，從開會到交給 AI。"
+          }
+        }
+      }
+    },
     "Generate a summary with AI" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2897,6 +2931,23 @@
         }
       }
     },
+    "How Parley works" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "How Parley works"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Parley 怎麼運作"
+          }
+        }
+      }
+    },
     "How long" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3100,13 +3151,13 @@
         }
       }
     },
-    "It turns into text as you go, with who said what." : {
+    "It transcribes live and labels who is speaking." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "It turns into text as you go, with who said what."
+            "value" : "It transcribes live and labels who is speaking."
           }
         },
         "zh-Hant" : {
@@ -4559,23 +4610,6 @@
         }
       }
     },
-    "One customer, one folder, synced with your Mac" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "One customer, one folder, synced with your Mac"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "一個客戶一個資料夾，和 Mac 同步"
-          }
-        }
-      }
-    },
     "Only the folder's creator or an organization admin can change it." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5266,6 +5300,23 @@
         }
       }
     },
+    "Play from this step" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Play from this step"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "從這一步開始播放"
+          }
+        }
+      }
+    },
     "Playback speed" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5642,23 +5693,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "錄會議"
-          }
-        }
-      }
-    },
-    "Record and transcribe live, even from the lock screen" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Record and transcribe live, even from the lock screen"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "錄音與即時轉錄，鎖屏也繼續"
           }
         }
       }
@@ -6070,6 +6104,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "續約條件討論 — 北風工業"
+          }
+        }
+      }
+    },
+    "Replay" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Replay"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重播"
           }
         }
       }
@@ -6668,6 +6719,23 @@
         }
       }
     },
+    "Setup takes a minute." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Setup takes a minute."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "先花一分鐘完成設定。"
+          }
+        }
+      }
+    },
     "Share" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6783,23 +6851,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "分享給 AI（附分析提示）"
-          }
-        }
-      }
-    },
-    "Share to ChatGPT or Claude for analysis" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Share to ChatGPT or Claude for analysis"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "分享給 ChatGPT 或 Claude 分析"
           }
         }
       }
@@ -8284,19 +8335,19 @@
         }
       }
     },
-    "Then one customer, one folder." : {
+    "Then hand the record to Claude or ChatGPT to analyse." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Then one customer, one folder."
+            "value" : "Then hand the record to Claude or ChatGPT to analyse."
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "之後一個客戶一個資料夾。"
+            "value" : "再把紀錄交給 Claude 或 ChatGPT 分析。"
           }
         }
       }
