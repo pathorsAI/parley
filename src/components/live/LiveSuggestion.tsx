@@ -2,12 +2,11 @@ import { useMemo } from "react";
 import { Lightbulb, MessageCircleQuestion } from "lucide-react";
 import { formatClock, useStore } from "../../lib/store";
 import { useStickToBottom } from "../../lib/useStickToBottom";
-import { shownGroups, type ShownGroup } from "../../lib/meeting/liveSuggest";
+import { shownGroups, type ShownCard, type ShownGroup } from "../../lib/meeting/liveSuggest";
 import { CLOUD_ENABLED } from "../../lib/flags";
 import { useLiveMeeting } from "../../lib/meeting/liveSession";
 import { meetingCommand } from "../../lib/meeting/meetingWindow";
 import { useI18n } from "../../i18n";
-import type { ShownCard } from "../../lib/meeting/liveSuggest";
 
 /** The live suggestion on screen, or null: none, or the switch is off. */
 export function useLiveSuggestionCard(): ShownCard | null {
@@ -66,7 +65,8 @@ export function LiveSuggestToggle() {
   const on = useStore((s) => s.settings.liveSuggestions);
   const signedIn = useStore((s) => !!s.cloudAuth?.token);
   if (!CLOUD_ENABLED) return null;
-  const label = signedIn ? t(on ? "liveSuggest.turnOff" : "liveSuggest.turnOn") : t("liveSuggest.signIn");
+  const switchLabel = on ? t("liveSuggest.turnOff") : t("liveSuggest.turnOn");
+  const label = signedIn ? switchLabel : t("liveSuggest.signIn");
   return (
     <button
       type="button"

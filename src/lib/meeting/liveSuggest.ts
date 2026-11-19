@@ -253,7 +253,7 @@ export function shownGroups(log: readonly ShownSuggestion[]): ShownGroup[] {
   const out: ShownGroup[] = [];
   for (const s of log) {
     const last = out[out.length - 1];
-    if (last && last.atMs === s.atMs && last.mode === s.mode) last.items.push(s);
+    if (last?.atMs === s.atMs && last.mode === s.mode) last.items.push(s);
     else out.push({ mode: s.mode, atMs: s.atMs, items: [s] });
   }
   return out;

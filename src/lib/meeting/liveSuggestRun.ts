@@ -127,6 +127,18 @@ function createEngine() {
     }
   }
 
+  /** Log why no request goes out this tick (once per reason). */
+  function explainWait(turns: readonly Turn[], pending: boolean): void {
+    const last = turns[turns.length - 1];
+    if (inFlight) return note("a request is out");
+    if (!last) return note("no finished line yet");
+    if (pending) return note("someone is mid-sentence");
+    return note(last.who === "me" ? "the user spoke last: waiting for a lull" : "waiting for the line to settle", {
+      lines: turns.length,
+      theirs: turns.filter((t) => t.who === "them").length,
+    });
+  }
+
   function tick(): void {
     const s = useLiveStore.getState();
     if (s.liveMeetingId !== meetingId) reset(s.liveMeetingId);
@@ -147,16 +159,7 @@ function createEngine() {
       lastLullEndMs,
       stalledEndMs,
     });
-    if (!mode) {
-      const last = turns[turns.length - 1];
-      if (inFlight) return note("a request is out");
-      if (!last) return note("no finished line yet");
-      if (pending) return note("someone is mid-sentence");
-      return note(last.who === "me" ? "the user spoke last: waiting for a lull" : "waiting for the line to settle", {
-        lines: turns.length,
-        theirs: turns.filter((t) => t.who === "them").length,
-      });
-    }
+    if (!mode) return explainWait(turns, pending);
     lastWhy = "";
     const lastEnd = turns[turns.length - 1]?.endMs ?? 0;
     lastRequestAtMs = nowMs;
