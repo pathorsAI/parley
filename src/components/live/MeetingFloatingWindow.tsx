@@ -475,9 +475,12 @@ export function MeetingFloatingWindow() {
     busyRef.current = true;
     meetingCommand(cmd);
   }
-  // A new meeting in the same window can be ended again.
+  // A new meeting in the same window can be ended again, and — the window is
+  // made once and kept between meetings — opens on 教練 again when live
+  // suggestions are on, whatever tab the last one ended on.
   useEffect(() => {
     busyRef.current = false;
+    if (liveMeetingId && useStore.getState().settings.liveSuggestions) setTab("coach");
   }, [liveMeetingId]);
 
   /** Resize first, then swap the view: the window is measured (on the way
