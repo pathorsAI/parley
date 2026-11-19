@@ -145,6 +145,10 @@ struct OnboardingFlow: View {
     }
 
     @StateObject private var org = OnboardingOrgModel()
+    /// Owned by the wizard, not the step: leaving the step mid-sentence still
+    /// finishes saving it, and testing again later still knows what the
+    /// previous run put in, so it can take it back out.
+    @StateObject private var micCheck = MicCheckModel()
     private var orgChoosing: Bool {
         switch org.phase {
         case .choosing, .loading: return true
@@ -164,7 +168,7 @@ struct OnboardingFlow: View {
         case .perms:
             OnboardingPermsStep()
         case .mic:
-            OnboardingMicStep()
+            OnboardingMicStep(check: micCheck)
         case .context:
             OnboardingContextStep()
         case .done:
@@ -240,12 +244,13 @@ struct OnboardingHeroBars: View {
     ]
 
     /// The desktop draws the bars 398 pt tall and lifts them 198 pt above the
-    /// dialog, so only their lower half shows; the same here, under the
-    /// status bar.
+    /// dialog, so only their lower half shows. A phone screen is far taller
+    /// than the desktop dialog, so here they run 460 pt and show about 300 pt
+    /// under the status bar, reaching down past the step row.
     var body: some View {
         GeometryReader { geo in
             let width = geo.size.width / CGFloat(bars.count)
-            let height: CGFloat = 398
+            let height: CGFloat = 460
             ZStack(alignment: .topLeading) {
                 ForEach(bars.indices, id: \.self) { i in
                     let bar = bars[i]
@@ -257,10 +262,10 @@ struct OnboardingHeroBars: View {
                 }
             }
             .frame(width: geo.size.width, height: height, alignment: .topLeading)
-            .offset(y: -150)
+            .offset(y: -160)
             .opacity(0.8)
         }
-        .frame(height: 260)
+        .frame(height: 310)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }

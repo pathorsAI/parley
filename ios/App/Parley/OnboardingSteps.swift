@@ -16,7 +16,7 @@ struct OnboardingIntroStep: View {
                     .font(.parley.title2)
                     .foregroundStyle(OnboardingPalette.ink)
                     .multilineTextAlignment(.center)
-                IntroStage(showsStepRow: true)
+                IntroStage()
                     .frame(maxWidth: 420)
             }
             .frame(maxWidth: .infinity)
@@ -63,8 +63,9 @@ struct OnboardingAccountStep: View {
             ],
             title: "You're on Cloud",
             message: "Parley provides the transcription and AI, with a free monthly allowance. Nothing to pay yourself.")
-            .frame(minHeight: 150)
-            .fixedSize(horizontal: false, vertical: true)
+            // The whole page between the header and the footer, less the
+            // 20 pt the step pads it by on each side; never under 150 pt.
+            .containerRelativeFrame(.vertical) { height, _ in max(150, height - 40) }
     }
 
     private var choosing: some View {
@@ -470,7 +471,8 @@ struct OnboardingPermsStep: View {
 /// lines and terms; the phone keeps the sentence as said, which is what the
 /// desktop falls back to when no model answers.
 struct OnboardingMicStep: View {
-    @StateObject private var check = MicCheckModel()
+    @EnvironmentObject private var app: AppState
+    @ObservedObject var check: MicCheckModel
 
     var body: some View {
         ScrollView {
@@ -506,7 +508,9 @@ struct OnboardingMicStep: View {
         }
         .scrollBounceBehavior(.basedOnSize)
         .onAppear { check.refreshInput() }
-        .onDisappear { Task { await check.cancel() } }
+        // Leaving mid-sentence is the same as Stop, as on the desktop: what
+        // was said is still saved, so Next never throws an introduction away.
+        .onDisappear { Task { await check.stop() } }
     }
 
     private var testCard: some View {
@@ -520,7 +524,9 @@ struct OnboardingMicStep: View {
                 .background(OnboardingPalette.bubble, in: RoundedRectangle(cornerRadius: 10))
 
             HStack(spacing: 10) {
+                // Its own width, always: the track takes what is left.
                 testButton
+                    .fixedSize()
                 OnboardingMicTrack(levels: check.levels, running: check.phase == .listening)
                     .frame(height: 36)
             }
@@ -555,7 +561,7 @@ struct OnboardingMicStep: View {
                 if listening {
                     await check.stop()
                 } else {
-                    await check.start()
+                    await check.start(cloud: app.cloud)
                 }
             }
         } label: {
@@ -639,39 +645,59 @@ struct OnboardingMicStep: View {
 
 /// The waveform beside the test button: a dashed baseline with a caret at
 /// rest, the microphone's recent levels while listening.
+/// The mic check's level as a recording track, the desktop's `WaveformTrack`:
+/// thin bars for what has been said, a dashed line for the rest, and a
+/// playhead where the recording is now. The playhead starts at the left edge
+/// and walks right as the bars come in; once it reaches the right end it stays
+/// and the bars scroll past it, so a long take never outgrows the track. (The
+/// desktop stops it at the middle; on the phone's narrower track the walk
+/// runs the whole way.)
 struct OnboardingMicTrack: View {
     let levels: [CGFloat]
     let running: Bool
 
+    /// A bar and the gap after it.
+    private static let bar: CGFloat = 2
+    private static let step: CGFloat = 4
+
     var body: some View {
-        ZStack(alignment: .leading) {
-            Rectangle()
-                .stroke(style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
-                .foregroundStyle(OnboardingPalette.hairline)
-                .frame(height: 1)
-            if levels.isEmpty {
+        GeometryReader { geo in
+            // The playhead walks right until the end of the track (less its
+            // own width), then the bars scroll.
+            let playheadX = min(CGFloat(levels.count) * Self.step, (geo.size.width - 2).rounded(.down))
+            let fits = max(0, Int(playheadX / Self.step))
+            let shown = levels.suffix(fits)
+            ZStack(alignment: .leading) {
                 Rectangle()
-                    .fill(Theme.primary)
-                    .frame(width: 2, height: 24)
-            } else {
-                HStack(spacing: 2) {
-                    ForEach(levels.indices, id: \.self) { i in
+                    .stroke(style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                    .foregroundStyle(OnboardingPalette.hairline)
+                    .frame(height: 1)
+                HStack(spacing: Self.step - Self.bar) {
+                    ForEach(Array(shown.enumerated()), id: \.offset) { _, level in
                         Capsule()
                             .fill(running ? Theme.primary : Theme.primary.opacity(0.4))
-                            .frame(width: 2, height: max(2, levels[i] * 34))
+                            .frame(width: Self.bar, height: max(2, level * 34))
                     }
                 }
+                .frame(width: playheadX, alignment: .trailing)
+                Capsule()
+                    .fill(Theme.primary)
+                    .frame(width: 2, height: geo.size.height * 0.75)
+                    .offset(x: playheadX)
             }
+            .frame(width: geo.size.width, height: geo.size.height, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
         .clipped()
         .accessibilityHidden(true)
     }
 }
 
-/// One microphone check: capture → the hosted relay → the words said. The
-/// finished sentence is added to the speaker background, replacing the one
-/// the previous run added.
+/// One microphone check: capture → the hosted relay → the words said → the
+/// speaker background and the dictionary, the desktop's `MicStep` end to end
+/// (see `MicIntro`): the sentence is normalized, tidied by the hosted model
+/// into background lines and names, appended to the background without
+/// touching what is there, and its company and name become terms. Testing
+/// again takes the previous run's lines and new terms back out first.
 @MainActor
 final class MicCheckModel: ObservableObject {
     enum Phase: Equatable { case idle, listening, stopping, saved, empty, failed(String) }
@@ -683,10 +709,23 @@ final class MicCheckModel: ObservableObject {
 
     private var capture: AudioCapture?
     private var client: ParleyStreamClient?
-    private var segments: [String: TranscriptSegment] = [:]
-    private var lastLine: String?
+    private var cloud: CloudClient?
+    private var transcript = MicIntro.Transcript()
+    /// What the previous check put into the setup, so a new one replaces it.
+    private var lastRun: MicIntro.Run?
+    /// Bumped by every start, so a late close or timer from an earlier run
+    /// cannot finish the current one.
+    private var generation = 0
+    /// Set while a run is being saved, so the relay's close and the backstop
+    /// timer cannot both save it.
+    private var finishing = false
     private var demoTask: Task<Void, Never>?
-    private static let maxLevels = 60
+    private static let maxLevels = 200
+    /// A self-introduction takes seconds; the desktop ends the check here so
+    /// the microphone and the paid stream are not left open.
+    private static let maxDuration: Duration = .seconds(30)
+    /// How long Stop waits for the relay to flush its last words.
+    private static let closeWait: Duration = .seconds(4)
 
     func refreshInput() {
         inputName =
@@ -694,9 +733,14 @@ final class MicCheckModel: ObservableObject {
             ?? String(localized: "iPhone microphone")
     }
 
-    func start() async {
+    func start(cloud: CloudClient) async {
+        guard phase != .listening, phase != .stopping else { return }
+        generation += 1
+        let run = generation
+        undoLastRun()
+        self.cloud = cloud
         text = ""
-        segments = [:]
+        transcript = MicIntro.Transcript()
         levels = []
         #if DEBUG
             if ScreenshotDemo.isActive {
@@ -712,12 +756,15 @@ final class MicCheckModel: ObservableObject {
             phase = .failed(String(localized: "Sign in first."))
             return
         }
+        // The product's name first among the recognition terms: the check
+        // has the user say it (the desktop's `withProductName`).
+        let vocabulary = [MicIntro.productName] + LexiconStore.recognitionTerms().filter { $0 != MicIntro.productName }
         let client = ParleyStreamClient(
             options: .init(
                 bearerToken: token, diarization: false,
-                vocabulary: LexiconStore.recognitionTerms(), feature: "voice_typing")
+                vocabulary: vocabulary, feature: "voice_typing")
         ) { [weak self] event in
-            Task { @MainActor in self?.handle(event) }
+            Task { @MainActor in self?.handle(event, run: run) }
         }
         let capture = AudioCapture(onChunk: { [weak self] samples, level in
             client.enqueue(pcm: samples)
@@ -733,32 +780,42 @@ final class MicCheckModel: ObservableObject {
         } catch {
             await cancel()
             phase = .failed(error.localizedDescription)
+            return
+        }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.maxDuration)
+            guard let self, self.generation == run else { return }
+            await self.stop()
         }
     }
 
+    /// Stop listening and save what was said. Also what leaving the step
+    /// does; a check that is not listening is left as it is.
     func stop() async {
         guard phase == .listening else { return }
         phase = .stopping
+        let run = generation
         #if DEBUG
             if ScreenshotDemo.isActive {
                 demoTask?.cancel()
                 try? await Task.sleep(for: .milliseconds(700))
-                finalize(persist: false)
+                await finish(run: run)
                 return
             }
         #endif
         await capture?.stop()
         capture = nil
         await client?.finish()
-        // The relay's close normally finalizes; this is the backstop for a
-        // close that never comes.
+        // The relay's close normally finishes the run; this is the backstop
+        // for a close that never comes.
         Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(6))
-            if self?.phase == .stopping { self?.finalize(persist: true) }
+            try? await Task.sleep(for: Self.closeWait)
+            guard let self, self.generation == run, self.phase == .stopping else { return }
+            await self.finish(run: run)
         }
     }
 
-    /// Leaving the step mid-test: stop listening, keep nothing.
+    /// Drop the check without saving: only for a failed start.
     func cancel() async {
         demoTask?.cancel()
         demoTask = nil
@@ -769,17 +826,28 @@ final class MicCheckModel: ObservableObject {
         if phase == .listening || phase == .stopping { phase = .idle }
     }
 
-    private func handle(_ event: SttRelayEvent) {
+    private func handle(_ event: SttRelayEvent, run: Int) {
+        guard run == generation else { return }
         switch event {
         case .segment(let segment):
-            segments[segment.id] = segment
-            text = Self.join(segments.values.sorted { $0.startMs < $1.startMs }.map(\.text))
+            transcript.accept(segment)
+            text = Self.normalized(transcript.text)
         case .closed:
-            if phase == .stopping || phase == .listening { finalize(persist: true) }
+            if phase == .stopping || phase == .listening {
+                phase = .stopping
+                Task { await finish(run: run) }
+            }
         case .error(let message, _):
-            guard phase == .listening || phase == .stopping else { return }
-            Task { await cancel() }
-            phase = .failed(message)
+            switch phase {
+            case .listening:
+                Task { await cancel() }
+                phase = .failed(message)
+            case .stopping:
+                // The words are in; a failed close does not lose them.
+                Task { await finish(run: run) }
+            default:
+                break
+            }
         }
     }
 
@@ -789,29 +857,66 @@ final class MicCheckModel: ObservableObject {
         if levels.count > Self.maxLevels { levels.removeFirst(levels.count - Self.maxLevels) }
     }
 
-    private func finalize(persist: Bool) {
+    /// The desktop's `normalizeTranscriptText` + `fixProductName`, with the
+    /// user's own replacements.
+    private static func normalized(_ raw: String) -> String {
+        MicIntro.normalize(raw) { LexiconStore.apply(to: $0) }
+    }
+
+    /// The desktop's `finish`: the sentence into the background and the
+    /// dictionary. Runs once per check, even after the step has gone.
+    private func finish(run: Int) async {
+        guard run == generation, phase == .stopping, !finishing else { return }
+        finishing = true
+        defer { finishing = false }
         client = nil
-        let said = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let said = Self.normalized(transcript.text).trimmingCharacters(in: .whitespacesAndNewlines)
+        text = said
         guard !said.isEmpty else {
             phase = .empty
             return
         }
-        if persist {
-            let defaults = UserDefaults.standard
-            var lines = (defaults.string(forKey: OnboardingFlag.backgroundKey) ?? "")
-                .components(separatedBy: "\n")
-                .filter { !$0.isEmpty && $0 != lastLine }
-            lines.append(said)
-            defaults.set(lines.joined(separator: "\n"), forKey: OnboardingFlag.backgroundKey)
-            lastLine = said
+        var summary = MicIntro.Summary.plain(said)
+        if let cloud {
+            do {
+                summary = try await MicIntro.summarize(said, chinese: Self.chinese, cloud: cloud)
+            } catch {
+                // The sentence itself still makes a background line.
+                AppLog.capture.notice(
+                    "onboarding: summarizing the self-introduction failed: \(String(describing: error), privacy: .public)")
+            }
         }
-        phase = .saved
+        // The company and name always become terms, model or not.
+        let intro = MicIntro.complete(summary, transcript: said)
+        let defaults = UserDefaults.standard
+        let appended = MicIntro.append(
+            intro.background, to: defaults.string(forKey: OnboardingFlag.backgroundKey) ?? "")
+        defaults.set(appended.text, forKey: OnboardingFlag.backgroundKey)
+        let had = Set(LexiconStore.terms().map(\.text))
+        var created: [String] = []
+        for term in intro.terms {
+            let phrase = term.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !phrase.isEmpty, phrase.count <= MicIntro.maxTermCharacters else { continue }
+            if !had.contains(phrase) && !created.contains(phrase) { created.append(phrase) }
+            LexiconStore.addTerm(phrase)
+        }
+        lastRun = MicIntro.Run(lines: appended.lines, createdTerms: created)
+        if run == generation { phase = .saved }
     }
 
-    /// Chinese runs its segments together; other languages need a space.
-    private static func join(_ parts: [String]) -> String {
-        let chinese = (Bundle.main.preferredLocalizations.first ?? "en").hasPrefix("zh")
-        return parts.joined(separator: chinese ? "" : " ")
+    /// Testing again replaces the previous result rather than adding to it:
+    /// its background lines out, and the terms it created gone.
+    private func undoLastRun() {
+        guard let last = lastRun else { return }
+        lastRun = nil
+        let defaults = UserDefaults.standard
+        let background = defaults.string(forKey: OnboardingFlag.backgroundKey) ?? ""
+        defaults.set(MicIntro.remove(last.lines, from: background), forKey: OnboardingFlag.backgroundKey)
+        for term in last.createdTerms { LexiconStore.removeTerm(term) }
+    }
+
+    private static var chinese: Bool {
+        (Bundle.main.preferredLocalizations.first ?? "en").hasPrefix("zh")
     }
 
     #if DEBUG
@@ -830,7 +935,11 @@ final class MicCheckModel: ObservableObject {
                     self.push(level: Float.random(in: 0.02...0.12))
                     if shown < sentence.count {
                         shown += 1
-                        self.text = String(sentence.prefix(shown))
+                        self.transcript.accept(
+                            TranscriptSegment(
+                                id: "mix-0", source: "mix", speaker: 0,
+                                text: String(sentence.prefix(shown)), isFinal: true, startMs: 0, endMs: 0))
+                        self.text = Self.normalized(self.transcript.text)
                     }
                 }
             }
