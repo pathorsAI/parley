@@ -60,6 +60,7 @@ import {
 } from "./lib/releaseNotes";
 import { refreshSession } from "./lib/cloud/client";
 import { ensureDevSession } from "./lib/cloud/devSession";
+import { startDevControl } from "./lib/devControl";
 import { initDictionarySync } from "./lib/cloud/dictionarySync";
 import { initDraftSync } from "./lib/cloud/draftSync";
 import { runOrgNotices } from "./lib/cloud/orgNotices";
@@ -285,6 +286,9 @@ const App = () => {
       })
       .catch((error) => log.warn("update: installed release notes lookup failed", { error: String(error) }));
   }, []);
+
+  // Trial builds only: a local test harness can start and end meetings.
+  useEffect(() => startDevControl(), []);
 
   // Check for an app update shortly after launch, then keep re-checking on a slow
   // interval so a long-running window still catches a release that lands while
