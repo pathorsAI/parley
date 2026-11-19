@@ -8,14 +8,39 @@
 # Per-platform bundle wiring:
 #   macOS   tauri.macos.conf.json   -> onnxruntime/libonnxruntime.dylib (universal2)
 #   Windows tauri.windows.conf.json -> onnxruntime/onnxruntime.dll (x64, run via Git Bash)
+#
+# Source: Microsoft's `Microsoft.ML.OnnxRuntime` NuGet package, pinned by the
+# SHA-512 nuget.org publishes for it. The GitHub release assets this used to
+# download (github.com/microsoft/onnxruntime) stopped resolving on 2026-11-19 and
+# broke the v0.37.0 release build. The NuGet package carries the same version's
+# native libraries for every platform; macOS ships arm64 and x86_64 separately,
+# so the two are joined into the universal2 dylib the bundle expects.
 set -euo pipefail
 
-VERSION="1.22.0" # last ONNX Runtime release shipping a universal2 (x86_64+arm64) macOS dylib
+VERSION="1.22.0"
+PKG_URL="https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/${VERSION}/microsoft.ml.onnxruntime.${VERSION}.nupkg"
+PKG_SHA512="zb3eqkL6hHPGzZgArsuTH9VWdUs4ooKTJHBXF6ZZfQsPvzModaAEv3u69zwtqKuwUJ/DPc8i+uKoyXMzdwqrPg=="
 DEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/onnxruntime"
 mkdir -p "$DEST_DIR"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+
+# Download the package and refuse it unless it matches the pinned hash, then
+# unpack only the platform's binaries.
+fetch_package() {
+  echo "Downloading $PKG_URL"
+  curl --proto '=https' --tlsv1.2 -fsSL -o "$TMP/ort.nupkg" "$PKG_URL"
+  local got
+  got="$(openssl dgst -sha512 -binary "$TMP/ort.nupkg" | openssl base64 -A)"
+  if [[ "$got" != "$PKG_SHA512" ]]; then
+    echo "Microsoft.ML.OnnxRuntime ${VERSION}: hash mismatch (got $got)" >&2
+    exit 1
+  fi
+  unzip -q -o "$TMP/ort.nupkg" "$@" -d "$TMP"
+}
+
+BIN="runtimes"
 
 case "$(uname -s)" in
 Darwin)
@@ -24,11 +49,12 @@ Darwin)
     echo "universal2 onnxruntime dylib already present: $DEST"
     exit 0
   fi
-  URL="https://github.com/microsoft/onnxruntime/releases/download/v${VERSION}/onnxruntime-osx-universal2-${VERSION}.tgz"
-  echo "Downloading $URL"
-  curl --proto '=https' --tlsv1.2 -fsSL -o "$TMP/ort.tgz" "$URL"
-  tar xzf "$TMP/ort.tgz" -C "$TMP"
-  cp "$TMP/onnxruntime-osx-universal2-${VERSION}/lib/libonnxruntime.${VERSION}.dylib" "$DEST"
+  fetch_package "$BIN/osx-arm64/native/libonnxruntime.dylib" "$BIN/osx-x64/native/libonnxruntime.dylib"
+  rm -f "$DEST"
+  lipo -create \
+    "$TMP/$BIN/osx-arm64/native/libonnxruntime.dylib" \
+    "$TMP/$BIN/osx-x64/native/libonnxruntime.dylib" \
+    -output "$DEST"
   chmod +w "$DEST"
   echo "Installed universal2 dylib → $DEST"
   lipo -archs "$DEST"
@@ -40,13 +66,11 @@ MINGW* | MSYS* | CYGWIN*)
     echo "onnxruntime dll already present: $DEST"
     exit 0
   fi
-  URL="https://github.com/microsoft/onnxruntime/releases/download/v${VERSION}/onnxruntime-win-x64-${VERSION}.zip"
-  echo "Downloading $URL"
-  curl --proto '=https' --tlsv1.2 -fsSL -o "$TMP/ort.zip" "$URL"
-  unzip -q "$TMP/ort.zip" -d "$TMP"
-  cp "$TMP/onnxruntime-win-x64-${VERSION}/lib/onnxruntime.dll" "$DEST"
-  # Companion DLL onnxruntime.dll dlopens when execution providers are probed.
-  cp "$TMP/onnxruntime-win-x64-${VERSION}/lib/onnxruntime_providers_shared.dll" "$DEST_DIR/" 2>/dev/null || true
+  fetch_package "$BIN/win-x64/native/onnxruntime.dll" "$BIN/win-x64/native/onnxruntime_providers_shared.dll"
+  cp "$TMP/$BIN/win-x64/native/onnxruntime.dll" "$DEST"
+  # Companion DLL onnxruntime.dll dlopens when execution providers are probed
+  # (bundled by tauri.windows.conf.json).
+  cp "$TMP/$BIN/win-x64/native/onnxruntime_providers_shared.dll" "$DEST_DIR/"
   echo "Installed x64 dll → $DEST"
   ;;
 *)
