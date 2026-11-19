@@ -13,6 +13,7 @@ import type {
   Settings,
   VoiceTypingPolishStyle,
 } from "../types";
+import { createJSONStorage } from "zustand/middleware";
 import type { CloudAuth } from "../cloud/types";
 import { isMac } from "../platform";
 import { buildBuiltinEvalLabels, defaultEvalDefs, buildPresetEvalTemplates, evalsFromDefs } from "../evaluations/presets";
@@ -328,3 +329,21 @@ export const PERSIST_OPTIONS = {
   // Backfill any settings fields missing from older persisted state.
   merge: mergePersistedState,
 };
+
+/**
+ * The persisted store for a window that only READS it: hydrates from the shared
+ * localStorage key like any window, but never writes back. Every window has its
+ * own copy of the store, persisted under the same key, and each write is the
+ * window's WHOLE persisted slice — so a secondary window writing its stale copy
+ * of the drafts would undo the main window's, and the two would answer each
+ * other's `storage` events forever (a meeting window and the main window did
+ * exactly that whenever a draft changed mid-meeting: tens of thousands of
+ * settings re-applies a minute, the main window's renderer pegged, its live
+ * features starved). Only the main window, which owns the drafts and the
+ * session, and the Settings window, which edits the settings, write.
+ */
+export const READ_ONLY_STORAGE = createJSONStorage(() => ({
+  getItem: (key: string) => globalThis.localStorage.getItem(key),
+  setItem: () => {},
+  removeItem: () => {},
+}));
