@@ -7,6 +7,14 @@ import { log } from "../log";
 import { liveMeetingRunning, noteDraftTaken } from "./liveProbe";
 import { retitleForTime } from "../meeting/draftTitle";
 import { applyAiChecks, toggleAgendaItem, type AgendaCheck } from "../meeting/agenda";
+import {
+  emptyPlaybook,
+  playbookWithItem,
+  playbookWithoutItem,
+  type MeetingPlaybook,
+  type PlaybookItemFields,
+  type PlaybookList,
+} from "../meeting/playbook";
 import type { SliceCreator } from "./types";
 
 /** Default reminder lead: enough to wrap up and join, short enough to still
@@ -31,6 +39,8 @@ export interface MeetingDraft {
   meetingTarget: string;
   meetingFloor: string;
   todos: TodoItem[];
+  /** What to ask, how to steer, where to go next — live suggestions pick from it. */
+  playbook: MeetingPlaybook;
   meetingFolderId: string | null;
   meetingOrgShare: MeetingShare;
   updatedAt: number;
@@ -45,6 +55,7 @@ export interface NewDraftFields {
   meetingContext: string;
   meetingFolderId: string | null;
   agenda: string[];
+  playbook: MeetingPlaybook;
 }
 
 /** The prep fields a draft fills in when it is loaded. */
@@ -59,6 +70,7 @@ function prepFromDraft(d: MeetingDraft) {
     meetingTarget: d.meetingTarget,
     meetingFloor: d.meetingFloor,
     todos: d.todos,
+    meetingPlaybook: d.playbook,
     meetingFolderId: d.meetingFolderId,
     meetingOrgShare: d.meetingOrgShare,
     meetingNotes: "",
@@ -178,6 +190,11 @@ export interface PrepSlice {
    *  org's page opens it); without one the prep's own destination stands, as
    *  總覽 opens it. Ignored while a saved draft is being edited. */
   setDraftOpen: (open: boolean, preset?: DraftPreset) => void;
+  /** The meeting's playbook (questions, branches, topics). The running
+   *  meeting's copy is what live suggestions read. */
+  meetingPlaybook: MeetingPlaybook;
+  addPlaybookItem: (list: PlaybookList, fields: PlaybookItemFields) => void;
+  removePlaybookItem: (list: PlaybookList, id: string) => void;
   /** Principled-negotiation setup for THIS deal (per-meeting, not global). Feeds
    *  BATNA / ZOPA / walk-away reasoning in the analysis. */
   meetingBatna: string;
@@ -198,8 +215,8 @@ export interface PrepSlice {
    */
   meetingOrgShare: MeetingShare;
   setMeetingOrgShare: (share: MeetingShare) => void;
-  /** Throw the current prep draft away (folder, context, agenda, negotiation
-   *  fields). The ONLY prep-clearing path. */
+  /** Throw the current prep draft away (folder, context, agenda, playbook,
+   *  negotiation fields). The ONLY prep-clearing path. */
   resetPrep: () => void;
 
   // the to-do checklist
@@ -235,6 +252,9 @@ export const CLEARED_PREP_SLICE = {
   meetingTarget: "",
   meetingFloor: "",
   todos: [] as TodoItem[],
+  // One shared frozen value: every reset hands out the same empty playbook,
+  // and nothing mutates it (the actions above build new ones).
+  meetingPlaybook: Object.freeze(emptyPlaybook()) as MeetingPlaybook,
 } satisfies Partial<PrepSlice>;
 
 export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
@@ -265,6 +285,7 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
   meetingBatna: "",
   meetingTarget: "",
   meetingFloor: "",
+  meetingPlaybook: CLEARED_PREP_SLICE.meetingPlaybook,
 
   setMeetingContext: (text) => set({ meetingContext: text }),
   setMeetingTitle: (meetingTitle) => set({ meetingTitle }),
@@ -298,6 +319,7 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
         meetingTarget: s.meetingTarget,
         meetingFloor: s.meetingFloor,
         todos: s.todos,
+        playbook: s.meetingPlaybook,
         meetingFolderId: s.meetingFolderId,
         meetingOrgShare: s.meetingOrgShare,
         updatedAt: Date.now(),
@@ -362,6 +384,7 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
       meetingTarget: "",
       meetingFloor: "",
       todos: f.agenda.map((text) => ({ id: crypto.randomUUID(), text, done: false })),
+      playbook: f.playbook,
       meetingFolderId: f.meetingFolderId,
       meetingOrgShare: null,
       updatedAt: Date.now(),
@@ -399,6 +422,10 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
       return { ...CLEARED_PREP_SLICE, reminderLeadMin: DEFAULT_REMINDER_LEAD_MIN, editingDraftId: null };
     }),
   setNegotiationField: (field, value) => set({ [field]: value }),
+  addPlaybookItem: (list, fields) =>
+    set((s) => ({ meetingPlaybook: playbookWithItem(s.meetingPlaybook, list, fields) })),
+  removePlaybookItem: (list, id) =>
+    set((s) => ({ meetingPlaybook: playbookWithoutItem(s.meetingPlaybook, list, id) })),
 
   addTodo: (text) =>
     set((state) => {

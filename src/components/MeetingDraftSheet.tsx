@@ -1,4 +1,4 @@
-import { BellRing, CalendarDays, CalendarPlus, Eraser, FolderOpen, NotebookPen, Save, Trash2, X } from "lucide-react";
+import { BellRing, CalendarDays, CalendarPlus, Eraser, FolderOpen, NotebookPen, Route, Save, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { useStore } from "../lib/store";
 import { ensureNotificationPermission } from "../lib/meeting/reminder";
@@ -9,6 +9,8 @@ import { DestinationField } from "./DestinationSheet";
 import { Field, FieldHint, FieldTitle, FORM_INPUT_CLASS, FormSection } from "./FormSection";
 import { MeetingContextField } from "./MeetingContextField";
 import { MeetingTimePicker, defaultMeetingTime } from "./MeetingTimePicker";
+import { PlaybookFields } from "./PlaybookFields";
+import { isPlaybookEmpty } from "../lib/meeting/playbook";
 import { TodoAddForm, TodoRow } from "./sidebar/TodosPanel";
 import { useMeetingDestination } from "./useMeetingDestination";
 
@@ -104,7 +106,7 @@ function MeetingWhenFields() {
 
 /**
  * The meeting draft ("新增會議草稿"): the per-meeting prep — name, time,
- * context, folder, agenda — filled in ahead of a meeting. 儲存草稿 files it
+ * context, folder, agenda, playbook — filled in ahead of a meeting. 儲存草稿 files it
  * into the saved drafts (總覽's 即將開始) and clears the fields for the next;
  * a saved draft opens here again from that list (editingDraftId).
  *
@@ -127,7 +129,8 @@ export function MeetingDraftSheet() {
       !!s.meetingTitle.trim() ||
       !!s.meetingContext.trim() ||
       !!s.meetingTarget.trim() ||
-      s.todos.length > 0
+      s.todos.length > 0 ||
+      !isPlaybookEmpty(s.meetingPlaybook)
   );
   const { destination, mode, fresh, pickDestination } = useMeetingDestination();
 
@@ -240,6 +243,7 @@ export function MeetingDraftSheet() {
             <MeetingContextField form rows={4} />
             <Field>
               <FieldTitle label={t("draft.agenda")} />
+              <FieldHint>{t("draft.agendaHint")}</FieldHint>
               {todos.length > 0 && (
                 <div className="-mx-1.5 flex flex-col gap-0.5">
                   {todos.map((todo) => (
@@ -249,6 +253,14 @@ export function MeetingDraftSheet() {
               )}
               <TodoAddForm bare />
             </Field>
+          </FormSection>
+
+          <FormSection
+            icon={<Route className="size-3.5" />}
+            label={t("draft.section.playbook")}
+            note={t("draft.section.playbookNote")}
+          >
+            <PlaybookFields />
           </FormSection>
         </div>
       </SheetContent>
