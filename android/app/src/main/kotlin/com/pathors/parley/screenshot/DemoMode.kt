@@ -3,6 +3,7 @@ package com.pathors.parley.screenshot
 import android.net.Uri
 import com.pathors.parley.BuildConfig
 import com.pathors.parley.cloud.CloudFolder
+import com.pathors.parley.cloud.CloudInvitation
 import com.pathors.parley.cloud.CloudOrg
 import com.pathors.parley.cloud.CloudUser
 import com.pathors.parley.cloud.HostedQuota
@@ -409,6 +410,29 @@ object DemoMode {
             role = OrgRole.ADMIN,
         ),
     )
+
+    /**
+     * The invitation the onboarding's organization step offers in its
+     * "invited" state — iOS `ScreenshotDemo.onboardingInvitation`. Pending with
+     * no expiry, so [CloudInvitation.isLive] keeps it whatever the clock says.
+     */
+    fun onboardingInvitation(locale: Locale = Locale.getDefault()): CloudInvitation = CloudInvitation(
+        id = "demo-invitation",
+        organizationId = "demo-org-invite",
+        organizationName = t(locale, "Northwind Sales", "北風業務部"),
+        role = OrgRole.MEMBER,
+        status = CloudInvitation.PENDING,
+        expiresAtMs = null,
+    )
+
+    /**
+     * What `CloudClient.myInvitations` would answer for the demo account: the
+     * one [onboardingInvitation]. The organization step's other states need no
+     * fixture of their own — "no invitations" is an empty list, and "joined"
+     * is the names of [orgs] (or, after a demo create, the name typed in).
+     */
+    fun invitations(locale: Locale = Locale.getDefault()): List<CloudInvitation> =
+        listOf(onboardingInvitation(locale))
 
     /** The personal folders the library's chip row shows — iOS `ScreenshotDemo.folders`. */
     fun folders(locale: Locale = Locale.getDefault()): List<CloudFolder> = listOf(
