@@ -1,5 +1,6 @@
 import { Loader2, LogIn, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { SwapContent } from "../../components/SwapContent";
 import { log } from "../../lib/log";
 import { isTauri } from "../../lib/tauriEvents";
 import { signOut } from "../../lib/cloud/client";
@@ -155,8 +156,23 @@ function AccountSignInField({
               disabled={signingIn || !isTauri()}
               onClick={() => onSignIn().catch((error) => log.error("settings: sign-in failed", { error: String(error) }))}
             >
-              {signingIn ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
-              {signingIn ? t("settings.account.signingIn") : t("settings.account.signInGoogle")}
+              <SwapContent
+                active={signingIn ? "signingIn" : "signIn"}
+                states={{
+                  signIn: (
+                    <>
+                      <LogIn className="size-4" />
+                      {t("settings.account.signInGoogle")}
+                    </>
+                  ),
+                  signingIn: (
+                    <>
+                      <Loader2 className="size-4 animate-spin" />
+                      {t("settings.account.signingIn")}
+                    </>
+                  ),
+                }}
+              />
             </Button>
             {signingIn && (
               <button
@@ -169,7 +185,8 @@ function AccountSignInField({
             )}
           </div>
           <p className="text-[11px] text-muted-foreground">
-            {isTauri() ? t("settings.account.signedOutHelp") : t("settings.account.desktopOnly")}
+            {signingIn && t("settings.account.finishInBrowser")}
+            {!signingIn && (isTauri() ? t("settings.account.signedOutHelp") : t("settings.account.desktopOnly"))}
           </p>
         </div>
       )}
