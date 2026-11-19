@@ -71,10 +71,13 @@ export function LiveSuggestionBar({ className = "mx-5 mt-3" }: Readonly<{ classN
         <span className="min-w-0 truncate">{lull ? t("liveSuggest.lull") : originLabel(card.items[0], t)}</span>
       </p>
       {lull ? (
-        <ul className="mt-1 flex flex-wrap gap-1.5">
+        // Each direction is a sentence to say as is, one per line: mid-meeting
+        // there's no time to turn a bare topic into words.
+        <ul className="mt-1 flex flex-col gap-1">
           {card.items.map((item) => (
-            <li key={item.key} className="rounded-full border bg-background px-2 py-0.5 text-xs text-foreground">
-              {item.text}
+            <li key={item.key} className="flex gap-1.5 text-sm leading-snug text-foreground">
+              <span aria-hidden className="text-primary/60">·</span>
+              <span className="min-w-0">{item.text}</span>
             </li>
           ))}
         </ul>
