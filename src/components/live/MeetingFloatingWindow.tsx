@@ -47,6 +47,9 @@ import { LiveSuggestionFeed, LiveSuggestionLines, LiveSuggestToggle, useLiveSugg
 import { NotesEditor } from "./NotesEditor";
 import { LiveBanners } from "./LiveScreen";
 import { useTabShortcuts } from "../../lib/commands/tabs";
+import { listenEvent } from "../../lib/ipc/events";
+import { DEV_SESSION } from "../../lib/cloud/devSession";
+import { TRIAL_MINI_EVENT } from "../../lib/devControl";
 
 type Tab = "notes" | "transcript" | "coach";
 
@@ -486,6 +489,14 @@ export function MeetingFloatingWindow() {
   /** Resize first, then swap the view: the window is measured (on the way
    *  in) before anything shrinks it, and the full layout never renders into
    *  a mini-sized window on the way out. */
+  // Trial builds only: the test harness shrinks and grows the window.
+  useEffect(() => {
+    if (!DEV_SESSION) return;
+    let unlisten: (() => void) | undefined;
+    void listenEvent<{ on: boolean }>(TRIAL_MINI_EVENT, (e) => void toggleMini(e.payload.on)).then((fn) => (unlisten = fn));
+    return () => unlisten?.();
+  });
+
   async function toggleMini(on: boolean) {
     await setMeetingMini(on, miniHeight(tab), MINI_MIN_HEIGHT[tab]);
     setMini(on);
