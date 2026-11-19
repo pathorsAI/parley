@@ -29,8 +29,9 @@ fn is_branch(v: &Value) -> bool {
 }
 
 /// The draft's fields, each passed on as given (`null` when absent); `agenda`,
-/// `questions` and `topics`, when given, must be arrays of strings, and
-/// `branches` an array of `{ when, then }` string pairs.
+/// `questions` (an alias the frontend appends to the agenda) and `topics`,
+/// when given, must be arrays of strings, and `branches` an array of
+/// `{ when, then }` string pairs.
 fn draft_args(args: Value) -> anyhow::Result<Value> {
     let agenda = list_arg(&args, "agenda", Value::is_string, "strings")?;
     let questions = list_arg(&args, "questions", Value::is_string, "strings")?;
@@ -58,10 +59,11 @@ fn schemas() -> Vec<Value> {
             "List meeting drafts",
             "List the saved meeting drafts — the upcoming meetings the user has \
              prepared — as { id, title, startAt, endAt, reminderLeadMin, context, \
-             folderId, agenda, questions, branches, topics }. Times are ISO 8601 \
-             strings, or null for a draft with no time yet. `questions`, \
-             `branches` ({ when, then }) and `topics` are the draft's playbook, \
-             which live suggestions pick from during the meeting.",
+             folderId, agenda, branches, topics }. Times are ISO 8601 strings, \
+             or null for a draft with no time yet. `agenda` is the things to ask \
+             or cover in the meeting; `branches` ({ when, then }) and `topics` \
+             are the draft's playbook. Live suggestions pick from all three \
+             during the meeting.",
             json!({ "type": "object", "properties": {} }),
         ),
         tool(
@@ -76,12 +78,13 @@ fn schemas() -> Vec<Value> {
              alternative if no deal), target and bottom line into `context` as \
              plain lines, e.g. 'BATNA: …', 'Target: …', 'Bottom line: …' — \
              Parley has no separate fields for them. \
-             Optionally give the meeting a playbook, which live suggestions pick \
-             from while it runs: `questions` worth asking (each written the way \
-             it would be said), `branches` for steering when the other side says \
-             something specific ({ when: what they say, then: where to steer }), \
-             and `topics` to bring up when the conversation runs dry. Up to 30 \
-             items each. \
+             List what to ask or cover in `agenda`, one item each (a question \
+             written the way it would be said works well): the AI ticks items \
+             as they come up, and live suggestions pick from the ones still \
+             open. Optionally give the meeting a playbook as well: `branches` \
+             for steering when the other side says something specific \
+             ({ when: what they say, then: where to steer }), and `topics` to \
+             bring up when the conversation runs dry. Up to 30 items each. \
              `title` may be left out: a draft with a start time is then named \
              after it. Safe to call while a meeting is recording.",
             json!({
@@ -93,8 +96,8 @@ fn schemas() -> Vec<Value> {
                     "reminderLeadMin": { "type": "number", "description": "Minutes before the start to remind the user (default 5)." },
                     "context": { "type": "string", "description": "Background for the analysis, including any BATNA / target / bottom line." },
                     "folderId": { "type": "string", "description": "Personal folder to file the recording into (see list_folders)." },
-                    "agenda": { "type": "array", "items": { "type": "string" }, "description": "Checklist items to cover in the meeting." },
-                    "questions": { "type": "array", "items": { "type": "string" }, "description": "Playbook: questions to ask, one line each, as they would be said." },
+                    "agenda": { "type": "array", "items": { "type": "string" }, "description": "The things to ask or cover in the meeting; the AI ticks them as they come up and live suggestions pick from the ones still open." },
+                    "questions": { "type": "array", "items": { "type": "string" }, "description": "Alias of `agenda`: its items are appended to the agenda (skipping any already there). Prefer `agenda`." },
                     "branches": {
                         "type": "array",
                         "items": {

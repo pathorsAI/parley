@@ -243,6 +243,7 @@ export function MeetingDraftSheet() {
             <MeetingContextField form rows={4} />
             <Field>
               <FieldTitle label={t("draft.agenda")} />
+              <FieldHint>{t("draft.agendaHint")}</FieldHint>
               {todos.length > 0 && (
                 <div className="-mx-1.5 flex flex-col gap-0.5">
                   {todos.map((todo) => (

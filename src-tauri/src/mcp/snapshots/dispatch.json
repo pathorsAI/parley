@@ -2021,6 +2021,9 @@
   },
   {
     "args": {
+      "agenda": [
+        "Confirm volume"
+      ],
       "branches": [
         {
           "then": "Ask what they compare against",
@@ -2039,7 +2042,9 @@
       "received": {
         "action": "create_meeting_draft",
         "args": {
-          "agenda": null,
+          "agenda": [
+            "Confirm volume"
+          ],
           "branches": [
             {
               "then": "Ask what they compare against",

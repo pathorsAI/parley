@@ -27,7 +27,7 @@ import {
 } from "./defaults";
 import type { ParleyState } from "./types";
 import type { MeetingDraft } from "./prep";
-import { normalizePlaybook } from "../meeting/playbook";
+import { normalizePlaybook, withLegacyQuestions } from "../meeting/playbook";
 import { sanitizeMutedApps } from "../meeting/detect";
 import { CLOUD_ENABLED } from "../flags";
 import { resolveSetupMode } from "../onboarding/setupMode";
@@ -210,7 +210,8 @@ export function migratePersistedState(persisted: unknown, version: number): unkn
  */
 /** Saved meeting drafts from a persisted payload (anything malformed is
  *  dropped, so a bad entry can't take the store down). A draft saved before
- *  playbooks existed comes back with the empty one. */
+ *  playbooks existed comes back with the empty one; one whose playbook still
+ *  carries questions gets them as unticked agenda items. */
 export function restoredDrafts(persisted: unknown): MeetingDraft[] {
   const raw = (persisted as { drafts?: unknown } | undefined)?.drafts;
   if (!Array.isArray(raw)) return [];
@@ -223,7 +224,11 @@ export function restoredDrafts(persisted: unknown): MeetingDraft[] {
         Array.isArray((d as MeetingDraft).todos) &&
         ((d as MeetingDraft).meetingAt === null || typeof (d as MeetingDraft).meetingAt === "number"),
     )
-    .map((d) => ({ ...d, playbook: normalizePlaybook(d.playbook) }));
+    .map((d) => ({
+      ...d,
+      todos: withLegacyQuestions(d.todos, d.playbook),
+      playbook: normalizePlaybook(d.playbook),
+    }));
 }
 
 export function mergePersistedState(persisted: unknown, current: ParleyState): ParleyState {

@@ -193,7 +193,6 @@ describe("saved meeting drafts", () => {
     meetingFloor: "",
     todos: [],
     playbook: {
-      questions: [{ id: "q1", text: "預算多少？" }],
       branches: [{ id: "b1", when: "太貴", then: "問他跟誰比" }],
       topics: [],
     },
@@ -210,7 +209,31 @@ describe("saved meeting drafts", () => {
   it("saved before playbooks existed come back with the empty one", () => {
     const { playbook: _none, ...old } = draft;
     const restored = mergePersistedState({ settings: {}, drafts: [old] }, current());
-    expect(restored.drafts).toEqual([{ ...old, playbook: { questions: [], branches: [], topics: [] } }]);
+    expect(restored.drafts).toEqual([{ ...old, playbook: { branches: [], topics: [] } }]);
+  });
+
+  it("whose playbook still has questions get them as unticked agenda items", () => {
+    const legacy = {
+      ...draft,
+      todos: [{ id: "a1", text: "預算多少？", done: true }],
+      playbook: {
+        ...draft.playbook,
+        questions: [
+          { id: "q1", text: " 預算多少？ " },
+          { id: "q2", text: "什麼時候要決定？" },
+        ],
+      },
+    };
+    const restored = mergePersistedState({ settings: {}, drafts: [legacy] }, current());
+    expect(restored.drafts).toEqual([
+      {
+        ...draft,
+        todos: [
+          { id: "a1", text: "預算多少？", done: true },
+          { id: "q2", text: "什麼時候要決定？", done: false },
+        ],
+      },
+    ]);
   });
 
   it("with a malformed playbook keep its well-formed items", () => {
@@ -218,7 +241,7 @@ describe("saved meeting drafts", () => {
       { settings: {}, drafts: [{ ...draft, playbook: { questions: "x", branches: [{ id: "b1", when: "太貴" }], topics: [{ id: "t1", text: " 擴點 " }] } }] },
       current(),
     );
-    expect(restored.drafts[0].playbook).toEqual({ questions: [], branches: [], topics: [{ id: "t1", text: "擴點" }] });
+    expect(restored.drafts[0].playbook).toEqual({ branches: [], topics: [{ id: "t1", text: "擴點" }] });
   });
 
   it("drop anything malformed", () => {

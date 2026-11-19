@@ -674,7 +674,6 @@ function draftForMcp(d: MeetingDraft) {
     context: d.meetingContext,
     folderId: d.meetingFolderId,
     agenda: d.todos.map((t) => t.text),
-    questions: d.playbook.questions.map((q) => q.text),
     branches: d.playbook.branches.map((b) => ({ when: b.when, then: b.then })),
     topics: d.playbook.topics.map((t) => t.text),
   };
@@ -688,6 +687,21 @@ function asBranches(v: unknown): { when: string; then: string }[] {
     (b): b is { when: string; then: string } =>
       !!b && typeof b === "object" && typeof b.when === "string" && typeof b.then === "string",
   );
+}
+
+/** The agenda from MCP arguments: `agenda`, then the items of its alias
+ *  `questions` that aren't already there (by trimmed text). Blanks dropped. */
+function agendaArg(a: RpcArgs): string[] {
+  const agenda = (asStringArray(a.agenda) ?? []).map((t) => t.trim()).filter(Boolean);
+  const seen = new Set(agenda);
+  for (const raw of asStringArray(a.questions) ?? []) {
+    const q = raw.trim();
+    if (q && !seen.has(q)) {
+      seen.add(q);
+      agenda.push(q);
+    }
+  }
+  return agenda;
 }
 
 async function rpcListMeetingDrafts(): Promise<unknown> {
@@ -718,9 +732,8 @@ async function rpcCreateMeetingDraft(a: RpcArgs): Promise<unknown> {
     reminderLeadMin: lead,
     meetingContext: asString(a.context, "").trim(),
     meetingFolderId: asNonEmptyString(a.folderId) ?? null,
-    agenda: (asStringArray(a.agenda) ?? []).map((t) => t.trim()).filter(Boolean),
+    agenda: agendaArg(a),
     playbook: playbookFromLists({
-      questions: asStringArray(a.questions),
       branches: asBranches(a.branches),
       topics: asStringArray(a.topics),
     }),

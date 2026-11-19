@@ -271,10 +271,10 @@ describe("starting a meeting while a recording is open", () => {
 
 describe("the playbook", () => {
   it("moves into the running meeting with the rest of the prep", () => {
-    useStore.getState().addPlaybookItem("questions", { text: "Budget?" });
+    useStore.getState().addPlaybookItem("topics", { text: "Expansion" });
     beginLiveSession();
-    expect(useLiveStore.getState().meetingPlaybook.questions.map((q) => q.text)).toEqual(["Budget?"]);
-    expect(useStore.getState().meetingPlaybook).toEqual({ questions: [], branches: [], topics: [] });
+    expect(useLiveStore.getState().meetingPlaybook.topics.map((t) => t.text)).toEqual(["Expansion"]);
+    expect(useStore.getState().meetingPlaybook).toEqual({ branches: [], topics: [] });
   });
 
   it("comes back with a cancelled meeting's prep: an empty playbook counts as untouched", () => {
@@ -282,7 +282,7 @@ describe("the playbook", () => {
     useStore.getState().addPlaybookItem("topics", { text: "Expansion" });
     beginLiveSession();
     // A fresh empty playbook, not the cleared slice's own object.
-    useStore.setState({ meetingPlaybook: { questions: [], branches: [], topics: [] } });
+    useStore.setState({ meetingPlaybook: { branches: [], topics: [] } });
     cancelLiveSession();
     expect(useStore.getState().meetingContext).toBe("background");
     expect(useStore.getState().meetingPlaybook.topics.map((t) => t.text)).toEqual(["Expansion"]);

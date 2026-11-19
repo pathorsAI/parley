@@ -154,7 +154,7 @@ describe("carryOverDraft", () => {
       meetingContext: "",
       meetingFolderId: null,
       agenda: [TIMELINE, PILOT],
-      playbook: { questions: [], branches: [], topics: [] },
+      playbook: { branches: [], topics: [] },
     });
   });
 });

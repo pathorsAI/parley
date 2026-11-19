@@ -46,18 +46,16 @@ function AddButton({ disabled }: Readonly<{ disabled: boolean }>) {
   );
 }
 
-/** A one-line-per-item list: the questions or the topics. */
-function TextList({
-  list,
-  label,
-  placeholder,
-}: Readonly<{ list: "questions" | "topics"; label: string; placeholder: string }>) {
-  const items = useStore((s) => s.meetingPlaybook[list]);
+/** The topics: one line per item. */
+function TopicList() {
+  const { t } = useI18n();
+  const label = t("draft.playbook.topics");
+  const items = useStore((s) => s.meetingPlaybook.topics);
   const add = useStore((s) => s.addPlaybookItem);
   const [input, setInput] = useState("");
   function submit(e: React.FormEvent) {
     e.preventDefault();
-    add(list, { text: input });
+    add("topics", { text: input });
     setInput("");
   }
   return (
@@ -66,7 +64,7 @@ function TextList({
       {items.length > 0 && (
         <div className="-mx-1.5 flex flex-col gap-0.5">
           {items.map((x) => (
-            <PlaybookRow key={x.id} list={list} id={x.id}>
+            <PlaybookRow key={x.id} list="topics" id={x.id}>
               {x.text}
             </PlaybookRow>
           ))}
@@ -78,7 +76,7 @@ function TextList({
             value={input}
             maxLength={MAX_PLAYBOOK_TEXT}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={placeholder}
+            placeholder={t("draft.playbook.topicsPlaceholder")}
             aria-label={label}
             className={INPUT_CLASS}
           />
@@ -157,24 +155,16 @@ function BranchList() {
   );
 }
 
-/** The meeting draft's playbook: what to ask, how to steer, where to go next.
- *  Live suggestions pick from it while the meeting runs. */
+/** The meeting draft's playbook: how to steer and where to go next (what to
+ *  ask or cover is the agenda, above it in the sheet). Live suggestions pick
+ *  from it while the meeting runs. */
 export function PlaybookFields() {
   const { t } = useI18n();
   return (
     <>
       <FieldHint>{t("draft.playbook.hint")}</FieldHint>
-      <TextList
-        list="questions"
-        label={t("draft.playbook.questions")}
-        placeholder={t("draft.playbook.questionsPlaceholder")}
-      />
       <BranchList />
-      <TextList
-        list="topics"
-        label={t("draft.playbook.topics")}
-        placeholder={t("draft.playbook.topicsPlaceholder")}
-      />
+      <TopicList />
     </>
   );
 }

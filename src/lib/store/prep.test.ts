@@ -123,27 +123,26 @@ describe("the playbook in the prep", () => {
   const fill = () => {
     const s = useStore.getState();
     s.setMeetingTitle("Renewal");
-    s.addPlaybookItem("questions", { text: "Budget?" });
     s.addPlaybookItem("branches", { when: "too expensive", then: "Ask what they compare against" });
     s.addPlaybookItem("topics", { text: "Expansion" });
   };
   const texts = () => {
     const p = useStore.getState().meetingPlaybook;
-    return [p.questions.map((q) => q.text), p.branches.map((b) => `${b.when}→${b.then}`), p.topics.map((t) => t.text)];
+    return [p.branches.map((b) => `${b.when}→${b.then}`), p.topics.map((t) => t.text)];
   };
 
   it("is edited with the add / remove actions", () => {
     useStore.setState(INITIAL, true);
     fill();
     useStore.getState().removePlaybookItem("topics", useStore.getState().meetingPlaybook.topics[0].id);
-    expect(texts()).toEqual([["Budget?"], ["too expensive→Ask what they compare against"], []]);
+    expect(texts()).toEqual([["too expensive→Ask what they compare against"], []]);
   });
 
   it("is saved with the draft, cleared for the next, and loaded back by edit and take", () => {
     useStore.setState(INITIAL, true);
     fill();
     const saved = useStore.getState().saveDraft()!;
-    expect(saved.playbook.questions.map((q) => q.text)).toEqual(["Budget?"]);
+    expect(saved.playbook.topics.map((t) => t.text)).toEqual(["Expansion"]);
     expect(useStore.getState().meetingPlaybook).toEqual(emptyPlaybook());
 
     useStore.getState().editDraft(saved.id);

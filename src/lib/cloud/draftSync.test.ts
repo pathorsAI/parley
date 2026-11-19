@@ -126,7 +126,6 @@ describe("mapping", () => {
 });
 
 const PLAYBOOK: MeetingPlaybook = {
-  questions: [{ id: "q1", text: "What does next year's volume look like?" }],
   branches: [{ id: "b1", when: "too expensive", then: "Ask what they compare against" }],
   topics: [{ id: "t1", text: "Their expansion plans" }],
 };
@@ -145,12 +144,34 @@ describe("playbook", () => {
   });
 
   it("is read defensively off the wire", () => {
-    const messy = row({ playbook: { questions: [{ id: "q1", text: "  Budget?  " }, { text: "" }], branches: "x" } as never });
+    const messy = row({ playbook: { topics: [{ id: "t1", text: "  Budget  " }, { text: "" }], branches: "x" } as never });
     expect(fromCloudDraft(messy, null).playbook).toEqual({
-      questions: [{ id: "q1", text: "Budget?" }],
       branches: [],
-      topics: [],
+      topics: [{ id: "t1", text: "Budget" }],
     });
+  });
+
+  it("a row whose playbook still has questions brings them into the agenda, once", () => {
+    const legacy = row({
+      todos: [{ id: "a1", text: "Confirm volume", done: true }],
+      playbook: {
+        ...PLAYBOOK,
+        questions: [
+          { id: "q1", text: " Confirm volume " },
+          { id: "q2", text: "What does next year's volume look like?" },
+        ],
+      } as never,
+    });
+    const local = fromCloudDraft(legacy, null);
+    expect(local.todos).toEqual([
+      { id: "a1", text: "Confirm volume", done: true },
+      { id: "q2", text: "What does next year's volume look like?", done: false },
+    ]);
+    expect(local.playbook).toEqual(PLAYBOOK);
+    // Read again, it is the same draft: the sync sees no change to push.
+    expect(fingerprint(fromCloudDraft(legacy, null))).toBe(fingerprint(local));
+    // Written back, the playbook goes up without the questions.
+    expect(toCloudDraft(local).playbook).toEqual(PLAYBOOK);
   });
 
   it("a row with no playbook key keeps the local draft's (an older server)", () => {

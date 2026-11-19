@@ -39,7 +39,7 @@ import { isTauri } from "../tauriEvents";
 import { DEFAULT_REMINDER_LEAD_MIN, type MeetingDraft } from "../store/prep";
 import type { MeetingShare } from "../history/history";
 import type { TodoItem } from "../types";
-import { emptyPlaybook, isPlaybookEmpty, normalizePlaybook, type MeetingPlaybook } from "../meeting/playbook";
+import { emptyPlaybook, isPlaybookEmpty, normalizePlaybook, withLegacyQuestions, type MeetingPlaybook } from "../meeting/playbook";
 import { cloudFetch, syncEnabled } from "./client";
 
 /** The org-share choice as the cloud stores it: the desktop's MeetingShare,
@@ -186,7 +186,8 @@ export function fromCloudDraft(
     meetingBatna: str(row.meetingBatna),
     meetingTarget: str(row.meetingTarget),
     meetingFloor: str(row.meetingFloor),
-    todos: todosOf(row.todos),
+    // A row written while playbooks had questions brings them into the agenda.
+    todos: withLegacyQuestions(todosOf(row.todos), row.playbook),
     playbook: "playbook" in row ? normalizePlaybook(row.playbook) : (localPlaybook ?? emptyPlaybook()),
     meetingFolderId: typeof row.meetingFolderId === "string" ? row.meetingFolderId : null,
     // A share made in the cloud may lack `mode`; the desktop reads a missing
