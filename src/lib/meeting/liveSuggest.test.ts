@@ -15,6 +15,7 @@ import {
   stillCurrent,
   TURN_SETTLE_MS,
   turnsForTrigger,
+  shownGroups,
   type ShownCard,
   type Turn,
   type TriggerFacts,
@@ -222,5 +223,20 @@ describe("turnsForTrigger", () => {
     const read = turnsForTrigger(turns);
     expect(read.map((t) => t.who)).toEqual(["them", "them"]);
     expect(nextTrigger(facts({ turns: read, nowMs: 5_000 + TURN_SETTLE_MS }))).toBe("turn");
+  });
+});
+
+describe("shownGroups", () => {
+  it("rebuilds the cards from the log, oldest first", () => {
+    const at = (key: string, atMs: number, mode: "turn" | "lull") => ({
+      key, kind: "question" as const, text: key, source: null, confidence: 1, mode, atMs,
+    });
+    const groups = shownGroups([at("a", 1000, "turn"), at("b", 5000, "lull"), at("c", 5000, "lull"), at("d", 9000, "turn")]);
+    expect(groups.map((g) => [g.mode, g.atMs, g.items.map((i) => i.key)])).toEqual([
+      ["turn", 1000, ["a"]],
+      ["lull", 5000, ["b", "c"]],
+      ["turn", 9000, ["d"]],
+    ]);
+    expect(shownGroups([])).toEqual([]);
   });
 });

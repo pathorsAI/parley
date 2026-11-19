@@ -239,3 +239,22 @@ export function parseSuggestions(mode: SuggestMode, body: unknown): Suggestion[]
   }
   return out.slice(0, mode === "turn" ? 1 : 3);
 }
+
+/** One card as it was shown: its moment and the lines it offered. */
+export interface ShownGroup {
+  mode: SuggestMode;
+  atMs: number;
+  items: ShownSuggestion[];
+}
+
+/** The meeting's shown suggestions as the cards they appeared in, oldest
+ *  first: the 教練 tab's running list. Pure. */
+export function shownGroups(log: readonly ShownSuggestion[]): ShownGroup[] {
+  const out: ShownGroup[] = [];
+  for (const s of log) {
+    const last = out[out.length - 1];
+    if (last && last.atMs === s.atMs && last.mode === s.mode) last.items.push(s);
+    else out.push({ mode: s.mode, atMs: s.atMs, items: [s] });
+  }
+  return out;
+}

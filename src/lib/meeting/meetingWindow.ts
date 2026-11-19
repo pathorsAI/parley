@@ -57,6 +57,8 @@ const MIRRORED = [
   // The live suggestion on screen (meeting/liveSuggestRun.ts): made in the
   // main window, shown here. Its on/off is a setting, synced like the others.
   "liveSuggestion",
+  // Every suggestion shown this meeting: the 教練 tab's running list.
+  "liveSuggestLog",
 ] as const satisfies readonly (keyof ParleyState)[];
 
 /** Of those, the ones the meeting window edits; they travel back as patches. */
