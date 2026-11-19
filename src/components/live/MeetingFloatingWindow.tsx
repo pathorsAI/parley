@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -49,8 +49,7 @@ import { DestinationField } from "../DestinationSheet";
 import { MeetingContextField } from "../MeetingContextField";
 import { useMeetingDestination } from "../useMeetingDestination";
 import { CoachFeed } from "./CoachFeed";
-import { LiveSuggestionBar, LiveSuggestToggle } from "./LiveSuggestion";
-import { AgendaBar, MiniAgendaCount, useAgendaEndReminder } from "./AgendaBar";
+import { LiveSuggestionBar, LiveSuggestionLines, LiveSuggestToggle, useLiveSuggestionCard } from "./LiveSuggestion";
 import { NotesEditor } from "./NotesEditor";
 import { LiveBanners } from "./LiveScreen";
 import { ASK_SUGGESTIONS, useCoachAsk, type AskCard } from "./coachAsk";
@@ -224,6 +223,23 @@ function MiniWindow({
   const coach = tab === "coach";
   const answerOpen = coach && open && !!last;
   useMiniDocking(!fixed);
+  // A live suggestion shows under the row on every tab; the window grows by
+  // its height so the tab's own view keeps its size.
+  const suggestion = useLiveSuggestionCard();
+  const [suggestionH, setSuggestionH] = useState(0);
+  const suggestionRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = suggestionRef.current;
+    if (!el) {
+      setSuggestionH(0);
+      return;
+    }
+    const measure = () => setSuggestionH(Math.ceil(el.getBoundingClientRect().height));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [suggestion]);
 
   // Only a change of tab or answer resizes the window: on mount it already has
   // the size the shrink gave it, and resizing then raced the shrink's reading
@@ -236,8 +252,8 @@ function MiniWindow({
       if (!fixed) void holdMiniMinHeight(MINI_MIN_HEIGHT[tab]);
       return;
     }
-    if (!fixed) void setMiniHeight(miniHeight(tab, answerOpen), MINI_MIN_HEIGHT[tab]);
-  }, [tab, answerOpen, fixed]);
+    if (!fixed) void setMiniHeight(miniHeight(tab, answerOpen) + suggestionH, MINI_MIN_HEIGHT[tab] + suggestionH);
+  }, [tab, answerOpen, fixed, suggestionH]);
 
   function send() {
     if (!draft.trim() || busy) return;
@@ -267,7 +283,6 @@ function MiniWindow({
       <div className="flex h-12 shrink-0 items-center gap-2 pr-1.5 pl-2" title={fixed ? undefined : t("floating.dockHint")}>
         <DragGrip />
         <RecordingClock withLabel={false} />
-        <MiniAgendaCount />
         {coach ? (
           <form
             className="flex h-8 min-w-0 flex-1 items-center gap-1 rounded-lg border border-input bg-background pr-1 pl-2.5"
@@ -327,6 +342,11 @@ function MiniWindow({
           <Maximize2 className="size-3.5" />
         </button>
       </div>
+      {suggestion && (
+        <div ref={suggestionRef} className="shrink-0 border-t bg-primary/10 px-3 py-2">
+          <LiveSuggestionLines card={suggestion} compact />
+        </div>
+      )}
       {tab === "transcript" && (
         <div className="flex min-h-0 flex-1 flex-col border-t">
           <MiniTranscript />
@@ -653,17 +673,6 @@ export function MeetingFloatingWindow() {
   const meetingActive = status === "recording" || status === "paused";
   const paused = status === "paused";
 
-  // 結束前 5 分鐘 still-open agenda items: one toast, whichever layout is up.
-  useAgendaEndReminder();
-
-  /** An AI tick's 「AI · mm:ss」: over to the transcript, which scrolls to the
-   *  line nearest that moment and flashes it (TranscriptPanel's highlightMs —
-   *  the signal waits in the store until the tab has mounted). */
-  function jumpToTranscript(ms: number) {
-    setHighlightMs(ms);
-    setTab("transcript");
-  }
-
   // Each meeting starts with an empty question thread.
   useEffect(() => {
     useCoachAsk.getState().reset();
@@ -704,7 +713,6 @@ export function MeetingFloatingWindow() {
       <FloatingTitleBar onClose={() => setConfirmCancel(true)} onCollapse={() => void toggleMini(true)} />
       <LiveBanners />
       <MeetingHeading />
-      <AgendaBar onJump={jumpToTranscript} />
       <LiveSuggestionBar />
 
       {bgOpen && (

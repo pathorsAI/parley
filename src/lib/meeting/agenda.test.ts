@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  AGENDA_REMINDER_LEAD_MS,
-  agendaCount,
-  agendaProgress,
-  agendaReminderDue,
   applyAiChecks,
   carryOverDraft,
   parseClock,
@@ -78,60 +74,6 @@ describe("toggleAgendaItem", () => {
   it("a dismissed item ticked again by the user stays dismissed", () => {
     const back = toggleAgendaItem(item("a", BUDGET, { aiDismissed: true }));
     expect(back).toMatchObject({ done: true, doneBy: "user", aiDismissed: true });
-  });
-});
-
-describe("agendaProgress", () => {
-  it("counts, fills and names the first item still open", () => {
-    const p = agendaProgress([item("a", BUDGET, { done: true }), item("b", TIMELINE), item("c", PILOT)]);
-    expect(p).toMatchObject({ done: 1, total: 3, next: { id: "b" } });
-    expect(p.fraction).toBeCloseTo(1 / 3);
-    expect(agendaCount(p)).toBe("1/3");
-  });
-
-  it("the next item is the first open one in agenda order, not the first ticked off", () => {
-    const p = agendaProgress([item("a", BUDGET), item("b", TIMELINE, { done: true })]);
-    expect(p.next?.id).toBe("a");
-  });
-
-  it("has no next item once everything is done, and an empty agenda fills nothing", () => {
-    expect(agendaProgress([item("a", BUDGET, { done: true })])).toMatchObject({ next: null, fraction: 1 });
-    expect(agendaProgress([])).toEqual({ done: 0, total: 0, fraction: 0, next: null });
-  });
-});
-
-describe("agendaReminderDue", () => {
-  const END = 10_000_000;
-  const open = [item("a", BUDGET, { done: true }), item("b", TIMELINE)];
-  const due = (over: Partial<Parameters<typeof agendaReminderDue>[0]>) =>
-    agendaReminderDue({
-      now: END - AGENDA_REMINDER_LEAD_MS,
-      meetingEndAt: END,
-      todos: open,
-      alreadyShown: false,
-      startedAt: END - 60 * 60_000,
-      ...over,
-    });
-
-  it("fires from five minutes before the drafted end while something is open", () => {
-    expect(due({})).toBe(true);
-    expect(due({ now: END + 60_000 })).toBe(true);
-  });
-
-  it("waits until then", () => {
-    expect(due({ now: END - AGENDA_REMINDER_LEAD_MS - 1 })).toBe(false);
-  });
-
-  it("stays quiet for a meeting that started inside the last five minutes or after its end", () => {
-    expect(due({ startedAt: END - AGENDA_REMINDER_LEAD_MS })).toBe(false);
-    expect(due({ startedAt: END + 60_000, now: END + 120_000 })).toBe(false);
-  });
-
-  it("never without an end time, once shown, or with nothing open", () => {
-    expect(due({ meetingEndAt: null })).toBe(false);
-    expect(due({ alreadyShown: true })).toBe(false);
-    expect(due({ todos: [item("a", BUDGET, { done: true })] })).toBe(false);
-    expect(due({ todos: [] })).toBe(false);
   });
 });
 
