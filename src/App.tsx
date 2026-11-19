@@ -32,7 +32,6 @@ import {
   showTrayNoticeOnce,
   syncTrayLabels,
   trayActive,
-  TRAY_QUIT_EVENT,
 } from "./lib/tray";
 import { listenForLocalSttSlow } from "./lib/transcription/localAlerts";
 import { listenForSettings } from "./lib/settingsSync";
@@ -49,6 +48,8 @@ import { initStudyPipeline } from "./lib/analysis/studyPipeline";
 import { listenForSpeakerCacheClear } from "./lib/speakers/namesCache";
 import { initHistoryPersistSync, listenForRecordingSaved, recoverCrashedMeetings } from "./lib/history/history";
 import { endMeeting, recoverOrphanedMeeting } from "./lib/meeting/controls";
+import { QUIT_REQUESTED_EVENT, quitAfterSaving } from "./lib/meeting/quit";
+import * as ipc from "./lib/ipc/commands";
 import { initSilenceGuard } from "./lib/meeting/silenceGuard";
 import { initMeetingReminder } from "./lib/meeting/reminder";
 import { initMeetingDetect } from "./lib/meeting/detectPrompt";
@@ -108,15 +109,16 @@ function exitApp(): void {
 }
 
 /**
- * Stop-then-quit: the tray's Quit item on Windows, and the close button where
- * there is nothing to hide to (Linux, or a Windows tray that failed to build).
- * The stop has to land before the process goes away — `exit` is immediate and
- * would cut the IPC mid-flight, leaving the native capture to die with the
- * process instead of finishing its teardown — so the exit is chained onto it,
- * on success and failure alike.
+ * End-save-then-quit: every Quit (⌘Q and the app menu on macOS, the tray's
+ * Quit on Windows — all routed through src-tauri/src/quit.rs) and the close
+ * button where there is nothing to hide to (Linux, or a Windows tray that
+ * failed to build). `exit` is immediate, so it waits until an active meeting
+ * is ended AND its history entry is written — exiting any earlier lost the
+ * transcript, and with it the report (see quitAfterSaving) — and runs on
+ * failure too.
  */
 function exitOnClose(stopIfRecording: () => Promise<void>): void {
-  void stopIfRecording().then(exitApp, exitApp);
+  void quitAfterSaving(stopIfRecording, exitApp, { meetingActive: isLiveMeetingActive() });
 }
 
 /**
@@ -335,7 +337,7 @@ const App = () => {
   //
   // Windows does the same, into the notification area: Rust puts a tray icon
   // there (src-tauri/src/tray.rs) whose click brings the window back and whose
-  // Quit item is the real exit (TRAY_QUIT_EVENT, below). Before that icon
+  // Quit item is the real exit (QUIT_REQUESTED_EVENT, below). Before that icon
   // existed the close button had to QUIT on Windows — hiding needs somewhere to
   // hide to, and merely letting the window be destroyed left Parley running
   // invisibly (the prewarmed `voice-typing` window kept the process alive,
@@ -389,10 +391,15 @@ const App = () => {
         }
       })
       .catch((error) => log.warn("window: close listener failed", { error: String(error) }));
-    // The tray's Quit item (Windows): Rust asks, and the exit runs here so an
-    // active meeting is stopped first — the same chain close-to-quit uses.
+    // Quit (⌘Q / the app menu on macOS, the tray on Windows): Rust asks, and
+    // the exit runs here so an active meeting is ended and saved first — the
+    // same chain close-to-quit uses. The acknowledgement tells Rust to give
+    // the save time instead of exiting under it.
     let unlistenQuit: (() => void) | undefined;
-    listenEvent(TRAY_QUIT_EVENT, () => exitOnClose(stopIfRecording))
+    listenEvent(QUIT_REQUESTED_EVENT, () => {
+      ipc.quitAcknowledged().catch((error) => log.warn("quit: acknowledging failed", { error: String(error) }));
+      exitOnClose(stopIfRecording);
+    })
       .then((fn) => {
         if (active) {
           unlistenQuit = fn;
@@ -400,7 +407,7 @@ const App = () => {
           fn();
         }
       })
-      .catch((error) => log.warn("window: tray quit listener failed", { error: String(error) }));
+      .catch((error) => log.warn("window: quit listener failed", { error: String(error) }));
     return () => {
       active = false;
       window.removeEventListener("beforeunload", stopOnUnload);

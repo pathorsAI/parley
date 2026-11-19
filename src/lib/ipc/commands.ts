@@ -379,6 +379,9 @@ export const appIdentity = () => invoke<AppIdentity>("app_identity");
 
 export const setTrayLabels = (args: { labels: TrayLabels }) => invoke<void>("set_tray_labels", args);
 export const trayActive = () => invoke<boolean>("tray_active");
+/** The main window has a quit request (src-tauri/src/quit.rs): give the
+ *  meeting's save time before the backend's fallback exit. */
+export const quitAcknowledged = () => invoke<void>("quit_acknowledged");
 export const launchAtLoginStatus = () => invoke<boolean>("launch_at_login_status");
 export const setLaunchAtLogin = (args: { enabled: boolean }) => invoke<boolean>("set_launch_at_login", args);
 export const markShowOnNextLaunch = () => invoke<void>("mark_show_on_next_launch");

@@ -13,9 +13,6 @@ import { useStore } from "./store";
 import { log } from "./log";
 import * as ipc from "./ipc/commands";
 
-/** Rust → main window: the tray's Quit item was clicked. */
-export const TRAY_QUIT_EVENT = "app://quit-requested";
-
 /** Rust → voice-typing host: the tray's Start/Stop voice typing item. */
 export const TRAY_VOICE_TOGGLE_EVENT = "voicetyping://toggle";
 

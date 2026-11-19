@@ -103,6 +103,11 @@ export interface HistoryEntry {
    *  keeps meta's). Absent on uploads, meetings without an agenda and entries
    *  saved before it existed: the report then shows no 沒談到的議程. */
   agenda?: TodoItem[];
+  /** The meeting did not end the normal way — Parley quit, crashed or lost
+   *  the page mid-meeting — and was saved by recovery. Its title carries the
+   *  （已復原） mark, so the filing pass must not rename it (filingRun.ts):
+   *  the name says what happened to it. Absent on every normal save. */
+  recovered?: true;
   /** The live suggestions (即時建議) shown during the meeting, each with when
    *  it appeared on the transcript's clock — what the report's adoption rate
    *  compares with what the user then said (meeting/suggestAdoption.ts).

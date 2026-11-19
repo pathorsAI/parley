@@ -198,6 +198,28 @@ export interface LiveMeetingSnapshot {
   /** The backend recorded it without this window knowing (the page reloaded
    *  under a running capture): its transcript is gone, keep the audio. */
   orphan: boolean;
+  /** Cut off rather than ended: Parley quit mid-meeting (or the page lost
+   *  it — every orphan is). Saved as a recovered entry, see
+   *  {@link HistoryEntry.recovered}. */
+  interrupted: boolean;
+}
+
+/** Live meetings the app is quitting under (markLiveMeetingInterrupted). */
+const interruptedMeetings = new Set<string>();
+
+/** The live meeting is being cut off by a quit, not ended by the user: its
+ *  save keeps the live name with the recovered mark. Call before ending it. */
+export function markLiveMeetingInterrupted(): void {
+  const id = useLiveStore.getState().liveMeetingId;
+  if (id) interruptedMeetings.add(id);
+}
+
+/** The title a recovered live meeting saves under: its own name (typed in
+ *  the meeting window, else the dated default) plus the recovered mark —
+ *  never a generated one. Pure + exported for testing. */
+export function recoveredTitle(base: string, lang: Settings["language"]): string {
+  const suffix = translate(lang, "history.recoveredSuffix");
+  return base.endsWith(suffix) ? base : `${base}${suffix}`;
 }
 
 /** Stopped meetings whose recording is still being encoded and saved. */
@@ -219,6 +241,7 @@ export function snapshotLiveMeeting(): LiveMeetingSnapshot | null {
     ...agendaField(s.todos),
     ...liveSuggestionsField(s.liveSuggestLog),
     orphan: false,
+    interrupted: interruptedMeetings.has(s.liveMeetingId),
   };
 }
 
@@ -262,6 +285,7 @@ export function orphanSnapshot(id: string, startedAtMs: number | undefined): Liv
       origin: "default",
     },
     orphan: true,
+    interrupted: true,
   };
 }
 
@@ -480,11 +504,13 @@ export async function saveLiveToHistory(
   const speechRateHz = await liveSpeechRate(snap, audioTempPath);
   const save = snap.save;
   log.info("history: live save destination", { id: snap.id, origin: save.origin, folderId: save.folderId });
+  const baseTitle = snap.title ?? `${translate(s.settings.language, "history.liveTitle")} · ${dateLabel}`;
+  interruptedMeetings.delete(snap.id);
   const entry: HistoryEntry = {
     // The meeting's own id: a second save of the same meeting (a recovered
     // journal, a repeated event) overwrites its entry instead of duplicating it.
     id: snap.id,
-    title: snap.title ?? `${translate(s.settings.language, "history.liveTitle")} · ${dateLabel}`,
+    title: snap.interrupted ? recoveredTitle(baseTitle, s.settings.language) : baseTitle,
     source: "live",
     createdAt,
     durationMs,
@@ -492,6 +518,7 @@ export async function saveLiveToHistory(
     folderId: save.folderId,
     ...analysis,
     ...agendaField(snap.agenda),
+    ...(snap.interrupted ? { recovered: true as const } : {}),
     ...liveSuggestionsField(snap.liveSuggestions),
     speechRateHz,
     // Only a diarized meeting needs it: a two-stream one already knows which
@@ -1273,13 +1300,14 @@ async function saveRecovered(
   const dateLabel = new Date(snap.createdAt).toLocaleString(localeOf());
   const entry: HistoryEntry = {
     id: r.meetingId,
-    title: `${translate(lang, "history.liveTitle")} · ${dateLabel}${translate(lang, "history.recoveredSuffix")}`,
+    title: recoveredTitle(`${translate(lang, "history.liveTitle")} · ${dateLabel}`, lang),
     source: "live",
     createdAt: snap.createdAt,
     durationMs: r.durationMs,
     audio: "audio.ogg",
     folderId: snap.save.folderId,
     ...snap.analysis,
+    recovered: true,
   };
   await persist(entry, r.path, /* compress */ false);
   log.warn("history: recovered an unfinished meeting", { id: r.meetingId, durationMs: r.durationMs });
