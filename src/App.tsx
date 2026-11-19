@@ -43,6 +43,7 @@ import { initSessionSync } from "./lib/sessionSync";
 import { initSessionCommands } from "./lib/sessionCommands";
 import { useThemePreference } from "./lib/theme";
 import { useAnalysisEngine, listenForCacheClear } from "./lib/analysis/engine";
+import { useLiveSuggestEngine } from "./lib/meeting/liveSuggestRun";
 import { initStudyPipeline } from "./lib/analysis/studyPipeline";
 import { listenForSpeakerCacheClear } from "./lib/speakers/namesCache";
 import { initHistoryPersistSync, listenForRecordingSaved, recoverCrashedMeetings } from "./lib/history/history";
@@ -60,6 +61,8 @@ import {
   type ReleaseNotes,
 } from "./lib/releaseNotes";
 import { refreshSession } from "./lib/cloud/client";
+import { ensureDevSession } from "./lib/cloud/devSession";
+import { startDevControl } from "./lib/devControl";
 import { initDictionarySync } from "./lib/cloud/dictionarySync";
 import { initDraftSync } from "./lib/cloud/draftSync";
 import { runOrgNotices } from "./lib/cloud/orgNotices";
@@ -287,6 +290,9 @@ const App = () => {
       .catch((error) => log.warn("update: installed release notes lookup failed", { error: String(error) }));
   }, []);
 
+  // Trial builds only: a local test harness can start and end meetings.
+  useEffect(() => startDevControl(), []);
+
   // Check for an app update shortly after launch, then keep re-checking on a slow
   // interval so a long-running window still catches a release that lands while
   // it's open. Surfaces a dismissible banner only; applying is always
@@ -294,7 +300,11 @@ const App = () => {
   // cloud sign-in on launch.
   useEffect(() => {
     if (CLOUD_ENABLED) {
-      refreshSession().catch((error) => log.warn("cloud: session refresh failed", { error: String(error) }));
+      refreshSession()
+        .catch((error) => log.warn("cloud: session refresh failed", { error: String(error) }))
+        // Trial builds only (VITE_PARLEY_DEV_SESSION); a constant no-op otherwise.
+        .then(() => ensureDevSession())
+        .catch((error) => log.error("cloud: dev session failed", { error: String(error) }));
     }
     // Skip update checks in dev — there are no updater artifacts and the banner
     // just gets in the way while iterating.
@@ -451,6 +461,8 @@ const App = () => {
 
   // LIVE background engine: optional auto-analyze interval + checklist auto-check.
   useAnalysisEngine();
+  // LIVE suggestions (即時建議): the next line, from Parley Cloud, when on.
+  useLiveSuggestEngine();
 
   // LIVE delivery coach: turns the prosody stream into pace/monotone/pause nudges.
   useDeliveryCoach();

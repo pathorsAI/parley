@@ -13,6 +13,7 @@ import type {
   Settings,
   VoiceTypingPolishStyle,
 } from "../types";
+import { createJSONStorage } from "zustand/middleware";
 import type { CloudAuth } from "../cloud/types";
 import { isMac } from "../platform";
 import { buildBuiltinEvalLabels, defaultEvalDefs, buildPresetEvalTemplates, evalsFromDefs } from "../evaluations/presets";
@@ -27,6 +28,7 @@ import {
 } from "./defaults";
 import type { ParleyState } from "./types";
 import type { MeetingDraft } from "./prep";
+import { normalizePlaybook, withLegacyQuestions } from "../meeting/playbook";
 import { sanitizeMutedApps } from "../meeting/detect";
 import { CLOUD_ENABLED } from "../flags";
 import { resolveSetupMode } from "../onboarding/setupMode";
@@ -208,18 +210,26 @@ export function migratePersistedState(persisted: unknown, version: number): unkn
  * persisted state (runs after {@link migratePersistedState}). Exported for tests.
  */
 /** Saved meeting drafts from a persisted payload (anything malformed is
- *  dropped, so a bad entry can't take the store down). */
+ *  dropped, so a bad entry can't take the store down). A draft saved before
+ *  playbooks existed comes back with the empty one; one whose playbook still
+ *  carries questions gets them as unticked agenda items. */
 export function restoredDrafts(persisted: unknown): MeetingDraft[] {
   const raw = (persisted as { drafts?: unknown } | undefined)?.drafts;
   if (!Array.isArray(raw)) return [];
-  return raw.filter(
-    (d): d is MeetingDraft =>
-      !!d &&
-      typeof d === "object" &&
-      typeof (d as MeetingDraft).id === "string" &&
-      Array.isArray((d as MeetingDraft).todos) &&
-      ((d as MeetingDraft).meetingAt === null || typeof (d as MeetingDraft).meetingAt === "number"),
-  );
+  return raw
+    .filter(
+      (d): d is MeetingDraft =>
+        !!d &&
+        typeof d === "object" &&
+        typeof (d as MeetingDraft).id === "string" &&
+        Array.isArray((d as MeetingDraft).todos) &&
+        ((d as MeetingDraft).meetingAt === null || typeof (d as MeetingDraft).meetingAt === "number"),
+    )
+    .map((d) => ({
+      ...d,
+      todos: withLegacyQuestions(d.todos, d.playbook),
+      playbook: normalizePlaybook(d.playbook),
+    }));
 }
 
 export function mergePersistedState(persisted: unknown, current: ParleyState): ParleyState {
@@ -319,3 +329,21 @@ export const PERSIST_OPTIONS = {
   // Backfill any settings fields missing from older persisted state.
   merge: mergePersistedState,
 };
+
+/**
+ * The persisted store for a window that only READS it: hydrates from the shared
+ * localStorage key like any window, but never writes back. Every window has its
+ * own copy of the store, persisted under the same key, and each write is the
+ * window's WHOLE persisted slice — so a secondary window writing its stale copy
+ * of the drafts would undo the main window's, and the two would answer each
+ * other's `storage` events forever (a meeting window and the main window did
+ * exactly that whenever a draft changed mid-meeting: tens of thousands of
+ * settings re-applies a minute, the main window's renderer pegged, its live
+ * features starved). Only the main window, which owns the drafts and the
+ * session, and the Settings window, which edits the settings, write.
+ */
+export const READ_ONLY_STORAGE = createJSONStorage(() => ({
+  getItem: (key: string) => globalThis.localStorage.getItem(key),
+  setItem: () => {},
+  removeItem: () => {},
+}));

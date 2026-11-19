@@ -2,6 +2,7 @@
 // auto-analysis interval.
 
 import type { DeliveryNudge, ProsodyMetrics } from "../types";
+import type { ShownCard, ShownSuggestion } from "../meeting/liveSuggest";
 import { addMicSample, type MicSpan } from "../speakers/self";
 import { meetingElapsedMs } from "./meeting";
 import type { SliceCreator } from "./types";
@@ -30,6 +31,16 @@ export interface CoachingSlice {
   /** Show a nudge (replaces any current one); the UI auto-dismisses it. */
   pushDeliveryNudge: (n: DeliveryNudge) => void;
   clearDeliveryNudge: () => void;
+
+  /** The live suggestion on screen (即時建議; meeting/liveSuggestRun.ts),
+   *  null when there is none. LIVE only; reset on meeting start. */
+  liveSuggestion: ShownCard | null;
+  /** Every suggestion shown this meeting, oldest first: the cloud's cooldown
+   *  input, and saved with the recording for the adoption rate. */
+  liveSuggestLog: ShownSuggestion[];
+  /** Put a card on screen and log what it shows. */
+  showLiveSuggestion: (card: ShownCard) => void;
+  clearLiveSuggestion: () => void;
 }
 
 export const createCoachingSlice: SliceCreator<CoachingSlice> = (set) => ({
@@ -39,6 +50,8 @@ export const createCoachingSlice: SliceCreator<CoachingSlice> = (set) => ({
   micSessionRateHz: null,
   micActivity: [],
   deliveryNudge: null,
+  liveSuggestion: null,
+  liveSuggestLog: [],
 
   setAutoAnalyze: (on) => set({ autoAnalyze: on }),
   setAutoAnalyzeSec: (sec) => set({ autoAnalyzeSec: Math.max(20, sec || 45) }),
@@ -67,4 +80,13 @@ export const createCoachingSlice: SliceCreator<CoachingSlice> = (set) => ({
     }),
   pushDeliveryNudge: (n) => set({ deliveryNudge: n }),
   clearDeliveryNudge: () => set({ deliveryNudge: null }),
+  showLiveSuggestion: (card) =>
+    set((state) => ({
+      liveSuggestion: card,
+      liveSuggestLog: [
+        ...state.liveSuggestLog,
+        ...card.items.map((item) => ({ ...item, mode: card.mode, atMs: card.atMs })),
+      ],
+    })),
+  clearLiveSuggestion: () => set({ liveSuggestion: null }),
 });

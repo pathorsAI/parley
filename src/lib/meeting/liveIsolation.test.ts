@@ -40,7 +40,7 @@ import { useLiveStore, useStore } from "../store";
 import { listenForTranscript } from "../tauriEvents";
 import { runAnalysis } from "../analysis/engine";
 import { loadOrgEntry } from "../history/open";
-import { beginLiveSession } from "./liveSession";
+import { beginLiveSession, cancelLiveSession } from "./liveSession";
 import { replaySession, seg } from "../test/fixtures";
 import type { TimelineEvent } from "../types";
 
@@ -266,5 +266,25 @@ describe("starting a meeting while a recording is open", () => {
     beginLiveSession();
     expect(useStore.getState().meetingContext).toBe("old recording's background");
     expect(useLiveStore.getState().meetingContext).toBe("");
+  });
+});
+
+describe("the playbook", () => {
+  it("moves into the running meeting with the rest of the prep", () => {
+    useStore.getState().addPlaybookItem("topics", { text: "Expansion" });
+    beginLiveSession();
+    expect(useLiveStore.getState().meetingPlaybook.topics.map((t) => t.text)).toEqual(["Expansion"]);
+    expect(useStore.getState().meetingPlaybook).toEqual({ branches: [], topics: [] });
+  });
+
+  it("comes back with a cancelled meeting's prep: an empty playbook counts as untouched", () => {
+    useStore.getState().setMeetingContext("background");
+    useStore.getState().addPlaybookItem("topics", { text: "Expansion" });
+    beginLiveSession();
+    // A fresh empty playbook, not the cleared slice's own object.
+    useStore.setState({ meetingPlaybook: { branches: [], topics: [] } });
+    cancelLiveSession();
+    expect(useStore.getState().meetingContext).toBe("background");
+    expect(useStore.getState().meetingPlaybook.topics.map((t) => t.text)).toEqual(["Expansion"]);
   });
 });

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 // The store first: prep.ts reaches it through ./meeting, and entering the
 // cycle from the slice side would build the store before the slice exists.
-import "../store";
+import { useStore } from "../store";
+import { emptyPlaybook } from "../meeting/playbook";
 import { draftsForOrg, isStartingSoon, sortDrafts, STARTING_SOON_MS, type MeetingDraft } from "./prep";
 
 function draft(id: string, over: Partial<MeetingDraft> = {}): MeetingDraft {
@@ -17,6 +18,7 @@ function draft(id: string, over: Partial<MeetingDraft> = {}): MeetingDraft {
     meetingTarget: "",
     meetingFloor: "",
     todos: [],
+    playbook: emptyPlaybook(),
     meetingFolderId: null,
     meetingOrgShare: null,
     updatedAt: 0,
@@ -113,5 +115,66 @@ describe("isStartingSoon", () => {
 
   it("never takes an untimed draft", () => {
     expect(isStartingSoon(draft("a"), now)).toBe(false);
+  });
+});
+
+describe("the playbook in the prep", () => {
+  const INITIAL = useStore.getState();
+  const fill = () => {
+    const s = useStore.getState();
+    s.setMeetingTitle("Renewal");
+    s.addPlaybookItem("branches", { when: "too expensive", then: "Ask what they compare against" });
+    s.addPlaybookItem("topics", { text: "Expansion" });
+  };
+  const texts = () => {
+    const p = useStore.getState().meetingPlaybook;
+    return [p.branches.map((b) => `${b.when}→${b.then}`), p.topics.map((t) => t.text)];
+  };
+
+  it("is edited with the add / remove actions", () => {
+    useStore.setState(INITIAL, true);
+    fill();
+    useStore.getState().removePlaybookItem("topics", useStore.getState().meetingPlaybook.topics[0].id);
+    expect(texts()).toEqual([["too expensive→Ask what they compare against"], []]);
+  });
+
+  it("is saved with the draft, cleared for the next, and loaded back by edit and take", () => {
+    useStore.setState(INITIAL, true);
+    fill();
+    const saved = useStore.getState().saveDraft()!;
+    expect(saved.playbook.topics.map((t) => t.text)).toEqual(["Expansion"]);
+    expect(useStore.getState().meetingPlaybook).toEqual(emptyPlaybook());
+
+    useStore.getState().editDraft(saved.id);
+    expect(useStore.getState().meetingPlaybook).toEqual(saved.playbook);
+    useStore.getState().discardDraftEdit();
+    expect(useStore.getState().meetingPlaybook).toEqual(emptyPlaybook());
+
+    expect(useStore.getState().takeDraft(saved.id)).toBe(true);
+    expect(useStore.getState().meetingPlaybook).toEqual(saved.playbook);
+  });
+
+  it("is cleared by resetPrep", () => {
+    useStore.setState(INITIAL, true);
+    fill();
+    useStore.getState().resetPrep();
+    expect(useStore.getState().meetingPlaybook).toEqual(emptyPlaybook());
+  });
+
+  it("comes with a draft added from outside (MCP), leaving the prep alone", () => {
+    useStore.setState(INITIAL, true);
+    const playbook = { ...emptyPlaybook(), topics: [{ id: "t1", text: "Expansion" }] };
+    const d = useStore.getState().addDraft({
+      title: "From MCP",
+      meetingAt: null,
+      meetingEndAt: null,
+      reminderLeadMin: null,
+      meetingContext: "",
+      meetingFolderId: null,
+      agenda: [],
+      playbook,
+    });
+    expect(d.playbook).toEqual(playbook);
+    expect(useStore.getState().meetingPlaybook).toEqual(emptyPlaybook());
   });
 });

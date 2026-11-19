@@ -7,6 +7,7 @@ import { initFolderRegistry } from "./lib/history/folders";
 import { initDictionary } from "./lib/dictionary";
 import { desktopPlatform, isTauri } from "./lib/platform";
 import { useStore } from "./lib/store";
+import { READ_ONLY_STORAGE } from "./lib/store/persistence";
 import type { AppLanguage } from "./lib/types";
 import { restoreZoom } from "./lib/zoom";
 import { installGlobalCommands } from "./lib/commands/bind";
@@ -46,6 +47,13 @@ setNotifier({
 // Settings are edited in the Settings window, so that window's store edits are
 // the ones broadcast to the others (see settingsSync).
 if (window_ === "settings") installSettingsBroadcast();
+
+// Only the main window and the Settings window write the persisted store; the
+// others (the meeting window, the overlays) read it at boot and stay in step
+// through settingsSync. See READ_ONLY_STORAGE for the feedback loop this stops.
+if (window_ !== "main" && window_ !== "settings") {
+  useStore.persist.setOptions({ storage: READ_ONLY_STORAGE });
+}
 
 // Re-apply this window's saved page zoom (the KEYS are commands now — below).
 // Not in the voice-typing overlay: the zoom is stored under one key shared by

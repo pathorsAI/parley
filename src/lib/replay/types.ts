@@ -7,6 +7,7 @@
 // this declaration.
 
 import type { TodoItem, TranscriptSegment } from "../types";
+import type { ShownSuggestion } from "../meeting/liveSuggest";
 
 /**
  * A fully transcribed uploaded recording ready for the replay UI to play and
@@ -46,4 +47,7 @@ export interface ReplaySession {
   /** The saved meeting's agenda (HistoryEntry.agenda), for the report's
    *  沒談到的議程. Absent when the recording has none. */
   agenda?: readonly TodoItem[];
+  /** The live suggestions shown during the meeting (HistoryEntry.liveSuggestions),
+   *  for the report's adoption rate. Absent when none were. */
+  liveSuggestions?: readonly ShownSuggestion[];
 }
