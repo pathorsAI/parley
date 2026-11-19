@@ -33,14 +33,28 @@ export function LiveSuggestionBar({ className = "mx-5 mt-3" }: Readonly<{ classN
   const card = useLiveMeeting((s) => s.liveSuggestion);
   const on = useStore((s) => s.settings.liveSuggestions);
   const signedIn = useStore((s) => !!s.cloudAuth?.token);
+  // Several of the user's lines and none from the other side: their audio is
+  // not reaching the meeting (see turnsForTrigger) — say so on the standby line.
+  const otherSideMissing = useLiveMeeting((s) => {
+    let mine = 0;
+    for (const seg of s.segments) {
+      if (!seg.isFinal || !seg.text.trim()) continue;
+      if (seg.source !== "me") return false;
+      mine++;
+    }
+    return mine >= 3;
+  });
   if (!CLOUD_ENABLED || !on) return null;
   if (!card || card.items.length === 0) {
+    let standby: TranslationKey = "liveSuggest.idle";
+    if (!signedIn) standby = "liveSuggest.signIn";
+    else if (otherSideMissing) standby = "liveSuggest.noOtherSide";
     return (
       <p
         className={`${className} flex shrink-0 items-center gap-1.5 rounded-lg border border-dashed border-primary/25 px-3 py-1.5 text-[11px] text-muted-foreground`}
       >
         <Lightbulb className="size-3 shrink-0 text-primary/70" />
-        <span className="min-w-0 truncate">{t(signedIn ? "liveSuggest.idle" : "liveSuggest.signIn")}</span>
+        <span className="min-w-0">{t(standby)}</span>
       </p>
     );
   }

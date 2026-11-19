@@ -14,6 +14,7 @@ import {
   speechPending,
   stillCurrent,
   TURN_SETTLE_MS,
+  turnsForTrigger,
   type ShownCard,
   type Turn,
   type TriggerFacts,
@@ -205,5 +206,19 @@ describe("containment", () => {
     expect(containment("預算可以先從小規模 POC 開始", "今天天氣不錯")).toBeLessThan(0.1);
     expect(containment("What does your night shift look like?", "so what does your night shift look like")).toBe(1);
     expect(containment("", "anything")).toBe(0);
+  });
+});
+
+describe("turnsForTrigger", () => {
+  it("leaves a meeting where the other side is heard as it is", () => {
+    const turns = [turn("me", "a", 1), turn("them", "b", 2)];
+    expect(turnsForTrigger(turns)).toBe(turns);
+  });
+
+  it("reads every line as possibly theirs when only the user's track has spoken", () => {
+    const turns = [turn("me", "喂？聽得到嗎", 1_000), turn("me", "我是慎康黃心慧", 5_000)];
+    const read = turnsForTrigger(turns);
+    expect(read.map((t) => t.who)).toEqual(["them", "them"]);
+    expect(nextTrigger(facts({ turns: read, nowMs: 5_000 + TURN_SETTLE_MS }))).toBe("turn");
   });
 });

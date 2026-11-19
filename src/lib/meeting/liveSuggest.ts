@@ -85,6 +85,19 @@ export function finalTurns(segments: readonly TranscriptSegment[]): Turn[] {
     .sort((a, b) => a.endMs - b.endMs);
 }
 
+/**
+ * The lines as the trigger should read them. When nothing has come through
+ * the other side's track all meeting — a room with one microphone, the other
+ * side on the laptop speakers, a system-audio permission not granted — every
+ * line arrives as the user's, and "the other side finished a line" would never
+ * happen. Then any finished line may be theirs: better a suggestion after the
+ * user's own line than none all meeting. Pure.
+ */
+export function turnsForTrigger(turns: readonly Turn[]): readonly Turn[] {
+  if (turns.some((t) => t.who === "them")) return turns;
+  return turns.map((t) => ({ ...t, who: "them" as const }));
+}
+
 /** Someone is mid-sentence: a segment still being transcribed. */
 export function speechPending(segments: readonly TranscriptSegment[]): boolean {
   return segments.some((s) => !s.isFinal && s.text.trim().length > 0);

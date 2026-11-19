@@ -19,6 +19,7 @@ import {
   parseSuggestions,
   speechPending,
   stillCurrent,
+  turnsForTrigger,
   type SuggestMode,
   type Turn,
 } from "./liveSuggest";
@@ -105,7 +106,7 @@ function createEngine() {
       // A different meeting, or the conversation moved on: drop it.
       if (now.liveMeetingId !== id || ctrl.signal.aborted) return;
       const turns = finalTurns(now.segments);
-      if (!stillCurrent(mode, sent, turns)) {
+      if (!stillCurrent(mode, turnsForTrigger(sent), turnsForTrigger(turns))) {
         log.info("live-suggest: answer arrived stale, dropped", { mode });
         return;
       }
@@ -138,7 +139,7 @@ function createEngine() {
     const pending = speechPending(s.segments);
     const mode = nextTrigger({
       nowMs,
-      turns,
+      turns: turnsForTrigger(turns),
       pending,
       inFlight: inFlight != null,
       lastRequestAtMs,
