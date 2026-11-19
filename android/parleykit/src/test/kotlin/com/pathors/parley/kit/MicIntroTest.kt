@@ -69,7 +69,7 @@ class MicIntroTest {
     @Test
     fun `normalize converts to Traditional and applies replacements`() {
         // The app passes android.icu's Hans-Hant; this stands in for the characters the case uses.
-        val simplified = mapOf('设' to '設', '师' to '師', '开' to '開', '会' to '會')
+        val simplified = mapOf('设' to '設', '计' to '計', '师' to '師', '开' to '開', '会' to '會')
         val toTraditional = { s: String -> s.map { simplified[it] ?: it }.joinToString("") }
         val out = MicIntro.normalize(
             "我是设计师，我用帕利开会",

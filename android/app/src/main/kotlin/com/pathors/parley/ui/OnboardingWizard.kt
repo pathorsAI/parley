@@ -590,7 +590,7 @@ fun OnboardingPill(icon: Painter, label: String, style: PillStyle = PillStyle.PL
 }
 
 /**
- * The desktop's line art (`public/onboarding/*.svg`, as vector drawables),
+ * The desktop's line art (the SVGs in `public/onboarding/`, as vector drawables),
  * drawn at its own size from a fixed corner so a taller card never stretches it.
  * Put it in a `matchParentSize()` box that clips.
  */
