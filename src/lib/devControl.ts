@@ -5,7 +5,7 @@
 // without anyone at the keyboard. Release builds don't set the variable:
 // DEV_SESSION is the constant false there and Vite drops all of this.
 
-import { emit } from "@tauri-apps/api/event";
+import { emitEvent } from "./ipc/events";
 import { useStore } from "./store";
 import { sortDrafts } from "./store/prep";
 import { DEV_SESSION } from "./cloud/devSession";
@@ -36,7 +36,7 @@ async function run(c: Command): Promise<void> {
     const { endMeeting } = await import("./meeting/controls");
     await endMeeting();
   } else {
-    await emit(TRIAL_MINI_EVENT, { on: c.action === "mini" });
+    await emitEvent(TRIAL_MINI_EVENT, { on: c.action === "mini" });
   }
 }
 

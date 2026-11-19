@@ -54,7 +54,7 @@ import { NotesEditor } from "./NotesEditor";
 import { LiveBanners } from "./LiveScreen";
 import { ASK_SUGGESTIONS, useCoachAsk, type AskCard } from "./coachAsk";
 import { useTabShortcuts } from "../../lib/commands/tabs";
-import { listen } from "@tauri-apps/api/event";
+import { listenEvent } from "../../lib/ipc/events";
 import { DEV_SESSION } from "../../lib/cloud/devSession";
 import { TRIAL_MINI_EVENT } from "../../lib/devControl";
 
@@ -692,7 +692,7 @@ export function MeetingFloatingWindow() {
   useEffect(() => {
     if (!DEV_SESSION) return;
     let unlisten: (() => void) | undefined;
-    void listen<{ on: boolean }>(TRIAL_MINI_EVENT, (e) => void toggleMini(e.payload.on)).then((fn) => (unlisten = fn));
+    void listenEvent<{ on: boolean }>(TRIAL_MINI_EVENT, (e) => void toggleMini(e.payload.on)).then((fn) => (unlisten = fn));
     return () => unlisten?.();
   });
 
