@@ -73,3 +73,15 @@ jobs:
       - name: Build
         working-directory: android
         run: ./gradlew assembleDebug
+
+      # The debug APK, so a reviewer without an Android toolchain can install
+      # the PR on a phone (Actions run → Artifacts). It is signed with the
+      # runner's throwaway debug key and shares the release applicationId, so a
+      # Play install of Parley has to be removed first.
+      - name: Upload the debug APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: parley-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
