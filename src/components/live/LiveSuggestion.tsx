@@ -24,13 +24,26 @@ function originLabel(item: Suggestion, t: (key: TranslationKey, vars?: Record<st
  * on every tab (and above the main window's live screen): one line to say after the other side finishes a sentence, or a
  * few directions when the talk runs dry. Nothing to click — it leaves on its
  * own (meeting/liveSuggest.ts cardExpired), and whether it was used is read
- * from the transcript afterwards. Renders nothing when there is no card.
+ * from the transcript afterwards. With the switch on and no card, a quiet
+ * standby line holds the spot, so it is plain where suggestions will appear
+ * (or that the sign-in they need is missing). Nothing at all when it is off.
  */
 export function LiveSuggestionBar({ className = "mx-5 mt-3" }: Readonly<{ className?: string }>) {
   const { t } = useI18n();
   const card = useLiveMeeting((s) => s.liveSuggestion);
   const on = useStore((s) => s.settings.liveSuggestions);
-  if (!CLOUD_ENABLED || !on || !card || card.items.length === 0) return null;
+  const signedIn = useStore((s) => !!s.cloudAuth?.token);
+  if (!CLOUD_ENABLED || !on) return null;
+  if (!card || card.items.length === 0) {
+    return (
+      <p
+        className={`${className} flex shrink-0 items-center gap-1.5 rounded-lg border border-dashed border-primary/25 px-3 py-1.5 text-[11px] text-muted-foreground`}
+      >
+        <Lightbulb className="size-3 shrink-0 text-primary/70" />
+        <span className="min-w-0 truncate">{t(signedIn ? "liveSuggest.idle" : "liveSuggest.signIn")}</span>
+      </p>
+    );
+  }
   const lull = card.mode === "lull";
 
   return (

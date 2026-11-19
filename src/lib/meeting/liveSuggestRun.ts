@@ -44,6 +44,16 @@ function createEngine() {
   let lastLullEndMs = 0;
   let stalledEndMs = 0;
   let quietUntil = 0;
+  /** The last "why not now" logged, so the log says it once per change. */
+  let lastWhy = "";
+
+  /** Log what the engine is waiting for, once each time it changes: the trail
+   *  that answers "the switch is on, why did nothing show". */
+  function note(why: string, data?: Record<string, unknown>) {
+    if (why === lastWhy) return;
+    lastWhy = why;
+    log.info("live-suggest: waiting", { why, ...data });
+  }
 
   function reset(id: string | null) {
     inFlight?.abort();
@@ -54,6 +64,7 @@ function createEngine() {
     lastLullEndMs = 0;
     stalledEndMs = 0;
     quietUntil = 0;
+    lastWhy = "";
   }
 
   async function ask(mode: SuggestMode, sent: Turn[], nowMs: number): Promise<void> {
@@ -71,6 +82,8 @@ function createEngine() {
     });
     const ctrl = new AbortController();
     inFlight = ctrl;
+    const startedAt = Date.now();
+    log.info("live-suggest: asking", { mode, lines: body.transcript.length });
     const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
     const id = meetingId;
     try {
@@ -82,6 +95,12 @@ function createEngine() {
       });
       const json: unknown = await res.json();
       const items = parseSuggestions(mode, json);
+      log.info("live-suggest: answered", {
+        mode,
+        ms: Date.now() - startedAt,
+        shown: items.length,
+        abstained: (json as { abstained?: unknown } | null)?.abstained ?? null,
+      });
       const now = useLiveStore.getState();
       // A different meeting, or the conversation moved on: drop it.
       if (now.liveMeetingId !== id || ctrl.signal.aborted) return;
@@ -114,18 +133,30 @@ function createEngine() {
     const nowMs = meetingElapsedMs(s);
     const turns = finalTurns(s.segments);
     if (s.liveSuggestion && cardExpired(s.liveSuggestion, nowMs, turns)) s.clearLiveSuggestion();
-    if (!cloudToken() || Date.now() < quietUntil) return;
+    if (!cloudToken()) return note("not signed in to Parley Cloud");
+    if (Date.now() < quietUntil) return note("backing off after a failed request");
+    const pending = speechPending(s.segments);
     const mode = nextTrigger({
       nowMs,
       turns,
-      pending: speechPending(s.segments),
+      pending,
       inFlight: inFlight != null,
       lastRequestAtMs,
       lastTurnEndMs,
       lastLullEndMs,
       stalledEndMs,
     });
-    if (!mode) return;
+    if (!mode) {
+      const last = turns[turns.length - 1];
+      if (inFlight) return note("a request is out");
+      if (!last) return note("no finished line yet");
+      if (pending) return note("someone is mid-sentence");
+      return note(last.who === "me" ? "the user spoke last: waiting for a lull" : "waiting for the line to settle", {
+        lines: turns.length,
+        theirs: turns.filter((t) => t.who === "them").length,
+      });
+    }
+    lastWhy = "";
     const lastEnd = turns[turns.length - 1]?.endMs ?? 0;
     lastRequestAtMs = nowMs;
     // Both marks move: a line answered as a turn is not then asked about again
@@ -155,6 +186,7 @@ export function useLiveSuggestEngine(): void {
 
   useEffect(() => {
     if (!CLOUD_ENABLED || !recording || !on) return;
+    log.info("live-suggest: engine on");
     const engine = createEngine();
     const id = setInterval(engine.tick, TICK_MS);
     return () => {
