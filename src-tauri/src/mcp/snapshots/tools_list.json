@@ -1344,7 +1344,7 @@
       "title": "List meeting drafts"
     },
     {
-      "description": "Save a draft for an upcoming meeting. It appears under 即將開始 on the home screen, reminds the user before its start time, and one click starts recording with this preparation loaded. Put everything the analysis should know into `context`: who attends and their roles, the goal, history with this party. When the meeting is a negotiation or a deal, ALWAYS also write the user's BATNA (best alternative if no deal), target and bottom line into `context` as plain lines, e.g. 'BATNA: …', 'Target: …', 'Bottom line: …' — Parley has no separate fields for them. List what to ask or cover in `agenda`, one item each (a question written the way it would be said works well): the AI ticks items as they come up, and live suggestions pick from the ones still open. Optionally give the meeting a playbook as well: `branches` for steering when the other side says something specific ({ when: what they say, then: where to steer }), and `topics` to bring up when the conversation runs dry. Up to 30 items each. `title` may be left out: a draft with a start time is then named after it. Safe to call while a meeting is recording.",
+      "description": "Save a draft for an upcoming meeting. It appears under 即將開始 on the home screen, reminds the user before its start time, and one click starts recording with this preparation loaded. Put everything the analysis should know into `context`: who attends and their roles, the goal, history with this party. When the meeting is a negotiation or a deal, ALWAYS also write the user's BATNA (best alternative if no deal), target and bottom line into `context` as plain lines, e.g. 'BATNA: …', 'Target: …', 'Bottom line: …' — Parley has no separate fields for them. List what to ask or cover in `agenda`, one item each (a question written the way it would be said works well): the AI ticks items as they come up, and live suggestions pick from the ones still open. Optionally give the meeting a playbook as well: `branches` for steering when the other side says something specific ({ when: what they say, then: where to steer }), and `topics`, each a full sentence the user could say as is, to bring up when the conversation runs dry. Up to 30 items each. `title` may be left out: a draft with a start time is then named after it. Safe to call while a meeting is recording.",
       "inputSchema": {
         "properties": {
           "agenda": {
@@ -1407,7 +1407,7 @@
             "type": "string"
           },
           "topics": {
-            "description": "Playbook: directions to explore when the conversation runs dry.",
+            "description": "Playbook: what to bring up when the conversation runs dry, each written as one complete sentence the user could say as is (e.g. '最近洗碗機旺季，你們晚上的電話是不是也變多了？'), not a bare topic — Parley shows it word for word mid-meeting.",
             "items": {
               "type": "string"
             },

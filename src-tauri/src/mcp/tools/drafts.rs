@@ -83,7 +83,8 @@ fn schemas() -> Vec<Value> {
              as they come up, and live suggestions pick from the ones still \
              open. Optionally give the meeting a playbook as well: `branches` \
              for steering when the other side says something specific \
-             ({ when: what they say, then: where to steer }), and `topics` to \
+             ({ when: what they say, then: where to steer }), and `topics`, each a full \
+             sentence the user could say as is, to \
              bring up when the conversation runs dry. Up to 30 items each. \
              `title` may be left out: a draft with a start time is then named \
              after it. Safe to call while a meeting is recording.",
@@ -110,7 +111,7 @@ fn schemas() -> Vec<Value> {
                         },
                         "description": "Playbook: if they say `when`, steer with `then`."
                     },
-                    "topics": { "type": "array", "items": { "type": "string" }, "description": "Playbook: directions to explore when the conversation runs dry." }
+                    "topics": { "type": "array", "items": { "type": "string" }, "description": "Playbook: what to bring up when the conversation runs dry, each written as one complete sentence the user could say as is (e.g. '最近洗碗機旺季，你們晚上的電話是不是也變多了？'), not a bare topic — Parley shows it word for word mid-meeting." }
                 }
             }),
         ),
