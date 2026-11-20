@@ -40,6 +40,11 @@ for launcher in com.google.android.apps.nexuslauncher com.android.launcher3; do
 done
 adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS >/dev/null 2>&1 || true
 
+# Warm up: the first launch of a fresh install is a cold start that draws
+# black for several seconds, which would eat the welcome demo's first beats.
+open_route welcome
+sleep 8
+
 # A clean status bar (AppStore/assets/README.md).
 adb shell settings put global sysui_demo_allowed 1
 demo() { adb shell am broadcast -a com.android.systemui.demo "$@" >/dev/null; }
@@ -68,7 +73,7 @@ for combo in zh-TW:light en-US:light zh-TW:dark; do
   n=2
   for route in "${ROUTES[@]}"; do
     open_route "$route"
-    sleep 2.5
+    sleep 4
     shot "$dir/$(printf %02d $n)-$route.png"
     n=$((n + 1))
   done

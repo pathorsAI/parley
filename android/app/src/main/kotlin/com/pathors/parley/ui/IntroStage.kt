@@ -67,6 +67,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -302,7 +303,9 @@ private fun StepRow(
                             )
                         }
                     }
-                    Text(label, style = mini(12, FontWeight.Medium), color = ink, maxLines = 2)
+                    // Balanced breaks: a label that needs two lines splits evenly
+                    // ("AI 分析／與摘要") instead of orphaning its last character.
+                    Text(label, style = mini(12, FontWeight.Medium).copy(lineBreak = LineBreak.Heading), color = ink, maxLines = 2)
                 }
                 Spacer(Modifier.weight(1f).heightIn(min = 8.dp))
                 Box(

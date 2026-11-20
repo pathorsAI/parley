@@ -59,6 +59,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -68,6 +69,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.pathors.parley.AppContainer
@@ -663,22 +665,53 @@ fun OnboardingChoiceCard(
                 Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(20.dp),
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                if (note == null) {
                     pill()
-                    if (note != null) {
-                        Spacer(Modifier.width(12.dp).weight(1f))
+                } else {
+                    PillWithNote(pill) {
                         Text(
                             text = note,
                             style = MaterialTheme.typography.labelMedium,
                             color = palette.inkSoft,
-                            textAlign = TextAlign.End,
-                            modifier = Modifier.weight(2f),
                         )
                     }
                 }
                 content()
             }
             action()
+        }
+    }
+}
+
+/**
+ * The pill with its note — iOS's `ViewThatFits`: the note sits beside the
+ * pill, pushed right, when it fits on one line there; otherwise it goes under
+ * the pill at full width. Squeezing it beside the pill wrapped it a word or a
+ * letter per line.
+ */
+@Composable
+private fun PillWithNote(pill: @Composable () -> Unit, note: @Composable () -> Unit) {
+    Layout(contents = listOf(pill, note), modifier = Modifier.fillMaxWidth()) { (pills, notes), constraints ->
+        val width = constraints.maxWidth
+        val gap = 12.dp.roundToPx()
+        val below = 8.dp.roundToPx()
+        val loose = constraints.copy(minWidth = 0, minHeight = 0)
+        val p = pills.first().measure(loose)
+        val noteMeasurable = notes.first()
+        val beside = p.width + gap + noteMeasurable.maxIntrinsicWidth(Constraints.Infinity) <= width
+        if (beside) {
+            val n = noteMeasurable.measure(loose.copy(maxWidth = width - p.width - gap))
+            val height = maxOf(p.height, n.height)
+            layout(width, height) {
+                p.placeRelative(0, (height - p.height) / 2)
+                n.placeRelative(width - n.width, (height - n.height) / 2)
+            }
+        } else {
+            val n = noteMeasurable.measure(loose.copy(maxWidth = width))
+            layout(width, p.height + below + n.height) {
+                p.placeRelative(0, 0)
+                n.placeRelative(0, p.height + below)
+            }
         }
     }
 }

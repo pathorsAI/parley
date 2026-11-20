@@ -969,7 +969,13 @@ internal fun OnboardingDoneStep(onFinish: (OnboardingExit) -> Unit) {
                 textAlign = TextAlign.Center,
             )
         }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+        // The extra top padding is the arrow's room: it hangs 52dp above the
+        // button, and in the 36dp gap alone it ran through the last line of text.
+        Row(
+            Modifier.padding(top = 20.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(24.dp),
+        ) {
             OnboardingGhostButton(
                 text = stringResource(R.string.onboarding_start_recording),
                 onClick = { onFinish(OnboardingExit.RECORD) },
