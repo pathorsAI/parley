@@ -197,7 +197,9 @@ struct OnboardingOrgStep: View {
                 },
                 title: "You're in an organization",
                 message: "Everyone in the organization can see the recordings shared to it.")
-                .frame(minHeight: 360)
+                // Fills the page like the signed-in confirmation: everything
+                // between the header and the footer, less the 20 pt padding.
+                .containerRelativeFrame(.vertical) { height, _ in max(150, height - 40) }
         case .choosing:
             ForEach(model.invitations) { invitation in
                 invitationRow(invitation)
