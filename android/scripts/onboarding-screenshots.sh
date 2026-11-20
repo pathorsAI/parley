@@ -31,6 +31,15 @@ open_route() {
 }
 shot() { adb exec-out screencap -p > "$1"; }
 
+# On a slow CI emulator the launcher stops answering and its "isn't
+# responding" dialog sits over every frame. Nothing here needs a home screen:
+# turn the launcher off and error dialogs with it.
+adb shell settings put global hide_error_dialogs 1 || true
+for launcher in com.google.android.apps.nexuslauncher com.android.launcher3; do
+  adb shell pm disable-user --user 0 "$launcher" >/dev/null 2>&1 || true
+done
+adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS >/dev/null 2>&1 || true
+
 # A clean status bar (AppStore/assets/README.md).
 adb shell settings put global sysui_demo_allowed 1
 demo() { adb shell am broadcast -a com.android.systemui.demo "$@" >/dev/null; }
