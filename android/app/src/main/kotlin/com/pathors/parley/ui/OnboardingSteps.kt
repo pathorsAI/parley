@@ -186,20 +186,28 @@ private fun AccountConfirmed(container: AppContainer) {
             runCatching { container.cloud.me()?.email }.getOrNull().orEmpty()
         }
     }
+    FullPageCard { modifier ->
+        OnboardingConfirmCard(
+            title = stringResource(R.string.onboarding_on_cloud),
+            message = stringResource(R.string.onboarding_on_cloud_body),
+            modifier = modifier,
+        ) {
+            OnboardingPill(rememberVectorPainter(Icons.Filled.CheckCircle), email, PillStyle.GREEN)
+        }
+    }
+}
+
+/**
+ * A confirmation card filling the page: the whole height between the header
+ * and the footer, less the 20dp a step pads it by on each side, never under
+ * 150dp. [card] gets the modifier that sizes and pads it.
+ */
+@Composable
+private fun FullPageCard(card: @Composable (Modifier) -> Unit) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        // The whole page between the header and the footer, less the 20dp the
-        // step pads it by on each side; never under 150dp.
         val height = maxOf(150.dp, maxHeight - 40.dp)
         Column(Modifier.verticalScroll(rememberScrollState())) {
-            OnboardingConfirmCard(
-                title = stringResource(R.string.onboarding_on_cloud),
-                message = stringResource(R.string.onboarding_on_cloud_body),
-                modifier = Modifier
-                    .padding(20.dp)
-                    .height(height),
-            ) {
-                OnboardingPill(rememberVectorPainter(Icons.Filled.CheckCircle), email, PillStyle.GREEN)
-            }
+            card(Modifier.padding(20.dp).height(height))
         }
     }
 }
@@ -482,6 +490,22 @@ internal fun OnboardingOrgStep(model: OnboardingOrgModel, onBack: () -> Unit, on
     }
     val create = { scope.launch { model.create(orgName) } }
 
+    // Joined: the confirmation fills the page, as the signed-in one does.
+    if (model.phase == OnboardingOrgModel.Phase.JOINED) {
+        FullPageCard { modifier ->
+            OnboardingConfirmCard(
+                title = stringResource(R.string.onboarding_org_joined),
+                message = stringResource(R.string.onboarding_org_joined_body),
+                modifier = modifier,
+            ) {
+                model.joinedNames.forEach { name ->
+                    OnboardingPill(rememberVectorPainter(LibraryIcons.Group), name, PillStyle.GREEN)
+                }
+            }
+        }
+        return
+    }
+
     StepPage {
         when (model.phase) {
             OnboardingOrgModel.Phase.LOADING -> Row(
@@ -508,15 +532,8 @@ internal fun OnboardingOrgStep(model: OnboardingOrgModel, onBack: () -> Unit, on
                     onClick = { scope.launch { model.load() } },
                 )
             }
-            OnboardingOrgModel.Phase.JOINED -> OnboardingConfirmCard(
-                title = stringResource(R.string.onboarding_org_joined),
-                message = stringResource(R.string.onboarding_org_joined_body),
-                modifier = Modifier.heightIn(min = 360.dp),
-            ) {
-                model.joinedNames.forEach { name ->
-                    OnboardingPill(rememberVectorPainter(LibraryIcons.Group), name, PillStyle.GREEN)
-                }
-            }
+            // Drawn by the full-page card above; never reaches the page.
+            OnboardingOrgModel.Phase.JOINED -> Unit
             OnboardingOrgModel.Phase.CHOOSING -> {
                 model.invitations.forEach { invitation ->
                     InvitationRow(invitation, model.busy) { scope.launch { model.accept(invitation) } }
