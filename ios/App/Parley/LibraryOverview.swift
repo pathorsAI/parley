@@ -2,8 +2,8 @@ import ParleyKit
 import SwiftUI
 
 // The pieces of the Library's Meetings overview — the phone's take on the
-// desktop's 總覽 (`src/components/home/HomeScreen.tsx`): a greeting over a
-// row of blue light bars, the getting-started list, the folders as one
+// desktop's 總覽 (`src/components/home/HomeScreen.tsx`): a row of blue light
+// bars behind the top of the page, the getting-started list, the folders as one
 // sideways row of cards, and the four newest recordings. `LibraryView` puts
 // them together, because the state they act on (the scope, the folders, the
 // dialogs) is its own; everything here only draws and reports taps.
@@ -63,7 +63,7 @@ struct OverviewBackdrop: View {
     private static let layerTop: CGFloat = -172
     private static let layerHeight: CGFloat = 595
     /// Desktop px → points, vertically.
-    private static let scale: CGFloat = 0.62
+    private static let scale: CGFloat = 0.85
     /// How far down the page the lowest bar reaches (the first one, ending
     /// 473 px down on the desktop). The backdrop is this tall and no taller.
     static let height: CGFloat = 473 * scale
@@ -120,13 +120,12 @@ struct OverviewBackdrop: View {
         }
         .frame(height: Self.height)
         .clipped()
-        // Faded in at the top and out at the bottom: the backdrop starts under
-        // the segmented picker, and a clipped edge there read as a stripe.
+        // Faded out at the bottom, where the page goes on below it; the top
+        // is the window's edge, where the bars run off as on the desktop.
         .mask(
             LinearGradient(
                 stops: [
-                    .init(color: .clear, location: 0),
-                    .init(color: .black, location: 0.22),
+                    .init(color: .black, location: 0),
                     .init(color: .black, location: 0.7),
                     .init(color: .clear, location: 1),
                 ],

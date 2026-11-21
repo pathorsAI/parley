@@ -116,7 +116,18 @@ struct LibraryView: View {
                     DictationHistoryList(search: search)
                 }
             }
-            .background(Theme.background)
+            // The overview's light bars reach the top edge of the window, behind
+            // the large title, the search field and the tabs, as the desktop's
+            // run from the top of its page. Only on the overview: the voice
+            // typing list and a search's results are plain pages.
+            .background {
+                ZStack(alignment: .top) {
+                    Theme.background
+                    if showsBackdrop { OverviewBackdrop().transition(.opacity) }
+                }
+                .ignoresSafeArea()
+                .animation(.easeInOut(duration: 0.25), value: showsBackdrop)
+            }
             // Settings' "Show the getting-started list again" lands on the
             // checklist, which lives in Meetings; the overview then takes the
             // request on appearing (`takeChecklistRequest`).
@@ -264,18 +275,25 @@ struct LibraryView: View {
         }
     }
 
-    /// Meetings / Voice typing, above everything else on the page. Segmented
-    /// rather than a tab of its own: both are "what I said, kept", and the
-    /// Library is where someone goes looking for either.
+    /// Meetings / Voice typing, above everything else on the page. Both are
+    /// "what I said, kept", and the Library is where someone goes looking for
+    /// either, so they share the page as two tabs rather than two places.
+    ///
+    /// Drawn in the library's own tab language rather than the system's grey
+    /// segmented control: a label, blue and semibold when it is the one shown,
+    /// over a blue rule that slides to the other label — the folder chips'
+    /// underline at a larger size, and the onboarding header's progress line.
     private var sectionPicker: some View {
-        Picker("Library", selection: $section) {
-            Text("Meetings").tag(LibrarySection.meetings)
-            Text("Voice typing").tag(LibrarySection.voiceTyping)
-        }
-        .pickerStyle(.segmented)
-        .padding(.horizontal, 20)
-        .padding(.top, 4)
-        .padding(.bottom, 6)
+        LibrarySectionTabs(selection: $section)
+            .padding(.horizontal, 20)
+            .padding(.top, 2)
+            .padding(.bottom, 4)
+    }
+
+    /// Whether the light bars are behind the page: the Meetings overview,
+    /// signed in, not searching.
+    private var showsBackdrop: Bool {
+        section == .meetings && app.signedIn && search.isEmpty
     }
 
     /// The library is the account's cloud recordings, so it needs a confirmed
@@ -300,8 +318,8 @@ struct LibraryView: View {
     /// desktop's number. Four is a shortcut, not a browser.
     private static let recentCount = 4
 
-    /// What Meetings opens on: the desktop's 總覽 — a greeting over the light
-    /// bars, the getting-started list, the folders as cards in one sideways
+    /// What Meetings opens on: the desktop's 總覽 — the light bars behind the
+    /// top of the page, the getting-started list, the folders as cards in one sideways
     /// row, and the four newest recordings. Everything else in the library is
     /// one tap away on the full list (`fullList`), pushed by See all or a
     /// folder card, which is the list this tab used to open on, unchanged.
@@ -312,8 +330,6 @@ struct LibraryView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 28) {
-                    greeting
-                        .padding(.horizontal, 20)
                     overviewStatus
                     if showsChecklist {
                         GettingStartedList(
@@ -332,28 +348,10 @@ struct LibraryView: View {
                 }
                 .padding(.top, 16)
                 .padding(.bottom, 32)
-                .background(alignment: .top) { OverviewBackdrop() }
             }
             .onAppear { takeChecklistRequest(proxy) }
             .onChange(of: router.checklistRequest) { _, _ in takeChecklistRequest(proxy) }
         }
-    }
-
-    /// The desktop's greeting, with the account's name when it has one.
-    @ViewBuilder
-    private var greeting: some View {
-        let name = app.user?.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        Group {
-            if name.isEmpty {
-                Text("What are you meeting about today?")
-            } else {
-                Text("\(name), what are you meeting about today?")
-            }
-        }
-        .font(.parley.title)
-        .foregroundStyle(Color(.label))
-        .fixedSize(horizontal: false, vertical: true)
-        .accessibilityAddTraits(.isHeader)
     }
 
     /// What the full list says above its rows, said on the overview too so it
@@ -1592,6 +1590,58 @@ private final class FetchedHealth: @unchecked Sendable {
 private enum LibrarySection: Hashable {
     case meetings
     case voiceTyping
+}
+
+/// The Library's two tabs, Meetings and Voice typing: labels in a row, the
+/// shown one blue and semibold over a 2pt blue rule that slides between them,
+/// all on a hairline across the page. The rule is one view moved by
+/// `matchedGeometryEffect`, so a switch reads as the same marker travelling,
+/// not one appearing as the other goes. A tap is light haptic feedback too,
+/// like the tab bar's.
+private struct LibrarySectionTabs: View {
+    @Binding var selection: LibrarySection
+    @Namespace private var rule
+
+    var body: some View {
+        HStack(spacing: 24) {
+            tab("Meetings", .meetings)
+            tab("Voice typing", .voiceTyping)
+            Spacer(minLength: 0)
+        }
+        .background(alignment: .bottom) {
+            Rectangle().fill(Color(.separator).opacity(0.6)).frame(height: 0.5)
+        }
+        .sensoryFeedback(.selection, trigger: selection)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func tab(_ title: LocalizedStringKey, _ value: LibrarySection) -> some View {
+        let selected = selection == value
+        return Button {
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { selection = value }
+        } label: {
+            VStack(spacing: 8) {
+                Text(title)
+                    .font(.parley.subheadline.weight(selected ? .semibold : .regular))
+                    .foregroundStyle(selected ? Theme.primary : Color(.secondaryLabel))
+                ZStack {
+                    // Always laid out, so a tab does not change height on tap.
+                    Capsule().fill(.clear).frame(height: 2)
+                    if selected {
+                        Capsule()
+                            .fill(Theme.primary)
+                            .frame(height: 2)
+                            .matchedGeometryEffect(id: "rule", in: rule)
+                    }
+                }
+            }
+            .fixedSize()
+            .padding(.top, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
+    }
 }
 
 /// The frames the folder swipe hit-tests against, in `.global` coordinates.

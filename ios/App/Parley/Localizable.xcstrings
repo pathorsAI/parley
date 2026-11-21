@@ -19,23 +19,6 @@
         }
       }
     },
-    "%@, what are you meeting about today?" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%@, what are you meeting about today?"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%@，今天要開什麼會?"
-          }
-        }
-      }
-    },
     "%lld d ago" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8297,23 +8280,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "輸入到"
-          }
-        }
-      }
-    },
-    "What are you meeting about today?" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "What are you meeting about today?"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "今天要開什麼會?"
           }
         }
       }
