@@ -164,6 +164,19 @@ struct OverviewHeading<Trailing: View>: View {
     }
 }
 
+/// A heading's trailing link — 查看全部, 新增資料夾: a small blue label with its
+/// icon, the icon after the text for a way on (an arrow), before it for an
+/// action (a plus).
+struct OverviewLinkLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 3) {
+            configuration.icon.imageScale(.small)
+            configuration.title
+        }
+        .font(.parley.caption)
+    }
+}
+
 extension OverviewHeading where Trailing == EmptyView {
     init(title: LocalizedStringKey) {
         self.init(title: title) { EmptyView() }
@@ -286,57 +299,6 @@ private struct FolderDrawing: View {
     }
 }
 
-/// The first card in the row, 新增資料夾 (3541:9360): a pale-blue frame with a
-/// folder front and a dashed + in a circle. Pressed, the frame deepens and the
-/// + fills. Opens the same naming alert as the full list's "+".
-struct NewFolderCard: View {
-    let create: () -> Void
-
-    var body: some View {
-        Button(action: create) { EmptyView() }
-            .buttonStyle(NewFolderCardStyle())
-            .accessibilityLabel(Text("New folder"))
-    }
-}
-
-private struct NewFolderCardStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        let pressed = configuration.isPressed
-        return ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(pressed ? FolderPalette.newFramePressed : FolderPalette.newFrame)
-                .frame(width: 151, height: 136)
-            Image("FolderNewFront")
-                .resizable()
-                .frame(width: 151, height: 107)
-                .offset(y: 29)
-            Image(systemName: "plus")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(FolderPalette.blue)
-                .frame(width: 16, height: 16)
-                .padding(4)
-                .background(Circle().fill(pressed ? FolderPalette.plusFill : .clear))
-                .overlay(
-                    Circle().strokeBorder(
-                        pressed ? FolderPalette.blue : FolderPalette.blue.opacity(0.3),
-                        style: StrokeStyle(lineWidth: 1, dash: [2, 2])))
-                .scaleEffect(pressed ? 1.1 : 1)
-                .offset(x: 63, y: 69)
-        }
-        .frame(
-            width: FolderCardMetrics.drawn.width, height: FolderCardMetrics.drawn.height,
-            alignment: .topLeading
-        )
-        .scaleEffect(FolderCardMetrics.scale, anchor: .topLeading)
-        .frame(
-            width: FolderCardMetrics.shown.width, height: FolderCardMetrics.shown.height,
-            alignment: .topLeading
-        )
-        .contentShape(Rectangle())
-        .animation(.timingCurve(0.2, 0.8, 0.2, 1, duration: 0.35), value: pressed)
-    }
-}
-
 /// The folder cards' colours, from the desktop's (light / dark). Not `Theme`:
 /// these are the drawing's own greys and paper whites, which no other screen
 /// uses.
@@ -348,10 +310,6 @@ private enum FolderPalette {
     static let name = adaptive(0x333333, 0xE5E7EB)
     static let namePressed = adaptive(0x3B82F6, 0x60A5FA)
     static let count = adaptive(0xA3A3A3, 0x8B95A3)
-    static let newFrame = adaptive(0xF6FCFF, 0x15223A)
-    static let newFramePressed = adaptive(0xEEF8FF, 0x1A2B47)
-    static let blue = Color(UIColor(hex: 0x3B82F6))
-    static let plusFill = Color(UIColor(hex: 0x2DB6F3)).opacity(0.2)
 
     static func adaptive(_ light: UInt32, _ dark: UInt32, alpha: CGFloat = 1) -> Color {
         Color(
@@ -486,11 +444,8 @@ struct RecentEmptyBox: View {
             ZStack(alignment: .top) {
                 OverviewBackdrop()
                 VStack(alignment: .leading, spacing: 24) {
-                    Text("What are you meeting about today?")
-                        .font(.parley.title)
                     ScrollView(.horizontal) {
                         HStack(spacing: 16) {
-                            NewFolderCard {}
                             FolderCard(name: "Renewals", count: 3) {}
                             FolderCard(name: "Empty", count: 0) {}
                         }

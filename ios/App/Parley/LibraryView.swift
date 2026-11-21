@@ -383,14 +383,21 @@ struct LibraryView: View {
     /// row that scrolls sideways and runs to both edges of the screen.
     private var foldersSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            OverviewHeading(title: "Folders")
-                .padding(.horizontal, 20)
+            // A folder is made from the heading, not from a card in the row:
+            // the row is for the folders there are.
+            OverviewHeading(title: "Folders") {
+                Button {
+                    folderNameDraft = ""
+                    namingFolder = .create
+                } label: {
+                    Label("Add folder", systemImage: "plus")
+                        .labelStyle(OverviewLinkLabelStyle())
+                }
+                .buttonStyle(.borderless)
+            }
+            .padding(.horizontal, 20)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 16) {
-                    NewFolderCard {
-                        folderNameDraft = ""
-                        namingFolder = .create
-                    }
                     ForEach(folders) { f in
                         FolderCard(name: f.name, count: recordingCount(in: f)) {
                             openFullList(f.id)
@@ -422,10 +429,9 @@ struct LibraryView: View {
                     Button {
                         openFullList(nil)
                     } label: {
-                        HStack(spacing: 4) {
+                        HStack(spacing: 3) {
                             Text("See all")
-                            Image(systemName: "arrow.right")
-                                .imageScale(.small)
+                            Image(systemName: "arrow.right").imageScale(.small)
                         }
                         .font(.parley.caption)
                     }

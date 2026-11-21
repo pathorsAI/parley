@@ -567,6 +567,23 @@
         }
       }
     },
+    "Add folder" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New folder"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新增資料夾"
+          }
+        }
+      }
+    },
     "Add the Parley keyboard" : {
       "extractionState" : "manual",
       "localizations" : {
