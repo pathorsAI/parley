@@ -986,34 +986,47 @@ internal fun OnboardingDoneStep(onFinish: (OnboardingExit) -> Unit) {
                 textAlign = TextAlign.Center,
             )
         }
-        // The extra top padding is the arrow's room: it hangs 52dp above the
-        // button, and in the 36dp gap alone it ran through the last line of text.
-        Row(
-            Modifier.padding(top = 20.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(24.dp),
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            OnboardingGhostButton(
-                text = stringResource(R.string.onboarding_start_recording),
-                onClick = { onFinish(OnboardingExit.RECORD) },
-            )
-            Box {
-                OnboardingBlueButton(
-                    text = stringResource(R.string.onboarding_try_sample),
-                    onClick = { onFinish(OnboardingExit.SAMPLE) },
+            // The extra top padding is the arrow's room: it hangs 52dp above the
+            // button, and in the 36dp gap alone it ran through the last line of text.
+            Row(
+                Modifier.padding(top = 20.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(24.dp),
+            ) {
+                OnboardingGhostButton(
+                    text = stringResource(R.string.onboarding_start_recording),
+                    onClick = { onFinish(OnboardingExit.RECORD) },
                 )
-                // The hand-drawn arrow pointing at the button, hung off its
-                // top-right corner without taking any room.
-                Box(Modifier.matchParentSize()) {
-                    ScribbleArrow(
-                        color = primary,
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .wrapContentSize(Alignment.TopEnd, unbounded = true)
-                            .offset(x = 34.dp, y = (-52).dp)
-                            .requiredSize(46.dp, 53.dp),
+                Box {
+                    OnboardingBlueButton(
+                        text = stringResource(R.string.onboarding_try_sample),
+                        onClick = { onFinish(OnboardingExit.SAMPLE) },
                     )
+                    // The hand-drawn arrow pointing at the button, hung off its
+                    // top-right corner without taking any room.
+                    Box(Modifier.matchParentSize()) {
+                        ScribbleArrow(
+                            color = primary,
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .wrapContentSize(Alignment.TopEnd, unbounded = true)
+                                .offset(x = 34.dp, y = (-52).dp)
+                                .requiredSize(46.dp, 53.dp),
+                        )
+                    }
                 }
+            }
+            // A quiet way out: straight to the library, no sample, no recording.
+            TextButton(onClick = { onFinish(OnboardingExit.SKIP) }) {
+                Text(
+                    stringResource(R.string.onboarding_skip),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = primary,
+                )
             }
         }
     }
