@@ -102,7 +102,7 @@ struct LibraryView: View {
                         } else if !search.isEmpty && !showsFullList {
                             // Searching from the overview searches the whole
                             // library, the way the Library always has.
-                            list
+                            list(chips: true)
                         } else {
                             overview
                         }
@@ -150,8 +150,8 @@ struct LibraryView: View {
                             onFolderChange: folderChanged(rec.id),
                             onTitleChange: titleChanged(rec.id))
                     }
-                case .recordings:
-                    fullList
+                case .recordings(let folder):
+                    fullList(inFolder: folder != nil)
                 }
             }
             .searchable(
@@ -458,11 +458,14 @@ struct LibraryView: View {
         }
     }
 
-    /// The full list, pushed over the overview: the chips, the rows with their
-    /// swipes and long-press menus, the search, pull to refresh — the page this
-    /// tab used to open on, opened on the folder that was tapped.
-    private var fullList: some View {
-        list
+    /// The full list, pushed over the overview: the rows with their swipes
+    /// and long-press menus, the search, pull to refresh. Opened from See all
+    /// it is the page this tab used to open on, chips and all. Opened from a
+    /// folder card it is that folder and nothing else — one recording after
+    /// another, no chip row and no swipe to the next folder: the folders were
+    /// already chosen between on the overview.
+    private func fullList(inFolder: Bool) -> some View {
+        list(chips: !inFolder)
             .background(Theme.background)
             .navigationTitle(fullListTitle)
             .navigationBarTitleDisplayMode(.inline)
@@ -735,14 +738,19 @@ struct LibraryView: View {
     /// without one: with no folders it is only the "+", which is the one place an
     /// org scope can make its first folder. It waits out the first load so the
     /// lone "+" does not flash up ahead of the chips it belongs after.
-    private var list: some View {
-        VStack(spacing: 0) {
-            if !folders.isEmpty || !loading {
-                folderChips
+    @ViewBuilder
+    private func list(chips: Bool) -> some View {
+        if chips {
+            VStack(spacing: 0) {
+                if !folders.isEmpty || !loading {
+                    folderChips
+                }
+                folderList(folderFilter)
             }
+            .simultaneousGesture(folderSwipe)
+        } else {
             folderList(folderFilter)
         }
-        .simultaneousGesture(folderSwipe)
     }
 
     /// One folder's worth of the library. The getting-started checklist is
