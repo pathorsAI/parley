@@ -279,6 +279,41 @@ public actor CloudClient: BatchTranscriptionService, DictionarySyncTransport {
         try await get("orgs/mine", as: [CloudOrg].self)
     }
 
+    /// Create an organization; the caller becomes its owner
+    /// (`POST /auth/organization/create`, better-auth's organization plugin).
+    public func createOrg(name: String) async throws -> CloudOrg {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = try JSONSerialization.data(withJSONObject: [
+            "name": trimmed, "slug": OrgSlug.make(name: trimmed),
+        ])
+        let data = try await request(
+            "auth/organization/create", method: "POST", body: body,
+            contentType: "application/json")
+        return try JSONDecoder().decode(CloudOrg.self, from: data)
+    }
+
+    /// The signed-in user's invitations that can still be accepted. The server
+    /// answers either a bare array or `{ invitations }`; both are read.
+    public func myInvitations(now: Date = Date()) async throws -> [CloudInvitation] {
+        let data = try await request("auth/organization/list-user-invitations")
+        let all: [CloudInvitation]
+        if let list = try? JSONDecoder().decode([CloudInvitation].self, from: data) {
+            all = list
+        } else {
+            struct Wrapped: Decodable { let invitations: [CloudInvitation]? }
+            all = try JSONDecoder().decode(Wrapped.self, from: data).invitations ?? []
+        }
+        return all.filter { $0.isLive(now: now) }
+    }
+
+    /// Accept an invitation: the user becomes a member of that organization.
+    public func acceptInvitation(id: String) async throws {
+        let body = try JSONSerialization.data(withJSONObject: ["invitationId": id])
+        _ = try await request(
+            "auth/organization/accept-invitation", method: "POST", body: body,
+            contentType: "application/json")
+    }
+
     public func orgRecordings(orgId: String) async throws -> [CloudRecordingSummary] {
         struct R: Codable { let recordings: [CloudRecordingSummary] }
         return try await get("orgs/\(orgId)/recordings", as: R.self).recordings

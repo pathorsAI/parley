@@ -447,3 +447,87 @@ extension CloudRecordingSummary {
             folderId: folderId, updatedAt: updatedAt)
     }
 }
+
+/// An invitation into an organization, as `GET /auth/organization/list-user-invitations`
+/// returns it (better-auth's organization plugin). The desktop's `CloudInvitation`
+/// in `src/lib/cloud/types.ts` is the same shape.
+public struct CloudInvitation: Decodable, Equatable, Identifiable, Sendable {
+    public let id: String
+    public let organizationId: String
+    /// The org's display name. Present on `list-user-invitations`, which is the
+    /// only list the phone reads.
+    public let organizationName: String?
+    public let role: String?
+    public let status: String
+    /// Milliseconds since the epoch. The server sends an ISO string; epoch
+    /// milliseconds are tolerated too, as on the desktop. Invitations expire
+    /// 48 hours after they are sent or renewed.
+    public let expiresAtMs: Double?
+
+    public init(
+        id: String, organizationId: String, organizationName: String?, role: String?,
+        status: String, expiresAtMs: Double?
+    ) {
+        self.id = id
+        self.organizationId = organizationId
+        self.organizationName = organizationName
+        self.role = role
+        self.status = status
+        self.expiresAtMs = expiresAtMs
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, organizationId, organizationName, role, status, expiresAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        organizationId = try c.decode(String.self, forKey: .organizationId)
+        organizationName = try c.decodeIfPresent(String.self, forKey: .organizationName)
+        role = try c.decodeIfPresent(String.self, forKey: .role)
+        status = try c.decode(String.self, forKey: .status)
+        if let ms = try? c.decodeIfPresent(Double.self, forKey: .expiresAt) {
+            expiresAtMs = ms
+        } else if let iso = try? c.decodeIfPresent(String.self, forKey: .expiresAt) {
+            expiresAtMs = Self.parseISO(iso).map { $0.timeIntervalSince1970 * 1000 }
+        } else {
+            expiresAtMs = nil
+        }
+    }
+
+    /// Whether this can still be accepted: pending and not past its expiry. An
+    /// expired invitation is refused by the server, so it is not offered.
+    public func isLive(now: Date = Date()) -> Bool {
+        guard status == "pending" else { return false }
+        guard let expiresAtMs else { return true }
+        return expiresAtMs > now.timeIntervalSince1970 * 1000
+    }
+
+    private static func parseISO(_ s: String) -> Date? {
+        let withFraction = ISO8601DateFormatter()
+        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = withFraction.date(from: s) { return d }
+        return ISO8601DateFormatter().date(from: s)
+    }
+}
+
+/// The URL slug better-auth requires when an organization is created. Same rule
+/// as the desktop's `toSlug` in `src/lib/cloud/orgs.ts`: lower-case ASCII words
+/// joined by hyphens, at most 32 characters, then a short random suffix so two
+/// orgs with the same name never collide. A name with no ASCII letters or
+/// digits (a Chinese company name, say) falls back to `org`.
+public enum OrgSlug {
+    public static func make(name: String, suffix: String = OrgSlug.randomSuffix()) -> String {
+        let words = name.lowercased()
+            .split(whereSeparator: { ch in
+                !(ch.isASCII && (ch.isLetter || ch.isNumber))
+            })
+        let base = String(words.joined(separator: "-").prefix(32))
+        return "\(base.isEmpty ? "org" : base)-\(suffix)"
+    }
+
+    public static func randomSuffix() -> String {
+        String(UUID().uuidString.lowercased().prefix(6))
+    }
+}
