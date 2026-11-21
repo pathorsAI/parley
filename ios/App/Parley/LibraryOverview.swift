@@ -120,6 +120,17 @@ struct OverviewBackdrop: View {
         }
         .frame(height: Self.height)
         .clipped()
+        // Faded in at the top and out at the bottom: the backdrop starts under
+        // the segmented picker, and a clipped edge there read as a stripe.
+        .mask(
+            LinearGradient(
+                stops: [
+                    .init(color: .clear, location: 0),
+                    .init(color: .black, location: 0.22),
+                    .init(color: .black, location: 0.7),
+                    .init(color: .clear, location: 1),
+                ],
+                startPoint: .top, endPoint: .bottom))
         .allowsHitTesting(false)
         .accessibilityHidden(true)
         .onAppear {
