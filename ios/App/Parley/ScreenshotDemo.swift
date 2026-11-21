@@ -40,8 +40,9 @@
     /// picker open over fifteen folders), `resetchecklist` (Settings'
     /// "Show the getting-started list again", pressed, landing on the Library),
     /// `summary` / `jump` / `nosummary` (the recording page's two faces — see
-    /// `docs/design/ios-recording-page.md`), and `voicehistory` (Library ›
-    /// Voice typing, one entry per polish outcome).
+    /// `docs/design/ios-recording-page.md`), `library-all` (the Library's full
+    /// list, pushed over the overview as See all opens it), and `voicehistory`
+    /// (Library › Voice typing, one entry per polish outcome).
     @MainActor
     final class ScreenshotDemo: ObservableObject {
         static let shared = ScreenshotDemo()
@@ -72,6 +73,8 @@
         /// Library switches to its Voice typing section, seeded with one
         /// history entry per polish outcome (`voicehistory`).
         @Published var showVoiceTyping = false
+        /// Library pushes its full list over the overview (`library-all`).
+        @Published var showAllRecordings = false
         /// A sheet with a focused text field, so the Parley keyboard is on
         /// screen, and an Action-Button-style demo dictation into it a moment
         /// later (`keyboardharness`). The only way to watch the keyboard's
@@ -161,6 +164,7 @@
             allowsChecklist = false
             showSample = false
             showVoiceTyping = false
+            showAllRecordings = false
             keyboardHarness = false
             recordingID = Self.featured.id
             forcedFace = nil
@@ -176,6 +180,10 @@
                 showSettledFiling = true
                 wantsFilingAdjust = true
             case "library": tab = .library
+            case "library-all":
+                // The full list, as See all opens it over the overview.
+                tab = .library
+                showAllRecordings = true
             case "voicehistory":
                 // Review frame for the history's polish labels (1.25): one
                 // entry per outcome, plus one from before 1.25 with none.
@@ -416,6 +424,11 @@
             CloudFolder(
                 id: "f-new", name: t("New business", "新客戶"),
                 orgId: nil, createdAt: nil, updatedAt: nil),
+            // Empty, so the overview's folder row shows a card drawn without
+            // its papers, and runs past the screen edge.
+            CloudFolder(
+                id: "f-team", name: t("Team syncs", "團隊週會"),
+                orgId: nil, createdAt: nil, updatedAt: nil),
         ]
 
         /// The demo org's shared folders, so the picker shows an organization
@@ -484,6 +497,26 @@
                     "Usage up 22% quarter on quarter; two action items carried over.",
                     "使用量季增 22%；兩項待辦順延到下一季。"),
                 folderId: nil, updatedAt: nil),
+            // Two more, so the overview's four recent rows are full and the
+            // full list behind See all has more than they show.
+            CloudRecordingSummary(
+                id: "demo-pricing",
+                title: t("Pricing follow-up — Northwind", "報價追蹤 — 北風工業"),
+                source: "live", createdAt: epoch - 8 * 86_400_000, durationMs: 742_000,
+                speakerCount: 2, findingsCount: 1, actionItemsCount: 0, hasAudio: true,
+                snippet: t(
+                    "Volume discount approved above sixty seats.",
+                    "六十席以上的量價折扣已核准。"),
+                folderId: "f-renewals", updatedAt: nil),
+            CloudRecordingSummary(
+                id: "demo-intro",
+                title: t("Intro call — Blue Harbor Hotels", "初次接觸 — 藍港酒店"),
+                source: "upload", createdAt: epoch - 12 * 86_400_000, durationMs: 1_310_000,
+                speakerCount: 2, findingsCount: 2, actionItemsCount: 3, hasAudio: true,
+                snippet: t(
+                    "Twelve properties; front desk wants call summaries in the PMS.",
+                    "旗下十二間飯店；櫃檯希望通話摘要能寫回 PMS。"),
+                folderId: "f-new", updatedAt: nil),
         ]
 
         static var featured: CloudRecordingSummary { recordings[0] }
