@@ -19,6 +19,23 @@
         }
       }
     },
+    "%@, what are you meeting about today?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@, what are you meeting about today?"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@，今天要開什麼會?"
+          }
+        }
+      }
+    },
     "%lld d ago" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -100,6 +117,41 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已完成 %1$lld／%2$lld 項"
+          }
+        }
+      }
+    },
+    "%lld recordings" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld recording"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld recordings"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hant" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld 筆錄音"
+                }
+              }
+            }
           }
         }
       }
@@ -612,6 +664,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "全部"
+          }
+        }
+      }
+    },
+    "All recordings" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "All recordings"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全部錄音"
           }
         }
       }
@@ -2319,6 +2388,23 @@
         }
       }
     },
+    "Folders" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Folders"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "資料夾"
+          }
+        }
+      }
+    },
     "Generate a summary with AI" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3675,6 +3761,23 @@
         }
       }
     },
+    "No recordings yet — start a meeting or import one." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No recordings yet — start a meeting or import one."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "還沒有錄音——開一場會議,或匯入一段錄音。"
+          }
+        }
+      }
+    },
     "No summary yet." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4965,6 +5068,23 @@
         }
       }
     },
+    "Recent recordings" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recent recordings"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最近錄音"
+          }
+        }
+      }
+    },
     "Reconnecting…" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5867,6 +5987,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "搜尋語音輸入"
+          }
+        }
+      }
+    },
+    "See all" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "See all"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看全部"
           }
         }
       }
@@ -7909,6 +8046,23 @@
         }
       }
     },
+    "Use the sample" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use the sample"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "用範例錄音"
+          }
+        }
+      }
+    },
     "Value" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8143,6 +8297,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "輸入到"
+          }
+        }
+      }
+    },
+    "What are you meeting about today?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "What are you meeting about today?"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "今天要開什麼會?"
           }
         }
       }

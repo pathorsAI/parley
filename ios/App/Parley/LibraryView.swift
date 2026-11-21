@@ -51,11 +51,12 @@ struct LibraryView: View {
     /// waits for it, so it never flashes up over a library still on its way
     /// from the cloud — and so the existing-user check has run first.
     @State private var personalLoaded = false
-    /// What is pushed on the Library's stack: the recording a row or the
-    /// checklist opened, and what for. A path rather than destination-closure
-    /// links, so the stack can be popped from here — the checklist request has
-    /// to land on the list, not on whatever recording was left open.
-    @State private var path: [OpenedRecording] = []
+    /// What is pushed on the Library's stack: the full list (from See all or a
+    /// folder card), and the recording a row or the checklist opened, and what
+    /// for. A path rather than destination-closure links, so the stack can be
+    /// popped from here — the checklist request has to land on the overview,
+    /// not on whatever recording was left open.
+    @State private var path: [LibraryRoute] = []
     /// The last `TabRouter.checklistRequest` acted on.
     @State private var handledChecklistRequest = 0
     /// "Walk through the sample" was tapped and its 1.5 s "Transcribing…" is up.
@@ -98,8 +99,12 @@ struct LibraryView: View {
                     Group {
                         if !app.signedIn {
                             unavailable
-                        } else {
+                        } else if !search.isEmpty && !showsFullList {
+                            // Searching from the overview searches the whole
+                            // library, the way the Library always has.
                             list
+                        } else {
+                            overview
                         }
                     }
                     // Here rather than on the stack: pulling the voice-typing
@@ -113,8 +118,8 @@ struct LibraryView: View {
             }
             .background(Theme.background)
             // Settings' "Show the getting-started list again" lands on the
-            // checklist, which lives in Meetings; the list itself then takes
-            // the request on appearing (`takeChecklistRequest`).
+            // checklist, which lives in Meetings; the overview then takes the
+            // request on appearing (`takeChecklistRequest`).
             .onChange(of: router.checklistRequest) { _, _ in section = .meetings }
             .navigationTitle("Library")
             .toolbar {
@@ -134,46 +139,20 @@ struct LibraryView: View {
             ) { result in
                 Task { await runImport(result) }
             }
-            .navigationDestination(for: OpenedRecording.self) { target in
-                if let rec = allRecordings.first(where: { $0.id == target.id }) {
-                    RecordingDetailView(
-                        summary: rec, orgId: target.orgId, intent: target.intent,
-                        isLapRecording: target.guided || isLapRecording(rec, orgId: target.orgId),
-                        onFolderChange: folderChanged(rec.id),
-                        onTitleChange: titleChanged(rec.id))
+            .navigationDestination(for: LibraryRoute.self) { route in
+                switch route {
+                case .recording(let target):
+                    if let rec = allRecordings.first(where: { $0.id == target.id }) {
+                        RecordingDetailView(
+                            summary: rec, orgId: target.orgId, intent: target.intent,
+                            isLapRecording: target.guided
+                                || isLapRecording(rec, orgId: target.orgId),
+                            onFolderChange: folderChanged(rec.id),
+                            onTitleChange: titleChanged(rec.id))
+                    }
+                case .recordings:
+                    fullList
                 }
-            }
-            .sheet(item: $moving) { rec in folderPicker(for: rec) }
-            // Attached once here, not per row: every row's swipe and context
-            // menu only sets the state, and this one dialog answers for all of
-            // them.
-            .confirmationDialog(
-                "Delete this recording?",
-                isPresented: Binding(
-                    get: { confirmingDelete != nil },
-                    set: { if !$0 { confirmingDelete = nil } }),
-                titleVisibility: .visible,
-                presenting: confirmingDelete
-            ) { rec in
-                Button("Delete", role: .destructive) { Task { await remove(rec) } }
-            } message: { _ in
-                Text(
-                    "The recording, its transcript and its summary are deleted everywhere. This cannot be undone."
-                )
-            }
-            .confirmationDialog(
-                confirmingOrgMove.map { Text("Move to \($0.org.name)?") } ?? Text(verbatim: ""),
-                isPresented: Binding(
-                    get: { confirmingOrgMove != nil },
-                    set: { if !$0 { confirmingOrgMove = nil } }),
-                titleVisibility: .visible,
-                presenting: confirmingOrgMove
-            ) { move in
-                Button("Move", role: .destructive) {
-                    Task { await shareToOrg(move.recording, org: move.org, thenDelete: true) }
-                }
-            } message: { _ in
-                Text("A copy goes to the organization, and the recording leaves your personal library.")
             }
             .searchable(
                 text: $search, isPresented: $searchPresented,
@@ -183,6 +162,14 @@ struct LibraryView: View {
             // A recording renamed or filed from another tab (the record
             // screen's filing card): reload, so the row shows the new name.
             .onChange(of: app.libraryRevision) { _, _ in Task { await load() } }
+            // Leaving the full list leaves its search and its folder behind:
+            // the overview is not filtered by either.
+            .onChange(of: path) { old, new in
+                if old.contains(where: \.isFullList) && !new.contains(where: \.isFullList) {
+                    search = ""
+                    folderFilter = nil
+                }
+            }
             // `parley://demo/transcript` pushes the demo recording, so the
             // transcript frame is captured through the real navigation stack
             // (back chevron and all) rather than as a detached view.
@@ -199,7 +186,81 @@ struct LibraryView: View {
                 .onChange(of: demo.showVoiceTyping, initial: true) { _, show in
                     if show { section = .voiceTyping }
                 }
+                // `-ParleyDemoRoute library-all` lands on the full list.
+                .onChange(of: demo.showAllRecordings, initial: true) { _, show in
+                    if show && !showsFullList { openFullList(nil) }
+                }
             #endif
+        }
+        // The dialogs and sheets hang off the stack itself rather than its root
+        // page, because the rows that raise them live on two pages — the
+        // overview and the full list pushed over it — and a presentation
+        // attached to a page that has been pushed under another one is not
+        // guaranteed to come up.
+        .sheet(item: $moving) { rec in folderPicker(for: rec) }
+        .sheet(isPresented: $showingUploadQueue) { UploadQueueSheet() }
+        // Attached once here, not per row: every row's swipe and context
+        // menu only sets the state, and this one dialog answers for all of
+        // them.
+        .confirmationDialog(
+            "Delete this recording?",
+            isPresented: Binding(
+                get: { confirmingDelete != nil },
+                set: { if !$0 { confirmingDelete = nil } }),
+            titleVisibility: .visible,
+            presenting: confirmingDelete
+        ) { rec in
+            Button("Delete", role: .destructive) { Task { await remove(rec) } }
+        } message: { _ in
+            Text(
+                "The recording, its transcript and its summary are deleted everywhere. This cannot be undone."
+            )
+        }
+        .confirmationDialog(
+            confirmingOrgMove.map { Text("Move to \($0.org.name)?") } ?? Text(verbatim: ""),
+            isPresented: Binding(
+                get: { confirmingOrgMove != nil },
+                set: { if !$0 { confirmingOrgMove = nil } }),
+            titleVisibility: .visible,
+            presenting: confirmingOrgMove
+        ) { move in
+            Button("Move", role: .destructive) {
+                Task { await shareToOrg(move.recording, org: move.org, thenDelete: true) }
+            }
+        } message: { _ in
+            Text("A copy goes to the organization, and the recording leaves your personal library.")
+        }
+        .alert(
+            namingFolder?.title ?? Text(verbatim: ""),
+            isPresented: Binding(
+                get: { namingFolder != nil },
+                set: { if !$0 { namingFolder = nil } }),
+            presenting: namingFolder
+        ) { naming in
+            TextField("Folder name", text: $folderNameDraft)
+            Button("Cancel", role: .cancel) {}
+            Button(naming.confirmLabel) { Task { await commitFolderName(naming) } }
+                .disabled(trimmedFolderName.isEmpty)
+        }
+        .confirmationDialog(
+            confirmingFolderDelete.map { Text("Delete “\($0.name)”?") } ?? Text(verbatim: ""),
+            isPresented: Binding(
+                get: { confirmingFolderDelete != nil },
+                set: { if !$0 { confirmingFolderDelete = nil } }),
+            titleVisibility: .visible,
+            presenting: confirmingFolderDelete
+        ) { folder in
+            Button("Delete", role: .destructive) { Task { await deleteFolder(folder) } }
+        } message: { folder in
+            // Says what happens to what is in it, because "delete" next to a
+            // folder of recordings reads as deleting them. The count is what this
+            // phone has loaded, which is the library the user is looking at.
+            let count = recordingCount(in: folder)
+            if count == 0 {
+                Text("The folder is empty.")
+            } else {
+                Text("\(count) recordings in it move to Unfiled. No recording is deleted.")
+            }
         }
     }
 
@@ -231,6 +292,209 @@ struct LibraryView: View {
             : String(localized: "Sign in under Settings → Account and your cloud recordings show up here.")
         return ContentUnavailableView(
             title, systemImage: "icloud.slash", description: Text(detail))
+    }
+
+    // MARK: overview (desktop 總覽, phone-sized)
+
+    /// How many recordings 最近錄音 shows before See all takes over — the
+    /// desktop's number. Four is a shortcut, not a browser.
+    private static let recentCount = 4
+
+    /// What Meetings opens on: the desktop's 總覽 — a greeting over the light
+    /// bars, the getting-started list, the folders as cards in one sideways
+    /// row, and the four newest recordings. Everything else in the library is
+    /// one tap away on the full list (`fullList`), pushed by See all or a
+    /// folder card, which is the list this tab used to open on, unchanged.
+    ///
+    /// Both follow the scope menu: switching to an organization re-targets the
+    /// folders and the recent rows to its library.
+    private var overview: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 28) {
+                    greeting
+                        .padding(.horizontal, 20)
+                    overviewStatus
+                    if showsChecklist {
+                        GettingStartedList(
+                            state: gettingStarted.state,
+                            action: checklistAction,
+                            transcribing: walkingThrough,
+                            walkThrough: walkThroughSample,
+                            continueLap: continueLap,
+                            dismiss: { withAnimation { gettingStarted.dismiss() } })
+                            .padding(.horizontal, 20)
+                            .id(Self.checklistID)
+                    }
+                    foldersSection
+                    recentSection
+                        .padding(.horizontal, 20)
+                }
+                .padding(.top, 16)
+                .padding(.bottom, 32)
+                .background(alignment: .top) { OverviewBackdrop() }
+            }
+            .onAppear { takeChecklistRequest(proxy) }
+            .onChange(of: router.checklistRequest) { _, _ in takeChecklistRequest(proxy) }
+        }
+    }
+
+    /// The desktop's greeting, with the account's name when it has one.
+    @ViewBuilder
+    private var greeting: some View {
+        let name = app.user?.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        Group {
+            if name.isEmpty {
+                Text("What are you meeting about today?")
+            } else {
+                Text("\(name), what are you meeting about today?")
+            }
+        }
+        .font(.parley.title)
+        .foregroundStyle(Color(.label))
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityAddTraits(.isHeader)
+    }
+
+    /// What the full list says above its rows, said on the overview too so it
+    /// is not missed: recordings still on the phone, an import in flight or
+    /// just landed, and the last failure.
+    @ViewBuilder
+    private var overviewStatus: some View {
+        let queue = scope == nil && app.pendingUploadCount > 0
+        let importShown = importer.isRunning || notice != nil
+        if queue || importShown || error != nil {
+            VStack(alignment: .leading, spacing: 10) {
+                if queue {
+                    UploadQueueRow(pending: app.pendingUploadCount, parked: app.parkedUploads) {
+                        showingUploadQueue = true
+                    }
+                }
+                if importShown { importStatus }
+                if let error {
+                    Text(error)
+                        .font(.parley.caption)
+                        .foregroundStyle(Theme.destructive)
+                }
+            }
+            .padding(.horizontal, 20)
+        }
+    }
+
+    /// 資料夾: a "new folder" card, then a card per folder in the scope, in one
+    /// row that scrolls sideways and runs to both edges of the screen.
+    private var foldersSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            OverviewHeading(title: "Folders")
+                .padding(.horizontal, 20)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 16) {
+                    NewFolderCard {
+                        folderNameDraft = ""
+                        namingFolder = .create
+                    }
+                    ForEach(folders) { f in
+                        FolderCard(name: f.name, count: recordingCount(in: f)) {
+                            openFullList(f.id)
+                        }
+                        // The chips' long-press, on the card.
+                        .contextMenu {
+                            Button("Rename", systemImage: "pencil") { requestRename(f) }
+                            Button("Delete", systemImage: "trash", role: .destructive) {
+                                confirmingFolderDelete = f
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 4)
+            }
+        }
+    }
+
+    /// 最近錄音: the newest four in the scope, as hairline-split rows that open
+    /// the recording exactly as the full list's rows do, with the same
+    /// long-press actions. No swipe actions: this is a shortcut, and deleting
+    /// from it would make the four rows shuffle under the finger.
+    private var recentSection: some View {
+        let recent = Array(filtered(nil).prefix(Self.recentCount))
+        return VStack(alignment: .leading, spacing: 6) {
+            OverviewHeading(title: "Recent recordings") {
+                if !recent.isEmpty {
+                    Button {
+                        openFullList(nil)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text("See all")
+                            Image(systemName: "arrow.right")
+                                .imageScale(.small)
+                        }
+                        .font(.parley.caption)
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+            if !recent.isEmpty {
+                HairlineList(items: recent) { rec in
+                    NavigationLink(value: LibraryRoute.recording(opened(rec))) {
+                        RecentRecordingRow(summary: rec, folderName: folderName(rec.folderId))
+                    }
+                    .buttonStyle(.plain)
+                    .contextMenu { actions(for: rec) }
+                    .disabled(busyId == rec.id)
+                    .opacity(busyId == rec.id ? 0.5 : 1)
+                }
+            } else if loading {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 24)
+            } else {
+                // The checklist already offers the sample — don't say it twice.
+                RecentEmptyBox(
+                    offersSample: scope == nil && !showsChecklist && SampleRecordingStore.isBundled,
+                    transcribing: walkingThrough,
+                    useSample: walkThroughSample)
+            }
+        }
+    }
+
+    /// The full list, pushed over the overview: the chips, the rows with their
+    /// swipes and long-press menus, the search, pull to refresh — the page this
+    /// tab used to open on, opened on the folder that was tapped.
+    private var fullList: some View {
+        list
+            .background(Theme.background)
+            .navigationTitle(fullListTitle)
+            .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $search, prompt: Text("Search titles and snippets"))
+            .refreshable { await load() }
+    }
+
+    /// Named after the page the chips are on, so the title follows a swipe.
+    private var fullListTitle: String {
+        switch folderFilter {
+        case nil: return String(localized: "All recordings")
+        case Self.unfiledPage: return String(localized: "Unfiled")
+        case let id?: return folders.first { $0.id == id }?.name ?? String(localized: "All recordings")
+        }
+    }
+
+    private var showsFullList: Bool { path.contains(where: \.isFullList) }
+
+    /// See all (`nil`) or a folder card: the full list, on that folder.
+    private func openFullList(_ folder: String?) {
+        folderFilter = folder
+        path.append(.recordings(folder: folder))
+    }
+
+    /// A row's tap, from either page.
+    private func opened(_ rec: CloudRecordingSummary) -> OpenedRecording {
+        OpenedRecording(id: rec.id, orgId: scope, intent: .read)
+    }
+
+    /// The live folder's name, by the same orphan→root rule the list files by.
+    private func folderName(_ id: String?) -> String? {
+        id.flatMap { id in folders.first { $0.id == id }?.name }
     }
 
     // MARK: getting started
@@ -334,14 +598,15 @@ struct LibraryView: View {
             walkingThrough = false
             guard let summary = sample.load() else { return }
             select(nil)
-            path.append(OpenedRecording(id: summary.id, orgId: nil, intent: .read, guided: true))
+            path.append(
+                .recording(OpenedRecording(id: summary.id, orgId: nil, intent: .read, guided: true)))
         }
     }
 
     /// 繼續 →: back into the lap recording.
     private func continueLap() {
         guard let rec = lapRecording else { return }
-        path.append(OpenedRecording(id: rec.id, orgId: nil, intent: .read, guided: true))
+        path.append(.recording(OpenedRecording(id: rec.id, orgId: nil, intent: .read, guided: true)))
     }
 
     /// Keeps a row's folder in step with a move made inside the recording, so
@@ -478,55 +743,16 @@ struct LibraryView: View {
             folderList(folderFilter)
         }
         .simultaneousGesture(folderSwipe)
-        .sheet(isPresented: $showingUploadQueue) { UploadQueueSheet() }
-        .alert(
-            namingFolder?.title ?? Text(verbatim: ""),
-            isPresented: Binding(
-                get: { namingFolder != nil },
-                set: { if !$0 { namingFolder = nil } }),
-            presenting: namingFolder
-        ) { naming in
-            TextField("Folder name", text: $folderNameDraft)
-            Button("Cancel", role: .cancel) {}
-            Button(naming.confirmLabel) { Task { await commitFolderName(naming) } }
-                .disabled(trimmedFolderName.isEmpty)
-        }
-        .confirmationDialog(
-            confirmingFolderDelete.map { Text("Delete “\($0.name)”?") } ?? Text(verbatim: ""),
-            isPresented: Binding(
-                get: { confirmingFolderDelete != nil },
-                set: { if !$0 { confirmingFolderDelete = nil } }),
-            titleVisibility: .visible,
-            presenting: confirmingFolderDelete
-        ) { folder in
-            Button("Delete", role: .destructive) { Task { await deleteFolder(folder) } }
-        } message: { folder in
-            // Says what happens to what is in it, because "delete" next to a
-            // folder of recordings reads as deleting them. The count is what this
-            // phone has loaded, which is the library the user is looking at.
-            let count = recordingCount(in: folder)
-            if count == 0 {
-                Text("The folder is empty.")
-            } else {
-                Text("\(count) recordings in it move to Unfiled. No recording is deleted.")
-            }
-        }
     }
 
-    /// One folder's worth of the library.
+    /// One folder's worth of the library. The getting-started checklist is
+    /// not here: it lives on the overview, under the stack this list is
+    /// pushed onto.
     private func folderList(_ folder: String?) -> some View {
-        let items = filtered(folder)
-        let checklist = folder == nil && showsChecklist
-        return ScrollViewReader { proxy in
-            folderRows(items, checklist: checklist, showsQueue: folder == nil && scope == nil)
-                .onAppear { takeChecklistRequest(proxy) }
-                .onChange(of: router.checklistRequest) { _, _ in takeChecklistRequest(proxy) }
-        }
+        folderRows(filtered(folder), showsQueue: folder == nil && scope == nil)
     }
 
-    private func folderRows(
-        _ items: [CloudRecordingSummary], checklist: Bool, showsQueue: Bool
-    ) -> some View {
+    private func folderRows(_ items: [CloudRecordingSummary], showsQueue: Bool) -> some View {
         List {
             // Recordings on this phone that the cloud does not have yet — the
             // only place outside Settings they show up. Personal scope, every
@@ -552,30 +778,8 @@ struct LibraryView: View {
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
             }
-            if checklist {
-                GettingStartedList(
-                    state: gettingStarted.state,
-                    action: checklistAction,
-                    transcribing: walkingThrough,
-                    walkThrough: walkThroughSample,
-                    continueLap: continueLap,
-                    dismiss: { withAnimation { gettingStarted.dismiss() } })
-                    .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
-                    .id(Self.checklistID)
-                // The list is drawn before the first load lands; the spinner
-                // goes under it rather than over it.
-                if loading && recordings.isEmpty {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 24)
-                        .listRowSeparator(.hidden)
-                        .listRowBackground(Color.clear)
-                }
-            }
             ForEach(items) { rec in
-                NavigationLink(value: OpenedRecording(id: rec.id, orgId: scope, intent: .read)) {
+                NavigationLink(value: LibraryRoute.recording(opened(rec))) {
                     RecordingCard(
                         summary: rec, folders: folders, audio: downloads.state(for: rec.id))
                 }
@@ -627,7 +831,7 @@ struct LibraryView: View {
         } action: {
             swipeGeometry.list = $0
         }
-        .overlay { if loading && recordings.isEmpty && !checklist { ProgressView() } }
+        .overlay { if loading && recordings.isEmpty { ProgressView() } }
     }
 
     /// An import in flight, or the one that just landed.
@@ -927,7 +1131,9 @@ struct LibraryView: View {
                 }
                 guard scope == orgId else { return }
                 folders.append(folder)
-                select(folder.id)
+                // Onto the new folder's page when a list is showing; the
+                // overview has no page to move, and the new card is enough.
+                if showsFullList || !search.isEmpty { select(folder.id) }
             case .rename(let folder):
                 guard name != folder.name else { return }
                 if let orgId {
@@ -1427,6 +1633,20 @@ private enum FolderNaming {
 private struct PendingOrgMove {
     let recording: CloudRecordingSummary
     let org: CloudOrg
+}
+
+/// A page on the Library's stack over the overview.
+private enum LibraryRoute: Hashable {
+    /// The full list, opened on a folder (`nil` = everything). The page shown
+    /// is `folderFilter`, which the chips go on changing; the folder here is
+    /// only where it was opened.
+    case recordings(folder: String?)
+    case recording(OpenedRecording)
+
+    var isFullList: Bool {
+        if case .recordings = self { return true }
+        return false
+    }
 }
 
 private struct OpenedRecording: Hashable {
