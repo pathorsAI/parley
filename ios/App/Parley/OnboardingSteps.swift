@@ -1125,25 +1125,17 @@ struct OnboardingDoneStep: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                VStack(spacing: 12) {
-                    HStack(spacing: 24) {
-                        OnboardingGhostButton(title: "Start recording") { finish(.record) }
-                        OnboardingBlueButton(title: "Try the sample") { finish(.sample) }
-                            .overlay(alignment: .topTrailing) {
-                                OnboardingScribbleArrow()
-                                    .stroke(Theme.primary, style: StrokeStyle(lineWidth: 1, lineCap: .round, lineJoin: .round))
-                                    .frame(width: 46, height: 53)
-                                    .offset(x: 34, y: -52)
-                                    .allowsHitTesting(false)
-                                    .accessibilityHidden(true)
-                            }
-                    }
-                    // A quiet way out: straight to the library, no sample, no recording.
-                    Button("Skip") { finish(.skip) }
-                        .font(.parley.footnote)
-                        .foregroundStyle(Theme.primary)
-                        .buttonStyle(.plain)
-                        .frame(minHeight: 32)
+                HStack(spacing: 24) {
+                    OnboardingGhostButton(title: "Start recording") { finish(.record) }
+                    OnboardingBlueButton(title: "Try the sample") { finish(.sample) }
+                        .overlay(alignment: .topTrailing) {
+                            OnboardingScribbleArrow()
+                                .stroke(Theme.primary, style: StrokeStyle(lineWidth: 1, lineCap: .round, lineJoin: .round))
+                                .frame(width: 46, height: 53)
+                                .offset(x: 34, y: -52)
+                                .allowsHitTesting(false)
+                                .accessibilityHidden(true)
+                        }
                 }
             }
             .frame(maxWidth: .infinity)
@@ -1152,6 +1144,16 @@ struct OnboardingDoneStep: View {
             .padding(.bottom, 24)
         }
         .scrollBounceBehavior(.basedOnSize)
+        // A quiet way out, pinned to the bottom of the screen: straight to
+        // the library, no sample, no recording.
+        .safeAreaInset(edge: .bottom) {
+            Button("Skip") { finish(.skip) }
+                .font(.parley.footnote)
+                .foregroundStyle(Theme.primary)
+                .buttonStyle(.plain)
+                .frame(minHeight: 32)
+                .padding(.bottom, 12)
+        }
     }
 }
 
