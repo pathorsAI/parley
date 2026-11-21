@@ -759,7 +759,7 @@ private fun LanguageSection() {
  * own details page, which is at least where the system language lives two taps
  * away. Either can be missing on an odd OEM build, hence the fallthrough.
  */
-private fun openLanguageSettings(context: Context) {
+internal fun openLanguageSettings(context: Context) {
     val target = Uri.fromParts("package", context.packageName, null)
     val candidates = buildList {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

@@ -3,6 +3,10 @@ package com.pathors.parley.cloud
 import com.pathors.parley.kit.FilingFolderSuggestion
 import com.pathors.parley.kit.FilingSuggestion
 import com.pathors.parley.kit.TranscriptSegment
+import java.time.Instant
+import java.time.OffsetDateTime
+import java.util.Locale
+import java.util.UUID
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.descriptors.PrimitiveKind
@@ -213,6 +217,102 @@ object OrgRole {
     const val OWNER = "owner"
     const val ADMIN = "admin"
     const val MEMBER = "member"
+}
+
+/**
+ * An invitation into an organization, as `GET /auth/organization/list-user-invitations`
+ * returns it (better-auth's organization plugin). Mirrors iOS `CloudInvitation`;
+ * the desktop's `CloudInvitation` in `src/lib/cloud/types.ts` is the same shape.
+ *
+ * Read by hand with [fromJson] rather than through a generated serializer,
+ * because `expiresAt` arrives as an ISO string from the server and is tolerated
+ * as epoch milliseconds too, as on the desktop and iOS.
+ */
+data class CloudInvitation(
+    val id: String,
+    val organizationId: String,
+    /**
+     * The org's display name. Present on `list-user-invitations`, which is the
+     * only list the phone reads.
+     */
+    val organizationName: String? = null,
+    /** [OrgRole.MEMBER] or [OrgRole.ADMIN], as the inviter chose. */
+    val role: String? = null,
+    /** [PENDING] while it can still be answered; `accepted`, `rejected`, `canceled` after. */
+    val status: String,
+    /**
+     * When it expires, in milliseconds since the epoch; null when the server
+     * sent none. Invitations expire 48 hours after they are sent or renewed.
+     */
+    val expiresAtMs: Double? = null,
+) {
+    /**
+     * Whether this can still be accepted: pending and not past its expiry. An
+     * expired invitation is refused by the server, so it is not offered.
+     */
+    fun isLive(now: Instant = Instant.now()): Boolean {
+        if (status != PENDING) return false
+        val expires = expiresAtMs ?: return true
+        return expires > now.toEpochMilli().toDouble()
+    }
+
+    companion object {
+        const val PENDING = "pending"
+
+        /**
+         * One invitation from the server's JSON, or null when a required field
+         * (`id`, `organizationId`, `status`) is missing — a malformed row is
+         * dropped rather than failing the whole list.
+         */
+        fun fromJson(obj: JsonObject): CloudInvitation? {
+            val id = obj.stringOrNull("id") ?: return null
+            val organizationId = obj.stringOrNull("organizationId") ?: return null
+            val status = obj.stringOrNull("status") ?: return null
+            val expiresAtMs = obj.numberOrNull("expiresAt")
+                ?: obj.stringOrNull("expiresAt")?.let { parseIsoMs(it) }
+            return CloudInvitation(
+                id = id,
+                organizationId = organizationId,
+                organizationName = obj.stringOrNull("organizationName"),
+                role = obj.stringOrNull("role"),
+                status = status,
+                expiresAtMs = expiresAtMs,
+            )
+        }
+
+        /** An ISO-8601 instant (`Z` or an offset, fractional seconds optional) as epoch ms. */
+        private fun parseIsoMs(text: String): Double? =
+            runCatching { OffsetDateTime.parse(text).toInstant() }
+                .recoverCatching { Instant.parse(text) }
+                .getOrNull()
+                ?.toEpochMilli()
+                ?.toDouble()
+    }
+}
+
+/**
+ * The URL slug better-auth requires when an organization is created. Same rule
+ * as the desktop's `toSlug` in `src/lib/cloud/orgs.ts` and iOS `OrgSlug`:
+ * lower-case ASCII words joined by hyphens, at most 32 characters, then a short
+ * random suffix so two orgs with the same name never collide. A name with no
+ * ASCII letters or digits (a Chinese company name, say) falls back to `org`.
+ */
+object OrgSlug {
+    private const val MAX_BASE_LENGTH = 32
+    private const val SUFFIX_LENGTH = 6
+    private val NON_ALPHANUMERIC = Regex("[^a-z0-9]+")
+
+    fun make(name: String, suffix: String = randomSuffix()): String {
+        val base = name.lowercase(Locale.ROOT)
+            .split(NON_ALPHANUMERIC)
+            .filter { it.isNotEmpty() }
+            .joinToString("-")
+            .take(MAX_BASE_LENGTH)
+        return "${base.ifEmpty { "org" }}-$suffix"
+    }
+
+    fun randomSuffix(): String =
+        UUID.randomUUID().toString().lowercase(Locale.ROOT).take(SUFFIX_LENGTH)
 }
 
 /** `POST /stt/batch` → `{ id }`, the hosted transcription job to poll. */

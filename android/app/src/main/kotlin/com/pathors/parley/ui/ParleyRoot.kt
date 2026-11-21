@@ -16,7 +16,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -30,6 +32,7 @@ import com.pathors.parley.meeting.MeetingService
 import com.pathors.parley.quickrecord.QuickRecord
 import com.pathors.parley.quickrecord.QuickRecordInbox
 import com.pathors.parley.screenshot.DemoMode
+import kotlinx.coroutines.launch
 
 /** The four places the app can be. */
 private object Route {
@@ -117,6 +120,7 @@ fun ParleyRoot() {
     val demo by DemoMode.enabled.collectAsState()
     val signingIn by container.signingIn.collectAsState()
     val quickRecord by QuickRecordInbox.shared.requestedAt.collectAsState()
+    val demoOnboarding by DemoMode.onboarding.collectAsState()
 
     // A record request that meets the onboarding wall is dropped, not kept for
     // after sign-in: that is minutes later, on a screen reached for another
@@ -136,6 +140,8 @@ fun ParleyRoot() {
         // background is what shows through the bars.
         Box(Modifier.fillMaxSize().safeDrawingPadding()) {
             when {
+                // The welcome and account frames are of the signed-out wizard.
+                demo && demoOnboarding?.signedOut == true -> OnboardingScreen(container)
                 demo -> ParleyNavHost(container)
                 // Still reading the stored token. Named, not a bare spinner: a
                 // returning user must not watch an anonymous loading screen, nor
@@ -163,6 +169,9 @@ fun ParleyRoot() {
 private fun ParleyNavHost(container: AppContainer) {
     val navController = rememberNavController()
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val onboardingStart = rememberSignedInOnboardingStart(container)
+    val language = LocalConfiguration.current.locales[0].language
 
     DemoNavigation(navController, container)
     QuickRecordNavigation(navController)
@@ -193,8 +202,9 @@ private fun ParleyNavHost(container: AppContainer) {
                     navController.navigate(Route.recording(id, orgId, guided = guided))
                 },
             )
-            // What's New after an update: only ever over the signed-in library.
-            WhatsNewHost(container.whatsNew)
+            // What's New after an update: only ever over the signed-in library,
+            // and never over the onboarding wizard covering it.
+            if (onboardingStart == null) WhatsNewHost(container.whatsNew)
         }
         composable(Route.MEETING) {
             MeetingScreen(onDone = { navController.popBackStack(Route.HOME, inclusive = false) })
@@ -235,6 +245,55 @@ private fun ParleyNavHost(container: AppContainer) {
                     },
                 )
             }
+        }
+    }
+
+    // After a sign-in that started in the wizard, the rest of it covers the
+    // library until it is left — iOS `MainTabs.onboardingStart`.
+    if (onboardingStart != null) {
+        OnboardingWizard(
+            container = container,
+            start = onboardingStart,
+            hasAccount = true,
+            onFinish = { exit ->
+                container.onboarding.finish()
+                DemoMode.clearOnboarding()
+                when (exit) {
+                    OnboardingExit.SKIP -> Unit
+                    OnboardingExit.RECORD -> navController.navigate(Route.MEETING)
+                    // The sample, loaded into the library, opens as the lap's
+                    // recording — the checklist's own walk-through, without its pause.
+                    OnboardingExit.SAMPLE -> scope.launch {
+                        val sample = container.sample.load(language) ?: return@launch
+                        navController.navigate(Route.recording(sample.id, guided = true))
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxSize(),
+        )
+    }
+}
+
+/**
+ * Which step to open the signed-in wizard on, or null when there is none to
+ * show: where it was left, but never before the signed-in confirmation. Only
+ * after a sign-in that started in the wizard (`onboarding.afterSignIn`), so
+ * users signed in before it existed never see it. A demo route names its own
+ * step. iOS `MainTabs.onboardingStart`.
+ */
+@Composable
+private fun rememberSignedInOnboardingStart(container: AppContainer): OnboardingStep? {
+    val afterSignIn by container.onboarding.afterSignIn.collectAsState()
+    val savedStep by container.onboarding.step.collectAsState()
+    val demo by DemoMode.enabled.collectAsState()
+    val scenario by DemoMode.onboarding.collectAsState()
+    val current = scenario
+    return when {
+        current != null -> if (current.signedOut) null else current.step
+        demo || !afterSignIn -> null
+        else -> {
+            val saved = OnboardingStep.fromKey(savedStep) ?: OnboardingStep.ACCOUNT
+            if (saved < OnboardingStep.ACCOUNT) OnboardingStep.ACCOUNT else saved
         }
     }
 }

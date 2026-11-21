@@ -140,6 +140,23 @@ class DemoModeTest {
         }
     }
 
+    @Test
+    fun `the onboarding invitation is live and named in both languages`() {
+        val english = DemoMode.invitations(en)
+        val chinese = DemoMode.invitations(zh)
+        assertEquals(1, english.size)
+        assertEquals(english.map { it.id }, chinese.map { it.id })
+        english.zip(chinese).forEach { (a, b) ->
+            assertTrue(a.isLive())
+            assertTrue(a.organizationName.orEmpty().isNotBlank())
+            assertTrue(b.organizationName.orEmpty().isNotBlank())
+            assertNotEquals(a.organizationName, b.organizationName)
+        }
+        // A different org from the one the demo account is already in, so
+        // accepting it reads as joining something new.
+        assertFalse(english.any { it.organizationId == DemoMode.ORG_ID })
+    }
+
     /**
      * The library shows folder chips and a folder name on the cards, so the
      * fixtures must file some recordings and leave one at the root — every

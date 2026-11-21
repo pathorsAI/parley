@@ -83,6 +83,9 @@ All methods are `suspend` and throw `CloudException` on a non-2xx response.
 | `listFolders(): List<CloudFolder>` | `GET /folders` → `{ folders }` (filter `orgId == null` for the personal ones) |
 | `createFolder(name, id?, createdAtMs?): CloudFolder` | `POST /folders` `{id, name, createdAt}` — the id is a client-minted lowercase UUID, so a retry re-syncs the same folder; a `{ folder }` response is used when present |
 | `myOrgs(): List<CloudOrg>` | `GET /orgs/mine` → bare array, each with the caller's `role` (`owner` / `admin` / `member`); a non-array reads as none |
+| `createOrg(name): CloudOrg` | `POST /auth/organization/create` `{name, slug}` — name trimmed, slug from `OrgSlug.make` (ASCII words, hyphenated, ≤ 32 chars, `org` when none, plus a 6-char random suffix); the caller becomes owner |
+| `myInvitations(now = Instant.now()): List<CloudInvitation>` | `GET /auth/organization/list-user-invitations` → bare array or `{ invitations }`; only `pending` ones not expired at `now` are returned; `expiresAt` read as ISO string or epoch ms; any other shape reads as none |
+| `acceptInvitation(id)` | `POST /auth/organization/accept-invitation` `{invitationId}`; the response is not read — re-list `myOrgs()` |
 | `orgRecordings(orgId)` | `GET /orgs/{orgId}/recordings` → `{ recordings }` |
 | `orgRecordingMeta(orgId, id)` | `GET /orgs/{orgId}/recordings/{id}/meta` |
 | `orgFolders(orgId)` | `GET /orgs/{orgId}/folders` → `{ folders }` |
@@ -100,8 +103,9 @@ device. `MeetingUploader` already does this; hand-rolled push paths must too.
 re-push; an org folder move is the dedicated `PATCH`; "share to organization" is
 `shareRecording`; "move to organization" is `shareRecording` *then*
 `deleteRecording`, never the other order, so a failure half-way leaves the
-original. Creating and managing organizations, and renaming or deleting folders,
-are not in this client.
+original. Creating an organization and joining one by invitation are here for
+onboarding; managing an organization (inviting, roles, renaming, deleting) is
+not in this client.
 
 ### Deleting the account
 
