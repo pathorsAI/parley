@@ -190,6 +190,7 @@ private val BELOW_STATUS_BAR = WindowInsetsSides.Horizontal + WindowInsetsSides.
  * one of them takes it here except the Library, whose overview draws behind the
  * status bar and insets its own content ([HomeScreen]).
  */
+@Composable
 internal fun Modifier.underStatusBarInset(): Modifier =
     windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
 
