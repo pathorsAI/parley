@@ -145,7 +145,10 @@ struct SettingsView: View {
                     }
                 #endif
             }
+            // Drawn by `PageTitle` on the toolbar's row, as on every tab.
             .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { PageTitle("Settings") }
             .navigationDestination(for: SettingsPage.self) { _ in voiceTypingPage }
             .navigationDestination(isPresented: $showSavedInfo) { SavedInfoView() }
             .task { await loadFolders() }
