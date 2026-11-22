@@ -92,6 +92,10 @@ Account → Delete Account. The privacy policy has the full detail.
 
 Parley is Apache-2.0 licensed. Source: github.com/pathorsAI/parley
 
+## What's New — 1.39
+
+The first-run setup is redesigned to match the desktop app. The welcome demo shows recording, the transcript and folders on the phone app's own screens. In the microphone check, introduce yourself in one sentence: Parley adds your company and name to your dictionary, so later transcripts get them right.
+
 ## What's New — 1.38
 
 A phone call no longer ends your meeting. Parley pauses while you're on the call and picks the recording back up when it ends, in the same recording with the same transcript.

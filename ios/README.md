@@ -43,6 +43,15 @@ xcodebuild -project Parley.xcodeproj -scheme Parley \
 
 The `.xcodeproj` is generated from `App/project.yml` (XcodeGen) and not committed.
 
+To preview a screen without signing in, `scripts/preview.sh` builds for the
+Simulator and launches straight onto one demo route, in one language, from the
+fixtures in `App/Parley/ScreenshotDemo.swift`:
+
+```bash
+ios/scripts/preview.sh transcript en   # route, then zh (default) or en
+ios/scripts/preview.sh --list          # every route
+```
+
 The 注音 pane's candidate dictionary is a generated resource:
 
 ```bash

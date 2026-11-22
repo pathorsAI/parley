@@ -142,6 +142,7 @@ final class AppState: NSObject, ObservableObject {
         _ = MeetingUploader.adoptOrphanedRecordings(defaultSave: defaultSave)
         refreshUploadCounts()
         watchNetwork()
+        watchBackgroundUploads()
 
         #if DEBUG
             if ScreenshotDemo.isActive {
@@ -335,6 +336,19 @@ final class AppState: NSObject, ObservableObject {
     // MARK: network
 
     private var pathMonitor: NWPathMonitor?
+    private var backgroundUploadObserver: NSObjectProtocol?
+
+    /// A recording whose audio a background transfer landed is finished off
+    /// outside any pass this object runs (`MeetingUploader.finishAfterBackgroundUpload`),
+    /// so the counts on screen are re-read when it says the queue changed.
+    private func watchBackgroundUploads() {
+        guard backgroundUploadObserver == nil else { return }
+        backgroundUploadObserver = NotificationCenter.default.addObserver(
+            forName: MeetingUploader.uploadQueueChanged, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.refreshUploadCounts() }
+        }
+    }
     private var networkWasSatisfied = true
 
     /// Drain the queue whenever the network comes back, not only at the next
