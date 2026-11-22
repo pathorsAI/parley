@@ -899,15 +899,33 @@ struct SettingsView: View {
             LabeledContent("Version", value: Bundle.main.shortVersion)
             Link("Parley for Mac", destination: URL(string: "https://parley.tw")!)
             Link("Privacy Policy", destination: URL(string: "https://parley.tw/privacy/")!)
-            // Brings the Library's checklist back, unticked — for someone who
-            // closed it with "Not now" and wants the lap after all.
-            Button("Show the getting-started list again") {
-                showGettingStartedAgain()
+            // The whole first-run wizard again, from the welcome — the
+            // desktop's "Re-run onboarding". It ends where the first run did,
+            // so "Try the sample" lands on a fresh getting-started lap.
+            Button("Re-run onboarding") {
+                rerunOnboarding()
             }
         }
     }
 
-    /// Reset the checklist and go and show it.
+    /// Start the onboarding over: the wizard covers the tabs from its welcome
+    /// (the signed-in account step shows the confirmation, not sign-in), and
+    /// the getting-started lap and the sample are reset so the wizard's "Try
+    /// the sample" starts that lap from the top. The speaker background and
+    /// terms are kept: the wizard shows them on its context step to edit.
+    private func rerunOnboarding() {
+        GettingStartedStore.shared.reset()
+        SampleRecordingStore.shared.remove()
+        let defaults = UserDefaults.standard
+        defaults.set(OnboardingStep.intro.rawValue, forKey: OnboardingFlag.stepKey)
+        defaults.set(true, forKey: OnboardingFlag.rerunKey)
+        defaults.set(false, forKey: OnboardingFlag.completedKey)
+        defaults.set(true, forKey: OnboardingFlag.afterSignInKey)
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+    }
+
+    /// Reset the checklist and go and show it. Now only the `resetchecklist`
+    /// demo route takes this path; the button re-runs the whole onboarding.
     ///
     /// Resetting alone was the bug: the list lives on another tab, so the tap
     /// changed nothing anyone could see, and the owner concluded the button did
