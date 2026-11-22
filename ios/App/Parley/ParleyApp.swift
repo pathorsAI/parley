@@ -3,6 +3,8 @@ import SwiftUI
 
 @main
 struct ParleyApp: App {
+    /// Background `URLSession` events for the recording upload (parley#727).
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var app = AppState()
     @StateObject private var dictation = DictationCoordinator.shared
     /// One per app, so the library row, its context menu and the recording's own

@@ -158,6 +158,20 @@ public actor CloudClient: BatchTranscriptionService, DictionarySyncTransport {
             timeout: AudioUploadTimeout.forBody(bytes: ogg.count))
     }
 
+    /// The same PUT as `uploadAudio`, built without a body, for a transfer the
+    /// caller hands to a background `URLSession` with `uploadTask(with:fromFile:)`
+    /// — a background session only uploads from a file on disk. Auth and the
+    /// client identity header are exactly the ones `uploadAudio` sends.
+    ///
+    /// The bearer token is captured now, when the request is built; a transfer
+    /// the system holds for a long time carries it unchanged. See
+    /// `BackgroundUploadPlan.resourceTimeout` for how that is bounded.
+    public nonisolated func audioUploadRequest(id: String, bytes: Int) -> URLRequest {
+        makeRequest(
+            "recordings/\(id)/audio", method: "PUT", contentType: "audio/ogg",
+            timeout: AudioUploadTimeout.forBody(bytes: bytes))
+    }
+
     /// The Ogg back again — the same path `uploadAudio` writes to, which is also
     /// the path the desktop reads (`src/lib/cloud/sync.ts`).
     ///
@@ -489,7 +503,7 @@ public actor CloudClient: BatchTranscriptionService, DictionarySyncTransport {
     /// `path`: `appendingPathComponent` percent-encodes `?` and `&`, so a query
     /// string smuggled through the path arrives as one long, meaningless path
     /// segment.
-    private func makeRequest(
+    private nonisolated func makeRequest(
         _ path: String, method: String = "GET", body: Data? = nil, contentType: String? = nil,
         query: [URLQueryItem] = [], timeout: TimeInterval? = nil, headers: [String: String] = [:]
     ) -> URLRequest {
