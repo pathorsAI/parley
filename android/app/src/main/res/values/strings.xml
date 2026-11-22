@@ -381,7 +381,7 @@
     <string name="getting_started_filed">Put it in a folder</string>
     <string name="getting_started_replayed">Replay: tap a line to jump</string>
     <string name="getting_started_shared">Share it with your AI</string>
-    <string name="getting_started_show_again">Show the getting-started list again</string>
+    <string name="onboarding_rerun">Re-run onboarding</string>
     <string name="getting_started_walk_through">Walk through it with the sample recording</string>
     <string name="getting_started_continue">Continue →</string>
     <string name="getting_started_transcribing">Transcribing…</string>

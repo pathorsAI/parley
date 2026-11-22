@@ -374,7 +374,7 @@
     <string name="getting_started_filed">放進一個資料夾</string>
     <string name="getting_started_replayed">回放：點一句跳過去</string>
     <string name="getting_started_shared">分享給你的 AI</string>
-    <string name="getting_started_show_again">再顯示起步清單</string>
+    <string name="onboarding_rerun">重新執行引導設定</string>
     <string name="getting_started_walk_through">用範例錄音走一遍</string>
     <string name="getting_started_continue">繼續 →</string>
     <string name="getting_started_transcribing">轉錄中…</string>

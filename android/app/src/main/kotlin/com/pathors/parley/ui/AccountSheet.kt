@@ -125,8 +125,8 @@ import kotlinx.coroutines.launch
 fun AccountSheet(
     viewModel: HomeViewModel,
     onDismiss: () -> Unit,
-    /** "Show the getting-started list again". The library resets it, closes this, and shows it. */
-    onShowGettingStarted: () -> Unit,
+    /** "Re-run onboarding". The library closes this and the wizard covers it. */
+    onRerunOnboarding: () -> Unit,
 ) {
     val account by viewModel.account.collectAsState()
     val library by viewModel.state.collectAsState()
@@ -186,7 +186,7 @@ fun AccountSheet(
 
             FeedbackSection(onReport = onDismiss)
 
-            AboutSection(onShowGettingStarted)
+            AboutSection(onRerunOnboarding)
 
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
 
@@ -889,7 +889,7 @@ private fun FeedbackSection(
  * because that is what identifies an artifact on Play.
  */
 @Composable
-private fun AboutSection(onShowGettingStarted: () -> Unit) {
+private fun AboutSection(onRerunOnboarding: () -> Unit) {
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
 
@@ -908,14 +908,13 @@ private fun AboutSection(onShowGettingStarted: () -> Unit) {
     LinkButton(R.string.link_privacy_policy) {
         CustomTabsLauncher.launch(context, ParleyLinks.PRIVACY)
     }
-    // Brings the library's checklist back, unticked — for someone who closed it
-    // with "Not now" and wants the lap after all. Resetting alone was the iOS
-    // bug: the list lives behind this sheet, so the tap changed nothing anyone
-    // could see. It ends where its result is — the library, scrolled to the
-    // list — with the confirming buzz iOS gives it.
-    LinkButton(R.string.getting_started_show_again) {
+    // The whole first-run wizard again, from the welcome — the desktop's
+    // "Re-run onboarding", iOS's too. It ends where the first run did, so
+    // "Try the sample" lands on a fresh getting-started lap. The confirming
+    // buzz iOS gives it.
+    LinkButton(R.string.onboarding_rerun) {
         haptics.performHapticFeedback(HapticFeedbackType.Confirm)
-        onShowGettingStarted()
+        onRerunOnboarding()
     }
 
     Text(
