@@ -36,13 +36,10 @@
     <string name="home_title">Library</string>
     <string name="home_account">Account</string>
     <string name="home_empty_title">No recordings yet</string>
-    <string name="home_empty_body">Record a meeting, or import an audio file you already have.</string>
+    <string name="home_empty_body">Start a meeting or import a recording, and each one lines up here by date.</string>
     <string name="home_empty_import">Import an audio file</string>
-    <string name="home_search">Search recordings</string>
     <string name="home_search_hint">Search titles and snippets</string>
-    <string name="home_search_empty">No matches.</string>
     <string name="home_record">Record a meeting</string>
-    <string name="home_import">Import recording</string>
     <string name="home_pending_header">Waiting to upload</string>
     <string name="home_pending_badge">%1$d</string>
     <string name="home_pending_retry">Upload now</string>
@@ -62,9 +59,7 @@
     <string name="recording_untitled">Untitled recording</string>
     <string name="recording_source_upload">UPLOAD</string>
     <string name="recording_source_live">LIVE</string>
-    <string name="recording_meta_duration">Length</string>
     <string name="recording_meta_speakers">Speakers</string>
-    <string name="recording_meta_audio">Audio available</string>
     <string name="home_recording_actions">Recording options</string>
     <string name="home_delete_recording">Delete recording</string>
     <string name="home_deleting">Deleting…</string>
@@ -417,8 +412,27 @@
     <string name="org_role_member">Member</string>
     <string name="library_folder_all">All</string>
     <string name="library_folder_unfiled">Unfiled</string>
-    <string name="library_empty_here">No recordings here yet.</string>
-    <string name="library_folder_meta">Folder</string>
+    <!-- The Library's overview (LibraryOverview.kt) and its empty states -->
+    <string name="library_all_recordings">All recordings</string>
+    <string name="library_import_audio">Import audio</string>
+    <string name="library_overview_folders">Folders</string>
+    <string name="library_folder_add">New folder</string>
+    <string name="library_overview_recent">Recent recordings</string>
+    <string name="library_overview_see_all">See all</string>
+    <string name="library_recent_empty">No recordings yet — start a meeting or import one.</string>
+    <string name="library_use_sample">Use the sample</string>
+    <plurals name="library_folder_card_count">
+        <item quantity="one">%1$d recording</item>
+        <item quantity="other">%1$d recordings</item>
+    </plurals>
+    <string name="library_empty_search_title">No matching recordings</string>
+    <string name="library_empty_search_hint">Try another keyword, or clear the search to go back to folders.</string>
+    <string name="library_empty_folder_title">No recordings in this folder yet</string>
+    <string name="library_empty_folder_hint">Long-press a recording and choose Move to… to put it here.</string>
+    <string name="library_empty_org_title">No recordings shared in this organization yet</string>
+    <string name="library_empty_org_hint">Long-press a personal recording and choose Share to organization to copy it here.</string>
+    <string name="library_empty_unfiled_title">All filed</string>
+    <string name="library_empty_unfiled_hint">New recordings that aren\'t in a folder yet show up here.</string>
     <string name="home_error_forbidden_org">You don\'t have access to this organization\'s recordings any more.</string>
     <!-- Library row actions -->
     <string name="library_move_to_folder">Move to…</string>

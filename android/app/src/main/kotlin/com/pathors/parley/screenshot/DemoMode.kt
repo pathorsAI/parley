@@ -61,9 +61,12 @@ import kotlinx.serialization.json.putJsonObject
  * adb shell am start -a android.intent.action.VIEW -d "'parley://demo/library'"
  * ```
  *
- * Routes: `library`, `transcript`, `record` (alias `meeting`), `account`
+ * Routes: `library` (the overview it opens on), `library-all` (the full list,
+ * as See all opens it), `library-folder-empty` (an empty folder's page, for its
+ * empty state), `library-org` (the organization's library), `transcript`,
+ * `record` (alias `meeting`), `account`
  * (alias `settings`), `movetofolder` (the transcript with the folder picker
- * open over fifteen folders — a review frame, not a store frame, the same one
+ * open over sixteen folders — a review frame, not a store frame, the same one
  * iOS has), the import screen's endings (`import-partial`, `import-offline`,
  * `import-quota`, `import-signed-out`), the getting-started frames
  * (`checklist`, `checklist-partial`, `sample`, `share-menu` — see
@@ -229,6 +232,24 @@ object DemoMode {
     }
 
     /**
+     * Which page of the Library a request lands on — iOS's `library-…` routes.
+     * Every request lands on the library first; these say where on it.
+     */
+    enum class LibraryPage(val route: String?) {
+        /** The personal overview. */
+        OVERVIEW(null),
+
+        /** The full list, as See all opens it over the overview. */
+        ALL("library-all"),
+
+        /** [EMPTY_FOLDER_ID]'s page, as its card opens it: the empty folder state. */
+        FOLDER_EMPTY("library-folder-empty"),
+
+        /** The overview of the organization's library, as the scope switcher opens it. */
+        ORG("library-org"),
+    }
+
+    /**
      * A navigation request. [serial] makes each one distinct so firing the same
      * URL twice re-navigates instead of being swallowed as "no change".
      */
@@ -237,6 +258,7 @@ object DemoMode {
         val serial: Long,
         val scenario: MeetingScenario = MeetingScenario.LIVE,
         val report: ReportScenario? = null,
+        val library: LibraryPage = LibraryPage.OVERVIEW,
     )
 
     private val _enabled = MutableStateFlow(false)
@@ -277,7 +299,7 @@ object DemoMode {
         _onboarding.value = ONBOARDING_ROUTES[route]
         val screen = when (route) {
             in ONBOARDING_ROUTES -> Screen.LIBRARY
-            "library", "recordings" -> Screen.LIBRARY
+            "library", "recordings", in LIBRARY_ROUTES -> Screen.LIBRARY
             "transcript", "recording" -> Screen.TRANSCRIPT
             "record", "meeting", in FILING_ROUTES -> Screen.MEETING
             "account", "settings" -> Screen.ACCOUNT
@@ -301,6 +323,7 @@ object DemoMode {
             scenario = FILING_ROUTES[route]
                 ?: MeetingScenario.fromRoute(uri.getQueryParameter(QUERY_SCENARIO)),
             report = REPORT_ROUTES[route],
+            library = LIBRARY_ROUTES[route] ?: LibraryPage.OVERVIEW,
         )
         return true
     }
@@ -401,6 +424,14 @@ object DemoMode {
     private const val RENEWALS_FOLDER_ID = "f-renewals"
     private const val NEW_BUSINESS_FOLDER_ID = "f-new"
     private const val PIPELINE_FOLDER_ID = "of-pipeline"
+    private const val ACCOUNTS_FOLDER_ID = "of-accounts"
+
+    /**
+     * The personal folder nothing is filed in, so the overview's folder row
+     * shows a card drawn without its papers, and `library-folder-empty` has an
+     * empty page to open.
+     */
+    const val EMPTY_FOLDER_ID = "f-team"
 
     fun orgs(locale: Locale = Locale.getDefault()): List<CloudOrg> = listOf(
         CloudOrg(
@@ -434,10 +465,15 @@ object DemoMode {
     fun invitations(locale: Locale = Locale.getDefault()): List<CloudInvitation> =
         listOf(onboardingInvitation(locale))
 
-    /** The personal folders the library's chip row shows — iOS `ScreenshotDemo.folders`. */
+    /**
+     * The personal folders the overview's cards and the chip row show — iOS
+     * `ScreenshotDemo.folders`: two with recordings in them and [EMPTY_FOLDER_ID],
+     * which also makes the card row run past the screen's edge.
+     */
     fun folders(locale: Locale = Locale.getDefault()): List<CloudFolder> = listOf(
         CloudFolder(id = RENEWALS_FOLDER_ID, name = t(locale, "Renewals", "續約")),
         CloudFolder(id = NEW_BUSINESS_FOLDER_ID, name = t(locale, "New business", "新客戶")),
+        CloudFolder(id = EMPTY_FOLDER_ID, name = t(locale, "Team syncs", "團隊週會")),
     )
 
     /**
@@ -468,25 +504,73 @@ object DemoMode {
             listOf(
                 CloudFolder(
                     id = PIPELINE_FOLDER_ID,
-                    name = t(locale, "Pipeline", "商機追蹤"),
+                    name = t(locale, "Pipeline review", "業務檢討"),
                     orgId = ORG_ID,
                 ),
                 CloudFolder(
-                    id = "of-accounts",
+                    id = ACCOUNTS_FOLDER_ID,
                     name = t(locale, "Key accounts", "重點客戶"),
                     orgId = ORG_ID,
                 ),
             )
         }
 
-    /** What the team library holds: two of the recordings, shared in. */
+    /**
+     * The team library — iOS `ScreenshotDemo.orgRecordings`: a different set
+     * from the personal one, so switching the Library's scope to the
+     * organization visibly changes the page — filed in the org's own folders,
+     * one of them left outside a folder.
+     */
     fun orgRecordings(orgId: String, locale: Locale = Locale.getDefault()): List<RecordingSummary> =
         if (orgId != ORG_ID) {
             emptyList()
         } else {
-            recordings(locale)
-                .filter { it.id != FEATURED_ID }
-                .map { it.copy(folderId = if (it.id == DISCOVERY_ID) PIPELINE_FOLDER_ID else null) }
+            listOf(
+                RecordingSummary(
+                    id = "demo-org-pipeline",
+                    title = t(locale, "Weekly pipeline review", "每週業務檢討"),
+                    source = RecordingSource.LIVE,
+                    createdAt = EPOCH_MS - 2 * DAY_MS,
+                    durationMs = 2_410_000.0,
+                    speakerCount = 5,
+                    hasAudio = true,
+                    folderId = PIPELINE_FOLDER_ID,
+                    snippet = t(
+                        locale,
+                        "Three deals slip to next quarter; Northwind renewal is the priority.",
+                        "三個案子延到下一季；北風續約列為優先。",
+                    ),
+                ),
+                RecordingSummary(
+                    id = "demo-org-account",
+                    title = t(locale, "Account plan — Halcyon Labs", "客戶經營規劃 — 晴光實驗室"),
+                    source = RecordingSource.UPLOAD,
+                    createdAt = EPOCH_MS - 6 * DAY_MS,
+                    durationMs = 1_580_000.0,
+                    speakerCount = 3,
+                    hasAudio = true,
+                    folderId = ACCOUNTS_FOLDER_ID,
+                    snippet = t(
+                        locale,
+                        "Expand to the second business unit after the security review.",
+                        "資安審查通過後，擴展到第二個事業部。",
+                    ),
+                ),
+                RecordingSummary(
+                    id = "demo-org-kickoff",
+                    title = t(locale, "Quarter kickoff", "季度開工會議"),
+                    source = RecordingSource.LIVE,
+                    createdAt = EPOCH_MS - 15 * DAY_MS,
+                    durationMs = 3_120_000.0,
+                    speakerCount = 8,
+                    hasAudio = false,
+                    snippet = t(
+                        locale,
+                        "Targets set per region; weekly reviews move to Tuesdays.",
+                        "各區目標確定；每週檢討改到週二。",
+                    ),
+                ),
+            )
         }
 
     /**
@@ -556,11 +640,43 @@ object DemoMode {
                 "使用量季增 22%；兩項待辦順延到下一季。",
             ),
         ),
+        // Two more, as on iOS, so the overview's four recent rows are full and
+        // the full list behind See all has more than they show.
+        RecordingSummary(
+            id = "demo-pricing",
+            title = t(locale, "Pricing follow-up — Northwind", "報價追蹤 — 北風工業"),
+            source = RecordingSource.LIVE,
+            createdAt = EPOCH_MS - 8 * DAY_MS,
+            durationMs = 742_000.0,
+            speakerCount = 2,
+            findingsCount = 0,
+            actionItemsCount = 0,
+            hasAudio = true,
+            folderId = RENEWALS_FOLDER_ID,
+            snippet = t(locale, "Volume discount approved above sixty seats.", "六十席以上的量價折扣已核准。"),
+        ),
+        RecordingSummary(
+            id = "demo-intro",
+            title = t(locale, "Intro call — Blue Harbor Hotels", "初次接觸 — 藍港酒店"),
+            source = RecordingSource.UPLOAD,
+            createdAt = EPOCH_MS - 12 * DAY_MS,
+            durationMs = 1_310_000.0,
+            speakerCount = 2,
+            findingsCount = 0,
+            actionItemsCount = 0,
+            hasAudio = true,
+            folderId = NEW_BUSINESS_FOLDER_ID,
+            snippet = t(
+                locale,
+                "Twelve properties; front desk wants call summaries in the PMS.",
+                "旗下十二間飯店；櫃檯希望通話摘要能寫回 PMS。",
+            ),
+        ),
     )
 
     /** The meta the detail screen renders, or null for an id we don't have. */
     fun meta(id: String, locale: Locale = Locale.getDefault()): RecordingMeta? {
-        val summary = recordings(locale).firstOrNull { it.id == id } ?: return null
+        val summary = (recordings(locale) + orgRecordings(ORG_ID, locale)).firstOrNull { it.id == id } ?: return null
         return RecordingMeta(
             buildJsonObject {
                 put("id", summary.id)
@@ -1020,6 +1136,8 @@ object DemoMode {
     }
 
     private val REPORT_ROUTES = ReportScenario.entries.associateBy { it.route }
+
+    private val LIBRARY_ROUTES = LibraryPage.entries.filter { it.route != null }.associateBy { it.route!! }
 
     /**
      * The study as the report face of [id] shows it in a screenshot run: the

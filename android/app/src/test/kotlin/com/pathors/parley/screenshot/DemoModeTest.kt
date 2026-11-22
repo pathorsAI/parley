@@ -26,7 +26,8 @@ class DemoModeTest {
     fun `library is populated in both languages`() {
         listOf(en, zh).forEach { locale ->
             val recordings = DemoMode.recordings(locale)
-            assertEquals(3, recordings.size)
+            // Enough for the overview's four recent rows and a See all with more.
+            assertEquals(5, recordings.size)
             recordings.forEach { recording ->
                 assertTrue(recording.title.isNotBlank())
                 assertTrue(recording.snippet.orEmpty().isNotBlank())
@@ -164,6 +165,9 @@ class DemoModeTest {
      */
     @Test
     fun `the library has filed and unfiled recordings in live folders`() {
+        // One folder is left empty, for the empty card and its empty page.
+        assertTrue(DemoMode.recordings(en).none { it.folderId == DemoMode.EMPTY_FOLDER_ID })
+        assertTrue(DemoMode.folders(en).any { it.id == DemoMode.EMPTY_FOLDER_ID })
         val folderIds = DemoMode.folders(en).map { it.id }.toSet()
         val filed = DemoMode.recordings(en).mapNotNull { it.folderId }
         assertTrue(filed.isNotEmpty())
@@ -180,7 +184,7 @@ class DemoModeTest {
     fun `the picker folders are many, distinct, and include the library's`() {
         listOf(en, zh).forEach { locale ->
             val picker = DemoMode.pickerFolders(locale)
-            assertEquals(15, picker.size)
+            assertEquals(16, picker.size)
             assertEquals(picker.size, picker.map { it.id }.toSet().size)
             assertEquals(picker.size, picker.map { it.name }.toSet().size)
             assertTrue(picker.map { it.id }.containsAll(DemoMode.folders(locale).map { it.id }))
@@ -194,6 +198,10 @@ class DemoModeTest {
         assertTrue(shared.isNotEmpty())
         assertTrue(shared.mapNotNull { it.folderId }.all { it in orgFolderIds })
         assertTrue(DemoMode.orgRecordings("someone-else", en).isEmpty())
+        // Its own set, not the personal one shared in: switching scope has to
+        // change the page.
+        assertTrue(shared.none { org -> DemoMode.recordings(en).any { it.id == org.id } })
+        assertTrue(shared.all { DemoMode.meta(it.id, en) != null })
         assertEquals(DemoMode.ORG_ID, DemoMode.saveDestination().orgId)
         assertTrue(DemoMode.saveDestination().folderId in orgFolderIds)
     }

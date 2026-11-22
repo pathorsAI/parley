@@ -1,10 +1,11 @@
 name: Android onboarding screenshots
 
 # Boots an emulator, installs the debug build and captures every onboarding
-# step in demo mode (android/scripts/onboarding-screenshots.sh), so the wizard
-# can be reviewed from a PR without a local Android toolchain. Slower than
-# android-ci.yml (an emulator boot), so it runs only when the onboarding UI or
-# its strings change, or by hand.
+# step and the Library's pages in demo mode (android/scripts/demo-screenshots.sh),
+# so they can be reviewed from a PR without a local Android toolchain. Slower
+# than android-ci.yml (an emulator boot), so it runs only when the onboarding or
+# Library UI or their strings change, or by hand. Two artifacts: the onboarding
+# set (`onboarding-screenshots`) and the Library set (`library-screenshots`).
 
 on:
   workflow_dispatch:
@@ -12,9 +13,16 @@ on:
     paths:
       - "android/app/src/main/kotlin/com/pathors/parley/ui/Onboarding*.kt"
       - "android/app/src/main/kotlin/com/pathors/parley/ui/IntroStage.kt"
+      - "android/app/src/main/kotlin/com/pathors/parley/ui/HomeScreen.kt"
+      - "android/app/src/main/kotlin/com/pathors/parley/ui/HomeViewModel.kt"
+      - "android/app/src/main/kotlin/com/pathors/parley/ui/Library*.kt"
+      - "android/app/src/main/kotlin/com/pathors/parley/ui/Folder*.kt"
+      - "android/app/src/main/kotlin/com/pathors/parley/ui/GettingStartedList.kt"
+      - "android/app/src/main/kotlin/com/pathors/parley/ui/Format.kt"
+      - "android/app/src/main/kotlin/com/pathors/parley/ui/theme/**"
       - "android/app/src/main/kotlin/com/pathors/parley/screenshot/DemoMode.kt"
       - "android/app/src/main/res/values*/strings.xml"
-      - "android/scripts/onboarding-screenshots.sh"
+      - "android/scripts/demo-screenshots.sh"
       - ".github/workflows/android-screenshots.yml"
 
 concurrency:
@@ -26,7 +34,7 @@ permissions:
 
 jobs:
   capture:
-    name: Capture onboarding
+    name: Capture onboarding and Library
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -69,12 +77,20 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: |
             adb install -r android/app/build/outputs/apk/debug/*.apk
-            android/scripts/onboarding-screenshots.sh screenshots
+            android/scripts/demo-screenshots.sh screenshots
 
-      - name: Upload the screenshots
+      - name: Upload the onboarding screenshots
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: onboarding-screenshots
-          path: screenshots/
+          path: screenshots/onboarding/
+          retention-days: 14
+
+      - name: Upload the Library screenshots
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: library-screenshots
+          path: screenshots/library/
           retention-days: 14
