@@ -201,6 +201,10 @@ struct LibraryView: View {
                 .onChange(of: demo.showAllRecordings, initial: true) { _, show in
                     if show && !showsFullList { openFullList(nil) }
                 }
+                // `-ParleyDemoRoute library-org` switches to the demo org.
+                .onChange(of: demo.showOrg, initial: true) { _, show in
+                    if show { scope = ScreenshotDemo.orgs.first?.id }
+                }
                 // `-ParleyDemoRoute library-folder-empty` lands on an empty folder.
                 .onChange(of: demo.showFolder, initial: true) { _, folder in
                     if let folder, !showsFullList { openFullList(folder) }
@@ -1391,8 +1395,9 @@ struct LibraryView: View {
         guard app.signedIn else { return }
         #if DEBUG
             if ScreenshotDemo.servesFixtures {
-                recordings = ScreenshotDemo.recordings
-                folders = ScreenshotDemo.folders
+                // Each scope its own fixtures, as the cloud would answer.
+                recordings = scope == nil ? ScreenshotDemo.recordings : ScreenshotDemo.orgRecordings
+                folders = scope == nil ? ScreenshotDemo.folders : ScreenshotDemo.orgFolders
                 loading = false
                 return
             }

@@ -42,7 +42,8 @@
     /// `summary` / `jump` / `nosummary` (the recording page's two faces — see
     /// `docs/design/ios-recording-page.md`), `library-all` (the Library's full
     /// list, pushed over the overview as See all opens it), `library-folder-empty`
-    /// (an empty folder's page, for the empty state), and `voicehistory`
+    /// (an empty folder's page, for the empty state), `library-org` (the
+    /// Library on the demo org's scope), and `voicehistory`
     /// (Library › Voice typing, one entry per polish outcome).
     @MainActor
     final class ScreenshotDemo: ObservableObject {
@@ -80,6 +81,8 @@
         /// card opens it (`library-folder-empty`: the empty "Team syncs", for
         /// the empty state).
         @Published var showFolder: String?
+        /// Library switches its scope to the demo org (`library-org`).
+        @Published var showOrg = false
         /// A sheet with a focused text field, so the Parley keyboard is on
         /// screen, and an Action-Button-style demo dictation into it a moment
         /// later (`keyboardharness`). The only way to watch the keyboard's
@@ -171,6 +174,7 @@
             showVoiceTyping = false
             showAllRecordings = false
             showFolder = nil
+            showOrg = false
             keyboardHarness = false
             recordingID = Self.featured.id
             forcedFace = nil
@@ -190,6 +194,10 @@
                 // The full list, as See all opens it over the overview.
                 tab = .library
                 showAllRecordings = true
+            case "library-org":
+                // The demo org's shared library, as the scope menu opens it.
+                tab = .library
+                showOrg = true
             case "library-folder-empty":
                 // A folder with nothing in it, as its card opens it.
                 tab = .library
@@ -527,6 +535,40 @@
                     "Twelve properties; front desk wants call summaries in the PMS.",
                     "旗下十二間飯店；櫃檯希望通話摘要能寫回 PMS。"),
                 folderId: "f-new", updatedAt: nil),
+        ]
+
+        /// The demo org's shared library — a different set from the personal
+        /// one, so switching the Library's scope to the org visibly changes the
+        /// page: its own folders (`orgFolders`), and these, one of them left
+        /// outside a folder.
+        static let orgRecordings: [CloudRecordingSummary] = [
+            CloudRecordingSummary(
+                id: "demo-org-pipeline",
+                title: t("Weekly pipeline review", "每週業務檢討"),
+                source: "live", createdAt: epoch - 2 * 86_400_000, durationMs: 2_410_000,
+                speakerCount: 5, findingsCount: 4, actionItemsCount: 6, hasAudio: true,
+                snippet: t(
+                    "Three deals slip to next quarter; Northwind renewal is the priority.",
+                    "三個案子延到下一季；北風續約列為優先。"),
+                folderId: "f-org-pipeline", updatedAt: nil),
+            CloudRecordingSummary(
+                id: "demo-org-account",
+                title: t("Account plan — Halcyon Labs", "客戶經營規劃 — 晴光實驗室"),
+                source: "upload", createdAt: epoch - 6 * 86_400_000, durationMs: 1_580_000,
+                speakerCount: 3, findingsCount: 3, actionItemsCount: 2, hasAudio: true,
+                snippet: t(
+                    "Expand to the second business unit after the security review.",
+                    "資安審查通過後，擴展到第二個事業部。"),
+                folderId: "f-org-accounts", updatedAt: nil),
+            CloudRecordingSummary(
+                id: "demo-org-kickoff",
+                title: t("Quarter kickoff", "季度開工會議"),
+                source: "live", createdAt: epoch - 15 * 86_400_000, durationMs: 3_120_000,
+                speakerCount: 8, findingsCount: 2, actionItemsCount: 4, hasAudio: false,
+                snippet: t(
+                    "Targets set per region; weekly reviews move to Tuesdays.",
+                    "各區目標確定；每週檢討改到週二。"),
+                folderId: nil, updatedAt: nil),
         ]
 
         static var featured: CloudRecordingSummary { recordings[0] }
