@@ -418,6 +418,44 @@ struct HairlineList<Item: Identifiable, Row: View>: View {
     }
 }
 
+/// Nothing to list — the desktop's `EmptyRecords`: its empty-box illustration
+/// (UX 3541:9456, a light and a dark drawing), a title, and a hint that says
+/// how this place fills up. `action`, when given, sits under the hint: the
+/// library's own door into import, for instance.
+struct EmptyRecordsView<Action: View>: View {
+    let title: LocalizedStringKey
+    let hint: LocalizedStringKey
+    @ViewBuilder var action: Action
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Image("EmptyRecords")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 120, height: 105.84)
+                .padding(.bottom, 16)
+                .accessibilityHidden(true)
+            Text(title)
+                .font(.parley.subheadline)
+                .foregroundStyle(Color(.secondaryLabel))
+            Text(hint)
+                .font(.parley.caption)
+                .foregroundStyle(Color(.tertiaryLabel))
+                .frame(maxWidth: 280)
+            action
+                .padding(.top, 14)
+        }
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: .infinity)
+    }
+}
+
+extension EmptyRecordsView where Action == EmptyView {
+    init(title: LocalizedStringKey, hint: LocalizedStringKey) {
+        self.init(title: title, hint: hint) { EmptyView() }
+    }
+}
+
 /// 最近錄音 with nothing in it: a dashed box with the sentence, and the
 /// sample offered under it when the checklist is not already offering it.
 struct RecentEmptyBox: View {

@@ -668,6 +668,23 @@
         }
       }
     },
+    "All filed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "All filed"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "都歸檔好了"
+          }
+        }
+      }
+    },
     "All recordings" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3134,6 +3151,40 @@
         }
       }
     },
+    "Long-press a personal recording and choose Share to organization to copy it here." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Long-press a personal recording and choose Share to organization to copy it here."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在個人錄音上長按，選「分享到組織」，就會複製一份到這裡。"
+          }
+        }
+      }
+    },
+    "Long-press a recording and choose Move to… to put it here." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Long-press a recording and choose Move to… to put it here."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在錄音上長按，選「移到…」，就能把它放進來。"
+          }
+        }
+      }
+    },
     "Lost the connection before anything could be typed. Tap the mic to try again." : {
       "localizations" : {
         "en" : {
@@ -3642,6 +3693,23 @@
         }
       }
     },
+    "New recordings that aren't in a folder yet show up here." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New recordings that aren't in a folder yet show up here."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新的錄音沒歸檔時會出現在這裡。"
+          }
+        }
+      }
+    },
     "New saved info" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3693,6 +3761,23 @@
         }
       }
     },
+    "No dictations yet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No dictations yet"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "還沒有語音輸入紀錄"
+          }
+        }
+      }
+    },
     "No folders match." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3727,36 +3812,87 @@
         }
       }
     },
-    "No matches." : {
+    "No matching dictations" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "No matches."
+            "value" : "No matching dictations"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "沒有符合的結果。"
+            "value" : "沒有符合的語音輸入"
           }
         }
       }
     },
-    "No recordings here yet." : {
+    "No matching recordings" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "No recordings here yet."
+            "value" : "No matching recordings"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "這裡還沒有錄音。"
+            "value" : "沒有符合的錄音"
+          }
+        }
+      }
+    },
+    "No recordings in this folder yet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No recordings in this folder yet"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這個資料夾還沒有錄音"
+          }
+        }
+      }
+    },
+    "No recordings shared in this organization yet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No recordings shared in this organization yet"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這個組織還沒有共享的錄音"
+          }
+        }
+      }
+    },
+    "No recordings yet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No recordings yet"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "還沒有任何錄音"
           }
         }
       }
@@ -6791,6 +6927,23 @@
         }
       }
     },
+    "Start a meeting or import a recording, and each one lines up here by date." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start a meeting or import a recording, and each one lines up here by date."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "開一場會議或匯入一段錄音，之後每一場都會依日期排在這裡。"
+          }
+        }
+      }
+    },
     "Start now" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7928,6 +8081,57 @@
         }
       }
     },
+    "Try another keyword, or clear the search to go back to folders." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Try another keyword, or clear the search to go back to folders."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "換個關鍵字，或清除搜尋回到資料夾。"
+          }
+        }
+      }
+    },
+    "Try another keyword, or clear the search." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Try another keyword, or clear the search."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "換個關鍵字，或清除搜尋。"
+          }
+        }
+      }
+    },
+    "Turn it on in Settings › Voice typing." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Turn it on in Settings › Voice typing."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "可到「設定 › 語音輸入」開啟。"
+          }
+        }
+      }
+    },
     "Type by voice in any app" : {
       "localizations" : {
         "en" : {
@@ -8182,19 +8386,19 @@
         }
       }
     },
-    "Voice typing history is off. Turn it on in Settings › Voice typing." : {
+    "Voice typing history is off" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Voice typing history is off. Turn it on in Settings › Voice typing."
+            "value" : "Voice typing history is off"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "語音輸入紀錄已關閉。可到「設定 › 語音輸入」開啟。"
+            "value" : "語音輸入紀錄已關閉"
           }
         }
       }

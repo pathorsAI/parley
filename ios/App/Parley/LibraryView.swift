@@ -201,6 +201,10 @@ struct LibraryView: View {
                 .onChange(of: demo.showAllRecordings, initial: true) { _, show in
                     if show && !showsFullList { openFullList(nil) }
                 }
+                // `-ParleyDemoRoute library-folder-empty` lands on an empty folder.
+                .onChange(of: demo.showFolder, initial: true) { _, folder in
+                    if let folder, !showsFullList { openFullList(folder) }
+                }
             #endif
         }
         // The dialogs and sheets hang off the stack itself rather than its root
@@ -879,42 +883,52 @@ struct LibraryView: View {
         }
     }
 
-    /// Same shape as the live screen's empty state: the glyph, the sentence, and
-    /// enough room around it that "nothing here" reads as a deliberate state
-    /// rather than a failed load. The glyph is a quiet mark on the page — it used
-    /// to be brand blue on a tinted disc, which made the emptiest screen in the
-    /// app the most decorated one.
+    /// The desktop's empty state (`EmptyRecordsView`): the empty box, a title
+    /// and a hint, chosen the way the desktop's `emptyStateCopy` chooses them —
+    /// a search that found nothing, an empty folder, an organization with
+    /// nothing shared, the unfiled page with everything filed, or a library
+    /// with nothing in it yet. The hints name the phone's own gestures where the
+    /// desktop's name its buttons.
     ///
-    /// A library with nothing in it is also the second natural door into
+    /// A personal library with nothing in it is also the second door into
     /// import, so it opens the very same `.fileImporter` the toolbar button
-    /// does — one flow, two doors, the way the desktop routes every import
-    /// affordance through one function.
+    /// does — one flow, two doors.
+    @ViewBuilder
     private var emptyState: some View {
-        VStack(spacing: 18) {
-            Image(systemName: search.isEmpty ? "rectangle.stack" : "magnifyingglass")
-                .font(.parley.title)
-                .foregroundStyle(Color(.tertiaryLabel))
-                .accessibilityHidden(true)
-            Text(search.isEmpty ? "No recordings here yet." : "No matches.")
-                .font(.parley.subheadline)
-                .foregroundStyle(Color(.secondaryLabel))
-                .multilineTextAlignment(.center)
-            if scope == nil && search.isEmpty {
-                // A tappable thing, so it is blue — and nothing more than that:
-                // it inherits the app's tint rather than carrying a fill.
-                Button {
-                    importing = true
-                } label: {
-                    // Same glyph as the toolbar button it duplicates — see
-                    // `importButton` for why it is not the download arrow.
-                    Label("Import an audio file", systemImage: "square.and.arrow.down")
-                        .font(.parley.subheadlineEmphasized)
+        Group {
+            if !search.isEmpty {
+                EmptyRecordsView(
+                    title: "No matching recordings",
+                    hint: "Try another keyword, or clear the search to go back to folders.")
+            } else if let folder = folderFilter, folder != Self.unfiledPage {
+                EmptyRecordsView(
+                    title: "No recordings in this folder yet",
+                    hint: "Long-press a recording and choose Move to… to put it here.")
+            } else if scope != nil {
+                EmptyRecordsView(
+                    title: "No recordings shared in this organization yet",
+                    hint: "Long-press a personal recording and choose Share to organization to copy it here.")
+            } else if folderFilter == Self.unfiledPage {
+                EmptyRecordsView(
+                    title: "All filed",
+                    hint: "New recordings that aren't in a folder yet show up here.")
+            } else {
+                EmptyRecordsView(
+                    title: "No recordings yet",
+                    hint: "Start a meeting or import a recording, and each one lines up here by date."
+                ) {
+                    Button {
+                        importing = true
+                    } label: {
+                        // Same glyph as the toolbar button it duplicates.
+                        Label("Import an audio file", systemImage: "square.and.arrow.down")
+                            .font(.parley.subheadlineEmphasized)
+                    }
+                    .disabled(importer.isRunning)
                 }
-                .disabled(importer.isRunning)
             }
         }
-        .frame(maxWidth: .infinity)
-        .padding(.top, 42)
+        .padding(.top, 56)
         .padding(.bottom, 24)
     }
 

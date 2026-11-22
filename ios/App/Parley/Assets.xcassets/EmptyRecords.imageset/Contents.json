@@ -1,0 +1,25 @@
+{
+  "images" : [
+    {
+      "filename" : "empty-records.svg",
+      "idiom" : "universal"
+    },
+    {
+      "filename" : "empty-records-dark.svg",
+      "idiom" : "universal",
+      "appearances" : [
+        {
+          "appearance" : "luminosity",
+          "value" : "dark"
+        }
+      ]
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  },
+  "properties" : {
+    "preserves-vector-representation" : true
+  }
+}

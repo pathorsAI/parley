@@ -41,7 +41,8 @@
     /// "Show the getting-started list again", pressed, landing on the Library),
     /// `summary` / `jump` / `nosummary` (the recording page's two faces — see
     /// `docs/design/ios-recording-page.md`), `library-all` (the Library's full
-    /// list, pushed over the overview as See all opens it), and `voicehistory`
+    /// list, pushed over the overview as See all opens it), `library-folder-empty`
+    /// (an empty folder's page, for the empty state), and `voicehistory`
     /// (Library › Voice typing, one entry per polish outcome).
     @MainActor
     final class ScreenshotDemo: ObservableObject {
@@ -75,6 +76,10 @@
         @Published var showVoiceTyping = false
         /// Library pushes its full list over the overview (`library-all`).
         @Published var showAllRecordings = false
+        /// Library pushes one folder's page over the overview, as a folder
+        /// card opens it (`library-folder-empty`: the empty "Team syncs", for
+        /// the empty state).
+        @Published var showFolder: String?
         /// A sheet with a focused text field, so the Parley keyboard is on
         /// screen, and an Action-Button-style demo dictation into it a moment
         /// later (`keyboardharness`). The only way to watch the keyboard's
@@ -165,6 +170,7 @@
             showSample = false
             showVoiceTyping = false
             showAllRecordings = false
+            showFolder = nil
             keyboardHarness = false
             recordingID = Self.featured.id
             forcedFace = nil
@@ -184,6 +190,10 @@
                 // The full list, as See all opens it over the overview.
                 tab = .library
                 showAllRecordings = true
+            case "library-folder-empty":
+                // A folder with nothing in it, as its card opens it.
+                tab = .library
+                showFolder = "f-team"
             case "voicehistory":
                 // Review frame for the history's polish labels (1.25): one
                 // entry per outcome, plus one from before 1.25 with none.
