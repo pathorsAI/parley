@@ -8759,6 +8759,23 @@
         }
       }
     },
+    "Uploading in the background. You can lock your phone; it finishes on its own." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Uploading in the background. You can lock your phone; it finishes on its own."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在背景上傳。可以直接鎖定手機，上傳會自動完成。"
+          }
+        }
+      }
+    },
     "Uploading…" : {
       "extractionState" : "manual",
       "localizations" : {

@@ -24,11 +24,27 @@ enum BackgroundGrace {
         }
     }
 
+    /// Keep the app running for a stretch of work that has no single closure
+    /// to wrap — stopping a meeting, or the calls that follow a background
+    /// transfer. When iOS calls time the assertion is simply ended (nothing is
+    /// cancelled); the caller ends it when the work is done.
+    @MainActor
+    static func hold(_ name: String) -> Hold {
+        Hold(Assertion.begin(name) {})
+    }
+
+    @MainActor
+    final class Hold {
+        private let assertion: Assertion
+        fileprivate init(_ assertion: Assertion) { self.assertion = assertion }
+        func end() { assertion.end() }
+    }
+
     /// One background task, ended exactly once — by the work finishing or by
     /// iOS calling time, whichever comes first. Ending one twice is a
     /// programming error UIKit logs; never ending one gets the app killed.
     @MainActor
-    private final class Assertion {
+    fileprivate final class Assertion {
         private var id: UIBackgroundTaskIdentifier = .invalid
 
         static func begin(_ name: String, onExpiry: @escaping @Sendable () -> Void) -> Assertion {
