@@ -645,11 +645,11 @@ struct LibraryView: View {
     /// stays where it has always been: last, at the trailing edge, with room
     /// for an org name beside it on a small phone.
     ///
-    /// `square.and.arrow.down.on.square`, the platform's Import mark: an arrow
-    /// into a box, which reads as bringing a file in at a glance — the
-    /// `doc.badge.plus` it replaced read as "new document". Not the bare
-    /// `square.and.arrow.down`, which is close to the download mark, and the
-    /// library has a real download (`downloadAction`, `arrow.down.circle`).
+    /// `square.and.arrow.down`, the mark iOS uses for Import (Files, Photos):
+    /// one arrow into a box, read at a glance. `doc.badge.plus` read as "new
+    /// document", and the stacked `square.and.arrow.down.on.square` was too
+    /// busy to read. The library's download (`downloadAction`) is
+    /// `arrow.down.circle`, a different shape, so the two do not collide.
     @ToolbarContentBuilder
     private var importButton: some ToolbarContent {
         if scope == nil {
@@ -657,7 +657,7 @@ struct LibraryView: View {
                 Button {
                     importing = true
                 } label: {
-                    Label("Import audio", systemImage: "square.and.arrow.down.on.square")
+                    Label("Import audio", systemImage: "square.and.arrow.down")
                 }
                 .disabled(importer.isRunning)
             }
@@ -908,7 +908,7 @@ struct LibraryView: View {
                 } label: {
                     // Same glyph as the toolbar button it duplicates — see
                     // `importButton` for why it is not the download arrow.
-                    Label("Import an audio file", systemImage: "square.and.arrow.down.on.square")
+                    Label("Import an audio file", systemImage: "square.and.arrow.down")
                         .font(.parley.subheadlineEmphasized)
                 }
                 .disabled(importer.isRunning)
