@@ -441,7 +441,7 @@ struct LibraryView: View {
             if !recent.isEmpty {
                 HairlineList(items: recent) { rec in
                     NavigationLink(value: LibraryRoute.recording(opened(rec))) {
-                        RecentRecordingRow(summary: rec, folderName: folderName(rec.folderId))
+                        RecentRecordingRow(summary: rec)
                     }
                     .buttonStyle(.plain)
                     .contextMenu { actions(for: rec) }
@@ -792,8 +792,7 @@ struct LibraryView: View {
             }
             ForEach(items) { rec in
                 NavigationLink(value: LibraryRoute.recording(opened(rec))) {
-                    RecordingCard(
-                        summary: rec, folders: folders, audio: downloads.state(for: rec.id))
+                    RecordingCard(summary: rec, audio: downloads.state(for: rec.id))
                 }
                 .onGeometryChange(for: CGRect.self) { proxy in
                     proxy.frame(in: .global)
@@ -1867,22 +1866,6 @@ private struct RecordingRow: ViewModifier {
     }
 }
 
-/// Glyph and value as one unit, with a gap narrow enough that the eye groups
-/// them and wide enough that they don't touch. `Label`'s own spacing follows
-/// the text style, so at caption2 it still leaves roughly a body-text gap; the
-/// meta row carries four labels, and that adds up to more width than the one
-/// value on the row that actually needs it. Always rendering both halves also
-/// keeps `Label`'s icon-only fallback from kicking in under pressure, which is
-/// what `.titleAndIcon` used to be here for.
-private struct MetaLabelStyle: LabelStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: 4) {
-            configuration.icon
-            configuration.title
-        }
-    }
-}
-
 /// How far a download has got, in the width of a glyph.
 ///
 /// Hand-drawn rather than a `ProgressView` because `.circular` on iOS is an
@@ -1925,14 +1908,17 @@ struct DownloadRing: View {
 /// duration/speakers/findings meta row.
 private struct RecordingCard: View {
     let summary: CloudRecordingSummary
-    let folders: [CloudFolder]
     /// Where this recording's audio is. The row is the only place in the app
     /// that answers this without being asked, which is the point: "can I play
     /// this on the train" is a property of the library, not of one recording.
     var audio: AudioDownloadState = .absent
 
+    /// The title with where it came from, then one line: when the meeting
+    /// was and how many people spoke (`RecordingMetaLine`, the desktop list's
+    /// facts), and at the end where the audio is, which the row's download
+    /// swipe acts on. No transcript snippet, duration, folder or findings.
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 badge
                 Text(
@@ -1941,133 +1927,13 @@ private struct RecordingCard: View {
                     .font(.parley.subheadlineEmphasized)
                     .lineLimit(2)
             }
-            if let snippet = summary.snippet, !snippet.isEmpty {
-                Text(verbatim: snippet)
-                    .font(.parley.caption)
-                    .foregroundStyle(Color(.secondaryLabel))
-                    .lineLimit(2)
-            }
-            // Everything here is short and fixed except the folder name, so the
-            // fixed parts are pinned and only the folder is allowed to
-            // truncate. Without this the row wraps mid-value — "18:4 / 2" for a
-            // duration, "New busi- / ness" for a folder — which it did in both
-            // languages, worst in Chinese where the labels are widest.
-            //
-            // Pinning the rest is not enough on its own, though: the folder
-            // Label and the Spacer are then the only two children with any give,
-            // and an HStack hands each flexible child an equal share of what is
-            // left. Half the slack went to the gap in front of the date and the
-            // folder came out as "R…" / "新…" with visible room beside it. The
-            // layout priority below serves the folder first, so the Spacer gets
-            // only what the folder does not want — see `.layoutPriority(1)`.
-            //
-            // All of that holds only while the pinned values fit. From Larger
-            // Text's xLarge up they can add up to more than the screen, and a
-            // row whose children refuse to shrink makes the whole cell wider
-            // than the list: title, snippet and meta all came out clipped on
-            // both edges. So when the one line cannot fit, the meta goes on two
-            // (`stackedMeta`). `ViewThatFits` decides, measuring each option at
-            // its ideal width — which for the folder would be its full name, and
-            // a long folder would then flip a row that only needed to truncate
-            // it onto two lines. The folder's `idealWidth` below is what keeps
-            // that from happening: the one line is measured with room for a
-            // truncated name, and laid out with whatever the row really has.
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) {
-                    counts
-                    // The folder's slot also does the Spacer's job of pushing
-                    // the date to the trailing edge: a Spacer measures as
-                    // unbounded when `ViewThatFits` asks for an ideal width, and
-                    // the one line never "fit". The ZStack keeps the slot there
-                    // on a row with no folder, where `folderLabel` is nothing.
-                    ZStack(alignment: .leading) {
-                        Color.clear.frame(width: 0, height: 0)
-                        folderLabel
-                    }
-                    .frame(minWidth: 0, idealWidth: 44, maxWidth: .infinity, alignment: .leading)
-                    // First claim on whatever the pinned values leave
-                    // over. A long name still degrades — it just does so
-                    // after the row is actually full, not at one
-                    // character.
-                    .layoutPriority(1)
-                    Text(verbatim: Self.dateLabel(summary.createdAt)).fixedSize()
-                    statusGlyphs(pinned: true)
-                }
-                stackedMeta
-            }
-            // Durations, counts and a clock time: tabular figures so the row
-            // doesn't reflow a digit at a time as a meeting ticks over.
-            .font(.parley.caption2.monospacedDigit())
-            .lineLimit(1)
-            // Under pressure `Label` quietly falls back to icon-only, which
-            // leaves a row of glyphs with no values at all — worse than the
-            // wrapping it replaced. Pin the style so the numbers always show —
-            // and, while we are here, pin the gap between glyph and value too:
-            // the built-in one is sized for body text, and four of them at
-            // caption2 ate more of the row than the folder name did.
-            .labelStyle(MetaLabelStyle())
-            .foregroundStyle(Color(.secondaryLabel))
-        }
-    }
-
-    // MARK: meta pieces, shared by the one-line and the two-line layout
-
-    /// Duration, speakers, findings: short values that are pinned so they never
-    /// wrap mid-number.
-    @ViewBuilder
-    private var counts: some View {
-        Label(RecordingDetailView.duration(summary.durationMs), systemImage: "clock")
-            .fixedSize()
-        if let n = summary.speakerCount, n > 0 {
-            Label("\(n)", systemImage: "person.2").fixedSize()
-        }
-        if let n = summary.findingsCount, n > 0 {
-            // `lightbulb`, the same glyph the detail screen puts on the
-            // findings section. The glyph here used to be the AI stars,
-            // which said "a model wrote this" rather than "findings" —
-            // and the count is only ever about the latter.
-            Label("\(n)", systemImage: "lightbulb").fixedSize()
-        }
-    }
-
-    /// The one value on the meta line allowed to truncate. No `fixedSize`.
-    @ViewBuilder
-    private var folderLabel: some View {
-        if let fid = summary.folderId, let f = folders.first(where: { $0.id == fid }) {
-            Label(f.name, systemImage: "folder")
-                .truncationMode(.tail)
-        }
-    }
-
-    /// The glyphs that close the line: audio in the cloud, then audio here.
-    @ViewBuilder
-    private func statusGlyphs(pinned: Bool) -> some View {
-        if summary.hasAudio {
-            Image(systemName: "speaker.wave.2")
-        }
-        audioIndicator(pinned: pinned)
-    }
-
-    /// The meta when one line cannot hold it. Counts on the first line, where
-    /// they are still pinned; folder, date and status on the second, where
-    /// nothing is, so the folder and date truncate before anything widens the
-    /// row. No Spacer
-    /// on the second line: it would split the slack with the folder (the
-    /// problem the one-line layout needed `.layoutPriority` for), and at these
-    /// sizes there is no slack worth pushing the date right with.
-    ///
-    /// The counts get one more fallback: at the largest sizes even three short
-    /// pinned labels can outgrow the screen, and then they stack.
-    private var stackedMeta: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) { counts }
-                VStack(alignment: .leading, spacing: 4) { counts }
-            }
             HStack(spacing: 10) {
-                folderLabel
-                Text(verbatim: Self.dateLabel(summary.createdAt))
-                statusGlyphs(pinned: false)
+                RecordingMetaLine(summary: summary)
+                Spacer(minLength: 0)
+                audioIndicator
+                    .font(.parley.caption2)
+                    .foregroundStyle(Color(.secondaryLabel))
+                    .lineLimit(1)
             }
         }
     }
@@ -2084,7 +1950,7 @@ private struct RecordingCard: View {
     /// context menu: a button inside a `NavigationLink`'s label cannot be tapped
     /// on its own, so a tappable "Retry" here would be a lie.
     @ViewBuilder
-    private func audioIndicator(pinned: Bool) -> some View {
+    private var audioIndicator: some View {
         switch audio {
         case .local:
             Image(systemName: "iphone")
@@ -2095,9 +1961,7 @@ private struct RecordingCard: View {
         case .failed:
             Text("Download failed · Retry")
                 .foregroundStyle(Color(.secondaryLabel))
-                // Pinned on the one-line layout; free to truncate on the two-line
-                // one, where pinning it would widen the row.
-                .fixedSize(horizontal: pinned, vertical: true)
+                .fixedSize()
         case .absent:
             EmptyView()
         }
@@ -2117,21 +1981,6 @@ private struct RecordingCard: View {
         return Text(live ? "LIVE" : "UPLOAD")
             .font(.parley.caption2.weight(.semibold))
             .foregroundStyle(live ? Theme.recording : Color(.secondaryLabel))
-    }
-
-    /// Locale-formatted rather than one hard-coded `M/d HH:mm`: an English phone
-    /// expects Aug 9, 3:20 PM where a Chinese one expects 8月9日 下午3:20.
-    ///
-    /// The year is added for anything outside the current one. Without it a
-    /// list sorted newest first reads as out of order the moment it crosses a
-    /// new year: Mar 8 (this year) above Jul 17 (last year) looks backwards.
-    static func dateLabel(_ epochMs: Double, now: Date = .now) -> String {
-        let date = Date(timeIntervalSince1970: epochMs / 1000)
-        let style = Date.FormatStyle.dateTime.month(.abbreviated).day().hour().minute()
-        guard Calendar.current.isDate(date, equalTo: now, toGranularity: .year) else {
-            return date.formatted(style.year())
-        }
-        return date.formatted(style)
     }
 }
 
@@ -2163,7 +2012,7 @@ private struct RecordingCard: View {
                         // first row is on the phone, the second is arriving, the
                         // third is cloud-only.
                         RecordingCard(
-                            summary: rec, folders: ScreenshotDemo.folders,
+                            summary: rec,
                             audio: previewAudioState(rec.id))
                     }
                     .modifier(RecordingRow())
@@ -2182,7 +2031,7 @@ private struct RecordingCard: View {
             List {
                 ForEach(ScreenshotDemo.recordings) { rec in
                     RecordingCard(
-                        summary: rec, folders: ScreenshotDemo.folders,
+                        summary: rec,
                         audio: previewAudioState(rec.id))
                         .modifier(RecordingRow())
                 }

@@ -322,13 +322,10 @@ private enum FolderPalette {
 
 // MARK: - Recent recordings
 
-/// One row of 最近錄音, as on the desktop: an audio glyph, the title, and
-/// "date · folder · snippet" under it on one line, with the action-item count
-/// at the trailing edge when there are any. No card — rows are split by
-/// hairlines (`RecentRecordingsList`).
+/// One of 最近錄音's rows: a waveform glyph, the title, and the meta line the
+/// desktop's list has — when the meeting was and how many people spoke.
 struct RecentRecordingRow: View {
     let summary: CloudRecordingSummary
-    let folderName: String?
 
     var body: some View {
         HStack(spacing: 10) {
@@ -337,7 +334,7 @@ struct RecentRecordingRow: View {
                 .foregroundStyle(Color(.secondaryLabel))
                 .frame(width: 20)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(
                     verbatim: summary.title.isEmpty
                         ? String(localized: "Untitled recording") : summary.title
@@ -345,38 +342,60 @@ struct RecentRecordingRow: View {
                 .font(.parley.subheadlineEmphasized)
                 .foregroundStyle(Color(.label))
                 .lineLimit(1)
-                Text(verbatim: meta)
-                    .font(.parley.caption)
-                    .foregroundStyle(Color(.secondaryLabel))
-                    .lineLimit(1)
+                RecordingMetaLine(summary: summary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            if let n = summary.actionItemsCount, n > 0 {
-                HStack(spacing: 4) {
-                    Image(systemName: "checklist")
-                    Text(verbatim: "\(n)")
-                }
-                .font(.parley.caption.monospacedDigit())
-                .foregroundStyle(Color(.secondaryLabel))
-                .fixedSize()
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(Text("Action items"))
-                .accessibilityValue(Text(verbatim: "\(n)"))
-            }
         }
         .padding(.vertical, 11)
         .contentShape(Rectangle())
     }
+}
 
-    /// Short month and day in the phone's locale (May 14 / 5月14日), then the
-    /// folder and the snippet when there are any.
-    private var meta: String {
-        let date = Date(timeIntervalSince1970: summary.createdAt / 1000)
-            .formatted(.dateTime.month(.abbreviated).day())
-        var parts = [date]
-        if let folderName { parts.append(folderName) }
-        if let snippet = summary.snippet, !snippet.isEmpty { parts.append(snippet) }
-        return parts.joined(separator: " · ")
+/// A recording's meta, as the desktop's list gives it: when the meeting was,
+/// and how many people spoke. Nothing from the transcript — a row says which
+/// meeting this is, the recording says what was in it — and no duration,
+/// folder or findings count, which the list's folder pages, the recording and
+/// its summary already carry.
+///
+/// Shared by the overview's recent rows and the full list, so the two lists
+/// read the same.
+struct RecordingMetaLine: View {
+    let summary: CloudRecordingSummary
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(verbatim: Self.dateLabel(summary.createdAt))
+                .fixedSize()
+            if let n = summary.speakerCount, n > 0 {
+                HStack(spacing: 4) {
+                    Image(systemName: "person.2")
+                    Text(verbatim: "\(n)")
+                }
+                .fixedSize()
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Text("Speakers"))
+                .accessibilityValue(Text(verbatim: "\(n)"))
+            }
+        }
+        // A clock time and a count: tabular figures, so rows line up.
+        .font(.parley.caption.monospacedDigit())
+        .foregroundStyle(Color(.secondaryLabel))
+        .lineLimit(1)
+    }
+
+    /// Locale-formatted rather than one hard-coded `M/d HH:mm`: an English phone
+    /// expects Aug 9, 3:20 PM where a Chinese one expects 8月9日 下午3:20.
+    ///
+    /// The year is added for anything outside the current one. Without it a
+    /// list sorted newest first reads as out of order the moment it crosses a
+    /// new year: Mar 8 (this year) above Jul 17 (last year) looks backwards.
+    static func dateLabel(_ epochMs: Double, now: Date = .now) -> String {
+        let date = Date(timeIntervalSince1970: epochMs / 1000)
+        let style = Date.FormatStyle.dateTime.month(.abbreviated).day().hour().minute()
+        guard Calendar.current.isDate(date, equalTo: now, toGranularity: .year) else {
+            return date.formatted(style.year())
+        }
+        return date.formatted(style)
     }
 }
 
@@ -451,7 +470,7 @@ struct RecentEmptyBox: View {
                         }
                     }
                     HairlineList(items: ScreenshotDemo.recordings) { rec in
-                        RecentRecordingRow(summary: rec, folderName: "Renewals")
+                        RecentRecordingRow(summary: rec)
                     }
                     RecentEmptyBox(offersSample: true, transcribing: false) {}
                 }
