@@ -33,9 +33,6 @@ struct LibraryView: View {
     @State private var error: String?
     @State private var busyId: String?
     @State private var search = ""
-    /// Whether the search field is active, so a request to show the checklist
-    /// can close it — the checklist is not drawn while searching.
-    @State private var searchPresented = false
     /// One importer for the whole screen, so every door — the toolbar button
     /// and the empty state — drives the same single in-flight import.
     @StateObject private var importer = RecordingImporter()
@@ -93,6 +90,15 @@ struct LibraryView: View {
     var body: some View {
         NavigationStack(path: $path) {
             VStack(spacing: 0) {
+                TabPageHeader(title: "Library") {
+                    if section == .meetings { libraryActions }
+                }
+                PageSearchField(
+                    text: $search,
+                    prompt: section == .meetings
+                        ? Text("Search titles and snippets") : Text("Search voice typing"))
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 6)
                 sectionPicker
                 switch section {
                 case .meetings:
@@ -132,16 +138,11 @@ struct LibraryView: View {
             // checklist, which lives in Meetings; the overview then takes the
             // request on appearing (`takeChecklistRequest`).
             .onChange(of: router.checklistRequest) { _, _ in section = .meetings }
-            // Drawn by `PageTitle` on the toolbar's row, as on every tab.
+            // The title, actions and search are the page's own (`TabPageHeader`,
+            // as on every tab); the title stays for VoiceOver and the back
+            // button of pages pushed from here, which bring their bar back.
             .navigationTitle("Library")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                PageTitle("Library")
-                if section == .meetings {
-                    importButton
-                    scopeMenu
-                }
-            }
+            .toolbar(.hidden, for: .navigationBar)
             // `.audio` is the whole family — mp3, m4a, wav, aac, caf and the
             // rest — which is what the desktop's extension list adds up to.
             // Single selection: a transcription run takes one file, the same
@@ -168,10 +169,6 @@ struct LibraryView: View {
                     fullList(inFolder: folder != nil)
                 }
             }
-            .searchable(
-                text: $search, isPresented: $searchPresented,
-                prompt: section == .meetings
-                    ? Text("Search titles and snippets") : Text("Search voice typing"))
             .task(id: "\(scope ?? "personal")-\(app.signedIn)") { await load() }
             // A recording renamed or filed from another tab (the record
             // screen's filing card): reload, so the row shows the new name.
@@ -561,7 +558,6 @@ struct LibraryView: View {
         guard router.checklistRequest != handledChecklistRequest else { return }
         handledChecklistRequest = router.checklistRequest
         path = []
-        searchPresented = false
         search = ""
         if scope != nil {
             scope = nil
@@ -647,6 +643,15 @@ struct LibraryView: View {
 
     // MARK: import (desktop History "+ Import", phone-sized)
 
+    /// Import and the scope switcher, in the header's glass capsule.
+    @ViewBuilder
+    private var libraryActions: some View {
+        HeaderActions {
+            if scope == nil { importButton }
+            scopeMenu
+        }
+    }
+
     /// Personal scope only. An org library is a different container, and the
     /// upload path files into the personal library first and shares from there
     /// — offering the button under an org would promise a destination the flow
@@ -661,49 +666,41 @@ struct LibraryView: View {
     /// document", and the stacked `square.and.arrow.down.on.square` was too
     /// busy to read. The library's download (`downloadAction`) is
     /// `arrow.down.circle`, a different shape, so the two do not collide.
-    @ToolbarContentBuilder
-    private var importButton: some ToolbarContent {
-        if scope == nil {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    importing = true
-                } label: {
-                    Label("Import audio", systemImage: "square.and.arrow.down")
-                }
-                .disabled(importer.isRunning)
-            }
+    private var importButton: some View {
+        Button {
+            importing = true
+        } label: {
+            Image(systemName: "square.and.arrow.down")
         }
+        .accessibilityLabel(Text("Import audio"))
+        .disabled(importer.isRunning)
     }
 
-    // MARK: scope switcher (desktop sidebar, phone-sized)
-
-    private var scopeMenu: some ToolbarContent {
-        ToolbarItem(placement: .topBarTrailing) {
-            Menu {
+    private var scopeMenu: some View {
+        Menu {
+            Button {
+                scope = nil
+                folderFilter = nil
+                notice = nil
+            } label: {
+                Label("Personal", systemImage: scope == nil ? "checkmark" : "folder")
+            }
+            ForEach(app.orgs) { org in
                 Button {
-                    scope = nil
+                    scope = org.id
                     folderFilter = nil
                     notice = nil
                 } label: {
-                    Label("Personal", systemImage: scope == nil ? "checkmark" : "folder")
+                    Label(
+                        org.name,
+                        systemImage: scope == org.id ? "checkmark" : "person.2")
                 }
-                ForEach(app.orgs) { org in
-                    Button {
-                        scope = org.id
-                        folderFilter = nil
-                        notice = nil
-                    } label: {
-                        Label(
-                            org.name,
-                            systemImage: scope == org.id ? "checkmark" : "person.2")
-                    }
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: scope == nil ? "folder" : "person.2")
-                    Text(verbatim: scopeName)
-                }
-                .font(.parley.subheadlineEmphasized)
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: scope == nil ? "folder" : "person.2")
+                Text(verbatim: scopeName)
+                    .font(.parley.subheadlineEmphasized)
             }
         }
     }

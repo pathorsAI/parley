@@ -62,93 +62,99 @@ struct SettingsView: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            ScrollViewReader { _ in
-                Form {
-                    accountSection
-                    if app.signedIn {
-                        saveDestinationSection
-                        usageSection
+            VStack(spacing: 0) {
+                TabPageHeader("Settings")
+                ScrollViewReader { _ in
+                    Form {
+                        accountSection
+                        if app.signedIn {
+                            saveDestinationSection
+                            usageSection
+                        }
+                        // Sync reads only on-device state, so it stays available while
+                        // offline — that is exactly when someone needs to see that a
+                        // finished recording is queued rather than lost.
+                        if app.hasAccount {
+                            syncSection
+                        }
+                        // Everything about the keyboard and dictation is one row
+                        // here and its own page behind it: five sections of it
+                        // used to sit between sync and appearance, and a page that
+                        // is half keyboard settings reads as a keyboard's settings.
+                        // Always shown, because the keyboards and saved info need
+                        // no account.
+                        Section {
+                            NavigationLink(value: SettingsPage.voiceTyping) {
+                                Label("Voice typing", systemImage: "mic")
+                            }
+                        }
+                        appearanceSection
+                        languageSection
+                        // Outside every gate: a report can be sent signed out —
+                        // someone whose sign-in is what broke is exactly who needs
+                        // to be able to send one.
+                        feedbackSection
+                        aboutSection
+                        #if DEBUG
+                            debugSection
+                        #endif
                     }
-                    // Sync reads only on-device state, so it stays available while
-                    // offline — that is exactly when someone needs to see that a
-                    // finished recording is queued rather than lost.
-                    if app.hasAccount {
-                        syncSection
-                    }
-                    // Everything about the keyboard and dictation is one row
-                    // here and its own page behind it: five sections of it
-                    // used to sit between sync and appearance, and a page that
-                    // is half keyboard settings reads as a keyboard's settings.
-                    // Always shown, because the keyboards and saved info need
-                    // no account.
-                    Section {
-                        NavigationLink(value: SettingsPage.voiceTyping) {
-                            Label("Voice typing", systemImage: "mic")
+                    // **This screen keeps the platform's own surfaces.** Everywhere
+                    // else in the app a fill behind content is gone; here the
+                    // inset-grouped `Form` keeps its system background and its
+                    // system row fill, because a grouped list *is* the iOS grammar
+                    // for settings and a phone owner already knows how to read one.
+                    // A pale-blue row fill and brand-blue section headers used to
+                    // sit on top of it, which made the one screen people arrive at
+                    // with expectations the one screen that broke them.
+                    //
+                    // The cost is that this is the one screen whose page is *not*
+                    // `Theme.background`: in dark mode a grouped list's own page is
+                    // the system black rather than Parley's navy-black. Taken
+                    // knowingly — a settings page that reads as the platform's is
+                    // worth more here than one that reads as the brand's, and
+                    // repainting the page while keeping the system row fill would
+                    // land white rows on a white page in light mode.
+                    //
+                    // The face is the only thing overridden, and it has to be set on
+                    // the whole Form: a settings page is mostly rows nobody styles
+                    // individually (pickers, links, `LabeledContent`), and each one
+                    // would otherwise quietly draw in the system font next to a
+                    // heading that doesn't.
+                    .font(.parley.body)
+                    // Settings is a page of short rows; the default height packs
+                    // them tighter than anything else in the app.
+                    .environment(\.defaultMinListRowHeight, 48)
+                    // The keyboard's saved-info panel linking here
+                    // (`SettingsLinkInbox`). Taken, so it is acted on once.
+                    .onReceive(SettingsLinkInbox.shared.$request) { request in
+                        guard request != nil, let link = SettingsLinkInbox.shared.take() else { return }
+                        switch link {
+                        case .snippets: showSavedInfo = true
                         }
                     }
-                    appearanceSection
-                    languageSection
-                    // Outside every gate: a report can be sent signed out —
-                    // someone whose sign-in is what broke is exactly who needs
-                    // to be able to send one.
-                    feedbackSection
-                    aboutSection
                     #if DEBUG
-                        debugSection
+                        .onReceive(ScreenshotDemo.shared.$focusKeyboardSection) { focus in
+                            if focus { path = [.voiceTyping] }
+                        }
+                        .onReceive(ScreenshotDemo.shared.$pressResetChecklist) { press in
+                            guard press else { return }
+                            // A beat on Settings first, the way a person gets there.
+                            Task { @MainActor in
+                                try? await Task.sleep(for: .milliseconds(600))
+                                showGettingStartedAgain()
+                            }
+                        }
                     #endif
                 }
-                // **This screen keeps the platform's own surfaces.** Everywhere
-                // else in the app a fill behind content is gone; here the
-                // inset-grouped `Form` keeps its system background and its
-                // system row fill, because a grouped list *is* the iOS grammar
-                // for settings and a phone owner already knows how to read one.
-                // A pale-blue row fill and brand-blue section headers used to
-                // sit on top of it, which made the one screen people arrive at
-                // with expectations the one screen that broke them.
-                //
-                // The cost is that this is the one screen whose page is *not*
-                // `Theme.background`: in dark mode a grouped list's own page is
-                // the system black rather than Parley's navy-black. Taken
-                // knowingly — a settings page that reads as the platform's is
-                // worth more here than one that reads as the brand's, and
-                // repainting the page while keeping the system row fill would
-                // land white rows on a white page in light mode.
-                //
-                // The face is the only thing overridden, and it has to be set on
-                // the whole Form: a settings page is mostly rows nobody styles
-                // individually (pickers, links, `LabeledContent`), and each one
-                // would otherwise quietly draw in the system font next to a
-                // heading that doesn't.
-                .font(.parley.body)
-                // Settings is a page of short rows; the default height packs
-                // them tighter than anything else in the app.
-                .environment(\.defaultMinListRowHeight, 48)
-                // The keyboard's saved-info panel linking here
-                // (`SettingsLinkInbox`). Taken, so it is acted on once.
-                .onReceive(SettingsLinkInbox.shared.$request) { request in
-                    guard request != nil, let link = SettingsLinkInbox.shared.take() else { return }
-                    switch link {
-                    case .snippets: showSavedInfo = true
-                    }
-                }
-                #if DEBUG
-                    .onReceive(ScreenshotDemo.shared.$focusKeyboardSection) { focus in
-                        if focus { path = [.voiceTyping] }
-                    }
-                    .onReceive(ScreenshotDemo.shared.$pressResetChecklist) { press in
-                        guard press else { return }
-                        // A beat on Settings first, the way a person gets there.
-                        Task { @MainActor in
-                            try? await Task.sleep(for: .milliseconds(600))
-                            showGettingStartedAgain()
-                        }
-                    }
-                #endif
             }
-            // Drawn by `PageTitle` on the toolbar's row, as on every tab.
+            // The Form's grouped grey runs up behind the header.
+            .background(Color(.systemGroupedBackground))
+            // The title is the page's own (`TabPageHeader`, as on every tab);
+            // it stays for VoiceOver and the back button of the pages pushed
+            // from here, which bring their bar back.
             .navigationTitle("Settings")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { PageTitle("Settings") }
+            .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: SettingsPage.self) { _ in voiceTypingPage }
             .navigationDestination(isPresented: $showSavedInfo) { SavedInfoView() }
             .task { await loadFolders() }
