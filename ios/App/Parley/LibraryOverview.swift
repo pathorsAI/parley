@@ -429,9 +429,7 @@ struct EmptyRecordsView<Action: View>: View {
 
     var body: some View {
         VStack(spacing: 4) {
-            Image("EmptyRecords")
-                .resizable()
-                .scaledToFit()
+            EmptyRecordsIllustration()
                 .frame(width: 120, height: 105.84)
                 .padding(.bottom, 16)
                 .accessibilityHidden(true)
@@ -453,6 +451,136 @@ struct EmptyRecordsView<Action: View>: View {
 extension EmptyRecordsView where Action == EmptyView {
     init(title: LocalizedStringKey, hint: LocalizedStringKey) {
         self.init(title: title, hint: hint) { EmptyView() }
+    }
+}
+
+/// The desktop's empty-box illustration, `public/library/empty-records.svg`
+/// and its `-dark` twin, drawn here as vectors from the very same path data.
+///
+/// Not the SVG in the asset catalog: the catalog turns an SVG into a bitmap at
+/// build time, and iOS does not draw the file's masks faithfully either, so
+/// the box came out soft at any size. Drawn live, the lines are as sharp as
+/// the screen. The SVG's two masks (a stroke kept inside its own face) are a
+/// clip to the face here.
+struct EmptyRecordsIllustration: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    /// The SVG's viewBox.
+    private static let box = CGSize(width: 80.2525, height: 70.5882)
+
+    private static let leftFace = SVGPathData.path(
+        "M0.16631 58.2022V28.5393L47.1326 39.3258V70.5618L0.16631 58.2022Z")
+    private static let rightFace = SVGPathData.path(
+        "M80.1663 20.7059L46.284 39.6657V70.5882L80.1663 50.9513V20.7059Z")
+    private static let rim = SVGPathData.path(
+        "M0.16631 28.7059L36.5708 11.0535L80.1663 21.1765")
+    private static let handle = SVGPathData.path(
+        "M24.9508 40.8807L20.3911 39.7753L16.6346 38.8362C15.2038 38.4785 13.7388 39.2827 13.2724 40.6818C12.7498 42.2497 13.68 43.9291 15.2864 44.3177L23.6296 46.3363C25.087 46.6888 26.5641 45.8336 26.984 44.3942C27.4322 42.8575 26.5065 41.2578 24.9508 40.8807Z")
+    private static let sheet = SVGPathData.path(
+        "M14.1663 31.7808V7.71653C14.1663 5.1739 16.5075 3.27655 18.995 3.80331L53.495 11.1092C55.3438 11.5007 56.6663 13.1326 56.6663 15.0224V33.7808L46.6663 39.2808L14.1663 31.7808Z")
+    private static let sheetDashes = SVGPathData.path(
+        "M14.1663 31.7808V31.2794M56.6663 33.7808V33.2597M14.1663 30.2767V29.2741M14.1663 28.2714V27.2687M14.1663 26.266V25.2634M14.1663 24.2607V23.258M14.1663 22.2553V21.2527M14.1663 20.25V19.2473M14.1663 18.2446V17.242M14.1663 16.2393V15.2366M14.1663 14.2339V13.2312M14.1663 12.2286V11.2259M14.1663 10.2232V9.22055M14.1663 8.21787V7.71653C14.1663 7.56605 14.1745 7.41784 14.1905 7.27225M14.3848 6.40565C14.483 6.12193 14.612 5.85362 14.7675 5.60428M15.3182 4.90752C15.5269 4.69639 15.7585 4.50872 16.0083 4.34831M16.804 3.95387C17.0802 3.85338 17.3694 3.78274 17.6673 3.74552M18.5554 3.73489C18.7011 3.74945 18.8478 3.77213 18.995 3.80331L19.4742 3.90478M20.4325 4.10772L21.3908 4.31066M22.3492 4.5136L23.3075 4.71654M24.2658 4.91948L25.2242 5.12242M26.1825 5.32536L27.1408 5.52831M28.0992 5.73125L29.0575 5.93419M30.0158 6.13713L30.9742 6.34007M31.9325 6.54301L32.8908 6.74595M33.8492 6.94889L34.8075 7.15183M35.7658 7.35478L36.7242 7.55772M37.6825 7.76066L38.6408 7.9636M39.5992 8.16654L40.5575 8.36948M41.5158 8.57242L42.4742 8.77536M43.4325 8.97831L44.3908 9.18125M45.3492 9.38419L46.3075 9.58713M47.2658 9.79007L48.2242 9.99301M49.1825 10.196L50.1408 10.3989M51.0992 10.6018L52.0575 10.8048M53.0158 11.0077L53.495 11.1092C53.6446 11.1409 53.7908 11.1807 53.9331 11.2281M54.7546 11.6103C55.0145 11.7694 55.2538 11.9569 55.4687 12.1681M56.0393 12.8721C56.2013 13.1261 56.3352 13.3991 56.437 13.6863M56.6407 14.5692C56.6576 14.7182 56.6663 14.8695 56.6663 15.0224V15.5435M56.6663 16.5856V17.6277M56.6663 18.6699V19.712M56.6663 20.7541V21.7963M56.6663 22.8384V23.8805M56.6663 24.9226V25.9648M56.6663 27.0069V28.049M56.6663 29.0912V30.1333M56.6663 31.1754V32.2176")
+
+    /// The two drawings' colours: the light file, and the dark one's slate
+    /// faces and navy sheet.
+    private struct Palette {
+        let leftFace, rightFace, ink, sheet, dashes: Color
+    }
+    private static let light = Palette(
+        leftFace: Color(UIColor(hex: 0xFAFAFA)), rightFace: Color(UIColor(hex: 0xF5F5F5)),
+        ink: Color(UIColor(hex: 0x535353)), sheet: Color(UIColor(hex: 0xE5F6FF)),
+        dashes: Color(UIColor(hex: 0xC7ECFD)))
+    private static let dark = Palette(
+        leftFace: Color(UIColor(hex: 0x1E2836)), rightFace: Color(UIColor(hex: 0x253141)),
+        ink: Color(UIColor(hex: 0x7B8899)), sheet: Color(UIColor(hex: 0x1F3D63)),
+        dashes: Color(UIColor(hex: 0x4A86C5)))
+
+    var body: some View {
+        let c = colorScheme == .dark ? Self.dark : Self.light
+        Canvas { ctx, size in
+            ctx.scaleBy(x: size.width / Self.box.width, y: size.height / Self.box.height)
+            // A face, then its outline kept inside it: the SVG's
+            // `mask="url(#…)"` on a 1.52 stroke, i.e. a clip to the face.
+            for (face, fill, join) in [
+                (Self.leftFace, c.leftFace, CGLineJoin.miter),
+                (Self.rightFace, c.rightFace, CGLineJoin.round),
+            ] {
+                ctx.fill(face, with: .color(fill))
+                var inside = ctx
+                inside.clip(to: face)
+                inside.stroke(face, with: .color(c.ink), style: StrokeStyle(lineWidth: 1.52471, lineJoin: join))
+            }
+            ctx.stroke(Self.rim, with: .color(c.ink), lineWidth: 0.762353)
+            ctx.fill(Self.handle, with: .color(c.ink))
+            ctx.stroke(Self.handle, with: .color(c.ink), lineWidth: 0.762353)
+            ctx.fill(Self.sheet, with: .color(c.sheet.opacity(0.7)))
+            ctx.stroke(Self.sheetDashes, with: .color(c.dashes), lineWidth: 1)
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+/// Just enough of SVG path data for the illustrations ported from the
+/// desktop: absolute M, L, H, V, C and Z, with repeated coordinate pairs.
+enum SVGPathData {
+    static func path(_ d: String) -> Path {
+        var path = Path()
+        var numbers: [CGFloat] = []
+        var command: Character = " "
+        var current = CGPoint.zero
+        var start = CGPoint.zero
+
+        func flush() {
+            var n = numbers[...]
+            func take() -> CGFloat? { n.isEmpty ? nil : n.removeFirst() }
+            switch command {
+            case "M":
+                var first = true
+                while let x = take(), let y = take() {
+                    current = CGPoint(x: x, y: y)
+                    if first { path.move(to: current); start = current; first = false }
+                    else { path.addLine(to: current) }
+                }
+            case "L":
+                while let x = take(), let y = take() {
+                    current = CGPoint(x: x, y: y); path.addLine(to: current)
+                }
+            case "H":
+                while let x = take() { current.x = x; path.addLine(to: current) }
+            case "V":
+                while let y = take() { current.y = y; path.addLine(to: current) }
+            case "C":
+                while let x1 = take(), let y1 = take(), let x2 = take(), let y2 = take(),
+                    let x = take(), let y = take()
+                {
+                    current = CGPoint(x: x, y: y)
+                    path.addCurve(to: current, control1: CGPoint(x: x1, y: y1), control2: CGPoint(x: x2, y: y2))
+                }
+            case "Z":
+                path.closeSubpath(); current = start
+            default: break
+            }
+            numbers.removeAll()
+        }
+
+        var token = ""
+        func endNumber() {
+            if let v = Double(token) { numbers.append(CGFloat(v)) }
+            token = ""
+        }
+        for ch in d {
+            if "MLHVCZ".contains(ch) {
+                endNumber(); flush(); command = ch
+            } else if ch == " " || ch == "," {
+                endNumber()
+            } else if ch == "-" && !token.isEmpty && token.last != "e" {
+                endNumber(); token = "-"
+            } else {
+                token.append(ch)
+            }
+        }
+        endNumber(); flush()
+        return path
     }
 }
 
