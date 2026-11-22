@@ -41,6 +41,15 @@ class OnboardingFlags internal constructor(private val preferences: SharedPrefer
     /** The wizard has been finished or skipped once on this device. */
     val completed: StateFlow<Boolean> = _completed.asStateFlow()
 
+    private val _rerun = MutableStateFlow(preferences?.getBoolean(RERUN_KEY, false) ?: false)
+
+    /**
+     * Set by the account sheet's "Re-run onboarding", so the signed-in wizard
+     * may open on the welcome rather than at the signed-in confirmation;
+     * cleared when the wizard is left. iOS `OnboardingFlag.rerunKey`.
+     */
+    val rerun: StateFlow<Boolean> = _rerun.asStateFlow()
+
     private val _background = MutableStateFlow(preferences?.getString(BACKGROUND_KEY, null).orEmpty())
 
     /**
@@ -55,11 +64,25 @@ class OnboardingFlags internal constructor(private val preferences: SharedPrefer
 
     fun setCompleted(value: Boolean) = write(_completed, value) { putBoolean(COMPLETED_KEY, value) }
 
+    fun setRerun(value: Boolean) = write(_rerun, value) { putBoolean(RERUN_KEY, value) }
+
+    /**
+     * "Re-run onboarding": the wizard again from its welcome, over the
+     * signed-in app. The desktop's `settings.basic.rerunSetup`.
+     */
+    fun startRerun() {
+        setStep(INTRO_STEP)
+        setRerun(true)
+        setCompleted(false)
+        setAfterSignIn(true)
+    }
+
     fun setBackground(value: String) = write(_background, value) { putString(BACKGROUND_KEY, value) }
 
     /** Leaving the wizard, by Skip or by one of the last screen's buttons. */
     fun finish() {
         setAfterSignIn(false)
+        setRerun(false)
         setCompleted(true)
         setStep("")
     }
@@ -76,6 +99,10 @@ class OnboardingFlags internal constructor(private val preferences: SharedPrefer
         const val AFTER_SIGN_IN_KEY = "onboarding.afterSignIn"
         const val COMPLETED_KEY = "onboarding.completed"
         const val BACKGROUND_KEY = "onboarding.userBackground"
+        const val RERUN_KEY = "onboarding.rerun"
+
+        /** `OnboardingStep.INTRO.key`, without this package reaching into the UI. */
+        internal const val INTRO_STEP = "intro"
 
         private const val FILE = "parley_onboarding_flags"
 

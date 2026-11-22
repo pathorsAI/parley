@@ -52,7 +52,6 @@ class HandoffStringsParityTest {
         "getting_started_filed" to "Put it in a folder",
         "getting_started_replayed" to "Replay: tap a line to jump",
         "getting_started_shared" to "Share it with your AI",
-        "getting_started_show_again" to "Show the getting-started list again",
         "getting_started_done" to "Done",
         "getting_started_walk_through" to "Walk through it with the sample recording",
         "getting_started_continue" to "Continue →",

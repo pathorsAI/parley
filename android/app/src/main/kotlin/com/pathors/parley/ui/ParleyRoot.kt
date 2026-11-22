@@ -322,7 +322,8 @@ private fun ParleyNavHost(container: AppContainer) {
 
 /**
  * Which step to open the signed-in wizard on, or null when there is none to
- * show: where it was left, but never before the signed-in confirmation. Only
+ * show: where it was left, but never before the signed-in confirmation (except
+ * a re-run from the account sheet, which starts at the welcome). Only
  * after a sign-in that started in the wizard (`onboarding.afterSignIn`), so
  * users signed in before it existed never see it. A demo route names its own
  * step. iOS `MainTabs.onboardingStart`.
@@ -331,12 +332,15 @@ private fun ParleyNavHost(container: AppContainer) {
 private fun rememberSignedInOnboardingStart(container: AppContainer): OnboardingStep? {
     val afterSignIn by container.onboarding.afterSignIn.collectAsState()
     val savedStep by container.onboarding.step.collectAsState()
+    val rerun by container.onboarding.rerun.collectAsState()
     val demo by DemoMode.enabled.collectAsState()
     val scenario by DemoMode.onboarding.collectAsState()
     val current = scenario
     return when {
         current != null -> if (current.signedOut) null else current.step
         demo || !afterSignIn -> null
+        // A re-run from the account sheet starts at the welcome.
+        rerun && savedStep == OnboardingStep.INTRO.key -> OnboardingStep.INTRO
         else -> {
             val saved = OnboardingStep.fromKey(savedStep) ?: OnboardingStep.ACCOUNT
             if (saved < OnboardingStep.ACCOUNT) OnboardingStep.ACCOUNT else saved
