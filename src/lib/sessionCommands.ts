@@ -750,28 +750,29 @@ function draftById(id: unknown): MeetingDraft {
   return draft;
 }
 
+/** How long draft `d` runs, or `fallbackMs` when it has no usable length. */
+function draftLength(d: MeetingDraft, fallbackMs: number): number {
+  const kept = d.meetingAt != null && d.meetingEndAt != null ? d.meetingEndAt - d.meetingAt : 0;
+  return kept > 0 ? kept : fallbackMs;
+}
+
 /** A draft's times after an update: a moved start keeps the meeting's length
  *  unless an end comes with it; a cleared start clears the end. */
 async function patchedTimes(d: MeetingDraft, a: RpcArgs): Promise<{ meetingAt: number | null; meetingEndAt: number | null }> {
-  let meetingAt = d.meetingAt;
-  let meetingEndAt = d.meetingEndAt;
   const endAt = asTime(a.endAt, "endAt");
-  if ("startAt" in a) {
-    meetingAt = asTime(a.startAt, "startAt");
-    if (meetingAt == null) {
-      meetingEndAt = null;
-    } else if (endAt == null) {
-      const { DEFAULT_DURATION_MIN } = await import("./meeting/timeSlots");
-      const kept = d.meetingAt != null && d.meetingEndAt != null ? d.meetingEndAt - d.meetingAt : 0;
-      meetingEndAt = meetingAt + (kept > 0 ? kept : DEFAULT_DURATION_MIN * 60_000);
-    }
+  const moved = "startAt" in a;
+  const meetingAt = moved ? asTime(a.startAt, "startAt") : d.meetingAt;
+  if (meetingAt == null) {
+    if (endAt != null) throw new Error("endAt needs a startAt");
+    return { meetingAt, meetingEndAt: null };
   }
   if (endAt != null) {
-    if (meetingAt == null) throw new Error("endAt needs a startAt");
     if (endAt <= meetingAt) throw new Error("endAt must be after startAt");
-    meetingEndAt = endAt;
+    return { meetingAt, meetingEndAt: endAt };
   }
-  return { meetingAt, meetingEndAt };
+  if (!moved) return { meetingAt, meetingEndAt: d.meetingEndAt };
+  const { DEFAULT_DURATION_MIN } = await import("./meeting/timeSlots");
+  return { meetingAt, meetingEndAt: meetingAt + draftLength(d, DEFAULT_DURATION_MIN * 60_000) };
 }
 
 /** A draft's agenda after an update: `agenda` replaces the list (an item whose

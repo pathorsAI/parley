@@ -107,6 +107,38 @@ fn branches_schema(description: &str) -> Value {
     })
 }
 
+/// One property of a tool's input schema.
+fn prop(kind: Value, description: &str) -> Value {
+    json!({ "type": kind, "description": description })
+}
+
+/// A property holding a list of strings.
+fn strings(description: &str) -> Value {
+    json!({ "type": "array", "items": { "type": "string" }, "description": description })
+}
+
+/// `update_meeting_draft`'s input: the draft's `id`, and any field to change.
+fn update_schema() -> Value {
+    let text = || json!("string");
+    let clearable = || json!(["string", "null"]);
+    let properties: [(&str, Value); 11] = [
+        ("id", prop(text(), "The draft to change (see list_meeting_drafts).")),
+        ("title", prop(text(), "Meeting name.")),
+        ("startAt", prop(clearable(), "Start time, ISO 8601 with a UTC offset (e.g. 2026-11-03T14:00:00+08:00). null makes the draft untimed.")),
+        ("endAt", prop(clearable(), "End time, ISO 8601. Must be after the start.")),
+        ("reminderLeadMin", prop(json!("number"), "Minutes before the start to remind the user.")),
+        ("context", prop(text(), "Background for the analysis, including any BATNA / target / bottom line. Replaces the current text.")),
+        ("folderId", prop(clearable(), "Personal folder to file the recording into (see list_folders); null for none.")),
+        ("agenda", strings("The whole agenda: the things to ask or cover in the meeting.")),
+        ("questions", strings("Items to add to the agenda (skipping any already there).")),
+        ("branches", branches_schema("Playbook: if they say `when`, steer with `then`. Replaces the whole list.")),
+        ("topics", strings("Playbook: what to bring up when the conversation runs dry, each one complete sentence the user could say as is. Replaces the whole list.")),
+    ];
+    let properties: serde_json::Map<String, Value> =
+        properties.into_iter().map(|(key, schema)| (key.to_string(), schema)).collect();
+    json!({ "type": "object", "properties": properties, "required": ["id"] })
+}
+
 fn schemas() -> Vec<Value> {
     vec![
         tool(
@@ -171,23 +203,7 @@ fn schemas() -> Vec<Value> {
              keeps the meeting's length; `startAt: null` makes the draft \
              untimed. Returns the updated draft. Safe to call while a meeting \
              is recording.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "id": { "type": "string", "description": "The draft to change (see list_meeting_drafts)." },
-                    "title": { "type": "string", "description": "Meeting name." },
-                    "startAt": { "type": ["string", "null"], "description": "Start time, ISO 8601 with a UTC offset (e.g. 2026-11-03T14:00:00+08:00). null makes the draft untimed." },
-                    "endAt": { "type": ["string", "null"], "description": "End time, ISO 8601. Must be after the start." },
-                    "reminderLeadMin": { "type": "number", "description": "Minutes before the start to remind the user." },
-                    "context": { "type": "string", "description": "Background for the analysis, including any BATNA / target / bottom line. Replaces the current text." },
-                    "folderId": { "type": ["string", "null"], "description": "Personal folder to file the recording into (see list_folders); null for none." },
-                    "agenda": { "type": "array", "items": { "type": "string" }, "description": "The whole agenda: the things to ask or cover in the meeting." },
-                    "questions": { "type": "array", "items": { "type": "string" }, "description": "Items to add to the agenda (skipping any already there)." },
-                    "branches": branches_schema("Playbook: if they say `when`, steer with `then`. Replaces the whole list."),
-                    "topics": { "type": "array", "items": { "type": "string" }, "description": "Playbook: what to bring up when the conversation runs dry, each one complete sentence the user could say as is. Replaces the whole list." }
-                },
-                "required": ["id"]
-            }),
+            update_schema(),
         ),
         tool(
             "delete_meeting_draft",
