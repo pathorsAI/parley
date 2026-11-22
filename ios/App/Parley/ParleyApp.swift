@@ -174,6 +174,15 @@ struct MainTabs: View {
     /// The selection, lifted out of this view so Settings can send the user to
     /// the Library — see `TabRouter`.
     @StateObject private var router = TabRouter()
+    /// Set when a first sign-in started from the onboarding: the rest of the
+    /// wizard (from the signed-in confirmation on) covers the tabs until it is
+    /// left.
+    @AppStorage(OnboardingFlag.afterSignInKey) private var onboardingAfterSignIn = false
+    @AppStorage(OnboardingFlag.completedKey) private var onboardingCompleted = false
+    @AppStorage(OnboardingFlag.stepKey) private var onboardingSavedStep = ""
+    #if DEBUG
+        @ObservedObject private var demo = ScreenshotDemo.shared
+    #endif
 
     var body: some View {
         TabView(selection: $router.tab) {
@@ -201,5 +210,36 @@ struct MainTabs: View {
             // The DEBUG screenshot routes land on a tab without a tap.
             .onReceive(ScreenshotDemo.shared.$tab) { router.tab = $0 }
         #endif
+        .overlay {
+            if let start = onboardingStart {
+                OnboardingFlow(start: start, finish: finishOnboarding)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: onboardingStart)
+    }
+
+    /// Which step to open the wizard on, or nil when there is none to show:
+    /// where it was left, but never before the signed-in confirmation.
+    private var onboardingStart: OnboardingStep? {
+        #if DEBUG
+            if let scenario = demo.onboarding, scenario.isAfterSignIn { return scenario.step }
+        #endif
+        guard onboardingAfterSignIn else { return nil }
+        let saved = OnboardingStep(rawValue: onboardingSavedStep) ?? .account
+        return saved.index < OnboardingStep.account.index ? .account : saved
+    }
+
+    private func finishOnboarding(_ exit: OnboardingExit) {
+        onboardingAfterSignIn = false
+        onboardingCompleted = true
+        onboardingSavedStep = ""
+        #if DEBUG
+            demo.onboarding = nil
+        #endif
+        switch exit {
+        case .sample: router.showGettingStarted()
+        case .record, .skip: router.tab = .record
+        }
     }
 }
