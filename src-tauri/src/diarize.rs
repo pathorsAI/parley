@@ -145,7 +145,9 @@ pub async fn diarize_audio(
 
     // Cache: a re-run on the same audio + same spans + same speaker count returns
     // instantly — skipping the model download AND the whole embed/cluster pass.
-    let cache_path = cache_key(&audio_path, &segments, num_speakers)
+    let audio_hash = crate::cache::content_hash_async(audio_path.clone().into()).await;
+    let cache_path = audio_hash
+        .map(|hash| cache_key(&hash, &segments, num_speakers))
         .and_then(|key| diarize_cache_path(&app, &key));
     if let Some(cp) = &cache_path {
         if let Ok(bytes) = std::fs::read(cp) {
@@ -224,23 +226,20 @@ pub fn diarize_model_status(app: AppHandle) -> Result<DiarizeModelStatus, String
     })
 }
 
-/// Cache key for a diarization run: audio identity (name + byte size) + the exact
-/// spans + the requested speaker count + the model/algo version. Any real change
-/// to those inputs yields a different key (so it recomputes); identical inputs
-/// reuse the cached assignment. `None` if the file can't be stat'd.
-fn cache_key(audio_path: &str, spans: &[SegSpan], num_speakers: Option<usize>) -> Option<String> {
-    let size = std::fs::metadata(audio_path).ok()?.len();
-    let name = Path::new(audio_path)
-        .file_name()?
-        .to_string_lossy()
-        .into_owned();
+/// Cache key for a diarization run: audio identity (the SHA-256 of its bytes,
+/// see [`crate::cache::content_hash`]) + the exact spans + the requested speaker
+/// count + the model/algo version. Any real change to those inputs yields a
+/// different key (so it recomputes); identical inputs reuse the cached
+/// assignment. The audio used to be identified by file name + byte size, which
+/// two different same-length recordings from one recorder can share.
+fn cache_key(audio_hash: &str, spans: &[SegSpan], num_speakers: Option<usize>) -> String {
     let mut hasher = Sha256::new();
     hasher.update(CACHE_VERSION.as_bytes());
-    hasher.update(format!("\0{name}\0{size}\0{num_speakers:?}\0").as_bytes());
+    hasher.update(format!("\0{audio_hash}\0{num_speakers:?}\0").as_bytes());
     for sp in spans {
         hasher.update(format!("{}:{}:{};", sp.id, sp.start_ms, sp.end_ms).as_bytes());
     }
-    Some(to_hex(&hasher.finalize()))
+    to_hex(&hasher.finalize())
 }
 
 /// Path of the cached diarization for `key`, in the OS app-cache dir. `None` if
