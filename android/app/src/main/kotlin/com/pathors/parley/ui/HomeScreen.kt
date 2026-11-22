@@ -17,14 +17,12 @@ import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -299,18 +297,20 @@ fun HomeScreen(
     ) {
         // The overview's light bars reach the top edge of the window, behind
         // the status bar, the title and the search field, as the desktop's run
-        // from the top of its page. Only on the overview: the full list and a
-        // search's results are plain pages.
+        // from the top of its page (iOS's `ignoresSafeArea`): this screen is
+        // the one destination the root leaves the status bar's inset to, and
+        // the column below takes it. Only on the overview: the full list and
+        // a search's results are plain pages.
         val showsBackdrop = page == LibraryPage.Overview && query.isBlank()
         val backdropAlpha by animateFloatAsState(if (showsBackdrop) 1f else 0f, tween(250), label = "backdrop")
         if (backdropAlpha > 0f) {
-            OverviewBackdrop(
-                Modifier
-                    .underStatusBar()
-                    .graphicsLayer { alpha = backdropAlpha },
-            )
+            OverviewBackdrop(Modifier.graphicsLayer { alpha = backdropAlpha })
         }
-        Column(Modifier.fillMaxSize()) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .underStatusBarInset(),
+        ) {
             when (page) {
                 LibraryPage.Overview -> LibraryPageHeader(title = stringResource(R.string.home_title)) {
                     LibraryActions(
@@ -475,18 +475,6 @@ private sealed interface LibraryPage {
             else -> Overview
         }
     }
-}
-
-/**
- * Draws this node from the top edge of the window rather than from under the
- * status bar: the root lays every screen out inside the safe-drawing insets
- * (`ParleyRoot`), and the overview's light bars are the one thing that should
- * run up behind the status bar, as iOS's do with `ignoresSafeArea`.
- */
-@Composable
-private fun Modifier.underStatusBar(): Modifier {
-    val top = WindowInsets.safeDrawing.getTop(LocalDensity.current)
-    return offset { IntOffset(0, -top) }
 }
 
 /**

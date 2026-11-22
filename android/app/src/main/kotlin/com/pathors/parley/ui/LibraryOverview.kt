@@ -512,7 +512,9 @@ internal fun FolderCard(
                 ),
         ) {
             Canvas(Modifier.matchParentSize()) {
-                scale(FOLDER_SCALE, FOLDER_SCALE, pivot = Offset.Zero) {
+                // The drawing's own units to pixels: the shown width over the drawn one.
+                val toPx = size.width / FOLDER_DRAWN_W
+                scale(toPx, toPx, pivot = Offset.Zero) {
                     drawFolder(palette, press, empty = count == 0)
                 }
             }

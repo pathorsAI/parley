@@ -8,7 +8,11 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
@@ -138,7 +142,18 @@ fun ParleyRoot() {
         // inset themselves, so the one place every screen passes through takes
         // the safe-drawing insets once. The Surface stays full-bleed so its
         // background is what shows through the bars.
-        Box(Modifier.fillMaxSize().safeDrawingPadding()) {
+        //
+        // The signed-in graph takes all but the top here: its destinations
+        // take the top themselves ([ParleyNavHost]), so that the Library's
+        // overview can draw its light bars up behind the status bar.
+        val navHost = demo && demoOnboarding?.signedOut != true || !demo && signedIn == true
+        Box(
+            Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(
+                    if (navHost) WindowInsets.safeDrawing.only(BELOW_STATUS_BAR) else WindowInsets.safeDrawing,
+                ),
+        ) {
             when {
                 // The welcome and account frames are of the signed-out wizard.
                 demo && demoOnboarding?.signedOut == true -> OnboardingScreen(container)
@@ -153,7 +168,9 @@ fun ParleyRoot() {
             }
             // Over every screen, signed in or not (a crash report does not need an
             // account) — but never over a store screenshot.
-            if (!demo) FeedbackHost(container.feedback)
+            if (!demo) {
+                Box(Modifier.matchParentSize().underStatusBarInset()) { FeedbackHost(container.feedback) }
+            }
         }
         // The sign-in page's edge glow lives here rather than in
         // `OnboardingScreen` so that it can outlast it: a successful sign-in
@@ -164,6 +181,17 @@ fun ParleyRoot() {
         AuroraEdgeGlow(onSignInPage = signedIn == false && !demo, signingIn = signingIn)
     }
 }
+
+/** Every safe-drawing side but the top, which the signed-in destinations take themselves. */
+private val BELOW_STATUS_BAR = WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom
+
+/**
+ * The top safe-drawing inset the root left to the signed-in destinations. Every
+ * one of them takes it here except the Library, whose overview draws behind the
+ * status bar and insets its own content ([HomeScreen]).
+ */
+internal fun Modifier.underStatusBarInset(): Modifier =
+    windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
 
 @Composable
 private fun ParleyNavHost(container: AppContainer) {
@@ -207,10 +235,14 @@ private fun ParleyNavHost(container: AppContainer) {
             if (onboardingStart == null) WhatsNewHost(container.whatsNew)
         }
         composable(Route.MEETING) {
-            MeetingScreen(onDone = { navController.popBackStack(Route.HOME, inclusive = false) })
+            Box(Modifier.underStatusBarInset()) {
+                MeetingScreen(onDone = { navController.popBackStack(Route.HOME, inclusive = false) })
+            }
         }
         composable(Route.IMPORT) {
-            ImportScreen(onDone = { navController.popBackStack(Route.HOME, inclusive = false) })
+            Box(Modifier.underStatusBarInset()) {
+                ImportScreen(onDone = { navController.popBackStack(Route.HOME, inclusive = false) })
+            }
         }
         composable(
             route = Route.RECORDING,
@@ -233,17 +265,19 @@ private fun ParleyNavHost(container: AppContainer) {
         ) { entry ->
             val guided = entry.arguments?.getBoolean(Route.ARG_GUIDED) ?: false
             CompositionLocalProvider(LocalLapRecording provides guided) {
-                RecordingDetailScreen(
-                    recordingId = entry.arguments?.getString("id").orEmpty(),
-                    orgId = entry.arguments?.getString(Route.ARG_ORG),
-                    openFor = OpenFor.parse(entry.arguments?.getString(Route.ARG_FOR)),
-                    onBack = { navController.popBackStack() },
-                    // The recording is left behind, so the meeting's "done"
-                    // lands back on the library.
-                    onStartMeeting = {
-                        navController.navigate(Route.MEETING) { popUpTo(Route.HOME) }
-                    },
-                )
+                Box(Modifier.underStatusBarInset()) {
+                    RecordingDetailScreen(
+                        recordingId = entry.arguments?.getString("id").orEmpty(),
+                        orgId = entry.arguments?.getString(Route.ARG_ORG),
+                        openFor = OpenFor.parse(entry.arguments?.getString(Route.ARG_FOR)),
+                        onBack = { navController.popBackStack() },
+                        // The recording is left behind, so the meeting's "done"
+                        // lands back on the library.
+                        onStartMeeting = {
+                            navController.navigate(Route.MEETING) { popUpTo(Route.HOME) }
+                        },
+                    )
+                }
             }
         }
     }
@@ -269,7 +303,9 @@ private fun ParleyNavHost(container: AppContainer) {
                     }
                 }
             },
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .underStatusBarInset(),
         )
     }
 }
