@@ -741,6 +741,89 @@ async function rpcCreateMeetingDraft(a: RpcArgs): Promise<unknown> {
   return draftForMcp(draft);
 }
 
+/** The saved draft `id` names, or an error that says where ids come from. */
+function draftById(id: unknown): MeetingDraft {
+  const key = asNonEmptyString(id);
+  if (!key) throw new Error("id is required");
+  const draft = useStore.getState().drafts.find((d) => d.id === key);
+  if (!draft) throw new Error(`no meeting draft with id ${key} — get ids from list_meeting_drafts`);
+  return draft;
+}
+
+/** A draft's times after an update: a moved start keeps the meeting's length
+ *  unless an end comes with it; a cleared start clears the end. */
+async function patchedTimes(d: MeetingDraft, a: RpcArgs): Promise<{ meetingAt: number | null; meetingEndAt: number | null }> {
+  let meetingAt = d.meetingAt;
+  let meetingEndAt = d.meetingEndAt;
+  const endAt = asTime(a.endAt, "endAt");
+  if ("startAt" in a) {
+    meetingAt = asTime(a.startAt, "startAt");
+    if (meetingAt == null) {
+      meetingEndAt = null;
+    } else if (endAt == null) {
+      const { DEFAULT_DURATION_MIN } = await import("./meeting/timeSlots");
+      const kept = d.meetingAt != null && d.meetingEndAt != null ? d.meetingEndAt - d.meetingAt : 0;
+      meetingEndAt = meetingAt + (kept > 0 ? kept : DEFAULT_DURATION_MIN * 60_000);
+    }
+  }
+  if (endAt != null) {
+    if (meetingAt == null) throw new Error("endAt needs a startAt");
+    if (endAt <= meetingAt) throw new Error("endAt must be after startAt");
+    meetingEndAt = endAt;
+  }
+  return { meetingAt, meetingEndAt };
+}
+
+/** A draft's agenda after an update: `agenda` replaces the list (an item whose
+ *  text is unchanged keeps its id and tick), `questions` adds to it. */
+function patchedTodos(d: MeetingDraft, a: RpcArgs): MeetingDraft["todos"] {
+  const replaces = Array.isArray(a.agenda);
+  if (!replaces && !Array.isArray(a.questions)) return d.todos;
+  const texts = agendaArg(replaces ? a : { agenda: d.todos.map((t) => t.text), questions: a.questions });
+  const kept = new Map<string, MeetingDraft["todos"]>();
+  for (const t of d.todos) kept.set(t.text.trim(), [...(kept.get(t.text.trim()) ?? []), t]);
+  return texts.map((text) => kept.get(text)?.shift() ?? { id: crypto.randomUUID(), text, done: false });
+}
+
+async function rpcUpdateMeetingDraft(a: RpcArgs): Promise<unknown> {
+  const d = draftById(a.id);
+  const s = useStore.getState();
+  const { meetingAt, meetingEndAt } = await patchedTimes(d, a);
+  const { autoMeetingTitle, retitleForTime } = await import("./meeting/draftTitle");
+  let title = retitleForTime(d.title, d.meetingAt, meetingAt, s.settings.language);
+  if (typeof a.title === "string") {
+    title = a.title.trim();
+    if (!title && meetingAt != null) title = autoMeetingTitle(meetingAt, s.settings.language);
+  }
+  const lists = playbookFromLists({
+    branches: asBranches(a.branches),
+    topics: asStringArray(a.topics),
+  });
+  const updated = s.updateDraft(d.id, {
+    title,
+    meetingAt,
+    meetingEndAt,
+    todos: patchedTodos(d, a),
+    playbook: {
+      branches: Array.isArray(a.branches) ? lists.branches : d.playbook.branches,
+      topics: Array.isArray(a.topics) ? lists.topics : d.playbook.topics,
+    },
+    ...(typeof a.reminderLeadMin === "number" && a.reminderLeadMin >= 0
+      ? { reminderLeadMin: Math.round(a.reminderLeadMin) }
+      : {}),
+    ...(typeof a.context === "string" ? { meetingContext: a.context.trim() } : {}),
+    ...("folderId" in a ? { meetingFolderId: asNonEmptyString(a.folderId) ?? null } : {}),
+  });
+  if (!updated) throw new Error(`no meeting draft with id ${d.id} — get ids from list_meeting_drafts`);
+  return draftForMcp(updated);
+}
+
+async function rpcDeleteMeetingDraft(a: RpcArgs): Promise<unknown> {
+  const d = draftById(a.id);
+  useStore.getState().deleteDraft(d.id);
+  return { id: d.id, deleted: true };
+}
+
 /** Every RPC action the frontend answers, keyed by the MCP tool's name. A Map,
  *  not an object: the action string comes off disk and must never resolve to
  *  something inherited from Object.prototype. */
@@ -770,6 +853,8 @@ const RPC_HANDLERS = new Map<string, (a: RpcArgs) => Promise<unknown>>([
   ["delete_recording", rpcDeleteRecording],
   ["list_meeting_drafts", rpcListMeetingDrafts],
   ["create_meeting_draft", rpcCreateMeetingDraft],
+  ["update_meeting_draft", rpcUpdateMeetingDraft],
+  ["delete_meeting_draft", rpcDeleteMeetingDraft],
 ]);
 
 /**
