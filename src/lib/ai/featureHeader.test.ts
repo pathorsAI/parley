@@ -19,6 +19,7 @@ import { askAboutMeeting } from "./ask";
 import { generatePostMeetingReport } from "./report";
 import { checkTodos } from "./todos";
 import { generateObjectResilient, streamObjectResilient } from "./generate";
+import { createAgendaCursor, cursorForMeeting } from "../meeting/agendaDelta";
 
 function settingsFor(provider: LlmProvider, extra: Record<string, string> = {}): Settings {
   return {
@@ -233,5 +234,89 @@ describe("checkTodos: which items were covered, and where", () => {
       todos: [{ id: "t1", text: BUDGET, done: false, aiDismissed: true }],
     });
     expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+/** The live meeting's pass (with a cursor) reads only what is new since the
+ *  last answered pass — pathorsAI/parley-internal#100. */
+describe("checkTodos with the live meeting's cursor", () => {
+  const todos = [
+    { id: "t1", text: "Confirm the budget", done: false },
+    { id: "t2", text: "Agree the timeline", done: false },
+  ];
+  const line = (n: number, text = `line number ${n}`) =>
+    seg({ id: `s${n}`, text, startMs: n * 10_000, endMs: n * 10_000 + 5_000 });
+  const upTo = (n: number) => Array.from({ length: n }, (_, i) => line(i + 1));
+  const prompt = (spy: ReturnType<typeof stubFetch>, i: number) => JSON.stringify(bodies(spy)[i].messages);
+  const unauthorized = () =>
+    new Response(JSON.stringify({ error: { message: "nope" } }), {
+      status: 401,
+      headers: { "content-type": "application/json" },
+    });
+
+  it("sends only the new lines, after a few earlier ones for context", async () => {
+    const cursor = createAgendaCursor("m1");
+    const spy = stubFetch('{"done":[]}');
+    await checkTodos({ settings: hosted, segments: upTo(10), todos, cursor });
+    await checkTodos({ settings: hosted, segments: upTo(12), todos, cursor });
+    const second = prompt(spy, 1);
+    expect(second).toContain("line number 11");
+    expect(second).toContain("line number 12");
+    expect(second).toContain("line number 7"); // context, before the boundary
+    expect(second).not.toContain("line number 6");
+    expect(second).toContain("New since the last check");
+  });
+
+  it("makes no call when nothing new was said", async () => {
+    const cursor = createAgendaCursor("m1");
+    const spy = stubFetch('{"done":[]}');
+    await checkTodos({ settings: hosted, segments: upTo(3), todos, cursor });
+    const silent = [...upTo(3), seg({ id: "s4", text: "typing…", isFinal: false, startMs: 40_000 })];
+    await checkTodos({ settings: hosted, segments: silent, todos, cursor });
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("makes no call when every item is covered", async () => {
+    const cursor = createAgendaCursor("m1");
+    const spy = stubFetch('{"done":[]}');
+    await checkTodos({ settings: hosted, segments: upTo(3), todos: todos.map((t) => ({ ...t, done: true })), cursor });
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("does not advance past lines a failed call never delivered", async () => {
+    const cursor = createAgendaCursor("m1");
+    stubFetch('{"done":[]}');
+    await checkTodos({ settings: hosted, segments: upTo(2), todos, cursor });
+    vi.stubGlobal("fetch", vi.fn(async () => unauthorized()));
+    await expect(checkTodos({ settings: hosted, segments: upTo(4), todos, cursor })).rejects.toThrow();
+    const spy = stubFetch('{"done":[{"id":"t1","at":"0:30"}]}');
+    const done = await checkTodos({ settings: hosted, segments: upTo(5), todos, cursor });
+    expect(done).toEqual([{ id: "t1", atMs: 30_000 }]);
+    const retry = prompt(spy, 0);
+    for (const n of [3, 4, 5]) expect(retry).toContain(`line number ${n}`);
+  });
+
+  it("an item covered across the boundary still has its opening line in view", async () => {
+    const cursor = createAgendaCursor("m1");
+    const spy = stubFetch('{"done":[]}');
+    const opening = line(2, "About the budget, let me check with finance.");
+    await checkTodos({ settings: hosted, segments: [line(1), opening], todos, cursor });
+    await checkTodos({ settings: hosted, segments: [line(1), opening, line(3, "Yes, it is approved.")], todos, cursor });
+    const second = prompt(spy, 1);
+    expect(second).toContain("let me check with finance");
+    expect(second).toContain("it is approved");
+  });
+
+  it("starts over for a new meeting", async () => {
+    let cursor = cursorForMeeting(null, "m1");
+    const spy = stubFetch('{"done":[]}');
+    await checkTodos({ settings: hosted, segments: upTo(3), todos, cursor });
+    cursor = cursorForMeeting(cursor, "m1"); // resume: same place
+    await checkTodos({ settings: hosted, segments: upTo(3), todos, cursor });
+    expect(spy).toHaveBeenCalledTimes(1);
+    cursor = cursorForMeeting(cursor, "m2"); // a new meeting, same ids by chance
+    await checkTodos({ settings: hosted, segments: upTo(3), todos, cursor });
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(prompt(spy, 1)).toContain("line number 1");
   });
 });
