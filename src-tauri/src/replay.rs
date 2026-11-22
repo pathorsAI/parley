@@ -25,7 +25,7 @@ use crate::transcription::common::ensure_crypto_provider;
 use crate::transcription::provider::{self, Batch, Credential};
 use crate::transcription::{Entry, SessionRequest, SttProvider};
 
-/// Cache payload persisted per uploaded file (keyed by name+size). Holds the
+/// Cache payload persisted per uploaded file (keyed by content hash). Holds the
 /// successful transcription so an identical re-upload skips the provider (and billing).
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -115,12 +115,12 @@ pub async fn transcribe_file(
             log::warn!("replay: missing api key provider={}", provider);
         })?;
 
-    // Cache: an identical re-upload (same file name + byte size, same provider)
+    // Cache: an identical re-upload (same file content, same provider)
     // reuses the prior SUCCESSFUL transcription — no compression, no provider
     // call, no billing. Failures are never cached, so a previously-failed file
     // re-transcribes.
     let suffix = cache_suffix(&provider, upload.model);
-    let cache_path = cache_file_path(&app, &path, suffix.as_deref());
+    let cache_path = cache_file_path(&app, &path, suffix.as_deref()).await;
     if !fresh {
         if let Some(cached) = read_cached(cache_path.as_deref()).await {
             return Ok(cached);
@@ -336,45 +336,36 @@ async fn local_transcribe(
     Ok(result)
 }
 
-/// Cache file path for an uploaded recording, keyed by file name + byte size (per
-/// the user's "same name, same size" rule) and the provider (so a Soniox result
-/// isn't served for, say, a Deepgram request — different diarization). Lives in
-/// the app cache dir. `None` if the file can't be stat'd or there's no cache dir.
-fn cache_file_path(
+/// Cache file path for an uploaded recording, keyed by the SHA-256 of its bytes
+/// and the provider (so a Soniox result isn't served for, say, a Deepgram
+/// request — different diarization). Lives in the app cache dir. `None` if the
+/// file can't be read or there's no cache dir.
+///
+/// It used to be keyed by file name + byte size. Recorders reuse file names and
+/// constant-bitrate recordings of the same length are the same size, so a new
+/// meeting could be handed an older meeting's transcript (see
+/// [`crate::cache::content_hash`]).
+async fn cache_file_path(
     app: &AppHandle,
     path: &str,
     suffix: Option<&str>,
 ) -> Option<std::path::PathBuf> {
-    let size = std::fs::metadata(path).ok()?.len();
-    let name = std::path::Path::new(path)
-        .file_name()?
-        .to_string_lossy()
-        .into_owned();
     let dir = app
         .path()
         .app_cache_dir()
         .ok()?
         .join(crate::cache::TRANSCRIPTIONS_DIR);
-    Some(dir.join(cache_file_name(&name, size, suffix)))
+    let hash = crate::cache::content_hash_async(path.into()).await?;
+    Some(dir.join(cache_file_name(&hash, suffix)))
 }
 
-/// The cache file name for an upload named `name` of `size` bytes, with the
-/// provider's [`cache_suffix`].
-fn cache_file_name(name: &str, size: u64, suffix: Option<&str>) -> String {
-    // Sanitize the name to a safe single filename component.
-    let safe: String = name
-        .chars()
-        .map(|c| {
-            if c.is_alphanumeric() || matches!(c, '.' | '-' | '_') {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
+/// The cache file name for an upload whose bytes hash to `hash`, with the
+/// provider's [`cache_suffix`]. The `v2-` prefix keeps these apart from the old
+/// name+size entries still on users' disks, which are never read again.
+fn cache_file_name(hash: &str, suffix: Option<&str>) -> String {
     match suffix {
-        None => format!("{safe}-{size}.json"),
-        Some(suffix) => format!("{safe}-{size}-{suffix}.json"),
+        None => format!("v2-{hash}.json"),
+        Some(suffix) => format!("v2-{hash}-{suffix}.json"),
     }
 }
 
@@ -596,32 +587,25 @@ mod tests {
     #[test]
     fn cache_file_names_stay_stable() {
         // Existing caches on users' disks are found by exactly these names.
-        let name = |file: &str, size: u64, provider: &str, model: Option<&str>| {
-            cache_file_name(file, size, cache_suffix(provider, model).as_deref())
+        let name = |hash: &str, provider: &str, model: Option<&str>| {
+            cache_file_name(hash, cache_suffix(provider, model).as_deref())
         };
-        assert_eq!(
-            name("rec.ogg", 42, "soniox", Some("stt-async-v5")),
-            "rec.ogg-42.json"
-        );
+        assert_eq!(name("ab12", "soniox", Some("stt-async-v5")), "v2-ab12.json");
         for provider in ["deepgram", "assemblyai", "openai", "gemini", "parley"] {
             assert_eq!(
-                name("rec.ogg", 42, provider, Some("m")),
-                format!("rec.ogg-42-{provider}.json")
+                name("ab12", provider, Some("m")),
+                format!("v2-ab12-{provider}.json")
             );
         }
         assert_eq!(
-            name("會議 #1.m4a", 7, "parley", None),
-            "會議__1.m4a-7-parley.json"
+            name("ab12", "local", Some("whisper-small-q5_1")),
+            "v2-ab12-local-whisper-small-q5_1.json"
         );
         assert_eq!(
-            name("a/b.wav", 1, "local", Some("whisper-small-q5_1")),
-            "a_b.wav-1-local-whisper-small-q5_1.json"
-        );
-        assert_eq!(
-            name("a.wav", 1, "local", None),
-            format!("a.wav-1-local-{}.json", crate::local_stt::DEFAULT_MODEL_ID)
+            name("ab12", "local", None),
+            format!("v2-ab12-local-{}.json", crate::local_stt::DEFAULT_MODEL_ID)
         );
         // An id without a registry row still keys by the id.
-        assert_eq!(name("a.wav", 1, "retired", None), "a.wav-1-retired.json");
+        assert_eq!(name("ab12", "retired", None), "v2-ab12-retired.json");
     }
 }

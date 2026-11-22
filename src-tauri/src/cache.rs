@@ -29,6 +29,31 @@ pub const DIARIZATIONS_DIR: &str = "diarizations";
 /// Decoded playback fallbacks (subdirectory of the app-cache dir; playback.rs).
 pub const PLAYBACK_DIR: &str = "playback";
 
+/// Identity of a file's *content* for cache keys: lowercase-hex SHA-256 of
+/// its bytes. `None` when the file can't be read.
+///
+/// Caches used to key uploads by file name + byte size. Recorders reuse names
+/// (`REC001.WAV`, `audio.m4a`) and constant-bitrate formats make same-length
+/// recordings byte-for-byte the same size, so two different meetings could
+/// share a key and the second silently got the first one's transcript. Hashing
+/// the bytes keeps the "identical re-upload is free" behaviour without that
+/// collision. Reads the whole file: call it off the async runtime.
+pub fn content_hash(path: &Path) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher).ok()?;
+    Some(crate::model_download::to_hex(&hasher.finalize()))
+}
+
+/// [`content_hash`] on a blocking thread, for async callers.
+pub async fn content_hash_async(path: std::path::PathBuf) -> Option<String> {
+    tauri::async_runtime::spawn_blocking(move || content_hash(&path))
+        .await
+        .ok()
+        .flatten()
+}
+
 /// Which cache to clear.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -138,6 +163,30 @@ mod tests {
 
         assert_eq!(dir_size(&root), 42);
         assert_eq!(dir_size(&root.join("does-not-exist")), 0);
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn content_hash_tells_apart_same_name_same_size_recordings() {
+        // Two meetings saved under the same recorder file name with the same
+        // byte size (constant bitrate, same length) must not share a key.
+        let root = std::env::temp_dir().join(format!("parley-hash-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("monday")).unwrap();
+        std::fs::create_dir_all(root.join("tuesday")).unwrap();
+        let monday = root.join("monday").join("REC001.WAV");
+        let tuesday = root.join("tuesday").join("REC001.WAV");
+        std::fs::write(&monday, [1u8; 64]).unwrap();
+        std::fs::write(&tuesday, [2u8; 64]).unwrap();
+        let copy = root.join("renamed.wav");
+        std::fs::write(&copy, [1u8; 64]).unwrap();
+
+        let a = content_hash(&monday).unwrap();
+        assert_ne!(a, content_hash(&tuesday).unwrap());
+        // Same bytes under another name is still the same recording.
+        assert_eq!(a, content_hash(&copy).unwrap());
+        assert_eq!(a.len(), 64);
+        assert_eq!(content_hash(&root.join("missing.wav")), None);
 
         std::fs::remove_dir_all(&root).unwrap();
     }
