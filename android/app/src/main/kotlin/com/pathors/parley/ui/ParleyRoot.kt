@@ -6,6 +6,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.WindowInsets
@@ -286,28 +287,36 @@ private fun ParleyNavHost(container: AppContainer) {
     // After a sign-in that started in the wizard, the rest of it covers the
     // library until it is left — iOS `MainTabs.onboardingStart`.
     if (onboardingStart != null) {
-        OnboardingWizard(
-            container = container,
-            start = onboardingStart,
-            hasAccount = true,
-            onFinish = { exit ->
-                container.onboarding.finish()
-                DemoMode.clearOnboarding()
-                when (exit) {
-                    OnboardingExit.SKIP -> Unit
-                    OnboardingExit.RECORD -> navController.navigate(Route.MEETING)
-                    // The sample, loaded into the library, opens as the lap's
-                    // recording — the checklist's own walk-through, without its pause.
-                    OnboardingExit.SAMPLE -> scope.launch {
-                        val sample = container.sample.load(language) ?: return@launch
-                        navController.navigate(Route.recording(sample.id, guided = true))
-                    }
-                }
-            },
-            modifier = Modifier
+        // Over the status bar too, so the Library's light bars, which run up
+        // behind it, do not show above the wizard.
+        Box(
+            Modifier
                 .fillMaxSize()
-                .underStatusBarInset(),
-        )
+                .background(MaterialTheme.colorScheme.background),
+        ) {
+            OnboardingWizard(
+                container = container,
+                start = onboardingStart,
+                hasAccount = true,
+                onFinish = { exit ->
+                    container.onboarding.finish()
+                    DemoMode.clearOnboarding()
+                    when (exit) {
+                        OnboardingExit.SKIP -> Unit
+                        OnboardingExit.RECORD -> navController.navigate(Route.MEETING)
+                        // The sample, loaded into the library, opens as the lap's
+                        // recording — the checklist's own walk-through, without its pause.
+                        OnboardingExit.SAMPLE -> scope.launch {
+                            val sample = container.sample.load(language) ?: return@launch
+                            navController.navigate(Route.recording(sample.id, guided = true))
+                        }
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .underStatusBarInset(),
+            )
+        }
     }
 }
 
