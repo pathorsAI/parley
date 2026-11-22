@@ -422,7 +422,7 @@ export function useAnalysisEngine() {
         void runLiveAnalysis();
       }
 
-      // Auto-check the TODO agenda every ~45s while recording. Each pass sends
+      // Auto-check the to-do agenda every ~45s while recording. Each pass sends
       // only the speech new since the last one that got an answer (and makes
       // no call when nothing new was said) — see meeting/agendaDelta.ts.
       if (

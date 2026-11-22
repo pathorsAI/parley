@@ -34,6 +34,39 @@ const DELTA_NOTE =
   "earlier lines given for context: judge each item by the new lines (an item may begin in the " +
   "context and conclude in the new lines). Items not covered by them stay open.";
 
+type AgendaPrompt = { body: string; plan: ReturnType<typeof planAgendaCheck> };
+
+/** The live meeting's prompt body: only speech new since the cursor's last
+ *  pass, behind a few already-checked lines. Null when nothing new was said. */
+function deltaPrompt(
+  cursor: AgendaCursor,
+  segments: TranscriptSegment[],
+  open: TodoItem[],
+  names: Record<string, string> | undefined,
+): AgendaPrompt | null {
+  // Speaker labels read the whole meeting, so a slice is labelled as the full transcript would be.
+  const labels = labelContextOf(segments);
+  const line = (s: TranscriptSegment) =>
+    `[${formatClock(s.startMs)}] [${speakerLabel(s, names, labels)}] ${s.text.trim()}`;
+  const plan = planAgendaCheck(cursor, segments, open, line);
+  if (!plan) return null;
+  const fresh = plan.fresh.map(line).join("\n");
+  const body = plan.context.length
+    ? `Earlier lines (already checked, context only):\n${plan.context.map(line).join("\n")}\n\nNew since the last check:\n${fresh}`
+    : `New since the last check:\n${fresh}`;
+  return { body, plan };
+}
+
+/** A one-off check's prompt body: the whole transcript. Null when it is empty. */
+function fullPrompt(
+  segments: TranscriptSegment[],
+  names: Record<string, string> | undefined,
+): AgendaPrompt | null {
+  const transcript = transcriptWithTimestamps(segments, names);
+  if (!transcript.trim()) return null;
+  return { body: `Transcript so far:\n${transcript}`, plan: null };
+}
+
 /**
  * Ask the LLM which checklist items have been covered in the meeting so far,
  * and where: the transcript goes in with its [m:ss] stamps and each covered
@@ -58,24 +91,9 @@ export async function checkTodos(opts: {
   const open = todos.filter((t) => !t.done && !t.aiDismissed);
   if (open.length === 0) return [];
 
-  let body: string;
-  let plan: ReturnType<typeof planAgendaCheck> = null;
-  if (cursor) {
-    // Speaker labels read the whole meeting, so a slice is labelled as the full transcript would be.
-    const labels = labelContextOf(segments);
-    const line = (s: TranscriptSegment) =>
-      `[${formatClock(s.startMs)}] [${speakerLabel(s, names, labels)}] ${s.text.trim()}`;
-    plan = planAgendaCheck(cursor, segments, open, line);
-    if (!plan) return [];
-    const fresh = plan.fresh.map(line).join("\n");
-    body = plan.context.length
-      ? `Earlier lines (already checked, context only):\n${plan.context.map(line).join("\n")}\n\nNew since the last check:\n${fresh}`
-      : `New since the last check:\n${fresh}`;
-  } else {
-    const transcript = transcriptWithTimestamps(segments, names);
-    if (!transcript.trim()) return [];
-    body = `Transcript so far:\n${transcript}`;
-  }
+  const prompt = cursor ? deltaPrompt(cursor, segments, open, names) : fullPrompt(segments, names);
+  if (!prompt) return [];
+  const { body, plan } = prompt;
 
   const list = open.map((t) => `- [${t.id}] ${t.text}`).join("\n");
   const mc = meetingBriefText(useStore.getState()).trim();

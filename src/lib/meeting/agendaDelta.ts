@@ -38,7 +38,7 @@ export function createAgendaCursor(meetingId: string | null = null): AgendaCurso
 /** The cursor for `meetingId`: `cursor` itself when it already belongs to
  *  that meeting (a resume keeps its place), otherwise a fresh one. */
 export function cursorForMeeting(cursor: AgendaCursor | null, meetingId: string | null): AgendaCursor {
-  return cursor && cursor.meetingId === meetingId ? cursor : createAgendaCursor(meetingId);
+  return cursor?.meetingId === meetingId ? cursor : createAgendaCursor(meetingId);
 }
 
 export interface AgendaCheckPlan {
