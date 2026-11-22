@@ -1938,7 +1938,8 @@ private struct RecordingCard: View {
     /// swipe acts on. No transcript snippet, duration, folder or findings.
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
+            // On the title's first line when the title wraps to two.
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 badge
                 Text(
                     verbatim: summary.title.isEmpty
@@ -1986,20 +1987,18 @@ private struct RecordingCard: View {
         }
     }
 
-    /// Where the recording came from, as small caps text rather than a tinted
-    /// chip. `LIVE` keeps the recording red — it is the one word on this screen
-    /// that says "a microphone was open" — and `UPLOAD` is secondary, because a
-    /// file someone imported is the unremarkable case.
+    /// Where the recording came from, as a glyph (`RecordingSourceIcon`):
+    /// the waveform for live, the upload mark for a file. The bundled sample
+    /// also says 範例, since it is neither the user's meeting nor their file.
+    @ViewBuilder
     private var badge: some View {
-        let live = summary.source == "live"
+        RecordingSourceIcon(source: summary.source)
+            .font(.parley.footnote)
         if SampleManifest.isSample(id: summary.id) {
-            return Text("SAMPLE")
+            Text("SAMPLE")
                 .font(.parley.caption2.weight(.semibold))
                 .foregroundStyle(Color(.secondaryLabel))
         }
-        return Text(live ? "LIVE" : "UPLOAD")
-            .font(.parley.caption2.weight(.semibold))
-            .foregroundStyle(live ? Theme.recording : Color(.secondaryLabel))
     }
 }
 

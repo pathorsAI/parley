@@ -322,18 +322,16 @@ private enum FolderPalette {
 
 // MARK: - Recent recordings
 
-/// One of 最近錄音's rows: a waveform glyph, the title, and the meta line the
+/// One of 最近錄音's rows: where it came from (`RecordingSourceIcon`), the title, and the meta line the
 /// desktop's list has — when the meeting was and how many people spoke.
 struct RecentRecordingRow: View {
     let summary: CloudRecordingSummary
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "waveform")
+            RecordingSourceIcon(source: summary.source)
                 .font(.parley.subheadline)
-                .foregroundStyle(Color(.secondaryLabel))
                 .frame(width: 20)
-                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
                 Text(
                     verbatim: summary.title.isEmpty
@@ -348,6 +346,23 @@ struct RecentRecordingRow: View {
         }
         .padding(.vertical, 11)
         .contentShape(Rectangle())
+    }
+}
+
+/// Where a recording came from, as a glyph rather than a word, as the
+/// desktop's list marks it: the waveform for a meeting recorded live, an
+/// arrow up out of a document for a file that was uploaded. Secondary grey —
+/// a fact about the row, not something to tap. VoiceOver reads 現場 / 上傳.
+///
+/// `arrow.up.doc` rather than `square.and.arrow.up`, which on iOS is Share.
+struct RecordingSourceIcon: View {
+    let source: String
+
+    var body: some View {
+        let live = source == "live"
+        Image(systemName: live ? "waveform" : "arrow.up.doc")
+            .foregroundStyle(Color(.secondaryLabel))
+            .accessibilityLabel(live ? Text("LIVE") : Text("UPLOAD"))
     }
 }
 
