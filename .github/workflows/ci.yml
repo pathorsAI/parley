@@ -167,6 +167,12 @@ jobs:
           workspaces: src-tauri
           # Dependency artifacts live in the build dir now, not in target/.
           cache-directories: ${{ env.CARGO_BUILD_BUILD_DIR }}
+          # whisper.cpp's CMake cache stores cl.exe's absolute path, which names
+          # the MSVC toolset version. When the runner image moves to a newer
+          # toolset, a cache restored from the old one points at a cl.exe that no
+          # longer exists and every native build fails. Keying on the toolset
+          # starts a fresh cache instead.
+          key: msvc-${{ env.VCToolsVersion }}
 
       - name: Provide placeholder build inputs
         # Same stand-ins as the macOS job, for the Windows resource list in
