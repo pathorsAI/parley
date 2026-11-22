@@ -132,8 +132,13 @@ struct LibraryView: View {
             // checklist, which lives in Meetings; the overview then takes the
             // request on appearing (`takeChecklistRequest`).
             .onChange(of: router.checklistRequest) { _, _ in section = .meetings }
+            // Still the page's title (VoiceOver, the back button on pushed
+            // pages), but drawn by `libraryTitle` on the toolbar's row rather
+            // than as a large title on a line of its own under the buttons.
             .navigationTitle("Library")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                libraryTitle
                 if section == .meetings {
                     importButton
                     scopeMenu
@@ -658,6 +663,33 @@ struct LibraryView: View {
     /// document", and the stacked `square.and.arrow.down.on.square` was too
     /// busy to read. The library's download (`downloadAction`) is
     /// `arrow.down.circle`, a different shape, so the two do not collide.
+    /// 錄音庫 at large-title size, leading, on the same row as import and the
+    /// scope menu — one line for the page's name and its two actions, where
+    /// the system's large title put the name on a line of its own below them.
+    /// The inline title it replaces is blanked (`principal`), so the name is
+    /// not said twice.
+    @ToolbarContentBuilder
+    private var libraryTitle: some ToolbarContent {
+        if #available(iOS 26.0, *) {
+            // No glass capsule behind a title: it is text, not a button.
+            ToolbarItem(placement: .topBarLeading) { libraryTitleText }
+                .sharedBackgroundVisibility(.hidden)
+        } else {
+            ToolbarItem(placement: .topBarLeading) { libraryTitleText }
+        }
+        ToolbarItem(placement: .principal) {
+            Color.clear.frame(width: 1, height: 1).accessibilityHidden(true)
+        }
+    }
+
+    private var libraryTitleText: some View {
+        Text("Library")
+            .font(.parley.largeTitle)
+            .foregroundStyle(Color(.label))
+            .fixedSize()
+            .accessibilityAddTraits(.isHeader)
+    }
+
     @ToolbarContentBuilder
     private var importButton: some ToolbarContent {
         if scope == nil {
