@@ -417,6 +417,14 @@ final class MeetingRecorder: ObservableObject {
         reconnectTask?.cancel()
         reconnectTask = nil
 
+        // Taken before the microphone closes: `cap.stop()` ends the audio
+        // session, which is the only thing keeping a backgrounded app running,
+        // and the relay drain and filing below still need a few seconds. Once
+        // the audio is in the background session the system finishes it
+        // whatever happens to this process (parley#727).
+        let hold = BackgroundGrace.hold("meeting-stop")
+        defer { hold.end() }
+
         let cap = capture
         capture = nil
         await cap?.stop()
@@ -806,10 +814,11 @@ final class MeetingRecorder: ObservableObject {
     ///
     /// Queued first and unconditionally: being signed out, offline or out of
     /// quota decides when a meeting reaches the cloud, never whether it is
-    /// kept. The attempt runs under a background task, so locking the phone
-    /// the moment a meeting ends no longer cuts the upload off; if iOS calls
-    /// time anyway the entry stays queued and the next foregrounding or
-    /// network change sends it.
+    /// kept. The audio goes through a background `URLSession`, so locking the
+    /// phone the moment a meeting ends no longer cuts the upload off: the
+    /// system finishes the transfer and relaunches the app for the meta push
+    /// (parley#727). The wait for it runs under a background task; when that
+    /// runs out the transfer carries on regardless.
     private func upload(app: AppState) async {
         guard let uploader else {
             phase = .idle
@@ -874,6 +883,15 @@ final class MeetingRecorder: ObservableObject {
                 localized:
                     "You're out of quota. The recording is safe on this phone and will sync once the quota resets."
             )
+        } catch is BackgroundAudioUpload.StillUploading {
+            // The audio is with the system, which keeps sending it with the
+            // phone locked and finishes the sync when it lands.
+            status = String(
+                localized: "Uploading in the background. You can lock your phone; it finishes on its own.")
+        } catch is CancellationError {
+            // The background task ran out while waiting; same story.
+            status = String(
+                localized: "Uploading in the background. You can lock your phone; it finishes on its own.")
         } catch {
             status = String(
                 localized:

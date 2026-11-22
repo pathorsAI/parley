@@ -43,8 +43,12 @@
     /// `docs/design/ios-recording-page.md`), `library-all` (the Library's full
     /// list, pushed over the overview as See all opens it), `library-folder-empty`
     /// (an empty folder's page, for the empty state), `library-org` (the
-    /// Library on the demo org's scope), and `voicehistory`
-    /// (Library › Voice typing, one entry per polish outcome).
+    /// Library on the demo org's scope), and `voicehistory` (Library ›
+    /// Voice typing, one entry per polish outcome), and the onboarding's steps:
+    /// `onboarding-account` (run with `-ParleyDemo signedOut`), then, signed in
+    /// and over the tabs, `onboarding-signed-in`, `onboarding-org` /
+    /// `onboarding-invited` / `onboarding-joined`, `onboarding-perms`,
+    /// `onboarding-mic`, `onboarding-context` and `onboarding-done`.
     @MainActor
     final class ScreenshotDemo: ObservableObject {
         static let shared = ScreenshotDemo()
@@ -72,6 +76,37 @@
         @Published var allowsChecklist = false
         /// Library pushes the sample recording, as the lap opens it.
         @Published var showSample = false
+        /// The onboarding step to open on (`onboarding-*` routes). The account
+        /// step runs signed out; the rest run signed in, over the tabs.
+        @Published var onboarding: OnboardingScenario?
+
+        enum OnboardingScenario: Equatable {
+            case account, accountConfirmed, org, orgInvited, orgJoined, perms, mic, context, done
+
+            /// The step the scenario opens the wizard on.
+            var step: OnboardingStep {
+                switch self {
+                case .account, .accountConfirmed: return .account
+                case .org, .orgInvited, .orgJoined: return .org
+                case .perms: return .perms
+                case .mic: return .mic
+                case .context: return .context
+                case .done: return .done
+                }
+            }
+
+            /// Runs signed in, over the tabs. Only the sign-in card itself is
+            /// signed out (`-ParleyDemo signedOut`).
+            var isAfterSignIn: Bool { self != .account }
+        }
+
+        /// The invitation the `onboarding-invited` route offers.
+        static var onboardingInvitation: CloudInvitation {
+            CloudInvitation(
+                id: "demo-invitation", organizationId: "demo-org-invite",
+                organizationName: t("Northwind Sales", "北風業務部"), role: "member",
+                status: "pending", expiresAtMs: nil)
+        }
         /// Library switches to its Voice typing section, seeded with one
         /// history entry per polish outcome (`voicehistory`).
         @Published var showVoiceTyping = false
@@ -171,6 +206,7 @@
             pressResetChecklist = false
             allowsChecklist = false
             showSample = false
+            onboarding = nil
             showVoiceTyping = false
             showAllRecordings = false
             showFolder = nil
@@ -260,6 +296,15 @@
             case "keyboard":
                 tab = .settings
                 focusKeyboardSection = true
+            case "onboarding-account": onboarding = .account
+            case "onboarding-signed-in": onboarding = .accountConfirmed
+            case "onboarding-org": onboarding = .org
+            case "onboarding-invited": onboarding = .orgInvited
+            case "onboarding-joined": onboarding = .orgJoined
+            case "onboarding-perms": onboarding = .perms
+            case "onboarding-mic": onboarding = .mic
+            case "onboarding-context": onboarding = .context
+            case "onboarding-done": onboarding = .done
             case "settings": tab = .settings
             case "movetofolder":
                 tab = .library

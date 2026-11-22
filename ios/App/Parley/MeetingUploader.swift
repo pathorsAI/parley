@@ -130,6 +130,12 @@ final class MeetingUploader {
         /// head of the queue. Nil for an entry that has only ever failed on
         /// the network, or never failed at all.
         var parking: UploadParking?
+        /// When a background transfer landed this entry's audio on the server
+        /// (parley#727). Set by `markAudioUploaded` from the session delegate,
+        /// possibly in a process that was relaunched just to hear about it, so
+        /// the next attempt skips the PUT and only makes the follow-up calls.
+        /// Nil until then — and on every manifest written before it existed.
+        var audioUploadedAt: Date?
 
         /// Both new fields decode with a default, because this manifest is
         /// written to disk and read back by a *later build of the app*. Someone
@@ -139,7 +145,7 @@ final class MeetingUploader {
         /// manifest reads as exactly what it was: a clock-named live recording.
         enum CodingKeys: String, CodingKey {
             case id, startedAt, durationMs, segments, defaultSave, source, title
-            case queuedAt, failureCount, lastError, parking
+            case queuedAt, failureCount, lastError, parking, audioUploadedAt
         }
 
         init(
@@ -175,6 +181,7 @@ final class MeetingUploader {
             failureCount = try container.decodeIfPresent(Int.self, forKey: .failureCount) ?? 0
             lastError = try container.decodeIfPresent(String.self, forKey: .lastError)
             parking = try container.decodeIfPresent(UploadParking.self, forKey: .parking)
+            audioUploadedAt = try container.decodeIfPresent(Date.self, forKey: .audioUploadedAt)
         }
 
         /// The name this recording lands under.
@@ -344,6 +351,11 @@ final class MeetingUploader {
             return .uploaded
         } catch is UploadInFlight {
             return .busy
+        } catch is BackgroundAudioUpload.StillUploading {
+            // Handed to the system and still going (or waiting for a network):
+            // its completion finishes the entry. Not a failure, and nothing
+            // behind it is blocked by a transfer the system is running.
+            return .busy
         } catch let error as CloudError
             where UploadFailureDisposition.of(httpStatus: error.status) == .park
         {
@@ -415,6 +427,11 @@ final class MeetingUploader {
     static func deleteQueued(id: String) -> Bool {
         guard inFlight.claim(id) else { return false }
         defer { inFlight.release(id) }
+        // The system may be reading the Ogg for a background transfer; stop it
+        // before the file goes. Fire-and-forget: a transfer that slips through
+        // fails on the missing file, and its completion finds no manifest to
+        // touch.
+        Task { await BackgroundAudioUpload.shared.cancel(id: id) }
         removePending(id: id)
         DiagnosticsJournal.record("sync_deleted_by_user", "queued recording deleted")
         return true
@@ -448,6 +465,9 @@ final class MeetingUploader {
             return try await upload(pending, cloud: cloud, orgs: orgs, isRetry: isRetry)
         } catch is CancellationError {
             throw CancellationError()
+        } catch let handedOff as BackgroundAudioUpload.StillUploading {
+            // The caller stopped waiting; the transfer did not stop.
+            throw handedOff
         } catch {
             let code = FeedbackErrorCode.of(error)
             noteFailure(id: pending.id, code: code, error: error)
@@ -540,7 +560,28 @@ final class MeetingUploader {
     ) async throws -> Outcome {
         let finals = pending.segments
         let personalFolderId = pending.defaultSave.isOrg ? nil : pending.defaultSave.folderId
-        let audio = try Data(contentsOf: audioURL(for: pending.id))
+        let audioFile = try audioURL(for: pending.id)
+        let audioBytes = (try? audioFile.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+
+        // The audio goes through the background session (parley#727): the
+        // system finishes it even if the app is suspended the moment this
+        // starts. The queued Ogg *is* the request body, so it is uploaded in
+        // place — never moved or deleted while a transfer may be reading it.
+        // Re-read from disk rather than from `pending`: a transfer that landed
+        // while this pass was getting here has already written it down. First,
+        // before anything else talks to the server, so the transfer is in the
+        // system's hands as early as possible.
+        if !audioAlreadyUploaded(id: pending.id) {
+            try await BackgroundAudioUpload.shared.upload(
+                id: pending.id, fileURL: audioFile,
+                request: cloud.audioUploadRequest(id: pending.id, bytes: audioBytes),
+                bytes: audioBytes)
+        }
+        // The rest is a handful of small calls. The transfer may have finished
+        // with the app in the background and the caller's own grace long
+        // spent, so hold the app awake for them.
+        let hold = await BackgroundGrace.hold("meeting-upload-finish")
+        defer { Task { @MainActor in hold.end() } }
 
         // A retry that rebuilt the entry from the manifest used to push the
         // clock name and the queued folder straight back over a recording that
@@ -562,7 +603,6 @@ final class MeetingUploader {
             summary = fresh
         }
 
-        try await cloud.uploadAudio(id: pending.id, ogg: audio)
         try await cloud.pushRecording(id: pending.id, summary: summary, meta: meta)
 
         var outcome = Outcome(
@@ -603,6 +643,66 @@ final class MeetingUploader {
         }
         return outcome
     }
+
+    // MARK: background transfer bookkeeping (parley#727)
+
+    /// Whether the entry's manifest records a background transfer that landed.
+    private static func audioAlreadyUploaded(id: String) -> Bool {
+        loadManifest(id: id)?.audioUploadedAt != nil
+    }
+
+    private static func loadManifest(id: String) -> PendingUpload? {
+        guard let url = try? manifestURL(for: id), let data = try? Data(contentsOf: url) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(PendingUpload.self, from: data)
+    }
+
+    /// A background transfer of this entry's audio finished with a 2xx. Called
+    /// from the session delegate, in whatever process heard about it. A
+    /// manifest that is gone (the entry finished or was deleted) is left gone.
+    static func markAudioUploaded(id: String, at date: Date = Date()) {
+        guard let url = try? manifestURL(for: id), var entry = loadManifest(id: id) else { return }
+        entry.audioUploadedAt = date
+        if let data = try? JSONEncoder().encode(entry) {
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
+    /// A background transfer failed with nobody in this process waiting to
+    /// count it — the app was relaunched for it, or the waiter had given up.
+    static func noteBackgroundFailure(id: String, error: Error) {
+        let code = FeedbackErrorCode.of(error)
+        noteFailure(id: id, code: code, error: error)
+        AppLog.sync.error("upload \(id, privacy: .public) failed in background: \(code, privacy: .public)")
+        DiagnosticsJournal.record("sync_\(code)", "background upload failed")
+    }
+
+    /// Make the follow-up calls (meta push, share, filing, retiring the Ogg)
+    /// for an entry whose audio a background transfer just landed with nobody
+    /// waiting — typically in a process the system launched in the background
+    /// for the transfer. Uses the stored session token, as every queue pass
+    /// does; a token the Keychain cannot hand over (or a failing call) leaves
+    /// the entry queued with its audio marked as uploaded, and the next pass
+    /// makes only these calls.
+    static func finishAfterBackgroundUpload(id: String) async {
+        let hold = await BackgroundGrace.hold("meeting-upload-followup")
+        defer { Task { @MainActor in hold.end() } }
+        let cloud = CloudClient { KeychainStore.get(AppState.tokenKey) }
+        // `retry` goes through the in-flight claim, so a pass already holding
+        // this entry finishes it instead and this returns at once.
+        let done = await retry(id: id, cloud: cloud, orgs: [])
+        AppLog.sync.info(
+            "upload \(id, privacy: .public) follow-up after background transfer: \(done ? "done" : "deferred", privacy: .public)"
+        )
+        await MainActor.run {
+            NotificationCenter.default.post(name: uploadQueueChanged, object: nil)
+        }
+    }
+
+    /// Posted on the main queue when a background completion changed the
+    /// queue, so the counts on screen can be re-read.
+    static let uploadQueueChanged = Notification.Name("ParleyUploadQueueChanged")
 
     /// Whether a transcript has anything in it for the filing pass to read.
     private static func hasSpokenText(_ segments: [TranscriptSegment]) -> Bool {
