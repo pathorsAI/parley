@@ -661,16 +661,16 @@ struct LibraryView: View {
     /// stays where it has always been: last, at the trailing edge, with room
     /// for an org name beside it on a small phone.
     ///
-    /// `square.and.arrow.down`, the mark iOS uses for Import (Files, Photos):
-    /// one arrow into a box, read at a glance. `doc.badge.plus` read as "new
-    /// document", and the stacked `square.and.arrow.down.on.square` was too
-    /// busy to read. The library's download (`downloadAction`) is
-    /// `arrow.down.circle`, a different shape, so the two do not collide.
+    /// `arrow.up.doc`: a file going up into the library — the same glyph the
+    /// rows use for a recording that came in this way (`RecordingSourceIcon`),
+    /// so the button and what it makes look alike. Not `square.and.arrow.up`,
+    /// which is Share on iOS, and nothing like the download's
+    /// `arrow.down.circle`.
     private var importButton: some View {
         Button {
             importing = true
         } label: {
-            Image(systemName: "square.and.arrow.down")
+            Image(systemName: "arrow.up.doc")
         }
         .accessibilityLabel(Text("Import audio"))
         .disabled(importer.isRunning)
@@ -925,7 +925,7 @@ struct LibraryView: View {
                         importing = true
                     } label: {
                         // Same glyph as the toolbar button it duplicates.
-                        Label("Import an audio file", systemImage: "square.and.arrow.down")
+                        Label("Import an audio file", systemImage: "arrow.up.doc")
                             .font(.parley.subheadlineEmphasized)
                     }
                     .disabled(importer.isRunning)
