@@ -1418,6 +1418,115 @@
       },
       "name": "create_meeting_draft",
       "title": "Create a meeting draft"
+    },
+    {
+      "description": "Change a saved meeting draft (id from list_meeting_drafts). Only the fields you pass change. `agenda` replaces the whole checklist; an item whose text is unchanged keeps its checked state. `questions` (an alias) adds items to the agenda instead. `branches` and `topics` each replace that whole playbook list; pass an empty array to clear one. Moving `startAt` without `endAt` keeps the meeting's length; `startAt: null` makes the draft untimed. Returns the updated draft. Safe to call while a meeting is recording.",
+      "inputSchema": {
+        "properties": {
+          "agenda": {
+            "description": "The whole agenda: the things to ask or cover in the meeting.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "branches": {
+            "description": "Playbook: if they say `when`, steer with `then`. Replaces the whole list.",
+            "items": {
+              "properties": {
+                "then": {
+                  "description": "Where to steer the conversation when they do.",
+                  "type": "string"
+                },
+                "when": {
+                  "description": "What the other side says.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "when",
+                "then"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "context": {
+            "description": "Background for the analysis, including any BATNA / target / bottom line. Replaces the current text.",
+            "type": "string"
+          },
+          "endAt": {
+            "description": "End time, ISO 8601. Must be after the start.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "folderId": {
+            "description": "Personal folder to file the recording into (see list_folders); null for none.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "description": "The draft to change (see list_meeting_drafts).",
+            "type": "string"
+          },
+          "questions": {
+            "description": "Items to add to the agenda (skipping any already there).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "reminderLeadMin": {
+            "description": "Minutes before the start to remind the user.",
+            "type": "number"
+          },
+          "startAt": {
+            "description": "Start time, ISO 8601 with a UTC offset (e.g. 2026-11-03T14:00:00+08:00). null makes the draft untimed.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "description": "Meeting name.",
+            "type": "string"
+          },
+          "topics": {
+            "description": "Playbook: what to bring up when the conversation runs dry, each one complete sentence the user could say as is. Replaces the whole list.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "update_meeting_draft",
+      "title": "Update a meeting draft"
+    },
+    {
+      "description": "Delete a saved meeting draft (id from list_meeting_drafts). It leaves 即將開始 and its reminder is cancelled. Recordings are not affected.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "description": "The draft to delete (see list_meeting_drafts).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "delete_meeting_draft",
+      "title": "Delete a meeting draft"
     }
   ]
 }
