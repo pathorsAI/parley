@@ -12,6 +12,7 @@ import { studyErrorMessage } from "./errorMessage";
 import { log } from "../log";
 import { translate } from "../../i18n";
 import { isTauri } from "../tauriEvents";
+import { cursorForMeeting, type AgendaCursor } from "../meeting/agendaDelta";
 import type {
   DeliveryAssessment,
   EvalDef,
@@ -395,6 +396,9 @@ export function useAnalysisEngine() {
     tone: 0,
   });
   const todoBusy = useRef(false);
+  /** What the agenda check has already read, for the meeting it belongs to:
+   *  survives a pause/resume, starts over for a new meeting. */
+  const agendaCursor = useRef<AgendaCursor | null>(null);
   const toneBusy = useRef(false);
   /** Latest finalized segment end already seen by the tone check (per meeting). */
   const lastToneEndMs = useRef(0);
@@ -408,7 +412,7 @@ export function useAnalysisEngine() {
     lastRun.current = { analysis: 0, todos: 0, tone: 0 };
 
     const tick = () => {
-      const { autoAnalyze, autoAnalyzeSec, todos, segments, speakerNames, markTodosDone } =
+      const { autoAnalyze, autoAnalyzeSec, todos, segments, speakerNames, markTodosDone, liveMeetingId } =
         useLiveStore.getState();
       const { settings } = useStore.getState();
       const now = Date.now();
@@ -418,8 +422,9 @@ export function useAnalysisEngine() {
         void runLiveAnalysis();
       }
 
-      // Auto-check the TODO agenda every ~45s while recording. The manual "AI"
-      // button on the checklist runs the same pass on demand.
+      // Auto-check the to-do agenda every ~45s while recording. Each pass sends
+      // only the speech new since the last one that got an answer (and makes
+      // no call when nothing new was said) — see meeting/agendaDelta.ts.
       if (
         now >= lastRun.current.todos + 45_000 &&
         !todoBusy.current &&
@@ -428,8 +433,10 @@ export function useAnalysisEngine() {
       ) {
         lastRun.current.todos = now;
         todoBusy.current = true;
+        const cursor = cursorForMeeting(agendaCursor.current, liveMeetingId);
+        agendaCursor.current = cursor;
         import("../ai/todos")
-          .then(({ checkTodos }) => checkTodos({ settings, segments, todos, names: speakerNames }))
+          .then(({ checkTodos }) => checkTodos({ settings, segments, todos, names: speakerNames, cursor }))
           .then((checks) => checks.length && markTodosDone(checks))
           .catch((e) => console.error("[todos]", e))
           .finally(() => {
