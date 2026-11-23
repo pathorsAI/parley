@@ -4,7 +4,7 @@ import { isMeetingActive, useLiveStore, useStore } from "../store";
 import type { ParleyState } from "../store/types";
 import { emitEvent, listenEvent, type UnlistenFn } from "../ipc/events";
 import { floatingFrame, FLOATING_SIZE } from "./floatingWindow";
-import { cancelActiveMeeting, endMeeting, toggleMeetingPause } from "./controls";
+import { cancelActiveMeeting, endMeeting, toggleMeetingMicMute, toggleMeetingPause } from "./controls";
 import { endSilentMeeting, keepRecording } from "./silenceGuard";
 
 // The meeting window: a separate OS window that floats over the call while
@@ -27,6 +27,8 @@ const MIRRORED = [
   "meetingStartedAt",
   "meetingPausedAt",
   "meetingPausedTotalMs",
+  // The mic mute: switched in the main window (toggleMicMute), shown here.
+  "meetingMicMuted",
   "isFinalizingMeeting",
   "liveMeetingId",
   "segments",
@@ -84,6 +86,7 @@ type Mirrored = Pick<ParleyState, (typeof MIRRORED)[number]>;
 
 export type MeetingCommand =
   | "togglePause"
+  | "toggleMicMute"
   | "end"
   | "cancel"
   | "analyze"
@@ -138,6 +141,9 @@ function runCommand(cmd: MeetingCommand): void {
   switch (cmd) {
     case "togglePause":
       toggleMeetingPause();
+      break;
+    case "toggleMicMute":
+      toggleMeetingMicMute();
       break;
     case "end":
       endMeeting().catch(fail);

@@ -90,8 +90,11 @@ export function LiveSuggestToggle() {
  * reader is there — so what was offered a few minutes ago is still there to
  * look back at. The one still current (not yet expired) stands out; the rest
  * are dimmed. Each shows when it came, its icon and its lines, nothing else.
+ *
+ * `compact`: the mini window's size — the same list in smaller type, so the
+ * suggestions and their history stay readable with the window shrunk.
  */
-export function LiveSuggestionFeed() {
+export function LiveSuggestionFeed({ compact = false }: Readonly<{ compact?: boolean }>) {
   const { t } = useI18n();
   const log = useLiveMeeting((s) => s.liveSuggestLog);
   const current = useLiveMeeting((s) => s.liveSuggestion);
@@ -102,29 +105,38 @@ export function LiveSuggestionFeed() {
   if (!CLOUD_ENABLED) return null;
   if (groups.length === 0) {
     return (
-      <p className="m-auto max-w-60 px-4 text-center text-sm text-muted-foreground">
+      <p className={`m-auto px-4 text-center text-muted-foreground ${compact ? "text-xs" : "max-w-60 text-sm"}`}>
         {t(on ? "liveSuggest.feedEmpty" : "liveSuggest.feedOff")}
       </p>
     );
   }
   return (
-    <div ref={viewportRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
-      <ol className="flex flex-col gap-3">
+    <div ref={viewportRef} className={`min-h-0 flex-1 overflow-y-auto ${compact ? "px-1.5 py-1.5" : "px-3 py-3"}`}>
+      <ol className={`flex flex-col ${compact ? "gap-0.5" : "gap-3"}`}>
         {groups.map((g) => (
-          <FeedGroup key={`${g.atMs}-${g.mode}`} group={g} live={!!current && current.atMs === g.atMs && current.mode === g.mode} />
+          <FeedGroup
+            key={`${g.atMs}-${g.mode}`}
+            group={g}
+            compact={compact}
+            live={!!current && current.atMs === g.atMs && current.mode === g.mode}
+          />
         ))}
       </ol>
     </div>
   );
 }
 
-function FeedGroup({ group, live }: Readonly<{ group: ShownGroup; live: boolean }>) {
+function FeedGroup({
+  group,
+  live,
+  compact,
+}: Readonly<{ group: ShownGroup; live: boolean; compact: boolean }>) {
   const Icon = group.mode === "lull" ? MessageCircleQuestion : Lightbulb;
   return (
     <li
-      className={`flex animate-in fade-in-0 items-start gap-2 rounded-lg px-2.5 py-2 transition-colors duration-500 ${
-        live ? "bg-primary/10" : ""
-      }`}
+      className={`flex animate-in fade-in-0 items-start gap-2 transition-colors duration-500 ${
+        compact ? "rounded-md px-1.5 py-1" : "rounded-lg px-2.5 py-2"
+      } ${live ? "bg-primary/10" : ""}`}
     >
       <span className="mt-0.5 w-9 shrink-0 text-[11px] tabular-nums text-muted-foreground">{formatClock(group.atMs)}</span>
       <Icon className={`mt-0.5 size-3.5 shrink-0 ${live ? "text-primary" : "text-muted-foreground"}`} />
@@ -132,7 +144,9 @@ function FeedGroup({ group, live }: Readonly<{ group: ShownGroup; live: boolean 
         {group.items.map((item) => (
           <li
             key={item.key}
-            className={`text-sm leading-snug transition-colors duration-500 ${live ? "text-foreground" : "text-muted-foreground"}`}
+            className={`${compact ? "text-xs" : "text-sm"} leading-snug transition-colors duration-500 ${
+              live ? "text-foreground" : "text-muted-foreground"
+            }`}
           >
             {item.text}
           </li>

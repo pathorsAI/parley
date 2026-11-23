@@ -152,6 +152,7 @@ export const startMeeting = (args: {
 export const stopMeeting = (args: { keepMs?: number | null } = {}) => invoke<void>("stop_meeting", args);
 export const cancelMeeting = () => invoke<void>("cancel_meeting");
 export const setMeetingPaused = (args: { paused: boolean }) => invoke<void>("set_meeting_paused", args);
+export const setMeetingMicMuted = (args: { muted: boolean }) => invoke<void>("set_meeting_mic_muted", args);
 export const meetingActive = () => invoke<boolean>("meeting_active");
 /** Move and resize the calling window to a frame in logical px (top-left
  *  origin), gliding there over `durationMs` on macOS; set at once elsewhere

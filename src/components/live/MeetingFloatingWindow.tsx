@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarDays,
   Captions,
@@ -6,6 +6,8 @@ import {
   GripVertical,
   Loader2,
   Maximize2,
+  Mic,
+  MicOff,
   Minimize2,
   Minus,
   NotebookPen,
@@ -43,7 +45,7 @@ import { displaySpeakerLabel, labelContextOf } from "../../lib/speakers/labels";
 import { DestinationField } from "../DestinationSheet";
 import { MeetingContextField } from "../MeetingContextField";
 import { useMeetingDestination } from "../useMeetingDestination";
-import { LiveSuggestionFeed, LiveSuggestionLines, LiveSuggestToggle, useLiveSuggestionCard } from "./LiveSuggestion";
+import { LiveSuggestionFeed, LiveSuggestToggle } from "./LiveSuggestion";
 import { NotesEditor } from "./NotesEditor";
 import { LiveBanners } from "./LiveScreen";
 import { useTabShortcuts } from "../../lib/commands/tabs";
@@ -191,9 +193,10 @@ const MINI_TABS: { tab: Tab; icon: typeof Captions }[] = [
 
 /**
  * The mini window ("小窗"): the window shrunk to one row — the clock, the
- * three tabs as icons, expand — over a small view of the tab it shrank from:
- * the transcript's last lines, the notes box, or the coach's ask box (its
- * answer opens under the row). The window's height follows the tab. Dragged
+ * mic mute, the three tabs as icons, expand — over a small view of the tab it
+ * shrank from: the notes box, the transcript's last lines, or the coach's
+ * suggestions so far (the current one lit, the earlier ones dimmed above
+ * it). The window's height follows the tab. Dragged
  * from anywhere that is not a control; brought near the screen's top edge,
  * it snaps to the nearer dock — under the notch or the top-right
  * corner — like a magnet.
@@ -209,28 +212,10 @@ function MiniWindow({
 }: Readonly<{ tab: Tab; onTab: (tab: Tab) => void; onExpand: () => void; fixed?: boolean }>) {
   const { t } = useI18n();
   useMiniDocking(!fixed);
-  // The 教練 tab shows the current live suggestion under the row; the window
-  // grows by its height, and back to the bare row when it goes.
-  const suggestion = useLiveSuggestionCard();
-  const shown = tab === "coach" ? suggestion : null;
-  const [suggestionH, setSuggestionH] = useState(0);
-  const suggestionRef = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const el = suggestionRef.current;
-    if (!el) {
-      setSuggestionH(0);
-      return;
-    }
-    const measure = () => setSuggestionH(Math.ceil(el.getBoundingClientRect().height));
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [shown]);
 
-  // Only a change of tab or suggestion resizes the window: on mount it already
-  // has the size the shrink gave it, and resizing then raced the shrink's
-  // reading of the size to restore later.
+  // Only a change of tab resizes the window: on mount it already has the size
+  // the shrink gave it, and resizing then raced the shrink's reading of the
+  // size to restore later.
   const firstRun = useRef(true);
   useEffect(() => {
     if (firstRun.current) {
@@ -239,8 +224,8 @@ function MiniWindow({
       if (!fixed) void holdMiniMinHeight(MINI_MIN_HEIGHT[tab]);
       return;
     }
-    if (!fixed) void setMiniHeight(miniHeight(tab) + suggestionH, MINI_MIN_HEIGHT[tab] + suggestionH);
-  }, [tab, fixed, suggestionH]);
+    if (!fixed) void setMiniHeight(miniHeight(tab), MINI_MIN_HEIGHT[tab]);
+  }, [tab, fixed]);
 
   return (
     <div
@@ -253,6 +238,7 @@ function MiniWindow({
         <DragGrip />
         <RecordingClock withLabel={false} />
         <div className="h-full min-w-0 flex-1" />
+        <MicMuteButton iconOnly />
         <div role="tablist" aria-label={t("floating.tabsLabel")} className="flex shrink-0 items-center rounded-lg bg-muted/50 p-0.5">
           {MINI_TABS.map(({ tab: k, icon: Icon }) => (
             <button
@@ -281,9 +267,10 @@ function MiniWindow({
           <Maximize2 className="size-3.5" />
         </button>
       </div>
-      {shown && (
-        <div ref={suggestionRef} className="shrink-0 border-t px-3 py-2">
-          <LiveSuggestionLines card={shown} compact />
+      {tab === "coach" && (
+        // Scrollable and selectable, like the transcript: not a drag handle.
+        <div data-no-drag className="flex min-h-0 flex-1 cursor-text select-text flex-col border-t">
+          <LiveSuggestionFeed compact />
         </div>
       )}
       {tab === "transcript" && (
@@ -300,9 +287,44 @@ function MiniWindow({
   );
 }
 
-/** The mini window's height for `tab`, with the coach's answer open or not. */
+/** The mini window's height for `tab`. */
 function miniHeight(tab: Tab): number {
   return MINI_HEIGHT[tab];
+}
+
+/**
+ * Mute / unmute this computer's microphone for the running meeting: while
+ * muted, nothing said here is recorded or transcribed, and the other side
+ * carries on. Red while muted — it is the one state worth noticing. The main
+ * window owns the capture, so the press travels there as a command.
+ * `iconOnly`: the mini window's row.
+ */
+function MicMuteButton({ iconOnly = false }: Readonly<{ iconOnly?: boolean }>) {
+  const { t } = useI18n();
+  const muted = useStore((s) => s.meetingMicMuted);
+  const active = useStore((s) => s.meetingStatus === "recording" || s.meetingStatus === "paused");
+  const label = muted ? t("titlebar.unmute") : t("titlebar.mute");
+  const Icon = muted ? MicOff : Mic;
+  const quiet = iconOnly
+    ? "text-foreground/80 hover:bg-muted"
+    : "bg-muted text-muted-foreground hover:bg-accent hover:text-foreground";
+  const tone = muted ? "bg-recording/10 text-recording hover:bg-recording/15" : quiet;
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      aria-pressed={muted}
+      disabled={!active}
+      onClick={() => meetingCommand("toggleMicMute")}
+      className={`flex shrink-0 items-center justify-center gap-1.5 text-sm font-medium transition-colors disabled:opacity-50 ${
+        iconOnly ? "size-8 rounded-md" : "h-8 rounded-lg pr-3 pl-2.5"
+      } ${tone}`}
+    >
+      <Icon className="size-3.5" />
+      {!iconOnly && (muted ? t("titlebar.muted") : t("titlebar.mute"))}
+    </button>
+  );
 }
 
 
@@ -448,7 +470,7 @@ function TabButton({
 /**
  * The meeting, as the floating window the app becomes while it records
  * (useFloatingMeetingWindow): name and folder on top, notes / transcript /
- * coach in tabs, and pause, ask-the-coach and end along the bottom.
+ * coach in tabs, and pause, mic mute and end along the bottom.
  */
 export function MeetingFloatingWindow() {
   const { t } = useI18n();
@@ -591,6 +613,7 @@ export function MeetingFloatingWindow() {
           {paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
           {paused ? t("titlebar.resume") : t("titlebar.pause")}
         </button>
+        <MicMuteButton />
         <div className="min-w-0 flex-1" />
         <button
           type="button"

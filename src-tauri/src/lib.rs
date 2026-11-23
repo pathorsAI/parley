@@ -224,6 +224,7 @@ pub fn run() {
             commands::meeting::stop_meeting,
             commands::meeting::cancel_meeting,
             commands::meeting::set_meeting_paused,
+            commands::meeting::set_meeting_mic_muted,
             commands::export::discard_recording,
             commands::mic_test::list_input_devices,
             commands::mic_test::start_mic_test,
