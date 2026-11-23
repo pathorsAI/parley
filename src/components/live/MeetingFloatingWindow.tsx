@@ -305,11 +305,10 @@ function MicMuteButton({ iconOnly = false }: Readonly<{ iconOnly?: boolean }>) {
   const active = useStore((s) => s.meetingStatus === "recording" || s.meetingStatus === "paused");
   const label = muted ? t("titlebar.unmute") : t("titlebar.mute");
   const Icon = muted ? MicOff : Mic;
-  const tone = muted
-    ? "bg-recording/10 text-recording hover:bg-recording/15"
-    : iconOnly
-      ? "text-foreground/80 hover:bg-muted"
-      : "bg-muted text-muted-foreground hover:bg-accent hover:text-foreground";
+  const quiet = iconOnly
+    ? "text-foreground/80 hover:bg-muted"
+    : "bg-muted text-muted-foreground hover:bg-accent hover:text-foreground";
+  const tone = muted ? "bg-recording/10 text-recording hover:bg-recording/15" : quiet;
   return (
     <button
       type="button"
