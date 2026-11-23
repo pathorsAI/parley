@@ -78,6 +78,9 @@ export interface CacheSizes {
 export interface HistoryReadResult {
   meta: HistoryEntry;
   audioPath: string | null;
+  /** The recording's size on disk in bytes (null without one; absent from an
+   *  older backend). */
+  audioBytes?: number | null;
 }
 
 /** `read_transcript_file` (history.rs `TranscriptFile`). */

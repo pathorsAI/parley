@@ -199,7 +199,8 @@ async fn transcribe_upload(
     upload: &Upload<'_>,
     adapter: Option<BatchFn>,
 ) -> Result<TranscriptionResult, String> {
-    let (upload_path, compressed_temp) = compress_upload(upload.path).await;
+    let hosted = matches!(upload.request().credential, Credential::CloudSession);
+    let (upload_path, compressed_temp) = compress_upload(upload.path, hosted).await?;
 
     // Measure the speaker's articulation rate acoustically over the audio we're
     // about to transcribe, so the post-call pace read is a real measurement — not
@@ -253,12 +254,34 @@ async fn run_adapter(
     .await
 }
 
+/// Parley Cloud's edge rejects any request body over 100 MB (with an HTML 413),
+/// so a hosted upload larger than this can only fail.
+pub(crate) const HOSTED_UPLOAD_LIMIT_BYTES: u64 = 100 * 1024 * 1024;
+
+/// Shown when a recording can't be compressed and is too big to send as is.
+/// The frontend recognizes it by its opening words (see
+/// `uploadFailureKey` in src/lib/replay/ingest.ts) and shows it translated.
+pub(crate) const UNCOMPRESSIBLE_TOO_LARGE: &str = "This file's format can't be compressed for upload and it's over 100 MB. Convert it to MP3 or M4A and upload again.";
+
+/// Whether an upload whose compression failed may still go up as the original
+/// file. A hosted upload over [`HOSTED_UPLOAD_LIMIT_BYTES`] can't (the edge would
+/// refuse it); BYOK vendors set their own limits, so they always try. An
+/// unknown size tries too — reading the file will report the real problem.
+fn raw_fallback_allowed(original_size: Option<u64>, hosted: bool) -> bool {
+    !hosted || original_size.is_none_or(|n| n <= HOSTED_UPLOAD_LIMIT_BYTES)
+}
+
 /// Try to compress the recording to a much smaller Opus/Ogg file before
-/// uploading. This is best-effort: any failure (unsupported codec, encode
-/// error, …) falls back to uploading the original file so it never blocks an
-/// upload. Returns the path to upload and, when a temp file was produced, that
-/// file so the caller can delete it afterward (even on error).
-async fn compress_upload(path: &str) -> (String, Option<std::path::PathBuf>) {
+/// uploading. This is best-effort: a failure (unsupported codec, encode error,
+/// …) falls back to uploading the original file, unless that file is too large
+/// for the hosted cloud to accept (see [`raw_fallback_allowed`]) — then the
+/// upload is refused up front with [`UNCOMPRESSIBLE_TOO_LARGE`]. Returns the
+/// path to upload and, when a temp file was produced, that file so the caller
+/// can delete it afterward (even on error).
+async fn compress_upload(
+    path: &str,
+    hosted: bool,
+) -> Result<(String, Option<std::path::PathBuf>), String> {
     let original_size = tokio::fs::metadata(path).await.map(|m| m.len()).ok();
     match compress_for_upload_blocking(path.to_string()).await {
         Ok(temp) => {
@@ -276,11 +299,19 @@ async fn compress_upload(path: &str) -> (String, Option<std::path::PathBuf>) {
                 ),
                 _ => log::info!("replay: compressed audio (sizes unavailable)"),
             }
-            (temp.to_string_lossy().into_owned(), Some(temp))
+            Ok((temp.to_string_lossy().into_owned(), Some(temp)))
+        }
+        Err(e) if !raw_fallback_allowed(original_size, hosted) => {
+            log::warn!(
+                "replay: compression failed and original is over the hosted limit, not uploading origBytes={:?} error={}",
+                original_size,
+                e
+            );
+            Err(UNCOMPRESSIBLE_TOO_LARGE.to_string())
         }
         Err(e) => {
             log::warn!("replay: compression failed, uploading original error={}", e);
-            (path.to_string(), None)
+            Ok((path.to_string(), None))
         }
     }
 }
@@ -582,6 +613,23 @@ mod tests {
             unsupported_batch_provider("whisperx"),
             "File transcription for 'whisperx' is not supported yet — switch to another transcription provider in Settings."
         );
+    }
+
+    #[test]
+    fn an_uncompressible_file_over_the_hosted_limit_is_not_sent_raw() {
+        let limit = HOSTED_UPLOAD_LIMIT_BYTES;
+        // Hosted: up to the limit the original still goes up; past it, no.
+        assert!(raw_fallback_allowed(Some(0), true));
+        assert!(raw_fallback_allowed(Some(limit), true));
+        assert!(!raw_fallback_allowed(Some(limit + 1), true));
+        assert!(!raw_fallback_allowed(Some(130_000_000), true));
+        // Unknown size: try, and let the read report the real error.
+        assert!(raw_fallback_allowed(None, true));
+        // BYOK vendors keep their own limits; we always try.
+        assert!(raw_fallback_allowed(Some(limit * 5), false));
+        // The frontend keys its translation off these opening words.
+        assert!(UNCOMPRESSIBLE_TOO_LARGE
+            .starts_with("This file's format can't be compressed for upload"));
     }
 
     #[test]

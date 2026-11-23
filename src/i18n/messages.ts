@@ -1508,6 +1508,7 @@ export const zhTW = {
   "ingest.failed": "失敗：{error}",
   "ingest.error.noSttKey": "還沒設定轉錄金鑰。登入 Parley，或在設定裡填一把轉錄金鑰，才能轉錄音檔。",
   "ingest.error.providerNoUpload": "{provider} 不支援轉錄音檔，請換一個轉錄供應商。",
+  "ingest.error.uncompressibleTooLarge": "這個檔案的格式沒辦法壓縮上傳，而且超過 100 MB。請先轉成 MP3 或 M4A 再上傳一次。",
 
   // ── Transcript import (.txt → history entry) ──
   "import.title": "匯入逐字稿",
@@ -3332,6 +3333,7 @@ export const en = {
   "ingest.failed": "Failed: {error}",
   "ingest.error.noSttKey": "No transcription key yet. Sign in to Parley or add a transcription key in Settings to transcribe audio.",
   "ingest.error.providerNoUpload": "{provider} can't transcribe uploaded files; pick another transcription provider.",
+  "ingest.error.uncompressibleTooLarge": "This file's format can't be compressed for upload and it's over 100 MB. Convert it to MP3 or M4A and upload again.",
   "replay.breadcrumb": "Recording location",
   "replay.breadcrumb.open": "Close the recording and go to {name}",
   "replay.preparing": "Preparing…",

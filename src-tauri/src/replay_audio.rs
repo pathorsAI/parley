@@ -61,15 +61,22 @@ struct DecodedAudio {
 /// Returns `Err` if the input can't be decoded (unsupported codec, corrupt
 /// data, encode failure, …) — callers fall back to uploading the raw file.
 pub fn compress_for_upload(input: &Path) -> Result<PathBuf> {
-    let decoded = decode_to_mono_f32(input)?;
-    if decoded.samples.is_empty() {
-        return Err(anyhow!("decoded audio was empty"));
-    }
-
-    // Resample mono f32 → 16 kHz i16 PCM using the shared linear resampler.
-    let mut pcm16: Vec<i16> = Vec::new();
-    let mut resampler = LinearResampler::new(decoded.sample_rate, TARGET_RATE);
-    resampler.process(&decoded.samples, &mut pcm16);
+    // Ogg/Opus from another recorder (often 64–128 kbps): symphonia has no Opus
+    // decoder, so decode with libopus straight to 16 kHz mono i16 and re-encode
+    // at our upload bitrate. Without this such files always went up raw.
+    let pcm16 = if is_ogg_opus(input)? {
+        decode_ogg_opus_16k_mono_i16(input)?
+    } else {
+        let decoded = decode_to_mono_f32(input)?;
+        if decoded.samples.is_empty() {
+            return Err(anyhow!("decoded audio was empty"));
+        }
+        // Resample mono f32 → 16 kHz i16 PCM using the shared linear resampler.
+        let mut pcm16: Vec<i16> = Vec::new();
+        let mut resampler = LinearResampler::new(decoded.sample_rate, TARGET_RATE);
+        resampler.process(&decoded.samples, &mut pcm16);
+        pcm16
+    };
 
     if pcm16.is_empty() {
         return Err(anyhow!("resampled audio was empty"));
@@ -192,11 +199,20 @@ fn is_ogg_opus(input: &Path) -> Result<bool> {
 /// (`OpusHead`/`OpusTags`) are skipped; a corrupt audio packet is skipped rather
 /// than aborting the whole decode.
 fn decode_ogg_opus_16k_mono(input: &Path) -> Result<Vec<f32>> {
+    Ok(decode_ogg_opus_16k_mono_i16(input)?
+        .into_iter()
+        .map(|s| s as f32 / 32768.0)
+        .collect())
+}
+
+/// [`decode_ogg_opus_16k_mono`] as raw 16 kHz mono `i16` PCM — what the Opus
+/// encoder takes, so re-compressing an Ogg/Opus file skips an f32 round trip.
+fn decode_ogg_opus_16k_mono_i16(input: &Path) -> Result<Vec<i16>> {
     let file = File::open(input).with_context(|| format!("open {}", input.display()))?;
     let mut reader = ogg::reading::PacketReader::new(BufReader::new(file));
     let mut decoder = Decoder::new(SampleRate::Hz16000, Channels::Mono)
         .map_err(|e| anyhow!("opus decoder init: {e}"))?;
-    let mut samples: Vec<f32> = Vec::new();
+    let mut samples: Vec<i16> = Vec::new();
     // 120 ms is the largest Opus packet duration; 16 kHz mono → 1920 samples (+ margin).
     let mut frame = vec![0i16; 2880];
     while let Some(packet) = reader.read_packet().context("read ogg packet")? {
@@ -205,7 +221,7 @@ fn decode_ogg_opus_16k_mono(input: &Path) -> Result<Vec<f32>> {
             continue;
         }
         match decoder.decode(Some(&data[..]), &mut frame[..], false) {
-            Ok(n) => samples.extend(frame[..n].iter().map(|&s| s as f32 / 32768.0)),
+            Ok(n) => samples.extend_from_slice(&frame[..n]),
             Err(_) => continue,
         }
     }
@@ -328,10 +344,16 @@ fn downmix_into(buf: &AudioBufferRef<'_>, out: &mut Vec<f32>) {
 /// `pub(crate)` so the live-meeting recorder can reuse it to persist a captured
 /// session (the realtime path already produces 16 kHz mono PCM).
 pub(crate) fn encode_opus_ogg(pcm16: &[i16], out_path: &Path) -> Result<()> {
+    encode_opus_ogg_at(pcm16, out_path, OPUS_BITRATE)
+}
+
+/// [`encode_opus_ogg`] at an explicit bitrate (tests use it to fabricate the
+/// high-bitrate Ogg/Opus files other recorders produce).
+fn encode_opus_ogg_at(pcm16: &[i16], out_path: &Path, bitrate: i32) -> Result<()> {
     let mut encoder = Encoder::new(SampleRate::Hz16000, Channels::Mono, Application::Voip)
         .map_err(|e| anyhow!("opus encoder init: {e}"))?;
     encoder
-        .set_bitrate(Bitrate::BitsPerSecond(OPUS_BITRATE))
+        .set_bitrate(Bitrate::BitsPerSecond(bitrate))
         .map_err(|e| anyhow!("opus set_bitrate: {e}"))?;
 
     let out_file = File::create(out_path)
@@ -551,6 +573,51 @@ mod tests {
         assert!(transcode_to_wav_16k_mono(&src, &out).is_err());
         assert!(!out.exists());
         let _ = std::fs::remove_file(&src);
+    }
+
+    /// An Ogg/Opus file from another recorder (here 96 kbps of noisy speech-band
+    /// audio) used to fail compression — symphonia has no Opus decoder — and go
+    /// up raw. It must now re-encode to a smaller 24 kbps file that decodes.
+    #[test]
+    fn compress_reencodes_high_bitrate_ogg_opus() {
+        let dir = std::env::temp_dir();
+        let src = dir.join(format!("parley-test-hi-{}.ogg", uuid::Uuid::new_v4()));
+        // 10 s of tone + pseudo-random noise so the encoder actually spends
+        // the bitrate it's given (a pure tone would compress to nearly nothing).
+        let mut seed: u32 = 0x1234_5678;
+        let pcm: Vec<i16> = sine_16k(10)
+            .into_iter()
+            .map(|s| {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let noise = ((seed >> 16) as i16) / 4;
+                s.saturating_add(noise)
+            })
+            .collect();
+        encode_opus_ogg_at(&pcm, &src, 96_000).expect("encode 96 kbps source");
+        assert!(is_ogg_opus(&src).unwrap());
+
+        let out = compress_for_upload(&src).expect("Ogg/Opus input should compress");
+        let (src_size, out_size) = (
+            std::fs::metadata(&src).unwrap().len(),
+            std::fs::metadata(&out).unwrap().len(),
+        );
+        eprintln!("src={src_size} bytes, out={out_size} bytes");
+        assert!(
+            out_size * 2 < src_size,
+            "96 → 24 kbps should at least halve it"
+        );
+
+        // The output is our own 16 kHz mono Ogg/Opus and decodes to ~10 s.
+        assert!(is_ogg_opus(&out).unwrap());
+        let samples = decode_to_16k_mono(&out).expect("output decodes");
+        assert!(
+            (159_000..=161_000).contains(&samples.len()),
+            "got {} samples",
+            samples.len()
+        );
+
+        let _ = std::fs::remove_file(&src);
+        let _ = std::fs::remove_file(&out);
     }
 
     /// Synthesize a WAV with ffmpeg, compress it, and validate the output with

@@ -50,6 +50,10 @@ pub struct HistoryRead {
     meta: serde_json::Value,
     #[serde(rename = "audioPath")]
     audio_path: Option<String>,
+    /// The recording's size on disk, so cloud sync can refuse one the cloud
+    /// would reject (over its 100 MB body limit) without reading it.
+    #[serde(rename = "audioBytes")]
+    audio_bytes: Option<u64>,
 }
 
 /// Save (or overwrite) a history entry. `meta_json` / `summary_json` are written
@@ -324,8 +328,16 @@ pub fn read_history_entry(app: AppHandle, id: String) -> Result<HistoryRead, Str
     let raw = std::fs::read_to_string(dir.join("meta.json")).map_err(|e| e.to_string())?;
     let meta: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
     let audio = dir.join("audio.ogg");
+    let audio_bytes = std::fs::metadata(&audio)
+        .ok()
+        .filter(|m| m.is_file())
+        .map(|m| m.len());
     let audio_path = audio.exists().then(|| audio.to_string_lossy().into_owned());
-    Ok(HistoryRead { meta, audio_path })
+    Ok(HistoryRead {
+        meta,
+        audio_path,
+        audio_bytes,
+    })
 }
 
 /// Rename an entry: patch `title` in both `meta.json` and `summary.json` (leaving
