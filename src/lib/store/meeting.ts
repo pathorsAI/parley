@@ -30,6 +30,15 @@ export interface MeetingSlice {
    *  recorded-time elapsed (see {@link meetingElapsedMs}) that matches the
    *  pause-compacted recording + transcript timeline. */
   meetingPausedTotalMs: number;
+  /** This computer's microphone is muted in the live meeting: the backend
+   *  zero-fills the mic side (nothing the user says is recorded, transcribed
+   *  or scored) while the other side keeps recording. Independent of pause.
+   *  Reset on start, stop and cancel. */
+  meetingMicMuted: boolean;
+  /** Mute / unmute the mic of the live meeting. Ignored outside an active
+   *  meeting; muting also withdraws the silence guard's question, as a pause
+   *  does (the guard does not count muted time as silence). */
+  setMeetingMicMuted: (muted: boolean) => void;
 
   /** System-audio tap failed for THIS meeting: mic-only capture, the other
    *  side won't be transcribed. Drives the persistent live banner (⑥) — a
@@ -180,6 +189,7 @@ export const createMeetingSlice: SliceCreator<MeetingSlice> = (set) => ({
   liveMeetingId: null,
   meetingPausedAt: null,
   meetingPausedTotalMs: 0,
+  meetingMicMuted: false,
   systemAudioWarning: false,
   ...CLEARED_TRANSCRIPTION_LINK,
   transcriptionDropped: false,
@@ -200,6 +210,13 @@ export const createMeetingSlice: SliceCreator<MeetingSlice> = (set) => ({
       return sources.includes(source) ? {} : { transcriptionNoAudioSources: [...sources, source] };
     }),
   setFinalizingMeeting: (v) => set({ isFinalizingMeeting: v }),
+  setMeetingMicMuted: (muted) => {
+    log.info("store: meeting mic muted", { muted });
+    set((s) => {
+      if (!isMeetingActive(s.meetingStatus)) return {};
+      return muted ? { meetingMicMuted: true, silencePromptAt: null } : { meetingMicMuted: false };
+    });
+  },
 
   startMeeting: () => {
     log.info("store: meeting started");
@@ -212,6 +229,7 @@ export const createMeetingSlice: SliceCreator<MeetingSlice> = (set) => ({
       liveMeetingId: crypto.randomUUID(),
       meetingPausedAt: null,
       meetingPausedTotalMs: 0,
+      meetingMicMuted: false,
       segments: [],
       speakerNames: {},
       speakerAliases: {},
@@ -267,6 +285,7 @@ export const createMeetingSlice: SliceCreator<MeetingSlice> = (set) => ({
       liveMeetingId: null,
       meetingPausedAt: null,
       meetingPausedTotalMs: 0,
+      meetingMicMuted: false,
       segments: [],
       speakerNames: {},
       speakerAliases: {},
@@ -291,6 +310,7 @@ export const createMeetingSlice: SliceCreator<MeetingSlice> = (set) => ({
     set({
       meetingStatus: "stopped",
       meetingPausedAt: null,
+      meetingMicMuted: false,
       prosody: null,
       deliveryNudge: null,
       // The backend stops redialling with the meeting, so a banner left up

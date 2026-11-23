@@ -11,6 +11,7 @@ import {
   History,
   Loader2,
   Mic,
+  MicOff,
   Minus,
   Pause,
   Play,
@@ -31,7 +32,7 @@ import { focusMeetingWindow } from "../lib/meeting/meetingWindow";
 import { pressTitleBar } from "../lib/window/press";
 import { mainZoomFallback, toggleZoom, useTrackRestoreFrame } from "../lib/window/zoom";
 import { beginMeeting } from "../lib/meeting/start";
-import { cancelActiveMeeting, endMeeting, toggleMeetingPause } from "../lib/meeting/controls";
+import { cancelActiveMeeting, endMeeting, toggleMeetingMicMute, toggleMeetingPause } from "../lib/meeting/controls";
 import { useCommandShortcut } from "../lib/commands/bind";
 import { openSettings } from "../lib/nav/settings";
 import { useI18n } from "../i18n";
@@ -307,19 +308,24 @@ function SwitchTrack({ children }: Readonly<{ children: ReactNode }>) {
   return <div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5">{children}</div>;
 }
 
-/** Pause/resume ⇄, end (save → debrief), cancel (discard, confirm-gated). All
- *  three live in both states, so 繼續／結束／取消 are always at hand. */
+/** Pause/resume ⇄, mic mute ⇄, end (save → debrief), cancel (discard,
+ *  confirm-gated). All live in both states, so 繼續／結束／取消 are always at
+ *  hand. */
 function RecorderCluster({
   paused,
+  micMuted,
   busy,
   onTogglePause,
+  onToggleMicMute,
   onEnd,
   onRequestCancel,
   t,
 }: Readonly<{
   paused: boolean;
+  micMuted: boolean;
   busy: boolean;
   onTogglePause: () => void;
+  onToggleMicMute: () => void;
   onEnd: () => void;
   onRequestCancel: () => void;
   t: TFn;
@@ -340,6 +346,26 @@ function RecorderCluster({
       >
         {paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
         {paused ? t("titlebar.resume") : t("titlebar.pause")}
+      </Button>
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={onToggleMicMute}
+        // Held while a start/end/cancel invoke is in flight, like pause: a mute
+        // landing before start_meeting resets the flag would split UI and
+        // backend state (the start also re-sends it, see openCaptureSession).
+        disabled={busy}
+        aria-pressed={micMuted}
+        // Muted reads at a glance: the recording red, tinted rather than solid,
+        // in the same spirit as the paused 繼續 button.
+        className={
+          micMuted
+            ? "h-8 border-transparent bg-recording/10 text-recording hover:bg-recording/15 hover:text-recording"
+            : "h-8"
+        }
+      >
+        {micMuted ? <MicOff className="size-3.5" /> : <Mic className="size-3.5" />}
+        {micMuted ? t("titlebar.unmute") : t("titlebar.mute")}
       </Button>
       <Button size="sm" variant="destructive" onClick={onEnd} disabled={busy} className="h-8">
         <Square className="size-3.5" />
@@ -369,10 +395,12 @@ function PrimaryAction({
   mode,
   meetingActive,
   paused,
+  micMuted,
   finalizing,
   busy,
   hasPrepDraft,
   onTogglePause,
+  onToggleMicMute,
   onEnd,
   onRequestCancel,
   onStart,
@@ -382,10 +410,12 @@ function PrimaryAction({
   mode: AppMode;
   meetingActive: boolean;
   paused: boolean;
+  micMuted: boolean;
   finalizing: boolean;
   busy: boolean;
   hasPrepDraft: boolean;
   onTogglePause: () => void;
+  onToggleMicMute: () => void;
   onEnd: () => void;
   onRequestCancel: () => void;
   onStart: () => void;
@@ -400,8 +430,10 @@ function PrimaryAction({
     return (
       <RecorderCluster
         paused={paused}
+        micMuted={micMuted}
         busy={busy}
         onTogglePause={onTogglePause}
+        onToggleMicMute={onToggleMicMute}
         onEnd={onEnd}
         onRequestCancel={onRequestCancel}
         t={t}
@@ -555,6 +587,7 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   // The running meeting (the live store); the rest is this window's own.
   const status = useLiveStore((s) => s.meetingStatus);
   const isFinalizingMeeting = useLiveStore((s) => s.isFinalizingMeeting);
+  const micMuted = useLiveStore((s) => s.meetingMicMuted);
   const layout = useStore((s) => s.settings.layout);
   const updateSettings = useStore((s) => s.updateSettings);
   const meetingStartedAt = useLiveStore((s) => s.meetingStartedAt);
@@ -626,6 +659,8 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
 
   /** Pause/resume: no busy guard (the backend flag is idempotent). */
   const togglePause = toggleMeetingPause;
+  /** Mic mute: no busy guard either (the backend flag is idempotent). */
+  const toggleMicMute = toggleMeetingMicMute;
 
   // The keyboard reaches exactly the two recorder actions that are safe to
   // reach blind. Both are gated with `enabled` rather than a bail-out inside
@@ -647,6 +682,7 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
   // reaching for a refresh must not be able to stop a recording — so it stays a
   // button you have to look at. Do not "complete the symmetry" here.
   useCommandShortcut("meeting.togglePause", togglePause, { enabled: meetingHere });
+  useCommandShortcut("meeting.toggleMicMute", toggleMicMute, { enabled: meetingHere });
 
   /** Cancel (from the confirm dialog): discard everything, back to idle. */
   async function cancel() {
@@ -746,10 +782,12 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
           mode={appMode}
           meetingActive={meetingHere}
           paused={paused}
+          micMuted={micMuted}
           finalizing={isFinalizingMeeting && !isTauri()}
           busy={toggleBusy}
           hasPrepDraft={hasPrepDraft}
           onTogglePause={togglePause}
+          onToggleMicMute={toggleMicMute}
           onEnd={() => void end()}
           onRequestCancel={() => setConfirmCancel(true)}
           onStart={start}
