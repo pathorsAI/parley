@@ -46,6 +46,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
@@ -1054,7 +1055,8 @@ private fun ScopeSwitcher(
                 .padding(start = 8.dp, end = 2.dp),
         ) {
             Icon(
-                imageVector = if (state.isPersonal) LibraryIcons.Folder else LibraryIcons.Group,
+                // One person for the personal library, people for an organization's.
+                imageVector = if (state.isPersonal) Icons.Default.Person else LibraryIcons.Group,
                 contentDescription = null,
                 modifier = Modifier.size(20.dp),
             )
@@ -1073,7 +1075,7 @@ private fun ScopeSwitcher(
             ScopeMenuItem(
                 title = personal,
                 role = null,
-                icon = LibraryIcons.Folder,
+                icon = Icons.Default.Person,
                 selected = state.isPersonal,
                 onClick = {
                     open = false
