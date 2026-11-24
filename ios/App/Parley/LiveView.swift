@@ -230,15 +230,17 @@ struct LiveView: View {
 
     // MARK: - During a meeting
 
-    /// The desktop's meeting window, top to bottom. The panel takes whatever
-    /// height is left; everything else is its natural size.
+    /// The desktop's meeting window, reordered for a hand: what the meeting
+    /// *is* on top — its name, day, folder and transcript — and everything
+    /// you *do* in one dock along the bottom, under the thumb: the clock and
+    /// the microphone, the waveform the record screen has always had, and
+    /// discard, pause and end. The panel takes whatever height is left.
     private var meetingScreen: some View {
         VStack(spacing: 0) {
-            meetingHeader
             warningStrip
             meetingHeading
             tabbedPanel
-            meetingFooter
+            controlDock
         }
         .confirmationDialog(
             "Cancel this meeting?", isPresented: $showDiscardConfirm, titleVisibility: .visible
@@ -254,26 +256,34 @@ struct LiveView: View {
         }
     }
 
-    // MARK: Header
+    // MARK: Control dock
 
-    /// Where the desktop's title bar is: the recording clock on the left; on
-    /// the right the copy button, the microphone, and the way out.
-    private var meetingHeader: some View {
-        HStack(spacing: 6) {
-            clockPill
-            Spacer(minLength: 8)
-            copyButton
-                .font(.parley.body)
-                .tint(Color(.label).opacity(0.8))
-                .frame(width: 40, height: 44)
-                .contentShape(Rectangle())
-            micChip
-            discardButton
+    /// Everything the meeting is operated with, together at the bottom: the
+    /// clock and the microphone on one line, the live waveform under them —
+    /// *is it hearing me*, the question the record screen has always answered
+    /// at a glance — and the three actions. Discard sits apart from End on the
+    /// left, so the two ways out are never side by side under a thumb.
+    private var controlDock: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 6) {
+                clockPill
+                Spacer(minLength: 8)
+                micChip
+            }
+            WaveformView(level: recorder.micLevel, sample: recorder.micSample, isActive: isHearing)
+                .frame(height: 30)
+                .accessibilityHidden(true)
+            HStack(spacing: 8) {
+                discardButton
+                pauseButton
+                Spacer(minLength: 8)
+                endButton
+            }
         }
-        .padding(.leading, 16)
-        .padding(.trailing, 8)
-        .frame(minHeight: 52)
-        .overlay(alignment: .bottom) { hairline }
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 6)
+        .overlay(alignment: .top) { hairline }
     }
 
     /// The recording clock: a pulsing red dot and the elapsed time on a grey
@@ -359,19 +369,22 @@ struct LiveView: View {
             ?? String(localized: "Microphone")
     }
 
-    /// ✕, as on the desktop's title bar: throw the meeting away, after the
-    /// desktop's own confirmation. Ink, not red — the red belongs in the
-    /// confirmation, and a red ✕ beside the recording clock would read as
-    /// part of the recording.
+    /// ✕, the desktop title bar's way out, in the dock: throw the meeting
+    /// away, after the desktop's own confirmation. Grey, not red — the red
+    /// belongs in the confirmation and on End's square.
     private var discardButton: some View {
         Button {
             titleFocused = false
             showDiscardConfirm = true
         } label: {
             Image(systemName: "xmark")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Color(.label).opacity(0.8))
-                .frame(width: 40, height: 44)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Color(.secondaryLabel))
+                .frame(width: 42, height: 42)
+                .background(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(Color(.tertiarySystemFill)))
+                .frame(minHeight: 44)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -481,6 +494,17 @@ struct LiveView: View {
             .submitLabel(.done)
             .focused($titleFocused)
             .onSubmit { titleFocused = false }
+            // Room for the copy button, so a long name never runs under it.
+            .padding(.trailing, 36)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(alignment: .trailing) {
+                copyButton
+                    .font(.parley.body)
+                    .tint(Color(.label).opacity(0.8))
+                    .frame(width: 40, height: 44)
+                    .contentShape(Rectangle())
+                    .offset(x: 8)
+            }
             HStack(spacing: 8) {
                 dateChip
                 folderChip
@@ -689,21 +713,7 @@ struct LiveView: View {
         .accessibilityAddTraits(active ? [.isSelected] : [])
     }
 
-    // MARK: Footer
-
-    /// Pause on the left, End on the right — grey, as on the desktop. The only
-    /// colour is meaning: Resume tinted the light primary blue (the one thing
-    /// to do while paused), and End's small red square, the recording's red.
-    private var meetingFooter: some View {
-        HStack(spacing: 8) {
-            pauseButton
-            Spacer(minLength: 8)
-            endButton
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .overlay(alignment: .top) { hairline }
-    }
+    // MARK: Pause and End
 
     private var pauseButton: some View {
         let paused = recorder.isPaused
