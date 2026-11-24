@@ -616,6 +616,23 @@
         }
       }
     },
+    "Add to folder" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add to folder"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "放進資料夾"
+          }
+        }
+      }
+    },
     "Added to your background. You can edit it in the next step." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -855,23 +872,6 @@
         }
       }
     },
-    "Asks you to confirm, then throws the audio and transcript away." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Asks you to confirm, then throws the audio and transcript away."
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "會先請你確認，然後把錄音與逐字稿直接丟掉。"
-          }
-        }
-      }
-    },
     "Audio error: %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -987,6 +987,41 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "取消"
+          }
+        }
+      }
+    },
+    "Cancel meeting" : {
+      "comment" : "The live screen's close button: throws the meeting away after a confirmation",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel meeting"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消會議"
+          }
+        }
+      }
+    },
+    "Cancel this meeting?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel this meeting?"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消這場會議？"
           }
         }
       }
@@ -1208,24 +1243,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "雲端版"
-          }
-        }
-      }
-    },
-    "Compact" : {
-      "comment" : "Accessibility value: the recording controls panel is folded to one row",
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Compact"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "精簡"
           }
         }
       }
@@ -2013,53 +2030,19 @@
         }
       }
     },
-    "Discard" : {
+    "Discard meeting" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Discard"
+            "value" : "Discard meeting"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "捨棄"
-          }
-        }
-      }
-    },
-    "Discard recording" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Discard recording"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "捨棄錄音"
-          }
-        }
-      }
-    },
-    "Discard this recording?" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Discard this recording?"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "捨棄這次錄音？"
+            "value" : "捨棄會議"
           }
         }
       }
@@ -2450,24 +2433,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "既有資料夾"
-          }
-        }
-      }
-    },
-    "Expanded" : {
-      "comment" : "Accessibility value: the recording controls panel is fully open",
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Expanded"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已展開"
           }
         }
       }
@@ -3219,6 +3184,23 @@
         }
       }
     },
+    "Keep meeting" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep meeting"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "繼續會議"
+          }
+        }
+      }
+    },
     "Keep talking — the microphone is still on and what you say is kept until the connection is back." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3692,6 +3674,42 @@
         }
       }
     },
+    "Meeting name" : {
+      "comment" : "Accessibility label of the live screen's title field",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Meeting name"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "會議名稱"
+          }
+        }
+      }
+    },
+    "Meeting tabs" : {
+      "comment" : "Accessibility label of the live screen's tab strip",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Meeting tabs"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "會議分頁"
+          }
+        }
+      }
+    },
     "Meeting: %1$@ (%2$@)" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3756,6 +3774,24 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "訊息"
+          }
+        }
+      }
+    },
+    "Microphone" : {
+      "comment" : "Fallback name of the recording input",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Microphone"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "麥克風"
           }
         }
       }
@@ -3892,6 +3928,24 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "麥克風被系統佔用"
+          }
+        }
+      }
+    },
+    "Microphone: %@" : {
+      "comment" : "Accessibility label of the live screen's microphone chip; the input's name",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Microphone: %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "麥克風：%@"
           }
         }
       }
@@ -4558,24 +4612,6 @@
         }
       }
     },
-    "On a call · recording paused" : {
-      "comment" : "Live screen recording-state row while a call or another app holds the microphone",
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "On a call · recording paused"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "通話中 · 已暫停錄音"
-          }
-        }
-      }
-    },
     "On this phone" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5198,36 +5234,20 @@
         }
       }
     },
-    "Pause recording" : {
+    "Paused" : {
+      "comment" : "Follows the elapsed time on the live screen's recording clock",
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Pause recording"
+            "value" : "Paused"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "暫停錄音"
-          }
-        }
-      }
-    },
-    "Paused · nothing is being recorded" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Paused · nothing is being recorded"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已暫停 · 目前沒有在錄音"
+            "value" : "已暫停"
           }
         }
       }
@@ -6261,37 +6281,20 @@
         }
       }
     },
-    "Resize controls" : {
-      "comment" : "Accessibility label for the grabber that resizes the recording controls panel",
+    "Resume" : {
+      "comment" : "Resumes a paused meeting",
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Resize controls"
+            "value" : "Resume"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "調整控制區高度"
-          }
-        }
-      }
-    },
-    "Resume recording" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Resume recording"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "繼續錄音"
+            "value" : "繼續"
           }
         }
       }
@@ -8045,23 +8048,6 @@
         }
       }
     },
-    "The audio and transcript are thrown away. Nothing is saved or uploaded." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The audio and transcript are thrown away. Nothing is saved or uploaded."
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "錄音與逐字稿會直接丟掉，不會儲存或上傳。"
-          }
-        }
-      }
-    },
     "The connection dropped before sign-in finished. Check your network and try again." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8280,6 +8266,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "範例錄音已不在錄音庫裡。"
+          }
+        }
+      }
+    },
+    "The transcript and recording will be discarded — nothing is saved and no analysis runs. This cannot be undone." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The transcript and recording will be discarded — nothing is saved and no analysis runs. This cannot be undone."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "逐字稿與錄音將直接捨棄——不會存檔、也不會產生分析報告。此動作無法復原。"
           }
         }
       }
@@ -8641,6 +8644,23 @@
         }
       }
     },
+    "Transcription dropped — reconnecting… The recording is still running. What's said during a short drop catches up in the transcript; a longer gap is kept in the recording but won't appear in the live transcript." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transcription dropped — reconnecting… The recording is still running. What's said during a short drop catches up in the transcript; a longer gap is kept in the recording but won't appear in the live transcript."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "轉錄連線中斷，正在重新連線…錄音仍在進行。短暫中斷時說的話會補進逐字稿；斷線較久的部分仍完整保留在錄音裡，只是不會出現在即時逐字稿。"
+          }
+        }
+      }
+    },
     "Transcription hours" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8738,6 +8758,24 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "未歸檔"
+          }
+        }
+      }
+    },
+    "Untitled meeting" : {
+      "comment" : "Placeholder of the live screen's title field",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Untitled meeting"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未命名的會議"
           }
         }
       }

@@ -34,7 +34,7 @@
     /// routed frame came out as the launch tab behind a modal. A launch
     /// argument never leaves the process.
     ///
-    /// Routes: `record`, `settled`, `adjust`, `library`, `transcript`,
+    /// Routes: `record`, `record-paused`, `settled`, `adjust`, `library`, `transcript`,
     /// `keyboard`, `settings`, `dictation`, and some that are not store frames
     /// but review frames: `movetofolder` (the transcript with the folder
     /// picker open over fifteen folders), `resetchecklist` (Settings'
@@ -58,6 +58,8 @@
         /// The record screen seeds a finished, uploaded recording with a filing
         /// suggestion on it instead of a meeting in progress.
         @Published var showSettledFiling = false
+        /// The record screen's meeting in progress is seeded paused.
+        var showPausedMeeting = false
         /// The filing suggestion's Adjust sheet, open. Flipped by `seedSettled`
         /// rather than by the route, because the card watches this and cannot
         /// know which of the two `task`s SwiftUI ran first — set from the route
@@ -189,6 +191,7 @@
             showTranscript = false
             focusKeyboardSection = false
             showSettledFiling = false
+            showPausedMeeting = false
             openFilingAdjust = false
             wantsFilingAdjust = false
             openFolderPicker = false
@@ -204,6 +207,9 @@
             holdsLitTurn = false
             switch route {
             case "record": tab = .record
+            case "record-paused":
+                tab = .record
+                showPausedMeeting = true
             case "settled":
                 tab = .record
                 showSettledFiling = true
@@ -747,8 +753,12 @@
         }
 
         /// The beat after a meeting: every turn final, the upload landed, and the
-        /// suggestion offering a name and a home. The recorder is idle — this is
-        /// a recording that is over, not one being made.
+        /// suggestion offering a home. The recorder is idle — this is a
+        /// recording that is over, not one being made. The meeting was named
+        /// on the live screen while it recorded (`seedLive`'s title) but left
+        /// without a folder, so the card opens on that name — no rename on
+        /// offer, no "Was:" — with the folders to confirm, which is the beat
+        /// the live screen's heading feeds.
         private static func seedSettled(
             _ recorder: MeetingRecorder, filing: FilingSuggestionModel
         ) {
@@ -762,7 +772,9 @@
                 },
                 status: String(localized: "Synced to the cloud"))
             filing.seedDemo(
-                suggestion: filingSuggestion, currentTitle: clockTitle, folders: folders)
+                suggestion: filingSuggestion.answering(named: true, filed: false)
+                    ?? filingSuggestion,
+                currentTitle: featured.title, folders: folders)
             if shared.wantsFilingAdjust { shared.openFilingAdjust = true }
         }
 
@@ -784,7 +796,13 @@
                         "兩週的前提是你們的 SSO 已經"),
                     isFinal: false, startMs: 58_000, endMs: 62_000))
             recorder.seedDemo(
-                segments: seeded, status: String(localized: "Transcribing live"))
+                segments: seeded, status: String(localized: "Transcribing live"),
+                paused: shared.showPausedMeeting,
+                title: featured.title,
+                folder: .init(
+                    destination: SaveDestination(
+                        scope: "personal", orgId: nil, folderId: folders[0].id),
+                    label: folders[0].name))
         }
     }
 

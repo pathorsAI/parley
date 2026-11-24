@@ -73,6 +73,9 @@ struct ParleyTypography {
     var subheadlineEmphasized: Font {
         Font.custom(Face.medium, size: 15, relativeTo: .subheadline)
     }
+    /// Bold at subheadline size: the selected tab of the live screen's tab
+    /// strip, which reads as the one chosen without a fill of its own.
+    var subheadlineBold: Font { Font.custom(Face.bold, size: 15, relativeTo: .subheadline) }
 
     // MARK: - Display (Alexandria)
 
@@ -87,6 +90,13 @@ struct ParleyTypography {
     var displayNumber: Font { displayNumber(size: 34) }
     func displayNumber(size: CGFloat) -> Font {
         Font.custom(Face.displaySemibold, size: size, relativeTo: .largeTitle).monospacedDigit()
+    }
+
+    /// The elapsed time in the live screen's recording-clock pill: the display
+    /// face at a line's size, scaling with the text around it rather than with
+    /// the large titles, tabular so the pill does not breathe as it ticks.
+    var clock: Font {
+        Font.custom(Face.displaySemibold, size: 15, relativeTo: .subheadline).monospacedDigit()
     }
 
     // MARK: - Escape hatch
