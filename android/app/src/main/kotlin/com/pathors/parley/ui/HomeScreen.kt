@@ -46,7 +46,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
@@ -621,10 +621,7 @@ private fun LibraryActions(
                 )
             }
         }
-        ScopeSwitcher(state = state, onSelectScope = onSelectScope)
-        IconButton(onClick = onAccount) {
-            Icon(Icons.Default.Person, stringResource(R.string.home_account))
-        }
+        ScopeSwitcher(state = state, onSelectScope = onSelectScope, onAccount = onAccount)
     }
 }
 
@@ -1039,8 +1036,11 @@ private fun LibraryErrorDialogs(viewModel: HomeViewModel, state: HomeViewModel.U
  * switcher at all: a menu with one entry is a control that does nothing.
  */
 @Composable
-private fun ScopeSwitcher(state: HomeViewModel.UiState, onSelectScope: (String?) -> Unit) {
-    if (state.orgs.isEmpty()) return
+private fun ScopeSwitcher(
+    state: HomeViewModel.UiState,
+    onSelectScope: (String?) -> Unit,
+    onAccount: () -> Unit,
+) {
     var open by remember { mutableStateOf(false) }
     val personal = stringResource(R.string.library_scope_personal)
     val name = state.scopeOrg?.name ?: personal
@@ -1092,6 +1092,20 @@ private fun ScopeSwitcher(state: HomeViewModel.UiState, onSelectScope: (String?)
                     },
                 )
             }
+            // The account sheet (sign-out, where recordings are saved, re-run
+            // onboarding) lives here, under the libraries, rather than as a
+            // third glyph in the header: the header keeps iOS's two actions,
+            // import and the scope. Which is also why the menu is shown with
+            // no organization to switch to.
+            HorizontalDivider(Modifier.padding(vertical = 4.dp))
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.home_account_settings)) },
+                leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                onClick = {
+                    open = false
+                    onAccount()
+                },
+            )
         }
     }
 }

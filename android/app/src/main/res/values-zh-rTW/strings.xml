@@ -32,7 +32,7 @@
 
     <!-- Home -->
     <string name="home_title">錄音庫</string>
-    <string name="home_account">帳號</string>
+    <string name="home_account_settings">帳號與設定</string>
     <string name="home_empty_title">還沒有任何錄音</string>
     <string name="home_empty_body">開一場會議或匯入一段錄音，之後每一場都會依日期排在這裡。</string>
     <string name="home_empty_import">匯入音訊檔</string>
