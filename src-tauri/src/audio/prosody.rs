@@ -514,7 +514,11 @@ fn count_syllable_nuclei(rms: &[f32], voiced: &[bool]) -> usize {
 ///
 /// Nuclei are counted in `WINDOW_MS`-sized blocks so the per-window loudness floor
 /// adapts to a recording whose level drifts, matching the live analyzer's framing.
-pub fn measure_speech_rate_hz(pcm: &[f32], sample_rate: u32) -> f32 {
+///
+/// The app measures with [`SpeechRateStream`], which streams the same
+/// computation; this whole-buffer form is kept as its reference in tests.
+#[cfg(test)]
+pub(crate) fn measure_speech_rate_hz(pcm: &[f32], sample_rate: u32) -> f32 {
     if sample_rate == 0 || pcm.len() < FRAME {
         return 0.0;
     }
@@ -603,6 +607,54 @@ impl SessionRateMeter {
             return 0.0;
         }
         (self.nuclei + count_syllable_nuclei(&self.rms, &self.voiced)) as f32 / voiced_sec
+    }
+}
+
+/// [`measure_speech_rate_hz`] over a recording streamed in chunks of any size
+/// at 16 kHz, so a long upload is measured without decoding all of it into
+/// memory. Frames are cut exactly as the batch function cuts them (`FRAME`
+/// samples every `HOP`) and counted by [`SessionRateMeter`], whose blocks
+/// mirror the batch ones, so the result is the batch result.
+pub struct SpeechRateStream {
+    /// Samples not yet covered by a full frame (fewer than `FRAME` + `HOP`).
+    buf: Vec<f32>,
+    meter: SessionRateMeter,
+    frames: u64,
+}
+
+impl Default for SpeechRateStream {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SpeechRateStream {
+    pub fn new() -> Self {
+        Self {
+            buf: Vec::with_capacity(FRAME * 2),
+            meter: SessionRateMeter::new(),
+            frames: 0,
+        }
+    }
+
+    /// Feed the next samples (16 kHz mono, normalized `f32`).
+    pub fn push(&mut self, pcm: &[f32]) {
+        self.buf.extend_from_slice(pcm);
+        let mut at = 0;
+        while at + FRAME <= self.buf.len() {
+            self.meter.push(rms_of(&self.buf[at..at + FRAME]));
+            self.frames += 1;
+            at += HOP;
+        }
+        self.buf.drain(..at);
+    }
+
+    /// The articulation rate over everything fed; 0.0 when unmeasurable.
+    pub fn rate_hz(&self) -> f32 {
+        if self.frames == 0 {
+            return 0.0;
+        }
+        self.meter.rate_hz()
     }
 }
 
@@ -986,6 +1038,38 @@ mod tests {
             (streaming - batch).abs() < 0.3,
             "streaming {streaming} should match batch {batch}"
         );
+    }
+
+    #[test]
+    fn speech_rate_stream_matches_the_batch_measure() {
+        // 20 s of syllable-like bumps, fed in uneven chunks.
+        let rate = TARGET_SAMPLE_RATE;
+        let n = rate as usize * 20;
+        let pcm: Vec<f32> = (0..n)
+            .map(|k| {
+                let t = k as f32 / rate as f32;
+                let env = 0.5 - 0.5 * (2.0 * PI * (t * 3.3).fract()).cos();
+                (2.0 * PI * 150.0 * t).sin() * (0.03 + 0.5 * env)
+            })
+            .collect();
+        let mut stream = SpeechRateStream::new();
+        let mut rest = &pcm[..];
+        for size in [1usize, 7, 320, 1023, 4096, 960].iter().cycle() {
+            if rest.is_empty() {
+                break;
+            }
+            let take = (*size).min(rest.len());
+            stream.push(&rest[..take]);
+            rest = &rest[take..];
+        }
+        let batch = measure_speech_rate_hz(&pcm, rate);
+        assert!(batch > 0.0);
+        assert!(
+            (stream.rate_hz() - batch).abs() < 1e-3,
+            "stream {} batch {batch}",
+            stream.rate_hz()
+        );
+        assert_eq!(SpeechRateStream::new().rate_hz(), 0.0);
     }
 
     #[test]

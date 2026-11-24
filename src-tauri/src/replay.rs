@@ -220,8 +220,19 @@ async fn transcribe_upload(
         r
     });
 
+    // A transcribed upload is saved to history next, which needs the very same
+    // Opus file: keep it for that save (history.rs) instead of encoding the
+    // source a second time. A failed one is just deleted.
     if let Some(temp) = compressed_temp {
-        let _ = tokio::fs::remove_file(&temp).await;
+        if result.is_ok() {
+            let source = std::path::PathBuf::from(upload.path);
+            let _ = tokio::task::spawn_blocking(move || {
+                crate::replay_audio::remember_compressed(&source, temp)
+            })
+            .await;
+        } else {
+            let _ = tokio::fs::remove_file(&temp).await;
+        }
     }
     result
 }
@@ -284,7 +295,14 @@ async fn compress_upload(
 ) -> Result<(String, Option<std::path::PathBuf>), String> {
     let original_size = tokio::fs::metadata(path).await.map(|m| m.len()).ok();
     match compress_for_upload_blocking(path.to_string()).await {
-        Ok(temp) => {
+        Ok(None) => {
+            log::info!(
+                "replay: audio is already 16 kHz mono Opus, uploading as is bytes={:?}",
+                original_size
+            );
+            Ok((path.to_string(), None))
+        }
+        Ok(Some(temp)) => {
             let compressed_size = tokio::fs::metadata(&temp).await.map(|m| m.len()).ok();
             match (original_size, compressed_size) {
                 (Some(orig), Some(comp)) => log::info!(
@@ -459,14 +477,67 @@ async fn write_cache(path: &std::path::Path, result: &TranscriptionResult) {
 }
 
 /// Run `compress_for_upload` off the async runtime (it does blocking file IO +
-/// CPU-bound decode/encode). Returns the temp output path on success.
-async fn compress_for_upload_blocking(path: String) -> Result<std::path::PathBuf, String> {
+/// CPU-bound decode/encode). Returns the temp output path on success, or `None`
+/// when the file already is what compression would produce (a split part, the
+/// app's own recording), which is uploaded as is.
+async fn compress_for_upload_blocking(path: String) -> Result<Option<std::path::PathBuf>, String> {
     tokio::task::spawn_blocking(move || {
-        crate::replay_audio::compress_for_upload(std::path::Path::new(&path))
+        let path = std::path::Path::new(&path);
+        if crate::replay_audio::is_upload_ready(path) {
+            return Ok(None);
+        }
+        crate::replay_audio::compress_for_upload(path)
+            .map(Some)
             .map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| format!("compression task panicked: {e}"))?
+}
+
+/// Read a picked file's duration, codec support and size from its headers (no
+/// decode), so the import wizard can decide about splitting or refuse an
+/// uncompressible oversized file before any heavy work starts.
+#[tauri::command]
+pub async fn probe_upload_audio(path: String) -> Result<crate::replay_audio::AudioProbe, String> {
+    tokio::task::spawn_blocking(move || {
+        crate::replay_audio::probe_audio(std::path::Path::new(&path)).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("probe task panicked: {e}"))?
+}
+
+/// Compress a long recording into `parts` equal Opus files for hosted
+/// transcription, which takes at most 6 hours per upload. Streams, like every
+/// compression. Returns the part paths in order; the caller transcribes and
+/// saves each, then hands them to [`discard_upload_parts`].
+#[tauri::command]
+pub async fn split_upload_audio(path: String, parts: u32) -> Result<Vec<String>, String> {
+    tokio::task::spawn_blocking(move || {
+        let parts = crate::replay_audio::compress_for_upload_split(
+            std::path::Path::new(&path),
+            parts.clamp(1, 64) as usize,
+        )
+        .map_err(|e| e.to_string())?;
+        log::info!("replay: split upload into parts={}", parts.len());
+        Ok(parts
+            .into_iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect())
+    })
+    .await
+    .map_err(|e| format!("split task panicked: {e}"))?
+}
+
+/// Delete the temp part files [`split_upload_audio`] made. Anything that isn't
+/// one of those parts is left alone.
+#[tauri::command]
+pub async fn discard_upload_parts(paths: Vec<String>) {
+    let _ = tokio::task::spawn_blocking(move || {
+        for p in paths {
+            crate::replay_audio::discard_part(std::path::Path::new(&p));
+        }
+    })
+    .await;
 }
 
 /// Measure the articulation rate (syllables/sec) of a recording already on disk.
@@ -484,8 +555,9 @@ pub async fn measure_audio_speech_rate(path: String) -> f32 {
 /// task panic resolves to 0.0 so it can never block a transcription.
 async fn measure_speech_rate_blocking(path: String) -> f32 {
     tokio::task::spawn_blocking(move || {
-        match crate::replay_audio::decode_to_16k_mono(std::path::Path::new(&path)) {
-            Ok(pcm) => crate::audio::prosody::measure_speech_rate_hz(&pcm, 16_000),
+        // Streamed: a long recording is measured without holding its decode.
+        match crate::replay_audio::measure_speech_rate(std::path::Path::new(&path)) {
+            Ok(rate) => rate,
             Err(e) => {
                 log::warn!("replay: speech-rate measure failed error={e}");
                 0.0
