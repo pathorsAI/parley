@@ -701,7 +701,7 @@ struct LiveView: View {
             endButton
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 6)
+        .padding(.vertical, 8)
         .overlay(alignment: .top) { hairline }
     }
 
@@ -718,9 +718,11 @@ struct LiveView: View {
                     .font(.parley.subheadlineEmphasized)
             }
             .foregroundStyle(paused ? Theme.primary : Color(.secondaryLabel))
-            .padding(.leading, 12)
-            .padding(.trailing, 14)
-            .frame(minHeight: 34)
+            .padding(.leading, 14)
+            .padding(.trailing, 16)
+            // Larger than the desktop's 32 px: on a phone these are the
+            // meeting's two main controls, under a thumb.
+            .frame(minHeight: 42)
             .background(
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
                     .fill(paused ? Theme.primary.opacity(0.12) : Color(.tertiarySystemFill)))
@@ -759,9 +761,11 @@ struct LiveView: View {
                     .font(.parley.subheadlineEmphasized)
             }
             .foregroundStyle(Color(.secondaryLabel))
-            .padding(.leading, 12)
-            .padding(.trailing, 14)
-            .frame(minHeight: 34)
+            .padding(.leading, 14)
+            .padding(.trailing, 16)
+            // Larger than the desktop's 32 px: on a phone these are the
+            // meeting's two main controls, under a thumb.
+            .frame(minHeight: 42)
             .background(
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
                     .fill(Color(.tertiarySystemFill)))
